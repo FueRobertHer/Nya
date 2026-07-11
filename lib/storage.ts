@@ -11,6 +11,35 @@
 
 import { Redis } from '@upstash/redis';
 
+// The @upstash/redis client speaks HTTP, so it needs the *REST* URL
+// (https://<host>), not a rediss:// connection string. Vercel's Upstash
+// Marketplace integration injects several env vars, and on some projects it
+// populates UPSTASH_REDIS_REST_URL with a rediss://…:6379 connection string
+// instead of the REST URL — which makes the client throw "invalid URL". So we
+// resolve the URL defensively: prefer any candidate that's already https://,
+// and if we only have a rediss:///redis:// one, derive the REST URL from its
+// host (Upstash serves REST on https://<same-host>). The REST token is the
+// same value as the connection-string password, so pairing them works.
+function resolveRedisUrl(): string | undefined {
+  const candidates = [
+    process.env.UPSTASH_REDIS_REST_URL,
+    process.env.KV_REST_API_URL,
+  ].filter((u): u is string => !!u);
+
+  const https = candidates.find((u) => u.startsWith('https://'));
+  if (https) return https;
+
+  const conn = candidates.find((u) => u.startsWith('rediss://') || u.startsWith('redis://'));
+  if (conn) {
+    try {
+      return `https://${new URL(conn).hostname}`;
+    } catch {
+      /* fall through to the missing-credentials error */
+    }
+  }
+  return undefined;
+}
+
 // Lazily constructed so importing this module (e.g. during `next build`)
 // doesn't require the env vars to be set. Supports both the env var names
 // the Upstash Marketplace integration injects (UPSTASH_REDIS_REST_*) and
@@ -19,7 +48,7 @@ import { Redis } from '@upstash/redis';
 let _redis: Redis | undefined;
 function redis(): Redis {
   if (!_redis) {
-    const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+    const url = resolveRedisUrl();
     const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
     if (!url || !token) {
       throw new Error(
