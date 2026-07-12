@@ -6,10 +6,10 @@
 // data in /api/transactions. Values are encrypted for consistency with
 // everything else financial.
 
-import { redis } from './storage';
+import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 
-const OVERRIDES_HASH = 'txn-category-overrides';
+const OVERRIDES_HASH = k('txn-category-overrides');
 
 export async function getOverrides(): Promise<Record<string, string>> {
   try {

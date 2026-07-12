@@ -8,13 +8,13 @@
 // AES-256-GCM key as the Plaid access tokens (lib/crypto.ts) -- a
 // database-only leak exposes neither tokens nor balances.
 
-import { redis } from './storage';
+import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 
 const TTL_SECONDS = 15 * 60;
 
-export const NET_WORTH_CACHE_KEY = 'cache:net-worth';
-export const TRANSACTIONS_CACHE_KEY = 'cache:transactions';
+export const NET_WORTH_CACHE_KEY = k('cache:net-worth');
+export const TRANSACTIONS_CACHE_KEY = k('cache:transactions');
 
 export async function readCache<T>(key: string): Promise<T | null> {
   try {
