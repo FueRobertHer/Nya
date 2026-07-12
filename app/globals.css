@@ -372,32 +372,6 @@ button:disabled {
 
 /* --- monthly breakdown (Activity tab) --- */
 
-.month-chips {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  margin-bottom: 12px;
-  -webkit-overflow-scrolling: touch;
-}
-
-.chip {
-  width: auto;
-  flex: 0 0 auto;
-  padding: 7px 14px;
-  font-size: 13px;
-  border-radius: 999px;
-  background: transparent;
-  border: 1px solid #2a2f3a;
-  color: var(--text);
-}
-
-.chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
-}
-
 .summary-row {
   display: flex;
   justify-content: space-between;
@@ -687,6 +661,55 @@ button:disabled {
 .budget-select {
   margin-bottom: 0;
   appearance: none;
+}
+
+/* --- collapsible holdings (Accounts tab) --- */
+
+.holdings-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 12px 0 4px;
+  color: var(--text);
+  text-align: left;
+}
+
+.holdings-title {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.holdings-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.holdings-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.holdings-summary .chevron {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.15s ease;
+}
+
+.holdings-summary .chevron.open {
+  transform: rotate(180deg);
 }
 
 /* --- expandable account rows (Accounts tab) --- */
