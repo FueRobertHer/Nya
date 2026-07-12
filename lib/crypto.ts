@@ -19,14 +19,27 @@ function getKeyMaterial(): string {
   return key;
 }
 
-async function importKey(): Promise<CryptoKey> {
-  const raw = Uint8Array.from(atob(getKeyMaterial()), (c) => c.charCodeAt(0));
-  if (raw.length !== 32) {
-    throw new Error(
-      `${KEY_ENV_VAR} must decode to exactly 32 bytes (AES-256). Generate with: openssl rand -base64 32`
-    );
+// The key never changes within a process, so import it once and reuse it --
+// history/account reads decrypt hundreds of values per request, and
+// re-importing for each one is pure waste. A failed import isn't cached, so
+// a missing env var stays a per-call error rather than a poisoned singleton.
+let _keyPromise: Promise<CryptoKey> | null = null;
+function importKey(): Promise<CryptoKey> {
+  if (!_keyPromise) {
+    _keyPromise = (async () => {
+      const raw = Uint8Array.from(atob(getKeyMaterial()), (c) => c.charCodeAt(0));
+      if (raw.length !== 32) {
+        throw new Error(
+          `${KEY_ENV_VAR} must decode to exactly 32 bytes (AES-256). Generate with: openssl rand -base64 32`
+        );
+      }
+      return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+    })().catch((err) => {
+      _keyPromise = null;
+      throw err;
+    });
   }
-  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  return _keyPromise;
 }
 
 /** Encrypts a plaintext string. Returns a single base64 string (IV + ciphertext). */

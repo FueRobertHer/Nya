@@ -5,6 +5,7 @@
   --muted: #8b8f98;
   --accent: #5b8def;
   --up: #3ecf8e;
+  --warn: #e0a83c;
   --down: #ef5b5b;
 }
 
@@ -27,7 +28,8 @@ body {
 .wrap {
   max-width: 760px;
   margin: 0 auto;
-  padding: calc(24px + env(safe-area-inset-top)) 16px calc(60px + env(safe-area-inset-bottom));
+  /* bottom padding clears the fixed tab bar */
+  padding: calc(24px + env(safe-area-inset-top)) 16px calc(92px + env(safe-area-inset-bottom));
 }
 
 h1 {
@@ -61,7 +63,8 @@ h2 {
 }
 
 .total-value {
-  font-size: 32px;
+  /* hero figure: proportional digits read better than tabular at this size */
+  font-size: 40px;
   font-weight: 700;
   margin-top: 4px;
 }
@@ -199,4 +202,504 @@ th.num {
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #2a2f3a;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 24px auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.as-of {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.hero-delta {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-delta.up {
+  color: var(--up);
+}
+
+.hero-delta.down {
+  color: var(--down);
+}
+
+.top-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  width: auto;
+  padding: 8px 10px;
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.icon-btn svg.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+.num.inflow {
+  color: var(--up);
+}
+
+.pending-tag {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.txn-date {
+  color: var(--muted);
+  white-space: nowrap;
+  width: 1%;
+}
+
+.empty-note {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 12px 0 0;
+}
+
+/* --- bottom tab bar (mobile-first PWA navigation) --- */
+
+.tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  background: rgba(23, 26, 33, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid #262a33;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tab-bar button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 9px 0 10px;
+}
+
+.tab-bar button.active {
+  color: var(--accent);
+}
+
+.tab-bar svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* --- net worth chart --- */
+
+.chart-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 8px;
+  min-height: 20px;
+}
+
+.chart-readout-value {
+  font-weight: 600;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-readout-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* the chart is a scrub surface -- don't let touches pan the page */
+  touch-action: none;
+}
+
+.chart-tick {
+  fill: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-xlabel {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.chart-note {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+/* --- monthly breakdown (Activity tab) --- */
+
+.month-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chip {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  font-size: 13px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid #2a2f3a;
+  color: var(--text);
+}
+
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summary-row > div {
+  flex: 1;
+}
+
+.summary-value {
+  font-size: 17px;
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-value.inflow {
+  color: var(--up);
+}
+
+.summary-value.negative {
+  color: var(--down);
+}
+
+.cat-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cat-name {
+  flex: 0 0 34%;
+  font-size: 13px;
+  color: var(--text);
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-track {
+  flex: 1;
+}
+
+.cat-bar {
+  height: 14px;
+  min-width: 2px;
+  background: var(--accent);
+  /* rounded data-end, square at the baseline (left) */
+  border-radius: 0 4px 4px 0;
+}
+
+.cat-val {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.search-input {
+  margin: 12px 0 4px;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+/* --- holdings gain/loss --- */
+
+.gain {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.gain.inflow {
+  color: var(--up);
+}
+
+.gain.loss {
+  color: var(--down);
+}
+
+/* --- insights (Home tab) --- */
+
+.insight-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.insight {
+  font-size: 14px;
+}
+
+.insight-up {
+  color: var(--up);
+}
+
+.insight-down {
+  color: var(--down);
+}
+
+.insight-neutral {
+  color: var(--text);
+}
+
+/* --- spending trend columns (Activity tab) --- */
+
+.trend-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.trend-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.trend-bar {
+  display: block;
+  width: 100%;
+  max-width: 24px;
+  background: var(--accent);
+  opacity: 0.45;
+  /* rounded data-end (top), square at the baseline */
+  border-radius: 4px 4px 0 0;
+}
+
+.trend-col.active .trend-bar {
+  opacity: 1;
+}
+
+.trend-val {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-label {
+  font-size: 11px;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+
+.trend-col.active .trend-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- budgets (Budgets tab) --- */
+
+/* Meter: the fill carries severity; the track is a lighter step of the
+   same hue so state reads across the whole bar. */
+.meter-track {
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(91, 141, 239, 0.16);
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.meter-track.warn {
+  background: rgba(224, 168, 60, 0.16);
+}
+
+.meter-track.over {
+  background: rgba(239, 91, 91, 0.16);
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 5px 0 0 5px;
+  background: var(--accent);
+  min-width: 2px;
+}
+
+.meter-fill.warn {
+  background: var(--warn);
+}
+
+.meter-fill.over {
+  background: var(--down);
+  border-radius: 5px;
+}
+
+.meter-fill.done {
+  background: var(--up);
+  border-radius: 5px;
+}
+
+.done-tag {
+  color: var(--up);
+  font-weight: 600;
+}
+
+.recat-select {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  width: auto;
+  appearance: none;
+}
+
+.budget-row {
+  margin-top: 16px;
+}
+
+.budget-summary {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.budget-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.budget-name {
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.budget-amounts {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.over-tag {
+  color: var(--down);
+  font-weight: 600;
+}
+
+.budget-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.budget-edit .card-actions {
+  margin-top: 0;
+}
+
+.budget-input {
+  margin-bottom: 0;
+}
+
+.budget-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #262a33;
+}
+
+.budget-select {
+  margin-bottom: 0;
+  appearance: none;
+}
+
+/* --- expandable account rows (Accounts tab) --- */
+
+.acct-row {
+  cursor: pointer;
+}
+
+.acct-row:active td {
+  background: rgba(91, 141, 239, 0.06);
+}
+
+.acct-chart-cell {
+  padding-top: 12px;
+  padding-bottom: 16px;
 }
