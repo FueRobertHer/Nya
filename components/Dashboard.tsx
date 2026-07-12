@@ -122,6 +122,7 @@ export default function Dashboard() {
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   const [budgets, setBudgets] = useState<Budgets>({});
   const [goals, setGoals] = useState<Goal[]>([]);
   // Guards the one-shot estimated-history backfill per page load; the server
@@ -418,6 +419,15 @@ export default function Dashboard() {
     });
   }, []);
 
+  const toggleHoldings = useCallback((item_id: string) => {
+    setExpandedHoldings((prev) => {
+      const next = new Set(prev);
+      if (next.has(item_id)) next.delete(item_id);
+      else next.add(item_id);
+      return next;
+    });
+  }, []);
+
   const refreshAll = useCallback(() => {
     loadNetWorth(true);
     if (txns !== null) loadTransactions(true);
@@ -594,7 +604,32 @@ export default function Dashboard() {
 
                       {inst.holdings.length > 0 && (
                         <>
-                          <h2>Holdings</h2>
+                          <button
+                            className="holdings-toggle"
+                            onClick={() => toggleHoldings(inst.item_id)}
+                            aria-expanded={expandedHoldings.has(inst.item_id)}
+                          >
+                            <span className="holdings-title">
+                              Holdings
+                              <span className="holdings-count">{inst.holdings.length}</span>
+                            </span>
+                            <span className="holdings-summary">
+                              {fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0))}
+                              <svg
+                                className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth={2}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="m6 9 6 6 6-6" />
+                              </svg>
+                            </span>
+                          </button>
+                          {expandedHoldings.has(inst.item_id) && (
                           <table>
                             <thead>
                               <tr>
@@ -622,6 +657,7 @@ export default function Dashboard() {
                               ))}
                             </tbody>
                           </table>
+                          )}
                         </>
                       )}
 

@@ -60,13 +60,24 @@ export function redis(): Redis {
   return _redis;
 }
 
+// All environments share one Upstash database, isolated by key namespace:
+// every Redis key is prefixed with the environment name (production:…,
+// preview:…, dev:…). Vercel sets VERCEL_ENV; local `next dev` falls through
+// to 'dev'. REDIS_PREFIX overrides both, e.g. to point a branch at another
+// namespace deliberately.
+const ENV_PREFIX = process.env.REDIS_PREFIX ?? process.env.VERCEL_ENV ?? 'dev';
+
+export function k(key: string): string {
+  return `${ENV_PREFIX}:${key}`;
+}
+
 export type StoredItem = {
   item_id: string;
   institution_name: string;
   encrypted_access_token: string;
 };
 
-const ITEMS_HASH = 'plaid:items';
+const ITEMS_HASH = k('plaid:items');
 
 export async function getItems(): Promise<StoredItem[]> {
   const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH);

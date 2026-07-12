@@ -175,26 +175,11 @@ export default function MonthBreakdown({
 
   return (
     <>
-      {months.length > 1 && (
-        <div className="month-chips" role="tablist" aria-label="Month">
-          {months.map((m) => (
-            <button
-              key={m}
-              role="tab"
-              aria-selected={m === selected}
-              className={`chip${m === selected ? ' active' : ''}`}
-              onClick={() => setMonth(m)}
-            >
-              {monthLabel(m)}
-            </button>
-          ))}
-        </div>
-      )}
-
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
             <div className="inst-name">Spending by month</div>
+            <div className="inst-total">tap a month to select</div>
           </div>
           <div className="trend-row">
             {(() => {
@@ -204,6 +189,7 @@ export default function MonthBreakdown({
                   key={m}
                   className={`trend-col${m === selected ? ' active' : ''}`}
                   onClick={() => setMonth(m)}
+                  aria-pressed={m === selected}
                   aria-label={`${monthLabel(m)}: ${fmtUsd(out)} spent`}
                 >
                   <span className="trend-val">

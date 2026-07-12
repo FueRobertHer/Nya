@@ -5,10 +5,10 @@
 // user's taps, so a single read-modify-write blob is fine here (unlike the
 // Plaid items hash, which two concurrent link flows can race on).
 
-import { redis } from './storage';
+import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 
-const BUDGETS_KEY = 'budgets';
+const BUDGETS_KEY = k('budgets');
 
 export type Budgets = Record<string, number>;
 

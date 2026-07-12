@@ -4,10 +4,10 @@
 // linked account's live balance. Stored as one encrypted JSON blob in Redis,
 // same reasoning as budgets (rare, single-user writes).
 
-import { redis } from './storage';
+import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 
-const GOALS_KEY = 'goals';
+const GOALS_KEY = k('goals');
 
 export type Goal = {
   id: string;

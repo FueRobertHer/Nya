@@ -14,16 +14,16 @@
 // encrypted with the same AES-256-GCM key as everything else financial, so
 // a database-only leak doesn't expose your net-worth series either.
 
-import { redis } from './storage';
+import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 
-const HISTORY_HASH = 'history:net-worth';
-const ESTIMATED_HASH = 'history:net-worth:est';
+const HISTORY_HASH = k('history:net-worth');
+const ESTIMATED_HASH = k('history:net-worth:est');
 // Per-account balances, one JSON map { account_id: balance } per date, so
 // individual accounts can be charted too.
-const ACCOUNTS_HASH = 'history:accounts';
-const ACCOUNTS_EST_HASH = 'history:accounts:est';
-const BACKFILL_FLAG = 'history:backfill-done';
+const ACCOUNTS_HASH = k('history:accounts');
+const ACCOUNTS_EST_HASH = k('history:accounts:est');
+const BACKFILL_FLAG = k('history:backfill-done');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
