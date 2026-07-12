@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
+import { clearCaches } from '@/lib/cache';
 
 export async function POST(req: Request) {
   try {
@@ -21,6 +22,10 @@ export async function POST(req: Request) {
     }
 
     await removeItem(item_id);
+
+    // Cached payloads no longer reflect the linked institutions.
+    await clearCaches();
+
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error(err);

@@ -9,6 +9,9 @@ export async function POST() {
       client_name: 'Nya',
       products: [Products.Transactions],
       optional_products: [Products.Investments],
+      // Ask for up to 2 years of transaction history (default is 90 days) so
+      // the estimated net-worth backfill can reach back further.
+      transactions: { days_requested: 730 },
       country_codes: [CountryCode.Us],
       language: 'en',
     });

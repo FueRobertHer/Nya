@@ -46,7 +46,7 @@ function resolveRedisUrl(): string | undefined {
 // the legacy names kept on stores auto-migrated from Vercel KV
 // (KV_REST_API_*).
 let _redis: Redis | undefined;
-function redis(): Redis {
+export function redis(): Redis {
   if (!_redis) {
     const url = resolveRedisUrl();
     const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;

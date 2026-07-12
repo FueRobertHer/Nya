@@ -2,12 +2,33 @@
 
 A Next.js + React app that connects to all your financial accounts — banks
 (Ally, Chase), brokerages (Fidelity, Vanguard), credit cards, etc. — via
-Plaid, and shows a combined balance sheet and net worth. Runs on Bun,
-deploys to Vercel, installs on your phone as a PWA.
+Plaid. Runs on Bun, deploys to Vercel, installs on your phone as a PWA.
 
-Plaid access tokens are encrypted (AES-256-GCM) before being stored in
-Upstash Redis (via the Vercel Marketplace), and the whole app sits behind a password (see "Security notes"
-below for why, and what's still not covered).
+Four tabs (bottom navigation, mobile-first):
+
+- **Home** — net worth with a 30-day delta and an over-time chart (daily
+  snapshots + estimated backfill, scrubbable), plus insights and alerts:
+  over/approaching budget, low balance, upcoming recurring bills, spending
+  pace vs last month, biggest purchase.
+- **Accounts** — per-institution balance sheet; tap any account for its own
+  balance history chart; holdings show gain/loss vs cost basis.
+- **Activity** — six months of transactions with a monthly breakdown:
+  spending-by-month trend columns, money in/out/net, top spending
+  categories, and search. Tap any transaction to recategorize it (manual
+  overrides win over Plaid's auto-categorization and persist). Transfers and
+  loan payments are excluded from the totals so credit-card payments don't
+  double-count.
+- **Budgets** — Mint-style monthly budgets per spending category with
+  severity meters (on track → approaching → over); savings goals tracked
+  against a linked account's live balance; and recurring-bill detection
+  (merchants charging a consistent amount for 3+ months) with estimated next
+  charge dates and a monthly total. All stored encrypted in Redis.
+
+A refresh button in the header forces live Plaid data from any tab.
+
+Plaid access tokens are encrypted (AES-256-GCM) before being stored in Upstash
+Redis (via the Vercel Marketplace), and the whole app sits behind a password
+(see "Security notes" below for why, and what's still not covered).
 
 ## 1. Get Plaid API keys
 
@@ -26,6 +47,8 @@ below for why, and what's still not covered).
    - `PLAID_ENCRYPTION_KEY` — generate with `openssl rand -base64 32`
    - `APP_PASSWORD` — the password you'll use to open the app
    - `SESSION_SECRET` — generate with `openssl rand -base64 32`
+   - `CRON_SECRET` — generate with `openssl rand -base64 32`; authenticates
+     the daily net-worth snapshot cron (Vercel sends it automatically)
 
 ## 3. Local development
 
@@ -40,7 +63,7 @@ Open http://localhost:3000 — you'll be redirected to `/login` first.
 
 > **If you hit `Upstash Redis client was passed an invalid URL … Received: "rediss://…"`:** `vercel env pull` sometimes writes a `rediss://…:6379` connection string into `UPSTASH_REDIS_REST_URL`, but the `@upstash/redis` client needs the HTTPS **REST** endpoint (`https://<name>.upstash.io`). The app now handles this automatically (it derives the REST URL from the host in `lib/storage.ts`), so a restart is enough. If you'd rather fix the env var itself, set `UPSTASH_REDIS_REST_URL` to the `https://…` value — Vercel exposes it as `<db-name>_KV_REST_API_URL` (or legacy `KV_REST_API_URL`).
 
-> Bun is Vercel's officially supported runtime for the API routes (`vercel.json` sets `bunVersion`). One nuance worth knowing: `middleware.ts` (the auth gate) always runs on Vercel's **Edge runtime**, not Bun — that's a Next.js constraint, not a choice made here. It's why `lib/auth.ts` uses the Web Crypto API instead of Node's `crypto`/`Buffer`: that code needs to work on Edge. If a future Vercel CLI/Next.js version changes the Bun config shape, check https://vercel.com/docs/functions/runtimes/bun for the current syntax.
+> Bun is Vercel's officially supported runtime for the API routes (`vercel.json` sets `bunVersion`). One nuance worth knowing: `proxy.ts` (the auth gate — renamed from `middleware.ts` in Next 16) always runs on Vercel's **Edge runtime**, not Bun — that's a Next.js constraint, not a choice made here. It's why `lib/auth.ts` uses the Web Crypto API instead of Node's `crypto`/`Buffer`: that code needs to work on Edge. If a future Vercel CLI/Next.js version changes the Bun config shape, check https://vercel.com/docs/functions/runtimes/bun for the current syntax.
 
 ## 4. Connect accounts
 
@@ -55,6 +78,7 @@ disconnect and relink from scratch.
 
 In `sandbox` mode, Plaid Link shows fake test institutions. Search for any
 name (e.g. "Chase") and log in with:
+
 - username: `user_good`
 - password: `pass_good`
 
@@ -83,8 +107,9 @@ Vercel gives you a free HTTPS domain automatically — no separate hosting step 
 Deploying to Vercel gives the app a public HTTPS URL — anyone who found it
 could otherwise view your balances or link their own account into your
 Redis store. Every route (except `/login` and the PWA assets needed for install)
-is now gated by `middleware.ts`, which checks a signed, expiring session
-cookie. Logging in at `/login` sets that cookie for 30 days.
+is now gated by `proxy.ts` (Next's renamed middleware convention), which
+checks a signed, expiring session cookie. Logging in at `/login` sets that
+cookie for 30 days.
 
 This is a single shared password, not per-user accounts — appropriate for
 one person's personal tracker, not for sharing with others. If you want
@@ -98,81 +123,62 @@ before being written to Redis — see `lib/crypto.ts`. That key lives only in
 your env vars, never in Redis itself, so a database-only leak doesn't expose
 usable tokens.
 
+Balance and transaction responses are also cached in Redis for 15 minutes
+(so the dashboard doesn't wait on live Plaid calls every load — the Refresh
+button forces a live fetch), encrypted with the same key. See `lib/cache.ts`.
+The daily net-worth history behind the Home-tab chart (`lib/history.ts`) is
+stored the same way: encrypted values, keyed by date. It has two layers:
+
+- **Real snapshots** — recorded on every clean live fetch, plus daily by a
+  Vercel Cron (`vercel.json` → `/api/snapshot`, authenticated with
+  `CRON_SECRET`), so the chart stays gapless even on days you don't open
+  the app. Per-account balances are snapshotted alongside the total, which
+  is what feeds the tap-to-expand account charts.
+- **Estimated backfill** — on first use (and after linking a new
+  institution) the app reconstructs up to a year of history from
+  transaction data (`/api/backfill`): cash and credit accounts are walked
+  backward from today's balances; investments and loans can't be
+  reconstructed (Plaid has no historical balances or prices) and are held
+  flat. The chart draws this region dashed and labels it estimated. New
+  links request 730 days of transactions; older Items may only have ~90
+  days until relinked.
+
+One deliberate tradeoff: the dashboard keeps the last-known snapshot in the
+browser's `localStorage` so the PWA opens instantly and still shows balances
+offline. That snapshot is readable on-device without the app password (e.g.
+by someone with your unlocked phone) — acceptable for a personal device, but
+worth knowing. It's cleared on logout.
+
 **Keep `PLAID_ENCRYPTION_KEY` and `SESSION_SECRET` safe** — losing the
 encryption key makes previously stored tokens permanently undecryptable
 (you'd need to reconnect all accounts); losing/leaking the session secret
 would let someone forge a valid login cookie.
 
+### Login rate limiting
+
+`/api/login` allows at most 10 failed attempts per IP per 15 minutes
+(tracked in Redis; a successful login clears the counter, and the limiter
+fails open if Redis is unreachable). This blunts brute-forcing of
+`APP_PASSWORD` on the public URL.
+
 ### What's still not covered
 
-- **No rate limiting** on the API routes or the login endpoint — someone
-  who discovers the URL could brute-force `APP_PASSWORD` given enough
-  attempts. Fine for a personal app behind a real password; add rate
-  limiting (e.g. Vercel's built-in Attack Challenge Mode, or a small
-  Upstash-backed limiter) before treating this as hardened.
 - **Single household password**, not per-device or per-person sessions —
   anyone with the password gets full access, including the ability to
   disconnect your accounts.
+- Rate limiting covers only the login endpoint, not the data routes (those
+  already require a valid session).
 
-## What changed in this revision
+## Limitations
 
-An earlier version of this app had no auth at all (fine for `localhost`,
-not fine once deployed publicly), fetched every linked institution's
-balances one at a time, had no way to recover from an expired bank login,
-and stored items in a single JSON blob with a read-then-write race between
-concurrent link flows. This revision fixes all four:
-
-- **Auth**: `middleware.ts` + `lib/auth.ts` + `/login` — see above.
-- **Parallel fetching**: `app/api/net-worth/route.ts` now fetches all
-  institutions concurrently (`Promise.all`) instead of in a sequential loop.
-- **Reconnect flow**: institutions Plaid flags as `ITEM_LOGIN_REQUIRED` now
-  show a "Reconnect" button that opens Plaid Link in update mode
-  (`app/api/create-update-link-token`), fixing the connection without
-  creating a duplicate Item.
-- **Disconnect**: each institution card has a "Disconnect" button
-  (`app/api/disconnect`) that revokes the token with Plaid and removes it
-  from Redis.
-- **Atomic storage**: `lib/storage.ts` now uses Redis hash operations
-  (`HSET`/`HDEL`/`HGETALL`) keyed by `item_id` instead of a single
-  read-modify-write JSON array, removing the race condition.
-- **Duplicate-link warning**: linking an institution you've already
-  connected now prompts for confirmation instead of silently creating a
-  second entry that double-counts balances.
-- **Loading states**: Connect/Refresh buttons now show progress and disable
-  themselves mid-request instead of appearing unresponsive.
-
-### Known limitations (not yet fixed)
-
-- No rate limiting (see Security notes above).
-- No automated tests.
-- PWA offline mode shows the app shell but not last-known balances — data
-  is always fetched live from `/api/*`, which is intentionally never
-  cached.
-- I wasn't able to run `bun install && bun run build` in the environment
-  that generated this code (no network access to Bun's install servers),
-  so everything here has been syntax-checked but not build-verified. Run a
-  real build before deploying with live financial credentials.
-
-### Third-pass fixes
-
-- The service worker cached every non-API request unconditionally: `cache.put()` throws on non-GET requests (an unhandled rejection waiting for the first POST to a page route), and failed/error responses could get cached and later served offline. Now only successful GETs are cached.
-- The session cookie was hard-coded `secure: true`, which Safari rejects over `http://localhost` — logging in during local dev would silently fail on Safari. Now Secure only in production (Vercel is always HTTPS).
-- Every page load made two sequential round trips (`/api/status`, then `/api/net-worth`) when the second response already contains everything the first one answered. The status check and its route are removed; initial load is one request.
-
-### Second-pass fixes (independent review)
-
-A closer re-read caught four smaller issues, now fixed:
-- `verifyPassword` hashed neither side before comparing, so it leaked the real password's length via timing on a mismatch. Now hashes both sides (SHA-256) first, so the comparison is always fixed-length.
-- The middleware's auth-exclusion list matched by prefix (`login`, `api/login`), which would have silently let any future route starting with those strings (e.g. a hypothetical `/login-history`) bypass auth. Now anchored to exact paths.
-- Disconnecting your *last* linked institution left the UI's `connected` flag stuck on `true` instead of reverting to the initial empty state. `loadNetWorth` now derives `connected` from the actual data every time.
-- The README overstated that "the app runs on Bun" — true for the API routes, but Next.js middleware (the auth gate) always runs on Vercel's Edge runtime regardless. Corrected above.
-
-## About the encryption
-
-See "Token encryption" above.
+- **No automated tests.**
+- **Offline is read-only last-known data** — the PWA opens with the last
+  snapshot from `localStorage`, but refreshing, linking, and transactions
+  need a network connection (`/api/*` responses are never cached by the
+  service worker).
 
 ## Extending this
 
-- Add a chart of net worth over time (store daily snapshots in Redis)
-- Add cost basis / gain-loss columns (Plaid returns `cost_basis` per holding)
-- Add rate limiting on `/api/login`
+- Push notifications (PWA web push) for budget alerts and upcoming bills
+- Goal target dates with required-monthly-savings math
+- Multi-currency support (`iso_currency_code` is already captured per account)
