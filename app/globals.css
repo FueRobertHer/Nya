@@ -183,6 +183,86 @@ th.num {
   font-size: 14px;
 }
 
+/* Destructive action (disconnect confirm): red so it reads as irreversible. */
+button.danger {
+  background: var(--down);
+  color: white;
+}
+
+/* Secondary toggle under the "Connect an Account" button on the Accounts tab. */
+.manage-toggle {
+  width: auto;
+  margin-top: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.manage-toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Right side of an institution header: balance, plus the small disconnect
+   control that only appears in manage mode. */
+.inst-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Small, tucked into the header (not a full-width button) so it can't be
+   fat-fingered; the type-to-confirm modal is the real safety net. */
+.disconnect-btn {
+  width: auto;
+  background: transparent;
+  border: 1px solid #3a2a2e;
+  color: var(--down);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+/* --- disconnect confirmation modal --- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.modal {
+  background: var(--card);
+  border: 1px solid #262a33;
+  border-radius: 14px;
+  padding: 20px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.modal-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.modal-body {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 8px 0 14px;
+}
+
+.modal-body strong {
+  color: var(--text);
+}
+
 .text-input {
   width: 100%;
   padding: 12px 14px;
@@ -370,6 +450,27 @@ button:disabled {
   margin-top: 6px;
 }
 
+/* Two-series legend (Income vs spend chart). */
+.chart-legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chart-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
 /* --- monthly breakdown (Activity tab) --- */
 
 .summary-row {
@@ -495,10 +596,17 @@ button:disabled {
   align-items: flex-end;
   gap: 2px;
   margin-top: 12px;
+  /* Up to a year of months lives here; older ones scroll off to the left
+     while the newest stays pinned to the right (set via JS scrollLeft). */
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
 }
 
 .trend-col {
-  flex: 1;
+  /* grow to fill when there are only a few months, but never shrink below a
+     tappable width -- that's what makes the row overflow and scroll. */
+  flex: 1 0 42px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -515,10 +623,18 @@ button:disabled {
   display: block;
   width: 100%;
   max-width: 24px;
-  background: var(--accent);
   opacity: 0.45;
   /* rounded data-end (top), square at the baseline */
   border-radius: 4px 4px 0 0;
+}
+
+/* Color carries the month's net: green when positive, red when negative. */
+.trend-bar.up {
+  background: var(--up);
+}
+
+.trend-bar.down {
+  background: var(--down);
 }
 
 .trend-col.active .trend-bar {

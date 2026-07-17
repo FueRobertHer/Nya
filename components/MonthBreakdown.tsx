@@ -1,13 +1,17 @@
 'use client';
 
-// Activity tab: month-by-month breakdown of the last ~6 months of
-// transactions. A month-chip row selects the month; a summary shows money
-// in / money out / net (transfers and loan payments excluded, so credit-card
-// payments don't double-count as both spending and income); top spending
-// categories draw as single-hue horizontal bars (magnitude lives in length,
-// not color); below that, the searchable transaction list for the month.
+// Activity tab: month-by-month breakdown of the last ~12 months of
+// transactions. A scrollable "Net by month" column row selects the month —
+// each column's height is that month's net magnitude and its color the sign
+// (green positive, red negative). Below it, a two-line chart traces cumulative
+// income vs spend across the days of the selected month. Then a summary shows
+// money in / money out / net (transfers and loan payments excluded, so
+// credit-card payments don't double-count as both spending and income); top
+// spending categories draw as single-hue horizontal bars (magnitude lives in
+// length, not color); and finally the searchable transaction list.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import MonthFlowChart from './MonthFlowChart';
 
 export type Txn = {
   transaction_id: string;
@@ -25,6 +29,13 @@ function fmtUsd(n: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+// Compact, signed currency for the net-bar value labels: +$1.2K / -$340.
+function fmtCompactSigned(n: number): string {
+  const sign = n < 0 ? '-' : '+';
+  const abs = Math.abs(n);
+  return abs >= 1000 ? `${sign}$${(abs / 1000).toFixed(1)}K` : `${sign}$${Math.round(abs)}`;
 }
 
 // Plaid's convention: positive amounts are money leaving the account.
@@ -51,7 +62,7 @@ function monthLabel(ym: string): string {
 }
 
 // Money moving between your own accounts isn't income or spending.
-function isTransfer(t: Txn): boolean {
+export function isTransfer(t: Txn): boolean {
   return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
 }
 
@@ -100,7 +111,7 @@ export default function MonthBreakdown({
   const months = useMemo(() => {
     const set = new Set<string>();
     (txns ?? []).forEach((t) => set.add(t.date.slice(0, 7)));
-    return [...set].sort().reverse().slice(0, 6);
+    return [...set].sort().reverse().slice(0, 12);
   }, [txns]);
 
   const selected = month ?? months[0] ?? null;
@@ -130,17 +141,31 @@ export default function MonthBreakdown({
     return { moneyIn: inflow, moneyOut: outflow, categories };
   }, [monthTxns]);
 
-  // Spending per month (oldest → newest) for the trend columns.
+  // Spending per month (oldest → newest) for the trend columns. Bar height
+  // tracks spending (out); bar color tracks that month's net (in − out) so a
+  // month you overspent reads red and a month you saved reads green.
   const trend = useMemo(
     () =>
-      [...months].reverse().map((m) => ({
-        month: m,
-        out: (txns ?? [])
-          .filter((t) => t.date.slice(0, 7) === m && t.amount > 0 && !isTransfer(t))
-          .reduce((sum, t) => sum + t.amount, 0),
-      })),
+      [...months].reverse().map((m) => {
+        let inflow = 0;
+        let outflow = 0;
+        for (const t of txns ?? []) {
+          if (t.date.slice(0, 7) !== m || isTransfer(t)) continue;
+          if (t.amount < 0) inflow += -t.amount;
+          else outflow += t.amount;
+        }
+        return { month: m, out: outflow, net: inflow - outflow };
+      }),
     [txns, months]
   );
+
+  // Keep the newest month in view when the row overflows (older months scroll
+  // off to the left).
+  const trendRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = trendRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [trend.length]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -165,7 +190,7 @@ export default function MonthBreakdown({
   if (!txns || (txns.length === 0 && notes.length === 0)) {
     return (
       <div className="card">
-        <p className="empty-note">No transactions in the last 6 months.</p>
+        <p className="empty-note">No transactions in the last 12 months.</p>
       </div>
     );
   }
@@ -178,32 +203,40 @@ export default function MonthBreakdown({
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
-            <div className="inst-name">Spending by month</div>
+            <div className="inst-name">Net by month</div>
             <div className="inst-total">tap a month to select</div>
           </div>
-          <div className="trend-row">
+          <div className="trend-row" ref={trendRef}>
             {(() => {
-              const max = Math.max(...trend.map((t) => t.out), 1);
-              return trend.map(({ month: m, out }) => (
+              const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
+              return trend.map(({ month: m, net }) => (
                 <button
                   key={m}
                   className={`trend-col${m === selected ? ' active' : ''}`}
                   onClick={() => setMonth(m)}
                   aria-pressed={m === selected}
-                  aria-label={`${monthLabel(m)}: ${fmtUsd(out)} spent`}
+                  aria-label={`${monthLabel(m)}: net ${fmtUsd(net)}`}
                 >
-                  <span className="trend-val">
-                    {out >= 1000 ? `$${(out / 1000).toFixed(1)}K` : `$${Math.round(out)}`}
-                  </span>
+                  <span className="trend-val">{fmtCompactSigned(net)}</span>
                   <span
-                    className="trend-bar"
-                    style={{ height: `${Math.max((out / max) * 72, 2)}px` }}
+                    className={`trend-bar${net >= 0 ? ' up' : ' down'}`}
+                    style={{ height: `${Math.max((Math.abs(net) / max) * 72, 2)}px` }}
                   />
                   <span className="trend-label">{monthLabel(m)}</span>
                 </button>
               ));
             })()}
           </div>
+        </div>
+      )}
+
+      {selected && monthTxns.length > 0 && (
+        <div className="card">
+          <div className="inst-header">
+            <div className="inst-name">Income vs spend</div>
+            <div className="inst-total">{monthLabel(selected)}</div>
+          </div>
+          <MonthFlowChart txns={monthTxns} month={selected} />
         </div>
       )}
 
