@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
+import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import {
   replaceEstimated,
   replaceEstimatedAccounts,
@@ -29,8 +30,6 @@ import { clearCaches } from '@/lib/cache';
 // account's RAW balance the walk is type-aware: depository balances go down
 // by amount, credit balances (amount owed) go up.
 
-const LOOKBACK_DAYS = 365;
-
 function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
@@ -46,37 +45,28 @@ export async function POST() {
       return NextResponse.json({ skipped: true, reason: 'no linked institutions' });
     }
 
-    const start = isoDaysAgo(LOOKBACK_DAYS);
-    const end = isoDaysAgo(0);
-
-    // Fetch every institution's balances + transaction window concurrently.
-    // If any institution can't be read (needs reauth, decrypt failure), the
-    // whole Promise.all rejects and we abort without setting the done-flag --
-    // a partial reconstruction would be silently wrong; the next attempt
+    // Fetch every institution's balances + transactions concurrently.
+    // Transactions come from the shared cursor-based store (lib/transactions),
+    // so this reuses the same Plaid pull the Activity tab warms rather than
+    // re-fetching. A balance read that fails (decrypt/reauth) rejects the whole
+    // Promise.all and we abort in the catch without marking done; a transaction
+    // read that isn't clean comes back as a `note`, handled just below. Either
+    // way a partial reconstruction is never persisted, and the next attempt
     // retries.
     const perItem = await Promise.all(
       items.map(async (item) => {
         const access_token = await decrypt(item.encrypted_access_token);
         const bal = await plaidClient.accountsBalanceGet({ access_token });
-
-        const txns: { account_id: string; date: string; amount: number; pending: boolean }[] = [];
-        let offset = 0;
-        let total = Infinity;
-        while (offset < total) {
-          const res = await plaidClient.transactionsGet({
-            access_token,
-            start_date: start,
-            end_date: end,
-            options: { count: 500, offset },
-          });
-          total = res.data.total_transactions;
-          txns.push(...res.data.transactions);
-          if (res.data.transactions.length === 0) break;
-          offset += res.data.transactions.length;
-        }
-        return { accounts: bal.data.accounts, txns };
+        const { txns, note } = await readItemTransactions(item, LOOKBACK_DAYS);
+        return { accounts: bal.data.accounts, txns, note };
       })
     );
+
+    // Any institution still syncing / needing reauth: abort without marking
+    // done so the next attempt can complete a full, consistent reconstruction.
+    if (perItem.some((p) => p.note)) {
+      return NextResponse.json({ skipped: true, reason: 'institutions not ready' });
+    }
 
     let totalNow = 0; // current net worth across all accounts
     const cashType: Record<string, 'depository' | 'credit'> = {}; // reconstructable accounts

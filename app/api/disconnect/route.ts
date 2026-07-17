@@ -3,6 +3,7 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
 import { clearCaches } from '@/lib/cache';
+import { clearItemTransactions } from '@/lib/transactions';
 
 export async function POST(req: Request) {
   try {
@@ -22,6 +23,8 @@ export async function POST(req: Request) {
     }
 
     await removeItem(item_id);
+    // Drop this Item's persisted sync cursor + transactions.
+    await clearItemTransactions(item_id);
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches();
