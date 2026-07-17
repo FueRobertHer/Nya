@@ -14,15 +14,18 @@
 // upsert by transaction_id, removed deletes by id — so a replayed page (after
 // a failed persist) or a mid-pagination restart can't corrupt the set.
 //
-// The stored set is bounded to a rolling RETENTION window so it can't grow
-// without limit as the Item ages: /transactions/sync only reports `removed`
-// when a bank deletes a transaction, never when one simply ages out, so
-// without a bound the set would grow forever. We retain everything Plaid gives
-// us on the initial pull (RETENTION matches the Link days_requested) rather
-// than the shorter window we display, so nothing fetched is thrown away —
-// callers slice to the window they need at read time. Pruning is safe because
-// the deltas are idempotent: if Plaid later modifies a pruned row we re-add it
-// (and prune it again if still out of window), and a removal of one is a no-op.
+// We retain history indefinitely rather than to a fixed age. /transactions/sync
+// only reports `removed` when a bank deletes a transaction, never when one
+// simply ages out of the bank's window, so once we've stored a row it stays —
+// which is the point: it lets the store outlive short-history institutions
+// (e.g. a card that only exposes 90 days to Plaid) and accumulate a long trend
+// the bank alone can't give us. The only bound is a *size* guard: the blob is
+// gzip-compressed at rest, and if one would still exceed Upstash's request-size
+// ceiling we trim the oldest rows until it fits (see writeState). At personal
+// volume the compressed blob stays far under that for many years, so in
+// practice nothing is ever dropped. Trimming is safe because the deltas are
+// idempotent: if Plaid later modifies a trimmed row we re-add it, and a removal
+// of one is a no-op.
 
 import { TransactionsUpdateStatus, type Transaction } from 'plaid';
 import { plaidClient } from './plaid';
@@ -53,10 +56,11 @@ type ItemState = {
 
 // Trailing window callers display / reconstruct by default.
 export const LOOKBACK_DAYS = 365;
-// How much history we retain in the store. Matches the Link token's
-// `transactions.days_requested` (app/api/create-link-token) so the full
-// initial pull is kept, and bounds lifetime growth to a rolling ~2 years.
-const RETENTION_DAYS = 730;
+// Max size of a stored (compressed + encrypted) blob. Upstash's free-plan
+// *request-size* ceiling is 10 MB, and a get/set of an Item's blob is a single
+// request, so that — not the 100 MB max-record size — is the real wall. We keep
+// a margin below it; writeState trims oldest rows only if a blob would cross it.
+const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 // Runaway guard for a single call: 50 * 500 = 25k updates. The initial pull of
 // a very large Item can exceed this; we persist progress and finish on the
 // next call (see the partial-history note).
@@ -75,31 +79,99 @@ function emptyState(): ItemState {
   return { cursor: '', accountNames: {}, txns: {} };
 }
 
+// Blobs are gzip-compressed before encryption — financial JSON is highly
+// repetitive (field names, categories, institution names repeat on every row),
+// so it shrinks ~10×, which both saves Upstash storage/bandwidth and keeps each
+// blob well under the request-size ceiling. We use the Web CompressionStream
+// API rather than node:zlib to stay runtime-portable, matching lib/crypto.ts.
+// Compression runs *before* encryption because ciphertext is high-entropy and
+// wouldn't compress.
+
+async function gzipString(input: string): Promise<Uint8Array> {
+  const stream = new Response(input).body!.pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function gunzipToString(data: Uint8Array): Promise<string> {
+  // Pass the backing ArrayBuffer (a valid BodyInit) rather than the typed array
+  // itself, which trips the strict BodyInit generic.
+  const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  const stream = new Response(buf).body!.pipeThrough(new DecompressionStream('gzip'));
+  return new Response(stream).text();
+}
+
+// encrypt/decrypt operate on UTF-8 strings, so the binary gzip output is
+// base64-wrapped going in and unwrapped coming out (same technique as crypto.ts).
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+async function encodeState(state: ItemState): Promise<string> {
+  return encrypt(bytesToBase64(await gzipString(JSON.stringify(state))));
+}
+
+async function decodeState(blob: string): Promise<Partial<ItemState>> {
+  const inner = await decrypt(blob);
+  // Legacy blobs (written before compression) stored the JSON string directly.
+  // base64-decoding real JSON throws (it starts with '{', not a base64 char),
+  // so a failed unwrap means legacy: parse the decrypted string as-is.
+  let json: string;
+  try {
+    json = await gunzipToString(base64ToBytes(inner));
+  } catch {
+    json = inner;
+  }
+  return JSON.parse(json) as Partial<ItemState>;
+}
+
 async function readState(item_id: string): Promise<ItemState> {
   try {
     const blob = await redis().get<string>(stateKey(item_id));
     if (!blob) return emptyState();
-    const parsed = JSON.parse(await decrypt(blob)) as Partial<ItemState>;
+    const parsed = await decodeState(blob);
     return {
       cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
       accountNames: parsed.accountNames ?? {},
       txns: parsed.txns ?? {},
     };
   } catch {
-    // Rotated key / corrupted value: start clean and re-sync from scratch.
+    // Rotated key / corrupted / unreadable value: start clean and re-sync.
     return emptyState();
   }
 }
 
 async function writeState(item_id: string, state: ItemState): Promise<void> {
   try {
-    await redis().set(stateKey(item_id), await encrypt(JSON.stringify(state)));
+    let encoded = await encodeState(state);
+    // Keep the blob under the request-size ceiling. Over budget: drop the
+    // oldest transactions — far older than anything the UI shows — until it
+    // fits, re-encoding to re-check. The keep-count is scaled to the overage
+    // (with margin) so this converges in one or two passes; at personal volume
+    // the compressed blob never approaches the limit, so this loop never runs.
+    while (encoded.length > MAX_BLOB_BYTES) {
+      const ids = Object.keys(state.txns);
+      if (ids.length === 0) break;
+      ids.sort((a, b) => (state.txns[a].date < state.txns[b].date ? -1 : 1));
+      const keep = Math.floor(ids.length * (MAX_BLOB_BYTES / encoded.length) * 0.9);
+      for (const id of ids.slice(0, ids.length - keep)) delete state.txns[id];
+      encoded = await encodeState(state);
+    }
+    await redis().set(stateKey(item_id), encoded);
   } catch (err) {
     // Persist failures are non-fatal for the current request (the in-memory
     // state is still returned), and the deltas are idempotent so the next call
-    // resumes safely. But a *persistent* failure — e.g. the blob outgrowing
-    // Upstash's max value size — silently degrades into re-pulling the item's
-    // full history from Plaid on every sync, so log it rather than swallow it.
+    // resumes safely. But a *persistent* failure silently degrades into
+    // re-pulling the item's full history from Plaid on every sync, so log it
+    // rather than swallow it.
     console.warn(
       `transactions: failed to persist sync state for ${item_id} (${Object.keys(state.txns).length} txns); will re-sync next call`,
       err
@@ -152,7 +224,6 @@ async function syncItem(
     return { state: null, note: `${item.institution_name}: could not decrypt stored credentials` };
   }
 
-  const cutoff = daysAgoIso(RETENTION_DAYS);
   const stored = await readState(item.item_id);
 
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
@@ -220,11 +291,9 @@ async function syncItem(
       };
     }
 
-    // Advance the cursor and bound the stored set to the retention window.
+    // Advance the cursor and persist. writeState compresses the blob and, only
+    // if it would exceed the request-size ceiling, trims oldest rows to fit.
     if (cursor) state.cursor = cursor;
-    for (const id of Object.keys(state.txns)) {
-      if (state.txns[id].date < cutoff) delete state.txns[id];
-    }
     await writeState(item.item_id, state);
 
     // Hit the page cap mid-history: intermediate cursors are valid, so we
