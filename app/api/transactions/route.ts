@@ -22,8 +22,9 @@ type TransactionsPayload = {
   as_of: string;
 };
 
-// Six months back, so the Activity tab can show a monthly breakdown.
-const LOOKBACK_DAYS = 183;
+// Twelve months back, so the Activity tab's monthly breakdown can scroll
+// through a full year of spending.
+const LOOKBACK_DAYS = 365;
 
 async function fetchTransactions(item: StoredItem): Promise<{ txns: Txn[]; note: string | null }> {
   let access_token: string;

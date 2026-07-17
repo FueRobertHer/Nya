@@ -125,6 +125,12 @@ export default function Dashboard() {
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   const [budgets, setBudgets] = useState<Budgets>({});
   const [goals, setGoals] = useState<Goal[]>([]);
+  // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
+  // toggled, so they can't be tapped by accident. disconnectTarget drives the
+  // type-to-confirm modal.
+  const [manageMode, setManageMode] = useState(false);
+  const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
+  const [disconnectInput, setDisconnectInput] = useState('');
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
   const backfillTried = useRef(false);
@@ -331,9 +337,8 @@ export default function Dashboard() {
     }
   }, []);
 
-  const disconnect = useCallback(
-    async (item_id: string, institutionName: string) => {
-      if (!window.confirm(`Disconnect ${institutionName}? You can reconnect it later.`)) return;
+  const performDisconnect = useCallback(
+    async (item_id: string) => {
       await fetch('/api/disconnect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -453,6 +458,19 @@ export default function Dashboard() {
     return { value, pct, days };
   }, [history]);
 
+  // Plaid returns institutions/accounts in no guaranteed order; sort by name
+  // so the Accounts tab renders the same way every load.
+  const sortedInstitutions = useMemo(
+    () =>
+      [...institutions]
+        .sort((a, b) => a.institution_name.localeCompare(b.institution_name))
+        .map((inst) => ({
+          ...inst,
+          accounts: [...inst.accounts].sort((a, b) => a.name.localeCompare(b.name)),
+        })),
+    [institutions]
+  );
+
   const subtitle = loading
     ? 'Loading your accounts…'
     : connected
@@ -561,16 +579,37 @@ export default function Dashboard() {
                   <button onClick={startConnect} disabled={connecting}>
                     {connecting ? 'Starting…' : 'Connect an Account'}
                   </button>
+                  <button
+                    className="secondary manage-toggle"
+                    onClick={() => setManageMode((m) => !m)}
+                    aria-pressed={manageMode}
+                  >
+                    {manageMode ? 'Done' : 'Manage accounts'}
+                  </button>
                   {error && <div className="error">{error}</div>}
                 </div>
 
-                {institutions.map((inst) => {
+                {sortedInstitutions.map((inst) => {
                   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
                   return (
                     <div className="card" key={inst.item_id}>
                       <div className="inst-header">
                         <div className="inst-name">{inst.institution_name}</div>
-                        <div className="inst-total">{fmt(instTotal)}</div>
+                        <div className="inst-header-right">
+                          <div className="inst-total">{fmt(instTotal)}</div>
+                          {manageMode && (
+                            <button
+                              className="disconnect-btn"
+                              onClick={() => {
+                                setDisconnectInput('');
+                                setDisconnectTarget(inst);
+                              }}
+                              aria-label={`Disconnect ${inst.institution_name}`}
+                            >
+                              Disconnect
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {inst.accounts.length > 0 && (
@@ -663,19 +702,13 @@ export default function Dashboard() {
 
                       {inst.error && <div className="error">{inst.error}</div>}
 
-                      <div className="card-actions">
-                        {inst.needs_reauth && (
+                      {inst.needs_reauth && (
+                        <div className="card-actions">
                           <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
                             Reconnect
                           </button>
-                        )}
-                        <button
-                          className="secondary"
-                          onClick={() => disconnect(inst.item_id, inst.institution_name)}
-                        >
-                          Disconnect
-                        </button>
-                      </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -727,6 +760,51 @@ export default function Dashboard() {
             </button>
           ))}
         </nav>
+      )}
+
+      {disconnectTarget && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Disconnect ${disconnectTarget.institution_name}`}
+          onClick={() => setDisconnectTarget(null)}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">Disconnect {disconnectTarget.institution_name}?</div>
+            <p className="modal-body">
+              This removes {disconnectTarget.institution_name} and its accounts from Nya. You can
+              reconnect it later. Type <strong>{disconnectTarget.institution_name}</strong> below to
+              confirm.
+            </p>
+            <input
+              className="text-input"
+              value={disconnectInput}
+              onChange={(e) => setDisconnectInput(e.target.value)}
+              placeholder={disconnectTarget.institution_name}
+              aria-label="Type the institution name to confirm"
+              autoFocus
+            />
+            <div className="card-actions">
+              <button className="secondary" onClick={() => setDisconnectTarget(null)}>
+                Cancel
+              </button>
+              <button
+                className="danger"
+                disabled={
+                  disconnectInput.trim().toLowerCase() !==
+                  disconnectTarget.institution_name.trim().toLowerCase()
+                }
+                onClick={() => {
+                  performDisconnect(disconnectTarget.item_id);
+                  setDisconnectTarget(null);
+                }}
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
