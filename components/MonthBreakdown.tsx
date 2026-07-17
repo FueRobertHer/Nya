@@ -141,9 +141,10 @@ export default function MonthBreakdown({
     return { moneyIn: inflow, moneyOut: outflow, categories };
   }, [monthTxns]);
 
-  // Spending per month (oldest → newest) for the trend columns. Bar height
-  // tracks spending (out); bar color tracks that month's net (in − out) so a
-  // month you overspent reads red and a month you saved reads green.
+  // Net per month (oldest → newest) for the trend columns. Bar height tracks
+  // net magnitude and bar color tracks its sign (green positive, red negative),
+  // so a month you overspent reads as a tall red bar and one you saved as a
+  // tall green one.
   const trend = useMemo(
     () =>
       [...months].reverse().map((m) => {
@@ -154,7 +155,7 @@ export default function MonthBreakdown({
           if (t.amount < 0) inflow += -t.amount;
           else outflow += t.amount;
         }
-        return { month: m, out: outflow, net: inflow - outflow };
+        return { month: m, net: inflow - outflow };
       }),
     [txns, months]
   );
