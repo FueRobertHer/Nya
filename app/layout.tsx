@@ -10,9 +10,6 @@ export const metadata: Metadata = {
     statusBarStyle: 'black-translucent',
     title: 'Nya',
   },
-  icons: {
-    apple: '/icons/icon-192.png',
-  },
 };
 
 export const viewport: Viewport = {
