@@ -12,7 +12,7 @@ Four tabs (bottom navigation, mobile-first):
   pace vs last month, biggest purchase.
 - **Accounts** — per-institution balance sheet; tap any account for its own
   balance history chart; holdings show gain/loss vs cost basis.
-- **Activity** — six months of transactions with a monthly breakdown:
+- **Activity** — twelve months of transactions with a monthly breakdown:
   spending-by-month trend columns, money in/out/net, top spending
   categories, and search. Tap any transaction to recategorize it (manual
   overrides win over Plaid's auto-categorization and persist). Transfers and
