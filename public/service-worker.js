@@ -6,7 +6,7 @@
 // - The page shell is network-first with a cache fallback, so the app still
 //   opens (showing the last-seen state) if the phone is offline
 
-const CACHE_NAME = 'nya-v1';
+const CACHE_NAME = 'nya-v2';
 const PRECACHE = ['/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

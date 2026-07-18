@@ -7,7 +7,7 @@ import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 // see app/api/snapshot/route.ts).
 export const config = {
   matcher: [
-    '/((?!api/login$|api/snapshot$|login$|_next/static/|_next/image/|favicon.ico$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/snapshot$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 
