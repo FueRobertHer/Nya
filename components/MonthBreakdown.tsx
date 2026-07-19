@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 // Activity tab: month-by-month breakdown of the last ~12 months of
 // transactions. A scrollable "Net by month" column row selects the month —
@@ -10,8 +10,8 @@
 // spending categories draw as single-hue horizontal bars (magnitude lives in
 // length, not color); and finally the searchable transaction list.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import MonthFlowChart from './MonthFlowChart';
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import MonthFlowChart from "./MonthFlowChart";
 
 export type Txn = {
   transaction_id: string;
@@ -25,17 +25,22 @@ export type Txn = {
 };
 
 function fmtUsd(n: number): string {
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return (
+    (n < 0 ? "-$" : "$") +
+    Math.abs(n).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  );
 }
 
 // Compact, signed currency for the net-bar value labels: +$1.2K / -$340.
 function fmtCompactSigned(n: number): string {
-  const sign = n < 0 ? '-' : '+';
+  const sign = n < 0 ? "-" : "+";
   const abs = Math.abs(n);
-  return abs >= 1000 ? `${sign}$${(abs / 1000).toFixed(1)}K` : `${sign}$${Math.round(abs)}`;
+  return abs >= 1000
+    ? `${sign}$${(abs / 1000).toFixed(1)}K`
+    : `${sign}$${Math.round(abs)}`;
 }
 
 // Plaid's convention: positive amounts are money leaving the account.
@@ -47,10 +52,21 @@ function fmtTxnAmount(amount: number): string {
   return amount > 0 ? `-$${abs}` : `+$${abs}`;
 }
 
+// Signed currency for the per-day net summary, in display terms (positive =
+// net money in). Zero renders without a sign.
+function fmtSignedUsd(n: number): string {
+  const abs = Math.abs(n).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  return `${sign}$${abs}`;
+}
+
 function fmtTxnDate(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
+    month: "short",
+    day: "numeric",
   });
 }
 
@@ -58,31 +74,37 @@ function monthLabel(ym: string): string {
   const d = new Date(`${ym}-01T00:00:00`);
   const now = new Date();
   const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString(undefined, sameYear ? { month: 'short' } : { month: 'short', year: '2-digit' });
+  return d.toLocaleDateString(
+    undefined,
+    sameYear ? { month: "short" } : { month: "short", year: "2-digit" },
+  );
 }
 
 // Money moving between your own accounts isn't income or spending.
 export function isTransfer(t: Txn): boolean {
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
+  return (
+    !!t.category &&
+    (t.category.startsWith("transfer") || t.category === "loan payments")
+  );
 }
 
 // Base category options for recategorization, merged with whatever
 // categories appear in the data.
 const BASE_CATEGORIES = [
-  'food and drink',
-  'general merchandise',
-  'transportation',
-  'travel',
-  'rent and utilities',
-  'entertainment',
-  'personal care',
-  'medical',
-  'general services',
-  'income',
-  'transfer in',
-  'transfer out',
-  'loan payments',
-  'other',
+  "food and drink",
+  "general merchandise",
+  "transportation",
+  "travel",
+  "rent and utilities",
+  "entertainment",
+  "personal care",
+  "medical",
+  "general services",
+  "income",
+  "transfer in",
+  "transfer out",
+  "loan payments",
+  "other",
 ];
 
 export default function MonthBreakdown({
@@ -97,7 +119,7 @@ export default function MonthBreakdown({
   onRecategorize: (transaction_id: string, category: string) => void;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [recatId, setRecatId] = useState<string | null>(null); // txn being recategorized
 
   const categoryOptions = useMemo(() => {
@@ -118,7 +140,7 @@ export default function MonthBreakdown({
 
   const monthTxns = useMemo(
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
-    [txns, selected]
+    [txns, selected],
   );
 
   const { moneyIn, moneyOut, categories } = useMemo(() => {
@@ -131,7 +153,7 @@ export default function MonthBreakdown({
         inflow += -t.amount;
       } else {
         outflow += t.amount;
-        const cat = t.category ?? 'other';
+        const cat = t.category ?? "other";
         byCategory[cat] = (byCategory[cat] ?? 0) + t.amount;
       }
     }
@@ -157,7 +179,7 @@ export default function MonthBreakdown({
         }
         return { month: m, net: inflow - outflow };
       }),
-    [txns, months]
+    [txns, months],
   );
 
   // Keep the newest month in view when the row overflows (older months scroll
@@ -174,16 +196,37 @@ export default function MonthBreakdown({
     return monthTxns.filter(
       (t) =>
         t.name.toLowerCase().includes(q) ||
-        (t.category ?? '').includes(q) ||
+        (t.category ?? "").includes(q) ||
         t.account_name.toLowerCase().includes(q) ||
-        t.institution_name.toLowerCase().includes(q)
+        t.institution_name.toLowerCase().includes(q),
     );
   }, [monthTxns, query]);
+
+  // Group the visible rows into day sections, each carrying the day's net in
+  // display terms (positive = money in), so the sum of the rows shown matches
+  // the header's summary figure.
+  const days = useMemo(() => {
+    const groups: { date: string; net: number; txns: Txn[] }[] = [];
+    for (const t of visible) {
+      let g = groups[groups.length - 1];
+      if (!g || g.date !== t.date) {
+        g = { date: t.date, net: 0, txns: [] };
+        groups.push(g);
+      }
+      g.txns.push(t);
+      g.net += -t.amount;
+    }
+    return groups;
+  }, [visible]);
 
   if (loading) {
     return (
       <div className="card">
-        <div className="spinner" role="status" aria-label="Loading transactions" />
+        <div
+          className="spinner"
+          role="status"
+          aria-label="Loading transactions"
+        />
       </div>
     );
   }
@@ -213,15 +256,17 @@ export default function MonthBreakdown({
               return trend.map(({ month: m, net }) => (
                 <button
                   key={m}
-                  className={`trend-col${m === selected ? ' active' : ''}`}
+                  className={`trend-col${m === selected ? " active" : ""}`}
                   onClick={() => setMonth(m)}
                   aria-pressed={m === selected}
                   aria-label={`${monthLabel(m)}: net ${fmtUsd(net)}`}
                 >
                   <span className="trend-val">{fmtCompactSigned(net)}</span>
                   <span
-                    className={`trend-bar${net >= 0 ? ' up' : ' down'}`}
-                    style={{ height: `${Math.max((Math.abs(net) / max) * 72, 2)}px` }}
+                    className={`trend-bar${net >= 0 ? " up" : " down"}`}
+                    style={{
+                      height: `${Math.max((Math.abs(net) / max) * 72, 2)}px`,
+                    }}
                   />
                   <span className="trend-label">{monthLabel(m)}</span>
                 </button>
@@ -253,7 +298,9 @@ export default function MonthBreakdown({
           </div>
           <div>
             <div className="total-label">Net</div>
-            <div className={`summary-value${net < 0 ? ' negative' : net > 0 ? ' inflow' : ''}`}>
+            <div
+              className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
+            >
               {fmtUsd(net)}
             </div>
           </div>
@@ -271,7 +318,10 @@ export default function MonthBreakdown({
               <div className="cat-row" key={cat}>
                 <span className="cat-name">{cat}</span>
                 <div className="cat-track">
-                  <div className="cat-bar" style={{ width: `${(sum / maxCat) * 100}%` }} />
+                  <div
+                    className="cat-bar"
+                    style={{ width: `${(sum / maxCat) * 100}%` }}
+                  />
                 </div>
                 <span className="cat-val">{fmtUsd(sum)}</span>
               </div>
@@ -285,7 +335,7 @@ export default function MonthBreakdown({
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
             {visible.length}
-            {query ? ` of ${monthTxns.length}` : ''}
+            {query ? ` of ${monthTxns.length}` : ""}
           </div>
         </div>
 
@@ -299,46 +349,65 @@ export default function MonthBreakdown({
 
         {visible.length === 0 ? (
           <p className="empty-note">
-            {query ? 'No transactions match your search.' : 'No transactions this month.'}
+            {query
+              ? "No transactions match your search."
+              : "No transactions this month."}
           </p>
         ) : (
-          <table>
+          <table className="txn-table">
             <tbody>
-              {visible.map((t) => (
-                <tr
-                  key={t.transaction_id}
-                  className="acct-row"
-                  onClick={() => setRecatId(recatId === t.transaction_id ? null : t.transaction_id)}
-                >
-                  <td className="txn-date">{fmtTxnDate(t.date)}</td>
-                  <td>
-                    {t.name}
-                    {t.pending && <span className="pending-tag"> · pending</span>}
-                    <div className="type-tag">
-                      {t.institution_name} · {t.account_name}
-                      {t.category ? ` · ${t.category}` : ''}
-                    </div>
-                    {recatId === t.transaction_id && (
-                      <select
-                        className="text-input recat-select"
-                        value={t.category ?? 'other'}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          onRecategorize(t.transaction_id, e.target.value);
-                          setRecatId(null);
-                        }}
-                        aria-label={`Category for ${t.name}`}
-                      >
-                        {categoryOptions.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </td>
-                  <td className={`num${t.amount < 0 ? ' inflow' : ''}`}>{fmtTxnAmount(t.amount)}</td>
-                </tr>
+              {days.map((g) => (
+                <Fragment key={g.date}>
+                  <tr className="txn-date-header">
+                    <td>{fmtTxnDate(g.date)}</td>
+                    <td className="num">{fmtSignedUsd(g.net)}</td>
+                  </tr>
+                  {g.txns.map((t, i) => (
+                    <tr
+                      key={t.transaction_id}
+                      className={`acct-row${i === g.txns.length - 1 ? " last-in-day" : ""}`}
+                      onClick={() =>
+                        setRecatId(
+                          recatId === t.transaction_id
+                            ? null
+                            : t.transaction_id,
+                        )
+                      }
+                    >
+                      <td>
+                        {t.name}
+                        {t.pending && (
+                          <span className="pending-tag"> · pending</span>
+                        )}
+                        <div className="type-tag">
+                          {t.institution_name} · {t.account_name}
+                          {t.category ? ` · ${t.category}` : ""}
+                        </div>
+                        {recatId === t.transaction_id && (
+                          <select
+                            className="text-input recat-select"
+                            value={t.category ?? "other"}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              onRecategorize(t.transaction_id, e.target.value);
+                              setRecatId(null);
+                            }}
+                            aria-label={`Category for ${t.name}`}
+                          >
+                            {categoryOptions.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                      <td className={`num${t.amount < 0 ? " inflow" : ""}`}>
+                        {fmtTxnAmount(t.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>
