@@ -1,7 +1,9 @@
 # Nya
 
-A Next.js + React app that connects to all your financial accounts — banks
-(Ally, Chase), brokerages (Fidelity, Vanguard), credit cards, etc. — via
+<img src="public\icons\icon-512.png" width="100"/>
+
+A Next.js + React app that connects to your financial accounts — banks
+(Ally, Chase), brokerages (Vanguard), credit cards, etc. — via
 Plaid. Runs on Bun, deploys to Vercel, installs on your phone as a PWA.
 
 Four tabs (bottom navigation, mobile-first):
@@ -29,6 +31,30 @@ A refresh button in the header forces live Plaid data from any tab.
 Plaid access tokens are encrypted (AES-256-GCM) before being stored in Upstash
 Redis (via the Vercel Marketplace), and the whole app sits behind a password
 (see "Security notes" below for why, and what's still not covered).
+
+## Screenshots
+
+_Captured in Plaid `sandbox` mode, so the balances and transactions are test data._
+
+<table>
+  <tr>
+    <td align="center"><b>Home</b></td>
+    <td align="center"><b>Accounts</b></td>
+    <td align="center"><b>Activity</b></td>
+    <td align="center"><b>Budgets</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/home.png" alt="Home tab: net worth, 30-day delta, over-time chart, and insights" width="210"></td>
+    <td><img src="docs/screenshots/accounts.png" alt="Accounts tab: per-institution balance sheet with holdings" width="210"></td>
+    <td><img src="docs/screenshots/activity.png" alt="Activity tab: net-by-month trend, income vs spend chart, and top spending" width="210"></td>
+    <td><img src="docs/screenshots/budgets.png" alt="Budgets tab: category budgets with severity meters and recurring bills" width="210"></td>
+  </tr>
+</table>
+
+The Activity tab's transaction list groups by day, with a running daily net on
+each date heading:
+
+<img src="docs/screenshots/activity-transactions.png" alt="Transaction list grouped by day with a per-day net summary" width="260">
 
 ## 1. Get Plaid API keys
 
