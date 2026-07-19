@@ -131,6 +131,7 @@ export default function Dashboard() {
   const [manageMode, setManageMode] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
   const [disconnectInput, setDisconnectInput] = useState('');
+  const [disconnecting, setDisconnecting] = useState(false);
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
   const backfillTried = useRef(false);
@@ -339,13 +340,23 @@ export default function Dashboard() {
 
   const performDisconnect = useCallback(
     async (item_id: string) => {
-      await fetch('/api/disconnect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item_id }),
-      });
-      loadNetWorth(true);
-      if (txns !== null) loadTransactions(true);
+      setDisconnecting(true);
+      setError('');
+      try {
+        const res = await fetch('/api/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_id }),
+        });
+        if (!res.ok) throw new Error('failed');
+        setDisconnectTarget(null);
+        loadNetWorth(true);
+        if (txns !== null) loadTransactions(true);
+      } catch {
+        setError('Could not disconnect account.');
+      } finally {
+        setDisconnecting(false);
+      }
     },
     [loadNetWorth, loadTransactions, txns]
   );
@@ -768,7 +779,7 @@ export default function Dashboard() {
           role="dialog"
           aria-modal="true"
           aria-label={`Disconnect ${disconnectTarget.institution_name}`}
-          onClick={() => setDisconnectTarget(null)}
+          onClick={() => !disconnecting && setDisconnectTarget(null)}
         >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">Disconnect {disconnectTarget.institution_name}?</div>
@@ -784,23 +795,26 @@ export default function Dashboard() {
               placeholder={disconnectTarget.institution_name}
               aria-label="Type the institution name to confirm"
               autoFocus
+              disabled={disconnecting}
             />
             <div className="card-actions">
-              <button className="secondary" onClick={() => setDisconnectTarget(null)}>
+              <button
+                className="secondary"
+                onClick={() => setDisconnectTarget(null)}
+                disabled={disconnecting}
+              >
                 Cancel
               </button>
               <button
                 className="danger"
                 disabled={
+                  disconnecting ||
                   disconnectInput.trim().toLowerCase() !==
-                  disconnectTarget.institution_name.trim().toLowerCase()
+                    disconnectTarget.institution_name.trim().toLowerCase()
                 }
-                onClick={() => {
-                  performDisconnect(disconnectTarget.item_id);
-                  setDisconnectTarget(null);
-                }}
+                onClick={() => performDisconnect(disconnectTarget.item_id)}
               >
-                Disconnect
+                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
               </button>
             </div>
           </div>
