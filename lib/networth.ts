@@ -41,10 +41,12 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
       account_id: a.account_id,
       name: a.name,
       official_name: a.official_name,
+      mask: a.mask, // last 4, for a richer account label
       type: a.type,
       subtype: a.subtype,
       balance: a.balances.current,
       available: a.balances.available,
+      limit: a.balances.limit, // credit line, for utilization
       currency: a.balances.iso_currency_code,
     }));
   } catch (err: any) {

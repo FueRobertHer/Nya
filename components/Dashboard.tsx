@@ -8,13 +8,18 @@ import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
 import { type Goal } from './GoalsCard';
+import { formatMoney, dominantCurrency } from '@/lib/format';
 
 type Account = {
   account_id: string;
   name: string;
+  official_name: string | null;
+  mask: string | null;
   type: string;
   subtype: string | null;
   balance: number | null;
+  limit: number | null;
+  currency: string | null;
 };
 
 type Holding = {
@@ -40,12 +45,12 @@ type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 // in the background. Cleared on logout.
 const LOCAL_CACHE_KEY = 'nya:dashboard';
 
-function fmt(n: number | null | undefined): string {
+// Currency-aware money, so a EUR/GBP account isn't rendered with a "$".
+// Delegates to the shared formatter (which falls back to $ for a null or
+// unrecognized code); "--" for a missing value.
+function fmt(n: number | null | undefined, currency?: string | null): string {
   if (n == null) return '--';
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return formatMoney(n, currency);
 }
 
 function signedBalance(a: Account): number {
@@ -510,6 +515,23 @@ export default function Dashboard() {
     [institutions]
   );
 
+  // One currency to label summed account figures (net worth, deltas). Accounts
+  // can differ, so use the most common code and flag a genuine mix rather than
+  // implying an FX-converted total.
+  const allAccounts = useMemo(
+    () => institutions.flatMap((i) => i.accounts),
+    [institutions]
+  );
+  const accountCurrency = useMemo(
+    () => dominantCurrency(allAccounts.map((a) => ({ iso_currency_code: a.currency }))),
+    [allAccounts]
+  );
+  const mixedAccountCurrency = useMemo(() => {
+    const seen = new Set<string>();
+    for (const a of allAccounts) if (a.currency) seen.add(a.currency);
+    return seen.size > 1;
+  }, [allAccounts]);
+
   const subtitle = loading
     ? 'Loading your accounts…'
     : connected
@@ -571,12 +593,17 @@ export default function Dashboard() {
                 <div className="card">
                   <div className="total-label">Net Worth</div>
                   <div className={`total-value${netWorth < 0 ? ' negative' : ''}`}>
-                    {fmt(netWorth)}
+                    {fmt(netWorth, accountCurrency)}
                   </div>
                   {heroDelta && (
                     <div className={`hero-delta${heroDelta.value >= 0 ? ' up' : ' down'}`}>
-                      {heroDelta.value >= 0 ? '▲' : '▼'} {fmt(Math.abs(heroDelta.value))} (
+                      {heroDelta.value >= 0 ? '▲' : '▼'} {fmt(Math.abs(heroDelta.value), accountCurrency)} (
                       {heroDelta.pct.toFixed(1)}%) · past {heroDelta.days} days
+                    </div>
+                  )}
+                  {mixedAccountCurrency && (
+                    <div className="as-of">
+                      Accounts use multiple currencies; totals aren&apos;t converted.
                     </div>
                   )}
                   {asOf && (
@@ -605,7 +632,12 @@ export default function Dashboard() {
                   txns={txns}
                   budgets={budgets}
                   accounts={institutions.flatMap((i) =>
-                    i.accounts.map((a) => ({ name: a.name, type: a.type, balance: a.balance }))
+                    i.accounts.map((a) => ({
+                      name: a.name,
+                      type: a.type,
+                      balance: a.balance,
+                      currency: a.currency,
+                    }))
                   )}
                 />
                 {error && <div className="error">{error}</div>}
@@ -630,12 +662,15 @@ export default function Dashboard() {
 
                 {sortedInstitutions.map((inst) => {
                   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
+                  const instCurrency = dominantCurrency(
+                    inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
+                  );
                   return (
                     <div className="card" key={inst.item_id}>
                       <div className="inst-header">
                         <div className="inst-name">{inst.institution_name}</div>
                         <div className="inst-header-right">
-                          <div className="inst-total">{fmt(instTotal)}</div>
+                          <div className="inst-total">{fmt(instTotal, instCurrency)}</div>
                           {manageMode && (
                             <button
                               className="disconnect-btn"
@@ -654,8 +689,13 @@ export default function Dashboard() {
                       {inst.accounts.length > 0 && (
                         <table>
                           <tbody>
-                            {inst.accounts.map((a) => (
-                              <Fragment key={a.account_id}>
+                            {inst.accounts.map((a) => {
+                              const util =
+                                a.type === 'credit' && a.limit && a.limit > 0 && a.balance != null
+                                  ? Math.max(a.balance, 0) / a.limit
+                                  : null;
+                              return (
+                                <Fragment key={a.account_id}>
                                 <tr
                                   className="acct-row"
                                   onClick={() => toggleAccount(a.account_id)}
@@ -663,9 +703,28 @@ export default function Dashboard() {
                                 >
                                   <td>
                                     {a.name}
-                                    <div className="type-tag">{a.subtype || a.type}</div>
+                                    {a.mask && <span className="acct-mask"> ••{a.mask}</span>}
+                                    <div className="type-tag">
+                                      {a.official_name && a.official_name !== a.name
+                                        ? `${a.official_name} · `
+                                        : ''}
+                                      {a.subtype || a.type}
+                                    </div>
+                                    {util != null && (
+                                      <div className="util">
+                                        <div className={`meter-track${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}>
+                                          <div
+                                            className={`meter-fill${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}
+                                            style={{ width: `${Math.min(util * 100, 100)}%` }}
+                                          />
+                                        </div>
+                                        <span className="util-label">
+                                          {Math.round(util * 100)}% of {fmt(a.limit, a.currency)} limit
+                                        </span>
+                                      </div>
+                                    )}
                                   </td>
-                                  <td className="num">{fmt(signedBalance(a))}</td>
+                                  <td className="num">{fmt(signedBalance(a), a.currency)}</td>
                                 </tr>
                                 {expandedAccounts.has(a.account_id) && (
                                   <tr>
@@ -675,7 +734,8 @@ export default function Dashboard() {
                                   </tr>
                                 )}
                               </Fragment>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       )}
@@ -777,6 +837,7 @@ export default function Dashboard() {
                     name: a.name,
                     institution: i.institution_name,
                     balance: a.balance,
+                    currency: a.currency,
                   }))
                 )}
                 loading={txnsLoading}

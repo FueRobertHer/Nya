@@ -18,10 +18,15 @@ export type RecurringBill = {
   institution: string;
   amount: number; // typical (average) charge
   currency: string | null; // of the charges (consistent within a merchant)
+  logo_url: string | null; // merchant logo, if any charge in the group carried one
   lastDate: string;
   nextDate: string; // estimated
   monthsSeen: number;
 };
+
+// Codes that move money without being spending: transfers, ATM, fees. Plaid's
+// transaction_code is more reliable than the category heuristic below.
+const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge', 'fee']);
 
 function addDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -33,6 +38,9 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
   const groups = new Map<string, Txn[]>();
   for (const t of txns) {
     if (t.amount <= 0 || t.pending) continue;
+    // Loan payments intentionally still count (mortgage/car are classic bills);
+    // only true transfers/ATM/fees are excluded.
+    if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) continue;
     if (t.category?.startsWith('transfer')) continue;
     const key = `${t.institution_name}::${t.name.toLowerCase().trim()}`;
     const list = groups.get(key);
@@ -76,6 +84,7 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
       institution: list[0].institution_name,
       amount: avg,
       currency: dominantCurrency(list),
+      logo_url: list.find((t) => t.logo_url)?.logo_url ?? null,
       lastDate: last,
       nextDate: addDays(last, cycle),
       monthsSeen: months.size,

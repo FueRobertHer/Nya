@@ -789,6 +789,56 @@ button:disabled {
   font-size: 11px;
 }
 
+/* Low category-confidence nudge on a transaction row. */
+.low-conf-tag {
+  color: var(--warn, #d08a2a);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* "What is this charge?" detail list inside the expanded row. */
+.txn-detail {
+  margin: 8px 0 2px;
+  display: grid;
+  gap: 4px;
+}
+
+.txn-detail-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.txn-detail-row dt {
+  flex: 0 0 84px;
+  color: var(--muted);
+}
+
+.txn-detail-row dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.txn-detail-row a {
+  color: var(--accent, #6ea8fe);
+}
+
+/* Account last-4 and credit-utilization meter on the Accounts tab. */
+.acct-mask {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.util {
+  margin-top: 6px;
+}
+
+.util-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .budget-row {
   margin-top: 16px;
 }

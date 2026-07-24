@@ -5,6 +5,7 @@
 // once the goal is reached (state, not severity -- reaching a goal is good).
 
 import { useState } from 'react';
+import { formatMoney } from '@/lib/format';
 
 export type Goal = {
   id: string;
@@ -18,14 +19,8 @@ export type GoalAccount = {
   name: string;
   institution: string;
   balance: number | null;
+  currency: string | null;
 };
-
-function fmtUsd(n: number): string {
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 export default function GoalsCard({
   goals,
@@ -156,6 +151,7 @@ export default function GoalsCard({
         }
         const account = goal.account_id ? accountById.get(goal.account_id) : undefined;
         const balance = account?.balance ?? null;
+        const currency = account?.currency ?? null;
         const ratio = balance != null ? Math.max(balance, 0) / goal.target : null;
         const done = ratio != null && ratio >= 1;
         return (
@@ -164,8 +160,8 @@ export default function GoalsCard({
               <div className="budget-line">
                 <span className="budget-name">{goal.name}</span>
                 <span className="budget-amounts">
-                  {balance != null ? `${fmtUsd(balance)} of ` : ''}
-                  {fmtUsd(goal.target)}
+                  {balance != null ? `${formatMoney(balance, currency)} of ` : ''}
+                  {formatMoney(goal.target, currency)}
                   {done && <span className="done-tag"> · reached</span>}
                 </span>
               </div>

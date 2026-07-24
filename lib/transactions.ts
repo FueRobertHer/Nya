@@ -36,8 +36,12 @@ import { redis, k, type StoredItem } from './storage';
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
 export const TXN_SCHEMA_VERSION = 2;
 
-// Lean display shape sent to the client. `name` here is the display name
-// (merchant_name || raw name); the full-fidelity data lives in StoredTxn.
+// Display shape sent to the client. `name` here is the display name
+// (merchant_name || raw name); the full-fidelity data lives in StoredTxn. We
+// project a widened-but-still-flat set of scalars (no nested objects) so the
+// Activity views can offer subcategory, channel, location, time, the real
+// merchant behind a processor, and a "what is this charge?" detail panel
+// without shipping the whole StoredTxn to the browser.
 export type Txn = {
   transaction_id: string;
   date: string; // YYYY-MM-DD
@@ -51,6 +55,20 @@ export type Txn = {
   vendor_key: string; // stable per-merchant key for vendor renames (see vendorKey)
   logo_url: string | null; // merchant logo for the row
   category_icon_url: string | null; // Plaid category icon
+
+  subcategory: string | null; // PFC detailed, humanized and de-prefixed
+  category_confidence: string | null; // VERY_HIGH … UNKNOWN; flags low-confidence rows
+  transaction_code: string | null; // transfer | atm | purchase | payroll … (reliable transfer signal)
+  payment_channel: string | null; // online | in store | other
+  datetime: string | null; // true event time (posting date is coarser); drives intra-day order
+  website: string | null;
+  check_number: string | null;
+  account_owner: string | null;
+  city: string | null;
+  region: string | null;
+  counterparty: string | null; // real merchant behind a processor, when it differs
+  payment_processor: string | null; // e.g. the PayPal/Square in front of the merchant
+  payment_reference: string | null; // payment_meta reference number, for "what is this charge?"
 };
 
 // Full-fidelity persisted form. We capture nearly everything Plaid returns per
@@ -152,6 +170,35 @@ export function vendorKey(t: {
   if (t.merchant_entity_id) return `mid:${t.merchant_entity_id}`;
   const nm = (t.merchant_name || t.name).toLowerCase().trim();
   return `nm:${t.institution_name.toLowerCase().trim()}::${nm}`;
+}
+
+// PFC `detailed` humanized and stripped of its `primary` prefix, so
+// "FOOD_AND_DRINK_COFFEE" surfaces as just "coffee" alongside the primary
+// category rather than repeating it.
+function humanizeSubcategory(pfc: StoredTxn['personal_finance_category']): string | null {
+  const detailed = pfc?.detailed;
+  if (!detailed) return null;
+  const primary = pfc?.primary ?? '';
+  const rest = primary && detailed.startsWith(primary) ? detailed.slice(primary.length) : detailed;
+  const s = rest.replace(/_/g, ' ').trim().toLowerCase();
+  return s || null;
+}
+
+// The real merchant behind a payment processor: Plaid resolves counterparties
+// with a `type`, so the underlying store (`merchant`) and the processor
+// (`payment_app`, e.g. PayPal/Square) can be separated from the raw descriptor.
+function resolveCounterparty(t: StoredTxn): string | null {
+  const merchant = t.counterparties.find((c) => c.type === 'merchant');
+  const name = merchant?.name ?? null;
+  // Only interesting when it differs from what we already show as the name.
+  const display = (t.merchant_name || t.name).toLowerCase().trim();
+  return name && name.toLowerCase().trim() !== display ? name : null;
+}
+
+function resolveProcessor(t: StoredTxn): string | null {
+  if (t.payment_meta?.payment_processor) return t.payment_meta.payment_processor;
+  const app = t.counterparties.find((c) => c.type === 'payment_app');
+  return app?.name ?? null;
 }
 
 // Ids of pending rows that a later posted row supersedes: when a pending charge
@@ -589,6 +636,19 @@ export async function syncItemTransactions(
       vendor_key: vendorKey(t),
       logo_url: t.logo_url,
       category_icon_url: t.personal_finance_category_icon_url,
+      subcategory: humanizeSubcategory(t.personal_finance_category),
+      category_confidence: t.personal_finance_category?.confidence_level ?? null,
+      transaction_code: t.transaction_code ?? null,
+      payment_channel: t.payment_channel,
+      datetime: t.datetime ?? t.authorized_datetime,
+      website: t.website,
+      check_number: t.check_number,
+      account_owner: t.account_owner,
+      city: t.location?.city ?? null,
+      region: t.location?.region ?? null,
+      counterparty: resolveCounterparty(t),
+      payment_processor: resolveProcessor(t),
+      payment_reference: t.payment_meta?.reference_number ?? null,
     }));
   return { txns, note };
 }
