@@ -8,16 +8,10 @@
 import { useMemo, useState } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { detectRecurring } from '@/lib/recurring';
+import { formatMoney, dominantCurrency } from '@/lib/format';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 
 export type Budgets = Record<string, number>;
-
-function fmtUsd(n: number): string {
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
@@ -91,6 +85,18 @@ export default function BudgetsTab({
 
   const recurring = useMemo(() => (txns ? detectRecurring(txns) : []), [txns]);
 
+  // Budgets are plain numbers with no currency; label summed figures with the
+  // user's dominant transaction currency (defaults to $ when unknown).
+  const displayCurrency = useMemo(() => dominantCurrency(txns ?? []), [txns]);
+
+  // Summing across currencies isn't meaningful without FX; flag it (same as the
+  // Activity summary) so the single-currency-labelled totals aren't read as exact.
+  const mixedCurrency = useMemo(() => {
+    const seen = new Set<string>();
+    for (const t of txns ?? []) if (t.iso_currency_code) seen.add(t.iso_currency_code);
+    return seen.size > 1;
+  }, [txns]);
+
   if (loading) {
     return (
       <div className="card">
@@ -138,7 +144,8 @@ export default function BudgetsTab({
           <div className="inst-name">{monthName} budgets</div>
           {totalBudget > 0 && (
             <div className="inst-total">
-              {fmtUsd(totalSpent)} of {fmtUsd(totalBudget)}
+              {formatMoney(totalSpent, displayCurrency)} of{' '}
+              {formatMoney(totalBudget, displayCurrency)}
             </div>
           )}
         </div>
@@ -191,7 +198,8 @@ export default function BudgetsTab({
                   <div className="budget-line">
                     <span className="budget-name">{cat}</span>
                     <span className="budget-amounts">
-                      {fmtUsd(spent)} of {fmtUsd(budget)}
+                      {formatMoney(spent, displayCurrency)} of{' '}
+                      {formatMoney(budget, displayCurrency)}
                       {ratio >= 1 && <span className="over-tag"> · over</span>}
                     </span>
                   </div>
@@ -218,7 +226,9 @@ export default function BudgetsTab({
             {availableCategories.map((c) => (
               <option key={c} value={c}>
                 {c}
-                {spendByCat[c] ? ` (${fmtUsd(spendByCat[c])} this month)` : ''}
+                {spendByCat[c]
+                  ? ` (${formatMoney(spendByCat[c], displayCurrency)} this month)`
+                  : ''}
               </option>
             ))}
           </select>
@@ -236,6 +246,10 @@ export default function BudgetsTab({
             Add Budget
           </button>
         </div>
+
+        {mixedCurrency && (
+          <div className="chart-note">Totals mix currencies and aren&apos;t converted.</div>
+        )}
       </div>
 
       <GoalsCard goals={goals} accounts={accounts} onSave={onSaveGoals} />
@@ -243,7 +257,11 @@ export default function BudgetsTab({
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">Recurring bills</div>
-          {recurring.length > 0 && <div className="inst-total">~{fmtUsd(monthlyBills)}/mo</div>}
+          {recurring.length > 0 && (
+            <div className="inst-total">
+              ~{formatMoney(monthlyBills, displayCurrency)}/mo
+            </div>
+          )}
         </div>
 
         {recurring.length === 0 ? (
@@ -262,7 +280,9 @@ export default function BudgetsTab({
                       {b.institution} · {b.monthsSeen} months · next ~{fmtDay(b.nextDate)}
                     </div>
                   </td>
-                  <td className="num">{fmtUsd(b.amount)}</td>
+                  <td className="num">
+                    {formatMoney(b.amount, b.currency ?? displayCurrency)}
+                  </td>
                 </tr>
               ))}
             </tbody>
