@@ -13,6 +13,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { isTransfer, type Txn } from './MonthBreakdown';
+import { formatMoney, compactMoney, dominantCurrency } from '@/lib/format';
 
 const W = 340;
 const H = 150;
@@ -20,20 +21,6 @@ const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 const PAD_BOTTOM = 20;
-
-function fullUsd(n: number): string {
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function compactUsd(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1e6) return `$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `$${(abs / 1e3).toFixed(1)}K`;
-  return `$${Math.round(abs)}`;
-}
 
 function niceTicks(min: number, max: number): number[] {
   const span = max - min || 1;
@@ -49,6 +36,7 @@ function niceTicks(min: number, max: number): number[] {
 export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: string }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
+  const currency = useMemo(() => dominantCurrency(txns), [txns]);
 
   const geo = useMemo(() => {
     const [y, m] = month.split('-').map(Number);
@@ -156,10 +144,10 @@ export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: st
 
       <div className="chart-readout">
         <span className="chart-readout-value" style={{ color: 'var(--up)' }}>
-          {fullUsd(cumIn[i])}
+          {formatMoney(cumIn[i], currency)}
         </span>
         <span className="chart-readout-value" style={{ color: 'var(--down)' }}>
-          {fullUsd(cumOut[i])}
+          {formatMoney(cumOut[i], currency)}
         </span>
         <span className="chart-readout-date">
           {active !== null ? `through ${dayLabel(days[i])}` : `month to date`}
@@ -171,7 +159,7 @@ export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: st
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Cumulative income and spending for ${dayLabel(1)} to ${dayLabel(lastDay)}. Income ${fullUsd(totalIn)}, spending ${fullUsd(totalOut)}.`}
+        aria-label={`Cumulative income and spending for ${dayLabel(1)} to ${dayLabel(lastDay)}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -180,7 +168,7 @@ export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: st
           <g key={t}>
             <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
-              {compactUsd(t)}
+              {compactMoney(t, currency)}
             </text>
           </g>
         ))}

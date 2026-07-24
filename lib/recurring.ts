@@ -11,11 +11,13 @@
 // linked accounts isn't miscounted as twice-monthly.
 
 import { type Txn } from '@/components/MonthBreakdown';
+import { dominantCurrency } from '@/lib/format';
 
 export type RecurringBill = {
   name: string;
   institution: string;
   amount: number; // typical (average) charge
+  currency: string | null; // of the charges (consistent within a merchant)
   lastDate: string;
   nextDate: string; // estimated
   monthsSeen: number;
@@ -73,6 +75,7 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
       name: list[0].name,
       institution: list[0].institution_name,
       amount: avg,
+      currency: dominantCurrency(list),
       lastDate: last,
       nextDate: addDays(last, cycle),
       monthsSeen: months.size,

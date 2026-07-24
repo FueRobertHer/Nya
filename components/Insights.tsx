@@ -7,18 +7,12 @@
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
+import { formatMoney, dominantCurrency } from '@/lib/format';
 
 export type InsightAccount = { name: string; type: string; balance: number | null };
 
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
-
-function fmtUsd(n: number): string {
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 function isTransfer(t: Txn): boolean {
   return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
@@ -39,6 +33,9 @@ export default function Insights({
     const out: Insight[] = [];
     const now = new Date();
     const thisMonthKey = now.toISOString().slice(0, 7);
+    // One display currency for summed/budget figures (budgets carry no currency
+    // of their own). Per-item amounts below use their own currency where known.
+    const displayCurrency = dominantCurrency(txns ?? []);
 
     // --- alerts first: they're the actionable ones ---
 
@@ -60,7 +57,7 @@ export default function Insights({
           spent >= budget
             ? {
                 key: `budget-${cat}`,
-                text: `Over your ${cat} budget — ${fmtUsd(spent)} of ${fmtUsd(budget)}`,
+                text: `Over your ${cat} budget — ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,
                 tone: 'down',
               }
             : {
@@ -77,7 +74,7 @@ export default function Insights({
       if (a.type === 'depository' && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
         out.push({
           key: `low-${a.name}`,
-          text: `Low balance: ${a.name} at ${fmtUsd(a.balance)}`,
+          text: `Low balance: ${a.name} at ${formatMoney(a.balance)}`,
           tone: 'down',
         });
       }
@@ -92,7 +89,7 @@ export default function Insights({
         seen.add(b.name);
         out.push({
           key: `bill-${b.name}`,
-          text: `Upcoming: ${b.name} (~${fmtUsd(b.amount)}) around ${new Date(`${b.nextDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+          text: `Upcoming: ${b.name} (~${formatMoney(b.amount, b.currency ?? displayCurrency)}) around ${new Date(`${b.nextDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
           tone: 'neutral',
         });
         if (seen.size >= 2) break;
@@ -144,7 +141,7 @@ export default function Insights({
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));
         out.push({
           key: 'biggest',
-          text: `Biggest purchase this month: ${biggest.name}, ${fmtUsd(biggest.amount)}`,
+          text: `Biggest purchase this month: ${biggest.name}, ${formatMoney(biggest.amount, biggest.iso_currency_code)}`,
           tone: 'neutral',
         });
       }

@@ -12,6 +12,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
+import { dominantCurrency } from "@/lib/format";
 
 export type Txn = {
   transaction_id: string;
@@ -180,18 +181,7 @@ export default function MonthBreakdown({
   // The month's summary figures sum amounts, which only makes sense in one
   // currency; use the most common currency among the month's transactions to
   // label them (a true multi-currency total would need FX conversion).
-  const monthCurrency = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const t of monthTxns) {
-      const c = t.iso_currency_code;
-      if (c) counts[c] = (counts[c] ?? 0) + 1;
-    }
-    let best: string | null = null;
-    for (const [c, n] of Object.entries(counts)) {
-      if (best === null || n > counts[best]) best = c;
-    }
-    return best;
-  }, [monthTxns]);
+  const monthCurrency = useMemo(() => dominantCurrency(monthTxns), [monthTxns]);
 
   // Summing amounts across currencies isn't meaningful without FX conversion;
   // flag it so the single-currency-labelled totals aren't read as exact.
