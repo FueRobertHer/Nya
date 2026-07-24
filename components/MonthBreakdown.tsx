@@ -136,7 +136,7 @@ function isLowConfidence(t: Txn): boolean {
 // transaction_code is the reliable signal (transfer / atm / bank charge / fee);
 // the category heuristic stays as a fallback for rows Plaid didn't code (older
 // data, or codes it never resolved).
-const TRANSFER_CODES = new Set(["transfer", "atm", "bank charge", "fee"]);
+const TRANSFER_CODES = new Set(["transfer", "atm", "bank charge"]);
 export function isTransfer(t: Txn): boolean {
   if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
   return (

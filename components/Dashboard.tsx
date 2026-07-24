@@ -665,6 +665,8 @@ export default function Dashboard() {
                   const instCurrency = dominantCurrency(
                     inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
                   );
+                  const instMixed =
+                    new Set(inst.accounts.map((a) => a.currency).filter(Boolean)).size > 1;
                   return (
                     <div className="card" key={inst.item_id}>
                       <div className="inst-header">
@@ -685,6 +687,12 @@ export default function Dashboard() {
                           )}
                         </div>
                       </div>
+
+                      {instMixed && (
+                        <div className="chart-note">
+                          Mixed currencies; total isn&apos;t converted.
+                        </div>
+                      )}
 
                       {inst.accounts.length > 0 && (
                         <table>

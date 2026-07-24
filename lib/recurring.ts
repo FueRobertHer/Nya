@@ -26,7 +26,7 @@ export type RecurringBill = {
 
 // Codes that move money without being spending: transfers, ATM, fees. Plaid's
 // transaction_code is more reliable than the category heuristic below.
-const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge', 'fee']);
+const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
 
 function addDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);

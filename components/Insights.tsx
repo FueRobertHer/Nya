@@ -19,7 +19,7 @@ export type InsightAccount = {
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
 
-const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge', 'fee']);
+const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
 function isTransfer(t: Txn): boolean {
   if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
   return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
