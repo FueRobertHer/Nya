@@ -729,6 +729,66 @@ button:disabled {
   appearance: none;
 }
 
+/* Transaction row: merchant logo + text. */
+.txn-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.txn-logo {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--card, #fff);
+}
+
+.txn-logo-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--track, rgba(127, 127, 127, 0.15));
+  text-transform: uppercase;
+}
+
+.txn-text {
+  min-width: 0;
+}
+
+/* Inline edit panel (category + vendor rename). */
+.txn-edit {
+  margin-top: 6px;
+}
+
+.rename-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.rename-row .text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rename-row button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.rename-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .budget-row {
   margin-top: 16px;
 }

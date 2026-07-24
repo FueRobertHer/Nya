@@ -47,6 +47,10 @@ export type Txn = {
   account_name: string;
   institution_name: string;
   category: string | null;
+  iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
+  vendor_key: string; // stable per-merchant key for vendor renames (see vendorKey)
+  logo_url: string | null; // merchant logo for the row
+  category_icon_url: string | null; // Plaid category icon
 };
 
 // Full-fidelity persisted form. We capture nearly everything Plaid returns per
@@ -132,6 +136,38 @@ const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 // next call (see the partial-history note).
 const MAX_PAGES = 50;
 const MAX_MUTATION_RETRIES = 3;
+
+// Stable grouping key for vendor-level features (renames applied in
+// /api/transactions). Prefers Plaid's merchant entity id — unique per merchant
+// and stable across institutions — so a rename hits every transaction from that
+// merchant. Falls back to institution + merchant/display name when Plaid gives
+// no entity id (older rows, or merchants it can't resolve), which scopes the
+// rename to that institution to avoid colliding same-named merchants elsewhere.
+export function vendorKey(t: {
+  merchant_entity_id: string | null;
+  merchant_name: string | null;
+  name: string;
+  institution_name: string;
+}): string {
+  if (t.merchant_entity_id) return `mid:${t.merchant_entity_id}`;
+  const nm = (t.merchant_name || t.name).toLowerCase().trim();
+  return `nm:${t.institution_name.toLowerCase().trim()}::${nm}`;
+}
+
+// Ids of pending rows that a later posted row supersedes: when a pending charge
+// posts, Plaid emits a new row carrying the pending one's id in
+// pending_transaction_id (and usually removes the pending original, but the two
+// can briefly coexist). Suppressing the pending original prevents the same
+// purchase from being counted twice.
+function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
+  const superseded = new Set<string>();
+  for (const t of Object.values(txns)) {
+    if (t.pending_transaction_id && txns[t.pending_transaction_id]) {
+      superseded.add(t.pending_transaction_id);
+    }
+  }
+  return superseded;
+}
 
 function daysAgoIso(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -535,10 +571,11 @@ export async function syncItemTransactions(
   const { state, note } = await syncItem(item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name — the display behavior recurring
   // detection and search depend on; StoredTxn keeps both parts separately.
   const txns: Txn[] = Object.values(state.txns)
-    .filter((t) => t.date >= cutoff)
+    .filter((t) => t.date >= cutoff && !superseded.has(t.transaction_id))
     .map((t) => ({
       transaction_id: t.transaction_id,
       date: t.date,
@@ -548,6 +585,10 @@ export async function syncItemTransactions(
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       institution_name: t.institution_name,
       category: t.category,
+      iso_currency_code: t.iso_currency_code,
+      vendor_key: vendorKey(t),
+      logo_url: t.logo_url,
+      category_icon_url: t.personal_finance_category_icon_url,
     }));
   return { txns, note };
 }
@@ -565,5 +606,11 @@ export async function readItemTransactions(
   const { state, note } = await syncItem(item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(sinceDays);
-  return { txns: Object.values(state.txns).filter((t) => t.date >= cutoff), note };
+  const superseded = supersededPendingIds(state.txns);
+  return {
+    txns: Object.values(state.txns).filter(
+      (t) => t.date >= cutoff && !superseded.has(t.transaction_id)
+    ),
+    note,
+  };
 }
