@@ -26,9 +26,16 @@ export async function GET(req: Request) {
       getRenames(),
     ]);
 
+    // Newest first. Within a day the posting `date` is equal, so fall back to
+    // the true event `datetime` when Plaid provides it for a precise order.
     const transactions = results
       .flatMap((r) => r.txns)
-      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+        const at = a.datetime ?? '';
+        const bt = b.datetime ?? '';
+        return at < bt ? 1 : at > bt ? -1 : 0;
+      });
 
     // Manual overrides win over Plaid's data: recategorization by transaction,
     // vendor rename by vendor key (so it covers every row from that merchant).

@@ -9,12 +9,19 @@ import { type Txn } from './MonthBreakdown';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 
-export type InsightAccount = { name: string; type: string; balance: number | null };
+export type InsightAccount = {
+  name: string;
+  type: string;
+  balance: number | null;
+  currency: string | null;
+};
 
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
 
+const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
 function isTransfer(t: Txn): boolean {
+  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
   return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
 }
 
@@ -74,7 +81,7 @@ export default function Insights({
       if (a.type === 'depository' && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
         out.push({
           key: `low-${a.name}`,
-          text: `Low balance: ${a.name} at ${formatMoney(a.balance)}`,
+          text: `Low balance: ${a.name} at ${formatMoney(a.balance, a.currency)}`,
           tone: 'down',
         });
       }

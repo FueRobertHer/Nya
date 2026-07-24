@@ -275,9 +275,21 @@ export default function BudgetsTab({
               {recurring.map((b) => (
                 <tr key={`${b.institution}-${b.name}`}>
                   <td>
-                    {b.name}
-                    <div className="type-tag">
-                      {b.institution} · {b.monthsSeen} months · next ~{fmtDay(b.nextDate)}
+                    <div className="txn-main">
+                      {b.logo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img className="txn-logo" src={b.logo_url} alt="" loading="lazy" />
+                      ) : (
+                        <span className="txn-logo txn-logo-fallback" aria-hidden="true">
+                          {b.name.slice(0, 1).toUpperCase()}
+                        </span>
+                      )}
+                      <div className="txn-text">
+                        {b.name}
+                        <div className="type-tag">
+                          {b.institution} · {b.monthsSeen} months · next ~{fmtDay(b.nextDate)}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td className="num">

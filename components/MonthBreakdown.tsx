@@ -27,6 +27,19 @@ export type Txn = {
   vendor_key: string;
   logo_url: string | null;
   category_icon_url: string | null;
+  subcategory: string | null;
+  category_confidence: string | null;
+  transaction_code: string | null;
+  payment_channel: string | null;
+  datetime: string | null;
+  website: string | null;
+  check_number: string | null;
+  account_owner: string | null;
+  city: string | null;
+  region: string | null;
+  counterparty: string | null;
+  payment_processor: string | null;
+  payment_reference: string | null;
 };
 
 function fmtUsd(n: number): string {
@@ -112,12 +125,33 @@ function monthLabel(ym: string): string {
   );
 }
 
-// Money moving between your own accounts isn't income or spending.
+// Plaid categorizes with a confidence level; LOW/UNKNOWN rows are worth a
+// glance, so the row nudges the user toward the existing recategorize flow.
+const LOW_CONFIDENCE = new Set(["LOW", "UNKNOWN"]);
+function isLowConfidence(t: Txn): boolean {
+  return !!t.category_confidence && LOW_CONFIDENCE.has(t.category_confidence);
+}
+
+// Money moving between your own accounts isn't income or spending. Plaid's
+// transaction_code is the reliable signal (transfer / atm / bank charge / fee);
+// the category heuristic stays as a fallback for rows Plaid didn't code (older
+// data, or codes it never resolved).
+const TRANSFER_CODES = new Set(["transfer", "atm", "bank charge"]);
 export function isTransfer(t: Txn): boolean {
+  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
   return (
     !!t.category &&
     (t.category.startsWith("transfer") || t.category === "loan payments")
   );
+}
+
+// A short "HH:MM" from Plaid's ISO datetime, in the viewer's locale. Null when
+// the row carries only a posting date.
+function fmtTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 // Base category options for recategorization, merged with whatever
@@ -138,6 +172,57 @@ const BASE_CATEGORIES = [
   "loan payments",
   "other",
 ];
+
+// "What is this charge?" detail panel, shown inside the expanded row. Surfaces
+// the Plaid fields that answer the question — the real merchant behind a
+// processor, channel, place, time, website, reference/check numbers, and (for
+// joint accounts) the owner — skipping any the row doesn't carry.
+function TxnDetail({ t }: { t: Txn }) {
+  const rows: { label: string; value: React.ReactNode }[] = [];
+  const time = fmtTime(t.datetime);
+
+  if (t.counterparty) rows.push({ label: "Merchant", value: t.counterparty });
+  if (t.payment_processor)
+    rows.push({ label: "Processed by", value: t.payment_processor });
+  if (t.payment_channel)
+    rows.push({ label: "Channel", value: t.payment_channel });
+  if (t.city)
+    rows.push({
+      label: "Where",
+      value: t.region ? `${t.city}, ${t.region}` : t.city,
+    });
+  if (time) rows.push({ label: "Time", value: time });
+  if (t.website)
+    rows.push({
+      label: "Website",
+      value: (
+        <a
+          href={`https://${t.website.replace(/^https?:\/\//, "")}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t.website.replace(/^https?:\/\//, "")}
+        </a>
+      ),
+    });
+  if (t.payment_reference)
+    rows.push({ label: "Reference", value: t.payment_reference });
+  if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
+  if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
+
+  if (rows.length === 0) return null;
+
+  return (
+    <dl className="txn-detail">
+      {rows.map((r) => (
+        <div className="txn-detail-row" key={r.label}>
+          <dt>{r.label}</dt>
+          <dd>{r.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 export default function MonthBreakdown({
   txns,
@@ -209,6 +294,34 @@ export default function MonthBreakdown({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
     return { moneyIn: inflow, moneyOut: outflow, categories };
+  }, [monthTxns]);
+
+  // Online vs in-store spending, from Plaid's payment_channel. Only rows that
+  // carry a channel count toward the split (unknown ones are left out rather
+  // than guessed), so the two need not sum to the month's total outflow.
+  const channelSplit = useMemo(() => {
+    let online = 0;
+    let inStore = 0;
+    for (const t of monthTxns) {
+      if (t.amount <= 0 || isTransfer(t)) continue;
+      if (t.payment_channel === "online") online += t.amount;
+      else if (t.payment_channel === "in store") inStore += t.amount;
+    }
+    return { online, inStore };
+  }, [monthTxns]);
+
+  // Top places by spend, from transaction location. Disambiguates same-named
+  // merchants and gives a light geo view without a map dependency.
+  const topCities = useMemo(() => {
+    const byCity: Record<string, number> = {};
+    for (const t of monthTxns) {
+      if (t.amount <= 0 || isTransfer(t) || !t.city) continue;
+      const label = t.region ? `${t.city}, ${t.region}` : t.city;
+      byCity[label] = (byCity[label] ?? 0) + t.amount;
+    }
+    return Object.entries(byCity)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
   }, [monthTxns]);
 
   // Net per month (oldest → newest) for the trend columns. Bar height tracks
@@ -383,6 +496,59 @@ export default function MonthBreakdown({
         </div>
       )}
 
+      {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
+        <div className="card">
+          <div className="inst-header">
+            <div className="inst-name">Online vs in-store</div>
+          </div>
+          {(() => {
+            const total = channelSplit.online + channelSplit.inStore;
+            const rows: [string, number][] = [
+              ["Online", channelSplit.online],
+              ["In store", channelSplit.inStore],
+            ];
+            return (
+              <div className="cat-list">
+                {rows.map(([label, sum]) => (
+                  <div className="cat-row" key={label}>
+                    <span className="cat-name">{label}</span>
+                    <div className="cat-track">
+                      <div
+                        className="cat-bar"
+                        style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {topCities.length > 0 && (
+        <div className="card">
+          <div className="inst-header">
+            <div className="inst-name">Where you spent</div>
+          </div>
+          <div className="cat-list">
+            {topCities.map(([place, sum]) => (
+              <div className="cat-row" key={place}>
+                <span className="cat-name">{place}</span>
+                <div className="cat-track">
+                  <div
+                    className="cat-bar"
+                    style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
+                  />
+                </div>
+                <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">Transactions</div>
@@ -449,10 +615,20 @@ export default function MonthBreakdown({
                               {t.pending && (
                                 <span className="pending-tag"> · pending</span>
                               )}
+                              {isLowConfidence(t) && (
+                                <span
+                                  className="low-conf-tag"
+                                  title="Plaid was unsure of this category — tap to fix it"
+                                >
+                                  {" "}
+                                  · check category
+                                </span>
+                              )}
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
                               {t.category ? ` · ${t.category}` : ""}
+                              {t.subcategory ? ` › ${t.subcategory}` : ""}
                             </div>
                           </div>
                         </div>
@@ -506,6 +682,7 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
+                            <TxnDetail t={t} />
                           </div>
                         )}
                       </td>
