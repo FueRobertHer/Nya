@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getItems } from '@/lib/storage';
 import { readCache, writeCache, TRANSACTIONS_CACHE_KEY } from '@/lib/cache';
 import { getOverrides } from '@/lib/overrides';
+import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
 
 type TransactionsPayload = {
@@ -19,19 +20,23 @@ export async function GET(req: Request) {
     }
 
     const items = await getItems();
-    const [results, overrides] = await Promise.all([
+    const [results, overrides, renames] = await Promise.all([
       Promise.all(items.map((item) => syncItemTransactions(item))),
       getOverrides(),
+      getRenames(),
     ]);
 
     const transactions = results
       .flatMap((r) => r.txns)
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
-    // Manual recategorizations win over Plaid's auto-categorization.
+    // Manual overrides win over Plaid's data: recategorization by transaction,
+    // vendor rename by vendor key (so it covers every row from that merchant).
     for (const t of transactions) {
       const manual = overrides[t.transaction_id];
       if (manual) t.category = manual;
+      const renamed = renames[t.vendor_key];
+      if (renamed) t.name = renamed;
     }
     const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
 

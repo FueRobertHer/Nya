@@ -22,6 +22,10 @@ export type Txn = {
   account_name: string;
   institution_name: string;
   category: string | null;
+  iso_currency_code: string | null;
+  vendor_key: string;
+  logo_url: string | null;
+  category_icon_url: string | null;
 };
 
 function fmtUsd(n: number): string {
@@ -34,6 +38,20 @@ function fmtUsd(n: number): string {
   );
 }
 
+// Currency-aware amount, so a EUR/GBP/etc. charge isn't silently shown with a
+// "$". Falls back to the $ formatter for a null or unrecognized currency code.
+function fmtMoney(n: number, currency: string | null): string {
+  if (!currency) return fmtUsd(n);
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+    }).format(n);
+  } catch {
+    return fmtUsd(n);
+  }
+}
+
 // Compact, signed currency for the net-bar value labels: +$1.2K / -$340.
 function fmtCompactSigned(n: number): string {
   const sign = n < 0 ? "-" : "+";
@@ -43,8 +61,21 @@ function fmtCompactSigned(n: number): string {
     : `${sign}$${Math.round(abs)}`;
 }
 
-// Plaid's convention: positive amounts are money leaving the account.
-function fmtTxnAmount(amount: number): string {
+// Plaid's convention: positive amounts are money leaving the account, so the
+// displayed value flips sign (positive = money in). Currency-aware.
+function fmtTxnAmount(amount: number, currency: string | null): string {
+  const display = amount === 0 ? 0 : -amount; // avoid -0 rendering as "-$0.00"
+  if (currency) {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency,
+        signDisplay: "always",
+      }).format(display);
+    } catch {
+      // fall through to the $ formatter
+    }
+  }
   const abs = Math.abs(amount).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -112,15 +143,18 @@ export default function MonthBreakdown({
   notes,
   loading,
   onRecategorize,
+  onRename,
 }: {
   txns: Txn[] | null;
   notes: string[];
   loading: boolean;
   onRecategorize: (transaction_id: string, category: string) => void;
+  onRename: (vendor_key: string, name: string) => void;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
-  const [recatId, setRecatId] = useState<string | null>(null); // txn being recategorized
+  const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
+  const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
 
   const categoryOptions = useMemo(() => {
     const set = new Set(BASE_CATEGORIES);
@@ -142,6 +176,30 @@ export default function MonthBreakdown({
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
     [txns, selected],
   );
+
+  // The month's summary figures sum amounts, which only makes sense in one
+  // currency; use the most common currency among the month's transactions to
+  // label them (a true multi-currency total would need FX conversion).
+  const monthCurrency = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of monthTxns) {
+      const c = t.iso_currency_code;
+      if (c) counts[c] = (counts[c] ?? 0) + 1;
+    }
+    let best: string | null = null;
+    for (const [c, n] of Object.entries(counts)) {
+      if (best === null || n > counts[best]) best = c;
+    }
+    return best;
+  }, [monthTxns]);
+
+  // Summing amounts across currencies isn't meaningful without FX conversion;
+  // flag it so the single-currency-labelled totals aren't read as exact.
+  const mixedCurrency = useMemo(() => {
+    const seen = new Set<string>();
+    for (const t of monthTxns) if (t.iso_currency_code) seen.add(t.iso_currency_code);
+    return seen.size > 1;
+  }, [monthTxns]);
 
   const { moneyIn, moneyOut, categories } = useMemo(() => {
     let inflow = 0;
@@ -290,22 +348,27 @@ export default function MonthBreakdown({
         <div className="summary-row">
           <div>
             <div className="total-label">In</div>
-            <div className="summary-value inflow">{fmtUsd(moneyIn)}</div>
+            <div className="summary-value inflow">
+              {fmtMoney(moneyIn, monthCurrency)}
+            </div>
           </div>
           <div>
             <div className="total-label">Out</div>
-            <div className="summary-value">{fmtUsd(moneyOut)}</div>
+            <div className="summary-value">{fmtMoney(moneyOut, monthCurrency)}</div>
           </div>
           <div>
             <div className="total-label">Net</div>
             <div
               className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
             >
-              {fmtUsd(net)}
+              {fmtMoney(net, monthCurrency)}
             </div>
           </div>
         </div>
-        <div className="chart-note">Transfers and loan payments excluded.</div>
+        <div className="chart-note">
+          Transfers and loan payments excluded.
+          {mixedCurrency && " Totals mix currencies and aren't converted."}
+        </div>
       </div>
 
       {categories.length > 0 && (
@@ -323,7 +386,7 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / maxCat) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{fmtUsd(sum)}</span>
+                <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
               </div>
             ))}
           </div>
@@ -366,44 +429,98 @@ export default function MonthBreakdown({
                     <tr
                       key={t.transaction_id}
                       className={`acct-row${i === g.txns.length - 1 ? " last-in-day" : ""}`}
-                      onClick={() =>
-                        setRecatId(
-                          recatId === t.transaction_id
-                            ? null
-                            : t.transaction_id,
-                        )
-                      }
+                      onClick={() => {
+                        const opening = recatId !== t.transaction_id;
+                        setRecatId(opening ? t.transaction_id : null);
+                        if (opening) setRenameDraft(t.name);
+                      }}
                     >
                       <td>
-                        {t.name}
-                        {t.pending && (
-                          <span className="pending-tag"> · pending</span>
-                        )}
-                        <div className="type-tag">
-                          {t.institution_name} · {t.account_name}
-                          {t.category ? ` · ${t.category}` : ""}
+                        <div className="txn-main">
+                          {t.logo_url || t.category_icon_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              className="txn-logo"
+                              src={(t.logo_url || t.category_icon_url) ?? undefined}
+                              alt=""
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span
+                              className="txn-logo txn-logo-fallback"
+                              aria-hidden="true"
+                            >
+                              {t.name.slice(0, 1).toUpperCase()}
+                            </span>
+                          )}
+                          <div className="txn-text">
+                            <div>
+                              {t.name}
+                              {t.pending && (
+                                <span className="pending-tag"> · pending</span>
+                              )}
+                            </div>
+                            <div className="type-tag">
+                              {t.institution_name} · {t.account_name}
+                              {t.category ? ` · ${t.category}` : ""}
+                            </div>
+                          </div>
                         </div>
                         {recatId === t.transaction_id && (
-                          <select
-                            className="text-input recat-select"
-                            value={t.category ?? "other"}
+                          <div
+                            className="txn-edit"
                             onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              onRecategorize(t.transaction_id, e.target.value);
-                              setRecatId(null);
-                            }}
-                            aria-label={`Category for ${t.name}`}
                           >
-                            {categoryOptions.map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                          </select>
+                            <select
+                              className="text-input recat-select"
+                              value={t.category ?? "other"}
+                              onChange={(e) => {
+                                onRecategorize(t.transaction_id, e.target.value);
+                                setRecatId(null);
+                              }}
+                              aria-label={`Category for ${t.name}`}
+                            >
+                              {categoryOptions.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                            {t.vendor_key && (
+                              <>
+                                <div className="rename-row">
+                                  <input
+                                    className="text-input"
+                                    value={renameDraft}
+                                    maxLength={100}
+                                    onChange={(e) =>
+                                      setRenameDraft(e.target.value)
+                                    }
+                                    placeholder="Rename vendor"
+                                    aria-label={`Rename ${t.name}`}
+                                  />
+                                  <button
+                                    className="secondary"
+                                    disabled={renameDraft.trim() === t.name}
+                                    onClick={() => {
+                                      onRename(t.vendor_key, renameDraft.trim());
+                                      setRecatId(null);
+                                    }}
+                                  >
+                                    Rename
+                                  </button>
+                                </div>
+                                <div className="rename-hint">
+                                  Applies to this vendor&apos;s transactions;
+                                  older ones may update later.
+                                </div>
+                              </>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className={`num${t.amount < 0 ? " inflow" : ""}`}>
-                        {fmtTxnAmount(t.amount)}
+                        {fmtTxnAmount(t.amount, t.iso_currency_code)}
                       </td>
                     </tr>
                   ))}

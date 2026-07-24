@@ -306,6 +306,34 @@ export default function Dashboard() {
     }
   }, []);
 
+  const renameVendor = useCallback(
+    async (vendor_key: string, name: string) => {
+      // Optimistically relabel every transaction from this vendor. An empty
+      // name clears the rename; we can't reconstruct the original Plaid name
+      // locally, so reload to pick the reverted names back up.
+      if (name) {
+        setTxns((prev) =>
+          prev
+            ? prev.map((t) => (t.vendor_key === vendor_key ? { ...t, name } : t))
+            : prev
+        );
+      }
+      try {
+        const res = await fetch('/api/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vendor_key, name }),
+        });
+        // Re-sync on a clear (to recover the reverted Plaid names) or on a
+        // rejected write, so the optimistic change can't linger out of sync.
+        if (!name || !res.ok) loadTransactions();
+      } catch {
+        loadTransactions(); // network failure: reload to server truth
+      }
+    },
+    [loadTransactions]
+  );
+
   const startConnect = useCallback(async () => {
     setError('');
     setConnecting(true);
@@ -732,6 +760,7 @@ export default function Dashboard() {
                 notes={txnNotes}
                 loading={txnsLoading}
                 onRecategorize={recategorize}
+                onRename={renameVendor}
               />
             )}
 
