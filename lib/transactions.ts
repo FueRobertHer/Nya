@@ -32,16 +32,12 @@ import { plaidClient } from './plaid';
 import { encrypt, decrypt } from './crypto';
 import { redis, k, type StoredItem } from './storage';
 
-// Bump when the shape of a persisted row changes in a way that historical rows
-// can't satisfy (a newly captured field). readState treats a stored blob whose
-// version differs as unreadable and re-pulls the Item's full history from Plaid
-// with the current mapping — so a field addition backfills automatically on the
-// next sync, with no manual migration. See readState / toStored.
+// Bump when a persisted row gains a field historical rows can't satisfy. A blob
+// at an older version is upgraded in place on read (see readState / migrateLegacyState).
 export const TXN_SCHEMA_VERSION = 2;
 
-// Lean display shape sent to the client. Kept intentionally small: the wire
-// payload shouldn't carry every captured field. `name` here is the *display*
-// name (merchant_name || raw name); the full-fidelity data lives in StoredTxn.
+// Lean display shape sent to the client. `name` here is the display name
+// (merchant_name || raw name); the full-fidelity data lives in StoredTxn.
 export type Txn = {
   transaction_id: string;
   date: string; // YYYY-MM-DD
@@ -59,37 +55,30 @@ export type Txn = {
 // where this repetitive data compresses heavily, so the space cost is small.
 // Read paths derive whatever narrower shape they need (e.g. the display Txn).
 export type StoredTxn = {
-  // Identity / linkage.
   transaction_id: string;
   pending_transaction_id: string | null; // pending row → its later posted row
   account_id: string;
 
-  // Money.
-  amount: number; // positive = money leaving the account
-  iso_currency_code: string | null; // amounts are meaningless without this
+  amount: number;
+  iso_currency_code: string | null;
   unofficial_currency_code: string | null;
 
-  // Dates. `date` is the posting date; datetime fields are the true event time.
-  date: string; // YYYY-MM-DD
+  date: string; // posting date, YYYY-MM-DD; datetime fields are the true event time
   authorized_date: string | null;
   authorized_datetime: string | null;
   datetime: string | null;
 
-  // Names & branding. Raw `name` and `merchant_name` are kept SEPARATELY (the
-  // display name folds them, but grouping/search may want either), and
-  // merchant_entity_id is the stable per-merchant key for vendor-level features.
+  // Raw `name` and `merchant_name` kept separately; merchant_entity_id is the
+  // stable per-merchant key for vendor-level features.
   name: string; // raw bank descriptor (Plaid `name`)
-  merchant_name: string | null; // Plaid-normalized merchant
+  merchant_name: string | null;
   merchant_entity_id: string | null;
   website: string | null;
   logo_url: string | null;
 
-  // Categorization: full PFC object (primary/detailed/confidence), not just
-  // primary, plus the icon URL for display.
-  personal_finance_category: Transaction['personal_finance_category'] | null;
+  personal_finance_category: Transaction['personal_finance_category'] | null; // primary/detailed/confidence
   personal_finance_category_icon_url: string | null;
 
-  // Classification.
   pending: boolean;
   payment_channel: string | null; // online | in store | other
   transaction_code: Transaction['transaction_code'] | null; // transfer | atm | purchase | payroll …
@@ -97,13 +86,12 @@ export type StoredTxn = {
   check_number: string | null;
   account_owner: string | null;
 
-  // Rich nested objects, stored as-is.
   location: Transaction['location'] | null; // address, city, region, lat/lon, store_number
   payment_meta: Transaction['payment_meta'] | null; // payee, payer, reference_number, processor …
   counterparties: NonNullable<Transaction['counterparties']>; // real merchant behind a processor
 
   // Derived / resolved, retained for existing consumers.
-  category: string | null; // PFC primary, humanized (back-compat)
+  category: string | null; // PFC primary, humanized
   account_name: string;
   institution_name: string;
 };
@@ -126,7 +114,7 @@ export type StoredAccount = {
 };
 
 type ItemState = {
-  schema_version: number; // mismatch → treat as unreadable and re-sync
+  schema_version: number; // older value → upgraded in place on read
   cursor: string; // '' = never synced → pull full history
   accounts: Record<string, StoredAccount>; // account_id → metadata, merged over time
   txns: Record<string, StoredTxn>; // keyed by transaction_id
@@ -211,22 +199,114 @@ async function decodeState(blob: string): Promise<Partial<ItemState>> {
   return JSON.parse(json) as Partial<ItemState>;
 }
 
+// Shape of a pre-v2 stored blob: an account_id→name map and the lean 9-field
+// rows. Kept only for the one-time in-place upgrade in readState.
+type LegacyStoredTxn = {
+  transaction_id: string;
+  date: string;
+  name: string; // was merchant_name || name, already merged (unrecoverable split)
+  amount: number;
+  pending: boolean;
+  account_name: string;
+  institution_name: string;
+  category: string | null;
+  account_id: string;
+};
+type LegacyItemState = {
+  cursor?: string;
+  accountNames?: Record<string, string>;
+  txns?: Record<string, LegacyStoredTxn>;
+};
+
+function migrateLegacyTxn(t: LegacyStoredTxn): StoredTxn {
+  return {
+    transaction_id: t.transaction_id,
+    pending_transaction_id: null,
+    account_id: t.account_id,
+
+    amount: t.amount,
+    iso_currency_code: null,
+    unofficial_currency_code: null,
+
+    date: t.date,
+    authorized_date: null,
+    authorized_datetime: null,
+    datetime: null,
+
+    // Legacy `name` was already merchant_name||name and can't be un-merged;
+    // keep it as `name` with the merchant fields null. Display is unchanged.
+    name: t.name,
+    merchant_name: null,
+    merchant_entity_id: null,
+    website: null,
+    logo_url: null,
+
+    personal_finance_category: null,
+    personal_finance_category_icon_url: null,
+
+    pending: t.pending,
+    payment_channel: null,
+    transaction_code: null,
+    transaction_type: null,
+    check_number: null,
+    account_owner: null,
+
+    location: null,
+    payment_meta: null,
+    counterparties: [],
+
+    category: t.category ?? null,
+    account_name: t.account_name ?? '',
+    institution_name: t.institution_name,
+  };
+}
+
+function migrateLegacyState(old: LegacyItemState): ItemState {
+  const accounts: Record<string, StoredAccount> = {};
+  for (const [id, name] of Object.entries(old.accountNames ?? {})) {
+    accounts[id] = {
+      name,
+      official_name: null,
+      type: null,
+      subtype: null,
+      mask: null,
+      balances: null,
+    };
+  }
+  const txns: Record<string, StoredTxn> = {};
+  for (const [id, t] of Object.entries(old.txns ?? {})) txns[id] = migrateLegacyTxn(t);
+  return {
+    schema_version: TXN_SCHEMA_VERSION,
+    cursor: typeof old.cursor === 'string' ? old.cursor : '',
+    accounts,
+    txns,
+  };
+}
+
 async function readState(item_id: string): Promise<ItemState> {
   try {
     const blob = await redis().get<string>(stateKey(item_id));
     if (!blob) return emptyState();
     const parsed = await decodeState(blob);
-    // A blob written under an older schema lacks fields we capture now. Rather
-    // than serve sparse rows, treat the version mismatch as unreadable: return
-    // an empty state so the cursor-based sync re-pulls full history with the
-    // current mapping. One-time per Item; the deltas are idempotent.
-    if (parsed.schema_version !== TXN_SCHEMA_VERSION) return emptyState();
-    return {
-      schema_version: TXN_SCHEMA_VERSION,
-      cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
-      accounts: parsed.accounts ?? {},
-      txns: parsed.txns ?? {},
-    };
+    const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
+    if (version >= TXN_SCHEMA_VERSION) {
+      // Current or newer. A newer blob (e.g. read by an older deploy after a
+      // rollback) is a superset, so pass its rows/accounts through untouched and
+      // preserve its version — never downgrade it, and never feed it to the
+      // legacy migrator, which would null the fields it doesn't know about.
+      return {
+        schema_version: version,
+        cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
+        accounts: parsed.accounts ?? {},
+        txns: parsed.txns ?? {},
+      };
+    }
+    // Strictly older / unversioned blob: upgrade in place, keeping every row and
+    // the cursor. Re-pulling would only recover what each bank still exposes to
+    // Plaid, dropping the long-tail history this store exists to retain (see
+    // file header). Newly-captured fields stay null on old rows until Plaid
+    // next `modified`s them.
+    return migrateLegacyState(parsed as unknown as LegacyItemState);
   } catch {
     // Rotated key / corrupted / unreadable value: start clean and re-sync.
     return emptyState();
@@ -455,10 +535,8 @@ export async function syncItemTransactions(
   const { state, note } = await syncItem(item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
-  // Project the lean display shape. `name` is the display name (merchant_name
-  // preferred, raw descriptor as fallback) — matching the prior behavior that
-  // recurring detection and search depend on — while StoredTxn keeps both raw
-  // parts. Account name is re-resolved from the merged accounts map.
+  // `name` is merchant_name || raw name — the display behavior recurring
+  // detection and search depend on; StoredTxn keeps both parts separately.
   const txns: Txn[] = Object.values(state.txns)
     .filter((t) => t.date >= cutoff)
     .map((t) => ({
