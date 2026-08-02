@@ -13,7 +13,9 @@ Four tabs (bottom navigation, mobile-first):
   over/approaching budget, low balance, upcoming recurring bills, spending
   pace vs last month, biggest purchase.
 - **Accounts** — per-institution balance sheet; tap any account for its own
-  balance history chart; holdings show gain/loss vs cost basis. Institutions
+  balance history chart; holdings show gain/loss vs cost basis. Any account can
+  be **hidden**: it keeps syncing but stops counting toward anything (see
+  "Hiding accounts" below). Institutions
   Plaid can't reach can be tracked as **manual accounts**: you type the
   balance, and it counts toward net worth and builds its own history like any
   linked account (see "Manual accounts" below).
@@ -122,6 +124,28 @@ name (e.g. "Chase") and log in with:
 
 - username: `user_good`
 - password: `pass_good`
+
+### Hiding accounts
+
+Some accounts you want synced but not counted: a joint account, a business
+card, an old account kept linked for records. On the Accounts tab, tap **Manage
+accounts** and then **Hide** on any account, linked or manual.
+
+A hidden account keeps syncing and keeps being stored. It's left out of net
+worth, the balance sheet, the Activity tab, budgets, insights, recurring-bill
+detection, and the goal picker. Hidden accounts collect in a collapsed
+**Hidden** card at the bottom of the Accounts tab, where **Unhide** restores
+them.
+
+Hiding is **retroactive**: the net-worth chart redraws as though the account was
+never counted, rather than showing a cliff on the day you hid it. That works
+because nothing is deleted. Snapshots keep recording the true total and every
+account's balance, and hiding is applied when the chart is read, so unhiding
+brings back the full history including the period while it was hidden.
+
+Hiding is not a security feature: the data is still fetched and stored, it just
+isn't shown or counted. To actually remove an account, disconnect it (Plaid) or
+delete it (manual).
 
 ### Manual accounts
 

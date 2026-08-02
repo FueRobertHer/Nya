@@ -70,6 +70,10 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
     const securities: Record<string, any> = {};
     (holdingsRes.data.securities || []).forEach((s) => (securities[s.security_id] = s));
     result.holdings = (holdingsRes.data.holdings || []).map((h) => ({
+      // Kept so holdings can be dropped along with a hidden parent account --
+      // otherwise hiding a brokerage would zero its balance but leave every
+      // position and its gain/loss on the Accounts tab.
+      account_id: h.account_id,
       name: securities[h.security_id]?.name || securities[h.security_id]?.ticker_symbol || 'Unknown',
       quantity: h.quantity,
       price: h.institution_price,

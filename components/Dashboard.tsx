@@ -21,9 +21,11 @@ type Account = {
   limit: number | null;
   currency: string | null;
   updated_at?: string; // manual accounts only: when the balance was last typed/pushed
+  hidden?: boolean; // excluded from every total and from the Activity tab
 };
 
 type Holding = {
+  account_id?: string; // absent on payloads cached before hiding existed
   name: string;
   quantity: number | null;
   value: number | null;
@@ -183,6 +185,13 @@ export default function Dashboard() {
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError] = useState('');
   const [manualDeleteTarget, setManualDeleteTarget] = useState<ManualAccount | null>(null);
+  // The Hidden card starts collapsed: it exists so hidden accounts are
+  // findable, not so they take up room on the balance sheet you decluttered.
+  const [hiddenExpanded, setHiddenExpanded] = useState(false);
+  // The stored hidden set, straight from the server, so hidden accounts stay
+  // listed (and unhideable) even when their institution fails to load.
+  const [hiddenMeta, setHiddenMeta] = useState<{ account_id: string; type: string }[]>([]);
+  const [togglingHidden, setTogglingHidden] = useState<string | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
   const backfillTried = useRef(false);
@@ -214,6 +223,7 @@ export default function Dashboard() {
       setInstitutions(data.institutions);
       setNetWorth(data.netWorth);
       setHistory(data.history ?? []);
+      setHiddenMeta(data.hidden ?? []);
       setAsOf(data.as_of ?? null);
       setConnected(data.institutions.length > 0);
 
@@ -233,6 +243,7 @@ export default function Dashboard() {
             institutions: data.institutions,
             netWorth: data.netWorth,
             history: data.history ?? [],
+            hidden: data.hidden ?? [],
             as_of: data.as_of,
           })
         );
@@ -277,6 +288,7 @@ export default function Dashboard() {
           setInstitutions(snap.institutions);
           setNetWorth(snap.netWorth ?? 0);
           setHistory(Array.isArray(snap.history) ? snap.history : []);
+          setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
           setAsOf(snap.as_of ?? null);
           setConnected(snap.institutions.length > 0);
           setLoading(false);
@@ -626,22 +638,125 @@ export default function Dashboard() {
 
   // Plaid returns institutions/accounts in no guaranteed order; sort by name
   // so the Accounts tab renders the same way every load.
+  //
+  // Hidden accounts are dropped here and surface in the Hidden card instead. An
+  // institution is only removed once it has nothing left to show: one whose
+  // accounts are ALL hidden goes, but one that simply failed to load keeps its
+  // (already empty) account list so its error and Reconnect button still render.
   const sortedInstitutions = useMemo(
     () =>
       [...institutions]
         .sort((a, b) => a.institution_name.localeCompare(b.institution_name))
-        .map((inst) => ({
-          ...inst,
-          accounts: [...inst.accounts].sort((a, b) => a.name.localeCompare(b.name)),
-        })),
-    [institutions]
+        .map((inst) => {
+          const hiddenIds = new Set(
+            inst.accounts.filter((a) => a.hidden).map((a) => a.account_id)
+          );
+          return {
+            ...inst,
+            accounts: [...inst.accounts]
+              .filter((a) => !a.hidden)
+              .sort((a, b) => a.name.localeCompare(b.name)),
+            // Holdings belong to a parent account, so hiding a brokerage has to
+            // take its positions with it. Holdings from a payload cached before
+            // this existed have no account_id and are kept.
+            holdings: inst.holdings.filter(
+              (h) => !h.account_id || !hiddenIds.has(h.account_id)
+            ),
+          };
+        })
+        .filter(
+          (inst) =>
+            inst.accounts.length > 0 ||
+            inst.holdings.length > 0 ||
+            !!inst.error ||
+            // Keep an entirely-hidden institution visible in manage mode, or
+            // its Disconnect button would be unreachable and the only way to
+            // remove it would be to unhide every account first.
+            (manageMode && !inst.manual)
+        ),
+    [institutions, manageMode]
+  );
+
+  // Hidden accounts for the Hidden card, built from the STORED set rather than
+  // from whatever resolved this load. An institution that's erroring returns no
+  // accounts, and deriving from the live list alone would make its hidden
+  // accounts silently disappear -- still hidden, still subtracted from history,
+  // but with no Unhide button anywhere.
+  const hiddenAccounts = useMemo(() => {
+    const live = new Map(
+      institutions.flatMap((i) =>
+        i.accounts
+          .filter((a) => a.hidden)
+          .map((a) => [a.account_id, { account: a, institution_name: i.institution_name }] as const)
+      )
+    );
+    return hiddenMeta
+      .map(({ account_id, type }) => {
+        const resolved = live.get(account_id);
+        if (resolved) return { ...resolved, resolved: true };
+        // Hidden, but its institution didn't answer this load. Render what we
+        // stored so it can still be unhidden.
+        return {
+          account: {
+            account_id,
+            name: 'Unavailable account',
+            type,
+            subtype: null,
+            balance: null,
+            currency: null,
+            hidden: true,
+          } as Account,
+          institution_name: 'Not loaded',
+          resolved: false,
+        };
+      })
+      .sort((a, b) => a.account.name.localeCompare(b.account.name));
+  }, [institutions, hiddenMeta]);
+
+  const toggleHidden = useCallback(
+    async (account_id: string, hidden: boolean) => {
+      setError('');
+      // Guarded like the adjacent manual-account actions: each toggle triggers
+      // a full refresh, so repeated taps would queue several of them.
+      setTogglingHidden(account_id);
+      try {
+        const res = await fetch('/api/hidden-accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_id, hidden }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          setError(data?.error ?? 'Could not update hidden accounts.');
+          return;
+        }
+        await loadNetWorth(true);
+        // Hidden accounts' transactions must leave the Activity tab too. Guarded
+        // like every other refresh here, so this can't kick off a first-ever
+        // Plaid sync from the Accounts tab.
+        if (txns !== null) loadTransactions(true);
+        // The estimated history layer doesn't know this account, so it can't
+        // subtract it and would sit high by its balance with a step at the
+        // estimated/real seam. The server cleared the backfill flag; actually
+        // running the recompute is on us, since the automatic one only fires
+        // when history is thin.
+        if (data?.recompute) requestBackfill(() => loadNetWorth());
+      } catch {
+        setError('Could not update hidden accounts.');
+      } finally {
+        setTogglingHidden(null);
+      }
+    },
+    [loadNetWorth, loadTransactions, requestBackfill, txns]
   );
 
   // One currency to label summed account figures (net worth, deltas). Accounts
   // can differ, so use the most common code and flag a genuine mix rather than
   // implying an FX-converted total.
+  // Hidden accounts excluded: a hidden EUR account must not make the Home tab
+  // announce "Accounts use multiple currencies" with no such account on screen.
   const allAccounts = useMemo(
-    () => institutions.flatMap((i) => i.accounts),
+    () => institutions.flatMap((i) => i.accounts.filter((a) => !a.hidden)),
     [institutions]
   );
   const accountCurrency = useMemo(
@@ -654,11 +769,18 @@ export default function Dashboard() {
     return seen.size > 1;
   }, [allAccounts]);
 
+  // Counts what's actually rendering, so hiding an institution's last account
+  // doesn't leave "3 institutions connected" above two cards. When everything
+  // is hidden the count would read "0 institutions connected", which sounds
+  // like nothing is linked rather than like it's all tucked away.
+  const shownInstitutionCount = sortedInstitutions.length;
   const subtitle = loading
     ? 'Loading your accounts…'
-    : connected
-      ? `${institutions.length} institution${institutions.length === 1 ? '' : 's'} connected`
-      : 'Connect your bank, credit card, and brokerage accounts';
+    : !connected
+      ? 'Connect your bank, credit card, and brokerage accounts'
+      : shownInstitutionCount === 0 && hiddenAccounts.length > 0
+        ? `All ${hiddenAccounts.length} account${hiddenAccounts.length === 1 ? '' : 's'} hidden`
+        : `${shownInstitutionCount} institution${shownInstitutionCount === 1 ? '' : 's'} connected`;
 
   return (
     <>
@@ -768,12 +890,14 @@ export default function Dashboard() {
                   txns={txns}
                   budgets={budgets}
                   accounts={institutions.flatMap((i) =>
-                    i.accounts.map((a) => ({
-                      name: a.name,
-                      type: a.type,
-                      balance: a.balance,
-                      currency: a.currency,
-                    }))
+                    i.accounts
+                      .filter((a) => !a.hidden)
+                      .map((a) => ({
+                        name: a.name,
+                        type: a.type,
+                        balance: a.balance,
+                        currency: a.currency,
+                      }))
                   )}
                 />
                 {error && <div className="error">{error}</div>}
@@ -889,33 +1013,47 @@ export default function Dashboard() {
                                   </td>
                                   <td className="num">
                                     {fmt(signedBalance(a), a.currency)}
-                                    {inst.manual && (
+                                    {(inst.manual || manageMode) && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
                                       <div
                                         className="manual-row-actions"
                                         onClick={(e) => e.stopPropagation()}
                                       >
-                                        <button
-                                          className="link-btn"
-                                          disabled={savingManual}
-                                          onClick={() =>
-                                            startEditManual({
-                                              account_id: a.account_id,
-                                              name: a.name,
-                                              institution_name: inst.institution_name,
-                                              type: a.type,
-                                              subtype: a.subtype,
-                                              balance: a.balance ?? 0,
-                                            })
-                                          }
-                                        >
-                                          Update
-                                        </button>
+                                        {inst.manual && (
+                                          <button
+                                            className="link-btn"
+                                            disabled={savingManual || togglingHidden !== null}
+                                            onClick={() =>
+                                              startEditManual({
+                                                account_id: a.account_id,
+                                                name: a.name,
+                                                institution_name: inst.institution_name,
+                                                type: a.type,
+                                                subtype: a.subtype,
+                                                balance: a.balance ?? 0,
+                                              })
+                                            }
+                                          >
+                                            Update
+                                          </button>
+                                        )}
+                                        {/* Hiding works on any account, linked
+                                            or manual: it only stops the account
+                                            counting, it doesn't remove it. */}
                                         {manageMode && (
                                           <button
+                                            className="link-btn"
+                                            disabled={togglingHidden !== null}
+                                            onClick={() => toggleHidden(a.account_id, true)}
+                                          >
+                                            {togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}
+                                          </button>
+                                        )}
+                                        {inst.manual && manageMode && (
+                                          <button
                                             className="link-btn danger-link"
-                                            disabled={savingManual}
+                                            disabled={savingManual || togglingHidden !== null}
                                             onClick={() => {
                                               setManualError('');
                                               setManualDeleteTarget({
@@ -1020,6 +1158,73 @@ export default function Dashboard() {
                     </div>
                   );
                 })}
+
+                {hiddenAccounts.length > 0 && (
+                  <div className="card hidden-section">
+                    <button
+                      className="holdings-toggle"
+                      onClick={() => setHiddenExpanded((v) => !v)}
+                      aria-expanded={hiddenExpanded}
+                    >
+                      <span className="holdings-title">
+                        Hidden
+                        <span className="holdings-count">{hiddenAccounts.length}</span>
+                      </span>
+                      <span className="holdings-summary">
+                        <svg
+                          className={`chevron${hiddenExpanded ? ' open' : ''}`}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </span>
+                    </button>
+                    {hiddenExpanded && (
+                      <>
+                        <p className="empty-note">
+                          These accounts still sync, but are left out of net worth, transactions,
+                          budgets and insights. Unhiding restores their history in full.
+                        </p>
+                        <table>
+                          <tbody>
+                            {hiddenAccounts.map(({ account, institution_name, resolved }) => (
+                              <tr key={account.account_id} className="hidden-row">
+                                <td>
+                                  {account.name}
+                                  <div className="type-tag">
+                                    {institution_name} · {account.subtype || account.type}
+                                  </div>
+                                </td>
+                                <td className="num">
+                                  {/* An unresolved account has no balance to
+                                      show; "--" beats a misleading $0.00. */}
+                                  {resolved ? fmt(signedBalance(account), account.currency) : '--'}
+                                  <div className="manual-row-actions">
+                                    <button
+                                      className="link-btn"
+                                      disabled={togglingHidden !== null}
+                                      onClick={() => toggleHidden(account.account_id, false)}
+                                    >
+                                      {togglingHidden === account.account_id
+                                        ? 'Unhiding…'
+                                        : 'Unhide'}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -1040,6 +1245,10 @@ export default function Dashboard() {
                 onSave={saveBudgets}
                 goals={goals}
                 onSaveGoals={saveGoals}
+                // Hidden accounts stay in this list rather than being filtered
+                // out: GoalsCard needs them to tell "you hid this account" from
+                // "this account was disconnected". It excludes them from the
+                // picker itself.
                 accounts={institutions.flatMap((i) =>
                   i.accounts.map((a) => ({
                     account_id: a.account_id,
@@ -1047,6 +1256,7 @@ export default function Dashboard() {
                     institution: i.institution_name,
                     balance: a.balance,
                     currency: a.currency,
+                    hidden: a.hidden,
                   }))
                 )}
                 loading={txnsLoading}

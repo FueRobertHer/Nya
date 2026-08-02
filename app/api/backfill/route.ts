@@ -7,6 +7,7 @@ import { getManualAccounts, isOwedType } from '@/lib/manual';
 import {
   replaceEstimated,
   replaceEstimatedAccounts,
+  replaceEstimatedFlat,
   getRealSnapshotDates,
   isBackfillDone,
   markBackfillDone,
@@ -100,7 +101,12 @@ export async function POST() {
     // the flat-held `rest` below -- the same convention already used for
     // investments and loans, which does mean today's manual balance is applied
     // retroactively across the estimated range.
-    for (const a of await getManualAccounts()) {
+    // Read once and reuse below: two reads could disagree, and an account
+    // created between them would land in the flat record without being in
+    // totalNow, so hiding it later would subtract a contribution these points
+    // never contained.
+    const manualAccounts = await getManualAccounts();
+    for (const a of manualAccounts) {
       totalNow += isOwedType(a.type) ? -a.balance : a.balance;
     }
 
@@ -117,6 +123,24 @@ export async function POST() {
 
     // Everything that isn't cash/credit is held flat at today's value.
     const rest = totalNow - signedCash();
+
+    // Record WHICH accounts make up that flat term, and at what balance. The
+    // estimated points don't name them (they only carry per-date cash
+    // balances), so without this there'd be no way to work out how much of
+    // `rest` a given account contributed. Hiding an account needs exactly that
+    // number to subtract it from the estimated layer: its balance today could
+    // be wildly different, and an account linked after this run contributed
+    // nothing at all. Stored separately from the per-account estimated series
+    // so investments still get no fabricated flat sparkline.
+    const flat: Record<string, number> = {};
+    for (const { accounts } of perItem) {
+      for (const a of accounts) {
+        if (!cashType[a.account_id]) flat[a.account_id] = a.balances.current ?? 0;
+      }
+    }
+    for (const a of manualAccounts) {
+      if (!cashType[a.account_id]) flat[a.account_id] = a.balance;
+    }
 
     // Walk backward one day at a time: un-applying day D's transactions
     // yields balances at the end of day D-1.
@@ -140,6 +164,7 @@ export async function POST() {
 
     await replaceEstimated(estimatedTotals);
     await replaceEstimatedAccounts(estimatedAccounts);
+    await replaceEstimatedFlat(flat);
     await markBackfillDone();
     await clearCaches(); // cached payloads don't include the new history yet
 

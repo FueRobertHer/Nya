@@ -20,6 +20,10 @@ export type GoalAccount = {
   institution: string;
   balance: number | null;
   currency: string | null;
+  // Hidden accounts are still passed in so a goal tracking one can say so,
+  // rather than falling through to "linked account disconnected", which would
+  // be alarming and false. They're kept out of the picker below.
+  hidden?: boolean;
 };
 
 export default function GoalsCard({
@@ -101,11 +105,16 @@ export default function GoalsCard({
         aria-label="Tracked account"
       >
         <option value="">No linked account</option>
-        {accounts.map((a) => (
-          <option key={a.account_id} value={a.account_id}>
-            {a.name} ({a.institution})
-          </option>
-        ))}
+        {accounts
+          // Hidden accounts aren't offered, but one that's already selected
+          // stays listed so the picker doesn't render blank on an existing goal.
+          .filter((a) => !a.hidden || a.account_id === accountId)
+          .map((a) => (
+            <option key={a.account_id} value={a.account_id}>
+              {a.name} ({a.institution})
+              {a.hidden ? ' · hidden' : ''}
+            </option>
+          ))}
       </select>
       <div className="card-actions">
         <button onClick={commit} disabled={!name.trim() || !target}>
@@ -150,7 +159,10 @@ export default function GoalsCard({
           );
         }
         const account = goal.account_id ? accountById.get(goal.account_id) : undefined;
-        const balance = account?.balance ?? null;
+        // A hidden account contributes nothing anywhere else, so it shouldn't
+        // drive a progress meter either. Treated as untracked, but labelled
+        // distinctly below so it doesn't read as "disconnected".
+        const balance = account && !account.hidden ? account.balance : null;
         const currency = account?.currency ?? null;
         const ratio = balance != null ? Math.max(balance, 0) / goal.target : null;
         const done = ratio != null && ratio >= 1;
@@ -174,7 +186,11 @@ export default function GoalsCard({
                 </div>
               ) : (
                 <div className="type-tag">
-                  {goal.account_id ? 'linked account disconnected' : 'no account linked'}
+                  {account?.hidden
+                    ? 'tracked account is hidden'
+                    : goal.account_id
+                      ? 'linked account disconnected'
+                      : 'no account linked'}
                 </div>
               )}
             </button>

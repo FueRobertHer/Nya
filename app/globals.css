@@ -205,6 +205,21 @@ button.danger {
   color: var(--accent);
 }
 
+/* --- hidden accounts ---
+   Dimmed so the Hidden card reads as an archive rather than part of the
+   balance sheet, while staying legible enough to find what you hid. */
+.hidden-section .holdings-title {
+  color: var(--muted);
+}
+
+.hidden-row td {
+  opacity: 0.62;
+}
+
+.hidden-row:hover td {
+  opacity: 1;
+}
+
 /* --- manually-tracked accounts --- */
 
 /* Marks a card as typed-in rather than Plaid-synced, so a stale manual balance
