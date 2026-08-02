@@ -19,15 +19,24 @@ Four tabs (bottom navigation, mobile-first):
   linked account (see "Manual accounts" below).
 - **Activity** — twelve months of transactions with a monthly breakdown:
   spending-by-month trend columns, money in/out/net, top spending
-  categories, and search. Tap any transaction to recategorize it (manual
-  overrides win over Plaid's auto-categorization and persist). Transfers and
-  loan payments are excluded from the totals so credit-card payments don't
-  double-count.
+  categories, and search. Each row shows the merchant's logo, and amounts
+  render in their own currency. Tap any transaction to recategorize it or
+  rename its vendor — a rename applies to every transaction from that merchant
+  (keyed on Plaid's merchant id, falling back to institution + name). Both are
+  manual overrides that win over Plaid's data and persist. Transfers and loan
+  payments are excluded from the totals so credit-card payments don't
+  double-count, and a pending charge is de-duplicated against its posted
+  version so a purchase isn't counted twice.
 - **Budgets** — Mint-style monthly budgets per spending category with
   severity meters (on track → approaching → over); savings goals tracked
   against a linked account's live balance; and recurring-bill detection
   (merchants charging a consistent amount for 3+ months) with estimated next
   charge dates and a monthly total. All stored encrypted in Redis.
+
+Amounts are shown in each transaction's own currency; summed figures (month
+totals, budgets, recurring bills) use your most common currency and flag when
+a period mixes currencies — full FX conversion isn't done, and account-level
+figures (net worth, balances, goals) are still shown in `$`.
 
 A refresh button in the header forces live Plaid data from any tab.
 
@@ -280,4 +289,9 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 
 - Push notifications (PWA web push) for budget alerts and upcoming bills
 - Goal target dates with required-monthly-savings math
-- Multi-currency support (`iso_currency_code` is already captured per account)
+- Currency-aware account-level figures — transaction views already render each
+  amount in its own currency and flag mixed-currency totals, but net worth,
+  balances, and goals still show `$` because the live-balance path doesn't
+  surface a currency code yet. More unbuilt features (spending map, credit
+  utilization, subcategory drill-down, …) are tracked as GitHub issues under
+  the `plaid-data-unlock` label.

@@ -172,10 +172,12 @@ export type ManualInstitution = {
     account_id: string;
     name: string;
     official_name: string | null;
+    mask: null;
     type: string;
     subtype: string | null;
     balance: number;
     available: null;
+    limit: null;
     currency: string;
     updated_at: string;
   }[];
@@ -218,12 +220,19 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       account_id: a.account_id,
       name: a.name,
       official_name: null,
+      // Fields a Plaid account carries that a typed one has no equivalent for.
+      // Explicitly null rather than absent so the synthetic account is the same
+      // shape as a real one: `available` is pending-hold specific, `mask` is the
+      // last 4 of a real account number, and `limit` drives the credit
+      // utilization meter, which needs a real credit line to mean anything.
+      mask: null,
+      available: null,
+      limit: null,
       type: a.type,
       subtype: a.subtype,
       balance: a.balance,
-      // Plaid's "available" is a distinct concept (pending holds) that a typed
-      // balance has no equivalent for; null keeps the UI from implying one.
-      available: null,
+      // Manual accounts are USD-only for now, matching the rest of the
+      // account-level figures (net worth, balances, goals).
       currency: 'USD',
       updated_at: a.updated_at,
     });

@@ -27,11 +27,21 @@
 // idempotent: if Plaid later modifies a trimmed row we re-add it, and a removal
 // of one is a no-op.
 
-import { TransactionsUpdateStatus, type Transaction } from 'plaid';
+import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
 import { encrypt, decrypt } from './crypto';
 import { redis, k, type StoredItem } from './storage';
 
+// Bump when a persisted row gains a field historical rows can't satisfy. A blob
+// at an older version is upgraded in place on read (see readState / migrateLegacyState).
+export const TXN_SCHEMA_VERSION = 2;
+
+// Display shape sent to the client. `name` here is the display name
+// (merchant_name || raw name); the full-fidelity data lives in StoredTxn. We
+// project a widened-but-still-flat set of scalars (no nested objects) so the
+// Activity views can offer subcategory, channel, location, time, the real
+// merchant behind a processor, and a "what is this charge?" detail panel
+// without shipping the whole StoredTxn to the browser.
 export type Txn = {
   transaction_id: string;
   date: string; // YYYY-MM-DD
@@ -41,16 +51,94 @@ export type Txn = {
   account_name: string;
   institution_name: string;
   category: string | null;
+  iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
+  vendor_key: string; // stable per-merchant key for vendor renames (see vendorKey)
+  logo_url: string | null; // merchant logo for the row
+  category_icon_url: string | null; // Plaid category icon
+
+  subcategory: string | null; // PFC detailed, humanized and de-prefixed
+  category_confidence: string | null; // VERY_HIGH … UNKNOWN; flags low-confidence rows
+  transaction_code: string | null; // transfer | atm | purchase | payroll … (reliable transfer signal)
+  payment_channel: string | null; // online | in store | other
+  datetime: string | null; // true event time (posting date is coarser); drives intra-day order
+  website: string | null;
+  check_number: string | null;
+  account_owner: string | null;
+  city: string | null;
+  region: string | null;
+  counterparty: string | null; // real merchant behind a processor, when it differs
+  payment_processor: string | null; // e.g. the PayPal/Square in front of the merchant
+  payment_reference: string | null; // payment_meta reference number, for "what is this charge?"
 };
 
-// Persisted form keeps account_id so display names can be re-resolved from the
-// merged name map at read time (an account name can arrive on a later page
-// than a transaction that references it).
-export type StoredTxn = Txn & { account_id: string };
+// Full-fidelity persisted form. We capture nearly everything Plaid returns per
+// transaction rather than a display subset: adding a field later would cost a
+// full re-sync (see TXN_SCHEMA_VERSION), and the blob is gzip-compressed at rest
+// where this repetitive data compresses heavily, so the space cost is small.
+// Read paths derive whatever narrower shape they need (e.g. the display Txn).
+export type StoredTxn = {
+  transaction_id: string;
+  pending_transaction_id: string | null; // pending row → its later posted row
+  account_id: string;
+
+  amount: number;
+  iso_currency_code: string | null;
+  unofficial_currency_code: string | null;
+
+  date: string; // posting date, YYYY-MM-DD; datetime fields are the true event time
+  authorized_date: string | null;
+  authorized_datetime: string | null;
+  datetime: string | null;
+
+  // Raw `name` and `merchant_name` kept separately; merchant_entity_id is the
+  // stable per-merchant key for vendor-level features.
+  name: string; // raw bank descriptor (Plaid `name`)
+  merchant_name: string | null;
+  merchant_entity_id: string | null;
+  website: string | null;
+  logo_url: string | null;
+
+  personal_finance_category: Transaction['personal_finance_category'] | null; // primary/detailed/confidence
+  personal_finance_category_icon_url: string | null;
+
+  pending: boolean;
+  payment_channel: string | null; // online | in store | other
+  transaction_code: Transaction['transaction_code'] | null; // transfer | atm | purchase | payroll …
+  transaction_type: string | null;
+  check_number: string | null;
+  account_owner: string | null;
+
+  location: Transaction['location'] | null; // address, city, region, lat/lon, store_number
+  payment_meta: Transaction['payment_meta'] | null; // payee, payer, reference_number, processor …
+  counterparties: NonNullable<Transaction['counterparties']>; // real merchant behind a processor
+
+  // Derived / resolved, retained for existing consumers.
+  category: string | null; // PFC primary, humanized
+  account_name: string;
+  institution_name: string;
+};
+
+// Per-account metadata, captured from each sync's `accounts[]` (we previously
+// kept only the display name). Enables balance/net-worth and account-list views.
+export type StoredAccount = {
+  name: string;
+  official_name: string | null;
+  type: string | null; // depository | credit | loan | investment
+  subtype: string | null; // checking | savings | credit card …
+  mask: string | null; // last 4
+  balances: {
+    available: number | null;
+    current: number | null;
+    limit: number | null;
+    iso_currency_code: string | null;
+    unofficial_currency_code: string | null;
+  } | null;
+};
 
 type ItemState = {
+  schema_version: number; // older value → upgraded in place on read
   cursor: string; // '' = never synced → pull full history
-  accountNames: Record<string, string>; // account_id → display name, merged over time
+  accounts: Record<string, StoredAccount>; // account_id → metadata, merged over time
   txns: Record<string, StoredTxn>; // keyed by transaction_id
 };
 
@@ -67,6 +155,67 @@ const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 const MAX_PAGES = 50;
 const MAX_MUTATION_RETRIES = 3;
 
+// Stable grouping key for vendor-level features (renames applied in
+// /api/transactions). Prefers Plaid's merchant entity id — unique per merchant
+// and stable across institutions — so a rename hits every transaction from that
+// merchant. Falls back to institution + merchant/display name when Plaid gives
+// no entity id (older rows, or merchants it can't resolve), which scopes the
+// rename to that institution to avoid colliding same-named merchants elsewhere.
+export function vendorKey(t: {
+  merchant_entity_id: string | null;
+  merchant_name: string | null;
+  name: string;
+  institution_name: string;
+}): string {
+  if (t.merchant_entity_id) return `mid:${t.merchant_entity_id}`;
+  const nm = (t.merchant_name || t.name).toLowerCase().trim();
+  return `nm:${t.institution_name.toLowerCase().trim()}::${nm}`;
+}
+
+// PFC `detailed` humanized and stripped of its `primary` prefix, so
+// "FOOD_AND_DRINK_COFFEE" surfaces as just "coffee" alongside the primary
+// category rather than repeating it.
+function humanizeSubcategory(pfc: StoredTxn['personal_finance_category']): string | null {
+  const detailed = pfc?.detailed;
+  if (!detailed) return null;
+  const primary = pfc?.primary ?? '';
+  const rest = primary && detailed.startsWith(primary) ? detailed.slice(primary.length) : detailed;
+  const s = rest.replace(/_/g, ' ').trim().toLowerCase();
+  return s || null;
+}
+
+// The real merchant behind a payment processor: Plaid resolves counterparties
+// with a `type`, so the underlying store (`merchant`) and the processor
+// (`payment_app`, e.g. PayPal/Square) can be separated from the raw descriptor.
+function resolveCounterparty(t: StoredTxn): string | null {
+  const merchant = t.counterparties.find((c) => c.type === 'merchant');
+  const name = merchant?.name ?? null;
+  // Only interesting when it differs from what we already show as the name.
+  const display = (t.merchant_name || t.name).toLowerCase().trim();
+  return name && name.toLowerCase().trim() !== display ? name : null;
+}
+
+function resolveProcessor(t: StoredTxn): string | null {
+  if (t.payment_meta?.payment_processor) return t.payment_meta.payment_processor;
+  const app = t.counterparties.find((c) => c.type === 'payment_app');
+  return app?.name ?? null;
+}
+
+// Ids of pending rows that a later posted row supersedes: when a pending charge
+// posts, Plaid emits a new row carrying the pending one's id in
+// pending_transaction_id (and usually removes the pending original, but the two
+// can briefly coexist). Suppressing the pending original prevents the same
+// purchase from being counted twice.
+function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
+  const superseded = new Set<string>();
+  for (const t of Object.values(txns)) {
+    if (t.pending_transaction_id && txns[t.pending_transaction_id]) {
+      superseded.add(t.pending_transaction_id);
+    }
+  }
+  return superseded;
+}
+
 function daysAgoIso(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
@@ -76,7 +225,7 @@ function stateKey(item_id: string): string {
 }
 
 function emptyState(): ItemState {
-  return { cursor: '', accountNames: {}, txns: {} };
+  return { schema_version: TXN_SCHEMA_VERSION, cursor: '', accounts: {}, txns: {} };
 }
 
 // Blobs are gzip-compressed before encryption — financial JSON is highly
@@ -133,16 +282,114 @@ async function decodeState(blob: string): Promise<Partial<ItemState>> {
   return JSON.parse(json) as Partial<ItemState>;
 }
 
+// Shape of a pre-v2 stored blob: an account_id→name map and the lean 9-field
+// rows. Kept only for the one-time in-place upgrade in readState.
+type LegacyStoredTxn = {
+  transaction_id: string;
+  date: string;
+  name: string; // was merchant_name || name, already merged (unrecoverable split)
+  amount: number;
+  pending: boolean;
+  account_name: string;
+  institution_name: string;
+  category: string | null;
+  account_id: string;
+};
+type LegacyItemState = {
+  cursor?: string;
+  accountNames?: Record<string, string>;
+  txns?: Record<string, LegacyStoredTxn>;
+};
+
+function migrateLegacyTxn(t: LegacyStoredTxn): StoredTxn {
+  return {
+    transaction_id: t.transaction_id,
+    pending_transaction_id: null,
+    account_id: t.account_id,
+
+    amount: t.amount,
+    iso_currency_code: null,
+    unofficial_currency_code: null,
+
+    date: t.date,
+    authorized_date: null,
+    authorized_datetime: null,
+    datetime: null,
+
+    // Legacy `name` was already merchant_name||name and can't be un-merged;
+    // keep it as `name` with the merchant fields null. Display is unchanged.
+    name: t.name,
+    merchant_name: null,
+    merchant_entity_id: null,
+    website: null,
+    logo_url: null,
+
+    personal_finance_category: null,
+    personal_finance_category_icon_url: null,
+
+    pending: t.pending,
+    payment_channel: null,
+    transaction_code: null,
+    transaction_type: null,
+    check_number: null,
+    account_owner: null,
+
+    location: null,
+    payment_meta: null,
+    counterparties: [],
+
+    category: t.category ?? null,
+    account_name: t.account_name ?? '',
+    institution_name: t.institution_name,
+  };
+}
+
+function migrateLegacyState(old: LegacyItemState): ItemState {
+  const accounts: Record<string, StoredAccount> = {};
+  for (const [id, name] of Object.entries(old.accountNames ?? {})) {
+    accounts[id] = {
+      name,
+      official_name: null,
+      type: null,
+      subtype: null,
+      mask: null,
+      balances: null,
+    };
+  }
+  const txns: Record<string, StoredTxn> = {};
+  for (const [id, t] of Object.entries(old.txns ?? {})) txns[id] = migrateLegacyTxn(t);
+  return {
+    schema_version: TXN_SCHEMA_VERSION,
+    cursor: typeof old.cursor === 'string' ? old.cursor : '',
+    accounts,
+    txns,
+  };
+}
+
 async function readState(item_id: string): Promise<ItemState> {
   try {
     const blob = await redis().get<string>(stateKey(item_id));
     if (!blob) return emptyState();
     const parsed = await decodeState(blob);
-    return {
-      cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
-      accountNames: parsed.accountNames ?? {},
-      txns: parsed.txns ?? {},
-    };
+    const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
+    if (version >= TXN_SCHEMA_VERSION) {
+      // Current or newer. A newer blob (e.g. read by an older deploy after a
+      // rollback) is a superset, so pass its rows/accounts through untouched and
+      // preserve its version — never downgrade it, and never feed it to the
+      // legacy migrator, which would null the fields it doesn't know about.
+      return {
+        schema_version: version,
+        cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
+        accounts: parsed.accounts ?? {},
+        txns: parsed.txns ?? {},
+      };
+    }
+    // Strictly older / unversioned blob: upgrade in place, keeping every row and
+    // the cursor. Re-pulling would only recover what each bank still exposes to
+    // Plaid, dropping the long-tail history this store exists to retain (see
+    // file header). Newly-captured fields stay null on old rows until Plaid
+    // next `modified`s them.
+    return migrateLegacyState(parsed as unknown as LegacyItemState);
   } catch {
     // Rotated key / corrupted / unreadable value: start clean and re-sync.
     return emptyState();
@@ -190,19 +437,65 @@ export async function clearItemTransactions(item_id: string): Promise<void> {
 
 function toStored(
   t: Transaction,
-  accountNames: Record<string, string>,
+  accounts: Record<string, StoredAccount>,
   institution_name: string
 ): StoredTxn {
   return {
     transaction_id: t.transaction_id,
-    date: t.date,
-    name: t.merchant_name || t.name,
-    amount: t.amount,
-    pending: t.pending,
+    pending_transaction_id: t.pending_transaction_id ?? null,
     account_id: t.account_id,
-    account_name: accountNames[t.account_id] || '',
-    institution_name,
+
+    amount: t.amount,
+    iso_currency_code: t.iso_currency_code ?? null,
+    unofficial_currency_code: t.unofficial_currency_code ?? null,
+
+    date: t.date,
+    authorized_date: t.authorized_date ?? null,
+    authorized_datetime: t.authorized_datetime ?? null,
+    datetime: t.datetime ?? null,
+
+    name: t.name,
+    merchant_name: t.merchant_name ?? null,
+    merchant_entity_id: t.merchant_entity_id ?? null,
+    website: t.website ?? null,
+    logo_url: t.logo_url ?? null,
+
+    personal_finance_category: t.personal_finance_category ?? null,
+    personal_finance_category_icon_url: t.personal_finance_category_icon_url ?? null,
+
+    pending: t.pending,
+    payment_channel: t.payment_channel ?? null,
+    transaction_code: t.transaction_code ?? null,
+    transaction_type: t.transaction_type ?? null,
+    check_number: t.check_number ?? null,
+    account_owner: t.account_owner ?? null,
+
+    location: t.location ?? null,
+    payment_meta: t.payment_meta ?? null,
+    counterparties: t.counterparties ?? [],
+
     category: t.personal_finance_category?.primary?.replace(/_/g, ' ').toLowerCase() ?? null,
+    account_name: accounts[t.account_id]?.name || '',
+    institution_name,
+  };
+}
+
+function toStoredAccount(a: AccountBase): StoredAccount {
+  return {
+    name: a.name,
+    official_name: a.official_name ?? null,
+    type: a.type ?? null,
+    subtype: a.subtype ?? null,
+    mask: a.mask ?? null,
+    balances: a.balances
+      ? {
+          available: a.balances.available ?? null,
+          current: a.balances.current ?? null,
+          limit: a.balances.limit ?? null,
+          iso_currency_code: a.balances.iso_currency_code ?? null,
+          unofficial_currency_code: a.balances.unofficial_currency_code ?? null,
+        }
+      : null,
   };
 }
 
@@ -240,12 +533,12 @@ async function syncItem(
         const res = await plaidClient.transactionsSync({ access_token, cursor, count: 500 });
         pages++;
         lastStatus = res.data.transactions_update_status;
-        res.data.accounts.forEach((a) => (state.accountNames[a.account_id] = a.name));
+        res.data.accounts.forEach((a) => (state.accounts[a.account_id] = toStoredAccount(a)));
         for (const t of res.data.added) {
-          state.txns[t.transaction_id] = toStored(t, state.accountNames, item.institution_name);
+          state.txns[t.transaction_id] = toStored(t, state.accounts, item.institution_name);
         }
         for (const t of res.data.modified) {
-          state.txns[t.transaction_id] = toStored(t, state.accountNames, item.institution_name);
+          state.txns[t.transaction_id] = toStored(t, state.accounts, item.institution_name);
         }
         for (const r of res.data.removed) {
           if (r.transaction_id) delete state.txns[r.transaction_id];
@@ -325,11 +618,37 @@ export async function syncItemTransactions(
   const { state, note } = await syncItem(item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
-  const txns = Object.values(state.txns)
-    .filter((t) => t.date >= cutoff)
-    .map(({ account_id, ...t }) => ({
-      ...t,
-      account_name: state.accountNames[account_id] || t.account_name || '',
+  const superseded = supersededPendingIds(state.txns);
+  // `name` is merchant_name || raw name — the display behavior recurring
+  // detection and search depend on; StoredTxn keeps both parts separately.
+  const txns: Txn[] = Object.values(state.txns)
+    .filter((t) => t.date >= cutoff && !superseded.has(t.transaction_id))
+    .map((t) => ({
+      transaction_id: t.transaction_id,
+      date: t.date,
+      name: t.merchant_name || t.name,
+      amount: t.amount,
+      pending: t.pending,
+      account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+      institution_name: t.institution_name,
+      category: t.category,
+      iso_currency_code: t.iso_currency_code,
+      vendor_key: vendorKey(t),
+      logo_url: t.logo_url,
+      category_icon_url: t.personal_finance_category_icon_url,
+      subcategory: humanizeSubcategory(t.personal_finance_category),
+      category_confidence: t.personal_finance_category?.confidence_level ?? null,
+      transaction_code: t.transaction_code ?? null,
+      payment_channel: t.payment_channel,
+      datetime: t.datetime ?? t.authorized_datetime,
+      website: t.website,
+      check_number: t.check_number,
+      account_owner: t.account_owner,
+      city: t.location?.city ?? null,
+      region: t.location?.region ?? null,
+      counterparty: resolveCounterparty(t),
+      payment_processor: resolveProcessor(t),
+      payment_reference: t.payment_meta?.reference_number ?? null,
     }));
   return { txns, note };
 }
@@ -347,5 +666,11 @@ export async function readItemTransactions(
   const { state, note } = await syncItem(item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(sinceDays);
-  return { txns: Object.values(state.txns).filter((t) => t.date >= cutoff), note };
+  const superseded = supersededPendingIds(state.txns);
+  return {
+    txns: Object.values(state.txns).filter(
+      (t) => t.date >= cutoff && !superseded.has(t.transaction_id)
+    ),
+    note,
+  };
 }
