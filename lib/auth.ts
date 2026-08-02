@@ -61,16 +61,25 @@ export async function verifySessionToken(token: string | undefined | null): Prom
   return true;
 }
 
-/** Compares against APP_PASSWORD via fixed-length hash comparison, so timing doesn't leak the real password's length. */
-export async function verifyPassword(candidate: string): Promise<boolean> {
-  const expected = process.env.APP_PASSWORD;
-  if (!expected) {
-    throw new Error('APP_PASSWORD is not set.');
-  }
+/**
+ * Constant-time string equality. Hashes both sides first so the comparison
+ * runs over fixed-length hex regardless of input, meaning neither the length
+ * nor the content of the real secret leaks through timing.
+ */
+export async function secretsMatch(candidate: string, expected: string): Promise<boolean> {
   const [a, b] = await Promise.all([sha256Hex(candidate), sha256Hex(expected)]);
   let diff = 0;
   for (let i = 0; i < a.length; i++) {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/** Compares against APP_PASSWORD via fixed-length hash comparison, so timing doesn't leak the real password's length. */
+export async function verifyPassword(candidate: string): Promise<boolean> {
+  const expected = process.env.APP_PASSWORD;
+  if (!expected) {
+    throw new Error('APP_PASSWORD is not set.');
+  }
+  return secretsMatch(candidate, expected);
 }

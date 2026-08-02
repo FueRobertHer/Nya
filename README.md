@@ -13,7 +13,10 @@ Four tabs (bottom navigation, mobile-first):
   over/approaching budget, low balance, upcoming recurring bills, spending
   pace vs last month, biggest purchase.
 - **Accounts** — per-institution balance sheet; tap any account for its own
-  balance history chart; holdings show gain/loss vs cost basis.
+  balance history chart; holdings show gain/loss vs cost basis. Institutions
+  Plaid can't reach can be tracked as **manual accounts**: you type the
+  balance, and it counts toward net worth and builds its own history like any
+  linked account (see "Manual accounts" below).
 - **Activity** — twelve months of transactions with a monthly breakdown:
   spending-by-month trend columns, money in/out/net, top spending
   categories, and search. Each row shows the merchant's logo, and amounts
@@ -84,6 +87,9 @@ each date heading:
    - `SESSION_SECRET` — generate with `openssl rand -base64 32`
    - `CRON_SECRET` — generate with `openssl rand -base64 32`; authenticates
      the daily net-worth snapshot cron (Vercel sends it automatically)
+   - `INGEST_SECRET` (optional), generate with `openssl rand -base64 32`;
+     authenticates scripted balance pushes to manual accounts. Leave it unset
+     to keep that endpoint closed.
 
 ## 3. Local development
 
@@ -116,6 +122,69 @@ name (e.g. "Chase") and log in with:
 
 - username: `user_good`
 - password: `pass_good`
+
+### Manual accounts
+
+Plaid's coverage is wide but uneven: small credit unions, HSAs, 401k
+recordkeepers, foreign banks, and anything that isn't a financial institution
+at all (property, crypto held off-exchange) may simply not be linkable. Those
+get tracked by hand.
+
+Click **Add a manual account** (on the Accounts tab, or on the empty state
+before anything is connected), give it a name, an institution, a type, and a
+balance. Accounts sharing an institution name group into one card. From then
+on it behaves like a linked account: it counts toward net worth, appears in
+the Accounts tab, is selectable as a savings-goal source, and gets its own
+balance history chart.
+
+The balance holds flat until you change it, and each update is recorded on
+the timeline, so the chart shows a step at each update rather than a
+pretend-smooth curve. Credit and loan balances are entered as the **amount
+owed** (a positive number) and subtract from net worth.
+
+Deleting a manual account is not reversible: re-adding it creates a new
+account with a fresh id and an empty history.
+
+#### Updating balances from a script
+
+Retyping balances gets old. If you set `INGEST_SECRET`, anything that can make
+an HTTP request can push balances into your manual accounts:
+
+```bash
+curl -X POST https://your-app.vercel.app/api/ingest/balance -H "Authorization: Bearer $INGEST_SECRET" -H 'Content-Type: application/json' -d '{"updates":[{"account_id":"manual_...","balance":1234.56}]}'
+```
+
+The `account_id` is shown in the account's edit dialog. The response reports
+each id's outcome (`updated`, `not_found`, or `invalid`) so a script pointed
+at a stale id fails loudly instead of looking healthy. A successful push also
+records a net-worth snapshot immediately, so the chart doesn't wait for the
+app to be opened.
+
+This is the escape hatch for filling Plaid's gaps however you like. Some
+options, roughly in order of how well they hold up:
+
+- **[SimpleFIN Bridge](https://beta-bridge.simplefin.org/)** (~$15/yr,
+  read-only, daily refresh) is purpose-built for personal aggregation and is
+  what Actual Budget and Firefly III use. It sometimes covers institutions
+  Plaid misses.
+- **OFX Direct Connect**, the pre-Plaid standard, is still enabled at many
+  credit unions (often needing a separate enrollment and PIN) and is
+  scriptable with [`ofxtools`](https://github.com/csingley/ofxtools). Check
+  the [GnuCash bank list](https://wiki.gnucash.org/wiki/OFX_Direct_Connect_Bank_Settings)
+  for a given institution. The industry is migrating away from it, so treat it
+  as a bonus where it exists.
+- **Other aggregators** (Teller, MX, Akoya, Finicity) generally have
+  *narrower* long-tail coverage than Plaid, so they rarely help with the exact
+  institutions Plaid is missing.
+- **Scraping your own account** is possible but a maintenance treadmill: MFA
+  and device binding break it, bank logins from datacenter IPs get flagged (so
+  it can't run on Vercel), most bank terms prohibit automated access, and the
+  failure mode is a locked account rather than a stale number. If you do it,
+  run it on your own machine and push the result here rather than storing bank
+  credentials in this app.
+
+Note that the endpoint only *updates* accounts that already exist. It can't
+create them, so a leaked token can't invent accounts.
 
 ## 5. Deploy
 
@@ -207,6 +276,10 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 ## Limitations
 
 - **No automated tests.**
+- **Manual balances are only as fresh as your last update.** They hold flat
+  between updates, so a stale one quietly overstates or understates net worth.
+  Each card shows when it was last updated. Automate it with
+  `/api/ingest/balance` if a given account matters.
 - **Offline is read-only last-known data** — the PWA opens with the last
   snapshot from `localStorage`, but refreshing, linking, and transactions
   need a network connection (`/api/*` responses are never cached by the

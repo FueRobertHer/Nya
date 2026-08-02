@@ -7,6 +7,7 @@
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { getItems, type StoredItem } from './storage';
+import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
 
 export type InstitutionResult = {
   institution_name: string;
@@ -15,6 +16,8 @@ export type InstitutionResult = {
   holdings: any[];
   error: string | null;
   needs_reauth: boolean;
+  /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
+  manual?: boolean;
 };
 
 async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
@@ -89,6 +92,34 @@ export async function computeNetWorth(): Promise<{
   // Fetch every institution concurrently instead of one at a time --
   // with N linked accounts this used to take N sequential round trips.
   const institutions = await Promise.all(items.map(fetchInstitution));
+
+  // Manually-tracked accounts join the same list, so net worth, the Accounts
+  // tab, per-account history, goals and insights all treat them like any other
+  // account with no special-casing downstream.
+  //
+  // A failed read becomes an institution with an `error` instead of an empty
+  // list. That matters: callers gate snapshot recording on
+  // `institutions.every(i => !i.error)`, and if a Redis blip silently returned
+  // "no manual accounts" the gate would still pass and a net worth short by
+  // the entire manual total would be written to the real history layer -- which
+  // nothing ever rewrites for a past date. Surfacing the error blocks the
+  // write instead. (Accepted consequence: a broken Plaid item freezes manual
+  // history too, since one gate covers the whole snapshot. Splitting it would
+  // corrupt the total series, which is worse.)
+  try {
+    institutions.push(...toInstitutions(await getManualAccounts()));
+  } catch (err) {
+    console.error('Manual accounts read failed', err);
+    institutions.push({
+      institution_name: 'Manual accounts',
+      item_id: `${MANUAL_ITEM_PREFIX}error`,
+      accounts: [],
+      holdings: [],
+      error: 'Could not load manually-tracked accounts',
+      needs_reauth: false,
+      manual: true,
+    });
+  }
 
   // Net worth = sum of depository/investment/other balances minus credit/loan balances.
   // Holdings values are already reflected in the parent investment account's balance,

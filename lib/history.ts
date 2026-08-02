@@ -27,18 +27,23 @@ const BACKFILL_FLAG = k('history:backfill-done');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
+/** Returns whether the snapshot actually landed. Callers that report success
+ *  to a caller of their own (e.g. /api/ingest/balance telling a script the
+ *  chart was updated) need to know; the rest can ignore it. */
 export async function recordSnapshot(
   netWorth: number,
   accountBalances?: Record<string, number>
-): Promise<void> {
+): Promise<boolean> {
   try {
     const today = new Date().toISOString().slice(0, 10);
     await redis().hset(HISTORY_HASH, { [today]: await encrypt(String(netWorth)) });
     if (accountBalances && Object.keys(accountBalances).length > 0) {
       await redis().hset(ACCOUNTS_HASH, { [today]: await encrypt(JSON.stringify(accountBalances)) });
     }
+    return true;
   } catch {
     // Best-effort: a missed snapshot just leaves a gap in the chart.
+    return false;
   }
 }
 

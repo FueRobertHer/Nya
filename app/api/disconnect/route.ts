@@ -4,10 +4,23 @@ import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
 import { clearCaches } from '@/lib/cache';
 import { clearItemTransactions } from '@/lib/transactions';
+import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 
 export async function POST(req: Request) {
   try {
     const { item_id } = await req.json();
+
+    // Manual institutions are synthetic groupings, not Plaid Items. Without
+    // this guard the call would fall through to a no-op HDEL and return
+    // success, which looks like the accounts were removed when nothing
+    // happened. They're deleted through /api/manual-accounts instead.
+    if (typeof item_id === 'string' && item_id.startsWith(MANUAL_ITEM_PREFIX)) {
+      return NextResponse.json(
+        { error: 'Manual accounts are removed via /api/manual-accounts' },
+        { status: 400 }
+      );
+    }
+
     const items = await getItems();
     const item = items.find((i) => i.item_id === item_id);
 

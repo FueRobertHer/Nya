@@ -20,6 +20,7 @@ type Account = {
   balance: number | null;
   limit: number | null;
   currency: string | null;
+  updated_at?: string; // manual accounts only: when the balance was last typed/pushed
 };
 
 type Holding = {
@@ -36,7 +37,42 @@ type Institution = {
   holdings: Holding[];
   error: string | null;
   needs_reauth: boolean;
+  manual?: boolean; // synthetic grouping of manually-tracked accounts
 };
+
+// One manually-tracked account as the API returns it (see lib/manual.ts).
+type ManualAccount = {
+  account_id: string;
+  name: string;
+  institution_name: string;
+  type: string;
+  subtype: string | null;
+  balance: number;
+};
+
+// The modal's working copy. `balance` is a STRING here, matching how
+// BudgetsTab and GoalsCard hold numeric inputs: an <input type="number">
+// reports '' for a partially-typed value like "-", and Number('') is 0, so
+// storing a number would erase the minus sign as you type it and make the
+// field impossible to clear. It's parsed once on submit instead.
+// `account_id` is null while adding; the server mints it on create.
+type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
+  account_id: string | null;
+  balance: string;
+};
+
+const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
+  { value: 'depository', label: 'Cash (checking, savings)' },
+  { value: 'investment', label: 'Investment (brokerage, 401k, HSA)' },
+  { value: 'credit', label: 'Credit card' },
+  { value: 'loan', label: 'Loan (mortgage, auto, student)' },
+  { value: 'other', label: 'Other (property, crypto)' },
+];
+
+/** Credit and loan balances are amounts owed, so they subtract from net worth. */
+function isOwedType(type: string): boolean {
+  return type === 'credit' || type === 'loan';
+}
 
 type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 
@@ -137,6 +173,16 @@ export default function Dashboard() {
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
   const [disconnectInput, setDisconnectInput] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
+  // Manual accounts: `manualDraft` drives the add/edit modal, and
+  // `editingManual` flips the same form between adding and editing.
+  // `manualError` is deliberately separate from the page-level `error` so a
+  // failed save can't linger on the Accounts card after the modal closes, and
+  // a background refresh failure can't appear to be a save failure.
+  const [manualDraft, setManualDraft] = useState<ManualDraft | null>(null);
+  const [editingManual, setEditingManual] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+  const [manualError, setManualError] = useState('');
+  const [manualDeleteTarget, setManualDeleteTarget] = useState<ManualAccount | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
   const backfillTried = useRef(false);
@@ -394,6 +440,82 @@ export default function Dashboard() {
     [loadNetWorth, loadTransactions, txns]
   );
 
+  /**
+   * One manual-account mutation. Every call names a single account, so a stale
+   * page can only ever affect the account it acted on -- it can't delete
+   * accounts it doesn't know about, and it can't revert a balance that a
+   * scheduled push to /api/ingest/balance wrote in the meantime.
+   */
+  const mutateManual = useCallback(
+    async (method: 'POST' | 'PATCH' | 'DELETE', body: unknown) => {
+      setSavingManual(true);
+      setManualError('');
+      try {
+        const res = await fetch('/api/manual-accounts', {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          setManualError(data?.error ?? 'Could not save. Please try again.');
+          return false;
+        }
+        setManualDraft(null);
+        setManualDeleteTarget(null);
+        // A forced fetch is what writes the new balance into today's history
+        // point, same as the disconnect flow. Then recompute estimated history,
+        // which the save just invalidated server-side -- the automatic backfill
+        // only fires when history is thin, so it won't re-run on its own.
+        await loadNetWorth(true);
+        requestBackfill(() => loadNetWorth());
+        return true;
+      } catch {
+        setManualError('Could not reach the server.');
+        return false;
+      } finally {
+        setSavingManual(false);
+      }
+    },
+    [loadNetWorth, requestBackfill]
+  );
+
+  const startAddManual = useCallback(() => {
+    setManualError('');
+    setEditingManual(false);
+    // The id is minted server-side on create, so a draft doesn't carry one.
+    setManualDraft({
+      account_id: null,
+      name: '',
+      institution_name: '',
+      type: 'depository',
+      subtype: null,
+      balance: '',
+    });
+  }, []);
+
+  const startEditManual = useCallback((account: ManualAccount) => {
+    setManualError('');
+    setEditingManual(true);
+    setManualDraft({ ...account, balance: String(account.balance) });
+  }, []);
+
+  const submitManualDraft = useCallback(() => {
+    if (!manualDraft) return;
+    const payload = {
+      name: manualDraft.name,
+      institution_name: manualDraft.institution_name,
+      type: manualDraft.type,
+      subtype: manualDraft.subtype,
+      balance: Number(manualDraft.balance),
+    };
+    if (manualDraft.account_id) {
+      mutateManual('PATCH', { ...payload, account_id: manualDraft.account_id });
+    } else {
+      mutateManual('POST', payload);
+    }
+  }, [manualDraft, mutateManual]);
+
   const logout = useCallback(async () => {
     try {
       localStorage.removeItem(LOCAL_CACHE_KEY);
@@ -584,6 +706,20 @@ export default function Dashboard() {
             <button onClick={startConnect} disabled={connecting}>
               {connecting ? 'Starting…' : 'Connect an Account'}
             </button>
+            {/* Also offered here, not just on the Accounts tab: with nothing
+                connected the tab bar is hidden, so this is the only reachable
+                entry point for someone whose bank Plaid doesn't support at all. */}
+            <button
+              className="secondary manage-toggle"
+              onClick={startAddManual}
+              disabled={savingManual}
+            >
+              Add a manual account
+            </button>
+            <p className="empty-note">
+              Manual accounts are for institutions Plaid can&apos;t reach. You type the balance and
+              update it whenever you like; it counts toward net worth and builds its own history.
+            </p>
             {error && <div className="error">{error}</div>}
           </div>
         ) : (
@@ -652,6 +788,13 @@ export default function Dashboard() {
                   </button>
                   <button
                     className="secondary manage-toggle"
+                    onClick={startAddManual}
+                    disabled={savingManual}
+                  >
+                    Add a manual account
+                  </button>
+                  <button
+                    className="secondary manage-toggle"
                     onClick={() => setManageMode((m) => !m)}
                     aria-pressed={manageMode}
                   >
@@ -670,10 +813,15 @@ export default function Dashboard() {
                   return (
                     <div className="card" key={inst.item_id}>
                       <div className="inst-header">
-                        <div className="inst-name">{inst.institution_name}</div>
+                        <div className="inst-name">
+                          {inst.institution_name}
+                          {inst.manual && <span className="manual-badge">Manual</span>}
+                        </div>
                         <div className="inst-header-right">
                           <div className="inst-total">{fmt(instTotal, instCurrency)}</div>
-                          {manageMode && (
+                          {/* Manual groupings aren't Plaid Items, so there's
+                              nothing to disconnect; they're removed per account. */}
+                          {manageMode && !inst.manual && (
                             <button
                               className="disconnect-btn"
                               onClick={() => {
@@ -718,6 +866,13 @@ export default function Dashboard() {
                                         : ''}
                                       {a.subtype || a.type}
                                     </div>
+                                    {/* A Plaid balance is implicitly "now"; a
+                                        typed one has to say when it was set. */}
+                                    {inst.manual && a.updated_at && (
+                                      <div className="manual-updated">
+                                        Updated {fmtAsOf(a.updated_at)}
+                                      </div>
+                                    )}
                                     {util != null && (
                                       <div className="util">
                                         <div className={`meter-track${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}>
@@ -732,7 +887,53 @@ export default function Dashboard() {
                                       </div>
                                     )}
                                   </td>
-                                  <td className="num">{fmt(signedBalance(a), a.currency)}</td>
+                                  <td className="num">
+                                    {fmt(signedBalance(a), a.currency)}
+                                    {inst.manual && (
+                                      // stopPropagation so tapping an action
+                                      // doesn't also toggle the history chart.
+                                      <div
+                                        className="manual-row-actions"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          className="link-btn"
+                                          disabled={savingManual}
+                                          onClick={() =>
+                                            startEditManual({
+                                              account_id: a.account_id,
+                                              name: a.name,
+                                              institution_name: inst.institution_name,
+                                              type: a.type,
+                                              subtype: a.subtype,
+                                              balance: a.balance ?? 0,
+                                            })
+                                          }
+                                        >
+                                          Update
+                                        </button>
+                                        {manageMode && (
+                                          <button
+                                            className="link-btn danger-link"
+                                            disabled={savingManual}
+                                            onClick={() => {
+                                              setManualError('');
+                                              setManualDeleteTarget({
+                                                account_id: a.account_id,
+                                                name: a.name,
+                                                institution_name: inst.institution_name,
+                                                type: a.type,
+                                                subtype: a.subtype,
+                                                balance: a.balance ?? 0,
+                                              });
+                                            }}
+                                          >
+                                            Delete
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
                                 </tr>
                                 {expandedAccounts.has(a.account_id) && (
                                   <tr>
@@ -869,6 +1070,150 @@ export default function Dashboard() {
             </button>
           ))}
         </nav>
+      )}
+
+      {manualDraft && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={editingManual ? 'Update manual account' : 'Add a manual account'}
+          onClick={() => !savingManual && setManualDraft(null)}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              {editingManual ? 'Update account' : 'Add a manual account'}
+            </div>
+            <p className="modal-body">
+              For institutions Plaid can&apos;t reach. The balance you type counts toward net worth
+              and is recorded on the timeline each time you update it.
+            </p>
+
+            <input
+              className="text-input"
+              value={manualDraft.name}
+              onChange={(e) => setManualDraft({ ...manualDraft, name: e.target.value })}
+              placeholder="Account name (e.g. Credit Union Checking)"
+              aria-label="Account name"
+              maxLength={60}
+              autoFocus={!editingManual}
+              disabled={savingManual}
+            />
+            <input
+              className="text-input"
+              value={manualDraft.institution_name}
+              onChange={(e) =>
+                setManualDraft({ ...manualDraft, institution_name: e.target.value })
+              }
+              placeholder="Institution (groups accounts into one card)"
+              aria-label="Institution"
+              maxLength={60}
+              disabled={savingManual}
+            />
+            <select
+              className="text-input budget-select"
+              value={manualDraft.type}
+              onChange={(e) => setManualDraft({ ...manualDraft, type: e.target.value })}
+              aria-label="Account type"
+              disabled={savingManual}
+            >
+              {MANUAL_TYPE_LABELS.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <input
+              className="text-input"
+              // Held as a string (see ManualDraft) so a leading "-" survives
+              // being typed. Credit and loan balances are amounts owed, which
+              // subtract from net worth, so a negative there would
+              // double-negate into a positive.
+              type="number"
+              step="0.01"
+              min={isOwedType(manualDraft.type) ? 0 : undefined}
+              value={manualDraft.balance}
+              onChange={(e) => setManualDraft({ ...manualDraft, balance: e.target.value })}
+              placeholder={isOwedType(manualDraft.type) ? 'Amount owed' : 'Current balance'}
+              aria-label={isOwedType(manualDraft.type) ? 'Amount owed' : 'Current balance'}
+              autoFocus={editingManual}
+              disabled={savingManual}
+            />
+            <p className="empty-note">
+              {isOwedType(manualDraft.type)
+                ? 'Enter what you owe as a positive number. It subtracts from net worth.'
+                : 'Negative balances are allowed (e.g. an overdrawn account).'}
+            </p>
+
+            {editingManual && manualDraft.account_id && (
+              <p className="empty-note manual-id">
+                Account ID for scripted updates: <code>{manualDraft.account_id}</code>
+              </p>
+            )}
+
+            {manualError && <div className="error">{manualError}</div>}
+
+            <div className="card-actions">
+              <button
+                className="secondary"
+                onClick={() => setManualDraft(null)}
+                disabled={savingManual}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={
+                  savingManual ||
+                  !manualDraft.name.trim() ||
+                  !manualDraft.institution_name.trim() ||
+                  manualDraft.balance.trim() === '' ||
+                  !Number.isFinite(Number(manualDraft.balance)) ||
+                  (isOwedType(manualDraft.type) && Number(manualDraft.balance) < 0)
+                }
+                onClick={submitManualDraft}
+              >
+                {savingManual ? 'Saving…' : editingManual ? 'Save' : 'Add account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualDeleteTarget && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Delete ${manualDeleteTarget.name}`}
+          onClick={() => !savingManual && setManualDeleteTarget(null)}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">Delete {manualDeleteTarget.name}?</div>
+            <p className="modal-body">
+              This account&apos;s balance history is <strong>not recoverable</strong>. Re-adding it
+              creates a new account with an empty history.
+            </p>
+            {manualError && <div className="error">{manualError}</div>}
+            <div className="card-actions">
+              <button
+                className="secondary"
+                onClick={() => setManualDeleteTarget(null)}
+                disabled={savingManual}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger"
+                disabled={savingManual}
+                onClick={() =>
+                  mutateManual('DELETE', { account_id: manualDeleteTarget.account_id })
+                }
+              >
+                {savingManual ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {disconnectTarget && (

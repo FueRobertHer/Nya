@@ -76,11 +76,14 @@ export default function Insights({
       }
     }
 
-    // Low balance on any checking/savings account.
-    for (const a of accounts) {
+    // Low balance on any checking/savings account. Keyed by position as well
+    // as name: two accounts can share a name (a manual account tracking the
+    // same institution as a linked one, say), and a duplicate React key would
+    // drop one of the alerts.
+    for (const [i, a] of accounts.entries()) {
       if (a.type === 'depository' && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
         out.push({
-          key: `low-${a.name}`,
+          key: `low-${i}-${a.name}`,
           text: `Low balance: ${a.name} at ${formatMoney(a.balance, a.currency)}`,
           tone: 'down',
         });
