@@ -3,6 +3,7 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
+import { getManualAccounts, isOwedType } from '@/lib/manual';
 import {
   replaceEstimated,
   replaceEstimatedAccounts,
@@ -90,6 +91,17 @@ export async function POST() {
         day[t.account_id] = (day[t.account_id] ?? 0) + t.amount;
         if (!oldestTxn || t.date < oldestTxn) oldestTxn = t.date;
       }
+    }
+
+    // Manual accounts have no transactions, so they can't be walked backward.
+    // They still have to land in totalNow or every estimated point would sit
+    // short by their whole total, putting a visible step right at the
+    // estimated/real seam. Because they never enter cashType they fall into
+    // the flat-held `rest` below -- the same convention already used for
+    // investments and loans, which does mean today's manual balance is applied
+    // retroactively across the estimated range.
+    for (const a of await getManualAccounts()) {
+      totalNow += isOwedType(a.type) ? -a.balance : a.balance;
     }
 
     if (!oldestTxn) {

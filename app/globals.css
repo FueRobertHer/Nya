@@ -205,6 +205,61 @@ button.danger {
   color: var(--accent);
 }
 
+/* --- manually-tracked accounts --- */
+
+/* Marks a card as typed-in rather than Plaid-synced, so a stale manual balance
+   is never mistaken for a live one. */
+.manual-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid #2a2f3a;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+/* When the balance was last typed or pushed. A Plaid balance is implicitly
+   "now"; a manual one needs to say. */
+.manual-updated {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.manual-row-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* Text-weight actions inside a table row: a full button would dominate the
+   balance it sits under. */
+.link-btn {
+  width: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.link-btn.danger-link {
+  color: var(--down);
+}
+
+.manual-id code {
+  font-size: 11px;
+  word-break: break-all;
+  color: var(--text);
+}
+
 /* Right side of an institution header: balance, plus the small disconnect
    control that only appears in manage mode. */
 .inst-header-right {
