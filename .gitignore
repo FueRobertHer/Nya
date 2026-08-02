@@ -8,3 +8,7 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Local-only tooling: hardcodes a machine-specific browser path and signs a
+# session cookie from SESSION_SECRET, so it stays out of the repo.
+scripts/screenshots.ts
