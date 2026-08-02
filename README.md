@@ -48,7 +48,13 @@ Redis (via the Vercel Marketplace), and the whole app sits behind a password
 
 ## Screenshots
 
-_Captured in Plaid `sandbox` mode, so the balances and transactions are test data._
+_Captured in Plaid `sandbox` mode, so the balances and transactions are test
+data. Anything named "Plaid ..." is a sandbox fixture; HealthEquity and Alliant
+Credit Union are manual accounts added by hand. The budget meters read $0.00
+because the capture was taken on the 2nd of the month, before anything had
+posted against them._
+
+The four tabs:
 
 <table>
   <tr>
@@ -59,16 +65,47 @@ _Captured in Plaid `sandbox` mode, so the balances and transactions are test dat
   </tr>
   <tr>
     <td><img src="docs/screenshots/home.png" alt="Home tab: net worth, 30-day delta, over-time chart, and insights" width="210"></td>
-    <td><img src="docs/screenshots/accounts.png" alt="Accounts tab: per-institution balance sheet with holdings" width="210"></td>
-    <td><img src="docs/screenshots/activity.png" alt="Activity tab: net-by-month trend, income vs spend chart, and top spending" width="210"></td>
-    <td><img src="docs/screenshots/budgets.png" alt="Budgets tab: category budgets with severity meters and recurring bills" width="210"></td>
+    <td><img src="docs/screenshots/accounts.png" alt="Accounts tab: per-institution balance sheet, with a manual account carrying a Manual badge and a credit card showing utilization against its limit" width="210"></td>
+    <td><img src="docs/screenshots/activity.png" alt="Activity tab: net-by-month trend columns, income vs spend chart, and month totals" width="210"></td>
+    <td><img src="docs/screenshots/budgets.png" alt="Budgets tab: category budgets with severity meters, and savings goals tracked against account balances" width="210"></td>
   </tr>
 </table>
 
-The Activity tab's transaction list groups by day, with a running daily net on
-each date heading:
+Scrolling the Accounts tab: **Manage accounts** reveals the per-account
+**Hide** action (plus Update and Delete on manual accounts, Disconnect on
+linked institutions), hidden accounts collect in their own card at the bottom,
+investment holdings expand with gain/loss against cost basis, and tapping any
+account row opens that account's own balance history.
 
-<img src="docs/screenshots/activity-transactions.png" alt="Transaction list grouped by day with a per-day net summary" width="260">
+<table>
+  <tr>
+    <td align="center"><b>Manage accounts</b></td>
+    <td align="center"><b>Hidden</b></td>
+    <td align="center"><b>Holdings</b></td>
+    <td align="center"><b>Per-account history</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/accounts-manage.png" alt="Manage mode: Update, Hide and Delete on a manual account, Disconnect on each linked institution, and Hide on every account row" width="210"></td>
+    <td><img src="docs/screenshots/accounts-hidden.png" alt="The collapsed Hidden card, expanded to show a hidden 401k with an Unhide button" width="210"></td>
+    <td><img src="docs/screenshots/accounts-holdings.png" alt="Expanded holdings table showing quantity, value, and gain or loss against cost basis per security" width="210"></td>
+    <td><img src="docs/screenshots/accounts-history.png" alt="An account row expanded to show that account's own balance history chart" width="210"></td>
+  </tr>
+</table>
+
+Scrolling Activity gives the transaction list, grouped by day with a running
+daily net on each date heading. Scrolling Budgets gives detected recurring
+bills with their estimated next charge dates:
+
+<table>
+  <tr>
+    <td align="center"><b>Transactions by day</b></td>
+    <td align="center"><b>Recurring bills</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/activity-transactions.png" alt="Transaction list grouped by day with a per-day net summary" width="240"></td>
+    <td><img src="docs/screenshots/budgets-recurring.png" alt="Recurring bills detected from repeating charges, each with its institution, streak length, and estimated next charge date" width="240"></td>
+  </tr>
+</table>
 
 ## 1. Get Plaid API keys
 
