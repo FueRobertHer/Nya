@@ -15,6 +15,7 @@ import {
 } from '@/lib/manual';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
+import { pruneHidden } from '@/lib/hidden';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
 //
@@ -165,6 +166,8 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
     }
     await removeManualAccount(account_id);
+    // The account is gone, so a hidden entry naming it would linger forever.
+    await pruneHidden([account_id]);
     await invalidate(true);
     return NextResponse.json({ success: true });
   } catch (err) {

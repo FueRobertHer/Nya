@@ -426,6 +426,26 @@ async function writeState(item_id: string, state: ItemState): Promise<void> {
   }
 }
 
+/**
+ * The account ids this Item is known to own, straight from the persisted state
+ * (no Plaid call). Used when disconnecting, to garbage-collect the Item's
+ * entries from the hidden-accounts set before its state is dropped.
+ *
+ * Reads the store rather than fetching, deliberately: an Item is often
+ * disconnected precisely because it's broken, and a fetch would fail exactly
+ * then. But the store can legitimately be empty -- an investments-only Item, or
+ * one linked and never synced, never persists transaction state -- so callers
+ * must treat this as a partial answer and union it with another source. See
+ * app/api/disconnect/route.ts.
+ */
+export async function getItemAccountIds(item_id: string): Promise<string[]> {
+  try {
+    return Object.keys((await readState(item_id)).accounts);
+  } catch {
+    return [];
+  }
+}
+
 /** Delete an Item's stored transactions. Call when the Item is disconnected. */
 export async function clearItemTransactions(item_id: string): Promise<void> {
   try {
@@ -611,9 +631,20 @@ async function syncItem(
  * Sync + return the display-shaped transactions for the Activity tab, sliced to
  * the trailing LOOKBACK window. Account names are re-resolved from the merged
  * map (an account can arrive on a later page than a transaction referencing it).
+ *
+ * `hiddenAccountIds` drops rows belonging to hidden accounts (lib/hidden.ts).
+ * This is the only place that filter can go: the projection below is where
+ * StoredTxn becomes Txn, and Txn has no `account_id` to filter on afterwards.
+ * Doing it here also means hidden rows are never sent to the client at all, and
+ * everything derived from the array downstream -- the Activity list, month
+ * totals, budgets, insights, recurring-bill detection -- follows for free.
+ *
+ * The persisted store itself is untouched: hiding never deletes data, so
+ * unhiding brings every row straight back.
  */
 export async function syncItemTransactions(
-  item: StoredItem
+  item: StoredItem,
+  hiddenAccountIds?: Set<string>
 ): Promise<{ txns: Txn[]; note: string | null }> {
   const { state, note } = await syncItem(item);
   if (!state) return { txns: [], note };
@@ -622,7 +653,12 @@ export async function syncItemTransactions(
   // `name` is merchant_name || raw name — the display behavior recurring
   // detection and search depend on; StoredTxn keeps both parts separately.
   const txns: Txn[] = Object.values(state.txns)
-    .filter((t) => t.date >= cutoff && !superseded.has(t.transaction_id))
+    .filter(
+      (t) =>
+        t.date >= cutoff &&
+        !superseded.has(t.transaction_id) &&
+        !hiddenAccountIds?.has(t.account_id)
+    )
     .map((t) => ({
       transaction_id: t.transaction_id,
       date: t.date,
