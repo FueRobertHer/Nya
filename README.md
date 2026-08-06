@@ -13,7 +13,12 @@ Four tabs (bottom navigation, mobile-first):
   over/approaching budget, low balance, upcoming recurring bills, spending
   pace vs last month, biggest purchase.
 - **Accounts** — per-institution balance sheet; tap any account for its own
-  balance history chart; holdings show gain/loss vs cost basis. Any account can
+  balance history chart; holdings show gain/loss vs cost basis. Credit cards and
+  loans carry their real terms — APR, minimum payment, and next due date, with
+  statement balance, last payment, escrow and payoff date in the expanded row
+  (see "Payment details" below). Investment accounts expand to show the last
+  year of activity (buys, sells, dividends, fees) and how much has been
+  contributed year to date. Any account can
   be **hidden**: it keeps syncing but stops counting toward anything (see
   "Hiding accounts" below). Institutions
   Plaid can't reach can be tracked as **manual accounts**: you type the
@@ -141,6 +146,15 @@ bun run dev
 
 Open http://localhost:3000 — you'll be redirected to `/login` first.
 
+Two checks worth running before you push:
+
+```bash
+bun run typecheck && bun run test
+```
+
+The tests need no Redis, no Plaid keys, and no network — storage and the Plaid
+client are faked, so they run in well under a second.
+
 > **If you hit `Upstash Redis client was passed an invalid URL … Received: "rediss://…"`:** `vercel env pull` sometimes writes a `rediss://…:6379` connection string into `UPSTASH_REDIS_REST_URL`, but the `@upstash/redis` client needs the HTTPS **REST** endpoint (`https://<name>.upstash.io`). The app now handles this automatically (it derives the REST URL from the host in `lib/storage.ts`), so a restart is enough. If you'd rather fix the env var itself, set `UPSTASH_REDIS_REST_URL` to the `https://…` value — Vercel exposes it as `<db-name>_KV_REST_API_URL` (or legacy `KV_REST_API_URL`).
 
 > Bun is Vercel's officially supported runtime for the API routes (`vercel.json` sets `bunVersion`). One nuance worth knowing: `proxy.ts` (the auth gate — renamed from `middleware.ts` in Next 16) always runs on Vercel's **Edge runtime**, not Bun — that's a Next.js constraint, not a choice made here. It's why `lib/auth.ts` uses the Web Crypto API instead of Node's `crypto`/`Buffer`: that code needs to work on Edge. If a future Vercel CLI/Next.js version changes the Bun config shape, check https://vercel.com/docs/functions/runtimes/bun for the current syntax.
@@ -161,6 +175,27 @@ name (e.g. "Chase") and log in with:
 
 - username: `user_good`
 - password: `pass_good`
+
+### Payment details
+
+Credit cards and loans show what they actually cost: purchase APR, minimum
+payment, and next due date on the account row, with statement balance, last
+payment, accrued interest, escrow and payoff/maturity date when the row is
+expanded. A payment coming due within a week, or one already overdue, also
+surfaces as an alert on the Home tab.
+
+This comes from Plaid's Liabilities product, which has to be enabled on an
+institution before it will return anything. Newly connected institutions get it
+automatically. Institutions you linked before this existed don't, so they show
+an **Enable payment details** button on their card — tap it, log back in through
+Plaid, and the terms appear.
+
+That button goes through Link's *update mode*, which re-authenticates the
+institution you already have rather than adding a second one: the item keeps its
+id, and its stored transaction history survives. Not every institution supports
+the product; where it isn't supported the button says so rather than failing
+silently, and where there's simply nothing to report (no cards or loans) no
+button appears at all.
 
 ### Hiding accounts
 
@@ -301,12 +336,18 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   is what feeds the tap-to-expand account charts.
 - **Estimated backfill** — on first use (and after linking a new
   institution) the app reconstructs up to a year of history from
-  transaction data (`/api/backfill`): cash and credit accounts are walked
-  backward from today's balances; investments and loans can't be
-  reconstructed (Plaid has no historical balances or prices) and are held
-  flat. The chart draws this region dashed and labels it estimated. New
-  links request 730 days of transactions; older Items may only have ~90
-  days until relinked.
+  transaction data (`/api/backfill`), at three levels of fidelity:
+  cash and credit accounts are walked backward from today's balances,
+  un-applying each day's transactions; investment accounts have their
+  external flows (deposits, withdrawals, dividends, fees) un-applied the
+  same way, but market movement isn't a transaction and can't be recovered,
+  so price changes within the window are not modelled; loans and manual
+  accounts are held flat, since amortization isn't in the transaction
+  stream and a typed balance has no stream at all. The chart draws the
+  whole region dashed and labels it estimated. An institution whose
+  investments product isn't available falls back to flat for those accounts
+  without affecting the rest of the run. New links request 730 days of
+  transactions; older Items may only have ~90 days until relinked.
 
 One deliberate tradeoff: the dashboard keeps the last-known snapshot in the
 browser's `localStorage` so the PWA opens instantly and still shows balances
@@ -336,7 +377,23 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 
 ## Limitations
 
-- **No automated tests.**
+- **Test coverage is narrow by design.** `bun test` covers the pure logic where
+  a silent wrong answer is worst: the net-worth history layers
+  (`lib/history.ts` — real-vs-estimated merging, retention across recomputes,
+  and hidden-account subtraction), Plaid's investment sign conventions and
+  pagination (`lib/investments.ts`), and liability normalization
+  (`lib/liabilities.ts`). Routes, React components and anything talking to live
+  Plaid are not covered.
+- **Liabilities is a paid Plaid product.** Free in `sandbox`, but billed per
+  Item per month in `production`, so enabling payment details on many
+  institutions has a running cost. Investments (holdings and activity) is
+  billed the same way.
+- **Reconstructed investment history ignores market movement.** The estimated
+  region removes contributions and withdrawals, so it no longer applies this
+  year's deposits retroactively, but Plaid exposes no historical prices — a
+  portfolio that doubled looks flat until real snapshots take over. Dividends
+  a broker reports as a single reinvestment row are counted as internal and
+  missed entirely.
 - **Manual balances are only as fresh as your last update.** They hold flat
   between updates, so a stale one quietly overstates or understates net worth.
   Each card shows when it was last updated. Automate it with
@@ -353,6 +410,12 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 - Currency-aware account-level figures — transaction views already render each
   amount in its own currency and flag mixed-currency totals, but net worth,
   balances, and goals still show `$` because the live-balance path doesn't
-  surface a currency code yet. More unbuilt features (spending map, credit
-  utilization, subcategory drill-down, …) are tracked as GitHub issues under
-  the `plaid-data-unlock` label.
+  surface a currency code yet.
+- Debt payoff planning on top of the new liabilities data: interest paid per
+  month, avalanche vs snowball ordering, a debt-free date on the net-worth chart.
+- Plaid webhooks (`SYNC_UPDATES_AVAILABLE`, `ITEM_LOGIN_REQUIRED`) to replace
+  the 15-minute cache and daily cron with near-live updates, and to surface a
+  broken institution before you next open the app.
+
+The `plaid-data-unlock` GitHub issues that tracked the earlier round of
+unused-Plaid-field features are all closed and shipped.

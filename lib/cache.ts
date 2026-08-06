@@ -15,6 +15,11 @@ const TTL_SECONDS = 15 * 60;
 
 export const NET_WORTH_CACHE_KEY = k('cache:net-worth');
 export const TRANSACTIONS_CACHE_KEY = k('cache:transactions');
+// Per-account investment activity, one hash field per account_id rather than
+// one key each. A hash keeps clearCaches() a single del of known keys -- with
+// per-account keys it would need a scan, and this is the only cache whose key
+// set isn't known ahead of time.
+export const INVESTMENT_ACTIVITY_CACHE_KEY = k('cache:inv-activity');
 
 export async function readCache<T>(key: string): Promise<T | null> {
   try {
@@ -35,10 +40,51 @@ export async function writeCache(key: string, value: unknown): Promise<void> {
   }
 }
 
+/**
+ * Cached investment activity for one account.
+ *
+ * Unlike the account sparkline -- whose endpoint reads straight from Redis and
+ * so can be re-fetched on every tap -- this one makes live paginated Plaid
+ * calls, so an uncached expand/collapse loop would hammer the API.
+ */
+export async function readAccountCache<T>(field: string): Promise<T | null> {
+  try {
+    const blob = await redis().hget<string>(INVESTMENT_ACTIVITY_CACHE_KEY, field);
+    if (!blob) return null;
+    const { at, value } = JSON.parse(await decrypt(blob)) as { at: number; value: T };
+    // Per-field expiry is enforced here, not by Redis. A hash carries one TTL
+    // for all its fields, and every write would slide it -- so under an
+    // expand/collapse loop a field written 40 minutes ago would keep being
+    // renewed by writes to other accounts and never expire. The key's own TTL
+    // stays on purely as cleanup for a hash nobody touches again.
+    if (typeof at !== 'number' || Date.now() - at > TTL_SECONDS * 1000) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeAccountCache(field: string, value: unknown): Promise<void> {
+  try {
+    await redis().hset(INVESTMENT_ACTIVITY_CACHE_KEY, {
+      [field]: await encrypt(JSON.stringify({ at: Date.now(), value })),
+    });
+    // Best-effort cleanup only; if this fails the stamp above still expires
+    // every field on read, so a hash with no TTL can serve stale data to nobody.
+    await redis().expire(INVESTMENT_ACTIVITY_CACHE_KEY, TTL_SECONDS * 4);
+  } catch {
+    // A cache write failure must never break the request that produced the data.
+  }
+}
+
 /** Drop all cached payloads -- call after any mutation (link/disconnect). */
 export async function clearCaches(): Promise<void> {
   try {
-    await redis().del(NET_WORTH_CACHE_KEY, TRANSACTIONS_CACHE_KEY);
+    await redis().del(
+      NET_WORTH_CACHE_KEY,
+      TRANSACTIONS_CACHE_KEY,
+      INVESTMENT_ACTIVITY_CACHE_KEY
+    );
   } catch {
     // Worst case the stale cache lives out its TTL.
   }

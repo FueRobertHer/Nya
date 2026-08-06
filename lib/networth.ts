@@ -8,6 +8,23 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { getItems, type StoredItem } from './storage';
 import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
+import { normalizeLiabilities } from './liabilities';
+
+/**
+ * Whether this Item can serve /liabilities/get, and if not, whether asking the
+ * user to do anything about it would help.
+ *
+ * Four states rather than a boolean because the UI decision differs in each:
+ *   on          - data is attached to the accounts.
+ *   off         - the product was never initialized on this Item. Offer Enable,
+ *                 which re-opens Link in update mode to add it.
+ *   loading     - Plaid is extracting. Say so; do NOT offer Enable, or the
+ *                 forced reload right after a successful enable would show the
+ *                 button again and the user would tap it in a loop.
+ *   unavailable - nothing to get (no liability accounts, or the institution
+ *                 can't serve it). Never offer Enable: it would change nothing.
+ */
+export type LiabilitiesState = 'on' | 'off' | 'loading' | 'unavailable';
 
 export type InstitutionResult = {
   institution_name: string;
@@ -16,6 +33,7 @@ export type InstitutionResult = {
   holdings: any[];
   error: string | null;
   needs_reauth: boolean;
+  liabilities: LiabilitiesState;
   /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
   manual?: boolean;
 };
@@ -28,6 +46,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
     holdings: [],
     error: null,
     needs_reauth: false,
+    liabilities: 'unavailable',
   };
 
   let access_token: string;
@@ -64,7 +83,21 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
     return result;
   }
 
-  // Investment holdings -- fails silently for non-brokerage items, that's expected.
+  // Holdings and liabilities are independent of each other and both swallow
+  // their own errors, so they run together rather than adding a second and
+  // third serial round trip to the uncached dashboard load and the daily cron.
+  const hasDebt = result.accounts.some((a) => a.type === 'credit' || a.type === 'loan');
+  await Promise.all([
+    fetchHoldings(access_token, result),
+    // Only worth a call if there's something a liability could describe.
+    hasDebt ? fetchLiabilities(access_token, result) : Promise.resolve(),
+  ]);
+
+  return result;
+}
+
+/** Investment holdings -- fails silently for non-brokerage items, that's expected. */
+async function fetchHoldings(access_token: string, result: InstitutionResult): Promise<void> {
   try {
     const holdingsRes = await plaidClient.investmentsHoldingsGet({ access_token });
     const securities: Record<string, any> = {};
@@ -83,8 +116,43 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   } catch {
     // not a brokerage account, or investments not supported -- fine, skip
   }
+}
 
-  return result;
+/**
+ * APRs, minimum payments and due dates for credit cards and loans.
+ *
+ * Note what this never does: set result.error. /api/net-worth and the snapshot
+ * cron both gate on `institutions.every(i => !i.error)` before recording a
+ * snapshot or writing the cache, so flagging "this Item has no liabilities
+ * product" as an error would freeze the entire net-worth history and disable
+ * caching outright. Product availability is reported through result.liabilities
+ * instead, which nothing gates on.
+ */
+async function fetchLiabilities(access_token: string, result: InstitutionResult): Promise<void> {
+  try {
+    const res = await plaidClient.liabilitiesGet({ access_token });
+    // Inside the try on purpose: a throw out here would reject the Promise.all
+    // in computeNetWorth and 500 both callers -- worse than the error flag the
+    // comment above is avoiding. normalizeLiabilities is written to be total,
+    // and this is the belt to that braces.
+    const byAccount = normalizeLiabilities(res.data.liabilities);
+    result.accounts.forEach((a) => {
+      if (byAccount[a.account_id]) a.liability = byAccount[a.account_id];
+    });
+    result.liabilities = Object.keys(byAccount).length > 0 ? 'on' : 'unavailable';
+  } catch (err: any) {
+    const code = err?.response?.data?.error_code;
+    if (code === 'PRODUCT_NOT_READY') {
+      result.liabilities = 'loading';
+    } else if (code === 'PRODUCTS_NOT_SUPPORTED' || code === 'ADDITIONAL_CONSENT_REQUIRED') {
+      // The Item was linked before liabilities was requested. Update mode can
+      // add it, so this is the one case worth offering the user a button for.
+      result.liabilities = 'off';
+    } else {
+      // NO_LIABILITY_ACCOUNTS and anything else: enabling would change nothing.
+      result.liabilities = 'unavailable';
+    }
+  }
 }
 
 export async function computeNetWorth(): Promise<{
@@ -121,6 +189,7 @@ export async function computeNetWorth(): Promise<{
       holdings: [],
       error: 'Could not load manually-tracked accounts',
       needs_reauth: false,
+      liabilities: 'unavailable',
       manual: true,
     });
   }

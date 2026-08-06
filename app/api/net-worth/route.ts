@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { computeNetWorth, accountBalanceMap, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
-import { recordSnapshot, getHistory, type HistoryPoint } from '@/lib/history';
+import { recordSnapshot, getHistory, isBackfillDone, type HistoryPoint } from '@/lib/history';
 import { getHiddenAccounts, applyHidden } from '@/lib/hidden';
 
 type NetWorthPayload = {
@@ -16,6 +16,19 @@ type NetWorthPayload = {
   as_of: string;
 };
 
+// Whether the estimated layer was built by an older algorithm and should be
+// recomputed. The client can't work this out for itself: its only other trigger
+// is "the chart looks empty", which is false for exactly the users who already
+// have a stale layer.
+//
+// Deliberately NOT part of NetWorthPayload, so it can't be frozen into the
+// 15-minute cache. Cached true would re-POST /api/backfill on every load for
+// the rest of the TTL; cached false would swallow a recompute that a
+// clearBackfillDone() elsewhere had just asked for.
+async function staleFlag(): Promise<{ backfill_stale: boolean }> {
+  return { backfill_stale: !(await isBackfillDone()) };
+}
+
 export async function GET(req: Request) {
   try {
     // Live Plaid balance calls take seconds; serve the (encrypted) cached
@@ -24,7 +37,9 @@ export async function GET(req: Request) {
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
     if (!refresh) {
       const cached = await readCache<NetWorthPayload>(NET_WORTH_CACHE_KEY);
-      if (cached) return NextResponse.json({ ...cached, from_cache: true });
+      if (cached) {
+        return NextResponse.json({ ...cached, ...(await staleFlag()), from_cache: true });
+      }
     }
 
     const { institutions, netWorth } = await computeNetWorth();
@@ -66,7 +81,7 @@ export async function GET(req: Request) {
       await writeCache(NET_WORTH_CACHE_KEY, payload);
     }
 
-    return NextResponse.json({ ...payload, from_cache: false });
+    return NextResponse.json({ ...payload, ...(await staleFlag()), from_cache: false });
   } catch (err: any) {
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to fetch net worth' }, { status: 500 });

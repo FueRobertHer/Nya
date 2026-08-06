@@ -26,9 +26,19 @@ const ACCOUNTS_HASH = k('history:accounts');
 const ACCOUNTS_EST_HASH = k('history:accounts:est');
 // The balances backfill folded into its flat `rest` term: everything that
 // isn't depository/credit (investments, loans, property, manual accounts),
-// captured as of the run that produced the estimated layer. One record, not
-// one per date, because the amount is constant across every estimated point.
+// captured as of the run that produced the estimated layer.
 //
+// Keyed BY DATE, one map per estimated point. It used to be a single record,
+// on the reasoning that the amount is constant across every estimated point --
+// true while backfill rewrote the whole layer every run, false now that points
+// outside a run's window are retained. Two runs can leave two eras of points in
+// the layer, and one record can't describe both: a mortgage flat at $310k in
+// run 1 and $302k in run 2 would subtract $302k from points that baked in
+// $310k. Worse, an account that moves between the flat term and the walk
+// between runs (which investments now do) would sit in both sources at once,
+// breaking the exactly-one-applies rule getHistory depends on.
+//
+
 // This exists so a hidden account can be subtracted from estimated points by
 // the amount actually baked into them. Using its *current* balance instead
 // would be wrong by however much it moved since the last backfill (unbounded
@@ -36,9 +46,20 @@ const ACCOUNTS_EST_HASH = k('history:accounts:est');
 // after that run, which was never in those points at all.
 //
 // Kept separate from ACCOUNTS_EST_HASH on purpose: merging it there would give
-// investments a flat per-account estimated series, which backfill's header
-// deliberately refuses to fabricate.
-const ACCOUNTS_EST_FLAT = k('history:accounts:est:flat');
+// every flat-held account a fake per-account estimated series, which backfill's
+// header deliberately refuses to fabricate.
+//
+// Which accounts land here is not a property of their type -- investment
+// accounts are walked day by day when their transactions are available and flat
+// when they aren't, so the same account can move between the two layers between
+// runs. That's why membership is always checked directly (see
+// estimatedLayerCovers) rather than inferred from account type.
+const ACCOUNTS_EST_FLAT_BY_DATE = k('history:accounts:est:flatd');
+// The pre-per-date single record. Still read, never written: it's the only
+// thing that can describe estimated points written before this key existed.
+// A different key name rather than a reshape, because the old one is a plain
+// string and the new one a hash -- Redis would reject the write.
+const ACCOUNTS_EST_FLAT_LEGACY = k('history:accounts:est:flat');
 const BACKFILL_FLAG = k('history:backfill-done');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
@@ -63,18 +84,65 @@ export async function recordSnapshot(
   }
 }
 
-/** Wholesale-replace the estimated layer (backfill recomputes it entirely). */
-export async function replaceEstimated(points: { date: string; value: number }[]): Promise<void> {
-  await redis().del(ESTIMATED_HASH);
+/**
+ * Replace the estimated layer over the range the new run actually covers,
+ * leaving anything older intact.
+ *
+ * This used to delete the whole hash. That was safe when backfill ran once per
+ * install, but it silently truncated the chart for anyone who had been running
+ * long enough to accumulate estimated points older than the walk's 365-day
+ * reach: a recompute regenerates [today-365, today] and the older region, which
+ * no transaction stream can reconstruct any more, was simply lost. The left
+ * edge of the chart jumped forward by up to a year.
+ *
+ * Scoping the delete to the new window keeps the recompute authoritative where
+ * it has data and non-destructive where it doesn't. Points outside the window
+ * are orphans from an earlier run: still the best answer available for those
+ * dates, since nothing can rebuild them.
+ */
+async function replaceRange(
+  key: string,
+  points: { date: string }[],
+  encode: (p: any) => Promise<string>
+): Promise<void> {
+  const oldest = points.reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+  try {
+    const existing = await redis().hkeys(key);
+    // No new points means nothing was reconstructable this run -- keep every
+    // stored point rather than blanking the layer.
+    const doomed = oldest ? existing.filter((d) => d >= oldest) : [];
+    if (doomed.length > 0) await redis().hdel(key, ...doomed);
+  } catch {
+    // Couldn't enumerate: fall through and just write. Stale dates inside the
+    // window get overwritten by the hset below anyway; the only loss is that a
+    // date the new run no longer produces keeps its old value.
+  }
   if (points.length === 0) return;
   const fields: Record<string, string> = {};
-  for (const p of points) fields[p.date] = await encrypt(String(p.value));
-  await redis().hset(ESTIMATED_HASH, fields);
+  for (const p of points) fields[p.date] = await encode(p);
+  await redis().hset(key, fields);
 }
 
-/** Replaces the flat (non-cash) balances that backfill folded into `rest`. */
-export async function replaceEstimatedFlat(balances: Record<string, number>): Promise<void> {
-  await redis().set(ACCOUNTS_EST_FLAT, await encrypt(JSON.stringify(balances)));
+export async function replaceEstimated(points: { date: string; value: number }[]): Promise<void> {
+  await replaceRange(ESTIMATED_HASH, points, (p) => encrypt(String(p.value)));
+}
+
+/**
+ * Replaces the flat (non-cash) balances backfill folded into `rest`, one map
+ * per date and range-scoped like the layers it describes.
+ *
+ * Per-date because a run only speaks for the dates it wrote. Retained points
+ * from an earlier run keep that run's flat balances, so each point is
+ * subtracted by the amount actually baked into it, and an account that moved
+ * between the flat term and the walk between runs is in exactly one source for
+ * any given date.
+ */
+export async function replaceEstimatedFlat(
+  points: { date: string; balances: Record<string, number> }[]
+): Promise<void> {
+  await replaceRange(ACCOUNTS_EST_FLAT_BY_DATE, points, (p) =>
+    encrypt(JSON.stringify(p.balances))
+  );
 }
 
 /**
@@ -91,12 +159,29 @@ export async function replaceEstimatedFlat(balances: Record<string, number>): Pr
 export async function estimatedLayerCovers(account_id: string): Promise<boolean> {
   if (account_id in ((await getEstimatedFlat()) ?? {})) return true;
   try {
+    const flatByDate = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE);
+    const [flatSample] = Object.values(flatByDate ?? {});
+    if (flatSample) {
+      const parsed = JSON.parse(await decrypt(flatSample)) as Record<string, number>;
+      if (account_id in (parsed ?? {})) return true;
+    }
+  } catch {
+    return false; // unreadable: report not-covered, so the caller forces a recompute
+  }
+  try {
     const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
-    // Any one date answers for all of them: backfill seeds `balances` with
-    // every cash account before the walk and only ever updates values, so each
-    // date's snapshot carries the identical key set. hgetall is unordered, so
-    // this is an arbitrary date rather than the earliest, which is fine given
-    // that invariant.
+    // Any one date used to answer for all of them, because backfill seeded
+    // every cash account before the walk and rewrote the layer wholesale. That
+    // no longer holds exactly: points older than the newest run's window are
+    // retained, and carry whatever account set was linked back then.
+    //
+    // It stays safe because of which way it errs. The caller hides a currently
+    // linked account, which the newest run always covers -- so sampling a new
+    // date answers correctly, and sampling a stale one can only under-report
+    // and force a recompute that wasn't needed. Over-reporting would be the
+    // dangerous direction (a skipped recompute leaves a cliff in the chart) and
+    // requires the account to be missing from the newest window, where the flat
+    // record checked just above already accounts for it.
     const [sample] = Object.values(map ?? {});
     if (!sample) return false;
     return account_id in ((JSON.parse(await decrypt(sample)) as Record<string, number>) ?? {});
@@ -116,7 +201,7 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
  */
 export async function getEstimatedFlat(): Promise<Record<string, number> | null> {
   try {
-    const blob = await redis().get<string>(ACCOUNTS_EST_FLAT);
+    const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY);
     if (!blob) return {}; // never written (layer predates this key) -- genuinely empty
     return JSON.parse(await decrypt(blob)) as Record<string, number>;
   } catch {
@@ -124,15 +209,35 @@ export async function getEstimatedFlat(): Promise<Record<string, number> | null>
   }
 }
 
-/** Same, for the per-account estimated layer. */
+/**
+ * The flat balances that applied on one specific date, preferring the per-date
+ * record and falling back to the legacy single record for points written before
+ * the per-date one existed.
+ *
+ * Same tri-state contract as getEstimatedFlat: `{}` means "nothing was folded
+ * in", `null` means "unreadable, don't treat as nothing".
+ */
+async function flatFor(
+  byDate: Record<string, string> | null,
+  date: string,
+  legacy: Record<string, number> | null
+): Promise<Record<string, number> | null> {
+  const blob = byDate?.[date];
+  if (!blob) return legacy;
+  try {
+    return JSON.parse(await decrypt(blob)) as Record<string, number>;
+  } catch {
+    return null;
+  }
+}
+
+/** Same, for the per-account estimated layer -- and range-scoped for the same
+ *  reason, so retained total points keep the per-date maps that hidden-account
+ *  subtraction reads for those dates. */
 export async function replaceEstimatedAccounts(
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
-  await redis().del(ACCOUNTS_EST_HASH);
-  if (points.length === 0) return;
-  const fields: Record<string, string> = {};
-  for (const p of points) fields[p.date] = await encrypt(JSON.stringify(p.balances));
-  await redis().hset(ACCOUNTS_EST_HASH, fields);
+  await replaceRange(ACCOUNTS_EST_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
 }
 
 export async function getRealSnapshotDates(): Promise<Set<string>> {
@@ -177,16 +282,31 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 
 // The backfill flag makes /api/backfill idempotent; linking a new
 // institution clears it so history gets recomputed with the new accounts.
+//
+// It stores a schema number rather than a bare '1' so that changing HOW the
+// estimated layer is built forces a recompute. Without it, a layer built by an
+// older algorithm would live forever: the only automatic trigger is the client
+// noticing history is "thin", which is never true for anyone who already has an
+// estimated layer, so the improvement would only ever reach new users.
+//
+// Bump this whenever the walk changes shape.
+//   1 - cash and credit walked; everything else flat
+//   2 - investment external flows walked too
+const BACKFILL_SCHEMA = 2;
+
 export async function isBackfillDone(): Promise<boolean> {
   try {
-    return !!(await redis().get(BACKFILL_FLAG));
+    const flag = await redis().get(BACKFILL_FLAG);
+    if (!flag) return false;
+    // Legacy '1' from before this was versioned means schema 1.
+    return Number(flag) >= BACKFILL_SCHEMA;
   } catch {
     return false;
   }
 }
 
 export async function markBackfillDone(): Promise<void> {
-  await redis().set(BACKFILL_FLAG, '1');
+  await redis().set(BACKFILL_FLAG, String(BACKFILL_SCHEMA));
 }
 
 export async function clearBackfillDone(): Promise<void> {
@@ -218,11 +338,12 @@ export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
   // The per-account maps are only read when something is actually hidden.
   // Decrypting a year of them on every dashboard load to subtract nothing would
   // be pure waste, and nothing hidden is the common case.
-  const [realMap, estMap, realAccounts, estAccounts, estFlat] = await Promise.all([
+  const [realMap, estMap, realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
     redis().hgetall<Record<string, string>>(HISTORY_HASH),
     redis().hgetall<Record<string, string>>(ESTIMATED_HASH),
     hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH) : null,
     hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH) : null,
+    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE) : null,
     hiding ? getEstimatedFlat() : null,
   ]);
 
@@ -280,8 +401,15 @@ export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
           // (backfill's `rest` term). So a miss in one is only correct if the
           // other is readable and genuinely doesn't list the account.
           //
-          // `estFlat === null` means the flat record itself is unreadable, so
+          // Resolved per date: two runs can leave two eras of points in this
+          // layer, each with its own flat balances, and an account can be flat
+          // in one era and walked in the next. Reading one global record would
+          // subtract the wrong era's number, and would double-count an account
+          // that appears in both sources across eras.
+          //
+          // A null result means the flat record for this date is unreadable, so
           // nothing here can be trusted.
+          const estFlat = await flatFor(estFlatByDate, date, legacyFlat);
           if (estFlat === null) return null;
           for (const [id, { type }] of hidden!) {
             const flatBalance = estFlat[id];

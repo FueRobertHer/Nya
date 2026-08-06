@@ -14,6 +14,11 @@ export type InsightAccount = {
   type: string;
   balance: number | null;
   currency: string | null;
+  liability?: {
+    minimum_payment: number | null;
+    next_due_date: string | null;
+    is_overdue: boolean | null;
+  };
 };
 
 const LOW_BALANCE_THRESHOLD = 100;
@@ -89,6 +94,50 @@ export default function Insights({
         });
       }
     }
+
+    // Card and loan payments coming due, from Plaid's liabilities data rather
+    // than inferred from transactions. Max 2, overdue first, since an overdue
+    // payment is the more actionable of the two.
+    const overdue: Insight[] = [];
+    const dueSoon: { days: number; insight: Insight }[] = [];
+    // Local midnight today, so "days until" counts calendar days rather than
+    // 24-hour blocks from this instant. Comparing against `now` directly made
+    // the answer drift by one over the course of the day: after local noon a
+    // payment due today rounded to -1 and was dropped as already past.
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    for (const [i, a] of accounts.entries()) {
+      const l = a.liability;
+      if (!l) continue;
+      if (l.is_overdue) {
+        overdue.push({
+          key: `overdue-${i}-${a.name}`,
+          text: `${a.name} is overdue${l.minimum_payment != null ? ` — ${formatMoney(l.minimum_payment, a.currency)} minimum` : ''}`,
+          tone: 'down',
+        });
+        continue;
+      }
+      if (!l.next_due_date) continue;
+      const days = Math.round(
+        (new Date(`${l.next_due_date}T00:00:00`).getTime() - midnight) / 86_400_000
+      );
+      // `days >= 0` matters: the dashboard hydrates from a localStorage
+      // snapshot with no TTL, so a stale payload can carry a due date that has
+      // since passed, and "due in -4 days" would render on first paint.
+      if (days < 0 || days > 7) continue;
+      dueSoon.push({
+        days,
+        insight: {
+          key: `due-${i}-${a.name}`,
+          text: `${a.name}: ${l.minimum_payment != null ? `${formatMoney(l.minimum_payment, a.currency)} ` : ''}due ${days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`}`,
+          tone: 'neutral',
+        },
+      });
+    }
+    // Soonest first within each group, matching the recurring-bills block
+    // below. Sorting the merged list would let a far-off due date outrank an
+    // account that's already overdue.
+    dueSoon.sort((x, y) => x.days - y.days);
+    out.push(...[...overdue, ...dueSoon.map((d) => d.insight)].slice(0, 2));
 
     // Recurring bills expected within a week (soonest first, max 2,
     // deduped by name -- the same bill on two linked accounts is one bill).
