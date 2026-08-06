@@ -77,8 +77,13 @@ function validate(body: DraftInput): { error: string } | { value: Validated } {
  *  and put a visible step at the estimated/real seam. A rename doesn't change
  *  any total, and recomputing forces a full Plaid transaction re-pull. */
 async function invalidate(balanceChanged: boolean): Promise<void> {
-  await clearCaches();
+  // Flag first, cache second. The other order leaves a window where a
+  // /api/net-worth request reads the flag as still-set and re-caches
+  // `backfill_stale: false`, pinning it for the TTL and silently dropping the
+  // recompute this call just asked for. (/api/hidden-accounts already does it
+  // in this order.)
   if (balanceChanged) await clearBackfillDone();
+  await clearCaches();
 }
 
 export async function GET() {

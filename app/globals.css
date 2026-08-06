@@ -1039,3 +1039,16 @@ button:disabled {
   padding-top: 12px;
   padding-bottom: 16px;
 }
+
+/* Investment activity inside an expanded account row. Separated from the
+   balance chart above it, and its own rows kept tighter than the main
+   transaction table since they sit nested two levels deep. */
+.inv-activity {
+  margin-top: 14px;
+  border-top: 1px solid #262a33;
+  padding-top: 12px;
+}
+
+.inv-activity .txn-table td {
+  padding: 6px 0;
+}

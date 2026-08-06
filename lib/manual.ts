@@ -184,6 +184,10 @@ export type ManualInstitution = {
   holdings: never[];
   error: null;
   needs_reauth: false;
+  // Typed-by-hand balances have no Plaid Item behind them, so there is no
+  // liabilities product to fetch or enable. 'unavailable' keeps the Enable
+  // button off these cards.
+  liabilities: 'unavailable';
   manual: true;
 };
 
@@ -212,6 +216,7 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
         holdings: [],
         error: null,
         needs_reauth: false,
+        liabilities: 'unavailable',
         manual: true,
       };
       byInstitution.set(key, inst);

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
+import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
@@ -22,6 +23,25 @@ type Account = {
   currency: string | null;
   updated_at?: string; // manual accounts only: when the balance was last typed/pushed
   hidden?: boolean; // excluded from every total and from the Activity tab
+  liability?: AccountLiability; // credit/loan only, and only where Plaid serves it
+};
+
+// Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
+// everywhere: a payload cached in localStorage before this shipped has none.
+type AccountLiability = {
+  kind: 'credit' | 'student' | 'mortgage';
+  apr: number | null;
+  apr_label: string | null;
+  minimum_payment: number | null;
+  next_due_date: string | null;
+  last_statement_balance: number | null;
+  last_payment_amount: number | null;
+  last_payment_date: string | null;
+  is_overdue: boolean | null;
+  maturity_date?: string | null;
+  escrow_balance?: number | null;
+  expected_payoff_date?: string | null;
+  outstanding_interest?: number | null;
 };
 
 type Holding = {
@@ -39,6 +59,10 @@ type Institution = {
   holdings: Holding[];
   error: string | null;
   needs_reauth: boolean;
+  // 'on' | 'off' | 'loading' | 'unavailable' (lib/networth.ts). Optional and
+  // compared explicitly against 'off' so a stale cached payload, which has no
+  // such field, never offers the Enable button.
+  liabilities?: string;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
 };
 
@@ -91,6 +115,12 @@ function fmt(n: number | null | undefined, currency?: string | null): string {
   return formatMoney(n, currency);
 }
 
+// Plaid still returns the legacy 'brokerage' type alongside 'investment' for
+// some institutions, and they mean the same thing here.
+function isInvestmentType(type: string): boolean {
+  return type === 'investment' || type === 'brokerage';
+}
+
 function signedBalance(a: Account): number {
   const b = a.balance ?? 0;
   return a.type === 'credit' || a.type === 'loan' ? -b : b;
@@ -105,6 +135,99 @@ function fmtGain(value: number, cost: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}${pct}`;
+}
+
+// "Mar 4" from a YYYY-MM-DD. Parsed at local midnight, not UTC, so a due date
+// never renders as the day before for anyone west of Greenwich.
+function fmtDay(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+// The one-line summary under a credit or loan row: rate, minimum, due date.
+// Built by pushing only the parts Plaid actually reported, so a card that
+// reports a due date but no APR still gets a useful line instead of "-- APR".
+function liabilitySummary(a: Account): string | null {
+  const l = a.liability;
+  if (!l) return null;
+  const parts: string[] = [];
+  if (l.apr != null) parts.push(`${l.apr.toFixed(2)}% APR`);
+  if (l.minimum_payment != null) parts.push(`min ${fmt(l.minimum_payment, a.currency)}`);
+  if (l.next_due_date) parts.push(`due ${fmtDay(l.next_due_date)}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * The rest of a liability's terms, shown only when the row is expanded — the
+ * collapsed row already carries rate, minimum and due date.
+ *
+ * Follows TxnDetail in MonthBreakdown: build the rows by pushing only fields
+ * that are actually present, and render nothing at all rather than a list of
+ * dashes when none are.
+ */
+function LiabilityDetail({
+  liability,
+  currency,
+}: {
+  liability?: AccountLiability;
+  currency: string | null;
+}) {
+  if (!liability) return null;
+  const l = liability;
+  const rows: { label: string; value: string }[] = [];
+
+  if (l.apr != null && l.apr_label) rows.push({ label: l.apr_label, value: `${l.apr.toFixed(2)}%` });
+  if (l.last_statement_balance != null) {
+    rows.push({ label: 'Statement balance', value: fmt(l.last_statement_balance, currency) });
+  }
+  if (l.last_payment_amount != null) {
+    rows.push({
+      label: 'Last payment',
+      value:
+        fmt(l.last_payment_amount, currency) +
+        (l.last_payment_date ? ` on ${fmtDay(l.last_payment_date)}` : ''),
+    });
+  }
+  if (l.outstanding_interest != null) {
+    rows.push({ label: 'Accrued interest', value: fmt(l.outstanding_interest, currency) });
+  }
+  if (l.escrow_balance != null) {
+    rows.push({ label: 'Escrow', value: fmt(l.escrow_balance, currency) });
+  }
+  if (l.expected_payoff_date) {
+    rows.push({ label: 'Expected payoff', value: fmtDay(l.expected_payoff_date) });
+  }
+  if (l.maturity_date) rows.push({ label: 'Matures', value: fmtDay(l.maturity_date) });
+
+  if (rows.length === 0) return null;
+  return (
+    <dl className="txn-detail">
+      {rows.map((r) => (
+        <div className="txn-detail-row" key={r.label}>
+          <dt>{r.label}</dt>
+          <dd>{r.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
+ * Whether to offer "Enable payment details" for an institution.
+ *
+ * Only 'off' — the product was never initialized on this Item, and update mode
+ * can add it. 'loading' means Plaid is already fetching (offering the button
+ * there would loop: the reload right after a successful enable arrives before
+ * the data does), and 'unavailable' means enabling would change nothing. A
+ * stale cached payload has no field at all, which also falls through to false.
+ */
+function canEnableLiabilities(inst: Institution): boolean {
+  return (
+    inst.liabilities === 'off' &&
+    inst.accounts.some((a) => a.type === 'credit' || a.type === 'loan')
+  );
 }
 
 function fmtAsOf(iso: string): string {
@@ -229,9 +352,14 @@ export default function Dashboard() {
 
       // First open with a near-empty chart: backfill estimated history from
       // transactions in the background (what the big trackers do on link).
+      //
+      // `backfill_stale` covers the other case: a layer that already exists but
+      // was built by an older algorithm. That one is invisible from here -- the
+      // chart looks full -- so the server has to say so, or an improvement to
+      // the reconstruction would only ever reach people with no history yet.
       const hist: HistoryPoint[] = data.history ?? [];
       const thin = hist.filter((h) => !h.estimated).length <= 1 && !hist.some((h) => h.estimated);
-      if (thin && data.institutions.length > 0 && !backfillTried.current) {
+      if ((thin || data.backfill_stale) && data.institutions.length > 0 && !backfillTried.current) {
         backfillTried.current = true;
         requestBackfill(() => loadNetWorth());
       }
@@ -426,6 +554,29 @@ export default function Dashboard() {
       setLinkToken(data.link_token);
     } else {
       setError('Could not start reconnection.');
+    }
+  }, []);
+
+  // Adds the liabilities product to an Item that was linked without it. Goes
+  // through Link's update mode, so it re-authenticates the SAME Item rather
+  // than creating a new one -- the stored transaction history survives.
+  const startEnableLiabilities = useCallback(async (item_id: string) => {
+    setError('');
+    setConnecting(true);
+    const res = await fetch('/api/create-update-link-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id, add_liabilities: true }),
+    });
+    const data = await res.json();
+    setConnecting(false);
+    if (data.link_token) {
+      setLinkMode('update');
+      setLinkToken(data.link_token);
+    } else {
+      // The route names the institution-doesn't-support-it case specifically,
+      // which is the likely one here and not something a retry fixes.
+      setError(data.error || 'Could not start enabling payment details.');
     }
   }, []);
 
@@ -897,6 +1048,7 @@ export default function Dashboard() {
                         type: a.type,
                         balance: a.balance,
                         currency: a.currency,
+                        liability: a.liability,
                       }))
                   )}
                 />
@@ -974,6 +1126,7 @@ export default function Dashboard() {
                                 a.type === 'credit' && a.limit && a.limit > 0 && a.balance != null
                                   ? Math.max(a.balance, 0) / a.limit
                                   : null;
+                              const liabLine = liabilitySummary(a);
                               return (
                                 <Fragment key={a.account_id}>
                                 <tr
@@ -1008,6 +1161,14 @@ export default function Dashboard() {
                                         <span className="util-label">
                                           {Math.round(util * 100)}% of {fmt(a.limit, a.currency)} limit
                                         </span>
+                                      </div>
+                                    )}
+                                    {liabLine && (
+                                      <div
+                                        className={`type-tag${a.liability?.is_overdue ? ' over-tag' : ''}`}
+                                      >
+                                        {a.liability?.is_overdue ? 'Overdue · ' : ''}
+                                        {liabLine}
                                       </div>
                                     )}
                                   </td>
@@ -1077,6 +1238,19 @@ export default function Dashboard() {
                                   <tr>
                                     <td colSpan={2} className="acct-chart-cell">
                                       <AccountSparkline accountId={a.account_id} />
+                                      <LiabilityDetail liability={a.liability} currency={a.currency} />
+                                      {/* Not for manual accounts: they're typed
+                                          by hand, and their synthetic
+                                          `manual:<name>` item_id doesn't
+                                          resolve to a Plaid Item, so the fetch
+                                          would 404 into a red error box under a
+                                          perfectly healthy row. */}
+                                      {isInvestmentType(a.type) && !inst.manual && (
+                                        <InvestmentActivity
+                                          accountId={a.account_id}
+                                          itemId={inst.item_id}
+                                        />
+                                      )}
                                     </td>
                                   </tr>
                                 )}
@@ -1148,11 +1322,33 @@ export default function Dashboard() {
 
                       {inst.error && <div className="error">{inst.error}</div>}
 
-                      {inst.needs_reauth && (
+                      {/* Tells someone who just tapped Enable why the button
+                          vanished without any payment details appearing. */}
+                      {inst.liabilities === 'loading' && (
+                        <p className="empty-note">
+                          Payment details are still importing from this institution.
+                        </p>
+                      )}
+
+                      {/* One container, two independent actions. Enable must
+                          NOT sit inside a needs_reauth gate: a healthy
+                          institution is exactly the case it exists for. */}
+                      {(inst.needs_reauth || canEnableLiabilities(inst)) && (
                         <div className="card-actions">
-                          <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
-                            Reconnect
-                          </button>
+                          {inst.needs_reauth && (
+                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
+                              Reconnect
+                            </button>
+                          )}
+                          {canEnableLiabilities(inst) && (
+                            <button
+                              className="secondary"
+                              onClick={() => startEnableLiabilities(inst.item_id)}
+                              disabled={connecting}
+                            >
+                              Enable payment details
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
