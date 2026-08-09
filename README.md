@@ -219,6 +219,48 @@ Hiding is not a security feature: the data is still fetched and stored, it just
 isn't shown or counted. To actually remove an account, disconnect it (Plaid) or
 delete it (manual).
 
+### When an institution can't be reached
+
+Plaid connections fail: a bank has an outage, a login expires, an item needs
+re-authenticating. When that happens Nya shows the institution's **last known
+balances** with the date they were taken ("Could not fetch balances · balances
+as of Aug 7") rather than a $0.00 card.
+
+That's not cosmetic. Dropping a failed institution from the total silently
+understates your debts as well as your assets, and a credit card falling out
+makes net worth go *up*: a broken connection that reads as good news. Showing
+the last real figures keeps the total honest while the connection is down.
+
+The balances come from the most recent daily snapshot, which is also what
+decides they still exist. Snapshots are only recorded on days when every
+institution answered, so the newest one lists exactly the accounts that were
+open as of the last clean read. An account you closed before then doesn't come
+back. With the cron running that window is under a day; without a `CRON_SECRET`
+it stretches to whenever you last opened the app.
+
+Two cases fall back to a plain $0.00 card rather than guess:
+
+- **Balances older than 35 days.** The card says so and names the date, so an
+  institution that has been broken for months doesn't quietly revert to zero.
+- **An account with no recorded metadata.** Recovery needs both the snapshot
+  and a record of what each account is. If the snapshot names an account that
+  can't be attributed, the whole institution is skipped, because a card missing
+  one row would show a wrong subtotal under a note claiming only that it was
+  dated.
+
+Recovered balances are **display-only**. They're never written to the net-worth
+history, and no snapshot is recorded on a day when any institution failed, so a
+stale figure can never be mistaken for a measured one in the chart. The
+consequence is a real gap: if a connection stays broken through the end of the
+day, that day gets no point at all and nothing back-fills it later. That's
+deliberate, because a fabricated flat line in the real history layer would be
+permanent: nothing ever rewrites a past date.
+
+An institution that needs re-authenticating keeps the red warning and its
+**Reconnect** button, and only says the balances are dated. The softer amber
+note is reserved for failures that usually clear on their own, so a dead
+connection can't hide behind plausible-looking numbers.
+
 ### Manual accounts
 
 Plaid's coverage is wide but uneven: small credit unions, HSAs, 401k
@@ -381,8 +423,10 @@ fails open if Redis is unreachable). This blunts brute-forcing of
   a silent wrong answer is worst: the net-worth history layers
   (`lib/history.ts` — real-vs-estimated merging, retention across recomputes,
   and hidden-account subtraction), Plaid's investment sign conventions and
-  pagination (`lib/investments.ts`), and liability normalization
-  (`lib/liabilities.ts`). Routes, React components and anything talking to live
+  pagination (`lib/investments.ts`), liability normalization
+  (`lib/liabilities.ts`), the credit/loan sign rule that every total depends on
+  (`lib/balance.ts`), and last-known-balance recovery for a failed institution
+  (`lib/last-known.ts`). Routes, React components and anything talking to live
   Plaid are not covered.
 - **Liabilities is a paid Plaid product.** Free in `sandbox`, but billed per
   Item per month in `production`, so enabling payment details on many

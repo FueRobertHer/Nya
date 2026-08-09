@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { computeNetWorth, accountBalanceMap, type InstitutionResult } from '@/lib/networth';
-import { readCache, writeCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
+import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { recordSnapshot, getHistory, isBackfillDone, type HistoryPoint } from '@/lib/history';
 import { getHiddenAccounts, applyHidden } from '@/lib/hidden';
+import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -58,10 +59,27 @@ export async function GET(req: Request) {
       await recordSnapshot(netWorth, balances);
     }
 
+    // Capture how to render each account while its institution is answering, so
+    // a later failure can still draw its card. Per institution, not gated on
+    // `clean`: one broken bank shouldn't stop the others' records staying
+    // fresh. Writes only, so the broken one's record survives.
+    await rememberAccounts(institutions);
+
     // Everything from here down is display-only. `visibleNetWorth` excludes
     // hidden accounts and is what ships as `netWorth` -- the client is never
     // sent the true total, so the Home hero, the Accounts tab and the
     // localStorage snapshot can't disagree with each other.
+
+    // An institution that failed shows its last good balances rather than
+    // $0.00, so the total isn't silently short by an entire bank. It runs HERE,
+    // below the two gates above, and never above them: `clean` is computed from
+    // the live fetch, so a recovered balance can't be mistaken for a measured
+    // one and written to history or frozen into the cache. See lib/last-known.ts.
+    const stale = await fillFromLastKnown(institutions);
+    if (stale.length > 0) {
+      console.warn('net-worth: showing last-known balances', stale);
+    }
+
     const hidden = await getHiddenAccounts();
     const visibleNetWorth = applyHidden(institutions, hidden);
     const history = await getHistory(hidden);
@@ -77,8 +95,17 @@ export async function GET(req: Request) {
     // Don't cache payloads containing errors: an institution that needs
     // reauth (or hit a transient Plaid failure) should be re-checked on the
     // next load, not frozen for the TTL.
+    //
+    // Not caching isn't enough on its own -- an entry written before the
+    // failure survives its full TTL, so loads would alternate between this
+    // payload (stale balances, disclosed) and that one (15-minute-old live
+    // balances, no disclosure at all), showing two different net worths and
+    // hiding the problem on every other load. Drop it so the next load also
+    // sees the failure.
     if (clean) {
       await writeCache(NET_WORTH_CACHE_KEY, payload);
+    } else {
+      await clearNetWorthCache();
     }
 
     return NextResponse.json({ ...payload, ...(await staleFlag()), from_cache: false });

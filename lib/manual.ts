@@ -38,13 +38,6 @@ export type ManualType = (typeof MANUAL_TYPES)[number];
  *  every write path so the UI, the PUT and the ingest route agree. */
 export const MAX_BALANCE = 1e12;
 
-/** Types where the stored balance is an amount OWED, so it subtracts from net
- *  worth. Matches the rule computeNetWorth() and Dashboard's signedBalance()
- *  already apply to Plaid accounts. */
-export function isOwedType(type: string): boolean {
-  return type === 'credit' || type === 'loan';
-}
-
 export type ManualAccount = {
   account_id: string;
   name: string;

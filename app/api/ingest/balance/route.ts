@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getManualAccount, setManualBalance, isOwedType, MAX_BALANCE } from '@/lib/manual';
+import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
+import { isOwedType } from '@/lib/balance';
+import { rememberAccounts } from '@/lib/last-known';
 import { computeNetWorth, accountBalanceMap } from '@/lib/networth';
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
@@ -132,6 +134,11 @@ export async function POST(req: Request) {
           clean && institutions.length > 0
             ? await recordSnapshot(netWorth, accountBalanceMap(institutions))
             : false;
+        // Keep accounts:meta in step with the snapshot, for the same reason
+        // /api/snapshot does: an account this read learned about but no
+        // dashboard load has seen would otherwise block recovery for its whole
+        // institution (lib/last-known.ts refuses to draw a partial one).
+        await rememberAccounts(institutions);
         return NextResponse.json({ updated, recorded, results });
       } catch (err) {
         // The balances did land; only the snapshot failed. Say so rather than

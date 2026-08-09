@@ -6,13 +6,13 @@ import {
   removeManualAccount,
   normalizeInstitutionName,
   isManualId,
-  isOwedType,
   newManualId,
   MANUAL_TYPES,
   MAX_BALANCE,
   type ManualAccount,
   type ManualType,
 } from '@/lib/manual';
+import { isOwedType } from '@/lib/balance';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { pruneHidden } from '@/lib/hidden';

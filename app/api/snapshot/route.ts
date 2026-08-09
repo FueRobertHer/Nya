@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { computeNetWorth, accountBalanceMap } from '@/lib/networth';
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
+import { rememberAccounts } from '@/lib/last-known';
 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
 // net-worth chart stays gapless even on days the app isn't opened.
@@ -27,6 +28,11 @@ export async function GET(req: Request) {
     }
 
     await recordSnapshot(netWorth, accountBalanceMap(institutions));
+    // Keep accounts:meta in step with what the snapshot just recorded. Without
+    // this the cron could add an account (one opened since the last dashboard
+    // load) that recovery has no metadata for, and lib/last-known.ts would then
+    // refuse to recover that institution at all rather than draw it short.
+    await rememberAccounts(institutions);
     await clearCaches(); // cached payloads now have yesterday's history
     return NextResponse.json({ recorded: true });
   } catch (err: any) {

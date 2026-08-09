@@ -34,6 +34,7 @@
 
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
+import { signedContribution } from './balance';
 
 const HIDDEN_HASH = k('hidden:accounts');
 
@@ -44,24 +45,6 @@ export type HiddenAccount = {
 
 /** account_id -> what we need to subtract it from a total. */
 export type HiddenMap = Map<string, HiddenAccount>;
-
-/**
- * How an account balance contributes to net worth: credit and loan balances
- * are amounts owed, so they subtract. computeNetWorth, lib/manual's
- * isOwedType and Dashboard's signedBalance still open-code the same rule; this
- * is the definition the history subtraction uses, not yet the only one.
- *
- * NOTE for anyone consolidating duplicates: app/api/backfill/route.ts contains
- * two expressions of this exact shape and only one of them is this rule. Its
- * transaction walk (`balances[id] += cashType[id] === 'credit' ? -amount :
- * amount`) is the opposite concept -- a card purchase *raises* the owed balance
- * -- and replacing it with this function would silently invert the estimated
- * series for every credit account. Both are deliberately left alone there.
- */
-export function signedContribution(type: string, balance: number): number {
-  return type === 'credit' || type === 'loan' ? -balance : balance;
-}
-
 
 /**
  * Every hidden account. Throws on a Redis error, or if any field fails to

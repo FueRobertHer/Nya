@@ -9,6 +9,7 @@ import { decrypt } from './crypto';
 import { getItems, type StoredItem } from './storage';
 import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
 import { normalizeLiabilities } from './liabilities';
+import { isOwedType, signedContribution } from './balance';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -34,6 +35,19 @@ export type InstitutionResult = {
   error: string | null;
   needs_reauth: boolean;
   liabilities: LiabilitiesState;
+  /**
+   * Set when `accounts` was recovered from the last good snapshot after this
+   * fetch failed (lib/last-known.ts), as YYYY-MM-DD. Display-only: `error` is
+   * still set alongside it, which is what keeps the snapshot and cache gates
+   * closed. Never populated by computeNetWorth itself.
+   */
+  stale_as_of?: string;
+  /**
+   * Set instead of `stale_as_of` when last-known balances exist but the newest
+   * snapshot is past the age limit. The accounts stay empty; this only lets the
+   * card explain itself rather than silently reverting to $0.00.
+   */
+  stale_too_old?: string;
   /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
   manual?: boolean;
 };
@@ -86,7 +100,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   // Holdings and liabilities are independent of each other and both swallow
   // their own errors, so they run together rather than adding a second and
   // third serial round trip to the uncached dashboard load and the daily cron.
-  const hasDebt = result.accounts.some((a) => a.type === 'credit' || a.type === 'loan');
+  const hasDebt = result.accounts.some((a) => isOwedType(a.type));
   await Promise.all([
     fetchHoldings(access_token, result),
     // Only worth a call if there's something a liability could describe.
@@ -201,19 +215,28 @@ export async function computeNetWorth(): Promise<{
   institutions.forEach((inst) => {
     inst.accounts.forEach((a) => {
       if (a.balance == null) return;
-      netWorth += a.type === 'credit' || a.type === 'loan' ? -a.balance : a.balance;
+      netWorth += signedContribution(a.type, a.balance);
     });
   });
 
   return { institutions, netWorth };
 }
 
-/** Flat { account_id: current balance } map, for per-account history snapshots. */
+/**
+ * Flat { account_id: current balance } map, for per-account history snapshots.
+ *
+ * Skips accounts recovered from a past snapshot (lib/last-known.ts). Callers
+ * today build this before recovery runs, so the filter never fires -- it is
+ * here so the display-only rule survives someone reordering the route. Writing
+ * a recovered balance into today's key would record last week's figure as
+ * though it had been measured, and nothing ever rewrites a real point for a
+ * past date, so that mistake would be permanent.
+ */
 export function accountBalanceMap(institutions: InstitutionResult[]): Record<string, number> {
   const map: Record<string, number> = {};
   institutions.forEach((inst) => {
     inst.accounts.forEach((a) => {
-      if (a.balance != null) map[a.account_id] = a.balance;
+      if (a.balance != null && !a.stale) map[a.account_id] = a.balance;
     });
   });
   return map;

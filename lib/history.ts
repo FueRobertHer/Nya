@@ -16,7 +16,8 @@
 
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
-import { signedContribution, type HiddenMap } from './hidden';
+import { type HiddenMap } from './hidden';
+import { signedContribution } from './balance';
 
 const HISTORY_HASH = k('history:net-worth');
 const ESTIMATED_HASH = k('history:net-worth:est');
@@ -238,6 +239,72 @@ export async function replaceEstimatedAccounts(
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
   await replaceRange(ACCOUNTS_EST_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
+}
+
+/**
+ * The most recent REAL per-account snapshot, as `{ date, balances }`. Null when
+ * nothing readable was ever recorded.
+ *
+ * Exists so an institution whose live fetch just failed can still show its last
+ * good balances with an honest "as of" (see lib/last-known.ts). The REAL layer
+ * only, deliberately: the estimated layer is a reconstruction, and presenting a
+ * walked figure as "your balance on Aug 7" would put an inferred number on
+ * screen dressed as an observed one.
+ *
+ * THE NEWEST SNAPSHOT IS AUTHORITATIVE ABOUT WHICH ACCOUNTS EXIST, which is why
+ * this returns it wholesale rather than searching backwards for a particular
+ * account. recordSnapshot only runs when EVERY institution answered cleanly, so
+ * a date is present here only if everything was healthy that day -- and no
+ * snapshot is written at all while anything is broken. The newest one therefore
+ * predates the current failure and lists every account that was open then. An
+ * account in an Item's stored metadata but absent from this map was already
+ * closed while its institution still worked; hunting further back for it would
+ * resurrect it as a live-looking row with a balance the user has since paid off
+ * and closed. Searching per account would also date different accounts
+ * differently, producing an institution subtotal that never existed on any day.
+ *
+ * One Redis read and (normally) one decrypt, shared by every caller in a
+ * request rather than repeated per institution.
+ */
+export async function getLatestAccountSnapshot(): Promise<{
+  date: string;
+  balances: Record<string, number>;
+} | null> {
+  let map: Record<string, string> | null;
+  try {
+    map = await redis().hgetall<Record<string, string>>(ACCOUNTS_HASH);
+  } catch {
+    return null;
+  }
+  if (!map) return null;
+
+  // No age limit here on purpose: whether a snapshot is too old to present is a
+  // display decision, and the caller needs the date even when it fails that
+  // test so it can say "too old" rather than silently showing nothing.
+  //
+  // Future dates ARE excluded. Keys come from toISOString() on whichever
+  // machine wrote them, so clock skew can mint one, and it would otherwise win
+  // every lookup indefinitely.
+  const today = new Date().toISOString().slice(0, 10);
+  const dates = Object.keys(map)
+    .filter((d) => d <= today)
+    .sort()
+    .reverse();
+
+  for (const date of dates) {
+    let balances: Record<string, number>;
+    try {
+      balances = JSON.parse(await decrypt(map[date])) as Record<string, number>;
+    } catch {
+      continue; // undecryptable date (rotated key) -- try the day before
+    }
+    const usable: Record<string, number> = {};
+    for (const [id, b] of Object.entries(balances ?? {})) {
+      if (typeof b === 'number' && Number.isFinite(b)) usable[id] = b;
+    }
+    if (Object.keys(usable).length > 0) return { date, balances: usable };
+  }
+  return null;
 }
 
 export async function getRealSnapshotDates(): Promise<Set<string>> {
