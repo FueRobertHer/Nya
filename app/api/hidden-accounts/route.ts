@@ -3,6 +3,7 @@ import { setAccountHidden } from '@/lib/hidden';
 import { computeNetWorth } from '@/lib/networth';
 import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
+import { findRememberedAccount } from '@/lib/last-known';
 
 // Hides or unhides ONE account per request.
 //
@@ -48,6 +49,14 @@ export async function POST(req: Request) {
       const cached = await readCache<{ institutions: any[] }>(NET_WORTH_CACHE_KEY);
       type = findType(cached?.institutions ?? []);
       if (!type) type = findType((await computeNetWorth()).institutions);
+
+      // Last resort: an account whose institution is currently failing. The
+      // Accounts tab now renders those rows from recovered balances
+      // (lib/last-known.ts), so Hide is reachable on them -- but neither source
+      // above can answer. The cache isn't written while anything is erroring,
+      // and the live fetch is the call that just failed. Without this, Hide on
+      // a recovered row 404s every time for the whole outage.
+      if (!type) type = (await findRememberedAccount(account_id))?.account.type ?? null;
 
       if (!type) {
         return NextResponse.json(

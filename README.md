@@ -231,22 +231,20 @@ understates your debts as well as your assets, and a credit card falling out
 makes net worth go *up*: a broken connection that reads as good news. Showing
 the last real figures keeps the total honest while the connection is down.
 
-The balances come from the most recent daily snapshot, which is also what
-decides they still exist. Snapshots are only recorded on days when every
-institution answered, so the newest one lists exactly the accounts that were
-open as of the last clean read. An account you closed before then doesn't come
-back. With the cron running that window is under a day; without a `CRON_SECRET`
-it stretches to whenever you last opened the app.
+Two stores back this. The balances come from the most recent daily snapshot,
+which is only recorded on days when every institution answered. Alongside it,
+each institution's account list is recorded every time that institution
+answers, so a card you closed disappears from it on the next successful load
+rather than lingering. The card you see is that institution as it stood on the
+snapshot date, which is what the date is there to say.
 
-Two cases fall back to a plain $0.00 card rather than guess:
+Everything is scoped per institution, so a problem with one can't affect
+another's recovery.
 
-- **Balances older than 35 days.** The card says so and names the date, so an
-  institution that has been broken for months doesn't quietly revert to zero.
-- **An account with no recorded metadata.** Recovery needs both the snapshot
-  and a record of what each account is. If the snapshot names an account that
-  can't be attributed, the whole institution is skipped, because a card missing
-  one row would show a wrong subtotal under a note claiming only that it was
-  dated.
+If the balances are older than **35 days** the card stops showing them and says
+so, naming the date. An institution broken for months shouldn't quietly revert
+to zero, and it shouldn't drag a months-old figure into today's total either.
+The Home total says when an institution isn't being counted.
 
 Recovered balances are **display-only**. They're never written to the net-worth
 history, and no snapshot is recorded on a day when any institution failed, so a

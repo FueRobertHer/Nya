@@ -7,9 +7,13 @@ const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
-const { fillFromLastKnown, rememberAccounts, rememberedIdsForItem, pruneRemembered } = await import(
-  '@/lib/last-known'
-);
+const {
+  fillFromLastKnown,
+  rememberAccounts,
+  rememberedIdsForItem,
+  findRememberedAccount,
+  forgetItem,
+} = await import('@/lib/last-known');
 const { applyHidden } = await import('@/lib/hidden');
 
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
@@ -113,10 +117,44 @@ describe('rememberAccounts', () => {
     expect(await rememberedIdsForItem('item_a')).toEqual([]);
   });
 
-  test('pruneRemembered drops the ids it is given', async () => {
-    await remember('item_a', [acct('card', 'Venture', 'credit'), acct('checking', '360', 'depository')]);
-    await pruneRemembered(['card']);
-    expect(await rememberedIdsForItem('item_a')).toEqual(['checking']);
+  // Wholesale replacement, not merge. The first shape of this store was
+  // append-only per account, so a card closed at the bank stayed in the record
+  // forever and nothing could ask "what accounts does this Item actually have?"
+  test('a later load replaces the record, dropping a closed account', async () => {
+    await remember('item_a', [
+      acct('card', 'Venture', 'credit'),
+      acct('closed', 'Quicksilver', 'credit'),
+    ]);
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    expect(await rememberedIdsForItem('item_a')).toEqual(['card']);
+  });
+
+  test('one Item replacing its record leaves other Items alone', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await remember('item_b', [acct('save', 'Savings', 'depository')]);
+    await remember('item_a', [acct('card2', 'Venture 2', 'credit')]);
+
+    expect(await rememberedIdsForItem('item_a')).toEqual(['card2']);
+    expect(await rememberedIdsForItem('item_b')).toEqual(['save']);
+  });
+
+  test('forgetItem drops one Item and nothing else', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await remember('item_b', [acct('save', 'Savings', 'depository')]);
+    await forgetItem('item_a');
+
+    expect(await rememberedIdsForItem('item_a')).toEqual([]);
+    expect(await rememberedIdsForItem('item_b')).toEqual(['save']);
+  });
+
+  // app/api/hidden-accounts needs an account's type to hide it, and for a
+  // recovered row neither the cache nor a live fetch can supply one.
+  test('findRememberedAccount resolves an account to its Item and type', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    const found = await findRememberedAccount('card');
+    expect(found?.item_id).toBe('item_a');
+    expect(found?.account.type).toBe('credit');
+    expect(await findRememberedAccount('nope')).toBeNull();
   });
 });
 
@@ -242,18 +280,14 @@ describe('what it refuses to do', () => {
   });
 
   // An unsigned balance would be added to net worth as an asset, turning a card
-  // you owe into money you have, so the write path drops untyped accounts. The
-  // knock-on is that such an account then has no metadata, which makes it
-  // unattributable and takes its whole institution out of recovery. That is the
-  // right outcome: showing the sibling checking account alone would understate
-  // net worth by the card, silently, under a note that says only "dated".
-  test('an untyped account is never recovered, and takes its institution with it', async () => {
+  // you owe into money you have, so the write path drops untyped accounts.
+  test('an untyped account is never recovered', async () => {
     await remember('item_a', [acct('card', 'Venture', null), acct('checking', '360', 'depository')]);
     await writeAccountSnapshot(RECENT, { card: 5000, checking: 100 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toEqual([]);
-    expect(inst.accounts).toHaveLength(0);
+    await fillFromLastKnown([inst]);
+    expect(inst.accounts.map((a) => a.account_id)).toEqual(['checking']);
   });
 
   // Recovery is scoped by item_id, so a failing institution can't absorb
@@ -284,50 +318,49 @@ describe('what it refuses to do', () => {
     expect(inst.accounts).toHaveLength(0);
   });
 
-  // Drawing an institution short is worse than not drawing it. The subtotal
-  // would be wrong under a note claiming only that it was dated, and when the
-  // dropped row is a credit card the total is overstated -- the exact failure
-  // this feature exists to prevent, one layer down and harder to see.
-  test('refuses the whole institution when one of its accounts is unreadable', async () => {
+  // BLAST RADIUS. Recovery is driven by each Item's own record, so nothing
+  // about one institution can disable another's. An earlier design scanned the
+  // snapshot for ids it couldn't attribute and refused everything when it found
+  // any -- which fired on a disconnected Item, a deleted manual account, a
+  // failed manual read, and on deploy day, each time silently reverting every
+  // institution to $0.00 for the duration of the outage.
+  test('an unreadable record costs only its own Item', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await remember('item_b', [acct('save', 'Savings', 'depository')]);
+    await fake.hset('test:accounts:meta', { item_a: 'not-ciphertext' });
+    await writeAccountSnapshot(RECENT, { card: 500, save: 2000 });
+
+    const a = broken('item_a');
+    const b = broken('item_b');
+    expect(await fillFromLastKnown([a, b])).toHaveLength(1);
+    expect(a.accounts).toHaveLength(0);
+    expect(b.accounts.map((x) => x.account_id)).toEqual(['save']);
+  });
+
+  test('a snapshot id no Item claims is ignored, not treated as a blocker', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    // A deleted manual account, a disconnected Item, an account closed since:
+    // all leave ids in the snapshot that nothing owns any more.
+    await writeAccountSnapshot(RECENT, { card: 500, orphan: 9000, manual_1: 400 });
+
+    const inst = broken('item_a');
+    expect(await fillFromLastKnown([inst])).toHaveLength(1);
+    expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
+  });
+
+  // An account opened during a partial outage: the Item's record was updated
+  // (rememberAccounts is per institution, not gated on a clean fetch) but no
+  // snapshot could be written. The card presents this institution AS OF the
+  // snapshot date, and on that date the account did not exist.
+  test('an account newer than the snapshot is omitted rather than blocking', async () => {
     await remember('item_a', [
       acct('card', 'Venture', 'credit'),
-      acct('checking', '360', 'depository'),
+      acct('brand_new', 'New Card', 'credit'),
     ]);
-    await fake.hset('test:accounts:meta', { card: 'not-ciphertext' });
-    await writeAccountSnapshot(RECENT, { card: 500, checking: 100 });
+    await writeAccountSnapshot(RECENT, { card: 500 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toEqual([]);
-    expect(inst.accounts).toHaveLength(0);
-    expect(inst.stale_as_of).toBeUndefined();
-  });
-
-  // The concrete path: a card opened at an already-linked bank, picked up by
-  // the nightly cron, before any uncached dashboard load recorded its metadata.
-  test('refuses when the snapshot holds an account no store can attribute', async () => {
-    await remember('item_a', [acct('checking', '360', 'depository')]);
-    await writeAccountSnapshot(RECENT, { checking: 1000, new_card: 5000 });
-
-    const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toEqual([]);
-    expect(inst.accounts).toHaveLength(0);
-  });
-
-  // ...but an unattributable id that belongs to a HEALTHY institution is
-  // accounted for by its live account list, so it must not block recovery.
-  test('an account live on a healthy institution does not count as unattributable', async () => {
-    await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    await writeAccountSnapshot(RECENT, { card: 500, manual_1: 9000 });
-
-    const inst = broken('item_a');
-    const healthy = {
-      ...broken('manual:ally'),
-      error: null,
-      manual: true,
-      accounts: [{ account_id: 'manual_1', type: 'investment', balance: 9000 }],
-    };
-
-    expect(await fillFromLastKnown([inst, healthy])).toHaveLength(1);
+    expect(await fillFromLastKnown([inst])).toHaveLength(1);
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
   });
 });
@@ -357,13 +390,31 @@ describe('the age limit', () => {
     expect(inst.stale_too_old).toBeUndefined();
   });
 
+  // Exactly at the limit. The other two cases sit at 34 and 40 days, which
+  // leaves `<` vs `<=` free to flip without failing anything.
+  test('a snapshot exactly at the limit still fills', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(daysAgo(35), { card: 500 });
+
+    const inst = broken('item_a');
+    expect(await fillFromLastKnown([inst])).toHaveLength(1);
+    expect(inst.stale_too_old).toBeUndefined();
+  });
+
   // An institution with nothing recoverable gets no explanation, because there
-  // is nothing to explain: it never had balances to be too old.
+  // is nothing to explain: it never had balances to be too old. Guards the
+  // order of the two guards -- swapping them would label an institution that
+  // never had balances "too old to show", inventing history it never had.
   test('says nothing when there was nothing to recover anyway', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    // The Item is known, but this old snapshot predates every one of its
+    // accounts, so there is nothing to date.
     await writeAccountSnapshot(daysAgo(40), { someone_else: 500 });
+
     const inst = broken('item_a');
     await fillFromLastKnown([inst]);
     expect(inst.stale_too_old).toBeUndefined();
+    expect(inst.stale_as_of).toBeUndefined();
   });
 });
 

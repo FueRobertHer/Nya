@@ -19,23 +19,30 @@
 // in the chart this feature is not trying to fix.
 //
 // Two stores, because neither has everything:
-//   - history:accounts (lib/history.ts) holds balances keyed by date, so it
-//     supplies both the figure and an honest "as of". It also decides which
-//     accounts still EXIST -- see getLatestAccountSnapshot.
-//   - accounts:meta, written here, holds how to render them: name, mask, type,
-//     subtype, credit limit, currency.
+//   - history:accounts (lib/history.ts) supplies the balance and the "as of".
+//   - accounts:meta, written here, supplies how to draw each account and which
+//     Item owns it: name, mask, type, subtype, credit limit, currency.
 //
-// WHY A DEDICATED METADATA STORE rather than reusing the transactions state,
-// which already carries a StoredAccount per account. Because that map is only
-// refreshed for accounts appearing in a sync's delta: /transactions/sync
-// returns `accounts` for the accounts related to the transactions in that
-// response, so a card with no recent activity is never revisited. An Item whose
-// state predates the metadata capture keeps `type: null` from
-// migrateLegacyState forever, and an investments-only Item never persists
-// transaction state at all. Both are the common case for exactly the accounts
-// worth recovering, and an account with no type cannot be signed, so recovery
-// would silently do nothing. Capturing metadata on the healthy net-worth path
-// instead means it is refreshed every time the institution answers.
+// KEYED BY ITEM, REPLACED WHOLESALE. One hash field per item_id holding that
+// Item's whole account list, rewritten every time the Item answers. Not one
+// field per account, which was the first shape: that record could only ever
+// grow, so a closed card stayed in it forever and there was no way to ask "what
+// accounts does this Item have?" without trusting an append-only set. Wholesale
+// replacement makes each record a true statement about one Item as of its last
+// successful fetch, which is what lets recovery work per institution instead of
+// reasoning about a global pool of account ids it cannot attribute.
+//
+// WHY A DEDICATED STORE rather than the transactions state, which already
+// carries a StoredAccount per account: that map is only refreshed for accounts
+// appearing in a sync's delta, because /transactions/sync returns `accounts`
+// for the accounts related to the transactions in that response. A card with no
+// recent activity is never revisited, an Item whose state predates the metadata
+// capture keeps `type: null` from migrateLegacyState forever, and an
+// investments-only Item never persists transaction state at all. All three are
+// the common case for exactly the accounts worth recovering, and an account
+// with no type cannot be signed, so recovery would silently do nothing.
+// Capturing on the healthy net-worth path instead means it is refreshed every
+// time the institution answers.
 //
 // This is the same move lib/hidden.ts already makes for one field. Its header
 // explains why it persists each hidden account's TYPE instead of resolving it
@@ -50,9 +57,19 @@ import { getLatestAccountSnapshot } from './history';
 
 const ACCOUNT_META_HASH = k('accounts:meta');
 
-/** How to render an account, captured while its institution was healthy. */
+/**
+ * How old the newest snapshot may be and still be presented as an account
+ * balance. Past this, the figure stops being "your balance, slightly behind"
+ * and starts being a historical curiosity that would drag a stale number into
+ * the net-worth total. Crossing it is disclosed rather than silent (see
+ * `stale_too_old`), because an institution reverting to $0.00 after five weeks
+ * of showing balances is the original bug coming back unannounced.
+ */
+const MAX_SNAPSHOT_AGE_DAYS = 35;
+
+/** How to draw one account, captured while its institution was healthy. */
 export type RememberedAccount = {
-  item_id: string;
+  account_id: string;
   name: string;
   official_name: string | null;
   mask: string | null;
@@ -61,16 +78,6 @@ export type RememberedAccount = {
   limit: number | null;
   currency: string | null;
 };
-
-/**
- * How old the newest snapshot may be and still be presented as an account
- * balance. Past this, the figure stops being "your balance, slightly behind"
- * and starts being a historical curiosity that would drag a stale number into
- * the net-worth total. Crossing it is disclosed rather than silent (see
- * `stale_too_old`), because an institution silently reverting to $0.00 after
- * five weeks of showing balances is the original bug coming back unannounced.
- */
-const MAX_SNAPSHOT_AGE_DAYS = 35;
 
 /** What was recovered, for logging and tests. The institutions are mutated. */
 export type StaleFill = { item_id: string; as_of: string; accounts: number };
@@ -88,31 +95,35 @@ type Fillable = {
 };
 
 /**
- * Records how to render every account of every institution that answered.
+ * Records how to draw every account of every institution that answered.
  *
- * Per institution, not gated on the whole fetch being clean: an institution
- * that succeeded should keep a fresh record even while a different one is
- * broken. Entries are only ever written, never deleted, so a broken
- * institution's record survives the outage that makes it useful.
+ * Per institution and NOT gated on the whole fetch being clean: an institution
+ * that succeeded should keep a current record even while a different one is
+ * broken. Each Item's record is replaced entirely, so an account closed at the
+ * bank disappears from it on the next successful load rather than lingering.
+ * Items that did not answer are left untouched, which is what makes a broken
+ * institution's record survive the outage that makes it useful.
  *
- * Stale entries for closed or disconnected accounts are harmless: nothing here
- * decides whether an account exists, only how to draw one the snapshot layer
- * already vouched for.
- *
- * Best-effort. This runs on the healthy path, where a Redis hiccup must not
- * cost the user their dashboard.
+ * Best-effort, and structurally unable to throw: this runs on the healthy path,
+ * where a Redis hiccup must not cost the user their dashboard.
  */
 export async function rememberAccounts(institutions: Fillable[]): Promise<void> {
   const fields: Record<string, string> = {};
 
   for (const inst of institutions) {
+    // Manual institutions have no Plaid Item to fail, and their balances live
+    // in lib/manual.ts. An erroring one has `accounts: []`, and writing that
+    // would erase a good record with the output of a failure.
     if (inst.error || inst.manual) continue;
+
+    const accounts: RememberedAccount[] = [];
     for (const a of inst.accounts) {
-      // No type means it could never be signed on the way back out, so there is
-      // no point storing it.
+      // No type means it could never be signed on the way back out -- an
+      // unsigned balance is added to net worth as an asset, turning a card you
+      // owe into money you have -- so there is no point storing it.
       if (typeof a?.account_id !== 'string' || typeof a?.type !== 'string') continue;
-      const value: RememberedAccount = {
-        item_id: inst.item_id,
+      accounts.push({
+        account_id: a.account_id,
         name: a.name ?? '',
         official_name: a.official_name ?? null,
         mask: a.mask ?? null,
@@ -120,12 +131,14 @@ export async function rememberAccounts(institutions: Fillable[]): Promise<void> 
         subtype: a.subtype ?? null,
         limit: typeof a.limit === 'number' ? a.limit : null,
         currency: a.currency ?? null,
-      };
-      try {
-        fields[a.account_id] = await encrypt(JSON.stringify(value));
-      } catch {
-        // Skip this one rather than lose the whole batch.
-      }
+      });
+    }
+    if (accounts.length === 0) continue;
+
+    try {
+      fields[inst.item_id] = await encrypt(JSON.stringify(accounts));
+    } catch {
+      // Skip this Item rather than lose the whole batch.
     }
   }
 
@@ -133,13 +146,14 @@ export async function rememberAccounts(institutions: Fillable[]): Promise<void> 
   try {
     await redis().hset(ACCOUNT_META_HASH, fields);
   } catch {
-    // Worst case a later failure shows the plain error card instead of balances.
+    // Worst case an institution that fails later shows the plain error card
+    // instead of its balances. Only that institution: records are per Item.
   }
 }
 
-/** Everything remembered, by account_id. Unreadable fields are skipped rather
- *  than failing the batch: a single rotated-key entry shouldn't cost the rest. */
-async function recallAccounts(): Promise<Record<string, RememberedAccount>> {
+/** Every Item's remembered accounts. An unreadable record costs only that Item:
+ *  a single rotated-key entry shouldn't take the rest down with it. */
+async function recallByItem(): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
     map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH);
@@ -148,24 +162,18 @@ async function recallAccounts(): Promise<Record<string, RememberedAccount>> {
   }
   if (!map) return {};
 
-  const out: Record<string, RememberedAccount> = {};
+  const out: Record<string, RememberedAccount[]> = {};
   await Promise.all(
-    Object.entries(map).map(async ([account_id, blob]) => {
+    Object.entries(map).map(async ([item_id, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as Partial<RememberedAccount>;
-        if (typeof parsed.item_id !== 'string' || typeof parsed.type !== 'string') return;
-        out[account_id] = {
-          item_id: parsed.item_id,
-          name: parsed.name ?? '',
-          official_name: parsed.official_name ?? null,
-          mask: parsed.mask ?? null,
-          type: parsed.type,
-          subtype: parsed.subtype ?? null,
-          limit: typeof parsed.limit === 'number' ? parsed.limit : null,
-          currency: parsed.currency ?? null,
-        };
+        const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+        if (!Array.isArray(parsed)) return;
+        const accounts = parsed.filter(
+          (a) => typeof a?.account_id === 'string' && typeof a?.type === 'string'
+        );
+        if (accounts.length > 0) out[item_id] = accounts;
       } catch {
-        // Undecryptable entry: that account just won't be recoverable.
+        // Undecryptable record: that Item just won't be recoverable.
       }
     })
   );
@@ -173,29 +181,45 @@ async function recallAccounts(): Promise<Record<string, RememberedAccount>> {
 }
 
 /**
- * The account ids remembered for one Item.
+ * One remembered account by id, with the Item that owns it.
  *
- * A third source for the disconnect route's cleanup, and the most complete one:
- * unlike the transaction store it doesn't need the Item to have synced
- * transactions, and unlike the net-worth cache it doesn't expire. Any Item that
- * has ever loaded successfully is covered.
+ * Exists for app/api/hidden-accounts, which needs an account's TYPE to hide it
+ * and previously resolved that from the net-worth cache or a live fetch. A
+ * recovered account is in neither -- the cache isn't written while anything is
+ * erroring, and the live fetch is the thing that failed -- so Hide on a
+ * recovered row would 404 without this.
  */
-export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
-  const meta = await recallAccounts();
-  return Object.entries(meta)
-    .filter(([, m]) => m.item_id === item_id)
-    .map(([account_id]) => account_id);
+export async function findRememberedAccount(
+  account_id: string
+): Promise<{ item_id: string; account: RememberedAccount } | null> {
+  const byItem = await recallByItem();
+  for (const [item_id, accounts] of Object.entries(byItem)) {
+    const account = accounts.find((a) => a.account_id === account_id);
+    if (account) return { item_id, account };
+  }
+  return null;
 }
 
-/** Drops remembered entries for accounts that no longer exist, mirroring
- *  pruneHidden. Not load-bearing (the snapshot layer decides existence), just
- *  housekeeping so a disconnected Item's rows don't linger forever. */
-export async function pruneRemembered(account_ids: string[]): Promise<void> {
-  if (account_ids.length === 0) return;
+/**
+ * The account ids remembered for one Item.
+ *
+ * A third source for the disconnect route's cleanup, and the broadest: unlike
+ * the transaction store it doesn't need the Item to have synced transactions,
+ * and unlike the net-worth cache it doesn't expire. Any Item that has ever
+ * loaded successfully is covered.
+ */
+export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
+  const byItem = await recallByItem();
+  return (byItem[item_id] ?? []).map((a) => a.account_id);
+}
+
+/** Drops one Item's record, on disconnect. Safe because attribution is per
+ *  Item: removing this record can't affect any other institution's recovery. */
+export async function forgetItem(item_id: string): Promise<void> {
   try {
-    await redis().hdel(ACCOUNT_META_HASH, ...account_ids);
+    await redis().hdel(ACCOUNT_META_HASH, item_id);
   } catch {
-    // Best effort; a stale entry is inert.
+    // Best effort; a stale record is inert once no Item carries that id.
   }
 }
 
@@ -219,45 +243,12 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
 
   // Both reads are shared across every broken institution rather than repeated
   // per institution: a Plaid-wide outage would otherwise download and decrypt
-  // the whole snapshot hash N times in parallel. Sharing the snapshot also
-  // makes every recovered card carry the same "as of", which is the correct
-  // answer rather than a convenient one -- snapshots exist only for days when
-  // everything answered, so there is exactly one newest such day for all of them.
-  const [last, meta] = await Promise.all([getLatestAccountSnapshot(), recallAccounts()]);
+  // both hashes N times in parallel. Sharing the snapshot also makes every
+  // recovered card carry the same "as of", which is the correct answer rather
+  // than a convenient one -- snapshots exist only for days when everything
+  // answered, so there is exactly one newest such day for all of them.
+  const [last, byItem] = await Promise.all([getLatestAccountSnapshot(), recallByItem()]);
   if (!last) return [];
-
-  // REFUSE TO RECOVER PART OF AN INSTITUTION.
-  //
-  // An account can only be recovered if BOTH stores know it: the snapshot for
-  // its balance, accounts:meta for its type and owning Item. If the snapshot
-  // names an account that is neither live right now nor in accounts:meta, it
-  // must belong to one of the failed institutions and cannot be attributed to
-  // one -- so any card we drew would be missing a row, and its subtotal would
-  // be wrong while the note said only "dated". A missing credit card overstates
-  // net worth, which is precisely the failure this whole feature exists to
-  // prevent, and it would be reintroduced one layer down and harder to see.
-  //
-  // The divergence is real, not theoretical: recordSnapshot has three callers
-  // (this route, the daily cron, /api/ingest/balance) and rememberAccounts is
-  // called from all three, but only a deploy where they agree keeps the stores
-  // in step. This check is what makes a fourth writer, or a missed one, fail
-  // safe rather than silently.
-  const liveIds = new Set<string>();
-  for (const inst of institutions) {
-    if (inst.error) continue;
-    for (const a of inst.accounts) {
-      if (typeof a?.account_id === 'string') liveIds.add(a.account_id);
-    }
-  }
-  const unattributable = Object.keys(last.balances).filter((id) => !liveIds.has(id) && !meta[id]);
-  if (unattributable.length > 0) {
-    console.warn(
-      `last-known: ${unattributable.length} snapshot account(s) have no metadata; ` +
-        'skipping recovery rather than showing a partial institution',
-      unattributable
-    );
-    return [];
-  }
 
   const cutoff = new Date(Date.now() - MAX_SNAPSHOT_AGE_DAYS * 86_400_000)
     .toISOString()
@@ -267,14 +258,23 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
   const filled: StaleFill[] = [];
 
   for (const inst of broken) {
+    // Driven by the Item's own record, never by scanning the snapshot for
+    // unowned ids. That is what keeps one institution's problems from touching
+    // another's: an account this Item doesn't claim is simply not its business,
+    // whether it belongs to a healthy institution, a manual one, or an Item
+    // disconnected since the snapshot was taken.
+    const remembered = byItem[inst.item_id] ?? [];
+
     const accounts = [];
-    for (const [account_id, balance] of Object.entries(last.balances)) {
-      // The snapshot decides existence, the metadata decides presentation and
-      // which institution the account belongs to.
-      const m = meta[account_id];
-      if (!m || m.item_id !== inst.item_id) continue;
+    for (const m of remembered) {
+      // Absent from the snapshot means the account did not exist on that date
+      // (opened since, during a partial outage that updated this record but
+      // could not write a snapshot). Omitting it is correct: the card presents
+      // this institution AS OF that date, and it says so.
+      const balance = last.balances[m.account_id];
+      if (typeof balance !== 'number') continue;
       accounts.push({
-        account_id,
+        account_id: m.account_id,
         name: m.name,
         official_name: m.official_name,
         mask: m.mask,

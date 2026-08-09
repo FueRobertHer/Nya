@@ -77,7 +77,12 @@ export async function GET(req: Request) {
     // one and written to history or frozen into the cache. See lib/last-known.ts.
     const stale = await fillFromLastKnown(institutions);
     if (stale.length > 0) {
-      console.warn('net-worth: showing last-known balances', stale);
+      // Counts and a date, not ids. Item and account ids are encrypted at rest
+      // everywhere else in this codebase, so writing them to a log would be the
+      // one place they sit in plaintext.
+      console.warn(
+        `net-worth: showing last-known balances for ${stale.length} institution(s), as of ${stale[0].as_of}`
+      );
     }
 
     const hidden = await getHiddenAccounts();

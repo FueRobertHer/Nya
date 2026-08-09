@@ -6,7 +6,7 @@ import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 import { pruneHidden } from '@/lib/hidden';
-import { rememberedIdsForItem, pruneRemembered } from '@/lib/last-known';
+import { rememberedIdsForItem, forgetItem } from '@/lib/last-known';
 
 export async function POST(req: Request) {
   try {
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     // Drop this Item's persisted sync cursor + transactions.
     await clearItemTransactions(item_id);
     await pruneHidden([...accountIds]);
-    await pruneRemembered([...accountIds]);
+    await forgetItem(item_id);
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches();

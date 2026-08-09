@@ -787,6 +787,15 @@ export default function Dashboard() {
     [institutions]
   );
 
+  // Institutions whose last known balances were too old to show. These are
+  // MORE wrong than the stale ones, not less: their accounts are absent, so the
+  // hero is short by the whole institution. Warning about the recovered case
+  // and staying silent about this one would be exactly backwards.
+  const droppedInstitutions = useMemo(
+    () => institutions.filter((i) => i.stale_too_old),
+    [institutions]
+  );
+
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
     if (history.length < 2) return null;
@@ -1048,6 +1057,15 @@ export default function Dashboard() {
                             staleInstitutions[0].needs_reauth ? 'needs reconnecting' : "couldn't refresh"
                           }; its balances are from ${fmtDay(staleInstitutions[0].stale_as_of!)}`
                         : `${staleInstitutions.length} institutions couldn't refresh; showing their last known balances`}
+                    </div>
+                  )}
+                  {droppedInstitutions.length > 0 && (
+                    <div className="as-of stale">
+                      {droppedInstitutions.length === 1
+                        ? `${droppedInstitutions[0].institution_name} isn't counted; its last balances are from ${fmtDay(
+                            droppedInstitutions[0].stale_too_old!
+                          )}, too old to use`
+                        : `${droppedInstitutions.length} institutions aren't counted; their last balances are too old to use`}
                     </div>
                   )}
                 </div>
