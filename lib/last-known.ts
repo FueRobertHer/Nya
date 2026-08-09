@@ -80,7 +80,7 @@ export type RememberedAccount = {
 };
 
 /** What was recovered, for logging and tests. The institutions are mutated. */
-export type StaleFill = { item_id: string; as_of: string; accounts: number };
+export type StaleFill = { item_id: string; as_of: string; accounts: number; missing: number };
 
 /** The shape this needs from an InstitutionResult, declared structurally so
  *  lib/networth.ts doesn't have to import this module to be filled by it. */
@@ -88,10 +88,10 @@ type Fillable = {
   item_id: string;
   accounts: any[];
   error: string | null;
-  needs_reauth?: boolean;
   manual?: boolean;
   stale_as_of?: string;
   stale_too_old?: string;
+  stale_missing?: number;
 };
 
 /**
@@ -163,20 +163,40 @@ async function recallByItem(): Promise<Record<string, RememberedAccount[]>> {
   if (!map) return {};
 
   const out: Record<string, RememberedAccount[]> = {};
+  // Fields holding the pre-per-item shape (one account object per account_id).
+  // They decrypt fine and are simply not arrays. Nothing else can remove them:
+  // forgetItem deletes by item_id, so they would be decrypted on every
+  // broken-path load forever, and app/api/hidden-accounts could resolve a type
+  // from one belonging to a disconnected Item.
+  const legacy: string[] = [];
+
   await Promise.all(
     Object.entries(map).map(async ([item_id, blob]) => {
       try {
         const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
-        if (!Array.isArray(parsed)) return;
+        if (!Array.isArray(parsed)) {
+          legacy.push(item_id);
+          return;
+        }
         const accounts = parsed.filter(
           (a) => typeof a?.account_id === 'string' && typeof a?.type === 'string'
         );
         if (accounts.length > 0) out[item_id] = accounts;
       } catch {
-        // Undecryptable record: that Item just won't be recoverable.
+        // Undecryptable record: that Item just won't be recoverable. Left in
+        // place rather than deleted -- a rotated key is recoverable by putting
+        // the old key back, and deleting would make that permanent.
       }
     })
   );
+
+  if (legacy.length > 0) {
+    try {
+      await redis().hdel(ACCOUNT_META_HASH, ...legacy);
+    } catch {
+      // Best effort; they stay inert either way.
+    }
+  }
   return out;
 }
 
@@ -209,8 +229,15 @@ export async function findRememberedAccount(
  * loaded successfully is covered.
  */
 export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
-  const byItem = await recallByItem();
-  return (byItem[item_id] ?? []).map((a) => a.account_id);
+  try {
+    const blob = await redis().hget<string>(ACCOUNT_META_HASH, item_id);
+    if (!blob) return [];
+    const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((a) => a?.account_id).filter((id): id is string => typeof id === 'string');
+  } catch {
+    return [];
+  }
 }
 
 /** Drops one Item's record, on disconnect. Safe because attribution is per
@@ -267,10 +294,21 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
 
     const accounts = [];
     for (const m of remembered) {
-      // Absent from the snapshot means the account did not exist on that date
-      // (opened since, during a partial outage that updated this record but
-      // could not write a snapshot). Omitting it is correct: the card presents
-      // this institution AS OF that date, and it says so.
+      // An account this Item has but the snapshot doesn't. There is no way to
+      // tell WHY from here, and the reasons are not equivalent:
+      //
+      //   - opened since the snapshot (a partial outage refreshes this Item's
+      //     record but blocks the global snapshot, so the two drift)
+      //   - its balance was null when the snapshot was taken, so it was skipped
+      //   - the snapshot we landed on is not the newest, because newer dates
+      //     were undecryptable
+      //   - its account_id changed at reauth
+      //
+      // Only the first two are harmless. The rest mean we are about to draw
+      // this institution short, and a short card understates debt, which
+      // OVERSTATES net worth -- the failure this whole feature exists to
+      // prevent. Since the reason is unknowable, the count is reported instead
+      // of guessed at, and the card says how many rows it could not show.
       const balance = last.balances[m.account_id];
       if (typeof balance !== 'number') continue;
       accounts.push({
@@ -299,6 +337,8 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
         stale: true,
       });
     }
+    const missing = remembered.length - accounts.length;
+
     if (accounts.length === 0) continue;
 
     if (tooOld) {
@@ -311,7 +351,8 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
 
     inst.accounts = accounts;
     inst.stale_as_of = last.date;
-    filled.push({ item_id: inst.item_id, as_of: last.date, accounts: accounts.length });
+    if (missing > 0) inst.stale_missing = missing;
+    filled.push({ item_id: inst.item_id, as_of: last.date, accounts: accounts.length, missing });
   }
 
   return filled;

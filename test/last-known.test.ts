@@ -15,6 +15,7 @@ const {
   forgetItem,
 } = await import('@/lib/last-known');
 const { applyHidden } = await import('@/lib/hidden');
+const { accountBalanceMap } = await import('@/lib/networth');
 
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
   await fake.hset('test:history:accounts', { [date]: await encrypt(JSON.stringify(balances)) });
@@ -65,6 +66,7 @@ type TestInstitution = {
   manual?: boolean;
   stale_as_of?: string;
   stale_too_old?: string;
+  stale_missing?: number;
 };
 
 const broken = (item_id: string, error = 'Could not fetch balances'): TestInstitution => ({
@@ -147,6 +149,20 @@ describe('rememberAccounts', () => {
     expect(await rememberedIdsForItem('item_b')).toEqual(['save']);
   });
 
+  // The store was reshaped from one field per account_id to one per item_id.
+  // forgetItem deletes by item_id, so nothing else could ever remove a field of
+  // the old shape: it would be decrypted on every broken-path load forever, and
+  // findRememberedAccount could resolve a type out of one.
+  test('clears records left over from the previous per-account shape', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await fake.hset('test:accounts:meta', {
+      old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
+    });
+
+    expect(await findRememberedAccount('old_acct_id')).toBeNull();
+    expect(await fake.hkeys('test:accounts:meta')).toEqual(['item_a']);
+  });
+
   // app/api/hidden-accounts needs an account's type to hide it, and for a
   // recovered row neither the cache nor a live fetch can supply one.
   test('findRememberedAccount resolves an account to its Item and type', async () => {
@@ -166,7 +182,7 @@ describe('recovering a failed institution', () => {
     const inst = broken('item_a');
     const filled = await fillFromLastKnown([inst]);
 
-    expect(filled).toEqual([{ item_id: 'item_a', as_of: RECENT, accounts: 1 }]);
+    expect(filled).toEqual([{ item_id: 'item_a', as_of: RECENT, accounts: 1, missing: 0 }]);
     expect(inst.stale_as_of).toBe(RECENT);
     expect(inst.accounts).toHaveLength(1);
     expect(inst.accounts[0]).toMatchObject({
@@ -180,6 +196,21 @@ describe('recovering a failed institution', () => {
     });
     // Captured at a different moment than stale_as_of, and volatile.
     expect(inst.accounts[0].available).toBeNull();
+  });
+
+  // Closes the seam between the two halves of the display-only guard.
+  // test/networth.test.ts proves accountBalanceMap honours `stale`, but with a
+  // hand-written object; nothing proved that recovery actually SETS it. Delete
+  // `stale: true` from the recovered literal and both halves still passed.
+  test('recovered accounts are marked so they can never be snapshotted', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(RECENT, { card: 5544.35 });
+
+    const inst = broken('item_a');
+    await fillFromLastKnown([inst]);
+
+    expect(inst.accounts[0].stale).toBe(true);
+    expect(accountBalanceMap([inst] as any)).toEqual({});
   });
 
   // The metadata store is never pruned on account closure, so the newest
@@ -348,11 +379,13 @@ describe('what it refuses to do', () => {
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
   });
 
-  // An account opened during a partial outage: the Item's record was updated
-  // (rememberAccounts is per institution, not gated on a clean fetch) but no
-  // snapshot could be written. The card presents this institution AS OF the
-  // snapshot date, and on that date the account did not exist.
-  test('an account newer than the snapshot is omitted rather than blocking', async () => {
+  // THE residual risk, and it is disclosed rather than hidden. An account this
+  // Item has but the snapshot doesn't can be harmless (opened during a partial
+  // outage, which refreshes this Item's record but blocks the global snapshot)
+  // or not (ids rotated at reauth, a newer snapshot that wouldn't decrypt). The
+  // reason is unknowable here, and a card drawn short understates debt, which
+  // OVERSTATES net worth -- so the count ships and the card says so.
+  test('reports how many accounts it could not show', async () => {
     await remember('item_a', [
       acct('card', 'Venture', 'credit'),
       acct('brand_new', 'New Card', 'credit'),
@@ -360,8 +393,20 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 500 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toHaveLength(1);
+    const filled = await fillFromLastKnown([inst]);
+
+    expect(filled).toEqual([{ item_id: 'item_a', as_of: RECENT, accounts: 1, missing: 1 }]);
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
+    expect(inst.stale_missing).toBe(1);
+  });
+
+  test('a complete recovery reports nothing missing', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(RECENT, { card: 500 });
+
+    const inst = broken('item_a');
+    await fillFromLastKnown([inst]);
+    expect(inst.stale_missing).toBeUndefined();
   });
 });
 
@@ -465,8 +510,8 @@ describe('the total it produces', () => {
     expect(applyHidden([a as any, b as any], new Map())).toBe(1500);
   });
 
-  // Both stores hold every account and every date since install, so reading
-  // them per institution would download and decrypt the lot N times in parallel
+  // Both stores span every Item and every date since install, so reading them
+  // per institution would download and decrypt the lot N times in parallel
   // during exactly the outage that makes N large.
   test('reads each store once regardless of how many institutions broke', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
@@ -478,6 +523,8 @@ describe('the total it produces', () => {
     const filled = await fillFromLastKnown([broken('item_a'), broken('item_b'), broken('item_c')]);
 
     expect(filled).toHaveLength(3);
-    expect(fake.ops).toBe(2); // one snapshot hgetall, one metadata hgetall
+    // hkeys + one hget for the winning snapshot date (never a full hgetall of
+    // every date since install), plus one hgetall of the metadata hash.
+    expect(fake.ops).toBe(3);
   });
 });

@@ -84,6 +84,10 @@ type Institution = {
   // age limit. The card stays at $0.00, and says why rather than looking like
   // an institution that never had recoverable balances at all.
   stale_too_old?: string;
+  // How many of this institution's known accounts could not be recovered, set
+  // alongside stale_as_of. Nonzero means the subtotal is short, so the card
+  // says so rather than presenting an incomplete figure as merely dated.
+  stale_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
 };
 
@@ -787,12 +791,21 @@ export default function Dashboard() {
     [institutions]
   );
 
-  // Institutions whose last known balances were too old to show. These are
-  // MORE wrong than the stale ones, not less: their accounts are absent, so the
-  // hero is short by the whole institution. Warning about the recovered case
-  // and staying silent about this one would be exactly backwards.
-  const droppedInstitutions = useMemo(
-    () => institutions.filter((i) => i.stale_too_old),
+  // Institutions that failed and could NOT be recovered, so the hero is short
+  // by all of them. Deliberately every such case, not just the ones with a
+  // named reason (too old, nothing remembered, ids changed at reauth): these
+  // are MORE wrong than the stale ones, not less, and disclosing the recovered
+  // case while staying silent here would be exactly backwards.
+  const uncountedInstitutions = useMemo(
+    () => institutions.filter((i) => i.error && !i.stale_as_of),
+    [institutions]
+  );
+
+  // Recovered, but short some rows. Called out at the hero and not just on the
+  // card, because "short some rows" is a statement about the total, and the
+  // total is what someone actually reads.
+  const incompleteCount = useMemo(
+    () => institutions.reduce((n, i) => n + (i.stale_missing ?? 0), 0),
     [institutions]
   );
 
@@ -1059,13 +1072,17 @@ export default function Dashboard() {
                         : `${staleInstitutions.length} institutions couldn't refresh; showing their last known balances`}
                     </div>
                   )}
-                  {droppedInstitutions.length > 0 && (
+                  {incompleteCount > 0 && (
                     <div className="as-of stale">
-                      {droppedInstitutions.length === 1
-                        ? `${droppedInstitutions[0].institution_name} isn't counted; its last balances are from ${fmtDay(
-                            droppedInstitutions[0].stale_too_old!
-                          )}, too old to use`
-                        : `${droppedInstitutions.length} institutions aren't counted; their last balances are too old to use`}
+                      {incompleteCount} account{incompleteCount === 1 ? '' : 's'} couldn&apos;t be
+                      shown, so this total is incomplete
+                    </div>
+                  )}
+                  {uncountedInstitutions.length > 0 && (
+                    <div className="as-of stale">
+                      {uncountedInstitutions.length === 1
+                        ? `${uncountedInstitutions[0].institution_name} couldn't be reached and isn't counted in this total`
+                        : `${uncountedInstitutions.length} institutions couldn't be reached and aren't counted in this total`}
                     </div>
                   )}
                 </div>
@@ -1379,9 +1396,27 @@ export default function Dashboard() {
                           treatment and its own wording, and only a transient
                           failure with real numbers behind it goes amber. */}
                       {inst.error && (
-                        <div className={inst.stale_as_of && !inst.needs_reauth ? 'stale-note' : 'error'}>
+                        <div
+                          className={
+                            // Amber is for "real numbers, just dated". A card
+                            // missing rows isn't that: its subtotal is wrong,
+                            // not merely old, so it keeps the red treatment.
+                            inst.stale_as_of && !inst.needs_reauth && !inst.stale_missing
+                              ? 'stale-note'
+                              : 'error'
+                          }
+                        >
                           {inst.error}
                           {inst.stale_as_of && ` · balances as of ${fmtDay(inst.stale_as_of)}`}
+                          {/* The shortfall is disclosed, not hidden: a card
+                              drawn short understates debt, which overstates
+                              net worth. Why a row is missing is unknowable
+                              here (see lib/last-known.ts), so say the count
+                              rather than guess at a reason. */}
+                          {!!inst.stale_missing &&
+                            ` · ${inst.stale_missing} account${
+                              inst.stale_missing === 1 ? '' : 's'
+                            } couldn't be shown, so this total is incomplete`}
                           {inst.stale_too_old &&
                             ` · last known balances are from ${fmtDay(inst.stale_too_old)}, too old to show`}
                         </div>

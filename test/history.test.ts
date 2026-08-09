@@ -314,6 +314,17 @@ describe('getLatestAccountSnapshot', () => {
     expect((await getLatestAccountSnapshot())!.date).toBe(daysAgo(40));
   });
 
+  // Reads the date keys, then fetches only the winner. hgetall would pull every
+  // date since install, each an encrypted map of every account, to decrypt one
+  // -- on the degraded path, growing forever.
+  test('fetches one date rather than the whole hash', async () => {
+    for (let d = 1; d <= 20; d++) await writeAccountSnapshot(daysAgo(d), { card: d });
+    fake.ops = 0;
+
+    expect((await getLatestAccountSnapshot())!.balances).toEqual({ card: 1 });
+    expect(fake.ops).toBe(2); // hkeys, then one hget
+  });
+
   // Keys come from toISOString() on whichever machine recorded them, so clock
   // skew can mint a future one -- and it would otherwise win every lookup from
   // then on, indefinitely.

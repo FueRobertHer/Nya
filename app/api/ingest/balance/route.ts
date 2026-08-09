@@ -134,10 +134,10 @@ export async function POST(req: Request) {
           clean && institutions.length > 0
             ? await recordSnapshot(netWorth, accountBalanceMap(institutions))
             : false;
-        // Keep accounts:meta in step with the snapshot, for the same reason
-        // /api/snapshot does: an account this read learned about but no
-        // dashboard load has seen would otherwise block recovery for its whole
-        // institution (lib/last-known.ts refuses to draw a partial one).
+        // Record how to draw these accounts, for the same reason /api/snapshot
+        // does: this read may be the only clean one of the day, and an account
+        // it learned about would otherwise sit in the snapshot with nothing to
+        // render it from.
         await rememberAccounts(institutions);
         return NextResponse.json({ updated, recorded, results });
       } catch (err) {

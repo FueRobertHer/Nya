@@ -28,10 +28,12 @@ export async function GET(req: Request) {
     }
 
     await recordSnapshot(netWorth, accountBalanceMap(institutions));
-    // Keep accounts:meta in step with what the snapshot just recorded. Without
-    // this the cron could add an account (one opened since the last dashboard
-    // load) that recovery has no metadata for, and lib/last-known.ts would then
-    // refuse to recover that institution at all rather than draw it short.
+    // Record how to draw these accounts, alongside the balances. On a day the
+    // app is never opened this cron is the only clean fetch there is, so
+    // without it an account added since the last dashboard load would be in the
+    // snapshot with nothing to render it from, and recovery would draw its
+    // institution short (lib/last-known.ts reports the shortfall but cannot
+    // undo it).
     await rememberAccounts(institutions);
     await clearCaches(); // cached payloads now have yesterday's history
     return NextResponse.json({ recorded: true });

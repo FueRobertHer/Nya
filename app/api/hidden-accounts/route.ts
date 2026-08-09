@@ -48,15 +48,29 @@ export async function POST(req: Request) {
       // account" would make a freshly added account impossible to hide.
       const cached = await readCache<{ institutions: any[] }>(NET_WORTH_CACHE_KEY);
       type = findType(cached?.institutions ?? []);
-      if (!type) type = findType((await computeNetWorth()).institutions);
 
-      // Last resort: an account whose institution is currently failing. The
+      const live = (await computeNetWorth()).institutions;
+      if (!type) type = findType(live);
+
+      // Last resort: an account whose institution is currently FAILING. The
       // Accounts tab now renders those rows from recovered balances
-      // (lib/last-known.ts), so Hide is reachable on them -- but neither source
-      // above can answer. The cache isn't written while anything is erroring,
-      // and the live fetch is the call that just failed. Without this, Hide on
-      // a recovered row 404s every time for the whole outage.
-      if (!type) type = (await findRememberedAccount(account_id))?.account.type ?? null;
+      // (lib/last-known.ts), so Hide is reachable on them, but neither source
+      // above can answer -- the cache isn't written while anything is erroring
+      // and the live fetch is the call that just failed.
+      //
+      // Gated on the owning Item still being linked AND currently erroring,
+      // which is narrower than it looks. Without the gate this would also
+      // answer for accounts that no longer exist: a card closed at the bank, or
+      // an Item disconnected on another device, whose row is still on screen
+      // because the Dashboard paints from localStorage before the network load
+      // lands. Hiding one of those writes a permanent entry that getHistory
+      // subtracts from every past date, with no live row to ever offer Unhide.
+      // That is the exact harm pruneHidden exists to prevent.
+      if (!type) {
+        const remembered = await findRememberedAccount(account_id);
+        const owner = remembered && live.find((i) => i.item_id === remembered.item_id);
+        if (owner?.error) type = remembered!.account.type;
+      }
 
       if (!type) {
         return NextResponse.json(

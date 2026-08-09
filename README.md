@@ -231,20 +231,25 @@ understates your debts as well as your assets, and a credit card falling out
 makes net worth go *up*: a broken connection that reads as good news. Showing
 the last real figures keeps the total honest while the connection is down.
 
-Two stores back this. The balances come from the most recent daily snapshot,
-which is only recorded on days when every institution answered. Alongside it,
-each institution's account list is recorded every time that institution
-answers, so a card you closed disappears from it on the next successful load
-rather than lingering. The card you see is that institution as it stood on the
-snapshot date, which is what the date is there to say.
+Two stores back this. Balances come from the most recent daily snapshot, which
+is only recorded on days when **every** institution answered. Alongside it, each
+institution's account list is recorded every time **that** institution answers,
+so a card you closed drops out on the next successful load rather than
+lingering.
 
-Everything is scoped per institution, so a problem with one can't affect
-another's recovery.
+Those two have different conditions, so they drift, and an account can be in one
+and not the other. When that happens the card can't show every row, and it says
+so: *"2 accounts couldn't be shown, so this total is incomplete."* That matters
+more than it sounds, because a missing row is usually a missing debt, and a
+missing debt makes net worth look better than it is. Everything is scoped per
+institution, so one bank's problems never affect another's recovery.
 
-If the balances are older than **35 days** the card stops showing them and says
-so, naming the date. An institution broken for months shouldn't quietly revert
-to zero, and it shouldn't drag a months-old figure into today's total either.
-The Home total says when an institution isn't being counted.
+If the balances are older than **35 days** the card stops showing them and names
+the date instead. An institution broken for months shouldn't quietly revert to
+zero, and it shouldn't drag a months-old figure into today's total either.
+
+Any institution that can't be reached and can't be recovered is called out under
+the Home total, so a total that's missing a whole bank never looks complete.
 
 Recovered balances are **display-only**. They're never written to the net-worth
 history, and no snapshot is recorded on a day when any institution failed, so a

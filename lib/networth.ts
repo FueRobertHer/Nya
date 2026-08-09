@@ -48,6 +48,13 @@ export type InstitutionResult = {
    * card explain itself rather than silently reverting to $0.00.
    */
   stale_too_old?: string;
+  /**
+   * How many of this institution's known accounts recovery could not resolve,
+   * set alongside `stale_as_of`. Nonzero means the recovered subtotal is short
+   * of the truth, which understates debt and so overstates net worth: the card
+   * discloses it rather than presenting an incomplete figure as merely dated.
+   */
+  stale_missing?: number;
   /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
   manual?: boolean;
 };
