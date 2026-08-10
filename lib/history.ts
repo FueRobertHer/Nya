@@ -16,7 +16,8 @@
 
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
-import { signedContribution, type HiddenMap } from './hidden';
+import { type HiddenMap } from './hidden';
+import { signedContribution } from './balance';
 
 const HISTORY_HASH = k('history:net-worth');
 const ESTIMATED_HASH = k('history:net-worth:est');
@@ -238,6 +239,76 @@ export async function replaceEstimatedAccounts(
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
   await replaceRange(ACCOUNTS_EST_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
+}
+
+/**
+ * The most recent REAL per-account snapshot, as `{ date, balances }`. Null when
+ * nothing readable was ever recorded.
+ *
+ * Exists so an institution whose live fetch just failed can still show its last
+ * good balances with an honest "as of" (see lib/last-known.ts). The REAL layer
+ * only, deliberately: the estimated layer is a reconstruction, and presenting a
+ * walked figure as "your balance on Aug 7" would put an inferred number on
+ * screen dressed as an observed one.
+ *
+ * ONE DATE, WHOLE. Returned as a single coherent picture rather than searched
+ * per account, so an institution's subtotal is a figure that actually existed
+ * on one day instead of a mix of dates that never coexisted.
+ *
+ * What this map does NOT settle is which accounts still exist. It is a complete
+ * picture of a day when everything answered (recordSnapshot only runs when
+ * `clean`), but it is a GLOBAL record while the caller's other source is
+ * per-Item, and the two have different write conditions: a snapshot needs every
+ * institution healthy, an Item's record needs only that Item healthy. So they
+ * drift, and an account can be in one and not the other for reasons that have
+ * nothing to do with it being closed. lib/last-known.ts owns that reconciliation
+ * and reports what it could not resolve; do not add an inference here.
+ *
+ * Reads the date keys, then fetches only the winner. `hgetall` would pull every
+ * date since install -- each an encrypted map of every account -- to decrypt
+ * one, on the degraded path, forever growing.
+ */
+export async function getLatestAccountSnapshot(): Promise<{
+  date: string;
+  balances: Record<string, number>;
+} | null> {
+  let keys: string[];
+  try {
+    keys = await redis().hkeys(ACCOUNTS_HASH);
+  } catch {
+    return null;
+  }
+  if (keys.length === 0) return null;
+
+  // No age limit here on purpose: whether a snapshot is too old to present is a
+  // display decision, and the caller needs the date even when it fails that
+  // test so it can say "too old" rather than silently showing nothing.
+  //
+  // Future dates ARE excluded. Keys come from toISOString() on whichever
+  // machine wrote them, so clock skew can mint one, and it would otherwise win
+  // every lookup indefinitely.
+  const today = new Date().toISOString().slice(0, 10);
+  const dates = keys
+    .filter((d) => d <= today)
+    .sort()
+    .reverse();
+
+  for (const date of dates) {
+    let balances: Record<string, number>;
+    try {
+      const blob = await redis().hget<string>(ACCOUNTS_HASH, date);
+      if (!blob) continue;
+      balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+    } catch {
+      continue; // undecryptable date (rotated key) -- try the day before
+    }
+    const usable: Record<string, number> = {};
+    for (const [id, b] of Object.entries(balances ?? {})) {
+      if (typeof b === 'number' && Number.isFinite(b)) usable[id] = b;
+    }
+    if (Object.keys(usable).length > 0) return { date, balances: usable };
+  }
+  return null;
 }
 
 export async function getRealSnapshotDates(): Promise<Set<string>> {

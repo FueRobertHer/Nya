@@ -6,6 +6,7 @@ import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 import { pruneHidden } from '@/lib/hidden';
+import { rememberedIdsForItem, forgetItem } from '@/lib/last-known';
 
 export async function POST(req: Request) {
   try {
@@ -43,10 +44,15 @@ export async function POST(req: Request) {
     // point forever, and with the account gone from the live list there'd be no
     // Unhide button to stop it.
     //
-    // Two sources, unioned, because the transaction store alone isn't enough:
-    // an investments-only Item, or one linked but never synced, has no
-    // persisted transaction state and would yield nothing.
+    // Three sources, unioned, because no one of them is complete. The
+    // transaction store misses an investments-only Item, or one linked but
+    // never synced. The net-worth cache is null whenever it expired or any
+    // institution errored. accounts:meta (lib/last-known.ts) covers any Item
+    // that has ever loaded successfully and never expires, so it's the broadest
+    // of the three, but it misses one linked and disconnected without a single
+    // successful load in between.
     const accountIds = new Set(await getItemAccountIds(item_id));
+    for (const id of await rememberedIdsForItem(item_id)) accountIds.add(id);
     const cached = await readCache<{ institutions: any[] }>(NET_WORTH_CACHE_KEY);
     for (const inst of cached?.institutions ?? []) {
       if (inst.item_id !== item_id) continue;
@@ -57,6 +63,7 @@ export async function POST(req: Request) {
     // Drop this Item's persisted sync cursor + transactions.
     await clearItemTransactions(item_id);
     await pruneHidden([...accountIds]);
+    await forgetItem(item_id);
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches();

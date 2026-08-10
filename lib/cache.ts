@@ -90,6 +90,17 @@ export async function clearCaches(): Promise<void> {
   }
 }
 
+/** Drop only the net-worth payload. Called when a live fetch comes back with a
+ *  failed institution, so a healthy entry written before the failure can't keep
+ *  being served alongside it for the rest of its TTL. */
+export async function clearNetWorthCache(): Promise<void> {
+  try {
+    await redis().del(NET_WORTH_CACHE_KEY);
+  } catch {
+    // Worst case the stale cache lives out its TTL.
+  }
+}
+
 /** Drop only the transactions payload (e.g. after a recategorization). */
 export async function clearTransactionsCache(): Promise<void> {
   try {

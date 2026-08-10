@@ -131,6 +131,22 @@ th.num {
   margin-top: 12px;
 }
 
+/* A failed refresh where the last known balances were recovered. Amber, not
+   red: the figures on the card are real, just not current, and styling that
+   identically to "could not fetch balances" would make the genuine failure
+   (nothing to show at all) indistinguishable from the recoverable one. */
+.stale-note {
+  color: var(--warn);
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+/* The hero's version of the same caveat, sized to sit with the other
+   under-total lines rather than compete with the total itself. */
+.as-of.stale {
+  color: var(--warn);
+}
+
 .inst-header {
   display: flex;
   justify-content: space-between;

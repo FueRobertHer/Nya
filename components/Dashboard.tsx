@@ -10,6 +10,9 @@ import Insights from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
 import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
+// Same dependency-free-shared-module trick as lib/format: the sign rule lives
+// outside lib/hidden.ts so the client can import it without pulling in Redis.
+import { isOwedType, signedContribution } from '@/lib/balance';
 
 type Account = {
   account_id: string;
@@ -24,6 +27,10 @@ type Account = {
   updated_at?: string; // manual accounts only: when the balance was last typed/pushed
   hidden?: boolean; // excluded from every total and from the Activity tab
   liability?: AccountLiability; // credit/loan only, and only where Plaid serves it
+  // Recovered from a past snapshot rather than fetched. Server-side this is
+  // what keeps the balance out of accountBalanceMap; the client only needs to
+  // know the field exists so it survives the localStorage round trip.
+  stale?: boolean;
 };
 
 // Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
@@ -63,6 +70,24 @@ type Institution = {
   // compared explicitly against 'off' so a stale cached payload, which has no
   // such field, never offers the Enable button.
   liabilities?: string;
+  // YYYY-MM-DD when the shown balances were last observed, set only when the
+  // live fetch failed and they were recovered (recovery is all-or-nothing per
+  // institution, so this covers every account in it). Optional: a payload
+  // cached before this shipped has none, which reads as "not stale" and shows
+  // the plain error, matching the old behaviour.
+  //
+  // The reverse direction is NOT disclosed: a rolled-back deploy reading a new
+  // localStorage payload renders recovered balances with no staleness marker at
+  // all, under the plain red error. The numbers are still real, just undated.
+  stale_as_of?: string;
+  // Set instead of stale_as_of when last-known balances exist but are past the
+  // age limit. The card stays at $0.00, and says why rather than looking like
+  // an institution that never had recoverable balances at all.
+  stale_too_old?: string;
+  // How many of this institution's known accounts could not be recovered, set
+  // alongside stale_as_of. Nonzero means the subtotal is short, so the card
+  // says so rather than presenting an incomplete figure as merely dated.
+  stale_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
 };
 
@@ -95,11 +120,6 @@ const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
   { value: 'other', label: 'Other (property, crypto)' },
 ];
 
-/** Credit and loan balances are amounts owed, so they subtract from net worth. */
-function isOwedType(type: string): boolean {
-  return type === 'credit' || type === 'loan';
-}
-
 type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 
 // Last-known dashboard snapshot, kept on-device so the app paints instantly
@@ -122,8 +142,7 @@ function isInvestmentType(type: string): boolean {
 }
 
 function signedBalance(a: Account): number {
-  const b = a.balance ?? 0;
-  return a.type === 'credit' || a.type === 'loan' ? -b : b;
+  return signedContribution(a.type, a.balance ?? 0);
 }
 
 // "+$12.34 · 5.2%" gain/loss for a holding vs its cost basis.
@@ -224,10 +243,7 @@ function LiabilityDetail({
  * stale cached payload has no field at all, which also falls through to false.
  */
 function canEnableLiabilities(inst: Institution): boolean {
-  return (
-    inst.liabilities === 'off' &&
-    inst.accounts.some((a) => a.type === 'credit' || a.type === 'loan')
-  );
+  return inst.liabilities === 'off' && inst.accounts.some((a) => isOwedType(a.type));
 }
 
 function fmtAsOf(iso: string): string {
@@ -767,6 +783,32 @@ export default function Dashboard() {
     if (txns !== null) loadTransactions(true);
   }, [loadNetWorth, loadTransactions, txns]);
 
+  // Institutions showing recovered balances. Surfaced on the hero too, not just
+  // on their own cards: the number someone actually reads is the total, and
+  // "this is real but a few days old" is a caveat on the total.
+  const staleInstitutions = useMemo(
+    () => institutions.filter((i) => i.stale_as_of),
+    [institutions]
+  );
+
+  // Institutions that failed and could NOT be recovered, so the hero is short
+  // by all of them. Deliberately every such case, not just the ones with a
+  // named reason (too old, nothing remembered, ids changed at reauth): these
+  // are MORE wrong than the stale ones, not less, and disclosing the recovered
+  // case while staying silent here would be exactly backwards.
+  const uncountedInstitutions = useMemo(
+    () => institutions.filter((i) => i.error && !i.stale_as_of),
+    [institutions]
+  );
+
+  // Recovered, but short some rows. Called out at the hero and not just on the
+  // card, because "short some rows" is a statement about the total, and the
+  // total is what someone actually reads.
+  const incompleteCount = useMemo(
+    () => institutions.reduce((n, i) => n + (i.stale_missing ?? 0), 0),
+    [institutions]
+  );
+
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
     if (history.length < 2) return null;
@@ -1019,6 +1061,28 @@ export default function Dashboard() {
                     <div className="as-of">
                       Updated {fmtAsOf(asOf)}
                       {refreshing ? ' · refreshing…' : ''}
+                    </div>
+                  )}
+                  {staleInstitutions.length > 0 && (
+                    <div className="as-of stale">
+                      {staleInstitutions.length === 1
+                        ? `${staleInstitutions[0].institution_name} ${
+                            staleInstitutions[0].needs_reauth ? 'needs reconnecting' : "couldn't refresh"
+                          }; its balances are from ${fmtDay(staleInstitutions[0].stale_as_of!)}`
+                        : `${staleInstitutions.length} institutions couldn't refresh; showing their last known balances`}
+                    </div>
+                  )}
+                  {incompleteCount > 0 && (
+                    <div className="as-of stale">
+                      {incompleteCount} account{incompleteCount === 1 ? '' : 's'} couldn&apos;t be
+                      shown, so this total is incomplete
+                    </div>
+                  )}
+                  {uncountedInstitutions.length > 0 && (
+                    <div className="as-of stale">
+                      {uncountedInstitutions.length === 1
+                        ? `${uncountedInstitutions[0].institution_name} couldn't be reached and isn't counted in this total`
+                        : `${uncountedInstitutions.length} institutions couldn't be reached and aren't counted in this total`}
                     </div>
                   )}
                 </div>
@@ -1320,7 +1384,43 @@ export default function Dashboard() {
                         </>
                       )}
 
-                      {inst.error && <div className="error">{inst.error}</div>}
+                      {/* Recovering the balances adds a date to the error; it
+                          does not replace the error. The distinction matters:
+                          "could not fetch balances" usually clears itself,
+                          while "needs to be reconnected" never does until you
+                          act, and collapsing both into a soft "couldn't
+                          refresh" would let a dead connection look healthy for
+                          as long as the recovered numbers stay plausible --
+                          the same failure this feature exists to prevent, moved
+                          from the total to the label. So reauth keeps the red
+                          treatment and its own wording, and only a transient
+                          failure with real numbers behind it goes amber. */}
+                      {inst.error && (
+                        <div
+                          className={
+                            // Amber is for "real numbers, just dated". A card
+                            // missing rows isn't that: its subtotal is wrong,
+                            // not merely old, so it keeps the red treatment.
+                            inst.stale_as_of && !inst.needs_reauth && !inst.stale_missing
+                              ? 'stale-note'
+                              : 'error'
+                          }
+                        >
+                          {inst.error}
+                          {inst.stale_as_of && ` · balances as of ${fmtDay(inst.stale_as_of)}`}
+                          {/* The shortfall is disclosed, not hidden: a card
+                              drawn short understates debt, which overstates
+                              net worth. Why a row is missing is unknowable
+                              here (see lib/last-known.ts), so say the count
+                              rather than guess at a reason. */}
+                          {!!inst.stale_missing &&
+                            ` · ${inst.stale_missing} account${
+                              inst.stale_missing === 1 ? '' : 's'
+                            } couldn't be shown, so this total is incomplete`}
+                          {inst.stale_too_old &&
+                            ` · last known balances are from ${fmtDay(inst.stale_too_old)}, too old to show`}
+                        </div>
+                      )}
 
                       {/* Tells someone who just tapped Enable why the button
                           vanished without any payment details appearing. */}

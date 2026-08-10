@@ -4,7 +4,8 @@ import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { fetchInvestmentTxns, valueDelta } from '@/lib/investments';
-import { getManualAccounts, isOwedType } from '@/lib/manual';
+import { getManualAccounts } from '@/lib/manual';
+import { signedContribution } from '@/lib/balance';
 import {
   replaceEstimated,
   replaceEstimatedAccounts,
@@ -132,7 +133,7 @@ export async function POST() {
     for (const { accounts, txns, invTxns, invCovered } of perItem) {
       for (const a of accounts) {
         const current = a.balances.current ?? 0;
-        totalNow += a.type === 'credit' || a.type === 'loan' ? -current : current;
+        totalNow += signedContribution(a.type, current);
         if (a.type === 'depository' || a.type === 'credit') {
           walkType[a.account_id] = a.type;
           cashIds.add(a.account_id);
@@ -195,7 +196,7 @@ export async function POST() {
     // never contained.
     const manualAccounts = await getManualAccounts();
     for (const a of manualAccounts) {
-      totalNow += isOwedType(a.type) ? -a.balance : a.balance;
+      totalNow += signedContribution(a.type, a.balance);
     }
 
     if (!oldestTxn) {
@@ -251,7 +252,7 @@ export async function POST() {
 
     const signedWalked = () =>
       Object.entries(balances).reduce(
-        (sum, [id, b]) => sum + (walkType[id] === 'credit' ? -b : b),
+        (sum, [id, b]) => sum + signedContribution(walkType[id], b),
         0
       );
 
@@ -288,6 +289,12 @@ export async function POST() {
     for (let back = 1; back <= LOOKBACK_DAYS; back++) {
       const dayTxns = dailyByAccount[isoDaysAgo(back - 1)] ?? {};
       for (const [id, amount] of Object.entries(dayTxns)) {
+        // NOT signedContribution, despite the identical shape. That function
+        // answers "how does this balance affect net worth"; this answers "which
+        // way does this transaction move the balance", and for a credit card
+        // those are opposites -- a purchase raises what you owe. Swapping in
+        // the shared helper would invert every credit account's estimated
+        // series. See the warning in lib/balance.ts.
         balances[id] += walkType[id] === 'credit' ? -amount : amount;
       }
       const date = isoDaysAgo(back);

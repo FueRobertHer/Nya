@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getManualAccount, setManualBalance, isOwedType, MAX_BALANCE } from '@/lib/manual';
+import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
+import { isOwedType } from '@/lib/balance';
+import { rememberAccounts } from '@/lib/last-known';
 import { computeNetWorth, accountBalanceMap } from '@/lib/networth';
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
@@ -132,6 +134,11 @@ export async function POST(req: Request) {
           clean && institutions.length > 0
             ? await recordSnapshot(netWorth, accountBalanceMap(institutions))
             : false;
+        // Record how to draw these accounts, for the same reason /api/snapshot
+        // does: this read may be the only clean one of the day, and an account
+        // it learned about would otherwise sit in the snapshot with nothing to
+        // render it from.
+        await rememberAccounts(institutions);
         return NextResponse.json({ updated, recorded, results });
       } catch (err) {
         // The balances did land; only the snapshot failed. Say so rather than

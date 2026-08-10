@@ -1,12 +1,12 @@
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis } from './fake-redis';
+import { FakeRedis, storageMock } from './fake-redis';
 
 // Real AES-256-GCM, not a stub: encryption sits between every write and read in
 // this module, and a round-trip bug would look exactly like a logic bug.
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const fake = new FakeRedis();
-mock.module('@/lib/storage', () => ({ redis: () => fake, k: (key: string) => `test:${key}` }));
+mock.module('@/lib/storage', () => storageMock(fake));
 
 const {
   recordSnapshot,
@@ -19,7 +19,16 @@ const {
   isBackfillDone,
   markBackfillDone,
   clearBackfillDone,
+  getLatestAccountSnapshot,
 } = await import('@/lib/history');
+
+const { encrypt } = await import('@/lib/crypto');
+
+/** Writes a real per-account snapshot for a specific date. recordSnapshot only
+ *  ever writes today, so backdating has to go through the hash directly. */
+async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
+  await fake.hset('test:history:accounts', { [date]: await encrypt(JSON.stringify(balances)) });
+}
 
 type Hidden = Map<string, { type: string; hidden_at: string }>;
 const hide = (...entries: [string, string][]): Hidden =>
@@ -255,6 +264,95 @@ describe('estimatedLayerCovers', () => {
 
   test('reports not-covered on an empty layer, so the caller forces a recompute', async () => {
     expect(await estimatedLayerCovers('anything')).toBe(false);
+  });
+});
+
+describe('getLatestAccountSnapshot', () => {
+  /** N days before today, as the UTC key recordSnapshot would have written. */
+  const daysAgo = (n: number) =>
+    new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+  test('returns the newest snapshot, whole', async () => {
+    await writeAccountSnapshot(daysAgo(4), { card: 100 });
+    await writeAccountSnapshot(daysAgo(2), { card: 150, checking: 200 });
+
+    expect(await getLatestAccountSnapshot()).toEqual({
+      date: daysAgo(2),
+      balances: { card: 150, checking: 200 },
+    });
+  });
+
+  // THE guard against resurrecting closed accounts. The transactions store
+  // never forgets an account, so the only thing that can say a card was closed
+  // is its absence from a day when its institution was demonstrably working --
+  // and a snapshot exists only for such days. Searching back for the account
+  // would find its last balance and put a paid-off, closed card back on screen.
+  test('does not search backwards for an account the newest snapshot omits', async () => {
+    await writeAccountSnapshot(daysAgo(4), { card: 100, closed_card: 4000 });
+    await writeAccountSnapshot(daysAgo(2), { card: 150 });
+
+    const last = await getLatestAccountSnapshot();
+    expect(last!.date).toBe(daysAgo(2));
+    expect(last!.balances.closed_card).toBeUndefined();
+  });
+
+  test('skips an undecryptable date rather than giving up', async () => {
+    await writeAccountSnapshot(daysAgo(4), { card: 100 });
+    await fake.hset('test:history:accounts', { [daysAgo(2)]: 'not-ciphertext' });
+
+    expect(await getLatestAccountSnapshot()).toEqual({
+      date: daysAgo(4),
+      balances: { card: 100 },
+    });
+  });
+
+  // Age is the caller's policy, not this function's: lib/last-known.ts needs
+  // the date even when it's too old to present, so it can say "too old" rather
+  // than silently showing nothing.
+  test('returns an old snapshot rather than deciding it is too old', async () => {
+    for (let m = 1; m <= 13; m++) await writeAccountSnapshot(daysAgo(m * 40), { card: 100 });
+    expect((await getLatestAccountSnapshot())!.date).toBe(daysAgo(40));
+  });
+
+  // Reads the date keys, then fetches only the winner. hgetall would pull every
+  // date since install, each an encrypted map of every account, to decrypt one
+  // -- on the degraded path, growing forever.
+  test('fetches one date rather than the whole hash', async () => {
+    for (let d = 1; d <= 20; d++) await writeAccountSnapshot(daysAgo(d), { card: d });
+    fake.ops = 0;
+
+    expect((await getLatestAccountSnapshot())!.balances).toEqual({ card: 1 });
+    expect(fake.ops).toBe(2); // hkeys, then one hget
+  });
+
+  // Keys come from toISOString() on whichever machine recorded them, so clock
+  // skew can mint a future one -- and it would otherwise win every lookup from
+  // then on, indefinitely.
+  test('ignores a future-dated key', async () => {
+    await writeAccountSnapshot(daysAgo(2), { card: 100 });
+    await writeAccountSnapshot(daysAgo(-5), { card: 999 });
+
+    expect(await getLatestAccountSnapshot()).toEqual({
+      date: daysAgo(2),
+      balances: { card: 100 },
+    });
+  });
+
+  test('null on an empty layer, and skips a date whose balances are all unusable', async () => {
+    expect(await getLatestAccountSnapshot()).toBeNull();
+
+    await writeAccountSnapshot(daysAgo(4), { card: 100 });
+    await writeAccountSnapshot(daysAgo(2), { card: 'lots' as unknown as number });
+    expect(await getLatestAccountSnapshot()).toEqual({
+      date: daysAgo(4),
+      balances: { card: 100 },
+    });
+  });
+
+  // Reconstructed figures must never be presented as observed ones.
+  test('ignores the estimated layer entirely', async () => {
+    await replaceEstimatedAccounts([{ date: daysAgo(2), balances: { card: 999 } }]);
+    expect(await getLatestAccountSnapshot()).toBeNull();
   });
 });
 
