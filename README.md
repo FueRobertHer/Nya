@@ -356,8 +356,12 @@ That hostname is stable for as long as the branch exists, and repoints to the
 newest deployment on every push. Slashes in a branch name become dashes.
 
 This repo keeps a long-lived `preview` branch for exactly that, so the URL is
-predictable instead of changing with every feature branch. Merge work into it
-to see that work at a fixed address:
+predictable instead of changing with every feature branch. Whatever is merged
+into it is live at:
+
+**<https://nya-git-preview-fueroberthers-projects.vercel.app>**
+
+Merge work into the branch to see it there:
 
 ```bash
 git checkout preview
@@ -399,6 +403,10 @@ A few other things worth knowing:
 - Deploys fire on a push of a *new commit*. A branch pointing at a commit
   that has already been deployed will not rebuild; use **Redeploy** in the
   dashboard to force one.
+- Each individual build also gets an immutable URL of its own, of the form
+  `https://nya-<hash>-<team-slug>.vercel.app`. That one is pinned to a single
+  build and never moves, which makes it useful for pointing someone at an
+  exact version, and a poor thing to bookmark.
 - If no preview builds at all, check **Settings → Git → Deployment Branches**.
   It has to be "All Branches", or a pattern that matches the branch.
 - If you use Plaid's OAuth bank logins, add the preview URL to the allowed
