@@ -48,7 +48,13 @@ export async function GET(req: Request) {
     // the holdings endpoint, which does), so a mismatched request that came back
     // 200-with-nothing could otherwise cache an empty result under the real
     // account's field and blank its activity for the whole TTL.
-    const cacheField = `${item_id}:${account_id}`;
+    //
+    // Version-prefixed because the payload's meaning changed, not just its
+    // shape: a payload written by the previous deploy would keep serving a
+    // ytd_contributions with the rollover still folded into it for the rest of
+    // its TTL -- the very figure this endpoint now splits, and with no rollover
+    // line beside it to explain the size.
+    const cacheField = `v2:${item_id}:${account_id}`;
     const cached = await readAccountCache(cacheField);
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 

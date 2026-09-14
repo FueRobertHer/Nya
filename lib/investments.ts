@@ -49,6 +49,12 @@ const EXTERNAL_FLOW_SUBTYPES = new Set([
   'transfer',
   'send',
   'request',
+  // Not a subtype Plaid emits today (it has no rollover value at all, see
+  // isRollover). Listed anyway because the alternative is worse than useless:
+  // if it ever appears, an unrecognised subtype falls through to 0 below, and a
+  // $60k arrival would be invisible to the balance walk AND to both figures the
+  // activity panel shows.
+  'rollover',
 ]);
 
 // Corporate actions. Plaid files these under type 'transfer', but they are not
@@ -75,18 +81,46 @@ const CORPORATE_ACTION_SUBTYPES = new Set([
 const CONTRIBUTION_SUBTYPES = new Set(['contribution', 'deposit', 'transfer']);
 
 // Rollovers: retirement money moved between accounts (401k -> IRA, IRA -> IRA).
-// Plaid has no subtype for them, so they arrive wearing an ordinary one --
-// `transfer`, `contribution` or `deposit` on the receiving side, `withdrawal`
-// or `distribution` on the sending side -- with the word itself only in the
-// free-text `name`. That name is what we match on, plus a `rollover` subtype
-// Plaid doesn't emit today but might.
+// InvestmentTransactionSubtype has no value for them, so they arrive wearing an
+// ordinary one -- `transfer`, `contribution` or `deposit` on the receiving side,
+// `withdrawal` or `distribution` on the sending side -- with the word itself
+// only in Plaid's free-text `name`, which is the institution's own description
+// of the transaction.
 //
-// `\b` before `roll` keeps this off words that merely end in it: the "ROLL
-// OVER" inside "PAYROLL OVERTIME" is not a rollover.
-const ROLLOVER_NAME = /\broll[\s-]?overs?\b/i;
+// Matching that description takes some care, because the word appears there for
+// two entirely different reasons.
+
+// Descriptions are formatted by the institution, so the same phrase arrives
+// separated by spaces, runs of spaces, underscores or hyphens, or not separated
+// at all. Flattening every non-alphanumeric run to one space lets the patterns
+// below be written once, against words.
+function normalizeName(name: string): string {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+}
+
+// "Rollover IRA" is the NAME OF AN ACCOUNT, not a description of what happened:
+// an IRA opened to receive a former employer's plan keeps that label for life,
+// and institutions stamp it on every row in the account. Removed before the
+// match below, so an ordinary $7,000 contribution described as "CONTRIBUTION
+// ROLLOVER IRA 2026" stays a contribution -- getting that wrong is the same
+// error this file is fixing, just pointing the other way, and it lands on
+// exactly the people this feature is for.
+const ROLLOVER_ACCOUNT_LABEL = /\brollover ira\b/g;
+
+// The event itself: rollover, roll over, rolled over, rolling over, rollovers.
+// The leading \b keeps this off words that merely end in "roll" -- the "ROLL
+// OVER" inside "PAYROLL OVERTIME" is not a rollover -- and the trailing one off
+// "ROLL OVERTIME".
+const ROLLOVER_EVENT = /\broll(?:ed|s|ing)?\s?overs?\b/;
 
 /**
  * A rollover, in either direction.
+ *
+ * Two gates, because the description alone is not enough. The subtype must be
+ * one that actually moves money across the account boundary, so a dividend or
+ * interest payment credited inside a rollover IRA can't be read as a rollover
+ * on the strength of the account's name; and the description must name the
+ * event once the account label is stripped out.
  *
  * valueDelta deliberately still counts these: the money really did enter or
  * leave the account, so the balance reconstruction needs them. What they are
@@ -96,8 +130,10 @@ const ROLLOVER_NAME = /\broll[\s-]?overs?\b/i;
  * "contributed this year" overstates the figure by an order of magnitude.
  */
 export function isRollover(t: InvestmentTxn): boolean {
-  if ((t.subtype || '').toLowerCase() === 'rollover') return true;
-  return ROLLOVER_NAME.test(t.name || '');
+  const subtype = (t.subtype || '').toLowerCase();
+  if (subtype === 'rollover') return true;
+  if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return false;
+  return ROLLOVER_EVENT.test(normalizeName(t.name).replace(ROLLOVER_ACCOUNT_LABEL, ' '));
 }
 
 /** A rollover arriving here, for the line shown alongside contributions. */
