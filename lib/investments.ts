@@ -95,17 +95,28 @@ const CONTRIBUTION_SUBTYPES = new Set(['contribution', 'deposit', 'transfer']);
 // at all. Flattening every non-alphanumeric run to one space lets the patterns
 // below be written once, against words.
 function normalizeName(name: string): string {
-  return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+  return (name || '')
+    // Split a camel-case run first: "RolloverIRA" is the account label with the
+    // space left out, and without this the event pattern's trailing boundary
+    // fails on it, sending a real rollover to the contributions line.
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ');
 }
 
 // "Rollover IRA" is the NAME OF AN ACCOUNT, not a description of what happened:
 // an IRA opened to receive a former employer's plan keeps that label for life,
-// and institutions stamp it on every row in the account. Removed before the
-// match below, so an ordinary $7,000 contribution described as "CONTRIBUTION
-// ROLLOVER IRA 2026" stays a contribution -- getting that wrong is the same
-// error this file is fixing, just pointing the other way, and it lands on
-// exactly the people this feature is for.
-const ROLLOVER_ACCOUNT_LABEL = /\brollover ira\b/g;
+// and an institution that puts it in the description puts it on every row in
+// the account, contributions included. Institutions that do it don't agree on
+// the word order, so every spelling has to be here -- recognising one of them
+// is worse than recognising none, since it splits an account's rows between the
+// two figures according to nothing but phrasing.
+const ROLLOVER_ACCOUNT_LABEL =
+  /\b(?:rollover (?:roth |trad |traditional )?(?:iras?|individual retirement accounts?)|iras? rollover)\b/g;
+
+// Words that identify an ordinary periodic contribution on their own, used to
+// decide whether a stripped label was really just a label (see isRollover).
+const CONTRIBUTION_MARKER = /\b(?:contributions?|contrib|payroll|employee|employer|deferrals?)\b/;
 
 // The event itself: rollover, roll over, rolled over, rolling over, rollovers.
 // The leading \b keeps this off words that merely end in "roll" -- the "ROLL
@@ -116,11 +127,25 @@ const ROLLOVER_EVENT = /\broll(?:ed|s|ing)?\s?overs?\b/;
 /**
  * A rollover, in either direction.
  *
- * Two gates, because the description alone is not enough. The subtype must be
- * one that actually moves money across the account boundary, so a dividend or
- * interest payment credited inside a rollover IRA can't be read as a rollover
- * on the strength of the account's name; and the description must name the
- * event once the account label is stripped out.
+ * The subtype gate comes first: only a subtype that actually moves money across
+ * the account boundary can be a rollover leg, so a dividend or interest payment
+ * credited inside a rollover IRA can't be read as one on the strength of the
+ * account's name.
+ *
+ * The description is then read twice, because the account label and the event
+ * are the same word. Stripping the label unconditionally was wrong: it made
+ * "ROLLOVER IRA DEPOSIT" -- a plain description of an arriving 401k -- an
+ * ordinary contribution, and the two mistakes here are not the same size. A
+ * contribution misread as a rollover is capped by the annual limit and lands on
+ * a line the user can see next to it; a rollover misread as a contribution is
+ * the whole 401k, and it lands on the headline figure with nothing to explain
+ * its size. So the label is only believed to BE a label when removing it takes
+ * the last mention of a rollover with it AND what remains identifies an
+ * ordinary contribution by itself. Everything else stays a rollover.
+ *
+ * Irreducibly ambiguous, and resolved toward contribution: an institution that
+ * stamps the label and also calls arriving rollover money a "contribution"
+ * (some recordkeepers do) writes both cases as "ROLLOVER IRA CONTRIBUTION".
  *
  * valueDelta deliberately still counts these: the money really did enter or
  * leave the account, so the balance reconstruction needs them. What they are
@@ -133,7 +158,13 @@ export function isRollover(t: InvestmentTxn): boolean {
   const subtype = (t.subtype || '').toLowerCase();
   if (subtype === 'rollover') return true;
   if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return false;
-  return ROLLOVER_EVENT.test(normalizeName(t.name).replace(ROLLOVER_ACCOUNT_LABEL, ' '));
+
+  const name = normalizeName(t.name);
+  if (!ROLLOVER_EVENT.test(name)) return false;
+
+  const residual = name.replace(ROLLOVER_ACCOUNT_LABEL, ' ');
+  if (ROLLOVER_EVENT.test(residual)) return true; // said it again outside the label
+  return !CONTRIBUTION_MARKER.test(residual);
 }
 
 /** A rollover arriving here, for the line shown alongside contributions. */
