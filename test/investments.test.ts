@@ -164,12 +164,15 @@ describe('isContribution', () => {
 });
 
 describe('isRollover', () => {
-  test('matches the spellings Plaid passes through in the name', () => {
+  test('matches the spellings and separators institutions use', () => {
     for (const name of [
       'ROLLOVER CONTRIBUTION',
       'Direct Rollover In',
       'roll over from 401k',
       'Roll-Over Deposit',
+      'ROLL  OVER 401K', // runs of spaces, common in fixed-width descriptions
+      'ROLLED OVER FROM PRIOR PLAN',
+      'Rolling over to IRA',
       'Incoming rollovers',
     ]) {
       expect(isRollover(txn({ name }))).toBe(true);
@@ -180,9 +183,55 @@ describe('isRollover', () => {
     expect(isRollover(txn({ subtype: 'ROLLOVER', name: 'Transfer' }))).toBe(true);
   });
 
+  // A subtype Plaid doesn't emit yet must still move value, or the row would be
+  // dropped from the balance walk and from both figures the panel shows.
+  test('a rollover subtype moves account value', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'rollover', amount: -60_000 }))).toBe(60_000);
+    expect(isIncomingRollover(txn({ type: 'transfer', subtype: 'rollover', amount: -60_000 }))).toBe(
+      true
+    );
+  });
+
   test('leaves ordinary activity alone', () => {
     for (const name of ['PAYROLL OVERTIME', 'Contribution', 'ACME CORP DIVIDEND', '']) {
       expect(isRollover(txn({ name }))).toBe(false);
+    }
+  });
+
+  // "Rollover IRA" is the account's name, stamped on every row in it for life.
+  // Reading it as an event would break the figure for exactly the people this
+  // split is for: anyone whose IRA received a former employer's plan.
+  test('ignores the account label in a description', () => {
+    const contribution = txn({
+      type: 'cash',
+      subtype: 'contribution',
+      name: 'CONTRIBUTION ROLLOVER IRA 2026',
+      amount: -7000,
+    });
+    expect(isRollover(contribution)).toBe(false);
+    expect(isContribution(contribution)).toBe(true);
+    // Same label reached through a separator, and on a deposit rather than a
+    // contribution.
+    expect(isRollover(txn({ subtype: 'deposit', name: 'ROLLOVER_IRA DEPOSIT' }))).toBe(false);
+  });
+
+  // The label is stripped, not the whole description: a real rollover INTO a
+  // rollover IRA still has to register.
+  test('still matches an event described alongside the label', () => {
+    expect(isRollover(txn({ subtype: 'transfer', name: 'ROLLOVER IRA - ROLLOVER DEPOSIT' }))).toBe(
+      true
+    );
+  });
+
+  // Every one of these has a positive valueDelta inside an account whose name
+  // is on the row, so without the subtype gate each would post to the rollover
+  // line and accumulate a figure with no event behind it.
+  test('income credited inside a rollover IRA is not a rollover', () => {
+    for (const subtype of ['qualified dividend', 'interest', 'long-term capital gain']) {
+      const income = txn({ type: 'cash', subtype, name: `${subtype} ROLLOVER IRA`, amount: -320 });
+      expect(isRollover(income)).toBe(false);
+      expect(isIncomingRollover(income)).toBe(false);
+      expect(isContribution(income)).toBe(false);
     }
   });
 
