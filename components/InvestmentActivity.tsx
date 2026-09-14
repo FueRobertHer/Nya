@@ -21,7 +21,14 @@ type InvestmentTxn = {
   security: string | null;
 };
 
-type Payload = { txns: InvestmentTxn[]; ytd_contributions: number; note: string | null };
+type Payload = {
+  txns: InvestmentTxn[];
+  ytd_contributions: number;
+  // Optional because a payload cached by the previous deploy (15-minute TTL)
+  // predates the field; the tag below is simply not drawn until it expires.
+  ytd_rollovers?: number;
+  note: string | null;
+};
 
 function fmtDay(iso: string): string {
   // Parsed at local midnight, not UTC, so a date never renders as the day
@@ -91,11 +98,21 @@ export default function InvestmentActivity({
     return <p className="empty-note">No investment activity in the last year.</p>;
   }
 
+  // Absent on a payload cached before this field existed (see Payload).
+  const rolledOver = data.ytd_rollovers ?? 0;
+
   return (
     <div className="inv-activity">
       {data.ytd_contributions > 0 && (
         <div className="type-tag">
           {formatMoney(data.ytd_contributions, data.txns[0]?.currency)} contributed this year
+        </div>
+      )}
+      {/* Kept on its own line rather than added to the figure above: a rollover
+          is existing retirement money arriving, not money saved this year. */}
+      {rolledOver > 0 && (
+        <div className="type-tag">
+          {formatMoney(rolledOver, data.txns[0]?.currency)} rolled over this year
         </div>
       )}
       <table className="txn-table">

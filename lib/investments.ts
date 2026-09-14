@@ -74,6 +74,37 @@ const CORPORATE_ACTION_SUBTYPES = new Set([
 /** Subtypes that represent money the account holder actually put in. */
 const CONTRIBUTION_SUBTYPES = new Set(['contribution', 'deposit', 'transfer']);
 
+// Rollovers: retirement money moved between accounts (401k -> IRA, IRA -> IRA).
+// Plaid has no subtype for them, so they arrive wearing an ordinary one --
+// `transfer`, `contribution` or `deposit` on the receiving side, `withdrawal`
+// or `distribution` on the sending side -- with the word itself only in the
+// free-text `name`. That name is what we match on, plus a `rollover` subtype
+// Plaid doesn't emit today but might.
+//
+// `\b` before `roll` keeps this off words that merely end in it: the "ROLL
+// OVER" inside "PAYROLL OVERTIME" is not a rollover.
+const ROLLOVER_NAME = /\broll[\s-]?overs?\b/i;
+
+/**
+ * A rollover, in either direction.
+ *
+ * valueDelta deliberately still counts these: the money really did enter or
+ * leave the account, so the balance reconstruction needs them. What they are
+ * not is a *contribution* -- no new money entered the holder's retirement
+ * savings and none of it counts against the annual limit -- which is why
+ * isContribution excludes them. A $60k 401k rollover counted as
+ * "contributed this year" overstates the figure by an order of magnitude.
+ */
+export function isRollover(t: InvestmentTxn): boolean {
+  if ((t.subtype || '').toLowerCase() === 'rollover') return true;
+  return ROLLOVER_NAME.test(t.name || '');
+}
+
+/** A rollover arriving here, for the line shown alongside contributions. */
+export function isIncomingRollover(t: InvestmentTxn): boolean {
+  return isRollover(t) && valueDelta(t) > 0;
+}
+
 /**
  * Signed change this transaction makes to the account's TOTAL value.
  *
@@ -121,6 +152,8 @@ export function valueDelta(t: InvestmentTxn): number {
 
 /** Money the holder added from outside, for the year-to-date contributions line. */
 export function isContribution(t: InvestmentTxn): boolean {
+  // Rollovers wear contribution subtypes but aren't new money (see isRollover).
+  if (isRollover(t)) return false;
   return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && valueDelta(t) > 0;
 }
 
