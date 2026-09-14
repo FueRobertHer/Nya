@@ -18,7 +18,9 @@ Four tabs (bottom navigation, mobile-first):
   statement balance, last payment, escrow and payoff date in the expanded row
   (see "Payment details" below). Investment accounts expand to show the last
   year of activity (buys, sells, dividends, fees) and how much has been
-  contributed year to date. Any account can
+  contributed year to date. Rollovers are counted separately from
+  contributions, since a 401k moved into an IRA is existing retirement money
+  arriving, not money saved this year. Any account can
   be **hidden**: it keeps syncing but stops counting toward anything (see
   "Hiding accounts" below). Institutions
   Plaid can't reach can be tracked as **manual accounts**: you type the

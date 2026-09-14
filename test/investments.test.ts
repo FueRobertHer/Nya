@@ -27,7 +27,8 @@ mock.module('@/lib/plaid', () => ({
   },
 }));
 
-const { valueDelta, isContribution, fetchInvestmentTxns } = await import('@/lib/investments');
+const { valueDelta, isContribution, isRollover, isIncomingRollover, fetchInvestmentTxns } =
+  await import('@/lib/investments');
 
 const txn = (over: Partial<InvestmentTxn> = {}): InvestmentTxn => ({
   investment_transaction_id: 'it1',
@@ -146,6 +147,58 @@ describe('isContribution', () => {
 
   test('excludes outflows that share a contribution subtype', () => {
     expect(isContribution(txn({ type: 'transfer', subtype: 'transfer', amount: 2000 }))).toBe(false);
+  });
+
+  // The case this whole split exists for: a rollover arrives wearing a
+  // contribution subtype, and at 401k sizes it dwarfs a real year of saving.
+  test('excludes rollovers', () => {
+    const rollover = txn({
+      type: 'transfer',
+      subtype: 'transfer',
+      name: 'ROLLOVER CONTRIBUTION',
+      amount: -60_000,
+    });
+    expect(isContribution(rollover)).toBe(false);
+    expect(isIncomingRollover(rollover)).toBe(true);
+  });
+});
+
+describe('isRollover', () => {
+  test('matches the spellings Plaid passes through in the name', () => {
+    for (const name of [
+      'ROLLOVER CONTRIBUTION',
+      'Direct Rollover In',
+      'roll over from 401k',
+      'Roll-Over Deposit',
+      'Incoming rollovers',
+    ]) {
+      expect(isRollover(txn({ name }))).toBe(true);
+    }
+  });
+
+  test('matches a rollover subtype, should Plaid ever emit one', () => {
+    expect(isRollover(txn({ subtype: 'ROLLOVER', name: 'Transfer' }))).toBe(true);
+  });
+
+  test('leaves ordinary activity alone', () => {
+    for (const name of ['PAYROLL OVERTIME', 'Contribution', 'ACME CORP DIVIDEND', '']) {
+      expect(isRollover(txn({ name }))).toBe(false);
+    }
+  });
+
+  test('direction comes from the value it moves, not the word', () => {
+    // Plaid's convention: positive amount = cash leaving. The sending 401k's
+    // leg is a rollover too, but nothing rolled INTO this account.
+    const outgoing = txn({ type: 'transfer', subtype: 'transfer', name: 'Rollover', amount: 60_000 });
+    expect(isRollover(outgoing)).toBe(true);
+    expect(isIncomingRollover(outgoing)).toBe(false);
+  });
+
+  test('a rollover still moves the account value', () => {
+    // valueDelta is untouched by the split: the balance reconstruction needs it.
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', name: 'Rollover', amount: -60_000 }))).toBe(
+      60_000
+    );
   });
 });
 
