@@ -171,19 +171,24 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
   }
   try {
     const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
-    // Any one date used to answer for all of them, because backfill seeded
-    // every cash account before the walk and rewrote the layer wholesale. That
-    // no longer holds exactly: points older than the newest run's window are
-    // retained, and carry whatever account set was linked back then.
+    // The NEWEST date, not an arbitrary one. Any date used to answer for all of
+    // them, because backfill seeded every cash account before the walk and
+    // rewrote the layer wholesale. Two things broke that: points older than the
+    // newest run's window are retained and carry whatever account set was
+    // linked back then, and the newest run's own oldest points can be
+    // investment-only, where the walk reaches past the cash horizon (see
+    // reconstruct in lib/backfill.ts). Both make an arbitrary sample
+    // under-report a cash account -- harmless in itself, since it only forces a
+    // recompute that wasn't needed, but it forces one on nearly every hide.
     //
-    // It stays safe because of which way it errs. The caller hides a currently
-    // linked account, which the newest run always covers -- so sampling a new
-    // date answers correctly, and sampling a stale one can only under-report
-    // and force a recompute that wasn't needed. Over-reporting would be the
-    // dangerous direction (a skipped recompute leaves a cliff in the chart) and
-    // requires the account to be missing from the newest window, where the flat
-    // record checked just above already accounts for it.
-    const [sample] = Object.values(map ?? {});
+    // The newest date is written by the newest run and holds every account it
+    // walked, which is what the caller is asking about: it hides a currently
+    // linked account. Over-reporting would be the dangerous direction (a
+    // skipped recompute leaves a cliff in the chart) and requires the account
+    // to be missing from the newest window, where the flat record checked just
+    // above already accounts for it.
+    const newest = Object.keys(map ?? {}).sort().pop();
+    const sample = newest ? map?.[newest] : undefined;
     if (!sample) return false;
     return account_id in ((JSON.parse(await decrypt(sample)) as Record<string, number>) ?? {});
   } catch {
@@ -239,6 +244,52 @@ export async function replaceEstimatedAccounts(
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
   await replaceRange(ACCOUNTS_EST_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
+}
+
+/**
+ * Add per-account balances to the estimated layer for dates the run speaks for
+ * only PARTLY, leaving every other account on those dates alone.
+ *
+ * Backfill walks an investment account past the oldest cash transaction, where
+ * its own flows still have data (see reconstruct in lib/backfill.ts). Those
+ * dates can't go through replaceEstimatedAccounts: that deletes the whole range
+ * from its oldest point forward, which would take out an older run's points --
+ * the very retention replaceRange exists to protect -- and its hset would
+ * replace a full map with an investment-only one either way. Both losses land
+ * on the hidden-account subtraction, which reads these maps to remove an
+ * account from past totals.
+ *
+ * So each date is merged rather than replaced: this run's balances win for the
+ * accounts it names, and anything it doesn't name keeps whatever was there.
+ * An unreadable stored map is overwritten -- it can't be merged with, and the
+ * new partial map is worth more than a blob nothing can decrypt.
+ */
+export async function mergeEstimatedAccounts(
+  points: { date: string; balances: Record<string, number> }[]
+): Promise<void> {
+  if (points.length === 0) return;
+  let existing: Record<string, string> | null = null;
+  try {
+    existing = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
+  } catch {
+    // Couldn't read: write the new balances on their own rather than skipping
+    // the dates entirely. Same trade replaceRange makes on the same failure.
+  }
+  const fields: Record<string, string> = {};
+  for (const p of points) {
+    let merged = p.balances;
+    const blob = existing?.[p.date];
+    if (blob) {
+      try {
+        const prior = JSON.parse(await decrypt(blob)) as Record<string, number>;
+        merged = { ...prior, ...p.balances };
+      } catch {
+        // fall through with the new balances alone
+      }
+    }
+    fields[p.date] = await encrypt(JSON.stringify(merged));
+  }
+  await redis().hset(ACCOUNTS_EST_HASH, fields);
 }
 
 /**
@@ -363,7 +414,11 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 // Bump this whenever the walk changes shape.
 //   1 - cash and credit walked; everything else flat
 //   2 - investment external flows walked too
-const BACKFILL_SCHEMA = 2;
+//   3 - an investment account whose flows out-run its balance is floored at
+//       zero instead of dropped back to flat, and its own series is walked past
+//       the cash horizon. Both make a large arrival (a rollover) visible on the
+//       account's chart where it previously was not.
+const BACKFILL_SCHEMA = 3;
 
 export async function isBackfillDone(): Promise<boolean> {
   try {

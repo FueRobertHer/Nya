@@ -12,6 +12,7 @@ const {
   recordSnapshot,
   replaceEstimated,
   replaceEstimatedAccounts,
+  mergeEstimatedAccounts,
   replaceEstimatedFlat,
   getHistory,
   getAccountHistory,
@@ -254,6 +255,38 @@ describe('getAccountHistory', () => {
   });
 });
 
+describe('mergeEstimatedAccounts', () => {
+  // Backfill walks an investment account past the oldest cash transaction,
+  // where its own flows still have data. Those dates go through the merge
+  // instead of the replace, because the run speaks only for that account
+  // there -- replacing would delete an older run's retained points and
+  // overwrite the cash balances on any that survived.
+  test('adds accounts to a date without disturbing the others', async () => {
+    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400, k401: 100 } }]);
+    await mergeEstimatedAccounts([{ date: '2026-01-01', balances: { k401: 250 } }]);
+
+    expect(valuesByDate(await getAccountHistory('cash'))['2026-01-01']).toBe(400);
+    expect(valuesByDate(await getAccountHistory('k401'))['2026-01-01']).toBe(250);
+  });
+
+  test('covers a date the layer had nothing for', async () => {
+    await mergeEstimatedAccounts([{ date: '2025-06-01', balances: { k401: 250 } }]);
+    expect(valuesByDate(await getAccountHistory('k401'))['2025-06-01']).toBe(250);
+  });
+
+  test('deletes nothing, however far back it reaches', async () => {
+    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400 } }]);
+    await mergeEstimatedAccounts([{ date: '2025-06-01', balances: { k401: 250 } }]);
+    expect(await getAccountHistory('cash')).toHaveLength(1);
+  });
+
+  test('an empty merge does not touch Redis at all', async () => {
+    fake.ops = 0;
+    await mergeEstimatedAccounts([]);
+    expect(fake.ops).toBe(0);
+  });
+});
+
 describe('estimatedLayerCovers', () => {
   test('finds walked and flat accounts, and misses unknown ones', async () => {
     await writeEra(['2026-01-01'], 1000, { cash: 400 }, { k401: 250 });
@@ -264,6 +297,19 @@ describe('estimatedLayerCovers', () => {
 
   test('reports not-covered on an empty layer, so the caller forces a recompute', async () => {
     expect(await estimatedLayerCovers('anything')).toBe(false);
+  });
+
+  // The newest date is the one the newest run wrote, and it holds every
+  // account that run walked. Older dates can be an investment-only tail (the
+  // walk reaching past the cash horizon) or a retained era from a run with a
+  // different account set, and sampling one of those would under-report a cash
+  // account and force a recompute on nearly every hide.
+  test('answers from the newest date, not an arbitrary one', async () => {
+    await replaceEstimatedAccounts([
+      { date: '2026-01-01', balances: { k401: 250 } },
+      { date: '2026-02-01', balances: { cash: 400, k401: 250 } },
+    ]);
+    expect(await estimatedLayerCovers('cash')).toBe(true);
   });
 });
 
