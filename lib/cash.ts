@@ -98,7 +98,16 @@ export type CashSummary = {
   /** Value in everything else. */
   invested: number;
   total: number;
-  /** cash / total, clamped to 0..1. 0 when there is nothing to divide by. */
+  /**
+   * Fraction of the priced holdings sitting in cash, clamped to 0..1.
+   *
+   * Clamped at BOTH ends because either can go out of range on a margin
+   * account (see summarizeCash). A denominator at or below zero reads as 1
+   * rather than 0: cash outweighing everything else is the extreme of this
+   * scale, not the absence of it, and rounding it to 0 would hide the pile the
+   * badge exists to show. Callers that print it as "% of holdings" should
+   * still check `total > 0` first -- the ratio is honest, the phrase isn't.
+   */
   share: number;
   /** Material enough to be worth acting on -- see the thresholds below. */
   flagged: boolean;
@@ -128,12 +137,14 @@ export function summarizeCash(holdings: CashHolding[]): CashSummary {
     else invested += h.value;
   }
   const total = cash + invested;
-  // Clamped, because `invested` can be NEGATIVE: Plaid reports a short position
-  // or a margin debit with a negative institution_value. $15k of settlement
-  // cash against a $5k short is a $10k total and a raw share of 1.5, and
-  // "150% of holdings is sitting in cash" is not a sentence worth shipping.
-  // The cash figure itself stays exact; only the ratio is bounded.
-  const share = total > 0 ? Math.min(cash / total, 1) : cash > 0 ? 1 : 0;
+  // Clamped at both ends, because Plaid reports a short position or a margin
+  // debit with a NEGATIVE institution_value and either side can carry one:
+  // $15k of settlement cash against a $5k short is a $10k total and a raw share
+  // of 1.5, and a margin debit on the cash line itself is a negative numerator.
+  // Neither "150% of holdings is sitting in cash" nor "-5%" is a sentence worth
+  // shipping. The cash figure itself stays exact; only the ratio is bounded.
+  const share =
+    total > 0 ? Math.min(Math.max(cash / total, 0), 1) : cash > 0 ? 1 : 0;
   return {
     cash,
     invested,
@@ -162,4 +173,64 @@ export function cashByAccount(holdings: CashHolding[]): Record<string, CashSumma
   const out: Record<string, CashSummary> = {};
   for (const [id, hs] of Object.entries(grouped)) out[id] = summarizeCash(hs);
   return out;
+}
+
+/** The subset of an account this module needs to judge its holdings. */
+export type CashAccount = { account_id: string; subtype?: string | null };
+
+/**
+ * One institution's idle-cash verdict, for every surface that renders it.
+ *
+ * Three places ask about the same money -- the badge under an account row, the
+ * chip on each cash holding, and the Holdings header -- and they must not
+ * disagree, so they all read this. In particular the header's AMOUNT and its
+ * COLOUR come from the same population here; sourcing them separately let a
+ * $600 flag paint a $50,600 total amber.
+ *
+ * Accounts that are cash by design drop out of all of it: their holdings
+ * aren't counted, so they get no summary, no amber, and no share of the header
+ * figure. The factual "Cash" label on their holding rows is unaffected -- that
+ * one is a statement about the security, not about whether anything ought to be
+ * done.
+ *
+ * Pass the accounts that are actually RENDERED. Hidden accounts are already
+ * gone from the Accounts tab list, and this drops their holdings with them.
+ */
+export function institutionCash(
+  accounts: CashAccount[],
+  holdings: CashHolding[]
+): {
+  cash: number;
+  flagged: boolean;
+  byAccount: Record<string, CashSummary>;
+  flaggedAccounts: Set<string>;
+} {
+  const rendered = new Map(accounts.map((a) => [a.account_id, a] as const));
+  const counted = holdings.filter((h) => {
+    const owner = h.account_id ? rendered.get(h.account_id) : undefined;
+    return !owner || !isCashByDesign(owner.subtype);
+  });
+
+  const byAccount = cashByAccount(counted);
+  const flaggedAccounts = new Set(
+    Object.keys(byAccount).filter((id) => byAccount[id].flagged && rendered.has(id))
+  );
+
+  // Cash belonging to no rendered account: a payload cached before holdings
+  // carried account_id, or a position whose parent account this Item didn't
+  // return. No row can badge it, so the header answers for it -- but on its own
+  // merits, rather than by falling back to a total that already includes cash
+  // the rows have judged and passed on.
+  const unattributed = counted.filter((h) => !h.account_id || !rendered.has(h.account_id));
+
+  // An institution that is nothing BUT cash-by-design accounts has nothing to
+  // say, including about holdings it couldn't attribute to one of them.
+  const allByDesign = accounts.length > 0 && accounts.every((a) => isCashByDesign(a.subtype));
+
+  return {
+    cash: summarizeCash(counted).cash,
+    flagged: !allByDesign && (flaggedAccounts.size > 0 || summarizeCash(unattributed).flagged),
+    byAccount,
+    flaggedAccounts,
+  };
 }

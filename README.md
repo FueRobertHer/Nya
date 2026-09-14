@@ -445,8 +445,9 @@ fails open if Redis is unreachable). This blunts brute-forcing of
   estimated layer (`lib/backfill.ts`), Plaid's investment sign conventions and
   pagination (`lib/investments.ts`), liability normalization
   (`lib/liabilities.ts`), the credit/loan sign rule that every total depends on
-  (`lib/balance.ts`), and last-known-balance recovery for a failed institution
-  (`lib/last-known.ts`). Routes, React components and anything talking to live
+  (`lib/balance.ts`), last-known-balance recovery for a failed institution
+  (`lib/last-known.ts`), and which holdings count as uninvested cash and when
+  that is worth flagging (`lib/cash.ts`). Routes, React components and anything talking to live
   Plaid are not covered.
 - **Liabilities is a paid Plaid product.** Free in `sandbox`, but billed per
   Item per month in `production`, so enabling payment details on many

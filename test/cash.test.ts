@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   cashByAccount,
+  institutionCash,
   isCashByDesign,
   isCashHolding,
   summarizeCash,
@@ -190,6 +191,17 @@ describe('summarizeCash', () => {
   // pile or negative outright. "150% of holdings is sitting in cash" is not a
   // sentence worth shipping.
   describe('with negative holding values', () => {
+    test('clamps a negative numerator at 0', () => {
+      // A margin debit reported on the cash line itself.
+      const s = summarizeCash([
+        holding({ ticker: 'CUR:USD', value: -5_000 }),
+        holding({ value: 100_000 }),
+      ]);
+      expect(s.cash).toBe(-5_000);
+      expect(s.share).toBe(0);
+      expect(s.flagged).toBe(false);
+    });
+
     test('clamps the share at 1', () => {
       const s = summarizeCash([
         holding({ ticker: 'VMFXX', value: 15_000 }),
@@ -223,8 +235,9 @@ describe('summarizeCash', () => {
     });
   });
 
-  // A null value is unknown, not zero: counting it as zero would shrink the
-  // denominator and overstate the cash share.
+  // Skipping an unpriced holding and adding zero for it are the same
+  // arithmetic; it's skipped because a holding with no value is evidence of
+  // nothing, cash or invested.
   test('skips holdings with no value', () => {
     const s = summarizeCash([holding({ value: null }), holding({ ticker: 'VMFXX', value: 1000 })]);
     expect(s.total).toBe(1000);
@@ -262,5 +275,104 @@ describe('cashByAccount', () => {
   // institution-level figure still counts them because it sums the whole list.
   test('drops holdings that name no account', () => {
     expect(cashByAccount([holding({ account_id: undefined, ticker: 'VMFXX' })])).toEqual({});
+  });
+});
+
+// The verdict three surfaces share: the badge under an account row, the chip on
+// each cash holding, and the Holdings header. They disagreeing about the same
+// money is the bug this function exists to make impossible.
+describe('institutionCash', () => {
+  const acct = (account_id: string, subtype: string | null = 'brokerage') => ({
+    account_id,
+    subtype,
+  });
+
+  // The header's AMOUNT and its COLOUR have to come from the same population.
+  // A cash management account holding $50k of SPAXX is exempt everywhere else,
+  // so counting it in the header total let a $600 flag paint $50,600 amber.
+  test('an exempt account contributes to neither the total nor the verdict', () => {
+    const r = institutionCash(
+      [acct('cma', 'cash management'), acct('brokerage')],
+      [
+        holding({ account_id: 'cma', ticker: 'SPAXX', value: 50_000 }),
+        holding({ account_id: 'brokerage', value: 20_000 }),
+        holding({ account_id: 'brokerage', ticker: 'VMFXX', value: 600 }),
+      ]
+    );
+    expect(r.cash).toBe(600);
+    expect(r.flagged).toBe(true);
+    expect(r.byAccount.cma).toBeUndefined();
+    expect(r.flaggedAccounts.has('cma')).toBe(false);
+    expect(r.flaggedAccounts.has('brokerage')).toBe(true);
+  });
+
+  test('an institution that is nothing but exempt accounts says nothing at all', () => {
+    const r = institutionCash(
+      [acct('cma', 'cash management')],
+      [holding({ account_id: 'cma', ticker: 'SPAXX', value: 50_000 })]
+    );
+    expect(r.cash).toBe(0);
+    expect(r.flagged).toBe(false);
+  });
+
+  // ...including when its holdings can't be attributed to it, which would
+  // otherwise take the unattributed path below and flag an exempt account.
+  test('and still says nothing when its holdings name no account', () => {
+    const r = institutionCash(
+      [acct('cma', 'cash management')],
+      [holding({ account_id: undefined, ticker: 'SPAXX', value: 50_000 })]
+    );
+    expect(r.flagged).toBe(false);
+  });
+
+  test('one flagged account among several sets the header, the others stay clean', () => {
+    const r = institutionCash(
+      [acct('brokerage'), acct('ira')],
+      [
+        holding({ account_id: 'brokerage', value: 200_000 }),
+        holding({ account_id: 'brokerage', ticker: 'VMFXX', value: 40 }),
+        holding({ account_id: 'ira', ticker: 'VMFXX', value: 7_000 }),
+      ]
+    );
+    expect(r.cash).toBe(7_040);
+    expect(r.flagged).toBe(true);
+    expect(r.flaggedAccounts).toEqual(new Set(['ira']));
+    expect(r.byAccount.brokerage.flagged).toBe(false);
+  });
+
+  // A payload cached before holdings carried account_id. No row can badge that
+  // cash, so the header has to answer for it.
+  test('cash that belongs to no rendered account is judged on its own merits', () => {
+    const material = institutionCash(
+      [acct('brokerage')],
+      [holding({ account_id: undefined, ticker: 'VMFXX', value: 7_000 })]
+    );
+    expect(material.cash).toBe(7_000);
+    expect(material.flagged).toBe(true);
+    expect(material.flaggedAccounts.size).toBe(0);
+
+    // The mirror case: ordinary float, attributed or not, leaves the header
+    // alone. Neither the $40 the brokerage row already passed on nor the $40
+    // no row could judge is material, and summing them into one verdict is how
+    // a header goes amber with no amber row under it to explain itself.
+    const float = institutionCash(
+      [acct('brokerage')],
+      [
+        holding({ account_id: 'brokerage', value: 200_000 }),
+        holding({ account_id: 'brokerage', ticker: 'VMFXX', value: 40 }),
+        holding({ account_id: undefined, ticker: 'VMFXX', value: 40 }),
+      ]
+    );
+    expect(float.cash).toBe(80);
+    expect(float.flagged).toBe(false);
+  });
+
+  test('an institution with no holdings reports nothing', () => {
+    expect(institutionCash([acct('brokerage')], [])).toEqual({
+      cash: 0,
+      flagged: false,
+      byAccount: {},
+      flaggedAccounts: new Set(),
+    });
   });
 });

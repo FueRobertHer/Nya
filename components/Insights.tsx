@@ -20,10 +20,17 @@ export type IdleCashAccount = {
   /** React key. Account NAMES collide across institutions; ids don't. */
   account_id: string;
   name: string;
+  /** Last 4, where the institution reports it. Two accounts at one broker can
+   *  share a name, and the Accounts tab tells them apart the same way. */
+  mask: string | null;
   institution_name: string;
   cash: number;
-  /** Fraction of the account's priced holdings sitting in cash, 0..1. */
-  share: number;
+  /**
+   * Fraction of the account's priced holdings sitting in cash, 0..1, or null
+   * where the denominator was degenerate and the percentage would be a claim
+   * rather than a measurement.
+   */
+  share: number | null;
   currency: string | null;
 };
 
@@ -172,13 +179,18 @@ export default function Insights({
     // with five brokerages doesn't need five lines to get the message, and the
     // Accounts tab carries the per-account detail.
     for (const a of idleCash.slice(0, 2)) {
+      const where = `${a.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`;
+      const howMuch =
+        a.share == null
+          ? ''
+          : ` · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of its holdings`;
       out.push({
         // Keyed by account_id, not name: "Individual" and "Roth IRA" are what
-        // brokerages call accounts, so two institutions collide easily, and a
+        // brokerages call accounts, so two of them collide easily, and a
         // duplicate React key would drop one of the lines (see the low-balance
         // block above, which has the same hazard).
         key: `idle-cash-${a.account_id}`,
-        text: `${a.institution_name} ${a.name}: ${formatMoney(a.cash, a.currency)} uninvested · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of its holdings are sitting in cash`,
+        text: `${where}: ${formatMoney(a.cash, a.currency)} uninvested${howMuch}`,
         tone: 'warn',
       });
     }
