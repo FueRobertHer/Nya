@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   cashByAccount,
+  isCashByDesign,
   isCashHolding,
   summarizeCash,
+  IDLE_CASH_LARGE_VALUE,
+  IDLE_CASH_MIN_SHARE,
+  IDLE_CASH_MIN_VALUE,
   type CashHolding,
 } from '@/lib/cash';
 
@@ -65,8 +69,41 @@ describe('isCashHolding', () => {
     ).toBe(false);
   });
 
-  test('survives a payload cached before the security fields existed', () => {
+  test('normalizes case on both the ticker and the security type', () => {
+    expect(isCashHolding(holding({ ticker: 'vmfxx', is_cash_equivalent: null }))).toBe(true);
+    expect(isCashHolding(holding({ security_type: 'Cash', is_cash_equivalent: null }))).toBe(true);
+  });
+
+  // A payload cached in localStorage before the security fields shipped carries
+  // a name and nothing else. The name rule is what keeps an offline first paint
+  // from quietly reporting a settlement fund as invested, so it is deliberate
+  // that this degrades rather than blanks -- see the Holding type in
+  // components/Dashboard.tsx.
+  test('still classifies from a payload cached before the security fields existed', () => {
     expect(isCashHolding({ name: 'Apple Inc.', value: 100 })).toBe(false);
+    expect(
+      isCashHolding({ name: 'Vanguard Federal Money Market Fund', value: 12_000 })
+    ).toBe(true);
+  });
+});
+
+// An account that is cash by design can never act on the warning, so it never
+// gets one.
+describe('isCashByDesign', () => {
+  test('exempts the subtypes whose whole purpose is holding cash', () => {
+    expect(isCashByDesign('cash management')).toBe(true);
+    expect(isCashByDesign('money market')).toBe(true);
+    expect(isCashByDesign('Cash Management')).toBe(true);
+  });
+
+  test('leaves ordinary investment accounts alone', () => {
+    expect(isCashByDesign('brokerage')).toBe(false);
+    expect(isCashByDesign('roth')).toBe(false);
+    expect(isCashByDesign(null)).toBe(false);
+    expect(isCashByDesign(undefined)).toBe(false);
+    // An HSA sitting in cash is the textbook case of money that should have
+    // been invested, so it stays eligible on purpose.
+    expect(isCashByDesign('hsa')).toBe(false);
   });
 });
 
@@ -117,6 +154,65 @@ describe('summarizeCash', () => {
     expect(s).toEqual({ cash: 0, invested: 1000, total: 1000, share: 0, flagged: false });
   });
 
+  // The feature IS these three numbers, so pin them at the edge: a `>=` quietly
+  // becoming a `>` passes every other test in this file.
+  describe('at the threshold boundaries', () => {
+    const withCash = (cash: number, invested: number) =>
+      summarizeCash([
+        ...(invested > 0 ? [holding({ value: invested })] : []),
+        holding({ ticker: 'VMFXX', value: cash }),
+      ]);
+
+    test('the minimum value is inclusive', () => {
+      // Share is 100% in both, so only the value rule is under test.
+      expect(withCash(IDLE_CASH_MIN_VALUE, 0).flagged).toBe(true);
+      expect(withCash(IDLE_CASH_MIN_VALUE - 0.01, 0).flagged).toBe(false);
+    });
+
+    test('the minimum share is inclusive', () => {
+      // 1000 of 50000 is exactly 2%, and 1000 clears the value floor.
+      const at = withCash(1000, 49_000);
+      expect(at.share).toBeCloseTo(IDLE_CASH_MIN_SHARE);
+      expect(at.flagged).toBe(true);
+      // Same cash, larger portfolio: below the share line and below the
+      // large-value line, so nothing fires.
+      expect(withCash(1000, 999_000).flagged).toBe(false);
+    });
+
+    test('the large-value rule is inclusive and ignores the share', () => {
+      expect(withCash(IDLE_CASH_LARGE_VALUE, 100_000_000).flagged).toBe(true);
+      expect(withCash(IDLE_CASH_LARGE_VALUE - 0.01, 100_000_000).flagged).toBe(false);
+    });
+  });
+
+  // Plaid reports a short position or a margin debit with a negative
+  // institution_value, which can make the denominator smaller than the cash
+  // pile or negative outright. "150% of holdings is sitting in cash" is not a
+  // sentence worth shipping.
+  describe('with negative holding values', () => {
+    test('clamps the share at 1', () => {
+      const s = summarizeCash([
+        holding({ ticker: 'VMFXX', value: 15_000 }),
+        holding({ name: 'Tesla Inc.', ticker: 'TSLA', value: -5_000 }),
+      ]);
+      expect(s.cash).toBe(15_000); // the cash figure itself stays exact
+      expect(s.total).toBe(10_000);
+      expect(s.share).toBe(1);
+      expect(s.flagged).toBe(true);
+    });
+
+    // The mirror case: a denominator at or below zero must not silently read as
+    // "0% cash" and hide a real pile.
+    test('still flags cash when the total is wiped out', () => {
+      const s = summarizeCash([
+        holding({ ticker: 'VMFXX', value: 5_000 }),
+        holding({ name: 'Tesla Inc.', ticker: 'TSLA', value: -8_000 }),
+      ]);
+      expect(s.share).toBe(1);
+      expect(s.flagged).toBe(true);
+    });
+  });
+
   test('empty list divides by nothing', () => {
     expect(summarizeCash([])).toEqual({
       cash: 0,
@@ -146,6 +242,18 @@ describe('cashByAccount', () => {
     expect(byAcct.brokerage.cash).toBe(1000);
     expect(byAcct.brokerage.share).toBeCloseTo(0.1);
     expect(byAcct.ira.share).toBe(1);
+    expect(byAcct.ira.flagged).toBe(true);
+  });
+
+  // Each account is judged on its own: the Accounts tab draws one badge per
+  // row, and a flagged IRA must not put amber on the brokerage beside it.
+  test('flags each account independently', () => {
+    const byAcct = cashByAccount([
+      holding({ account_id: 'brokerage', value: 200_000 }),
+      holding({ account_id: 'brokerage', ticker: 'VMFXX', value: 40 }),
+      holding({ account_id: 'ira', ticker: 'VMFXX', value: 7_000 }),
+    ]);
+    expect(byAcct.brokerage.flagged).toBe(false);
     expect(byAcct.ira.flagged).toBe(true);
   });
 

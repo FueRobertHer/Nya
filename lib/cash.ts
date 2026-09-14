@@ -43,8 +43,9 @@ const CASH_TICKERS = new Set([
   'CUR:USD',
   // Vanguard
   'VMFXX', 'VMRXX', 'VUSXX', 'VMSXX',
-  // Fidelity
-  'SPAXX', 'FDRXX', 'FZFXX', 'FDLXX', 'SPRXX',
+  // Fidelity ('FCASH' is its non-fund core position, typed by some feeds as an
+  // ordinary security with a name that matches nothing below)
+  'SPAXX', 'FDRXX', 'FZFXX', 'FDLXX', 'SPRXX', 'FCASH',
   // Schwab
   'SWVXX', 'SNVXX', 'SNSXX', 'SWGXX',
   // E*TRADE / Morgan Stanley, Merrill, T. Rowe
@@ -56,8 +57,12 @@ const CASH_TICKERS = new Set([
 // is the sweep account under another name. Deliberately narrow: short-duration
 // bond and T-bill ETFs are cash-LIKE but they are still a position someone
 // chose, and calling them idle would cry wolf on the badge.
-const CASH_NAME =
-  /\b(?:money market|cash reserves?|cash sweep|sweep account|settlement fund|federal money market)\b/i;
+//
+// Narrow is all this rule can be, not all the classifier is: Plaid's flag is
+// checked first and means "highly liquid asset [that] can be treated like
+// cash", which is broader than uninvested. A T-bill ETF that Plaid marks
+// cash-equivalent is still flagged, and that is Plaid's call, not this one's.
+const CASH_NAME = /\b(?:money market|cash reserves?|cash sweep|sweep account|settlement fund)\b/i;
 
 /** True when this position is money sitting in cash rather than invested. */
 export function isCashHolding(h: CashHolding): boolean {
@@ -67,13 +72,33 @@ export function isCashHolding(h: CashHolding): boolean {
   return CASH_NAME.test(h.name || '');
 }
 
+// Investment account subtypes that are cash BY DESIGN. A Fidelity cash
+// management account or a money market account carried under an investment Item
+// holds ~100% cash at all times, so the flag below would be true forever with
+// nothing the holder could ever do to clear it -- a permanent amber dot on an
+// account that is working exactly as intended, and there is no dismiss.
+//
+// HSAs are deliberately NOT here. An HSA sitting entirely in cash is the
+// textbook case of money that should have been invested and wasn't, which is
+// the thing this whole module exists to surface.
+const CASH_BY_DESIGN_SUBTYPES = new Set(['cash management', 'money market']);
+
+/**
+ * Whether an idle-cash warning would be meaningless for this account, by
+ * Plaid's account subtype. Callers use it to suppress the badge entirely rather
+ * than to change the arithmetic: the cash is real, it just isn't news.
+ */
+export function isCashByDesign(subtype: string | null | undefined): boolean {
+  return CASH_BY_DESIGN_SUBTYPES.has((subtype || '').toLowerCase());
+}
+
 export type CashSummary = {
   /** Value sitting in cash and cash equivalents. */
   cash: number;
   /** Value in everything else. */
   invested: number;
   total: number;
-  /** cash / total, 0 when there is nothing to divide by. */
+  /** cash / total, clamped to 0..1. 0 when there is nothing to divide by. */
   share: number;
   /** Material enough to be worth acting on -- see the thresholds below. */
   flagged: boolean;
@@ -95,14 +120,20 @@ export function summarizeCash(holdings: CashHolding[]): CashSummary {
   let cash = 0;
   let invested = 0;
   for (const h of holdings) {
-    // A null value is unknown, not zero: counting it as zero would shrink the
-    // denominator and overstate the cash share.
+    // An unpriced holding contributes nothing either way. (Skipping it and
+    // adding zero are the same arithmetic; it's skipped because a holding with
+    // no value isn't evidence of anything, cash or invested.)
     if (h.value == null) continue;
     if (isCashHolding(h)) cash += h.value;
     else invested += h.value;
   }
   const total = cash + invested;
-  const share = total > 0 ? cash / total : 0;
+  // Clamped, because `invested` can be NEGATIVE: Plaid reports a short position
+  // or a margin debit with a negative institution_value. $15k of settlement
+  // cash against a $5k short is a $10k total and a raw share of 1.5, and
+  // "150% of holdings is sitting in cash" is not a sentence worth shipping.
+  // The cash figure itself stays exact; only the ratio is bounded.
+  const share = total > 0 ? Math.min(cash / total, 1) : cash > 0 ? 1 : 0;
   return {
     cash,
     invested,
@@ -117,11 +148,10 @@ export function summarizeCash(holdings: CashHolding[]): CashSummary {
 /**
  * Per-account summaries, for the badge on an individual brokerage row.
  *
- * Holdings cached before this shipped -- and those from a payload written
- * before `account_id` was carried at all -- can't be attributed to a row, so
- * they're dropped here rather than lumped under a key that isn't an account.
- * They still count toward the institution-level figure, which sums the whole
- * list.
+ * A holding with no `account_id` -- one from a localStorage payload written
+ * before that field was carried at all -- can't be attributed to a row, so it's
+ * dropped here rather than lumped under a key that isn't an account. It still
+ * counts toward the institution-level figure, which sums the whole list.
  */
 export function cashByAccount(holdings: CashHolding[]): Record<string, CashSummary> {
   const grouped: Record<string, CashHolding[]> = {};

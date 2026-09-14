@@ -6,7 +6,7 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
-import Insights from './Insights';
+import Insights, { type IdleCashAccount } from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
 import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
@@ -15,7 +15,7 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 import { isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
-import { cashByAccount, isCashHolding, summarizeCash } from '@/lib/cash';
+import { cashByAccount, isCashByDesign, isCashHolding, summarizeCash } from '@/lib/cash';
 
 type Account = {
   account_id: string;
@@ -61,9 +61,13 @@ type Holding = {
   value: number | null;
   cost_basis: number | null;
   // Plaid security fields, read by lib/cash.ts to tell an invested position
-  // from money parked in cash. All optional: a payload cached in localStorage
-  // before this shipped carries none of them, which reads as "not cash" and
-  // renders exactly as it did before.
+  // from money parked in cash. All optional, because a payload cached in
+  // localStorage before this shipped carries none of them. What that payload
+  // DOES carry is `name`, and lib/cash.ts's last rule reads names -- so an
+  // offline first paint off an old cache still marks a fund called "...Money
+  // Market..." as cash, just without the confirmation Plaid's own flag gives.
+  // Graceful degradation rather than a blank: the amount and the share come
+  // from `value`, which was always there.
   ticker?: string | null;
   security_type?: string | null;
   is_cash_equivalent?: boolean | null;
@@ -887,7 +891,7 @@ export default function Dashboard() {
   // Hidden accounts are dropped here for the same reason they're dropped from
   // every total: the user has said they don't want to see them.
   const idleCashAccounts = useMemo(() => {
-    const out: { name: string; cash: number; share: number; currency: string | null }[] = [];
+    const out: IdleCashAccount[] = [];
     for (const inst of institutions) {
       const hiddenIds = new Set(
         inst.accounts.filter((a) => a.hidden).map((a) => a.account_id)
@@ -896,10 +900,24 @@ export default function Dashboard() {
         inst.holdings.filter((h) => !h.account_id || !hiddenIds.has(h.account_id))
       );
       for (const a of inst.accounts) {
-        if (a.hidden) continue;
+        // Same two exclusions as the Accounts tab badge: hidden accounts don't
+        // count toward anything, and an account that is cash by design has
+        // nothing to act on.
+        if (a.hidden || isCashByDesign(a.subtype)) continue;
         const cash = byAcct[a.account_id];
         if (!cash?.flagged) continue;
-        out.push({ name: a.name, cash: cash.cash, share: cash.share, currency: a.currency });
+        out.push({
+          // Carries the account_id and the institution because account names
+          // are not distinctive: "Individual" and "Roth IRA" are what
+          // brokerages call them, and two of them would otherwise produce one
+          // unreadable line and one duplicate React key.
+          account_id: a.account_id,
+          name: a.name,
+          institution_name: inst.institution_name,
+          cash: cash.cash,
+          share: cash.share,
+          currency: a.currency,
+        });
       }
     }
     return out.sort((x, y) => y.cash - x.cash);
@@ -1185,6 +1203,21 @@ export default function Dashboard() {
                   // list, so a hidden brokerage takes its cash with it.
                   const instCash = summarizeCash(inst.holdings);
                   const cashByAcct = cashByAccount(inst.holdings);
+                  // Which accounts have cash worth acting on, as opposed to
+                  // merely having some. One set, so the row badge, the per-row
+                  // chip and the Holdings header can't reach three different
+                  // verdicts about the same $40 dividend.
+                  const flaggedCashAccounts = new Set(
+                    inst.accounts
+                      .filter((a) => !isCashByDesign(a.subtype) && cashByAcct[a.account_id]?.flagged)
+                      .map((a) => a.account_id)
+                  );
+                  // The header speaks for the whole item, so it follows its
+                  // accounts. A payload cached before holdings carried
+                  // account_id resolves none, and falls back to the item total.
+                  const instCashFlagged =
+                    flaggedCashAccounts.size > 0 ||
+                    (Object.keys(cashByAcct).length === 0 && instCash.flagged);
                   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
                   const instCurrency = dominantCurrency(
                     inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
@@ -1232,7 +1265,13 @@ export default function Dashboard() {
                                   ? Math.max(a.balance, 0) / a.limit
                                   : null;
                               const liabLine = liabilitySummary(a);
-                              const cash = cashByAcct[a.account_id];
+                              // Suppressed outright on an account that is cash
+                              // by design (lib/cash.ts): 100% cash in a cash
+                              // management account is the account working, and
+                              // the warning could never be cleared.
+                              const cash = isCashByDesign(a.subtype)
+                                ? undefined
+                                : cashByAcct[a.account_id];
                               return (
                                 <Fragment key={a.account_id}>
                                 <tr
@@ -1291,8 +1330,13 @@ export default function Dashboard() {
                                         )}
                                         {fmt(cash.cash, a.currency)}
                                         {cash.flagged ? ' uninvested' : ' in cash'}
+                                        {/* "of holdings", not "of this
+                                            account": the denominator is the
+                                            positions Plaid priced, which can
+                                            fall short of the balance rendered
+                                            in the next column. */}
                                         {cash.total > 0 &&
-                                          ` · ${(cash.share * 100).toFixed(cash.share >= 0.1 ? 0 : 1)}% of this account`}
+                                          ` · ${(cash.share * 100).toFixed(cash.share >= 0.1 ? 0 : 1)}% of holdings`}
                                       </div>
                                     )}
                                   </td>
@@ -1398,8 +1442,8 @@ export default function Dashboard() {
                             </span>
                             <span className="holdings-summary">
                               {instCash.cash > 0 && (
-                                <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
-                                  {fmt(instCash.cash)} cash
+                                <span className={`cash-chip${instCashFlagged ? ' idle' : ''}`}>
+                                  {fmt(instCash.cash, instCurrency)} cash
                                 </span>
                               )}
                               {fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0))}
@@ -1433,7 +1477,21 @@ export default function Dashboard() {
                                 <tr key={i}>
                                   <td>
                                     {h.name}
-                                    {isCash && <span className="cash-chip idle">Cash</span>}
+                                    {/* The chip says WHICH row is cash; the
+                                        amber says it's worth doing something
+                                        about, and only the owning account can
+                                        decide that. */}
+                                    {isCash && (
+                                      <span
+                                        className={`cash-chip${
+                                          h.account_id && flaggedCashAccounts.has(h.account_id)
+                                            ? ' idle'
+                                            : ''
+                                        }`}
+                                      >
+                                        Cash
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="num">{h.quantity?.toFixed(3) ?? '--'}</td>
                                   <td className="num">

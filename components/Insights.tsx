@@ -12,17 +12,25 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 /**
  * An investment account with more cash sitting in it than looks deliberate,
  * already filtered to the flagged ones by lib/cash.ts. Optional on the props
- * below: the Home tab is also rendered from a localStorage payload written
- * before holdings carried their security fields, and there the list is simply
- * empty rather than wrong.
+ * below, so a caller that has no holdings to classify can leave it out; the
+ * Dashboard always passes it, populated from whatever the payload could
+ * resolve.
  */
 export type IdleCashAccount = {
+  /** React key. Account NAMES collide across institutions; ids don't. */
+  account_id: string;
   name: string;
+  institution_name: string;
   cash: number;
-  /** Fraction of the account's holdings sitting in cash, 0..1. */
+  /** Fraction of the account's priced holdings sitting in cash, 0..1. */
   share: number;
   currency: string | null;
 };
+
+// A stable empty default, rather than `= []` in the destructuring: a fresh
+// array literal per render is a new identity, which would re-run the memo below
+// on every render for any caller that omits the prop.
+const NO_IDLE_CASH: IdleCashAccount[] = [];
 
 export type InsightAccount = {
   name: string;
@@ -54,7 +62,7 @@ export default function Insights({
   txns,
   budgets,
   accounts,
-  idleCash = [],
+  idleCash = NO_IDLE_CASH,
 }: {
   txns: Txn[] | null;
   budgets: Record<string, number>;
@@ -165,8 +173,12 @@ export default function Insights({
     // Accounts tab carries the per-account detail.
     for (const a of idleCash.slice(0, 2)) {
       out.push({
-        key: `idle-cash-${a.name}`,
-        text: `${a.name}: ${formatMoney(a.cash, a.currency)} uninvested · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of the account is sitting in cash`,
+        // Keyed by account_id, not name: "Individual" and "Roth IRA" are what
+        // brokerages call accounts, so two institutions collide easily, and a
+        // duplicate React key would drop one of the lines (see the low-balance
+        // block above, which has the same hazard).
+        key: `idle-cash-${a.account_id}`,
+        text: `${a.institution_name} ${a.name}: ${formatMoney(a.cash, a.currency)} uninvested · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of its holdings are sitting in cash`,
         tone: 'warn',
       });
     }
