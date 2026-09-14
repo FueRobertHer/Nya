@@ -28,6 +28,13 @@ export class FakeRedis {
     this.strings.set(key, value);
   }
 
+  async incr(key: string): Promise<number> {
+    this.ops++;
+    const next = Number(this.strings.get(key) ?? 0) + 1;
+    this.strings.set(key, String(next));
+    return next;
+  }
+
   async del(...keys: string[]): Promise<void> {
     this.ops++;
     for (const key of keys) {

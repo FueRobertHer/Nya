@@ -4,7 +4,7 @@ import type { InvestmentTxn } from '@/lib/investments';
 // Stands in for the Plaid client so pagination can be driven deterministically.
 // Declared before the mock.module call because that call is hoisted with the
 // imports below it.
-let pages: { rows: any[]; total?: number | null }[] = [];
+let pages: { rows: any[]; total?: number | null; error?: string }[] = [];
 let calls: { offset: number; count: number; account_ids?: string[] }[] = [];
 
 mock.module('@/lib/plaid', () => ({
@@ -16,6 +16,7 @@ mock.module('@/lib/plaid', () => ({
         account_ids: req.options.account_ids,
       });
       const page = pages[calls.length - 1] ?? { rows: [] };
+      if (page.error) throw { response: { data: { error_code: page.error } } };
       return {
         data: {
           investment_transactions: page.rows,
@@ -378,6 +379,41 @@ describe('fetchInvestmentTxns', () => {
     expect(res.txns).toHaveLength(750);
     expect(res.truncated).toBe(false);
     expect(calls.map((c) => c.offset)).toEqual([0, 500]);
+  });
+
+  // `pending` is the one failure that fixes itself, and backfill leans on the
+  // distinction: it holds an Item's investment accounts flat either way, but
+  // only a standing failure lets it mark the reconstruction done. Marking it
+  // done while Plaid was still extracting froze the gap in place -- the flows
+  // never arrived, and nothing retried -- which is how an account's chart ends
+  // up missing a rollover its own activity list shows.
+  test('reports a still-importing product as pending', async () => {
+    pages = [{ rows: [], error: 'PRODUCT_NOT_READY' }];
+    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
+    expect(res.note).toBe('Investment activity is still importing');
+    expect(res.pending).toBe(true);
+  });
+
+  test('a standing failure is not pending', async () => {
+    for (const code of [
+      'PRODUCTS_NOT_SUPPORTED',
+      'NO_INVESTMENT_ACCOUNTS',
+      'ITEM_LOGIN_REQUIRED',
+      'INTERNAL_SERVER_ERROR',
+    ]) {
+      pages = [{ rows: [], error: code }];
+      calls = [];
+      const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
+      expect(res.note).not.toBeNull();
+      expect(res.pending).toBe(false);
+    }
+  });
+
+  test('a clean fetch is not pending', async () => {
+    pages = [{ rows: [row()] }];
+    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
+    expect(res.note).toBeNull();
+    expect(res.pending).toBe(false);
   });
 
   test('flags truncation when the page cap is hit with rows outstanding', async () => {

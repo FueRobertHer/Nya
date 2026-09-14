@@ -6,9 +6,13 @@ import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { fetchInvestmentTxns, valueDelta } from '@/lib/investments';
 import { getManualAccounts } from '@/lib/manual';
 import { signedContribution } from '@/lib/balance';
+import { isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
 import {
+  backfillPendingExhausted,
+  clearBackfillPending,
   replaceEstimated,
   replaceEstimatedAccounts,
+  replaceEstimatedExtension,
   replaceEstimatedFlat,
   getRealSnapshotDates,
   isBackfillDone,
@@ -32,10 +36,11 @@ import { clearCaches } from '@/lib/cache';
 //                        recovered, so within a day the price is held. This is
 //                        still much better than holding the whole balance flat,
 //                        which retroactively applied a year of contributions to
-//                        every past point. Falls back to flat for any Item whose
-//                        investments product isn't available, and for any
-//                        account whose flows drive it below zero -- see the
-//                        reconciliation check before the walk.
+//                        every past point. Falls back to flat only for an Item
+//                        whose investments product isn't available; an account
+//                        whose flows out-run its balance is floored at zero
+//                        rather than dropped (see reconstruct in
+//                        lib/backfill.ts).
 //   loans / manual       Flat at today's value. Amortization isn't in the
 //                        transaction stream and typed balances have no stream.
 //
@@ -49,14 +54,35 @@ import { clearCaches } from '@/lib/cache';
 // the same convention (positive = cash debited), so they need no new branch --
 // see valueDelta in lib/investments.ts for which of them move value at all.
 
-function isoDaysAgo(days: number): string {
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
+// How many runs in a row will wait for an Item's investment data before
+// accepting the reconstruction without it. PRODUCT_NOT_READY clears in minutes,
+// so a handful of app opens is generous; the cap exists because an extraction
+// that never finishes would otherwise re-run every institution's full pull on
+// every open, forever, where before the wait existed the user got a cached load.
+const MAX_PENDING_RUNS = 5;
 
 // Plaid still returns the legacy 'brokerage' type alongside 'investment' at
 // some institutions; both are walkable the same way.
 function isInvestmentType(type: string): boolean {
   return type === 'investment' || type === 'brokerage';
+}
+
+/**
+ * Records the run as complete unless an Item's investment data is still
+ * importing, in which case it leaves the flag unset so the client's next load
+ * rebuilds with the flows. Returns whether it is still waiting.
+ *
+ * The wait is capped. Held flat and marked done, a not-yet-ready Item's
+ * accounts keep that gap forever (nothing retries a completed backfill), which
+ * is how a rollover ends up in the activity list and nowhere on the chart. Held
+ * open indefinitely, a wedged extraction costs a full multi-institution Plaid
+ * pull on every app open. The cap takes the first and bounds the second.
+ */
+async function settleDoneFlag(invPending: boolean): Promise<boolean> {
+  if (invPending && !(await backfillPendingExhausted(MAX_PENDING_RUNS))) return true;
+  await markBackfillDone();
+  await clearBackfillPending();
+  return false;
 }
 
 export async function POST() {
@@ -94,7 +120,7 @@ export async function POST() {
         const hasInvestment = bal.data.accounts.some((a) => isInvestmentType(a.type));
         const inv = hasInvestment
           ? await fetchInvestmentTxns(access_token, isoDaysAgo(LOOKBACK_DAYS), isoDaysAgo(0))
-          : { txns: [], note: 'no investment accounts', truncated: false };
+          : { txns: [], note: 'no investment accounts', truncated: false, pending: false };
 
         return {
           accounts: bal.data.accounts,
@@ -112,6 +138,12 @@ export async function POST() {
           // left edge with flows silently absent and publish a curve that looks
           // fine and isn't.
           invCovered: hasInvestment && !inv.note && !inv.truncated,
+          // The one investment failure that fixes itself: Plaid is extracting
+          // right now (the async_update fetchInvestmentTxns asks for is what
+          // started it) and the same call works a minute later. Kept separate
+          // from `note` so it can leave the done-flag unset below without
+          // aborting the run.
+          invPending: hasInvestment && inv.pending,
         };
       })
     );
@@ -123,12 +155,21 @@ export async function POST() {
     }
 
     let totalNow = 0; // current net worth across all accounts
-    const walkType: Record<string, 'depository' | 'credit' | 'investment'> = {}; // reconstructable
+    const walkType: Record<string, WalkType> = {}; // reconstructable
     const cashIds = new Set<string>(); // depository/credit only -- see the txn loop below
     const balances: Record<string, number> = {}; // running raw balances for the walk
     const dailyByAccount: Record<string, Record<string, number>> = {}; // date -> account -> txn sum
     let oldestTxn: string | null = null;
     let oldestInvTxn: string | null = null;
+
+    // Whether any Item's investment data was still importing. The reconstruction
+    // below is still worth persisting -- the cash history in it is complete --
+    // but it must not be marked done: those accounts are held flat only because
+    // the data hadn't arrived, and the done-flag would freeze that in place
+    // with nothing to retry it. This is how a rollover ends up in the activity
+    // list (fetched live, later, when the product is ready) and missing from
+    // the chart. Left unset, the client's next load recomputes.
+    const invPending = perItem.some((p) => p.invPending);
 
     for (const { accounts, txns, invTxns, invCovered } of perItem) {
       for (const a of accounts) {
@@ -161,27 +202,28 @@ export async function POST() {
         // Back into the walk's convention (positive = value left the account),
         // which is what the shared loop below un-applies.
         day[t.account_id] = (day[t.account_id] ?? 0) + -delta;
-        // Deliberately NOT folded into oldestTxn. That marker stops the walk at
-        // the edge of the cash data; extending it to a brokerage's longer
-        // history would keep walking with every cash balance frozen, which is
-        // the flatlining the `break` below exists to prevent. Where investment
-        // history outlasts cash history the extra span is simply not drawn.
-        // Tracked separately for the no-cash-at-all case just below.
+        // Deliberately NOT folded into oldestTxn. That marker stops the TOTAL
+        // series at the edge of the cash data; extending it would keep walking
+        // with every cash balance frozen, publishing a flatline as history.
+        // Tracked separately because an investment account's own series has
+        // real data out there and is drawn over it -- which is where a rollover
+        // older than the cash window lives. See reconstruct in lib/backfill.ts.
         if (!oldestInvTxn || t.date < oldestInvTxn) oldestInvTxn = t.date;
       }
     }
 
     // A brokerage-only user has no cash horizon to preserve, so the hazard the
     // comment above describes -- freezing cash balances past their data -- can't
-    // arise: there are no cash balances. Without this they'd fall through the
-    // `!oldestTxn` early return below and get no estimated history at all,
-    // which is precisely the case this feature was built for.
+    // arise: there are no cash balances. Their investment history is the whole
+    // series, totals included.
     //
     // Gated on having no cash ACCOUNTS, not on `!oldestTxn`. Those differ: a
     // dormant checking account with no activity all year also leaves oldestTxn
-    // null, and walking past its horizon would freeze a real balance -- exactly
-    // what the guard above refuses to do.
+    // null, and walking a real cash balance past its horizon would freeze it.
+    // That case gets today as its cash horizon instead: no total points, but
+    // the investment accounts still get their own series rather than nothing.
     if (!oldestTxn && cashIds.size === 0) oldestTxn = oldestInvTxn;
+    else if (!oldestTxn && oldestInvTxn) oldestTxn = isoDaysAgo(0);
 
     // Manual accounts have no transactions, so they can't be walked backward.
     // They still have to land in totalNow or every estimated point would sit
@@ -200,64 +242,20 @@ export async function POST() {
     }
 
     if (!oldestTxn) {
-      await markBackfillDone();
+      await settleDoneFlag(invPending);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
       await clearCaches();
       return NextResponse.json({ backfilled: 0, reason: 'no transaction history' });
     }
 
-    // Sanity-check each investment account before trusting its reconstruction.
-    //
-    // The walk assumes the flow stream and the current balance describe the
-    // same account over the same period. When they don't, un-applying the flows
-    // drives the balance through zero -- and a brokerage account cannot hold
-    // less than nothing, so that isn't an imprecise estimate, it's a statement
-    // known to be false. It happens for real reasons: a broker that only
-    // reports 90 days of activity against a year-long window, an account opened
-    // mid-window, or a position transferred in-kind and reported at notional
-    // value.
-    //
-    // Where that happens, drop the account back to the flat term rather than
-    // publishing the impossible number. Flat is what it got before any of this
-    // existed, so the fallback is a known-good behaviour, not a new one. Done
-    // here, before `rest` and `flat` are computed, so every downstream figure
-    // sees one consistent membership.
-    const distrusted: string[] = [];
-    for (const id of Object.keys(walkType)) {
-      if (walkType[id] !== 'investment') continue;
-      let running = balances[id];
-      let negative = false;
-      for (let back = 1; back <= LOOKBACK_DAYS; back++) {
-        running += dailyByAccount[isoDaysAgo(back - 1)]?.[id] ?? 0;
-        if (isoDaysAgo(back) < oldestTxn) break; // same horizon the real walk stops at
-        if (running < 0) {
-          negative = true;
-          break;
-        }
-      }
-      if (negative) {
-        distrusted.push(id);
-        delete walkType[id];
-        delete balances[id];
-      }
-    }
-    // Their flows must go too, or the shared walk below would still apply them
-    // to an account it no longer tracks.
-    if (distrusted.length > 0) {
-      for (const day of Object.values(dailyByAccount)) {
-        for (const id of distrusted) delete day[id];
-      }
-    }
-
-    const signedWalked = () =>
+    // Everything not being walked is held flat at today's value.
+    const rest =
+      totalNow -
       Object.entries(balances).reduce(
         (sum, [id, b]) => sum + signedContribution(walkType[id], b),
         0
       );
-
-    // Everything not being walked is held flat at today's value.
-    const rest = totalNow - signedWalked();
 
     // Record WHICH accounts make up that flat term, and at what balance. The
     // estimated points don't name them (they only carry per-date cash
@@ -282,50 +280,57 @@ export async function POST() {
       if (!walkType[a.account_id]) flat[a.account_id] = a.balance;
     }
 
-    // Walk backward one day at a time: un-applying day D's transactions
-    // yields balances at the end of day D-1.
-    const totalPoints: { date: string; value: number }[] = [];
-    const accountPoints: { date: string; balances: Record<string, number> }[] = [];
-    for (let back = 1; back <= LOOKBACK_DAYS; back++) {
-      const dayTxns = dailyByAccount[isoDaysAgo(back - 1)] ?? {};
-      for (const [id, amount] of Object.entries(dayTxns)) {
-        // NOT signedContribution, despite the identical shape. That function
-        // answers "how does this balance affect net worth"; this answers "which
-        // way does this transaction move the balance", and for a credit card
-        // those are opposites -- a purchase raises what you owe. Swapping in
-        // the shared helper would invert every credit account's estimated
-        // series. See the warning in lib/balance.ts.
-        balances[id] += walkType[id] === 'credit' ? -amount : amount;
-      }
-      const date = isoDaysAgo(back);
-      if (date < oldestTxn) break; // beyond available data: stop, don't flatline
-      totalPoints.push({ date, value: signedWalked() + rest });
-      accountPoints.push({ date, balances: { ...balances } });
-    }
+    // The walk itself (lib/backfill.ts): the per-account series can reach back
+    // past the cash horizon where an investment account's own flows do, while
+    // the totals stop there.
+    const { accountPoints, totalPoints, floored } = reconstruct({
+      balances,
+      walkType,
+      dailyByAccount,
+      oldestTxn,
+      oldestInvTxn,
+      lookbackDays: LOOKBACK_DAYS,
+    });
 
     // Real snapshots always win -- never overwrite one with an estimate.
     const realDates = await getRealSnapshotDates();
-    const estimatedTotals = totalPoints.filter((p) => !realDates.has(p.date));
+    const estimatedTotals = totalPoints
+      .filter((p) => !realDates.has(p.date))
+      .map((p) => ({ date: p.date, value: p.walked + rest }));
     const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
 
     await replaceEstimated(estimatedTotals);
-    await replaceEstimatedAccounts(estimatedAccounts);
+    // Two layers, because the run speaks for these dates differently. Within
+    // the cash horizon every account was walked and each date is the breakdown
+    // of that date's estimated total, which is what the hidden-account
+    // subtraction reads it as. Past the horizon only the investment accounts
+    // were walked and there is no total at all, so those dates go to the
+    // extension layer -- which feeds the per-account chart and nothing else.
+    await replaceEstimatedAccounts(estimatedAccounts.filter((p) => p.date >= oldestTxn));
+    await replaceEstimatedExtension(
+      estimatedAccounts.filter((p) => p.date < oldestTxn),
+      oldestTxn
+    );
     // One map per date, over exactly the dates this run wrote. The balances are
     // identical across them -- what varies is which run a date belongs to, and
     // that's the whole point: a date retained from an earlier run keeps that
     // run's flat balances rather than being reinterpreted with these.
     await replaceEstimatedFlat(estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
-    await markBackfillDone();
+    const waiting = await settleDoneFlag(invPending);
     await clearCaches(); // cached payloads don't include the new history yet
 
     return NextResponse.json({
       backfilled: estimatedTotals.length,
       from: estimatedTotals.length > 0 ? estimatedTotals[estimatedTotals.length - 1].date : null,
-      // Investment accounts whose flows didn't reconcile with their balance and
-      // were held flat instead. Reported rather than silent: a number that
-      // stays high run after run means the flow data is systematically
-      // incomplete, which is worth knowing.
-      held_flat: distrusted.length,
+      // Investment accounts whose flows out-ran their balance and were floored
+      // at zero partway back. Reported rather than silent: a number that stays
+      // high run after run means the flow data is systematically incomplete,
+      // which is worth knowing.
+      floored: floored.length,
+      // Still importing somewhere AND still worth waiting for, so the
+      // done-flag was left unset and the client re-POSTs on its next load.
+      // False once the wait is spent, even though the data is still missing.
+      investments_pending: waiting,
     });
   } catch (err: any) {
     console.error(err?.response?.data || err);

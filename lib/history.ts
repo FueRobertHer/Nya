@@ -10,9 +10,15 @@
 //    walked backward from their current balances, everything else is held
 //    flat. Real points always win over estimated ones for the same date.
 //
-// Both layers are Redis hashes keyed by UTC date (YYYY-MM-DD), values
-// encrypted with the same AES-256-GCM key as everything else financial, so
-// a database-only leak doesn't expose your net-worth series either.
+// Per-account balances are kept alongside both, which is what lets a single
+// account be charted and a hidden one be subtracted from past totals. Those
+// have a third layer of their own (`history:accounts:est:ext`, see below): an
+// investment account can be walked back further than any total can honestly be
+// stated, and that span belongs to the chart only.
+//
+// Every layer is a Redis hash keyed by UTC date (YYYY-MM-DD), values encrypted
+// with the same AES-256-GCM key as everything else financial, so a
+// database-only leak doesn't expose your net-worth series either.
 
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
@@ -25,6 +31,22 @@ const ESTIMATED_HASH = k('history:net-worth:est');
 // individual accounts can be charted too.
 const ACCOUNTS_HASH = k('history:accounts');
 const ACCOUNTS_EST_HASH = k('history:accounts:est');
+// Per-account balances for dates BEYOND the estimated totals layer: backfill
+// walks an investment account past the oldest cash transaction, where its own
+// flows still have data but no total can honestly be stated (see reconstruct in
+// lib/backfill.ts).
+//
+// Its own key rather than more dates in ACCOUNTS_EST_HASH, and this is the
+// whole reason it exists. That hash is not just "per-account history": every
+// date in it is the account-by-account breakdown OF the estimated total for
+// that date, and the hidden-account subtraction in getHistory reads it as such.
+// The extension covers dates older than the newest run's totals -- exactly
+// where an EARLIER run's totals are retained (replaceRange only deletes from
+// the new run's oldest point forward) -- so writing there would answer "what
+// was in this total" with balances from a different run's walk, and hiding an
+// account would then subtract the wrong number from a point nothing rewrites.
+// Kept apart, it feeds the per-account chart and nothing else.
+const ACCOUNTS_EST_EXT_HASH = k('history:accounts:est:ext');
 // The balances backfill folded into its flat `rest` term: everything that
 // isn't depository/credit (investments, loans, property, manual accounts),
 // captured as of the run that produced the estimated layer.
@@ -62,6 +84,13 @@ const ACCOUNTS_EST_FLAT_BY_DATE = k('history:accounts:est:flatd');
 // string and the new one a hash -- Redis would reject the write.
 const ACCOUNTS_EST_FLAT_LEGACY = k('history:accounts:est:flat');
 const BACKFILL_FLAG = k('history:backfill-done');
+// How many runs in a row have finished with an Item's investment data still
+// importing. Backfill withholds the done-flag in that state so the next load
+// rebuilds with the flows once they arrive, and this is what stops that being
+// unbounded: PRODUCT_NOT_READY is supposed to clear in minutes, but a wedged
+// extraction would otherwise re-run a full multi-institution Plaid pull on
+// every app open, forever.
+const BACKFILL_PENDING_TRIES = k('history:backfill-pending');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
@@ -104,13 +133,24 @@ export async function recordSnapshot(
 async function replaceRange(
   key: string,
   points: { date: string }[],
-  encode: (p: any) => Promise<string>
+  encode: (p: any) => Promise<string>,
+  /** An extra date from which to clear, even where the run wrote no points --
+   *  for a layer whose dates are only valid while no other layer covers them.
+   *  Without it, "wrote nothing" means "keep everything", which is right for a
+   *  layer that stands alone and wrong for one that must yield. */
+  clearFrom?: string
 ): Promise<void> {
-  const oldest = points.reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+  const oldestPoint = points.reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+  const oldest =
+    oldestPoint && clearFrom
+      ? oldestPoint < clearFrom
+        ? oldestPoint
+        : clearFrom
+      : oldestPoint ?? clearFrom ?? null;
   try {
     const existing = await redis().hkeys(key);
-    // No new points means nothing was reconstructable this run -- keep every
-    // stored point rather than blanking the layer.
+    // No new points and no floor means nothing was reconstructable this run --
+    // keep every stored point rather than blanking the layer.
     const doomed = oldest ? existing.filter((d) => d >= oldest) : [];
     if (doomed.length > 0) await redis().hdel(key, ...doomed);
   } catch {
@@ -161,7 +201,9 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
   if (account_id in ((await getEstimatedFlat()) ?? {})) return true;
   try {
     const flatByDate = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE);
-    const [flatSample] = Object.values(flatByDate ?? {});
+    // Newest date, for the same reason as the walked map below.
+    const newestFlat = Object.keys(flatByDate ?? {}).sort().pop();
+    const flatSample = newestFlat ? flatByDate?.[newestFlat] : undefined;
     if (flatSample) {
       const parsed = JSON.parse(await decrypt(flatSample)) as Record<string, number>;
       if (account_id in (parsed ?? {})) return true;
@@ -171,19 +213,22 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
   }
   try {
     const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
-    // Any one date used to answer for all of them, because backfill seeded
-    // every cash account before the walk and rewrote the layer wholesale. That
-    // no longer holds exactly: points older than the newest run's window are
-    // retained, and carry whatever account set was linked back then.
+    // The NEWEST date, not an arbitrary one. Any date used to answer for all of
+    // them, because backfill seeded every cash account before the walk and
+    // rewrote the layer wholesale. Retention broke that: points older than the
+    // newest run's window are kept and carry whatever account set was linked
+    // back then, so an arbitrary sample can under-report a cash account --
+    // harmless in itself, since it only forces a recompute that wasn't needed,
+    // but it forces one on hides that didn't need it.
     //
-    // It stays safe because of which way it errs. The caller hides a currently
-    // linked account, which the newest run always covers -- so sampling a new
-    // date answers correctly, and sampling a stale one can only under-report
-    // and force a recompute that wasn't needed. Over-reporting would be the
-    // dangerous direction (a skipped recompute leaves a cliff in the chart) and
-    // requires the account to be missing from the newest window, where the flat
-    // record checked just above already accounts for it.
-    const [sample] = Object.values(map ?? {});
+    // The newest date is written by the newest run and holds every account it
+    // walked, which is what the caller is asking about: it hides a currently
+    // linked account. Over-reporting would be the dangerous direction (a
+    // skipped recompute leaves a cliff in the chart) and requires the account
+    // to be missing from the newest window, where the flat record checked just
+    // above already accounts for it.
+    const newest = Object.keys(map ?? {}).sort().pop();
+    const sample = newest ? map?.[newest] : undefined;
     if (!sample) return false;
     return account_id in ((JSON.parse(await decrypt(sample)) as Record<string, number>) ?? {});
   } catch {
@@ -239,6 +284,37 @@ export async function replaceEstimatedAccounts(
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
   await replaceRange(ACCOUNTS_EST_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
+}
+
+/**
+ * Replaces the per-account extension layer (ACCOUNTS_EST_EXT_HASH): the span an
+ * investment account's own flows reach past the cash horizon.
+ *
+ * Range-scoped like every other layer, so a run that reaches less far back than
+ * an earlier one leaves that earlier era's points alone rather than truncating
+ * the chart.
+ *
+ * `coveredFrom` is this run's full-walk horizon, and it is what keeps the two
+ * layers from disagreeing. The extension only means anything on dates the
+ * estimated layer can't speak for, and which dates those are changes run to
+ * run: link a bank with a longer transaction history and the full walk now
+ * covers a span the extension used to own. getAccountHistory prefers the
+ * extension where both have a date, so anything left behind there would shadow
+ * the newer walk -- the account's chart would read from one run up to the old
+ * seam and another after it, with a step at the join that is pure artifact.
+ * So the extension is cleared from this horizon forward even on a run that
+ * produces no extension points at all, which is the common case.
+ */
+export async function replaceEstimatedExtension(
+  points: { date: string; balances: Record<string, number> }[],
+  coveredFrom: string
+): Promise<void> {
+  await replaceRange(
+    ACCOUNTS_EST_EXT_HASH,
+    points,
+    (p) => encrypt(JSON.stringify(p.balances)),
+    coveredFrom
+  );
 }
 
 /**
@@ -319,31 +395,58 @@ export async function getRealSnapshotDates(): Promise<Set<string>> {
   }
 }
 
-/** Balance history for one account, merged like getHistory (real wins). */
+/**
+ * Balance history for one account, merged like getHistory (real wins) with the
+ * extension layer between the two.
+ *
+ * Resolved PER ACCOUNT, not per date. The three layers answer for different
+ * account sets on the same date: the extension names only the investment
+ * accounts walked past the cash horizon, so picking a whole map per date would
+ * drop a cash account's retained point on any date the extension also covers.
+ * Asking each layer for this one account in turn keeps every layer's coverage.
+ *
+ * Extension over estimated, because where both have a date the extension is the
+ * newer run: the estimated layer keeps points from an era whose walk reached
+ * further back, and mixing two walks inside one line is what the precedence is
+ * here to avoid.
+ */
 export async function getAccountHistory(account_id: string): Promise<HistoryPoint[]> {
-  const [realMap, estMap] = await Promise.all([
+  const [realMap, estMap, extMap] = await Promise.all([
     redis().hgetall<Record<string, string>>(ACCOUNTS_HASH),
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH),
   ]);
 
-  const entries: { date: string; blob: string; estimated: boolean }[] = [];
-  for (const [date, blob] of Object.entries(realMap ?? {})) {
-    entries.push({ date, blob, estimated: false });
-  }
-  for (const [date, blob] of Object.entries(estMap ?? {})) {
-    if (!realMap?.[date]) entries.push({ date, blob, estimated: true });
+  /** This account's balance in one encrypted per-account map, or null when the
+   *  map is unreadable or doesn't name it. */
+  async function balanceIn(blob: string | undefined): Promise<number | null> {
+    if (!blob) return null;
+    try {
+      const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      const value = balances[account_id];
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    } catch {
+      return null;
+    }
   }
 
+  const dates = new Set([
+    ...Object.keys(realMap ?? {}),
+    ...Object.keys(estMap ?? {}),
+    ...Object.keys(extMap ?? {}),
+  ]);
+
   const points = await Promise.all(
-    entries.map(async ({ date, blob, estimated }): Promise<HistoryPoint | null> => {
-      try {
-        const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
-        const value = balances[account_id];
-        if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-        return { date, value, ...(estimated ? { estimated: true } : {}) };
-      } catch {
-        return null;
+    [...dates].map(async (date): Promise<HistoryPoint | null> => {
+      if (realMap?.[date]) {
+        const real = await balanceIn(realMap[date]);
+        // A real map that doesn't name the account is an answer, not a gap: the
+        // account wasn't there that day. Falling through to an estimate would
+        // put a reconstructed figure on a date that was actually measured.
+        return real === null ? null : { date, value: real };
       }
+      const value = (await balanceIn(extMap?.[date])) ?? (await balanceIn(estMap?.[date]));
+      return value === null ? null : { date, value, estimated: true };
     })
   );
   return points
@@ -363,7 +466,11 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 // Bump this whenever the walk changes shape.
 //   1 - cash and credit walked; everything else flat
 //   2 - investment external flows walked too
-const BACKFILL_SCHEMA = 2;
+//   3 - an investment account whose flows out-run its balance is floored at
+//       zero instead of dropped back to flat, and its own series is walked past
+//       the cash horizon. Both make a large arrival (a rollover) visible on the
+//       account's chart where it previously was not.
+const BACKFILL_SCHEMA = 3;
 
 export async function isBackfillDone(): Promise<boolean> {
   try {
@@ -378,6 +485,32 @@ export async function isBackfillDone(): Promise<boolean> {
 
 export async function markBackfillDone(): Promise<void> {
   await redis().set(BACKFILL_FLAG, String(BACKFILL_SCHEMA));
+}
+
+/**
+ * Counts this run as one that ended with investment data still importing, and
+ * says whether to stop waiting.
+ *
+ * True means give up and accept the reconstruction as it stands (investment
+ * accounts held flat, which is what every run did before the retry existed).
+ * A failure to count returns true for the same reason: the retry is an
+ * optimization, and an uncountable one is an unbounded one.
+ */
+export async function backfillPendingExhausted(limit: number): Promise<boolean> {
+  try {
+    return (await redis().incr(BACKFILL_PENDING_TRIES)) >= limit;
+  } catch {
+    return true;
+  }
+}
+
+/** Forget the pending-run count: this run had nothing outstanding, or gave up. */
+export async function clearBackfillPending(): Promise<void> {
+  try {
+    await redis().del(BACKFILL_PENDING_TRIES);
+  } catch {
+    // Worst case a later pending run gives up sooner than it needed to.
+  }
 }
 
 export async function clearBackfillDone(): Promise<void> {

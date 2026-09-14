@@ -393,8 +393,18 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   stream and a typed balance has no stream at all. The chart draws the
   whole region dashed and labels it estimated. An institution whose
   investments product isn't available falls back to flat for those accounts
-  without affecting the rest of the run. New links request 730 days of
+  without affecting the rest of the run; one whose data is merely still being
+  extracted also falls back, but the run isn't recorded as complete, so the
+  next load rebuilds it once the flows have arrived rather than freezing the
+  gap in place. New links request 730 days of
   transactions; older Items may only have ~90 days until relinked.
+  An investment account whose flows out-run its balance (a $60k rollover into
+  an account worth less than that today) is floored at zero from that day
+  backward rather than dropped, so a large arrival reads as the step it was on
+  that account's chart and on the net-worth line;
+  and because a brokerage often reports further back than a bank does, an
+  investment account's own series is walked past the oldest cash transaction
+  even though the net-worth total stops there.
 
 One deliberate tradeoff: the dashboard keeps the last-known snapshot in the
 browser's `localStorage` so the PWA opens instantly and still shows balances
@@ -427,7 +437,8 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 - **Test coverage is narrow by design.** `bun test` covers the pure logic where
   a silent wrong answer is worst: the net-worth history layers
   (`lib/history.ts` — real-vs-estimated merging, retention across recomputes,
-  and hidden-account subtraction), Plaid's investment sign conventions and
+  and hidden-account subtraction), the backward balance walk behind the
+  estimated layer (`lib/backfill.ts`), Plaid's investment sign conventions and
   pagination (`lib/investments.ts`), liability normalization
   (`lib/liabilities.ts`), the credit/loan sign rule that every total depends on
   (`lib/balance.ts`), and last-known-balance recovery for a failed institution

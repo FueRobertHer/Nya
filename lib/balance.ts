@@ -13,14 +13,15 @@
 // at all, which is what lets both sides share it (the lib/format.ts pattern).
 //
 // WARNING for anyone extending this to "all the places that look like it":
-// app/api/backfill/route.ts walks transactions with
+// lib/backfill.ts walks transactions with
 //
 //     balances[id] += walkType[id] === 'credit' ? -amount : amount
 //
 // which is the same shape and the OPPOSITE concept -- a card purchase RAISES
 // the owed balance. Rewriting it in terms of signedContribution would silently
 // invert the estimated series for every credit account. It is deliberately left
-// open-coded, and deliberately not imported from here.
+// open-coded, and deliberately not imported from here. (signedContribution IS
+// used in that file, for the net-worth term -- the question it answers.)
 
 /** Types whose stored balance is an amount owed rather than an amount held. */
 export function isOwedType(type: string): boolean {

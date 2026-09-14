@@ -231,13 +231,21 @@ export function isContribution(t: InvestmentTxn): boolean {
  * lib/transactions.ts. Callers decide what an unavailable product means for
  * them: the backfill leaves that Item's investment accounts held flat and
  * carries on, rather than aborting a run it can't retry automatically.
+ *
+ * `pending` separates the one failure that fixes itself from the ones that
+ * don't. PRODUCT_NOT_READY means Plaid is extracting right now and the same
+ * call will work shortly (async_update below is what starts that extraction);
+ * every other note is a standing property of the Item. The backfill needs the
+ * distinction because it records a done-flag: holding an account flat because
+ * the data hadn't arrived yet, and then marking the reconstruction complete,
+ * freezes that gap in place with nothing to retry it.
  */
 export async function fetchInvestmentTxns(
   access_token: string,
   start: string,
   end: string,
   account_ids?: string[]
-): Promise<{ txns: InvestmentTxn[]; note: string | null; truncated: boolean }> {
+): Promise<{ txns: InvestmentTxn[]; note: string | null; truncated: boolean; pending: boolean }> {
   const txns: InvestmentTxn[] = [];
   const securities: Record<string, any> = {};
   const cancelled = new Set<string>();
@@ -313,16 +321,36 @@ export async function fetchInvestmentTxns(
   } catch (err: any) {
     const code = err?.response?.data?.error_code;
     if (code === 'PRODUCT_NOT_READY') {
-      return { txns: [], note: 'Investment activity is still importing', truncated: false };
+      return {
+        txns: [],
+        note: 'Investment activity is still importing',
+        truncated: false,
+        pending: true,
+      };
     }
     if (code === 'ITEM_LOGIN_REQUIRED') {
-      return { txns: [], note: 'This account needs to be reconnected', truncated: false };
+      return {
+        txns: [],
+        note: 'This account needs to be reconnected',
+        truncated: false,
+        pending: false,
+      };
     }
     if (code === 'PRODUCTS_NOT_SUPPORTED' || code === 'NO_INVESTMENT_ACCOUNTS') {
-      return { txns: [], note: 'Investment activity is not available here', truncated: false };
+      return {
+        txns: [],
+        note: 'Investment activity is not available here',
+        truncated: false,
+        pending: false,
+      };
     }
     console.error(err?.response?.data || err);
-    return { txns: [], note: 'Could not fetch investment activity', truncated: false };
+    return {
+      txns: [],
+      note: 'Could not fetch investment activity',
+      truncated: false,
+      pending: false,
+    };
   }
 
   // Cancellations come in pairs: the reversing row and the row it reverses.
@@ -335,5 +363,5 @@ export async function fetchInvestmentTxns(
       !PENDING_SUBTYPES.has(t.subtype.toLowerCase())
   );
 
-  return { txns: clean, note: null, truncated };
+  return { txns: clean, note: null, truncated, pending: false };
 }
