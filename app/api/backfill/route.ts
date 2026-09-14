@@ -8,6 +8,8 @@ import { getManualAccounts } from '@/lib/manual';
 import { signedContribution } from '@/lib/balance';
 import { isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
 import {
+  backfillPendingExhausted,
+  clearBackfillPending,
   replaceEstimated,
   replaceEstimatedAccounts,
   replaceEstimatedExtension,
@@ -52,10 +54,35 @@ import { clearCaches } from '@/lib/cache';
 // the same convention (positive = cash debited), so they need no new branch --
 // see valueDelta in lib/investments.ts for which of them move value at all.
 
+// How many runs in a row will wait for an Item's investment data before
+// accepting the reconstruction without it. PRODUCT_NOT_READY clears in minutes,
+// so a handful of app opens is generous; the cap exists because an extraction
+// that never finishes would otherwise re-run every institution's full pull on
+// every open, forever, where before the wait existed the user got a cached load.
+const MAX_PENDING_RUNS = 5;
+
 // Plaid still returns the legacy 'brokerage' type alongside 'investment' at
 // some institutions; both are walkable the same way.
 function isInvestmentType(type: string): boolean {
   return type === 'investment' || type === 'brokerage';
+}
+
+/**
+ * Records the run as complete unless an Item's investment data is still
+ * importing, in which case it leaves the flag unset so the client's next load
+ * rebuilds with the flows. Returns whether it is still waiting.
+ *
+ * The wait is capped. Held flat and marked done, a not-yet-ready Item's
+ * accounts keep that gap forever (nothing retries a completed backfill), which
+ * is how a rollover ends up in the activity list and nowhere on the chart. Held
+ * open indefinitely, a wedged extraction costs a full multi-institution Plaid
+ * pull on every app open. The cap takes the first and bounds the second.
+ */
+async function settleDoneFlag(invPending: boolean): Promise<boolean> {
+  if (invPending && !(await backfillPendingExhausted(MAX_PENDING_RUNS))) return true;
+  await markBackfillDone();
+  await clearBackfillPending();
+  return false;
 }
 
 export async function POST() {
@@ -215,7 +242,7 @@ export async function POST() {
     }
 
     if (!oldestTxn) {
-      if (!invPending) await markBackfillDone();
+      await settleDoneFlag(invPending);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
       await clearCaches();
@@ -280,13 +307,16 @@ export async function POST() {
     // were walked and there is no total at all, so those dates go to the
     // extension layer -- which feeds the per-account chart and nothing else.
     await replaceEstimatedAccounts(estimatedAccounts.filter((p) => p.date >= oldestTxn));
-    await replaceEstimatedExtension(estimatedAccounts.filter((p) => p.date < oldestTxn));
+    await replaceEstimatedExtension(
+      estimatedAccounts.filter((p) => p.date < oldestTxn),
+      oldestTxn
+    );
     // One map per date, over exactly the dates this run wrote. The balances are
     // identical across them -- what varies is which run a date belongs to, and
     // that's the whole point: a date retained from an earlier run keeps that
     // run's flat balances rather than being reinterpreted with these.
     await replaceEstimatedFlat(estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
-    if (!invPending) await markBackfillDone();
+    const waiting = await settleDoneFlag(invPending);
     await clearCaches(); // cached payloads don't include the new history yet
 
     return NextResponse.json({
@@ -297,9 +327,10 @@ export async function POST() {
       // high run after run means the flow data is systematically incomplete,
       // which is worth knowing.
       floored: floored.length,
-      // Still importing somewhere, so this run is not the final word and the
-      // done-flag was left unset. The client re-POSTs on its next load.
-      investments_pending: invPending,
+      // Still importing somewhere AND still worth waiting for, so the
+      // done-flag was left unset and the client re-POSTs on its next load.
+      // False once the wait is spent, even though the data is still missing.
+      investments_pending: waiting,
     });
   } catch (err: any) {
     console.error(err?.response?.data || err);

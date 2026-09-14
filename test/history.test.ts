@@ -20,6 +20,8 @@ const {
   isBackfillDone,
   markBackfillDone,
   clearBackfillDone,
+  backfillPendingExhausted,
+  clearBackfillPending,
   getLatestAccountSnapshot,
 } = await import('@/lib/history');
 
@@ -263,7 +265,7 @@ describe('the extension layer', () => {
   // where an earlier run's totals are retained.
   test('extends an account series past where the totals stop', async () => {
     await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400, ira: 60_000 } }]);
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }]);
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }], '2026-01-01');
 
     const series = valuesByDate(await getAccountHistory('ira'));
     expect(series['2025-11-01']).toBe(0);
@@ -279,7 +281,7 @@ describe('the extension layer', () => {
     // An earlier era: a total, its breakdown, and its flat record.
     await writeEra(['2025-11-01'], 100_000, { cash: 1000, ira: 30_000 }, {});
     // A newer run whose walk reaches that far back only for the investments.
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }]);
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }], '2025-12-01');
 
     const byDate = valuesByDate(await getHistory(hide(['ira', 'investment'])));
     expect(byDate['2025-11-01']).toBe(70_000); // the era's own 30k, not the new 0
@@ -290,7 +292,7 @@ describe('the extension layer', () => {
   // retained point on every date the extension also covers.
   test('leaves accounts it does not name to the other layers', async () => {
     await replaceEstimatedAccounts([{ date: '2025-11-01', balances: { cash: 1000, ira: 30_000 } }]);
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }]);
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }], '2025-11-01');
 
     expect(valuesByDate(await getAccountHistory('cash'))['2025-11-01']).toBe(1000);
     expect(valuesByDate(await getAccountHistory('ira'))['2025-11-01']).toBe(0);
@@ -299,7 +301,7 @@ describe('the extension layer', () => {
   test('a real snapshot still wins over both', async () => {
     await recordSnapshot(0, { ira: 999 });
     const today = new Date().toISOString().slice(0, 10);
-    await replaceEstimatedExtension([{ date: today, balances: { ira: 0 } }]);
+    await replaceEstimatedExtension([{ date: today, balances: { ira: 0 } }], today);
 
     const points = await getAccountHistory('ira');
     expect(valuesByDate(points)[today]).toBe(999);
@@ -307,15 +309,38 @@ describe('the extension layer', () => {
   });
 
   test('is range-scoped like every other layer', async () => {
-    await replaceEstimatedExtension([
-      { date: '2025-06-01', balances: { ira: 1 } },
-      { date: '2025-11-01', balances: { ira: 2 } },
-    ]);
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 3 } }]);
+    await replaceEstimatedExtension(
+      [
+        { date: '2025-06-01', balances: { ira: 1 } },
+        { date: '2025-11-01', balances: { ira: 2 } },
+      ],
+      '2026-01-01'
+    );
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 3 } }], '2026-01-01');
 
     const series = valuesByDate(await getAccountHistory('ira'));
     expect(series['2025-06-01']).toBe(1); // orphan retained
     expect(series['2025-11-01']).toBe(3);
+  });
+
+  // The regression: a run whose cash history now reaches further back produces
+  // NO extension points, and an empty write used to mean "keep everything".
+  // The stale span then shadowed the newer walk on the very chart this layer
+  // exists to fix, with an artifact step at the seam.
+  test('an empty run still clears the span the full walk now covers', async () => {
+    await replaceEstimatedExtension([{ date: '2026-01-01', balances: { ira: 58_000 } }], '2026-02-01');
+    // The next run walks everything from 2026-01-01, so it writes no extension.
+    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 10, ira: 70_000 } }]);
+    await replaceEstimatedExtension([], '2026-01-01');
+
+    expect(valuesByDate(await getAccountHistory('ira'))['2026-01-01']).toBe(70_000);
+  });
+
+  test('but keeps the span the full walk still cannot reach', async () => {
+    await replaceEstimatedExtension([{ date: '2025-06-01', balances: { ira: 1 } }], '2026-02-01');
+    await replaceEstimatedExtension([], '2026-01-01');
+
+    expect(valuesByDate(await getAccountHistory('ira'))['2025-06-01']).toBe(1);
   });
 });
 
@@ -455,5 +480,38 @@ describe('backfill schema flag', () => {
     await markBackfillDone();
     await clearBackfillDone();
     expect(await isBackfillDone()).toBe(false);
+  });
+});
+
+// Backfill withholds the done-flag while an Item's investment data is still
+// importing, so the next load rebuilds with the flows. This is what stops that
+// being unbounded: a wedged extraction would otherwise re-run every
+// institution's full Plaid pull on every app open, forever.
+describe('the pending-run count', () => {
+  test('counts runs and reports when the wait is spent', async () => {
+    expect(await backfillPendingExhausted(3)).toBe(false); // 1
+    expect(await backfillPendingExhausted(3)).toBe(false); // 2
+    expect(await backfillPendingExhausted(3)).toBe(true); // 3
+  });
+
+  test('clearing starts the wait over', async () => {
+    await backfillPendingExhausted(2);
+    await clearBackfillPending();
+    expect(await backfillPendingExhausted(2)).toBe(false);
+  });
+
+  // An uncountable wait is an unbounded one, so it reports spent.
+  test('an unreadable counter gives up rather than waiting forever', async () => {
+    // Delegates to the real fake for everything else, so this stays a test
+    // about one failing command rather than about a half-built stub.
+    const broken: FakeRedis = Object.create(fake, {
+      incr: { value: async () => { throw new Error('down'); } },
+    });
+    mock.module('@/lib/storage', () => storageMock(broken));
+    try {
+      expect(await backfillPendingExhausted(5)).toBe(true);
+    } finally {
+      mock.module('@/lib/storage', () => storageMock(fake));
+    }
   });
 });

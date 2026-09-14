@@ -16,9 +16,9 @@
 // investment account can be walked back further than any total can honestly be
 // stated, and that span belongs to the chart only.
 //
-// Both layers are Redis hashes keyed by UTC date (YYYY-MM-DD), values
-// encrypted with the same AES-256-GCM key as everything else financial, so
-// a database-only leak doesn't expose your net-worth series either.
+// Every layer is a Redis hash keyed by UTC date (YYYY-MM-DD), values encrypted
+// with the same AES-256-GCM key as everything else financial, so a
+// database-only leak doesn't expose your net-worth series either.
 
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
@@ -84,6 +84,13 @@ const ACCOUNTS_EST_FLAT_BY_DATE = k('history:accounts:est:flatd');
 // string and the new one a hash -- Redis would reject the write.
 const ACCOUNTS_EST_FLAT_LEGACY = k('history:accounts:est:flat');
 const BACKFILL_FLAG = k('history:backfill-done');
+// How many runs in a row have finished with an Item's investment data still
+// importing. Backfill withholds the done-flag in that state so the next load
+// rebuilds with the flows once they arrive, and this is what stops that being
+// unbounded: PRODUCT_NOT_READY is supposed to clear in minutes, but a wedged
+// extraction would otherwise re-run a full multi-institution Plaid pull on
+// every app open, forever.
+const BACKFILL_PENDING_TRIES = k('history:backfill-pending');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
@@ -126,13 +133,24 @@ export async function recordSnapshot(
 async function replaceRange(
   key: string,
   points: { date: string }[],
-  encode: (p: any) => Promise<string>
+  encode: (p: any) => Promise<string>,
+  /** An extra date from which to clear, even where the run wrote no points --
+   *  for a layer whose dates are only valid while no other layer covers them.
+   *  Without it, "wrote nothing" means "keep everything", which is right for a
+   *  layer that stands alone and wrong for one that must yield. */
+  clearFrom?: string
 ): Promise<void> {
-  const oldest = points.reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+  const oldestPoint = points.reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+  const oldest =
+    oldestPoint && clearFrom
+      ? oldestPoint < clearFrom
+        ? oldestPoint
+        : clearFrom
+      : oldestPoint ?? clearFrom ?? null;
   try {
     const existing = await redis().hkeys(key);
-    // No new points means nothing was reconstructable this run -- keep every
-    // stored point rather than blanking the layer.
+    // No new points and no floor means nothing was reconstructable this run --
+    // keep every stored point rather than blanking the layer.
     const doomed = oldest ? existing.filter((d) => d >= oldest) : [];
     if (doomed.length > 0) await redis().hdel(key, ...doomed);
   } catch {
@@ -275,11 +293,28 @@ export async function replaceEstimatedAccounts(
  * Range-scoped like every other layer, so a run that reaches less far back than
  * an earlier one leaves that earlier era's points alone rather than truncating
  * the chart.
+ *
+ * `coveredFrom` is this run's full-walk horizon, and it is what keeps the two
+ * layers from disagreeing. The extension only means anything on dates the
+ * estimated layer can't speak for, and which dates those are changes run to
+ * run: link a bank with a longer transaction history and the full walk now
+ * covers a span the extension used to own. getAccountHistory prefers the
+ * extension where both have a date, so anything left behind there would shadow
+ * the newer walk -- the account's chart would read from one run up to the old
+ * seam and another after it, with a step at the join that is pure artifact.
+ * So the extension is cleared from this horizon forward even on a run that
+ * produces no extension points at all, which is the common case.
  */
 export async function replaceEstimatedExtension(
-  points: { date: string; balances: Record<string, number> }[]
+  points: { date: string; balances: Record<string, number> }[],
+  coveredFrom: string
 ): Promise<void> {
-  await replaceRange(ACCOUNTS_EST_EXT_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
+  await replaceRange(
+    ACCOUNTS_EST_EXT_HASH,
+    points,
+    (p) => encrypt(JSON.stringify(p.balances)),
+    coveredFrom
+  );
 }
 
 /**
@@ -450,6 +485,32 @@ export async function isBackfillDone(): Promise<boolean> {
 
 export async function markBackfillDone(): Promise<void> {
   await redis().set(BACKFILL_FLAG, String(BACKFILL_SCHEMA));
+}
+
+/**
+ * Counts this run as one that ended with investment data still importing, and
+ * says whether to stop waiting.
+ *
+ * True means give up and accept the reconstruction as it stands (investment
+ * accounts held flat, which is what every run did before the retry existed).
+ * A failure to count returns true for the same reason: the retry is an
+ * optimization, and an uncountable one is an unbounded one.
+ */
+export async function backfillPendingExhausted(limit: number): Promise<boolean> {
+  try {
+    return (await redis().incr(BACKFILL_PENDING_TRIES)) >= limit;
+  } catch {
+    return true;
+  }
+}
+
+/** Forget the pending-run count: this run had nothing outstanding, or gave up. */
+export async function clearBackfillPending(): Promise<void> {
+  try {
+    await redis().del(BACKFILL_PENDING_TRIES);
+  } catch {
+    // Worst case a later pending run gives up sooner than it needed to.
+  }
 }
 
 export async function clearBackfillDone(): Promise<void> {

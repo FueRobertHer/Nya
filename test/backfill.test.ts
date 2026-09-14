@@ -56,6 +56,22 @@ describe('direction', () => {
     expect(byDate(accountPoints)['2026-09-09'].card).toBe(300);
   });
 
+  // The floor moves the net-worth line too, and this is the assertion that says
+  // so out loud: before the arrival the account contributes its floored zero,
+  // not today's balance. Held flat instead (what the old fallback did) the
+  // total would read 59_000 for every date in the window and the arrival would
+  // be invisible on that chart as well.
+  test('a floored account contributes zero to the total before its floor', () => {
+    const { totalPoints } = walk({
+      balances: { cash: 1000, ira: 58_000 },
+      walkType: { cash: 'depository', ira: 'investment' },
+      dailyByAccount: { '2026-06-01': { ira: -60_000 } },
+    });
+    const totals = totalsByDate(totalPoints);
+    expect(totals['2026-06-01']).toBe(59_000); // cash + the IRA as it stands
+    expect(totals['2026-05-31']).toBe(1000); // cash alone: the IRA wasn't funded
+  });
+
   test('the walked total treats owed balances as negative', () => {
     const { totalPoints } = walk({
       balances: { cash: 1000, card: 500 },
@@ -161,12 +177,45 @@ describe('horizons', () => {
     expect(totalPoints.some((p) => p.date < '2026-08-01')).toBe(false);
   });
 
-  test('the investment series keeps going to its own horizon', () => {
-    const { accountPoints } = spanning();
-    expect(accountPoints[accountPoints.length - 1].date).toBe('2026-03-01');
-    const dates = byDate(accountPoints);
+  test('the investment series keeps going past where the totals stop', () => {
+    const dates = byDate(spanning().accountPoints);
     expect(dates['2026-05-02'].ira).toBe(60_000);
     expect(dates['2026-05-01'].ira).toBe(40_000); // the old arrival, now visible
+  });
+
+  // `oldestInvTxn` is one number across every Item, so the extension has to be
+  // bounded per account or the newest brokerage inherits the oldest one's
+  // history: a flat line for months before it existed, drawn as an estimate.
+  test('an account is only drawn back to where its own flows start', () => {
+    const { accountPoints } = walk({
+      balances: { cash: 1000, old: 60_000, fresh: 40_000 },
+      walkType: { cash: 'depository', old: 'investment', fresh: 'investment' },
+      dailyByAccount: {
+        '2026-05-02': { old: -20_000 },
+        '2026-07-10': { fresh: -40_000 }, // opened two months ago
+      },
+      oldestTxn: '2026-08-01',
+      oldestInvTxn: '2026-03-01',
+    });
+    const dates = byDate(accountPoints);
+    // One day either side of the newer account's only flow, then nothing.
+    expect(dates['2026-07-10'].fresh).toBe(40_000);
+    expect(dates['2026-07-09'].fresh).toBe(0);
+    expect(dates['2026-05-01'].fresh).toBeUndefined();
+    expect(dates['2026-05-01'].old).toBe(40_000);
+  });
+
+  // Nothing reconstructable means no point at all, rather than an empty map.
+  test('a date no account can speak for is not written at all', () => {
+    const { accountPoints } = walk({
+      balances: { cash: 1000, ira: 60_000 },
+      walkType: { cash: 'depository', ira: 'investment' },
+      dailyByAccount: { '2026-05-02': { ira: -20_000 } },
+      oldestTxn: '2026-08-01',
+      oldestInvTxn: '2026-03-01',
+    });
+    expect(accountPoints[accountPoints.length - 1].date).toBe('2026-05-01');
+    expect(accountPoints.every((p) => Object.keys(p.balances).length > 0)).toBe(true);
   });
 
   // Past the cash horizon a cash balance is frozen, not known. Omitting it
@@ -204,6 +253,7 @@ describe('horizons', () => {
     expect(totalPoints).toEqual([]);
     expect(accountPoints.every((p) => Object.keys(p.balances).join() === 'ira')).toBe(true);
     expect(byDate(accountPoints)['2026-05-01'].ira).toBe(40_000);
+    expect(byDate(accountPoints)['2026-09-13'].ira).toBe(60_000);
   });
 
   test('an investment horizon equal to the cash one extends nothing', () => {
@@ -230,8 +280,10 @@ describe('horizons', () => {
     const dates = byDate(accountPoints);
     expect(floored).toEqual(['ira']);
     expect(dates['2026-04-01'].ira).toBe(58_000);
-    expect(dates['2026-03-31'].ira).toBe(0);
-    expect(dates['2026-03-01'].ira).toBe(0);
+    expect(dates['2026-03-31'].ira).toBe(0); // the day before it arrived
+    // and nothing before that: with no flows left to un-apply, every earlier
+    // day would just repeat the same zero.
+    expect(dates['2026-03-30']).toBeUndefined();
   });
 
   test('the walk never reaches past the lookback window', () => {

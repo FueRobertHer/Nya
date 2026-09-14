@@ -17,6 +17,13 @@ export function isoDaysAgo(days: number, from: number = Date.now()): string {
   return new Date(from - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/** The UTC day before a YYYY-MM-DD date. */
+function dayBefore(date: string): string {
+  return new Date(new Date(`${date}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+
 export type WalkInput = {
   /** Today's raw balance per walkable account. */
   balances: Record<string, number>;
@@ -72,6 +79,14 @@ export type WalkResult = {
  * no earlier flows: every reconstruction further back rests on a premise the
  * data has already contradicted.
  *
+ * What the floor gives up is the old fallback's one virtue: flow data that
+ * overstates inflow (a broker reporting an internal cash sweep as an external
+ * deposit, say) now pulls the account toward zero for the span before it,
+ * where holding it flat was merely uninformative. The trade is deliberate --
+ * flat was wrong in the common case and this is wrong in the rare one -- and
+ * `floored` in the response is what makes a systematically bad flow stream
+ * visible rather than silent.
+ *
  * The NET-WORTH line moves with it, deliberately. A floored account contributes
  * zero to the walked total before its floor date instead of today's balance, so
  * money arriving from an institution the user hasn't linked now shows as a step
@@ -93,6 +108,24 @@ export function reconstruct(input: WalkInput): WalkResult {
   // that extra span is where a rollover from six months ago lives.
   const invHorizon =
     input.oldestInvTxn && input.oldestInvTxn < oldestTxn ? input.oldestInvTxn : oldestTxn;
+
+  // The earliest date each account has a flow on. Past the cash horizon this is
+  // what bounds the extension per account, because `oldestInvTxn` is a single
+  // number across every Item: without it, a brokerage opened two months ago
+  // would be drawn as a flat line for the ten months before it existed, on the
+  // strength of some other account's longer history. An account is only drawn
+  // where its own data reaches, and one day either side of that is the most
+  // that can be said.
+  const firstFlow: Record<string, string> = {};
+  for (const [date, day] of Object.entries(dailyByAccount)) {
+    for (const id of Object.keys(day)) {
+      if (!firstFlow[id] || date < firstFlow[id]) firstFlow[id] = date;
+    }
+  }
+  // Resolved to the earliest date each account can be drawn on, once, rather
+  // than per day inside the loop below.
+  const extendsTo: Record<string, string> = {};
+  for (const [id, date] of Object.entries(firstFlow)) extendsTo[id] = dayBefore(date);
 
   const accountPoints: WalkResult['accountPoints'] = [];
   const totalPoints: WalkResult['totalPoints'] = [];
@@ -128,13 +161,25 @@ export function reconstruct(input: WalkInput): WalkResult {
       continue;
     }
     // Past the cash horizon: only the investment accounts still have data, so
-    // only they are recorded. Cash accounts simply have no point for these
-    // dates, which reads on their chart as history that hasn't been
-    // reconstructed rather than as a balance that didn't move.
+    // only they are recorded, and only back to where their own flows start.
+    // Everything left out simply has no point for these dates, which reads on a
+    // chart as history that hasn't been reconstructed rather than as a balance
+    // that didn't move.
+    //
+    // The day BEFORE the first flow is kept deliberately: it is the only point
+    // that shows what the account was worth before that flow, which for an
+    // account opened by a $60k rollover is the whole story. Nothing earlier is
+    // reconstructable -- with no flows left to un-apply, every earlier day would
+    // just repeat it.
     const investOnly: Record<string, number> = {};
     for (const [id, b] of Object.entries(balances)) {
-      if (walkType[id] === 'investment') investOnly[id] = b;
+      if (walkType[id] !== 'investment') continue;
+      const start = extendsTo[id];
+      if (!start || date < start) continue;
+      investOnly[id] = b;
     }
+    // Nothing left to say about this date: don't write an empty map for it.
+    if (Object.keys(investOnly).length === 0) continue;
     accountPoints.push({ date, balances: investOnly });
   }
 
