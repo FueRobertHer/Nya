@@ -49,6 +49,12 @@ const EXTERNAL_FLOW_SUBTYPES = new Set([
   'transfer',
   'send',
   'request',
+  // Not a subtype Plaid emits today (it has no rollover value at all, see
+  // isRollover). Listed anyway because the alternative is worse than useless:
+  // if it ever appears, an unrecognised subtype falls through to 0 below, and a
+  // $60k arrival would be invisible to the balance walk AND to both figures the
+  // activity panel shows.
+  'rollover',
 ]);
 
 // Corporate actions. Plaid files these under type 'transfer', but they are not
@@ -73,6 +79,98 @@ const CORPORATE_ACTION_SUBTYPES = new Set([
 
 /** Subtypes that represent money the account holder actually put in. */
 const CONTRIBUTION_SUBTYPES = new Set(['contribution', 'deposit', 'transfer']);
+
+// Rollovers: retirement money moved between accounts (401k -> IRA, IRA -> IRA).
+// InvestmentTransactionSubtype has no value for them, so they arrive wearing an
+// ordinary one -- `transfer`, `contribution` or `deposit` on the receiving side,
+// `withdrawal` or `distribution` on the sending side -- with the word itself
+// only in Plaid's free-text `name`, which is the institution's own description
+// of the transaction.
+//
+// Matching that description takes some care, because the word appears there for
+// two entirely different reasons.
+
+// Descriptions are formatted by the institution, so the same phrase arrives
+// separated by spaces, runs of spaces, underscores or hyphens, or not separated
+// at all. Flattening every non-alphanumeric run to one space lets the patterns
+// below be written once, against words.
+function normalizeName(name: string): string {
+  return (name || '')
+    // Split a camel-case run first: "RolloverIRA" is the account label with the
+    // space left out, and without this the event pattern's trailing boundary
+    // fails on it, sending a real rollover to the contributions line.
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ');
+}
+
+// "Rollover IRA" is the NAME OF AN ACCOUNT, not a description of what happened:
+// an IRA opened to receive a former employer's plan keeps that label for life,
+// and an institution that puts it in the description puts it on every row in
+// the account, contributions included. Institutions that do it don't agree on
+// the word order, so every spelling has to be here -- recognising one of them
+// is worse than recognising none, since it splits an account's rows between the
+// two figures according to nothing but phrasing.
+const ROLLOVER_ACCOUNT_LABEL =
+  /\b(?:rollover (?:roth |trad |traditional )?(?:iras?|individual retirement accounts?)|iras? rollover)\b/g;
+
+// Words that identify an ordinary periodic contribution on their own, used to
+// decide whether a stripped label was really just a label (see isRollover).
+const CONTRIBUTION_MARKER = /\b(?:contributions?|contrib|payroll|employee|employer|deferrals?)\b/;
+
+// The event itself: rollover, roll over, rolled over, rolling over, rollovers.
+// The leading \b keeps this off words that merely end in "roll" -- the "ROLL
+// OVER" inside "PAYROLL OVERTIME" is not a rollover -- and the trailing one off
+// "ROLL OVERTIME".
+const ROLLOVER_EVENT = /\broll(?:ed|s|ing)?\s?overs?\b/;
+
+/**
+ * A rollover, in either direction.
+ *
+ * The subtype gate comes first: only a subtype that actually moves money across
+ * the account boundary can be a rollover leg, so a dividend or interest payment
+ * credited inside a rollover IRA can't be read as one on the strength of the
+ * account's name.
+ *
+ * The description is then read twice, because the account label and the event
+ * are the same word. Stripping the label unconditionally was wrong: it made
+ * "ROLLOVER IRA DEPOSIT" -- a plain description of an arriving 401k -- an
+ * ordinary contribution, and the two mistakes here are not the same size. A
+ * contribution misread as a rollover is capped by the annual limit and lands on
+ * a line the user can see next to it; a rollover misread as a contribution is
+ * the whole 401k, and it lands on the headline figure with nothing to explain
+ * its size. So the label is only believed to BE a label when removing it takes
+ * the last mention of a rollover with it AND what remains identifies an
+ * ordinary contribution by itself. Everything else stays a rollover.
+ *
+ * Irreducibly ambiguous, and resolved toward contribution: an institution that
+ * stamps the label and also calls arriving rollover money a "contribution"
+ * (some recordkeepers do) writes both cases as "ROLLOVER IRA CONTRIBUTION".
+ *
+ * valueDelta deliberately still counts these: the money really did enter or
+ * leave the account, so the balance reconstruction needs them. What they are
+ * not is a *contribution* -- no new money entered the holder's retirement
+ * savings and none of it counts against the annual limit -- which is why
+ * isContribution excludes them. A $60k 401k rollover counted as
+ * "contributed this year" overstates the figure by an order of magnitude.
+ */
+export function isRollover(t: InvestmentTxn): boolean {
+  const subtype = (t.subtype || '').toLowerCase();
+  if (subtype === 'rollover') return true;
+  if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return false;
+
+  const name = normalizeName(t.name);
+  if (!ROLLOVER_EVENT.test(name)) return false;
+
+  const residual = name.replace(ROLLOVER_ACCOUNT_LABEL, ' ');
+  if (ROLLOVER_EVENT.test(residual)) return true; // said it again outside the label
+  return !CONTRIBUTION_MARKER.test(residual);
+}
+
+/** A rollover arriving here, for the line shown alongside contributions. */
+export function isIncomingRollover(t: InvestmentTxn): boolean {
+  return isRollover(t) && valueDelta(t) > 0;
+}
 
 /**
  * Signed change this transaction makes to the account's TOTAL value.
@@ -121,6 +219,8 @@ export function valueDelta(t: InvestmentTxn): number {
 
 /** Money the holder added from outside, for the year-to-date contributions line. */
 export function isContribution(t: InvestmentTxn): boolean {
+  // Rollovers wear contribution subtypes but aren't new money (see isRollover).
+  if (isRollover(t)) return false;
   return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && valueDelta(t) > 0;
 }
 

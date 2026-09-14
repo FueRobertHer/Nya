@@ -19,7 +19,14 @@ export const TRANSACTIONS_CACHE_KEY = k('cache:transactions');
 // one key each. A hash keeps clearCaches() a single del of known keys -- with
 // per-account keys it would need a scan, and this is the only cache whose key
 // set isn't known ahead of time.
-export const INVESTMENT_ACTIVITY_CACHE_KEY = k('cache:inv-activity');
+//
+// Versioned because the payload's MEANING changed when rollovers were split out
+// of its contributions figure, not just its shape: entries written by the
+// previous deploy would otherwise keep serving the un-split number for the rest
+// of their TTL. Versioning the key rather than the field lets the old hash
+// expire wholesale on the TTL it already carries, instead of leaving dead
+// fields inside a live hash that every write renews.
+export const INVESTMENT_ACTIVITY_CACHE_KEY = k('cache:inv-activity:v2');
 
 export async function readCache<T>(key: string): Promise<T | null> {
   try {

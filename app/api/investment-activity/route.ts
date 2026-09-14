@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
-import { fetchInvestmentTxns, isContribution, valueDelta } from '@/lib/investments';
+import {
+  fetchInvestmentTxns,
+  isContribution,
+  isIncomingRollover,
+  valueDelta,
+} from '@/lib/investments';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 
 // Recent buys, sells, dividends and fees for one investment account, plus what
@@ -43,6 +48,8 @@ export async function GET(req: Request) {
     // the holdings endpoint, which does), so a mismatched request that came back
     // 200-with-nothing could otherwise cache an empty result under the real
     // account's field and blank its activity for the whole TTL.
+    // (Payloads written before rollovers were split out of ytd_contributions
+    // are not reachable: INVESTMENT_ACTIVITY_CACHE_KEY carries the version.)
     const cacheField = `${item_id}:${account_id}`;
     const cached = await readAccountCache(cacheField);
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
@@ -62,13 +69,21 @@ export async function GET(req: Request) {
     const mine = txns.filter((t) => t.account_id === account_id);
 
     const yearStart = `${new Date().getUTCFullYear()}-01-01`;
-    const ytd_contributions = mine
-      .filter((t) => t.date >= yearStart && isContribution(t))
-      .reduce((sum, t) => sum + valueDelta(t), 0);
+    const thisYear = mine.filter((t) => t.date >= yearStart);
+    const sum = (rows: typeof thisYear) => rows.reduce((total, t) => total + valueDelta(t), 0);
+
+    // Reported as two figures rather than one. A rollover is retirement money
+    // that already existed moving between accounts, so folding it into
+    // contributions makes a $60k 401k transfer read as a year of saving --
+    // while dropping it entirely would leave a large arrival in the activity
+    // list that no line above it accounts for.
+    const ytd_contributions = sum(thisYear.filter(isContribution));
+    const ytd_rollovers = sum(thisYear.filter(isIncomingRollover));
 
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT), // Plaid returns newest first
       ytd_contributions,
+      ytd_rollovers,
       note,
     };
 
