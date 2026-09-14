@@ -343,6 +343,67 @@ Vercel gives you a free HTTPS domain automatically — no separate hosting step 
 
 **One Plaid-specific step:** in the [Plaid Dashboard](https://dashboard.plaid.com), under Team Settings → API, add your deployed URL to the allowed redirect URIs (some bank logins use OAuth screens that redirect back to a registered domain).
 
+### Preview deployments
+
+Every branch you push gets its own permanent HTTPS URL, so you can look at a
+change running for real before it reaches production:
+
+```
+https://nya-git-<branch>-<team-slug>.vercel.app
+```
+
+That hostname is stable for as long as the branch exists, and repoints to the
+newest deployment on every push. Slashes in a branch name become dashes.
+
+This repo keeps a long-lived `preview` branch for exactly that, so the URL is
+predictable instead of changing with every feature branch. Merge work into it
+to see that work at a fixed address:
+
+```bash
+git checkout preview
+git merge your-feature-branch
+git push
+```
+
+Treat it as a throwaway integration branch, never a merge source: real work
+still reaches `main` by pull request. If it ever tangles, reset it with
+`git reset --hard origin/main && git push --force-with-lease`.
+
+**Preview needs its own environment variables.** Everything from step 2 is
+scoped per environment, and a preview deployment with none of them set builds
+fine and then fails at runtime. Under **Settings → Environment Variables**,
+add the same list again with the **Preview** box ticked. Use a distinct
+`APP_PASSWORD` and `SESSION_SECRET`, and keep `PLAID_ENV` on `sandbox`.
+
+`PLAID_ENCRYPTION_KEY` is the one that needs thought. It has to match whatever
+encrypted the tokens that deployment reads (`lib/crypto.ts`), and the Upstash
+integration adds its connection variables to every environment by default, so
+preview points at the production database unless you say otherwise. That
+leaves two options:
+
+- **Share production's data.** Copy production's `PLAID_ENCRYPTION_KEY` value
+  across verbatim. Simplest, but anything you do on a preview writes to your
+  real accounts.
+- **Isolate it.** Create a second Upstash database and connect it to
+  **Preview** only, then give preview a freshly generated key. Preview starts
+  empty and you re-link accounts against Plaid sandbox.
+
+A few other things worth knowing:
+
+- Preview URLs sit behind Vercel Authentication by default, so only team
+  members can open them. Turn that off under **Settings → Deployment
+  Protection** if you want a shareable link.
+- The `/api/snapshot` cron in `vercel.json` only runs on production
+  deployments. To exercise it on a preview, call the route by hand with
+  `CRON_SECRET` as a bearer token.
+- Deploys fire on a push of a *new commit*. A branch pointing at a commit
+  that has already been deployed will not rebuild; use **Redeploy** in the
+  dashboard to force one.
+- If no preview builds at all, check **Settings → Git → Deployment Branches**.
+  It has to be "All Branches", or a pattern that matches the branch.
+- If you use Plaid's OAuth bank logins, add the preview URL to the allowed
+  redirect URIs alongside the production one.
+
 ## 6. Install on your phone
 
 **iPhone (Safari):** open your deployed URL → Share icon → **Add to Home Screen**
