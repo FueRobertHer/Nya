@@ -9,6 +9,36 @@ import { type Txn } from './MonthBreakdown';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 
+/**
+ * An investment account with more cash sitting in it than looks deliberate,
+ * already filtered to the flagged ones by lib/cash.ts. Optional on the props
+ * below, so a caller that has no holdings to classify can leave it out; the
+ * Dashboard always passes it, populated from whatever the payload could
+ * resolve.
+ */
+export type IdleCashAccount = {
+  /** React key. Account NAMES collide across institutions; ids don't. */
+  account_id: string;
+  name: string;
+  /** Last 4, where the institution reports it. Two accounts at one broker can
+   *  share a name, and the Accounts tab tells them apart the same way. */
+  mask: string | null;
+  institution_name: string;
+  cash: number;
+  /**
+   * Fraction of the account's priced holdings sitting in cash, 0..1, or null
+   * where the denominator was degenerate and the percentage would be a claim
+   * rather than a measurement.
+   */
+  share: number | null;
+  currency: string | null;
+};
+
+// A stable empty default, rather than `= []` in the destructuring: a fresh
+// array literal per render is a new identity, which would re-run the memo below
+// on every render for any caller that omits the prop.
+const NO_IDLE_CASH: IdleCashAccount[] = [];
+
 export type InsightAccount = {
   name: string;
   type: string;
@@ -30,16 +60,21 @@ function isTransfer(t: Txn): boolean {
   return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
 }
 
-type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' };
+// 'warn' is the amber the Accounts tab uses for idle cash: worth doing
+// something about, but nothing has gone wrong, which is what separates it from
+// the red 'down' of an overdue payment.
+type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' | 'warn' };
 
 export default function Insights({
   txns,
   budgets,
   accounts,
+  idleCash = NO_IDLE_CASH,
 }: {
   txns: Txn[] | null;
   budgets: Record<string, number>;
   accounts: InsightAccount[];
+  idleCash?: IdleCashAccount[];
 }) {
   const insights = useMemo<Insight[]>(() => {
     const out: Insight[] = [];
@@ -139,6 +174,27 @@ export default function Insights({
     dueSoon.sort((x, y) => x.days - y.days);
     out.push(...[...overdue, ...dueSoon.map((d) => d.insight)].slice(0, 2));
 
+    // Uninvested cash in a brokerage: a contribution that was never placed, or
+    // a settlement fund quietly filling up. Largest first, max 2 -- someone
+    // with five brokerages doesn't need five lines to get the message, and the
+    // Accounts tab carries the per-account detail.
+    for (const a of idleCash.slice(0, 2)) {
+      const where = `${a.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`;
+      const howMuch =
+        a.share == null
+          ? ''
+          : ` · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of its holdings`;
+      out.push({
+        // Keyed by account_id, not name: "Individual" and "Roth IRA" are what
+        // brokerages call accounts, so two of them collide easily, and a
+        // duplicate React key would drop one of the lines (see the low-balance
+        // block above, which has the same hazard).
+        key: `idle-cash-${a.account_id}`,
+        text: `${where}: ${formatMoney(a.cash, a.currency)} uninvested${howMuch}`,
+        tone: 'warn',
+      });
+    }
+
     // Recurring bills expected within a week (soonest first, max 2,
     // deduped by name -- the same bill on two linked accounts is one bill).
     if (txns) {
@@ -207,7 +263,7 @@ export default function Insights({
     }
 
     return out.slice(0, MAX_INSIGHTS);
-  }, [txns, budgets, accounts]);
+  }, [txns, budgets, accounts, idleCash]);
 
   if (insights.length === 0) return null;
 

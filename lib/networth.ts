@@ -133,6 +133,14 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
       price: h.institution_price,
       value: h.institution_value,
       cost_basis: h.cost_basis, // total cost of the position, for gain/loss
+      // The three security fields lib/cash.ts reads to tell a position apart
+      // from money that is merely sitting in the account. Carried separately
+      // rather than resolved to a boolean here so the client can re-derive it:
+      // this payload is cached in localStorage, and a stored verdict would
+      // freeze whatever the rule said on the day it was written.
+      ticker: securities[h.security_id]?.ticker_symbol ?? null,
+      security_type: securities[h.security_id]?.type ?? null,
+      is_cash_equivalent: securities[h.security_id]?.is_cash_equivalent ?? null,
     }));
   } catch {
     // not a brokerage account, or investments not supported -- fine, skip

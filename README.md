@@ -10,22 +10,26 @@ Four tabs (bottom navigation, mobile-first):
 
 - **Home** — net worth with a 30-day delta and an over-time chart (daily
   snapshots + estimated backfill, scrubbable), plus insights and alerts:
-  over/approaching budget, low balance, upcoming recurring bills, spending
-  pace vs last month, biggest purchase.
+  over/approaching budget, low balance, uninvested cash sitting in a brokerage,
+  upcoming recurring bills, spending pace vs last month, biggest purchase.
 - **Accounts** — per-institution balance sheet; tap any account for its own
-  balance history chart; holdings show gain/loss vs cost basis. Credit cards and
-  loans carry their real terms — APR, minimum payment, and next due date, with
-  statement balance, last payment, escrow and payoff date in the expanded row
-  (see "Payment details" below). Investment accounts expand to show the last
-  year of activity (buys, sells, dividends, fees) and how much has been
-  contributed year to date. Rollovers are counted separately from
-  contributions, since a 401k moved into an IRA is existing retirement money
-  arriving, not money saved this year. Any account can
-  be **hidden**: it keeps syncing but stops counting toward anything (see
-  "Hiding accounts" below). Institutions
-  Plaid can't reach can be tracked as **manual accounts**: you type the
-  balance, and it counts toward net worth and builds its own history like any
-  linked account (see "Manual accounts" below).
+  balance history chart; holdings show gain/loss vs cost basis. Money that is
+  not actually invested (a settlement fund like Vanguard's VMFXX, a sweep
+  account, a plain cash line) is marked on the holding, totalled on the
+  Holdings header, and flagged in amber under the account row once it is large
+  enough to be worth placing rather than ordinary settlement float; accounts
+  that are cash by design, such as a cash management or money market account,
+  are left alone. Credit cards and loans carry their real terms — APR, minimum
+  payment, and next due date, with statement balance, last payment, escrow and
+  payoff date in the expanded row (see "Payment details" below). Investment
+  accounts expand to show the last year of activity (buys, sells, dividends,
+  fees) and how much has been contributed year to date. Rollovers are counted
+  separately from contributions, since a 401k moved into an IRA is existing
+  retirement money arriving, not money saved this year. Any account can be
+  **hidden**: it keeps syncing but stops counting toward anything (see "Hiding
+  accounts" below). Institutions Plaid can't reach can be tracked as **manual
+  accounts**: you type the balance, and it counts toward net worth and builds
+  its own history like any linked account (see "Manual accounts" below).
 - **Activity** — twelve months of transactions with a monthly breakdown:
   spending-by-month trend columns, money in/out/net, top spending
   categories, and search. Each row shows the merchant's logo, and amounts
@@ -441,8 +445,9 @@ fails open if Redis is unreachable). This blunts brute-forcing of
   estimated layer (`lib/backfill.ts`), Plaid's investment sign conventions and
   pagination (`lib/investments.ts`), liability normalization
   (`lib/liabilities.ts`), the credit/loan sign rule that every total depends on
-  (`lib/balance.ts`), and last-known-balance recovery for a failed institution
-  (`lib/last-known.ts`). Routes, React components and anything talking to live
+  (`lib/balance.ts`), last-known-balance recovery for a failed institution
+  (`lib/last-known.ts`), and which holdings count as uninvested cash and when
+  that is worth flagging (`lib/cash.ts`). Routes, React components and anything talking to live
   Plaid are not covered.
 - **Liabilities is a paid Plaid product.** Free in `sandbox`, but billed per
   Item per month in `production`, so enabling payment details on many

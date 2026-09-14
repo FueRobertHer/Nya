@@ -6,13 +6,16 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
-import Insights from './Insights';
+import Insights, { type IdleCashAccount } from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
 import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
 import { isOwedType, signedContribution } from '@/lib/balance';
+// Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
+// between the server payload and this component.
+import { institutionCash, isCashHolding } from '@/lib/cash';
 
 type Account = {
   account_id: string;
@@ -57,6 +60,17 @@ type Holding = {
   quantity: number | null;
   value: number | null;
   cost_basis: number | null;
+  // Plaid security fields, read by lib/cash.ts to tell an invested position
+  // from money parked in cash. All optional, because a payload cached in
+  // localStorage before this shipped carries none of them. What that payload
+  // DOES carry is `name`, and lib/cash.ts's last rule reads names -- so an
+  // offline first paint off an old cache still marks a fund called "...Money
+  // Market..." as cash, just without the confirmation Plaid's own flag gives.
+  // Graceful degradation rather than a blank: the amount and the share come
+  // from `value`, which was always there.
+  ticker?: string | null;
+  security_type?: string | null;
+  is_cash_equivalent?: boolean | null;
 };
 
 type Institution = {
@@ -870,6 +884,51 @@ export default function Dashboard() {
     [institutions, manageMode]
   );
 
+  // Investment accounts carrying enough uninvested cash to be worth a line on
+  // the Home tab. Built from `institutions` rather than `sortedInstitutions`
+  // because that list is also filtered by manage mode, and an insight has no
+  // business appearing and disappearing with a UI toggle on another tab.
+  // Hidden accounts are dropped here for the same reason they're dropped from
+  // every total: the user has said they don't want to see them.
+  const idleCashAccounts = useMemo(() => {
+    const out: IdleCashAccount[] = [];
+    for (const inst of institutions) {
+      // Hidden accounts are dropped BEFORE the verdict rather than after, so
+      // institutionCash sees exactly what the Accounts tab sees: same rule,
+      // same exemptions, same answer on both tabs.
+      const visible = inst.accounts.filter((a) => !a.hidden);
+      const hiddenIds = new Set(
+        inst.accounts.filter((a) => a.hidden).map((a) => a.account_id)
+      );
+      const { byAccount, flaggedAccounts } = institutionCash(
+        visible,
+        inst.holdings.filter((h) => !h.account_id || !hiddenIds.has(h.account_id))
+      );
+      for (const a of visible) {
+        if (!flaggedAccounts.has(a.account_id)) continue;
+        const cash = byAccount[a.account_id];
+        out.push({
+          // Carries the id, the institution and the mask because account names
+          // are not distinctive: "Individual" and "Roth IRA" are what
+          // brokerages call them, and two of them would otherwise produce a
+          // duplicate React key and two identical, unactionable lines.
+          account_id: a.account_id,
+          name: a.name,
+          mask: a.mask,
+          institution_name: inst.institution_name,
+          cash: cash.cash,
+          // Null where the denominator is degenerate (a margin debit bigger
+          // than the positions), so the insight drops the phrase rather than
+          // claiming "100% of its holdings" of an account that is also holding
+          // a short. The Accounts tab badge suppresses it the same way.
+          share: cash.total > 0 ? cash.share : null,
+          currency: a.currency,
+        });
+      }
+    }
+    return out.sort((x, y) => y.cash - x.cash);
+  }, [institutions]);
+
   // Hidden accounts for the Hidden card, built from the STORED set rather than
   // from whatever resolved this load. An institution that's erroring returns no
   // accounts, and deriving from the live list alone would make its hidden
@@ -1104,6 +1163,7 @@ export default function Dashboard() {
                 <Insights
                   txns={txns}
                   budgets={budgets}
+                  idleCash={idleCashAccounts}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
@@ -1144,6 +1204,11 @@ export default function Dashboard() {
                 </div>
 
                 {sortedInstitutions.map((inst) => {
+                  // One verdict for the row badge, the per-holding chip and
+                  // the Holdings header, so they can't disagree about the same
+                  // money. `inst` is already filtered here, so a hidden
+                  // brokerage takes its cash with it.
+                  const instCash = institutionCash(inst.accounts, inst.holdings);
                   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
                   const instCurrency = dominantCurrency(
                     inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
@@ -1191,6 +1256,11 @@ export default function Dashboard() {
                                   ? Math.max(a.balance, 0) / a.limit
                                   : null;
                               const liabLine = liabilitySummary(a);
+                              // Undefined on an account that is cash by design:
+                              // institutionCash drops those, because 100% cash
+                              // in a cash management account is the account
+                              // working and the warning could never be cleared.
+                              const cash = instCash.byAccount[a.account_id];
                               return (
                                 <Fragment key={a.account_id}>
                                 <tr
@@ -1233,6 +1303,29 @@ export default function Dashboard() {
                                       >
                                         {a.liability?.is_overdue ? 'Overdue · ' : ''}
                                         {liabLine}
+                                      </div>
+                                    )}
+                                    {/* Money sitting in the settlement fund
+                                        rather than invested. Always shown when
+                                        there is any, because a small cash line
+                                        is information; the amber treatment is
+                                        reserved for an amount worth acting on
+                                        (lib/cash.ts), so the colour keeps
+                                        meaning something. */}
+                                    {cash && cash.cash > 0 && (
+                                      <div className={`cash-tag${cash.flagged ? ' idle' : ''}`}>
+                                        {cash.flagged && (
+                                          <span className="cash-dot" aria-hidden="true" />
+                                        )}
+                                        {fmt(cash.cash, a.currency)}
+                                        {cash.flagged ? ' uninvested' : ' in cash'}
+                                        {/* "of holdings", not "of this
+                                            account": the denominator is the
+                                            positions Plaid priced, which can
+                                            fall short of the balance rendered
+                                            in the next column. */}
+                                        {cash.total > 0 &&
+                                          ` · ${(cash.share * 100).toFixed(cash.share >= 0.1 ? 0 : 1)}% of holdings`}
                                       </div>
                                     )}
                                   </td>
@@ -1337,7 +1430,21 @@ export default function Dashboard() {
                               <span className="holdings-count">{inst.holdings.length}</span>
                             </span>
                             <span className="holdings-summary">
-                              {fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0))}
+                              {/* Says "uninvested", not "cash", because it is
+                                  scoped the way the amber is: an account that
+                                  is cash by design is left out of this figure,
+                                  while its positions still carry their factual
+                                  Cash label in the list below. */}
+                              {instCash.cash > 0 && (
+                                <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
+                                  {fmt(instCash.cash, instCurrency)}{' '}
+                                  {instCash.flagged ? 'uninvested' : 'cash'}
+                                </span>
+                              )}
+                              {fmt(
+                                inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0),
+                                instCurrency
+                              )}
                               <svg
                                 className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
                                 viewBox="0 0 24 24"
@@ -1362,13 +1469,37 @@ export default function Dashboard() {
                               </tr>
                             </thead>
                             <tbody>
-                              {inst.holdings.map((h, i) => (
+                              {inst.holdings.map((h, i) => {
+                                const isCash = isCashHolding(h);
+                                return (
                                 <tr key={i}>
-                                  <td>{h.name}</td>
+                                  <td>
+                                    {h.name}
+                                    {/* The chip says WHICH row is cash; the
+                                        amber says it's worth doing something
+                                        about, and only the owning account can
+                                        decide that. */}
+                                    {isCash && (
+                                      <span
+                                        className={`cash-chip${
+                                          h.account_id && instCash.flaggedAccounts.has(h.account_id)
+                                            ? ' idle'
+                                            : ''
+                                        }`}
+                                      >
+                                        Cash
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="num">{h.quantity?.toFixed(3) ?? '--'}</td>
                                   <td className="num">
                                     {fmt(h.value)}
-                                    {h.value != null && h.cost_basis != null && (
+                                    {/* No gain/loss on a cash line: a money
+                                        market fund holds its $1 NAV, so the
+                                        figure is a permanent "+$0.00 · 0.0%"
+                                        that says nothing and reads as a real
+                                        measurement of a flat investment. */}
+                                    {!isCash && h.value != null && h.cost_basis != null && (
                                       <div
                                         className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
                                       >
@@ -1377,7 +1508,8 @@ export default function Dashboard() {
                                     )}
                                   </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                           )}
