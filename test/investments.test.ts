@@ -175,7 +175,16 @@ describe('isRollover', () => {
       'Rolling over to IRA',
       'Incoming rollovers',
     ]) {
-      expect(isRollover(txn({ name }))).toBe(true);
+      expect(isRollover(txn({ subtype: 'deposit', name }))).toBe(true);
+    }
+  });
+
+  // The sending side of the same move, which the subtype gate has to admit too.
+  test('matches the outgoing leg', () => {
+    for (const subtype of ['withdrawal', 'distribution']) {
+      expect(isRollover(txn({ type: 'cash', subtype, name: 'ROLLOVER TO IRA', amount: 60_000 }))).toBe(
+        true
+      );
     }
   });
 
@@ -194,33 +203,58 @@ describe('isRollover', () => {
 
   test('leaves ordinary activity alone', () => {
     for (const name of ['PAYROLL OVERTIME', 'Contribution', 'ACME CORP DIVIDEND', '']) {
-      expect(isRollover(txn({ name }))).toBe(false);
+      expect(isRollover(txn({ subtype: 'deposit', name }))).toBe(false);
     }
   });
 
-  // "Rollover IRA" is the account's name, stamped on every row in it for life.
-  // Reading it as an event would break the figure for exactly the people this
-  // split is for: anyone whose IRA received a former employer's plan.
-  test('ignores the account label in a description', () => {
-    const contribution = txn({
-      type: 'cash',
-      subtype: 'contribution',
-      name: 'CONTRIBUTION ROLLOVER IRA 2026',
-      amount: -7000,
-    });
-    expect(isRollover(contribution)).toBe(false);
-    expect(isContribution(contribution)).toBe(true);
-    // Same label reached through a separator, and on a deposit rather than a
-    // contribution.
-    expect(isRollover(txn({ subtype: 'deposit', name: 'ROLLOVER_IRA DEPOSIT' }))).toBe(false);
+  // "Rollover IRA" is the account's name, stamped on every row in the account by
+  // the institutions that use it at all. Reading it as an event would break the
+  // figure for exactly the people this split is for. Every spelling has to be
+  // covered: recognising one word order and not another would split an
+  // account's rows between the two figures on phrasing alone.
+  test('reads the account label as a label, in any word order', () => {
+    for (const name of [
+      'CONTRIBUTION ROLLOVER IRA 2026',
+      'ROLLOVER IRA CONTRIBUTION 2026',
+      'IRA ROLLOVER CONTRIBUTION 2026',
+      'IRA-ROLLOVER CONTRIBUTION 2026',
+      'ROLLOVER ROTH IRA CONTRIBUTION 2026',
+      'ROLLOVER IRAS CONTRIBUTION 2026',
+      'ROLLOVER INDIVIDUAL RETIREMENT ACCOUNT PAYROLL CONTRIB',
+    ]) {
+      const row = txn({ type: 'cash', subtype: 'contribution', name, amount: -7000 });
+      expect(isRollover(row)).toBe(false);
+      // The half that actually matters to the user, and the half a predicate
+      // test can silently leave unstated: it still counts as a contribution.
+      expect(isContribution(row)).toBe(true);
+    }
   });
 
-  // The label is stripped, not the whole description: a real rollover INTO a
-  // rollover IRA still has to register.
-  test('still matches an event described alongside the label', () => {
-    expect(isRollover(txn({ subtype: 'transfer', name: 'ROLLOVER IRA - ROLLOVER DEPOSIT' }))).toBe(
-      true
-    );
+  // The label is only believed when what's left describes an ordinary
+  // contribution by itself. "ROLLOVER IRA DEPOSIT" is a plain description of an
+  // arriving 401k, and misreading it costs the whole balance on the headline
+  // figure -- an unbounded error, where the one above is capped by the annual
+  // contribution limit.
+  test('a label plus a neutral verb is still a rollover', () => {
+    for (const name of [
+      'ROLLOVER IRA DEPOSIT',
+      'ROLLOVER-IRA DEPOSIT',
+      'ROLLOVER IRA BDA DEPOSIT',
+      'ROLLOVER IRA - ROLLOVER DEPOSIT', // said again outside the label
+      'RolloverIRA Deposit', // label with the space left out
+    ]) {
+      const row = txn({ type: 'cash', subtype: 'deposit', name, amount: -62_400 });
+      expect(isRollover(row)).toBe(true);
+      expect(isContribution(row)).toBe(false);
+    }
+  });
+
+  // The industry's own term for arriving rollover money. No account label to
+  // strip, so the contribution marker must not reach it.
+  test('"rollover contribution" is a rollover', () => {
+    const row = txn({ type: 'cash', subtype: 'contribution', name: 'ROLLOVER CONTRIBUTION', amount: -60_000 });
+    expect(isRollover(row)).toBe(true);
+    expect(isContribution(row)).toBe(false);
   });
 
   // Every one of these has a positive valueDelta inside an account whose name
@@ -248,6 +282,41 @@ describe('isRollover', () => {
     expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', name: 'Rollover', amount: -60_000 }))).toBe(
       60_000
     );
+  });
+});
+
+// The two figures the activity panel shows are built from these predicates, so
+// the property that keeps them honest -- no row in both, so nothing is counted
+// twice -- is worth pinning across the whole subtype space rather than at the
+// handful of points the cases above happen to touch.
+describe('contributions and rollovers never overlap', () => {
+  test('across every subtype, type and direction', () => {
+    const subtypes = [
+      'contribution', 'deposit', 'transfer', 'withdrawal', 'distribution', 'send', 'request',
+      'rollover', 'dividend', 'qualified dividend', 'interest', 'long-term capital gain',
+      'return of principal', 'adjustment', 'merger', 'spin off', 'buy', 'sell', 'account fee',
+    ];
+    for (const subtype of subtypes) {
+      for (const type of ['cash', 'transfer', 'buy', 'sell', 'fee']) {
+        for (const amount of [-60_000, 0, 60_000]) {
+          for (const name of ['ROLLOVER CONTRIBUTION', 'ROLLOVER IRA CONTRIBUTION', 'ACME DEPOSIT']) {
+            const row = txn({ type, subtype, amount, name });
+            expect(isContribution(row) && isIncomingRollover(row)).toBe(false);
+          }
+        }
+      }
+    }
+  });
+
+  // Not a bug, but the invariant is "every FLOW-subtype arrival lands in exactly
+  // one figure", not "every arrival does": valueDelta credits any `cash` row,
+  // while both predicates gate on the flow subtypes. Pinned so the gap is a
+  // documented choice rather than a later surprise.
+  test('a cash subtype outside the flow set lands in neither', () => {
+    const row = txn({ type: 'cash', subtype: 'adjustment', name: 'ROLLOVER ADJUSTMENT', amount: -60_000 });
+    expect(valueDelta(row)).toBe(60_000);
+    expect(isContribution(row)).toBe(false);
+    expect(isIncomingRollover(row)).toBe(false);
   });
 });
 
