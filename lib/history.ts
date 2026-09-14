@@ -10,6 +10,12 @@
 //    walked backward from their current balances, everything else is held
 //    flat. Real points always win over estimated ones for the same date.
 //
+// Per-account balances are kept alongside both, which is what lets a single
+// account be charted and a hidden one be subtracted from past totals. Those
+// have a third layer of their own (`history:accounts:est:ext`, see below): an
+// investment account can be walked back further than any total can honestly be
+// stated, and that span belongs to the chart only.
+//
 // Both layers are Redis hashes keyed by UTC date (YYYY-MM-DD), values
 // encrypted with the same AES-256-GCM key as everything else financial, so
 // a database-only leak doesn't expose your net-worth series either.
@@ -25,6 +31,22 @@ const ESTIMATED_HASH = k('history:net-worth:est');
 // individual accounts can be charted too.
 const ACCOUNTS_HASH = k('history:accounts');
 const ACCOUNTS_EST_HASH = k('history:accounts:est');
+// Per-account balances for dates BEYOND the estimated totals layer: backfill
+// walks an investment account past the oldest cash transaction, where its own
+// flows still have data but no total can honestly be stated (see reconstruct in
+// lib/backfill.ts).
+//
+// Its own key rather than more dates in ACCOUNTS_EST_HASH, and this is the
+// whole reason it exists. That hash is not just "per-account history": every
+// date in it is the account-by-account breakdown OF the estimated total for
+// that date, and the hidden-account subtraction in getHistory reads it as such.
+// The extension covers dates older than the newest run's totals -- exactly
+// where an EARLIER run's totals are retained (replaceRange only deletes from
+// the new run's oldest point forward) -- so writing there would answer "what
+// was in this total" with balances from a different run's walk, and hiding an
+// account would then subtract the wrong number from a point nothing rewrites.
+// Kept apart, it feeds the per-account chart and nothing else.
+const ACCOUNTS_EST_EXT_HASH = k('history:accounts:est:ext');
 // The balances backfill folded into its flat `rest` term: everything that
 // isn't depository/credit (investments, loans, property, manual accounts),
 // captured as of the run that produced the estimated layer.
@@ -161,7 +183,9 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
   if (account_id in ((await getEstimatedFlat()) ?? {})) return true;
   try {
     const flatByDate = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE);
-    const [flatSample] = Object.values(flatByDate ?? {});
+    // Newest date, for the same reason as the walked map below.
+    const newestFlat = Object.keys(flatByDate ?? {}).sort().pop();
+    const flatSample = newestFlat ? flatByDate?.[newestFlat] : undefined;
     if (flatSample) {
       const parsed = JSON.parse(await decrypt(flatSample)) as Record<string, number>;
       if (account_id in (parsed ?? {})) return true;
@@ -173,13 +197,11 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
     const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
     // The NEWEST date, not an arbitrary one. Any date used to answer for all of
     // them, because backfill seeded every cash account before the walk and
-    // rewrote the layer wholesale. Two things broke that: points older than the
-    // newest run's window are retained and carry whatever account set was
-    // linked back then, and the newest run's own oldest points can be
-    // investment-only, where the walk reaches past the cash horizon (see
-    // reconstruct in lib/backfill.ts). Both make an arbitrary sample
-    // under-report a cash account -- harmless in itself, since it only forces a
-    // recompute that wasn't needed, but it forces one on nearly every hide.
+    // rewrote the layer wholesale. Retention broke that: points older than the
+    // newest run's window are kept and carry whatever account set was linked
+    // back then, so an arbitrary sample can under-report a cash account --
+    // harmless in itself, since it only forces a recompute that wasn't needed,
+    // but it forces one on hides that didn't need it.
     //
     // The newest date is written by the newest run and holds every account it
     // walked, which is what the caller is asking about: it hides a currently
@@ -247,49 +269,17 @@ export async function replaceEstimatedAccounts(
 }
 
 /**
- * Add per-account balances to the estimated layer for dates the run speaks for
- * only PARTLY, leaving every other account on those dates alone.
+ * Replaces the per-account extension layer (ACCOUNTS_EST_EXT_HASH): the span an
+ * investment account's own flows reach past the cash horizon.
  *
- * Backfill walks an investment account past the oldest cash transaction, where
- * its own flows still have data (see reconstruct in lib/backfill.ts). Those
- * dates can't go through replaceEstimatedAccounts: that deletes the whole range
- * from its oldest point forward, which would take out an older run's points --
- * the very retention replaceRange exists to protect -- and its hset would
- * replace a full map with an investment-only one either way. Both losses land
- * on the hidden-account subtraction, which reads these maps to remove an
- * account from past totals.
- *
- * So each date is merged rather than replaced: this run's balances win for the
- * accounts it names, and anything it doesn't name keeps whatever was there.
- * An unreadable stored map is overwritten -- it can't be merged with, and the
- * new partial map is worth more than a blob nothing can decrypt.
+ * Range-scoped like every other layer, so a run that reaches less far back than
+ * an earlier one leaves that earlier era's points alone rather than truncating
+ * the chart.
  */
-export async function mergeEstimatedAccounts(
+export async function replaceEstimatedExtension(
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
-  if (points.length === 0) return;
-  let existing: Record<string, string> | null = null;
-  try {
-    existing = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
-  } catch {
-    // Couldn't read: write the new balances on their own rather than skipping
-    // the dates entirely. Same trade replaceRange makes on the same failure.
-  }
-  const fields: Record<string, string> = {};
-  for (const p of points) {
-    let merged = p.balances;
-    const blob = existing?.[p.date];
-    if (blob) {
-      try {
-        const prior = JSON.parse(await decrypt(blob)) as Record<string, number>;
-        merged = { ...prior, ...p.balances };
-      } catch {
-        // fall through with the new balances alone
-      }
-    }
-    fields[p.date] = await encrypt(JSON.stringify(merged));
-  }
-  await redis().hset(ACCOUNTS_EST_HASH, fields);
+  await replaceRange(ACCOUNTS_EST_EXT_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
 }
 
 /**
@@ -370,31 +360,58 @@ export async function getRealSnapshotDates(): Promise<Set<string>> {
   }
 }
 
-/** Balance history for one account, merged like getHistory (real wins). */
+/**
+ * Balance history for one account, merged like getHistory (real wins) with the
+ * extension layer between the two.
+ *
+ * Resolved PER ACCOUNT, not per date. The three layers answer for different
+ * account sets on the same date: the extension names only the investment
+ * accounts walked past the cash horizon, so picking a whole map per date would
+ * drop a cash account's retained point on any date the extension also covers.
+ * Asking each layer for this one account in turn keeps every layer's coverage.
+ *
+ * Extension over estimated, because where both have a date the extension is the
+ * newer run: the estimated layer keeps points from an era whose walk reached
+ * further back, and mixing two walks inside one line is what the precedence is
+ * here to avoid.
+ */
 export async function getAccountHistory(account_id: string): Promise<HistoryPoint[]> {
-  const [realMap, estMap] = await Promise.all([
+  const [realMap, estMap, extMap] = await Promise.all([
     redis().hgetall<Record<string, string>>(ACCOUNTS_HASH),
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH),
   ]);
 
-  const entries: { date: string; blob: string; estimated: boolean }[] = [];
-  for (const [date, blob] of Object.entries(realMap ?? {})) {
-    entries.push({ date, blob, estimated: false });
-  }
-  for (const [date, blob] of Object.entries(estMap ?? {})) {
-    if (!realMap?.[date]) entries.push({ date, blob, estimated: true });
+  /** This account's balance in one encrypted per-account map, or null when the
+   *  map is unreadable or doesn't name it. */
+  async function balanceIn(blob: string | undefined): Promise<number | null> {
+    if (!blob) return null;
+    try {
+      const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      const value = balances[account_id];
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    } catch {
+      return null;
+    }
   }
 
+  const dates = new Set([
+    ...Object.keys(realMap ?? {}),
+    ...Object.keys(estMap ?? {}),
+    ...Object.keys(extMap ?? {}),
+  ]);
+
   const points = await Promise.all(
-    entries.map(async ({ date, blob, estimated }): Promise<HistoryPoint | null> => {
-      try {
-        const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
-        const value = balances[account_id];
-        if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-        return { date, value, ...(estimated ? { estimated: true } : {}) };
-      } catch {
-        return null;
+    [...dates].map(async (date): Promise<HistoryPoint | null> => {
+      if (realMap?.[date]) {
+        const real = await balanceIn(realMap[date]);
+        // A real map that doesn't name the account is an answer, not a gap: the
+        // account wasn't there that day. Falling through to an estimate would
+        // put a reconstructed figure on a date that was actually measured.
+        return real === null ? null : { date, value: real };
       }
+      const value = (await balanceIn(extMap?.[date])) ?? (await balanceIn(estMap?.[date]));
+      return value === null ? null : { date, value, estimated: true };
     })
   );
   return points

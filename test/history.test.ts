@@ -12,7 +12,7 @@ const {
   recordSnapshot,
   replaceEstimated,
   replaceEstimatedAccounts,
-  mergeEstimatedAccounts,
+  replaceEstimatedExtension,
   replaceEstimatedFlat,
   getHistory,
   getAccountHistory,
@@ -255,35 +255,67 @@ describe('getAccountHistory', () => {
   });
 });
 
-describe('mergeEstimatedAccounts', () => {
+describe('the extension layer', () => {
   // Backfill walks an investment account past the oldest cash transaction,
-  // where its own flows still have data. Those dates go through the merge
-  // instead of the replace, because the run speaks only for that account
-  // there -- replacing would delete an older run's retained points and
-  // overwrite the cash balances on any that survived.
-  test('adds accounts to a date without disturbing the others', async () => {
-    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400, k401: 100 } }]);
-    await mergeEstimatedAccounts([{ date: '2026-01-01', balances: { k401: 250 } }]);
+  // where its own flows still have data. Those dates go to their own layer:
+  // ACCOUNTS_EST is the account-by-account breakdown of each estimated TOTAL,
+  // and these dates are older than the newest run's totals -- which is exactly
+  // where an earlier run's totals are retained.
+  test('extends an account series past where the totals stop', async () => {
+    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400, ira: 60_000 } }]);
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }]);
 
-    expect(valuesByDate(await getAccountHistory('cash'))['2026-01-01']).toBe(400);
-    expect(valuesByDate(await getAccountHistory('k401'))['2026-01-01']).toBe(250);
+    const series = valuesByDate(await getAccountHistory('ira'));
+    expect(series['2025-11-01']).toBe(0);
+    expect(series['2026-01-01']).toBe(60_000);
+    expect((await getAccountHistory('ira')).every((p) => p.estimated)).toBe(true);
   });
 
-  test('covers a date the layer had nothing for', async () => {
-    await mergeEstimatedAccounts([{ date: '2025-06-01', balances: { k401: 250 } }]);
-    expect(valuesByDate(await getAccountHistory('k401'))['2025-06-01']).toBe(250);
+  // The regression this split exists for: the extension used to be merged into
+  // ACCOUNTS_EST, which rewrote the per-account breakdown of totals a previous
+  // run had left behind. Hiding the account then subtracted this run's balance
+  // from that run's total.
+  test('never changes what a retained total is subtracted by', async () => {
+    // An earlier era: a total, its breakdown, and its flat record.
+    await writeEra(['2025-11-01'], 100_000, { cash: 1000, ira: 30_000 }, {});
+    // A newer run whose walk reaches that far back only for the investments.
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }]);
+
+    const byDate = valuesByDate(await getHistory(hide(['ira', 'investment'])));
+    expect(byDate['2025-11-01']).toBe(70_000); // the era's own 30k, not the new 0
   });
 
-  test('deletes nothing, however far back it reaches', async () => {
-    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400 } }]);
-    await mergeEstimatedAccounts([{ date: '2025-06-01', balances: { k401: 250 } }]);
-    expect(await getAccountHistory('cash')).toHaveLength(1);
+  // Per account, not per date: the extension names only the investment
+  // accounts it walked, so a whole-map preference would drop a cash account's
+  // retained point on every date the extension also covers.
+  test('leaves accounts it does not name to the other layers', async () => {
+    await replaceEstimatedAccounts([{ date: '2025-11-01', balances: { cash: 1000, ira: 30_000 } }]);
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }]);
+
+    expect(valuesByDate(await getAccountHistory('cash'))['2025-11-01']).toBe(1000);
+    expect(valuesByDate(await getAccountHistory('ira'))['2025-11-01']).toBe(0);
   });
 
-  test('an empty merge does not touch Redis at all', async () => {
-    fake.ops = 0;
-    await mergeEstimatedAccounts([]);
-    expect(fake.ops).toBe(0);
+  test('a real snapshot still wins over both', async () => {
+    await recordSnapshot(0, { ira: 999 });
+    const today = new Date().toISOString().slice(0, 10);
+    await replaceEstimatedExtension([{ date: today, balances: { ira: 0 } }]);
+
+    const points = await getAccountHistory('ira');
+    expect(valuesByDate(points)[today]).toBe(999);
+    expect(points[0].estimated).toBeUndefined();
+  });
+
+  test('is range-scoped like every other layer', async () => {
+    await replaceEstimatedExtension([
+      { date: '2025-06-01', balances: { ira: 1 } },
+      { date: '2025-11-01', balances: { ira: 2 } },
+    ]);
+    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 3 } }]);
+
+    const series = valuesByDate(await getAccountHistory('ira'));
+    expect(series['2025-06-01']).toBe(1); // orphan retained
+    expect(series['2025-11-01']).toBe(3);
   });
 });
 

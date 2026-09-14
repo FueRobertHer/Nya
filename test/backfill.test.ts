@@ -189,6 +189,51 @@ describe('horizons', () => {
     expect(accountPoints.every((p) => 'cash' in p.balances)).toBe(true);
   });
 
+  // A cash account that saw no activity all year leaves the route with no cash
+  // horizon at all, and it passes today as one. Nothing can be said about the
+  // total then -- every cash balance would be frozen -- but the investment
+  // accounts still have flows, and their own series is the whole point.
+  test('a cash horizon of today yields investment points and no totals', () => {
+    const { accountPoints, totalPoints } = walk({
+      balances: { cash: 1000, ira: 60_000 },
+      walkType: { cash: 'depository', ira: 'investment' },
+      dailyByAccount: { '2026-05-02': { ira: -20_000 } },
+      oldestTxn: '2026-09-14', // today
+      oldestInvTxn: '2026-03-01',
+    });
+    expect(totalPoints).toEqual([]);
+    expect(accountPoints.every((p) => Object.keys(p.balances).join() === 'ira')).toBe(true);
+    expect(byDate(accountPoints)['2026-05-01'].ira).toBe(40_000);
+  });
+
+  test('an investment horizon equal to the cash one extends nothing', () => {
+    const { accountPoints, totalPoints } = walk({
+      balances: { cash: 1000, ira: 60_000 },
+      walkType: { cash: 'depository', ira: 'investment' },
+      oldestTxn: '2026-06-01',
+      oldestInvTxn: '2026-06-01',
+    });
+    expect(accountPoints).toHaveLength(totalPoints.length);
+    expect(accountPoints[accountPoints.length - 1].date).toBe('2026-06-01');
+  });
+
+  // The two fixes meeting: an arrival older than the cash window, in an account
+  // that can't absorb it. The extended span is where it shows at all.
+  test('an arrival past the cash horizon is floored there and still drawn', () => {
+    const { accountPoints, floored } = walk({
+      balances: { cash: 1000, ira: 58_000 },
+      walkType: { cash: 'depository', ira: 'investment' },
+      dailyByAccount: { '2026-04-01': { ira: -60_000 } },
+      oldestTxn: '2026-08-01',
+      oldestInvTxn: '2026-03-01',
+    });
+    const dates = byDate(accountPoints);
+    expect(floored).toEqual(['ira']);
+    expect(dates['2026-04-01'].ira).toBe(58_000);
+    expect(dates['2026-03-31'].ira).toBe(0);
+    expect(dates['2026-03-01'].ira).toBe(0);
+  });
+
   test('the walk never reaches past the lookback window', () => {
     const { accountPoints } = walk({
       balances: { cash: 1000 },

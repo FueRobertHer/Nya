@@ -71,6 +71,13 @@ export type WalkResult = {
  * never states a balance known to be impossible. Once floored an account takes
  * no earlier flows: every reconstruction further back rests on a premise the
  * data has already contradicted.
+ *
+ * The NET-WORTH line moves with it, deliberately. A floored account contributes
+ * zero to the walked total before its floor date instead of today's balance, so
+ * money arriving from an institution the user hasn't linked now shows as a step
+ * there too. That is what the walk already did for every arrival it trusted --
+ * the flat fallback was the inconsistency -- and where both legs are linked the
+ * sending account's matching drop cancels it out.
  */
 export function reconstruct(input: WalkInput): WalkResult {
   const { walkType, dailyByAccount, oldestTxn, lookbackDays } = input;

@@ -10,7 +10,7 @@ import { isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
 import {
   replaceEstimated,
   replaceEstimatedAccounts,
-  mergeEstimatedAccounts,
+  replaceEstimatedExtension,
   replaceEstimatedFlat,
   getRealSnapshotDates,
   isBackfillDone,
@@ -93,7 +93,7 @@ export async function POST() {
         const hasInvestment = bal.data.accounts.some((a) => isInvestmentType(a.type));
         const inv = hasInvestment
           ? await fetchInvestmentTxns(access_token, isoDaysAgo(LOOKBACK_DAYS), isoDaysAgo(0))
-          : { txns: [], note: 'no investment accounts', truncated: false };
+          : { txns: [], note: 'no investment accounts', truncated: false, pending: false };
 
         return {
           accounts: bal.data.accounts,
@@ -111,6 +111,12 @@ export async function POST() {
           // left edge with flows silently absent and publish a curve that looks
           // fine and isn't.
           invCovered: hasInvestment && !inv.note && !inv.truncated,
+          // The one investment failure that fixes itself: Plaid is extracting
+          // right now (the async_update fetchInvestmentTxns asks for is what
+          // started it) and the same call works a minute later. Kept separate
+          // from `note` so it can leave the done-flag unset below without
+          // aborting the run.
+          invPending: hasInvestment && inv.pending,
         };
       })
     );
@@ -128,6 +134,15 @@ export async function POST() {
     const dailyByAccount: Record<string, Record<string, number>> = {}; // date -> account -> txn sum
     let oldestTxn: string | null = null;
     let oldestInvTxn: string | null = null;
+
+    // Whether any Item's investment data was still importing. The reconstruction
+    // below is still worth persisting -- the cash history in it is complete --
+    // but it must not be marked done: those accounts are held flat only because
+    // the data hadn't arrived, and the done-flag would freeze that in place
+    // with nothing to retry it. This is how a rollover ends up in the activity
+    // list (fetched live, later, when the product is ready) and missing from
+    // the chart. Left unset, the client's next load recomputes.
+    const invPending = perItem.some((p) => p.invPending);
 
     for (const { accounts, txns, invTxns, invCovered } of perItem) {
       for (const a of accounts) {
@@ -200,7 +215,7 @@ export async function POST() {
     }
 
     if (!oldestTxn) {
-      await markBackfillDone();
+      if (!invPending) await markBackfillDone();
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
       await clearCaches();
@@ -258,19 +273,20 @@ export async function POST() {
     const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
 
     await replaceEstimated(estimatedTotals);
-    // Two writes, because the run speaks for these dates differently. Within
-    // the cash horizon it walked every account, so it replaces the range. Past
-    // it only the investment accounts were walked, so those dates are merged:
-    // replacing them would delete an older run's retained points and overwrite
-    // the cash balances on any that survived.
+    // Two layers, because the run speaks for these dates differently. Within
+    // the cash horizon every account was walked and each date is the breakdown
+    // of that date's estimated total, which is what the hidden-account
+    // subtraction reads it as. Past the horizon only the investment accounts
+    // were walked and there is no total at all, so those dates go to the
+    // extension layer -- which feeds the per-account chart and nothing else.
     await replaceEstimatedAccounts(estimatedAccounts.filter((p) => p.date >= oldestTxn));
-    await mergeEstimatedAccounts(estimatedAccounts.filter((p) => p.date < oldestTxn));
+    await replaceEstimatedExtension(estimatedAccounts.filter((p) => p.date < oldestTxn));
     // One map per date, over exactly the dates this run wrote. The balances are
     // identical across them -- what varies is which run a date belongs to, and
     // that's the whole point: a date retained from an earlier run keeps that
     // run's flat balances rather than being reinterpreted with these.
     await replaceEstimatedFlat(estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
-    await markBackfillDone();
+    if (!invPending) await markBackfillDone();
     await clearCaches(); // cached payloads don't include the new history yet
 
     return NextResponse.json({
@@ -281,6 +297,9 @@ export async function POST() {
       // high run after run means the flow data is systematically incomplete,
       // which is worth knowing.
       floored: floored.length,
+      // Still importing somewhere, so this run is not the final word and the
+      // done-flag was left unset. The client re-POSTs on its next load.
+      investments_pending: invPending,
     });
   } catch (err: any) {
     console.error(err?.response?.data || err);
