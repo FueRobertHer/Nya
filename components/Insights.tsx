@@ -9,6 +9,21 @@ import { type Txn } from './MonthBreakdown';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 
+/**
+ * An investment account with more cash sitting in it than looks deliberate,
+ * already filtered to the flagged ones by lib/cash.ts. Optional on the props
+ * below: the Home tab is also rendered from a localStorage payload written
+ * before holdings carried their security fields, and there the list is simply
+ * empty rather than wrong.
+ */
+export type IdleCashAccount = {
+  name: string;
+  cash: number;
+  /** Fraction of the account's holdings sitting in cash, 0..1. */
+  share: number;
+  currency: string | null;
+};
+
 export type InsightAccount = {
   name: string;
   type: string;
@@ -30,16 +45,21 @@ function isTransfer(t: Txn): boolean {
   return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
 }
 
-type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' };
+// 'warn' is the amber the Accounts tab uses for idle cash: worth doing
+// something about, but nothing has gone wrong, which is what separates it from
+// the red 'down' of an overdue payment.
+type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' | 'warn' };
 
 export default function Insights({
   txns,
   budgets,
   accounts,
+  idleCash = [],
 }: {
   txns: Txn[] | null;
   budgets: Record<string, number>;
   accounts: InsightAccount[];
+  idleCash?: IdleCashAccount[];
 }) {
   const insights = useMemo<Insight[]>(() => {
     const out: Insight[] = [];
@@ -139,6 +159,18 @@ export default function Insights({
     dueSoon.sort((x, y) => x.days - y.days);
     out.push(...[...overdue, ...dueSoon.map((d) => d.insight)].slice(0, 2));
 
+    // Uninvested cash in a brokerage: a contribution that was never placed, or
+    // a settlement fund quietly filling up. Largest first, max 2 -- someone
+    // with five brokerages doesn't need five lines to get the message, and the
+    // Accounts tab carries the per-account detail.
+    for (const a of idleCash.slice(0, 2)) {
+      out.push({
+        key: `idle-cash-${a.name}`,
+        text: `${a.name}: ${formatMoney(a.cash, a.currency)} uninvested · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of the account is sitting in cash`,
+        tone: 'warn',
+      });
+    }
+
     // Recurring bills expected within a week (soonest first, max 2,
     // deduped by name -- the same bill on two linked accounts is one bill).
     if (txns) {
@@ -207,7 +239,7 @@ export default function Insights({
     }
 
     return out.slice(0, MAX_INSIGHTS);
-  }, [txns, budgets, accounts]);
+  }, [txns, budgets, accounts, idleCash]);
 
   if (insights.length === 0) return null;
 

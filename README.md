@@ -10,11 +10,15 @@ Four tabs (bottom navigation, mobile-first):
 
 - **Home** — net worth with a 30-day delta and an over-time chart (daily
   snapshots + estimated backfill, scrubbable), plus insights and alerts:
-  over/approaching budget, low balance, upcoming recurring bills, spending
-  pace vs last month, biggest purchase.
+  over/approaching budget, low balance, uninvested cash sitting in a brokerage,
+  upcoming recurring bills, spending pace vs last month, biggest purchase.
 - **Accounts** — per-institution balance sheet; tap any account for its own
-  balance history chart; holdings show gain/loss vs cost basis. Credit cards and
-  loans carry their real terms — APR, minimum payment, and next due date, with
+  balance history chart; holdings show gain/loss vs cost basis. Money that is
+  not actually invested (a settlement fund like Vanguard's VMFXX, a sweep
+  account, a plain cash line) is marked on the holding, totalled on the
+  Holdings header, and flagged in amber under the account row once it is large
+  enough to be worth placing rather than ordinary settlement float.
+  Credit cards and loans carry their real terms — APR, minimum payment, and next due date, with
   statement balance, last payment, escrow and payoff date in the expanded row
   (see "Payment details" below). Investment accounts expand to show the last
   year of activity (buys, sells, dividends, fees) and how much has been

@@ -13,6 +13,9 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
 import { isOwedType, signedContribution } from '@/lib/balance';
+// Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
+// between the server payload and this component.
+import { cashByAccount, isCashHolding, summarizeCash } from '@/lib/cash';
 
 type Account = {
   account_id: string;
@@ -57,6 +60,13 @@ type Holding = {
   quantity: number | null;
   value: number | null;
   cost_basis: number | null;
+  // Plaid security fields, read by lib/cash.ts to tell an invested position
+  // from money parked in cash. All optional: a payload cached in localStorage
+  // before this shipped carries none of them, which reads as "not cash" and
+  // renders exactly as it did before.
+  ticker?: string | null;
+  security_type?: string | null;
+  is_cash_equivalent?: boolean | null;
 };
 
 type Institution = {
@@ -870,6 +880,31 @@ export default function Dashboard() {
     [institutions, manageMode]
   );
 
+  // Investment accounts carrying enough uninvested cash to be worth a line on
+  // the Home tab. Built from `institutions` rather than `sortedInstitutions`
+  // because that list is also filtered by manage mode, and an insight has no
+  // business appearing and disappearing with a UI toggle on another tab.
+  // Hidden accounts are dropped here for the same reason they're dropped from
+  // every total: the user has said they don't want to see them.
+  const idleCashAccounts = useMemo(() => {
+    const out: { name: string; cash: number; share: number; currency: string | null }[] = [];
+    for (const inst of institutions) {
+      const hiddenIds = new Set(
+        inst.accounts.filter((a) => a.hidden).map((a) => a.account_id)
+      );
+      const byAcct = cashByAccount(
+        inst.holdings.filter((h) => !h.account_id || !hiddenIds.has(h.account_id))
+      );
+      for (const a of inst.accounts) {
+        if (a.hidden) continue;
+        const cash = byAcct[a.account_id];
+        if (!cash?.flagged) continue;
+        out.push({ name: a.name, cash: cash.cash, share: cash.share, currency: a.currency });
+      }
+    }
+    return out.sort((x, y) => y.cash - x.cash);
+  }, [institutions]);
+
   // Hidden accounts for the Hidden card, built from the STORED set rather than
   // from whatever resolved this load. An institution that's erroring returns no
   // accounts, and deriving from the live list alone would make its hidden
@@ -1104,6 +1139,7 @@ export default function Dashboard() {
                 <Insights
                   txns={txns}
                   budgets={budgets}
+                  idleCash={idleCashAccounts}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
@@ -1144,6 +1180,11 @@ export default function Dashboard() {
                 </div>
 
                 {sortedInstitutions.map((inst) => {
+                  // Idle cash, per account for the row badge and across the
+                  // whole item for the Holdings header. Built from the filtered
+                  // list, so a hidden brokerage takes its cash with it.
+                  const instCash = summarizeCash(inst.holdings);
+                  const cashByAcct = cashByAccount(inst.holdings);
                   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
                   const instCurrency = dominantCurrency(
                     inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
@@ -1191,6 +1232,7 @@ export default function Dashboard() {
                                   ? Math.max(a.balance, 0) / a.limit
                                   : null;
                               const liabLine = liabilitySummary(a);
+                              const cash = cashByAcct[a.account_id];
                               return (
                                 <Fragment key={a.account_id}>
                                 <tr
@@ -1233,6 +1275,24 @@ export default function Dashboard() {
                                       >
                                         {a.liability?.is_overdue ? 'Overdue · ' : ''}
                                         {liabLine}
+                                      </div>
+                                    )}
+                                    {/* Money sitting in the settlement fund
+                                        rather than invested. Always shown when
+                                        there is any, because a small cash line
+                                        is information; the amber treatment is
+                                        reserved for an amount worth acting on
+                                        (lib/cash.ts), so the colour keeps
+                                        meaning something. */}
+                                    {cash && cash.cash > 0 && (
+                                      <div className={`cash-tag${cash.flagged ? ' idle' : ''}`}>
+                                        {cash.flagged && (
+                                          <span className="cash-dot" aria-hidden="true" />
+                                        )}
+                                        {fmt(cash.cash, a.currency)}
+                                        {cash.flagged ? ' uninvested' : ' in cash'}
+                                        {cash.total > 0 &&
+                                          ` · ${(cash.share * 100).toFixed(cash.share >= 0.1 ? 0 : 1)}% of this account`}
                                       </div>
                                     )}
                                   </td>
@@ -1337,6 +1397,11 @@ export default function Dashboard() {
                               <span className="holdings-count">{inst.holdings.length}</span>
                             </span>
                             <span className="holdings-summary">
+                              {instCash.cash > 0 && (
+                                <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
+                                  {fmt(instCash.cash)} cash
+                                </span>
+                              )}
                               {fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0))}
                               <svg
                                 className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
@@ -1362,13 +1427,23 @@ export default function Dashboard() {
                               </tr>
                             </thead>
                             <tbody>
-                              {inst.holdings.map((h, i) => (
+                              {inst.holdings.map((h, i) => {
+                                const isCash = isCashHolding(h);
+                                return (
                                 <tr key={i}>
-                                  <td>{h.name}</td>
+                                  <td>
+                                    {h.name}
+                                    {isCash && <span className="cash-chip idle">Cash</span>}
+                                  </td>
                                   <td className="num">{h.quantity?.toFixed(3) ?? '--'}</td>
                                   <td className="num">
                                     {fmt(h.value)}
-                                    {h.value != null && h.cost_basis != null && (
+                                    {/* No gain/loss on a cash line: a money
+                                        market fund holds its $1 NAV, so the
+                                        figure is a permanent "+$0.00 · 0.0%"
+                                        that says nothing and reads as a real
+                                        measurement of a flat investment. */}
+                                    {!isCash && h.value != null && h.cost_basis != null && (
                                       <div
                                         className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
                                       >
@@ -1377,7 +1452,8 @@ export default function Dashboard() {
                                     )}
                                   </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                           )}

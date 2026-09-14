@@ -692,6 +692,12 @@ button:disabled {
   color: var(--text);
 }
 
+/* Idle cash: worth acting on, but nothing has gone wrong -- amber rather than
+   the red an overdue payment gets. */
+.insight-warn {
+  color: var(--warn);
+}
+
 /* --- spending trend columns (Activity tab) --- */
 
 .trend-row {
@@ -990,6 +996,60 @@ button:disabled {
 .budget-select {
   margin-bottom: 0;
   appearance: none;
+}
+
+/* --- uninvested cash (Accounts tab) --- */
+
+/* The line under an investment account naming the part of it that is sitting
+   in cash. Muted while the amount looks like ordinary settlement float; amber
+   with a dot once lib/cash.ts calls it material, so the colour is a signal
+   rather than decoration. */
+.cash-tag {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.cash-tag.idle {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.cash-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+  vertical-align: middle;
+}
+
+/* Same signal at a glance on the Holdings header and on each cash row. */
+.cash-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid #2a2f3a;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.cash-chip.idle {
+  border-color: rgba(224, 168, 60, 0.45);
+  color: var(--warn);
+}
+
+/* In the Holdings summary the chip sits to the LEFT of the total, so its
+   margin belongs on the other side. */
+.holdings-summary .cash-chip {
+  margin-left: 0;
+  margin-right: 2px;
 }
 
 /* --- collapsible holdings (Accounts tab) --- */
