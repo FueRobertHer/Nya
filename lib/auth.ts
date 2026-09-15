@@ -75,6 +75,19 @@ export async function secretsMatch(candidate: string, expected: string): Promise
   return diff === 0;
 }
 
+/**
+ * Whether /api/login will mint a session without a password, for the one-click
+ * button on the login page.
+ *
+ * Vercel sets VERCEL_ENV per environment ('production' | 'preview' |
+ * 'development'), so a production deployment always refuses, and previews and
+ * local dev allow it. This keeps APP_PASSWORD on the server: the browser asks
+ * for a session rather than being handed the password to submit.
+ */
+export function previewLoginAllowed(): boolean {
+  return process.env.VERCEL_ENV !== 'production';
+}
+
 /** Compares against APP_PASSWORD via fixed-length hash comparison, so timing doesn't leak the real password's length. */
 export async function verifyPassword(candidate: string): Promise<boolean> {
   const expected = process.env.APP_PASSWORD;

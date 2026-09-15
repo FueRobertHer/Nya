@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { createSessionToken, verifyPassword, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@/lib/auth';
+import {
+  createSessionToken,
+  verifyPassword,
+  previewLoginAllowed,
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
+} from '@/lib/auth';
 import { redis, k } from '@/lib/storage';
 
 // Brute-force protection: at most MAX_FAILURES wrong passwords per IP per
@@ -30,8 +36,16 @@ export async function POST(req: Request) {
       // Redis unavailable: skip the limiter rather than lock the user out.
     }
 
-    const { password } = await req.json();
-    if (!password || !(await verifyPassword(password))) {
+    const { password, previewLogin } = await req.json();
+
+    // One-click login for preview deployments. The browser asks for a session
+    // instead of being handed APP_PASSWORD, so the password is never shipped to
+    // the client. Refused on production, where previewLoginAllowed() is false.
+    if (previewLogin === true) {
+      if (!previewLoginAllowed()) {
+        return NextResponse.json({ error: 'Not available' }, { status: 403 });
+      }
+    } else if (!password || !(await verifyPassword(password))) {
       try {
         const failures = await redis().incr(key);
         if (failures === 1) await redis().expire(key, WINDOW_SECONDS);
