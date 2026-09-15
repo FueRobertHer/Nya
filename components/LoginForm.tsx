@@ -57,7 +57,7 @@ export default function LoginForm({ previewLogin = false }: { previewLogin?: boo
           onClick={() => void submit({ previewLogin: true })}
           disabled={loading}
         >
-          Log in without the password
+          Use preview account
         </button>
       )}
       {error && <div className="error">{error}</div>}
