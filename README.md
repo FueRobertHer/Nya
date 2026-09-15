@@ -345,21 +345,20 @@ Vercel gives you a free HTTPS domain automatically — no separate hosting step 
 
 ### Preview deployments
 
-Every branch you push gets its own permanent HTTPS URL, so you can look at a
-change running for real before it reaches production:
+Every branch you push gets a stable URL, `https://nya-git-<branch>-<team-slug>.vercel.app`,
+which repoints to that branch's newest deployment on every push (slashes in a
+branch name become dashes). Each individual build also keeps an immutable
+`https://nya-<hash>-<team-slug>.vercel.app` that never moves, which is what to
+send someone when you mean one exact version.
 
-```
-https://nya-git-<branch>-<team-slug>.vercel.app
-```
+This repo keeps a long-lived `preview` branch so that URL is predictable
+instead of changing with every feature branch:
 
-That hostname is stable for as long as the branch exists, and repoints to the
-newest deployment on every push. Slashes in a branch name become dashes.
+**<https://nya-git-preview-fueroberthers-projects.vercel.app/?_vercel_share=hsOPuA6Qvofd4jxnrQVjuqXhPVkNqykh>**
 
-This repo keeps a long-lived `preview` branch for exactly that, so the URL is
-predictable instead of changing with every feature branch. Whatever is merged
-into it is live at:
-
-**<https://nya-git-preview-fueroberthers-projects.vercel.app>**
+The `?_vercel_share=` token carries visitors through Deployment Protection
+without a Vercel account. It is a credential, so rotate it under
+**Settings → Deployment Protection** if the link travels further than intended.
 
 Merge work into the branch to see it there:
 
@@ -369,46 +368,49 @@ git merge your-feature-branch
 git push
 ```
 
-Treat it as a throwaway integration branch, never a merge source: real work
-still reaches `main` by pull request. If it ever tangles, reset it with
-`git reset --hard origin/main && git push --force-with-lease`.
+Treat `preview` as a throwaway integration target, never a merge source: real
+work reaches `main` by pull request. If it tangles,
+`git reset --hard origin/main && git push --force-with-lease` starts it over,
+at the cost of the login button described below.
 
-**Preview needs its own environment variables.** Everything from step 2 is
-scoped per environment, and a preview deployment with none of them set builds
-fine and then fails at runtime. Under **Settings → Environment Variables**,
-add the same list again with the **Preview** box ticked. Use a distinct
-`APP_PASSWORD` and `SESSION_SECRET`, and keep `PLAID_ENV` on `sandbox`.
+#### What preview runs against
 
-`PLAID_ENCRYPTION_KEY` is the one that needs thought. It has to match whatever
-encrypted the tokens that deployment reads (`lib/crypto.ts`), and the Upstash
-integration adds its connection variables to every environment by default, so
-preview points at the production database unless you say otherwise. That
-leaves two options:
+Preview is a public demo, so nothing about it is shared with production:
 
-- **Share production's data.** Copy production's `PLAID_ENCRYPTION_KEY` value
-  across verbatim. Simplest, but anything you do on a preview writes to your
-  real accounts.
-- **Isolate it.** Create a second Upstash database and connect it to
-  **Preview** only, then give preview a freshly generated key. Preview starts
-  empty and you re-link accounts against Plaid sandbox.
+- **Its own Upstash database**, connected to **Preview** only (Storage → Create
+  Database, then pick the Preview scope). The integration attaches its
+  connection variables to every environment by default, so this has to be set
+  deliberately, otherwise preview reads production's data.
+- **Its own `APP_PASSWORD`, `SESSION_SECRET` and `PLAID_ENCRYPTION_KEY`**, added
+  under Settings → Environment Variables with the **Preview** box ticked. The
+  encryption key must match whatever encrypted the tokens in the database it
+  reads (`lib/crypto.ts`), so a fresh database takes a fresh key.
+- **`PLAID_ENV=sandbox`**, so linked accounts are Plaid's fake ones.
 
-A few other things worth knowing:
+Nothing here is inherited from production. A preview with no variables set
+builds fine and then fails at runtime.
 
-- Preview URLs sit behind Vercel Authentication by default, so only team
-  members can open them. Turn that off under **Settings → Deployment
-  Protection** if you want a shareable link.
-- The `/api/snapshot` cron in `vercel.json` only runs on production
-  deployments. To exercise it on a preview, call the route by hand with
-  `CRON_SECRET` as a bearer token.
-- Deploys fire on a push of a *new commit*. A branch pointing at a commit
-  that has already been deployed will not rebuild; use **Redeploy** in the
-  dashboard to force one.
-- Each individual build also gets an immutable URL of its own, of the form
-  `https://nya-<hash>-<team-slug>.vercel.app`. That one is pinned to a single
-  build and never moves, which makes it useful for pointing someone at an
-  exact version, and a poor thing to bookmark.
+#### The preview login button
+
+The `preview` branch carries a **Use preview account** button on the login page
+that signs visitors in without a password. It posts `previewLogin` to
+`/api/login`, which mints a session only when `VERCEL_ENV` is not `production`.
+A production deployment refuses with a 403 and never renders the button.
+
+That commit lives on `preview` only and is deliberately not merged to `main`.
+It is what makes the demo openable by anyone holding the link, so it is only
+safe while the point above holds and preview has its own database.
+
+#### Gotchas
+
+- Deploys fire on a push of a *new commit*. A branch pointing at a commit that
+  has already been deployed will not rebuild; use **Redeploy** in the dashboard
+  to force one.
 - If no preview builds at all, check **Settings → Git → Deployment Branches**.
   It has to be "All Branches", or a pattern that matches the branch.
+- The `/api/snapshot` cron in `vercel.json` only runs on production
+  deployments. Call the route by hand with `CRON_SECRET` as a bearer token to
+  exercise it on a preview.
 - If you use Plaid's OAuth bank logins, add the preview URL to the allowed
   redirect URIs alongside the production one.
 
