@@ -6,6 +6,11 @@ A Next.js + React app that connects to your financial accounts — banks
 (Ally, Chase), brokerages (Vanguard), credit cards, etc. — via
 Plaid. Runs on Bun, deploys to Vercel, installs on your phone as a PWA.
 
+**[Try the live demo](https://nya-git-preview-fueroberthers-projects.vercel.app/?_vercel_share=hsOPuA6Qvofd4jxnrQVjuqXhPVkNqykh)** and press **Use preview account** on the
+login screen. It runs against Plaid's sandbox on its own database, so every
+account and balance you see there is fake. See
+[Preview deployments](#preview-deployments) for how it is wired.
+
 Four tabs (bottom navigation, mobile-first):
 
 - **Home** — net worth with a 30-day delta and an over-time chart (daily
@@ -342,6 +347,84 @@ vercel deploy --prod
 Vercel gives you a free HTTPS domain automatically — no separate hosting step needed.
 
 **One Plaid-specific step:** in the [Plaid Dashboard](https://dashboard.plaid.com), under Team Settings → API, add your deployed URL to the allowed redirect URIs (some bank logins use OAuth screens that redirect back to a registered domain).
+
+### Preview deployments
+
+Every branch you push gets a stable URL, `https://nya-git-<branch>-<team-slug>.vercel.app`,
+which repoints to that branch's newest deployment on every push (slashes in a
+branch name become dashes). Each individual build also keeps an immutable
+`https://nya-<hash>-<team-slug>.vercel.app` that never moves, which is what to
+send someone when you mean one exact version.
+
+This repo keeps a long-lived `preview` branch so that URL is predictable
+instead of changing with every feature branch:
+
+**<https://nya-git-preview-fueroberthers-projects.vercel.app/?_vercel_share=hsOPuA6Qvofd4jxnrQVjuqXhPVkNqykh>**
+
+The `?_vercel_share=` token carries visitors through Deployment Protection
+without a Vercel account. It is a credential, so rotate it under
+**Settings → Deployment Protection** if the link travels further than intended.
+
+Anything on `main` lands there on its own:
+[`.github/workflows/sync-preview.yml`](.github/workflows/sync-preview.yml)
+merges `main` into `preview` on every push to `main`, which also triggers the
+deployment. It merges rather than resets, so the preview-only commits below
+survive, and on a conflict it aborts and fails the run, leaving `preview`
+untouched for you to resolve by hand.
+
+To see a branch that has *not* merged yet, merge it into `preview` yourself:
+
+```bash
+git checkout preview
+git merge your-feature-branch
+git push
+```
+
+Treat `preview` as a throwaway integration target, never a merge source: real
+work reaches `main` by pull request. If it tangles,
+`git reset --hard origin/main && git push --force-with-lease` starts it over,
+at the cost of the login button described below.
+
+#### What preview runs against
+
+Preview is a public demo, so nothing about it is shared with production:
+
+- **Its own Upstash database**, connected to **Preview** only (Storage → Create
+  Database, then pick the Preview scope). The integration attaches its
+  connection variables to every environment by default, so this has to be set
+  deliberately, otherwise preview reads production's data.
+- **Its own `APP_PASSWORD`, `SESSION_SECRET` and `PLAID_ENCRYPTION_KEY`**, added
+  under Settings → Environment Variables with the **Preview** box ticked. The
+  encryption key must match whatever encrypted the tokens in the database it
+  reads (`lib/crypto.ts`), so a fresh database takes a fresh key.
+- **`PLAID_ENV=sandbox`**, so linked accounts are Plaid's fake ones.
+
+Nothing here is inherited from production. A preview with no variables set
+builds fine and then fails at runtime.
+
+#### The preview login button
+
+The `preview` branch carries a **Use preview account** button on the login page
+that signs visitors in without a password. It posts `previewLogin` to
+`/api/login`, which mints a session only when `VERCEL_ENV` is not `production`.
+A production deployment refuses with a 403 and never renders the button.
+
+That commit lives on `preview` only and is deliberately not merged to `main`.
+It is what makes the demo openable by anyone holding the link, so it is only
+safe while the point above holds and preview has its own database.
+
+#### Gotchas
+
+- Deploys fire on a push of a *new commit*. A branch pointing at a commit that
+  has already been deployed will not rebuild; use **Redeploy** in the dashboard
+  to force one.
+- If no preview builds at all, check **Settings → Git → Deployment Branches**.
+  It has to be "All Branches", or a pattern that matches the branch.
+- The `/api/snapshot` cron in `vercel.json` only runs on production
+  deployments. Call the route by hand with `CRON_SECRET` as a bearer token to
+  exercise it on a preview.
+- If you use Plaid's OAuth bank logins, add the preview URL to the allowed
+  redirect URIs alongside the production one.
 
 ## 6. Install on your phone
 
