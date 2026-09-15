@@ -6,6 +6,11 @@ A Next.js + React app that connects to your financial accounts — banks
 (Ally, Chase), brokerages (Vanguard), credit cards, etc. — via
 Plaid. Runs on Bun, deploys to Vercel, installs on your phone as a PWA.
 
+**[Try the live demo](https://nya-git-preview-fueroberthers-projects.vercel.app/?_vercel_share=hsOPuA6Qvofd4jxnrQVjuqXhPVkNqykh)** and press **Use preview account** on the
+login screen. It runs against Plaid's sandbox on its own database, so every
+account and balance you see there is fake. See
+[Preview deployments](#preview-deployments) for how it is wired.
+
 Four tabs (bottom navigation, mobile-first):
 
 - **Home** — net worth with a 30-day delta and an over-time chart (daily
@@ -360,7 +365,14 @@ The `?_vercel_share=` token carries visitors through Deployment Protection
 without a Vercel account. It is a credential, so rotate it under
 **Settings → Deployment Protection** if the link travels further than intended.
 
-Merge work into the branch to see it there:
+Anything on `main` lands there on its own:
+[`.github/workflows/sync-preview.yml`](.github/workflows/sync-preview.yml)
+merges `main` into `preview` on every push to `main`, which also triggers the
+deployment. It merges rather than resets, so the preview-only commits below
+survive, and on a conflict it aborts and fails the run, leaving `preview`
+untouched for you to resolve by hand.
+
+To see a branch that has *not* merged yet, merge it into `preview` yourself:
 
 ```bash
 git checkout preview

@@ -1,0 +1,50 @@
+name: Sync preview with main
+
+# Keeps the long-lived `preview` branch current with `main`, so the demo at
+# nya-git-preview-*.vercel.app shows shipped work without anyone remembering to
+# merge. Pushing here also triggers the Vercel preview deployment.
+#
+# This merges main INTO preview and never the other way round: preview carries
+# commits that are deliberately not on main (the one-click login button), so a
+# merge is used rather than a reset, which would delete them.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One sync at a time. Queued rather than cancelled, so a run started by an
+# earlier push still lands before the next one merges on top of it.
+concurrency:
+  group: sync-preview
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: preview
+          fetch-depth: 0
+
+      - name: Merge main into preview
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "preview already contains main. Nothing to do."
+            exit 0
+          fi
+
+          if ! git merge --no-edit origin/main; then
+            git merge --abort
+            echo "::error::Merging main into preview hit a conflict, so preview was left untouched. Resolve it by hand: git checkout preview && git merge main"
+            exit 1
+          fi
+
+          git push
+          echo "preview updated to $(git rev-parse --short HEAD)."
