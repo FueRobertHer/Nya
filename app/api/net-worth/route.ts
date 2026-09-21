@@ -98,11 +98,12 @@ export async function GET(req: Request) {
     // awaited, not issued, is what the guarantee rests on, because a rejection
     // surfaces where it is awaited.)
     const clean = institutions.every((i) => !i.error);
-    // Read before the write so the chart labels the point with the same day the
-    // write targets. (Both derive it from the UTC date; a request straddling
-    // midnight could disagree by one day, which the next load corrects.)
-    const today = new Date().toISOString().slice(0, 10);
-    const recorded = clean && institutions.length > 0 && (await recordSnapshot(netWorth, balances));
+    // The date the point landed on, or null if it didn't. Taken from
+    // recordSnapshot rather than read from the clock again, so the point this
+    // route charts below is labelled with the day that was actually written
+    // even if the request straddles UTC midnight.
+    const snapshotDate =
+      clean && institutions.length > 0 ? await recordSnapshot(netWorth, balances) : null;
 
     // Capture how to render each account while its institution is answering, so
     // a later failure can still draw its card. Per institution, not gated on
@@ -135,7 +136,9 @@ export async function GET(req: Request) {
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
     const stored = await historyPromise;
-    const history = recorded ? withTodayPoint(stored, today, visibleNetWorth) : stored;
+    const history = snapshotDate
+      ? withTodayPoint(stored, snapshotDate, visibleNetWorth)
+      : stored;
 
     const payload: NetWorthPayload = {
       institutions,

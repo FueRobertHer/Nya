@@ -94,24 +94,47 @@ const BACKFILL_PENDING_TRIES = k('history:backfill-pending');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
-/** Returns whether the snapshot actually landed. Callers that report success
- *  to a caller of their own (e.g. /api/ingest/balance telling a script the
- *  chart was updated) need to know; the rest can ignore it. */
+/**
+ * Records today's total, and the per-account breakdown behind it.
+ *
+ * Returns THE DATE KEY IT WROTE, or null if nothing landed. Two callers need
+ * more than "it worked": /api/ingest/balance tells a script whether the chart
+ * was updated, and /api/net-worth charts today's point itself (see
+ * withTodayPoint) and must label it with the same day this wrote, not a second
+ * reading of the clock that could fall on the other side of UTC midnight.
+ *
+ * THE TWO WRITES FAIL INDEPENDENTLY, and only the first decides the answer.
+ * They were one try/catch returning a single boolean, which made a total that
+ * landed indistinguishable from one that didn't whenever the per-account write
+ * failed after it -- a state lib/history.ts already documents as reachable and
+ * getHistory already handles. A caller told "nothing was recorded" would hide a
+ * point that is genuinely in the chart's own layer. So: if the total lands the
+ * date comes back, and a failed breakdown costs only the breakdown.
+ */
 export async function recordSnapshot(
   netWorth: number,
   accountBalances?: Record<string, number>
-): Promise<boolean> {
+): Promise<string | null> {
+  const today = new Date().toISOString().slice(0, 10);
+
   try {
-    const today = new Date().toISOString().slice(0, 10);
     await redis().hset(HISTORY_HASH, { [today]: await encrypt(String(netWorth)) });
-    if (accountBalances && Object.keys(accountBalances).length > 0) {
-      await redis().hset(ACCOUNTS_HASH, { [today]: await encrypt(JSON.stringify(accountBalances)) });
-    }
-    return true;
   } catch {
     // Best-effort: a missed snapshot just leaves a gap in the chart.
-    return false;
+    return null;
   }
+
+  if (accountBalances && Object.keys(accountBalances).length > 0) {
+    try {
+      await redis().hset(ACCOUNTS_HASH, { [today]: await encrypt(JSON.stringify(accountBalances)) });
+    } catch {
+      // The total is in the chart either way. What's lost is the ability to
+      // subtract a hidden account from THIS date later, which getHistory
+      // already handles by dropping the point it can't correct.
+    }
+  }
+
+  return today;
 }
 
 /**

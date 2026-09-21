@@ -577,3 +577,54 @@ describe('withTodayPoint', () => {
     expect(stored).toEqual([p('2026-09-20', 20)]);
   });
 });
+
+// The two writes fail independently, and the return value is what /api/net-worth
+// uses to decide whether today's point exists. Conflating them hid a point that
+// was genuinely in the chart's own layer.
+describe('recordSnapshot return value', () => {
+  test('returns the date key it wrote', async () => {
+    fake.reset();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(await recordSnapshot(123, { cash: 123 })).toBe(today);
+  });
+
+  test('returns null when the total itself could not be written', async () => {
+    fake.reset();
+    const hset = fake.hset.bind(fake);
+    fake.hset = async () => {
+      throw new Error('upstash down');
+    };
+    try {
+      expect(await recordSnapshot(123, { cash: 123 })).toBeNull();
+    } finally {
+      fake.hset = hset;
+    }
+  });
+
+  // THE REGRESSION. A transient failure on the second write used to report the
+  // whole snapshot as missed, so the route suppressed today's point while the
+  // total sat in history:net-worth -- a chart ending yesterday under a hero
+  // showing today, cached for the next 15 minutes.
+  test('still returns the date when only the per-account map failed', async () => {
+    fake.reset();
+    const today = new Date().toISOString().slice(0, 10);
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    fake.hset = async (key: string, fields: Record<string, string>) => {
+      if (++calls === 2) throw new Error('upstash down');
+      return hset(key, fields);
+    };
+    try {
+      expect(await recordSnapshot(4242, { cash: 4242 })).toBe(today);
+    } finally {
+      fake.hset = hset;
+    }
+
+    // The total really is in the layer, which is what makes charting it honest.
+    expect(valuesByDate(await getHistory())[today]).toBe(4242);
+    // ...and the breakdown really is absent, so a hidden account can't be
+    // subtracted from this date later. getHistory drops it rather than showing
+    // it uncorrected; /api/net-worth re-adds it from live figures instead.
+    expect(await getHistory(hide(['cash', 'depository']))).toHaveLength(0);
+  });
+});
