@@ -23,6 +23,7 @@ const {
   backfillPendingExhausted,
   clearBackfillPending,
   getLatestAccountSnapshot,
+  withTodayPoint,
 } = await import('@/lib/history');
 
 const { encrypt } = await import('@/lib/crypto');
@@ -513,5 +514,117 @@ describe('the pending-run count', () => {
     } finally {
       mock.module('@/lib/storage', () => storageMock(fake));
     }
+  });
+});
+
+// /api/net-worth now issues getHistory() alongside the Plaid fetch, so the
+// series it gets back predates the snapshot that same request records. This is
+// what puts today's point back, and it is the only thing standing between the
+// chart and a total it disagrees with.
+describe('withTodayPoint', () => {
+  const p = (date: string, value: number) => ({ date, value });
+
+  test('appends today when the series has no point for it', () => {
+    expect(withTodayPoint([p('2026-09-19', 10), p('2026-09-20', 20)], '2026-09-21', 30)).toEqual([
+      p('2026-09-19', 10),
+      p('2026-09-20', 20),
+      p('2026-09-21', 30),
+    ]);
+  });
+
+  // The common case, not an edge one: any second load on the same day reads a
+  // point an earlier load already wrote. Keeping both would put two points on
+  // one date; keeping the older one would show a figure the hero has moved past.
+  test('replaces a point an earlier load wrote for today', () => {
+    expect(withTodayPoint([p('2026-09-20', 20), p('2026-09-21', 25)], '2026-09-21', 30)).toEqual([
+      p('2026-09-20', 20),
+      p('2026-09-21', 30),
+    ]);
+  });
+
+  // getHistory drops a real point it cannot correct for a hidden account, and
+  // today's is exactly the point it has live figures for. Re-adding it is the
+  // correction, not a bypass: `visible` is the same subtraction applied to
+  // today's balances.
+  test('restores today even when the stored series omitted it entirely', () => {
+    expect(withTodayPoint([], '2026-09-21', 30)).toEqual([p('2026-09-21', 30)]);
+  });
+
+  test('stays sorted when the stored series is not', () => {
+    expect(withTodayPoint([p('2026-09-20', 20), p('2026-09-18', 5)], '2026-09-19', 9)).toEqual([
+      p('2026-09-18', 5),
+      p('2026-09-19', 9),
+      p('2026-09-20', 20),
+    ]);
+  });
+
+  // Today is measured, so it must never carry the estimated flag -- the chart
+  // draws those dashed, and a real point rendered as a guess undersells the
+  // one number the user actually came to see.
+  test("today's point is real, and displaces an estimated one for the same date", () => {
+    const out = withTodayPoint(
+      [{ date: '2026-09-21', value: 12, estimated: true }],
+      '2026-09-21',
+      30
+    );
+    expect(out).toEqual([p('2026-09-21', 30)]);
+    expect(out[0].estimated).toBeUndefined();
+  });
+
+  test('does not mutate the series it was given', () => {
+    const stored = [p('2026-09-20', 20)];
+    withTodayPoint(stored, '2026-09-21', 30);
+    expect(stored).toEqual([p('2026-09-20', 20)]);
+  });
+});
+
+// The two writes fail independently, and the return value is what /api/net-worth
+// uses to decide whether today's point exists. Conflating them hid a point that
+// was genuinely in the chart's own layer.
+describe('recordSnapshot return value', () => {
+  test('returns the date key it wrote', async () => {
+    fake.reset();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(await recordSnapshot(123, { cash: 123 })).toBe(today);
+  });
+
+  test('returns null when the total itself could not be written', async () => {
+    fake.reset();
+    const hset = fake.hset.bind(fake);
+    fake.hset = async () => {
+      throw new Error('upstash down');
+    };
+    try {
+      expect(await recordSnapshot(123, { cash: 123 })).toBeNull();
+    } finally {
+      fake.hset = hset;
+    }
+  });
+
+  // THE REGRESSION. A transient failure on the second write used to report the
+  // whole snapshot as missed, so the route suppressed today's point while the
+  // total sat in history:net-worth -- a chart ending yesterday under a hero
+  // showing today, cached for the next 15 minutes.
+  test('still returns the date when only the per-account map failed', async () => {
+    fake.reset();
+    const today = new Date().toISOString().slice(0, 10);
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    fake.hset = async (key: string, fields: Record<string, string>) => {
+      if (++calls === 2) throw new Error('upstash down');
+      return hset(key, fields);
+    };
+    try {
+      expect(await recordSnapshot(4242, { cash: 4242 })).toBe(today);
+    } finally {
+      fake.hset = hset;
+    }
+
+    // The total really is in the layer, which is what makes charting it honest.
+    expect(valuesByDate(await getHistory())[today]).toBe(4242);
+    // ...and the breakdown really is absent, so a hidden account can't be
+    // subtracted from this date later. getHistory drops it rather than showing
+    // it uncorrected; /api/net-worth re-adds it from live figures instead.
+    expect(await getHistory(hide(['cash', 'depository']))).toHaveLength(0);
   });
 });

@@ -12,7 +12,7 @@ import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
-import { isOwedType, signedContribution } from '@/lib/balance';
+import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding } from '@/lib/cash';
@@ -147,12 +147,6 @@ const LOCAL_CACHE_KEY = 'nya:dashboard';
 function fmt(n: number | null | undefined, currency?: string | null): string {
   if (n == null) return '--';
   return formatMoney(n, currency);
-}
-
-// Plaid still returns the legacy 'brokerage' type alongside 'investment' for
-// some institutions, and they mean the same thing here.
-function isInvestmentType(type: string): boolean {
-  return type === 'investment' || type === 'brokerage';
 }
 
 function signedBalance(a: Account): number {
