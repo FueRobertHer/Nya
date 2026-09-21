@@ -5,7 +5,7 @@ import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { fetchInvestmentTxns, valueDelta } from '@/lib/investments';
 import { getManualAccounts } from '@/lib/manual';
-import { signedContribution } from '@/lib/balance';
+import { isInvestmentType, signedContribution } from '@/lib/balance';
 import { isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
 import {
   backfillPendingExhausted,
@@ -60,12 +60,6 @@ import { clearCaches } from '@/lib/cache';
 // that never finishes would otherwise re-run every institution's full pull on
 // every open, forever, where before the wait existed the user got a cached load.
 const MAX_PENDING_RUNS = 5;
-
-// Plaid still returns the legacy 'brokerage' type alongside 'investment' at
-// some institutions; both are walkable the same way.
-function isInvestmentType(type: string): boolean {
-  return type === 'investment' || type === 'brokerage';
-}
 
 /**
  * Records the run as complete unless an Item's investment data is still

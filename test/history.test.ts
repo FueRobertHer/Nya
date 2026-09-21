@@ -23,6 +23,7 @@ const {
   backfillPendingExhausted,
   clearBackfillPending,
   getLatestAccountSnapshot,
+  withTodayPoint,
 } = await import('@/lib/history');
 
 const { encrypt } = await import('@/lib/crypto');
@@ -513,5 +514,66 @@ describe('the pending-run count', () => {
     } finally {
       mock.module('@/lib/storage', () => storageMock(fake));
     }
+  });
+});
+
+// /api/net-worth now issues getHistory() alongside the Plaid fetch, so the
+// series it gets back predates the snapshot that same request records. This is
+// what puts today's point back, and it is the only thing standing between the
+// chart and a total it disagrees with.
+describe('withTodayPoint', () => {
+  const p = (date: string, value: number) => ({ date, value });
+
+  test('appends today when the series has no point for it', () => {
+    expect(withTodayPoint([p('2026-09-19', 10), p('2026-09-20', 20)], '2026-09-21', 30)).toEqual([
+      p('2026-09-19', 10),
+      p('2026-09-20', 20),
+      p('2026-09-21', 30),
+    ]);
+  });
+
+  // The common case, not an edge one: any second load on the same day reads a
+  // point an earlier load already wrote. Keeping both would put two points on
+  // one date; keeping the older one would show a figure the hero has moved past.
+  test('replaces a point an earlier load wrote for today', () => {
+    expect(withTodayPoint([p('2026-09-20', 20), p('2026-09-21', 25)], '2026-09-21', 30)).toEqual([
+      p('2026-09-20', 20),
+      p('2026-09-21', 30),
+    ]);
+  });
+
+  // getHistory drops a real point it cannot correct for a hidden account, and
+  // today's is exactly the point it has live figures for. Re-adding it is the
+  // correction, not a bypass: `visible` is the same subtraction applied to
+  // today's balances.
+  test('restores today even when the stored series omitted it entirely', () => {
+    expect(withTodayPoint([], '2026-09-21', 30)).toEqual([p('2026-09-21', 30)]);
+  });
+
+  test('stays sorted when the stored series is not', () => {
+    expect(withTodayPoint([p('2026-09-20', 20), p('2026-09-18', 5)], '2026-09-19', 9)).toEqual([
+      p('2026-09-18', 5),
+      p('2026-09-19', 9),
+      p('2026-09-20', 20),
+    ]);
+  });
+
+  // Today is measured, so it must never carry the estimated flag -- the chart
+  // draws those dashed, and a real point rendered as a guess undersells the
+  // one number the user actually came to see.
+  test("today's point is real, and displaces an estimated one for the same date", () => {
+    const out = withTodayPoint(
+      [{ date: '2026-09-21', value: 12, estimated: true }],
+      '2026-09-21',
+      30
+    );
+    expect(out).toEqual([p('2026-09-21', 30)]);
+    expect(out[0].estimated).toBeUndefined();
+  });
+
+  test('does not mutate the series it was given', () => {
+    const stored = [p('2026-09-20', 20)];
+    withTodayPoint(stored, '2026-09-21', 30);
+    expect(stored).toEqual([p('2026-09-20', 20)]);
   });
 });

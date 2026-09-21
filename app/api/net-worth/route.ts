@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { computeNetWorth, accountBalanceMap, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
-import { recordSnapshot, getHistory, isBackfillDone, type HistoryPoint } from '@/lib/history';
+import {
+  recordSnapshot,
+  getHistory,
+  withTodayPoint,
+  isBackfillDone,
+  type HistoryPoint,
+} from '@/lib/history';
 import { getHiddenAccounts, applyHidden } from '@/lib/hidden';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 
@@ -30,18 +36,53 @@ async function staleFlag(): Promise<{ backfill_stale: boolean }> {
   return { backfill_stale: !(await isBackfillDone()) };
 }
 
+/**
+ * Starts a promise now, to be awaited later, without risking an unhandled
+ * rejection in between.
+ *
+ * The Redis reads below are kicked off alongside the Plaid fetch but awaited in
+ * the same order they used to run in, which is what preserves every gate. The
+ * gap that opens up is the problem: if computeNetWorth() throws, control jumps
+ * to the catch and these are never awaited, and an unhandled rejection takes
+ * down the process on Node's default setting. The no-op catch marks the
+ * rejection handled; awaiting the original promise still rejects normally, so
+ * the error surfaces exactly where it did before.
+ */
+function eager<T>(p: Promise<T>): Promise<T> {
+  p.catch(() => {});
+  return p;
+}
+
 export async function GET(req: Request) {
   try {
     // Live Plaid balance calls take seconds; serve the (encrypted) cached
     // payload when it's fresh. The Refresh button passes ?refresh=1 to force
     // a live fetch.
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
+
+    // Wanted on both paths and dependent on neither, so it runs alongside
+    // whichever one we take rather than adding a round trip to the end of it.
+    const stalePromise = eager(staleFlag());
+
     if (!refresh) {
       const cached = await readCache<NetWorthPayload>(NET_WORTH_CACHE_KEY);
       if (cached) {
-        return NextResponse.json({ ...cached, ...(await staleFlag()), from_cache: true });
+        return NextResponse.json({ ...cached, ...(await stalePromise), from_cache: true });
       }
     }
+
+    // The two reads below touch only Redis and depend on nothing the Plaid
+    // fetch produces, so they're started HERE and awaited further down, in the
+    // exact order they used to RUN in. That ordering is load-bearing, not
+    // stylistic: the snapshot is still recorded before the hidden set is
+    // awaited, so a hidden-read failure still cannot cost today's point (see
+    // the comment on recordSnapshot below). Only the waiting overlaps.
+    //
+    // On Upstash each of these is an HTTPS round trip (getHistory is several),
+    // and they used to queue up behind a multi-second Plaid fetch that was
+    // sitting idle on the network the whole time.
+    const hiddenPromise = eager(getHiddenAccounts());
+    const historyPromise = eager(hiddenPromise.then((h) => getHistory(h)));
 
     const { institutions, netWorth } = await computeNetWorth();
     const balances = accountBalanceMap(institutions);
@@ -50,14 +91,18 @@ export async function GET(req: Request) {
     // and at least one is linked -- a partial fetch would chart an
     // artificial dip, and zero institutions isn't a $0 net worth.
     //
-    // This happens BEFORE the hidden set is read, and records the TRUE total
+    // This happens BEFORE the hidden set is AWAITED, and records the TRUE total
     // and the FULL account map. Storage never depends on what's hidden, which
     // is what makes unhiding perfectly symmetric and means a hidden-set failure
-    // below can't cost today's point.
+    // below can't cost today's point. (The read is now issued earlier, above --
+    // awaited, not issued, is what the guarantee rests on, because a rejection
+    // surfaces where it is awaited.)
     const clean = institutions.every((i) => !i.error);
-    if (clean && institutions.length > 0) {
-      await recordSnapshot(netWorth, balances);
-    }
+    // Read before the write so the chart labels the point with the same day the
+    // write targets. (Both derive it from the UTC date; a request straddling
+    // midnight could disagree by one day, which the next load corrects.)
+    const today = new Date().toISOString().slice(0, 10);
+    const recorded = clean && institutions.length > 0 && (await recordSnapshot(netWorth, balances));
 
     // Capture how to render each account while its institution is answering, so
     // a later failure can still draw its card. Per institution, not gated on
@@ -85,9 +130,12 @@ export async function GET(req: Request) {
       );
     }
 
-    const hidden = await getHiddenAccounts();
+    const hidden = await hiddenPromise;
     const visibleNetWorth = applyHidden(institutions, hidden);
-    const history = await getHistory(hidden);
+    // Started before the fetch, so it predates this request's snapshot: today's
+    // point comes from the live figures instead. See withTodayPoint.
+    const stored = await historyPromise;
+    const history = recorded ? withTodayPoint(stored, today, visibleNetWorth) : stored;
 
     const payload: NetWorthPayload = {
       institutions,
@@ -113,7 +161,7 @@ export async function GET(req: Request) {
       await clearNetWorthCache();
     }
 
-    return NextResponse.json({ ...payload, ...(await staleFlag()), from_cache: false });
+    return NextResponse.json({ ...payload, ...(await stalePromise), from_cache: false });
   } catch (err: any) {
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to fetch net worth' }, { status: 500 });

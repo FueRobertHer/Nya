@@ -32,3 +32,17 @@ export function isOwedType(type: string): boolean {
 export function signedContribution(type: string, balance: number): number {
   return isOwedType(type) ? -balance : balance;
 }
+
+/**
+ * Types that can hold securities. Plaid still returns the legacy 'brokerage'
+ * alongside 'investment' at some institutions and they mean the same thing
+ * here, which is the whole reason this is a function and not a comparison.
+ *
+ * Lives here, next to isOwedType, because it now decides whether a Plaid call
+ * is made at all (lib/networth.ts skips /investments/holdings/get for an Item
+ * with no such account). A fourth open-coded copy drifting from the other
+ * three would silently stop fetching a real brokerage's holdings.
+ */
+export function isInvestmentType(type: string): boolean {
+  return type === 'investment' || type === 'brokerage';
+}

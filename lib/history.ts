@@ -643,3 +643,34 @@ export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
     .filter((p): p is HistoryPoint => p !== null)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
+
+/**
+ * Puts today's live figure into the history series.
+ *
+ * /api/net-worth starts getHistory() concurrently with the Plaid fetch, so what
+ * comes back cannot include the snapshot recorded moments later in the same
+ * request: it holds either no point for today at all, or the one an earlier
+ * load wrote hours ago. Both would draw a chart that disagrees with the total
+ * printed above it.
+ *
+ * `visible` is the right value to write, not `netWorth`: getHistory subtracts
+ * hidden accounts from every point it returns, and visible is that same
+ * subtraction performed on today's live balances.
+ *
+ * Only called when the snapshot actually landed, which is what keeps this
+ * honest in both directions. A point appears in the chart exactly when one was
+ * stored, so the chart never shows a figure the history layer doesn't have. And
+ * because a snapshot is only recorded on a clean fetch, a total containing
+ * balances recovered by lib/last-known.ts can never reach here -- charting one
+ * would draw last week's figure as though it had been measured today, the one
+ * thing that module's display-only rule exists to prevent.
+ */
+export function withTodayPoint(
+  history: HistoryPoint[],
+  today: string,
+  visible: number
+): HistoryPoint[] {
+  const rest = history.filter((p) => p.date !== today);
+  rest.push({ date: today, value: visible });
+  return rest.sort((a, b) => (a.date < b.date ? -1 : 1));
+}
