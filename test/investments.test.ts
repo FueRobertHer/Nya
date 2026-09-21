@@ -4,7 +4,10 @@ import type { InvestmentTxn } from '@/lib/investments';
 // Stands in for the Plaid client so pagination can be driven deterministically.
 // Declared before the mock.module call because that call is hoisted with the
 // imports below it.
-let pages: { rows: any[]; total?: number | null; error?: string }[] = [];
+// `error` is a Plaid error_code (an HTTP response); `netCode` is an axios
+// transport failure, which arrives with NO response and so no error_code at all
+// -- the shape a client-side timeout actually takes.
+let pages: { rows: any[]; total?: number | null; error?: string; netCode?: string }[] = [];
 let calls: { offset: number; count: number; account_ids?: string[] }[] = [];
 
 mock.module('@/lib/plaid', () => ({
@@ -17,6 +20,7 @@ mock.module('@/lib/plaid', () => ({
       });
       const page = pages[calls.length - 1] ?? { rows: [] };
       if (page.error) throw { response: { data: { error_code: page.error } } };
+      if (page.netCode) throw { code: page.netCode, message: 'timeout of 45000ms exceeded' };
       return {
         data: {
           investment_transactions: page.rows,
@@ -392,6 +396,23 @@ describe('fetchInvestmentTxns', () => {
     const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
     expect(res.note).toBe('Investment activity is still importing');
     expect(res.pending).toBe(true);
+  });
+
+  // lib/plaid.ts now sets an axios timeout, and a timeout is transient in
+  // exactly the way PRODUCT_NOT_READY is. Getting this wrong is not a cosmetic
+  // misclassification: /api/backfill treats an investment failure as
+  // non-blocking, so an unclassified timeout leaves invCovered and invPending
+  // both false and the run marks the reconstruction DONE with every investment
+  // account held flat -- permanently, since nothing retries a done backfill.
+  test('a client-side timeout is pending, not a standing failure', async () => {
+    for (const netCode of ['ECONNABORTED', 'ETIMEDOUT']) {
+      calls = [];
+      pages = [{ rows: [], netCode }];
+      const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
+      expect(res.pending).toBe(true);
+      expect(res.note).toBe('Investment activity timed out');
+      expect(res.txns).toEqual([]);
+    }
   });
 
   test('a standing failure is not pending', async () => {

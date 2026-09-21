@@ -94,24 +94,47 @@ const BACKFILL_PENDING_TRIES = k('history:backfill-pending');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
-/** Returns whether the snapshot actually landed. Callers that report success
- *  to a caller of their own (e.g. /api/ingest/balance telling a script the
- *  chart was updated) need to know; the rest can ignore it. */
+/**
+ * Records today's total, and the per-account breakdown behind it.
+ *
+ * Returns THE DATE KEY IT WROTE, or null if nothing landed. Two callers need
+ * more than "it worked": /api/ingest/balance tells a script whether the chart
+ * was updated, and /api/net-worth charts today's point itself (see
+ * withTodayPoint) and must label it with the same day this wrote, not a second
+ * reading of the clock that could fall on the other side of UTC midnight.
+ *
+ * THE TWO WRITES FAIL INDEPENDENTLY, and only the first decides the answer.
+ * They were one try/catch returning a single boolean, which made a total that
+ * landed indistinguishable from one that didn't whenever the per-account write
+ * failed after it -- a state lib/history.ts already documents as reachable and
+ * getHistory already handles. A caller told "nothing was recorded" would hide a
+ * point that is genuinely in the chart's own layer. So: if the total lands the
+ * date comes back, and a failed breakdown costs only the breakdown.
+ */
 export async function recordSnapshot(
   netWorth: number,
   accountBalances?: Record<string, number>
-): Promise<boolean> {
+): Promise<string | null> {
+  const today = new Date().toISOString().slice(0, 10);
+
   try {
-    const today = new Date().toISOString().slice(0, 10);
     await redis().hset(HISTORY_HASH, { [today]: await encrypt(String(netWorth)) });
-    if (accountBalances && Object.keys(accountBalances).length > 0) {
-      await redis().hset(ACCOUNTS_HASH, { [today]: await encrypt(JSON.stringify(accountBalances)) });
-    }
-    return true;
   } catch {
     // Best-effort: a missed snapshot just leaves a gap in the chart.
-    return false;
+    return null;
   }
+
+  if (accountBalances && Object.keys(accountBalances).length > 0) {
+    try {
+      await redis().hset(ACCOUNTS_HASH, { [today]: await encrypt(JSON.stringify(accountBalances)) });
+    } catch {
+      // The total is in the chart either way. What's lost is the ability to
+      // subtract a hidden account from THIS date later, which getHistory
+      // already handles by dropping the point it can't correct.
+    }
+  }
+
+  return today;
 }
 
 /**
@@ -642,4 +665,35 @@ export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
   return points
     .filter((p): p is HistoryPoint => p !== null)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * Puts today's live figure into the history series.
+ *
+ * /api/net-worth starts getHistory() concurrently with the Plaid fetch, so what
+ * comes back cannot include the snapshot recorded moments later in the same
+ * request: it holds either no point for today at all, or the one an earlier
+ * load wrote hours ago. Both would draw a chart that disagrees with the total
+ * printed above it.
+ *
+ * `visible` is the right value to write, not `netWorth`: getHistory subtracts
+ * hidden accounts from every point it returns, and visible is that same
+ * subtraction performed on today's live balances.
+ *
+ * Only called when the snapshot actually landed, which is what keeps this
+ * honest in both directions. A point appears in the chart exactly when one was
+ * stored, so the chart never shows a figure the history layer doesn't have. And
+ * because a snapshot is only recorded on a clean fetch, a total containing
+ * balances recovered by lib/last-known.ts can never reach here -- charting one
+ * would draw last week's figure as though it had been measured today, the one
+ * thing that module's display-only rule exists to prevent.
+ */
+export function withTodayPoint(
+  history: HistoryPoint[],
+  today: string,
+  visible: number
+): HistoryPoint[] {
+  const rest = history.filter((p) => p.date !== today);
+  rest.push({ date: today, value: visible });
+  return rest.sort((a, b) => (a.date < b.date ? -1 : 1));
 }

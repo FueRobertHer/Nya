@@ -9,7 +9,7 @@ import { decrypt } from './crypto';
 import { getItems, type StoredItem } from './storage';
 import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
 import { normalizeLiabilities } from './liabilities';
-import { isOwedType, signedContribution } from './balance';
+import { isOwedType, isInvestmentType, signedContribution } from './balance';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -107,9 +107,21 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   // Holdings and liabilities are independent of each other and both swallow
   // their own errors, so they run together rather than adding a second and
   // third serial round trip to the uncached dashboard load and the daily cron.
+  //
+  // Both are gated on THIS fetch's account list, not on anything remembered:
+  // an account opened at an institution that already had only checking shows up
+  // in the balances above on the very first load after it appears, so the call
+  // it needs is made that same load. A cached hint could only ever be a
+  // prefetch, never the decision.
   const hasDebt = result.accounts.some((a) => isOwedType(a.type));
+  const hasSecurities = result.accounts.some((a) => isInvestmentType(a.type));
   await Promise.all([
-    fetchHoldings(access_token, result),
+    // Holdings exist only for investment/brokerage accounts, so for a
+    // cash-and-cards institution this call could only ever come back empty.
+    // It used to be made unconditionally, which put one guaranteed-useless
+    // Plaid round trip on the critical path of every such Item on every
+    // uncached load -- most of them, for most people.
+    hasSecurities ? fetchHoldings(access_token, result) : Promise.resolve(),
     // Only worth a call if there's something a liability could describe.
     hasDebt ? fetchLiabilities(access_token, result) : Promise.resolve(),
   ]);
@@ -117,7 +129,9 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   return result;
 }
 
-/** Investment holdings -- fails silently for non-brokerage items, that's expected. */
+/** Investment holdings. Only called for Items that actually hold securities (see
+ *  the gate in fetchInstitution); still swallows its own errors, because an Item
+ *  can have an investment account without the investments product enabled. */
 async function fetchHoldings(access_token: string, result: InstitutionResult): Promise<void> {
   try {
     const holdingsRes = await plaidClient.investmentsHoldingsGet({ access_token });

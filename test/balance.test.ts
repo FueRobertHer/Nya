@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isOwedType, signedContribution } from '@/lib/balance';
+import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 
 // Small surface, but it is now the single definition behind net worth, the
 // history subtraction, manual-account validation and every figure the Dashboard
@@ -48,5 +48,28 @@ describe('signedContribution', () => {
   test('an unknown type is treated as an asset, matching computeNetWorth', () => {
     expect(signedContribution('other', 500)).toBe(500);
     expect(signedContribution('', 500)).toBe(500);
+  });
+});
+
+// Now gates a Plaid call, not just a label: lib/networth.ts skips
+// /investments/holdings/get for an Item with no account of these types. A
+// false negative here means a real brokerage silently stops reporting its
+// positions, with no error anywhere to say so.
+describe('isInvestmentType', () => {
+  test('investment and the legacy brokerage both hold securities', () => {
+    expect(isInvestmentType('investment')).toBe(true);
+    expect(isInvestmentType('brokerage')).toBe(true);
+  });
+
+  test('cash, cards and loans do not', () => {
+    for (const t of ['depository', 'credit', 'loan', 'other', '']) {
+      expect(isInvestmentType(t)).toBe(false);
+    }
+  });
+
+  // Same rule as isOwedType above: Plaid types are lowercase and nothing
+  // normalizes before the call.
+  test('is case-sensitive', () => {
+    expect(isInvestmentType('Investment')).toBe(false);
   });
 });

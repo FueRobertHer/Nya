@@ -129,10 +129,14 @@ export async function POST(req: Request) {
         const clean = institutions.every((i) => !i.error);
         // `recorded` reflects whether the point actually landed, not just
         // whether we tried: recordSnapshot swallows its own errors, and a
-        // script that trusts this field deserves the truth.
+        // script that trusts this field deserves the truth. It returns the date
+        // it wrote; collapsed to a boolean here because that is this endpoint's
+        // published response shape. True now means the TOTAL landed, so a
+        // failed per-account write no longer reports the chart as un-updated
+        // when the point is sitting in it.
         const recorded =
           clean && institutions.length > 0
-            ? await recordSnapshot(netWorth, accountBalanceMap(institutions))
+            ? (await recordSnapshot(netWorth, accountBalanceMap(institutions))) !== null
             : false;
         // Record how to draw these accounts, for the same reason /api/snapshot
         // does: this read may be the only clean one of the day, and an account

@@ -328,6 +328,25 @@ export async function fetchInvestmentTxns(
         pending: true,
       };
     }
+    // A client-side timeout (lib/plaid.ts) reaches here with no Plaid error
+    // code at all, because Plaid never answered. It is transient in exactly the
+    // way PRODUCT_NOT_READY is, so it gets the same `pending` treatment, and
+    // that classification is load-bearing rather than cosmetic: /api/backfill
+    // deliberately does NOT treat an investment failure as a blocking note, so
+    // an unclassified one would leave invCovered AND invPending both false, and
+    // the run would persist an estimated layer with every investment account
+    // held flat and then MARK IT DONE. Nothing retries a done backfill, so one
+    // slow call would permanently cost the chart its investment history.
+    // `pending` instead leaves the flag unset for the next load, bounded by the
+    // MAX_PENDING_RUNS counter that already exists for the same reason.
+    if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') {
+      return {
+        txns: [],
+        note: 'Investment activity timed out',
+        truncated: false,
+        pending: true,
+      };
+    }
     if (code === 'ITEM_LOGIN_REQUIRED') {
       return {
         txns: [],
