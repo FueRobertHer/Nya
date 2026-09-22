@@ -59,12 +59,12 @@ describe('isRecordable', () => {
     // The whole point of this change: the fetch SUCCEEDED, so `error` is null
     // and the old gate would have waved it through and written a total silently
     // short by that account into a layer nothing rewrites.
-    expect(isRecordable(inst({ unconfirmed_missing: ['acct_2'] }))).toBe(false);
+    expect(isRecordable(inst({ unconfirmed_missing: 1 }))).toBe(false);
   });
 
-  test('an empty missing list does not withhold', () => {
-    // Accepted closures clear the field rather than leaving it empty, but an
-    // empty array must not read as "something is wrong" if one ever arrives.
-    expect(isRecordable(inst({ unconfirmed_missing: [] }))).toBe(true);
+  test('a zero count does not withhold', () => {
+    // Accepted closures leave the field unset, but a zero must not read as
+    // "something is wrong" if one ever arrives.
+    expect(isRecordable(inst({ unconfirmed_missing: 0 }))).toBe(true);
   });
 });

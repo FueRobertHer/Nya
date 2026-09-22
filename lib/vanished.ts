@@ -65,20 +65,57 @@ export type VanishedResult = {
   accepted: string[];
 };
 
-const EMPTY: VanishedResult = { unconfirmed: [], accepted: [] };
+/** A fresh empty result. NOT a shared constant: callers receive these arrays,
+ *  and one caller pushing onto a returned `unconfirmed` would corrupt the
+ *  constant for every later call in the process. */
+const empty = (): VanishedResult => ({ unconfirmed: [], accepted: [] });
+
+/** Decode one stored record, tolerating anything that is not a plain object. */
+function parseRecord(blob: string | null | undefined, plain: string | null): VanishRecord {
+  if (!blob && !plain) return {};
+  try {
+    const parsed = JSON.parse(plain ?? '') as VanishRecord;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 async function readRecord(item_id: string): Promise<VanishRecord> {
   try {
     const blob = await redis().hget<string>(VANISHED_HASH, item_id);
     if (!blob) return {};
-    const parsed = JSON.parse(await decrypt(blob)) as VanishRecord;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    return parseRecord(blob, await decrypt(blob));
   } catch {
     // Unreadable record: treat as empty. The cost is that a disappearance in
     // progress restarts its window, which delays acceptance rather than
     // recording a wrong total, so it fails in the safe direction.
     return {};
   }
+}
+
+/** Every Item's record in ONE read, for checkVanishedAll. Same tolerance as
+ *  readRecord: one undecryptable field costs only that Item. */
+async function readAllRecords(): Promise<Record<string, VanishRecord>> {
+  let map: Record<string, string> | null;
+  try {
+    map = await redis().hgetall<Record<string, string>>(VANISHED_HASH);
+  } catch {
+    return {};
+  }
+  if (!map) return {};
+
+  const out: Record<string, VanishRecord> = {};
+  await Promise.all(
+    Object.entries(map).map(async ([item_id, blob]) => {
+      try {
+        out[item_id] = parseRecord(blob, await decrypt(blob));
+      } catch {
+        out[item_id] = {};
+      }
+    })
+  );
+  return out;
 }
 
 async function writeRecord(item_id: string, record: VanishRecord): Promise<void> {
@@ -119,9 +156,23 @@ async function checkOne(
   item_id: string,
   freshIds: string[],
   remembered: string[],
-  now: number
+  now: number,
+  preloaded?: VanishRecord
 ): Promise<VanishedResult> {
-  const record = await readRecord(item_id);
+  // A healthy institution that reports NOTHING is not every account closing at
+  // once; it is an institution telling us nothing, which lib/last-known.ts
+  // already owns the shape of. Flagging the whole list here would close the
+  // global gate and then, three days later, accept every account as closed.
+  //
+  // Worse, it could never clear itself: rememberAccounts skips an institution
+  // whose account list is empty (lib/last-known.ts:136), so accounts:meta is
+  // never pruned, every id stays remembered, and the prune below never fires.
+  // The record and its warning would persist on every load forever. This is the
+  // one path where the settled-closure prune does not hold, so it is refused
+  // before it can start.
+  if (freshIds.length === 0) return empty();
+
+  const record = preloaded ?? (await readRecord(item_id));
 
   // Both sources, because neither alone is enough: `remembered` is refreshed
   // from the latest healthy fetch and so forgets a vanished account almost
@@ -129,7 +180,7 @@ async function checkOne(
   // missing and so cannot notice a new one.
   const rememberedSet = new Set(remembered);
   const candidates = new Set([...remembered, ...Object.keys(record)]);
-  if (candidates.size === 0) return EMPTY;
+  if (candidates.size === 0) return empty();
 
   const fresh = new Set(freshIds);
   const nowIso = new Date(now).toISOString();
@@ -194,18 +245,47 @@ export async function checkVanished(
 /**
  * Check every healthy institution in one pass.
  *
- * Exists for the round trips: the per-institution version costs two Redis reads
- * each, so a six-institution dashboard load paid twelve on a path the repo has
- * already had to cut latency out of once. This reads the remembered-accounts
- * hash once for all of them instead.
+ * Exists for the round trips. Both of the reads this needs are single hashes
+ * keyed by item_id, so both are read whole, ONCE, regardless of how many
+ * institutions are linked: two reads for six institutions rather than twelve, on
+ * a path the repo has already had to cut latency out of once (see the `eager()`
+ * comment in app/api/net-worth/route.ts).
+ *
+ * The per-institution `checkVanished` still exists for callers with one Item,
+ * and pays two reads, which is the same thing at N=1.
  */
 export async function checkVanishedAll(
   institutions: { item_id: string; accounts: { account_id: string }[] }[],
   now: number = Date.now()
 ): Promise<Record<string, VanishedResult>> {
   if (institutions.length === 0) return {};
+  return applyVanished(institutions, await loadVanishedInputs(), now);
+}
 
-  const remembered = await rememberedIdsByItem();
+/** Everything the comparison reads, so it can be fetched before the account
+ *  lists it will be compared against exist. */
+export type VanishedInputs = {
+  remembered: Record<string, string[]>;
+  records: Record<string, VanishRecord>;
+};
+
+/**
+ * Issue both reads. Depends only on what is already in Redis, never on the
+ * Plaid fetch, so a caller can start this and the fan-out together and pay for
+ * whichever is slower rather than for both in series.
+ */
+export async function loadVanishedInputs(): Promise<VanishedInputs> {
+  const [remembered, records] = await Promise.all([rememberedIdsByItem(), readAllRecords()]);
+  return { remembered, records };
+}
+
+/** The comparison itself, against already-loaded inputs. Writes happen here:
+ *  only an Item whose record actually changed costs a write. */
+export async function applyVanished(
+  institutions: { item_id: string; accounts: { account_id: string }[] }[],
+  inputs: VanishedInputs,
+  now: number = Date.now()
+): Promise<Record<string, VanishedResult>> {
   const out: Record<string, VanishedResult> = {};
 
   await Promise.all(
@@ -213,8 +293,9 @@ export async function checkVanishedAll(
       const res = await checkOne(
         inst.item_id,
         inst.accounts.map((a) => a.account_id),
-        remembered[inst.item_id] ?? [],
-        now
+        inputs.remembered[inst.item_id] ?? [],
+        now,
+        inputs.records[inst.item_id] ?? {}
       );
       if (res.unconfirmed.length > 0 || res.accepted.length > 0) out[inst.item_id] = res;
     })

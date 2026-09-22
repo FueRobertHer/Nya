@@ -30,6 +30,22 @@ async function remember(item_id: string, ids: string[]): Promise<void> {
   await fake.hset(testKey('accounts:meta'), { [item_id]: await encrypt(JSON.stringify(accounts)) });
 }
 
+const asAccounts = (ids: string[]) => ids.map((account_id) => ({ account_id }));
+
+/**
+ * Drive ONE institution through checkVanishedAll.
+ *
+ * Deliberately not `checkVanished`: production calls only the batch form, and
+ * the two source `remembered` through different code. rememberedIdsForItem
+ * accepts any string account_id; recallByItem, behind rememberedIdsByItem, also
+ * drops entries whose `type` is not a string and drops the Item entirely if
+ * that leaves none. Testing the single form would leave the real path unproven.
+ */
+async function check(item_id: string, freshIds: string[], now: number) {
+  const all = await checkVanishedAll([{ item_id, accounts: asAccounts(freshIds) }], now);
+  return all[item_id] ?? { unconfirmed: [], accepted: [] };
+}
+
 /** Read back the vanished record, for asserting on what was persisted. */
 async function record(item_id: string): Promise<Record<string, string> | null> {
   const blob = await fake.hget<string>(testKey('accounts:vanished'), item_id);
@@ -44,20 +60,33 @@ describe('nothing to report', () => {
   test('an Item with no remembered accounts reports nothing', async () => {
     // A brand new Item, or one that has never had a healthy fetch. There is no
     // prior list to compare against, so absence is unknowable rather than zero.
-    expect(await checkVanished('item_a', ['acct_1'], NOW)).toEqual({
-      unconfirmed: [],
-      accepted: [],
-    });
+    expect(await check('item_a', ['acct_1'], NOW)).toEqual({ unconfirmed: [], accepted: [] });
   });
 
   test('every remembered account still present reports nothing', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
 
-    expect(await checkVanished('item_a', ['acct_1', 'acct_2'], NOW)).toEqual({
+    expect(await check('item_a', ['acct_1', 'acct_2'], NOW)).toEqual({
       unconfirmed: [],
       accepted: [],
     });
     expect(await record('item_a')).toBeNull(); // nothing persisted when nothing is wrong
+  });
+
+  test('an institution reporting NO accounts reports nothing', async () => {
+    await remember('item_a', ['acct_1', 'acct_2']);
+
+    // A healthy fetch returning an empty list is an institution telling us
+    // nothing, not every account closing at once. Flagging the whole list would
+    // close the global gate and then accept every account as closed three days
+    // later -- and it could never clear, because rememberAccounts skips an
+    // institution with no accounts (lib/last-known.ts:136), so meta is never
+    // pruned, every id stays remembered, and the settled-closure prune never
+    // fires. The record and its warning would persist on every load forever.
+    const res = await check('item_a', [], NOW);
+
+    expect(res).toEqual({ unconfirmed: [], accepted: [] });
+    expect(await record('item_a')).toBeNull();
   });
 });
 
@@ -65,7 +94,7 @@ describe('an account disappears from a healthy fetch', () => {
   test('is unconfirmed at first, and closes the gate', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW);
+    const res = await check('item_a', ['acct_1'], NOW);
 
     expect(res.unconfirmed).toEqual(['acct_2']);
     expect(res.accepted).toEqual([]);
@@ -81,12 +110,11 @@ describe('an account disappears from a healthy fetch', () => {
     // very next load. A check that trusted meta alone would notice the
     // disappearance exactly once and then forget it.
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
 
-    // Meta now reflects only what answered.
-    await remember('item_a', ['acct_1']);
+    await remember('item_a', ['acct_1']); // meta now reflects only what answered
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW + DAY);
+    const res = await check('item_a', ['acct_1'], NOW + DAY);
     expect(res.unconfirmed).toEqual(['acct_2']);
     // And the original timestamp survived, so the window is not restarted.
     expect(await record('item_a')).toEqual({ acct_2: new Date(NOW).toISOString() });
@@ -94,9 +122,9 @@ describe('an account disappears from a healthy fetch', () => {
 
   test('is accepted once it has been absent past the window', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW + 4 * DAY);
+    const res = await check('item_a', ['acct_1'], NOW + 4 * DAY);
 
     // Accepted does NOT close the gate: a real closure should cost a few days
     // of gap, not a permanent freeze on a condition nothing can clear while
@@ -105,11 +133,34 @@ describe('an account disappears from a healthy fetch', () => {
     expect(res.accepted).toEqual(['acct_2']);
   });
 
-  test('is still unconfirmed on the last day of the window', async () => {
+  test('is still unconfirmed one second inside the window', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW + 2 * DAY);
+    const res = await check('item_a', ['acct_1'], NOW + 3 * DAY - 1000);
+    expect(res.unconfirmed).toEqual(['acct_2']);
+  });
+
+  test('accepts exactly at the window, so the boundary is inclusive', async () => {
+    await remember('item_a', ['acct_1', 'acct_2']);
+    await check('item_a', ['acct_1'], NOW);
+
+    // Pins which side the boundary falls on. With cron jitter around 13:00 UTC
+    // this decides whether acceptance lands on the third or fourth run, which
+    // is benign either way but should not change silently.
+    const res = await check('item_a', ['acct_1'], NOW + 3 * DAY);
+    expect(res.accepted).toEqual(['acct_2']);
+  });
+
+  test('tracks two accounts vanishing at different times independently', async () => {
+    await remember('item_a', ['acct_1', 'acct_2', 'acct_3']);
+
+    await check('item_a', ['acct_1', 'acct_2'], NOW); // acct_3 goes
+    const res = await check('item_a', ['acct_1'], NOW + 3 * DAY); // acct_2 goes, later
+
+    // acct_3 has served its window; acct_2 has just started one. A single
+    // per-Item timestamp would have accepted both or neither.
+    expect(res.accepted).toEqual(['acct_3']);
     expect(res.unconfirmed).toEqual(['acct_2']);
   });
 });
@@ -117,10 +168,10 @@ describe('an account disappears from a healthy fetch', () => {
 describe('the glitch case', () => {
   test('an account that comes back clears its record', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
     expect(await record('item_a')).not.toBeNull();
 
-    const res = await checkVanished('item_a', ['acct_1', 'acct_2'], NOW + DAY);
+    const res = await check('item_a', ['acct_1', 'acct_2'], NOW + DAY);
 
     expect(res).toEqual({ unconfirmed: [], accepted: [] });
     expect(await record('item_a')).toBeNull();
@@ -128,13 +179,13 @@ describe('the glitch case', () => {
 
   test('a later disappearance starts a fresh window, not an inherited one', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW); // vanishes
-    await checkVanished('item_a', ['acct_1', 'acct_2'], NOW + DAY); // returns
+    await check('item_a', ['acct_1'], NOW); // vanishes
+    await check('item_a', ['acct_1', 'acct_2'], NOW + DAY); // returns
 
     // Months later it vanishes again. If the old timestamp had been kept, this
     // would be accepted as closed instantly on the strength of an absence that
     // already resolved.
-    const res = await checkVanished('item_a', ['acct_1'], NOW + 90 * DAY);
+    const res = await check('item_a', ['acct_1'], NOW + 90 * DAY);
     expect(res.unconfirmed).toEqual(['acct_2']);
     expect(res.accepted).toEqual([]);
   });
@@ -149,7 +200,7 @@ describe('corrupt or missing state fails safe', () => {
 
     // Waving it through would be the failure that matters: a corrupt entry
     // must not let a disappearance be accepted unexamined.
-    const res = await checkVanished('item_a', ['acct_1'], NOW);
+    const res = await check('item_a', ['acct_1'], NOW);
     expect(res.unconfirmed).toEqual(['acct_2']);
     expect(res.accepted).toEqual([]);
   });
@@ -158,15 +209,18 @@ describe('corrupt or missing state fails safe', () => {
     await remember('item_a', ['acct_1', 'acct_2']);
     await fake.hset(testKey('accounts:vanished'), { item_a: 'not-ciphertext' });
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW);
+    const res = await check('item_a', ['acct_1'], NOW);
     expect(res.unconfirmed).toEqual(['acct_2']);
   });
 
-  test('a failed Redis read does not report a disappearance', async () => {
+  test('a failed record read does not report a disappearance', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    fake.failNext('hget', 2); // remembered ids, then the record
+    // Both reads in loadVanishedInputs are hgetall; failing them means the
+    // comparison has nothing to compare against and must say nothing rather
+    // than flagging every account.
+    fake.failNext('hgetall', 2);
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW);
+    const res = await check('item_a', ['acct_1'], NOW);
     expect(res).toEqual({ unconfirmed: [], accepted: [] });
   });
 });
@@ -174,69 +228,95 @@ describe('corrupt or missing state fails safe', () => {
 describe('a settled closure stops being reported', () => {
   test('is pruned once the institution no longer remembers it', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
 
     // Past the window, and rememberAccounts has since pruned meta (which it
     // does once the gate reopens and a healthy fetch is recorded).
     await remember('item_a', ['acct_1']);
-    const first = await checkVanished('item_a', ['acct_1'], NOW + 4 * DAY);
+    const first = await check('item_a', ['acct_1'], NOW + 4 * DAY);
     expect(first.accepted).toEqual(['acct_2']);
 
     // Without pruning, this entry would stay a candidate forever: reported as
     // accepted and logged on every single load, and the record would grow by
     // one permanent entry per closed account.
     expect(await record('item_a')).toBeNull();
-    const second = await checkVanished('item_a', ['acct_1'], NOW + 5 * DAY);
-    expect(second).toEqual({ unconfirmed: [], accepted: [] });
+    expect(await check('item_a', ['acct_1'], NOW + 5 * DAY)).toEqual({
+      unconfirmed: [],
+      accepted: [],
+    });
   });
 
   test('is NOT pruned while the institution still remembers it', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
 
     // meta still lists it, so dropping the record here would make the next run
     // rediscover it with a fresh window, and the two would cycle forever.
-    const res = await checkVanished('item_a', ['acct_1'], NOW + 4 * DAY);
+    const res = await check('item_a', ['acct_1'], NOW + 4 * DAY);
     expect(res.accepted).toEqual(['acct_2']);
     expect(await record('item_a')).toEqual({ acct_2: new Date(NOW).toISOString() });
   });
 });
 
-describe('checkVanishedAll', () => {
-  test('checks several institutions on one read of the remembered hash', async () => {
+describe('cost', () => {
+  const healthy = (item_id: string, ids: string[]) => ({ item_id, accounts: asAccounts(ids) });
+
+  test('does not grow with the number of institutions', async () => {
     await remember('item_a', ['a1', 'a2']);
-    await remember('item_b', ['b1']);
+    await remember('item_b', ['b1', 'b2']);
+    await remember('item_c', ['c1', 'c2']);
 
     fake.ops = 0;
-    const res = await checkVanishedAll(
+    await checkVanishedAll([healthy('item_a', ['a1', 'a2']), healthy('item_b', ['b1', 'b2'])], NOW);
+    const two = fake.ops;
+
+    fake.ops = 0;
+    await checkVanishedAll(
       [
-        { item_id: 'item_a', accounts: [{ account_id: 'a1' }] },
-        { item_id: 'item_b', accounts: [{ account_id: 'b1' }] },
+        healthy('item_a', ['a1', 'a2']),
+        healthy('item_b', ['b1', 'b2']),
+        healthy('item_c', ['c1', 'c2']),
       ],
       NOW
     );
+    const three = fake.ops;
 
-    expect(res.item_a.unconfirmed).toEqual(['a2']);
-    expect(res.item_b).toBeUndefined(); // healthy institutions are omitted
-
-    // One hgetall for the remembered hash, then per-item record reads. The
-    // per-institution form cost two reads each, which on a six-institution
-    // dashboard load was twelve round trips on a path this repo has already
-    // had to cut latency out of once.
-    expect(fake.ops).toBeLessThan(6);
+    // The property that actually matters, and the one a regression to per-item
+    // reads would break. An absolute bound would not: per-item reads for two
+    // institutions cost only one more than batched, so any loose threshold
+    // passes both.
+    expect(three).toBe(two);
+    // Exactly two: one hgetall for the remembered hash, one for the records.
+    expect(two).toBe(2);
   });
 
-  test('returns nothing for an empty institution list without touching Redis', async () => {
+  test('costs nothing at all when there are no institutions', async () => {
     fake.ops = 0;
     expect(await checkVanishedAll([], NOW)).toEqual({});
     expect(fake.ops).toBe(0);
   });
 });
 
+describe('the single-Item form', () => {
+  // Still exported for callers with one Item in hand; production uses the batch
+  // form. Covered so it cannot rot unnoticed.
+  test('behaves like the batch form', async () => {
+    await remember('item_a', ['acct_1', 'acct_2']);
+
+    const res = await checkVanished('item_a', ['acct_1'], NOW);
+    expect(res.unconfirmed).toEqual(['acct_2']);
+  });
+
+  test('refuses an empty account list too', async () => {
+    await remember('item_a', ['acct_1', 'acct_2']);
+    expect(await checkVanished('item_a', [], NOW)).toEqual({ unconfirmed: [], accepted: [] });
+  });
+});
+
 describe('forgetVanished', () => {
   test('drops the record so a relinked Item starts clean', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await checkVanished('item_a', ['acct_1'], NOW);
+    await check('item_a', ['acct_1'], NOW);
 
     await forgetVanished('item_a');
 
