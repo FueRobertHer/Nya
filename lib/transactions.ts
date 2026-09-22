@@ -275,6 +275,22 @@ function blockedKey(item_id: string): string {
   return k(`txns-blocked:${item_id}`);
 }
 
+/** What the marker records: when the write was refused, and how big the blob
+ *  was. The size is what lets a raised ceiling actually unblock the Item. */
+type BlockedMarker = { at: string; chars: number };
+
+function parseBlocked(raw: string): BlockedMarker | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<BlockedMarker>;
+    if (typeof parsed?.at === 'string' && typeof parsed?.chars === 'number') {
+      return { at: parsed.at, chars: parsed.chars };
+    }
+  } catch {
+    /* not JSON */
+  }
+  return null;
+}
+
 function emptyState(): ItemState {
   return { schema_version: TXN_SCHEMA_VERSION, cursor: '', accounts: {}, txns: {} };
 }
@@ -515,7 +531,8 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
         `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${MAX_BLOB_CHARS} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
       );
       try {
-        await redis().set(blockedKey(item_id), new Date().toISOString());
+        const marker: BlockedMarker = { at: new Date().toISOString(), chars: encoded.length };
+        await redis().set(blockedKey(item_id), JSON.stringify(marker));
       } catch {
         // Best effort. Without the marker the next sync re-pulls and refuses
         // again — wasteful, but still correct.
@@ -666,12 +683,28 @@ async function syncItem(
   // before the Plaid call: pulling again would rebuild the same oversized state
   // and refuse to write it again, at full cost, on every dashboard load.
   try {
-    const blockedAt = await redis().get<string>(blockedKey(item.item_id));
-    if (blockedAt) {
-      return {
-        state: null,
-        note: `${item.institution_name}: stored history is too large to update (since ${blockedAt.slice(0, 10)}) — reconnect this institution to reset it`,
-      };
+    const raw = await redis().get<string>(blockedKey(item.item_id));
+    if (raw) {
+      const marker = parseBlocked(raw);
+
+      // Raising the ceiling is the legitimate fix for this — a bigger Upstash
+      // plan allows a bigger request. Without this comparison the short-circuit
+      // would fire before any size is computed, so raising the limit would do
+      // nothing and the ONLY way out would be reconnecting, which discards the
+      // Item's stored history. That would make the destructive escape the only
+      // working one.
+      //
+      // An unparseable marker clears too, rather than blocking forever on a
+      // value nothing can interpret. The cost is one wasted pull, and
+      // writeState re-sets the marker if the blob is still too big.
+      if (!marker || marker.chars <= MAX_BLOB_CHARS) {
+        await redis().del(blockedKey(item.item_id));
+      } else {
+        return {
+          state: null,
+          note: `${item.institution_name}: stored history is too large to save (since ${marker.at.slice(0, 10)}) — raise the storage limit to resume, or reconnect to start over, which discards this institution's saved history`,
+        };
+      }
     }
   } catch {
     // Can't read the marker: fall through and sync. Worst case is the wasted

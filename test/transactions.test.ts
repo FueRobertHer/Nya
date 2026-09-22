@@ -364,8 +364,15 @@ describe('a blob too large to persist', () => {
     expect(res.txns.map((t) => t.transaction_id).sort()).toEqual(['t1', 't2']);
   });
 
+  /** A marker recording a refusal at `chars`, as writeState would write it. */
+  const blockedAt = (chars: number) =>
+    fake.set(
+      testKey('txns-blocked:item_a'),
+      JSON.stringify({ at: '2026-01-15T00:00:00.000Z', chars })
+    );
+
   test('a blocked item short-circuits instead of re-pulling from Plaid', async () => {
-    await fake.set(testKey('txns-blocked:item_a'), '2026-01-15T00:00:00.000Z');
+    await blockedAt(99_999_999); // still far over the 5000 test ceiling
 
     pages = [{ added: [txn()] }];
     const res = await syncItemTransactions(ITEM);
@@ -375,19 +382,46 @@ describe('a blob too large to persist', () => {
     // it again, forever, at real cost.
     expect(calls).toHaveLength(0);
     expect(res.txns).toEqual([]);
-    expect(res.note).toContain('too large to update');
+    expect(res.note).toContain('too large to save');
     expect(res.note).toContain('2026-01-15');
+    // The note must state what reconnecting costs, not just offer it.
+    expect(res.note).toContain('discards');
+  });
+
+  test('raising the ceiling unblocks the item', async () => {
+    // The legitimate fix is a bigger plan and a bigger limit. Before this was
+    // handled, the short-circuit fired before any size was computed, so raising
+    // the limit did nothing and reconnecting — which discards the stored
+    // history — was the only way out.
+    await blockedAt(1000); // under the 5000 ceiling now in force
+
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    expect(calls).toHaveLength(1);
+    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
+    expect(await fake.get(testKey('txns-blocked:item_a'))).toBeNull();
+  });
+
+  test('an uninterpretable marker clears rather than blocking forever', async () => {
+    await fake.set(testKey('txns-blocked:item_a'), 'not-json');
+
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    // Costs one wasted pull; writeState re-sets it if the blob is still too
+    // big. Better than a permanently stuck Item nothing can interpret.
+    expect(calls).toHaveLength(1);
+    expect(res.note).toBeNull();
   });
 
   test('disconnecting clears the marker so a reconnect is not blocked', async () => {
-    await fake.set(testKey('txns-blocked:item_a'), '2026-01-15T00:00:00.000Z');
+    await blockedAt(99_999_999);
     await clearItemTransactions('item_a');
 
     pages = [{ added: [txn()] }];
     const res = await syncItemTransactions(ITEM);
 
-    // The note on a blocked item tells the user to reconnect, so reconnecting
-    // has to be what resets it.
     expect(calls).toHaveLength(1);
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
   });
