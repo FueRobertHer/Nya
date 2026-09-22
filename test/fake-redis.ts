@@ -38,8 +38,8 @@ export class FakeRedis {
    *  which should cost nothing actually touches Redis zero times. */
   ops = 0;
 
-  /** Commands armed to throw on their next call, by `failNext`. */
-  private failing = new Set<FakeCommand>();
+  /** Commands armed to throw, and how many more calls each should fail. */
+  private failing = new Map<FakeCommand, number>();
 
   private hash(key: string): Hash {
     let h = this.hashes.get(key);
@@ -48,20 +48,28 @@ export class FakeRedis {
   }
 
   /**
-   * Make the NEXT call to `command` throw, then disarm.
+   * Make the next `times` calls to `command` throw, then disarm.
    *
    * Exists because the alternative is swapping in a whole second
    * `storageMock(broken)` (see test/history.test.ts), which fails every command
-   * at once. Failure isolation in the snapshot fan-out and the refuse-to-trim
+   * at once. Failure isolation in the snapshot fan-out and the refuse-to-persist
    * path both need one command to fail while the rest still work.
+   *
+   * `times` matters when a code path issues the same command more than once and
+   * swallows the earlier failures itself — lib/transactions.ts reads its
+   * blocked marker before it reads the state blob, and deliberately tolerates
+   * that first read failing.
    */
-  failNext(command: FakeCommand): void {
-    this.failing.add(command);
+  failNext(command: FakeCommand, times = 1): void {
+    this.failing.set(command, (this.failing.get(command) ?? 0) + times);
   }
 
   private gate(command: FakeCommand): void {
     this.ops++;
-    if (this.failing.delete(command)) {
+    const remaining = this.failing.get(command) ?? 0;
+    if (remaining > 0) {
+      if (remaining === 1) this.failing.delete(command);
+      else this.failing.set(command, remaining - 1);
       throw new Error(`FakeRedis: armed failure for ${command}`);
     }
   }

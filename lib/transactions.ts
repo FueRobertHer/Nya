@@ -21,11 +21,17 @@
 // (e.g. a card that only exposes 90 days to Plaid) and accumulate a long trend
 // the bank alone can't give us. The only bound is a *size* guard: the blob is
 // gzip-compressed at rest, and if one would still exceed Upstash's request-size
-// ceiling we trim the oldest rows until it fits (see writeState). At personal
-// volume the compressed blob stays far under that for many years, so in
-// practice nothing is ever dropped. Trimming is safe because the deltas are
+// ceiling, writeState REFUSES to write it rather than making it fit. At personal
+// volume the compressed blob stays far under that for many years, so in practice
+// this never fires.
+//
+// It used to trim the oldest rows instead, on the reasoning that the deltas are
 // idempotent: if Plaid later modifies a trimmed row we re-add it, and a removal
-// of one is a no-op.
+// of one is a no-op. That argument is sound, and it covers exactly the rows
+// Plaid will serve again. It does not cover the long tail past an institution's
+// window — the data this store exists to hold and that nothing can re-serve. So
+// trimming oldest-first dropped precisely the irreplaceable rows, and did it
+// silently. Refusing is recoverable; that was not.
 
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
@@ -147,8 +153,37 @@ export const LOOKBACK_DAYS = 365;
 // Max size of a stored (compressed + encrypted) blob. Upstash's free-plan
 // *request-size* ceiling is 10 MB, and a get/set of an Item's blob is a single
 // request, so that — not the 100 MB max-record size — is the real wall. We keep
-// a margin below it; writeState trims oldest rows only if a blob would cross it.
-const MAX_BLOB_BYTES = 8 * 1024 * 1024;
+// a margin below it; writeState REFUSES to persist a blob that would cross it.
+//
+// Measured in CHARACTERS, which is why the name says so: the value is base64
+// (see encodeState) travelling as ASCII in a JSON body, so one character is one
+// byte on the wire. Do not "correct" this by scaling for base64 expansion — the
+// expansion already happened before the measurement, and dividing would cut the
+// real ceiling to 6 MB for nothing.
+//
+// Overridable because the ceiling it shadows is a property of the Upstash plan,
+// not of this code, and those differ. Tests also use it to reach the refusal
+// path, which no realistic fixture could otherwise trigger.
+//
+// Validated rather than trusted: a negative or non-numeric value would
+// otherwise sail through and put every Item over the ceiling at once, blocking
+// every sync in the account over a typo in an env var.
+const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
+const MAX_BLOB_CHARS = (() => {
+  const raw = process.env.MAX_TXN_BLOB_CHARS;
+  if (!raw) return DEFAULT_MAX_BLOB_CHARS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `transactions: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
+    );
+    return DEFAULT_MAX_BLOB_CHARS;
+  }
+  return parsed;
+})();
+// Log a warning well before the wall, so a blob on its way there is visible
+// while there is still time to do something about it.
+const BLOB_WARN_CHARS = MAX_BLOB_CHARS * 0.6;
 // Runaway guard for a single call: 50 * 500 = 25k updates. The initial pull of
 // a very large Item can exceed this; we persist progress and finish on the
 // next call (see the partial-history note).
@@ -222,6 +257,38 @@ function daysAgoIso(days: number): string {
 
 function stateKey(item_id: string): string {
   return k(`txns:${item_id}`);
+}
+
+// Set when an Item's blob is too large to persist (see writeState). Its own key
+// rather than a field inside the blob, because the blob is exactly the thing we
+// could not write.
+//
+// It exists to break a loop, not to record a fact. Refusing to persist means the
+// cursor never advances, so without this every dashboard load would re-pull the
+// Item's entire history from Plaid, forever, at real cost — a far worse failure
+// than the one refusing was meant to avoid.
+//
+// Note for anything that later walks the keyspace (export, backup, migration):
+// this is deliberately NOT under the `txns:` prefix, since it is metadata about
+// a blob rather than a blob. `txns:*` does not match it; a looser `txns*` would.
+function blockedKey(item_id: string): string {
+  return k(`txns-blocked:${item_id}`);
+}
+
+/** What the marker records: when the write was refused, and how big the blob
+ *  was. The size is what lets a raised ceiling actually unblock the Item. */
+type BlockedMarker = { at: string; chars: number };
+
+function parseBlocked(raw: string): BlockedMarker | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<BlockedMarker>;
+    if (typeof parsed?.at === 'string' && typeof parsed?.chars === 'number') {
+      return { at: parsed.at, chars: parsed.chars };
+    }
+  } catch {
+    /* not JSON */
+  }
+  return null;
 }
 
 function emptyState(): ItemState {
@@ -366,10 +433,40 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
   };
 }
 
+/**
+ * The stored blob exists but could not be turned back into state.
+ *
+ * Thrown rather than swallowed because the caller's only other option is to
+ * carry on with an empty state, and the next writeState would then persist that
+ * emptiness over the real thing. See readState.
+ */
+class StateUnreadableError extends Error {
+  constructor(
+    readonly item_id: string,
+    readonly kind: 'read' | 'decode',
+    readonly reason: unknown
+  ) {
+    super(`transactions: stored state for ${item_id} is unreadable (${kind})`);
+    this.name = 'StateUnreadableError';
+  }
+}
+
 async function readState(item_id: string): Promise<ItemState> {
+  let blob: string | null;
   try {
-    const blob = await redis().get<string>(stateKey(item_id));
-    if (!blob) return emptyState();
+    blob = await redis().get<string>(stateKey(item_id));
+  } catch (err) {
+    // A Redis blip is NOT an empty store. Treating it as one would re-pull from
+    // scratch and then persist the bank's short window over years of retained
+    // rows — the read failing is transient, the overwrite is not.
+    throw new StateUnreadableError(item_id, 'read', err);
+  }
+
+  // Genuinely absent: a new Item, or one whose state was deliberately cleared.
+  // This is the ONLY case that legitimately starts from empty.
+  if (!blob) return emptyState();
+
+  try {
     const parsed = await decodeState(blob);
     const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
     if (version >= TXN_SCHEMA_VERSION) {
@@ -390,29 +487,67 @@ async function readState(item_id: string): Promise<ItemState> {
     // file header). Newly-captured fields stay null on old rows until Plaid
     // next `modified`s them.
     return migrateLegacyState(parsed as unknown as LegacyItemState);
-  } catch {
-    // Rotated key / corrupted / unreadable value: start clean and re-sync.
-    return emptyState();
+  } catch (err) {
+    // Rotated key, corrupted value, a cipher format this build predates.
+    //
+    // This used to return emptyState() and "start clean and re-sync". That was
+    // silent permanent loss: the empty state goes straight to writeState, which
+    // persists it over the stored blob, and the re-pull only recovers what the
+    // bank still exposes. Everything older — the long tail this module exists
+    // to hold — was gone, with nothing on screen to say so.
+    //
+    // It matters more than it looks. Introducing a second ciphertext format
+    // makes every old deploy's decrypt throw here, so the rollback path of an
+    // encryption change ran straight through this catch.
+    throw new StateUnreadableError(item_id, 'decode', err);
   }
 }
 
-async function writeState(item_id: string, state: ItemState): Promise<void> {
+/** Why a write did not land, when it didn't. `oversize` is the only outcome a
+ *  caller must surface: the others resolve themselves on the next sync. */
+type WriteOutcome = { persisted: true } | { persisted: false; reason: 'oversize' | 'error' };
+
+async function writeState(item_id: string, state: ItemState): Promise<WriteOutcome> {
   try {
-    let encoded = await encodeState(state);
-    // Keep the blob under the request-size ceiling. Over budget: drop the
-    // oldest transactions — far older than anything the UI shows — until it
-    // fits, re-encoding to re-check. The keep-count is scaled to the overage
-    // (with margin) so this converges in one or two passes; at personal volume
-    // the compressed blob never approaches the limit, so this loop never runs.
-    while (encoded.length > MAX_BLOB_BYTES) {
-      const ids = Object.keys(state.txns);
-      if (ids.length === 0) break;
-      ids.sort((a, b) => (state.txns[a].date < state.txns[b].date ? -1 : 1));
-      const keep = Math.floor(ids.length * (MAX_BLOB_BYTES / encoded.length) * 0.9);
-      for (const id of ids.slice(0, ids.length - keep)) delete state.txns[id];
-      encoded = await encodeState(state);
+    const encoded = await encodeState(state);
+
+    // OVER THE CEILING: refuse, and do not touch `state`.
+    //
+    // This used to trim the oldest rows until the blob fit. Two things made
+    // that the wrong trade. It mutated the caller's object in place, and
+    // syncItem returns that same object — so a trim silently shortened the
+    // RESPONSE too, and lib/backfill.ts's walk (via readItemTransactions)
+    // would reconstruct balances from a set with a hole in it, producing a
+    // wrong history rather than a short one and persisting it over the real
+    // estimated layer. And the rows it dropped were the oldest, which are
+    // exactly the ones no bank will re-serve — the long tail this module
+    // exists to retain (see the file header).
+    //
+    // Refusing is recoverable: the cursor does not advance, the deltas are
+    // idempotent, and the stored blob stays whatever it last was. Dropped
+    // rows are not recoverable at all.
+    if (encoded.length > MAX_BLOB_CHARS) {
+      console.error(
+        `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${MAX_BLOB_CHARS} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
+      );
+      try {
+        const marker: BlockedMarker = { at: new Date().toISOString(), chars: encoded.length };
+        await redis().set(blockedKey(item_id), JSON.stringify(marker));
+      } catch {
+        // Best effort. Without the marker the next sync re-pulls and refuses
+        // again — wasteful, but still correct.
+      }
+      return { persisted: false, reason: 'oversize' };
     }
+
+    if (encoded.length > BLOB_WARN_CHARS) {
+      console.warn(
+        `transactions: ${item_id} blob is ${encoded.length} chars, past ${Math.round((encoded.length / MAX_BLOB_CHARS) * 100)}% of the ceiling`
+      );
+    }
+
     await redis().set(stateKey(item_id), encoded);
+    return { persisted: true };
   } catch (err) {
     // Persist failures are non-fatal for the current request (the in-memory
     // state is still returned), and the deltas are idempotent so the next call
@@ -423,6 +558,7 @@ async function writeState(item_id: string, state: ItemState): Promise<void> {
       `transactions: failed to persist sync state for ${item_id} (${Object.keys(state.txns).length} txns); will re-sync next call`,
       err
     );
+    return { persisted: false, reason: 'error' };
   }
 }
 
@@ -446,10 +582,16 @@ export async function getItemAccountIds(item_id: string): Promise<string[]> {
   }
 }
 
-/** Delete an Item's stored transactions. Call when the Item is disconnected. */
+/**
+ * Delete an Item's stored transactions. Call when the Item is disconnected.
+ *
+ * Clears the oversize marker too: reconnecting is what the note on that
+ * condition tells the user to do, so it has to be the thing that resets it. A
+ * marker left behind would block the freshly-relinked Item forever.
+ */
 export async function clearItemTransactions(item_id: string): Promise<void> {
   try {
-    await redis().del(stateKey(item_id));
+    await redis().del(stateKey(item_id), blockedKey(item_id));
   } catch {
     // Best effort; a stale key is harmless once the Item is gone.
   }
@@ -537,7 +679,56 @@ async function syncItem(
     return { state: null, note: `${item.institution_name}: could not decrypt stored credentials` };
   }
 
-  const stored = await readState(item.item_id);
+  // A previous sync could not persist this Item's blob (see writeState). Stop
+  // before the Plaid call: pulling again would rebuild the same oversized state
+  // and refuse to write it again, at full cost, on every dashboard load.
+  try {
+    const raw = await redis().get<string>(blockedKey(item.item_id));
+    if (raw) {
+      const marker = parseBlocked(raw);
+
+      // Raising the ceiling is the legitimate fix for this — a bigger Upstash
+      // plan allows a bigger request. Without this comparison the short-circuit
+      // would fire before any size is computed, so raising the limit would do
+      // nothing and the ONLY way out would be reconnecting, which discards the
+      // Item's stored history. That would make the destructive escape the only
+      // working one.
+      //
+      // An unparseable marker clears too, rather than blocking forever on a
+      // value nothing can interpret. The cost is one wasted pull, and
+      // writeState re-sets the marker if the blob is still too big.
+      if (!marker || marker.chars <= MAX_BLOB_CHARS) {
+        await redis().del(blockedKey(item.item_id));
+      } else {
+        return {
+          state: null,
+          note: `${item.institution_name}: stored history is too large to save (since ${marker.at.slice(0, 10)}) — raise the storage limit to resume, or reconnect to start over, which discards this institution's saved history`,
+        };
+      }
+    }
+  } catch {
+    // Can't read the marker: fall through and sync. Worst case is the wasted
+    // pull this marker exists to prevent, which is better than refusing to
+    // sync because Redis hiccuped.
+  }
+
+  // Hard stop on an unreadable blob, the same shape as the undecryptable-
+  // credentials stop above. Carrying on would mean syncing from an empty state
+  // and persisting that over history no bank will re-serve, so the one thing
+  // this must not do is reach writeState.
+  let stored: ItemState;
+  try {
+    stored = await readState(item.item_id);
+  } catch (err) {
+    if (err instanceof StateUnreadableError) {
+      console.error(err.message, err.reason);
+      return {
+        state: null,
+        note: `${item.institution_name}: stored history could not be read — refusing to re-sync over it`,
+      };
+    }
+    throw err;
+  }
 
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
@@ -604,10 +795,23 @@ async function syncItem(
       };
     }
 
-    // Advance the cursor and persist. writeState compresses the blob and, only
-    // if it would exceed the request-size ceiling, trims oldest rows to fit.
+    // Advance the cursor and persist. writeState compresses the blob and, if it
+    // would exceed the request-size ceiling, refuses rather than dropping rows
+    // to fit.
     if (cursor) state.cursor = cursor;
-    await writeState(item.item_id, state);
+    const write = await writeState(item.item_id, state);
+
+    // Couldn't persist because the blob is too large. `state` is still correct
+    // and complete — nothing was trimmed out of it — so return it: the user
+    // sees accurate figures this request, plus a note saying they won't stick.
+    // Returning null instead would blank the institution over a storage
+    // problem, which is a worse answer than the true one with a caveat.
+    if (!write.persisted && write.reason === 'oversize') {
+      return {
+        state,
+        note: `${item.institution_name}: too much stored history to save an update — showing live data, but it won't persist until this is resolved`,
+      };
+    }
 
     // Hit the page cap mid-history: intermediate cursors are valid, so we
     // persisted progress and will finish next call. Surface it rather than

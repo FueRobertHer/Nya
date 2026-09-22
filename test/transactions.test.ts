@@ -7,6 +7,14 @@ import { FakeRedis, storageMock, testKey } from './fake-redis';
 // test nothing.
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
+// A ceiling a fixture can actually cross. The real one is 8M characters, which
+// would take roughly a hundred megabytes of JSON to reach after gzip — far too
+// slow to build in a unit test. A one-row blob encodes to about 800 characters,
+// so this sits well clear of the ordinary fixtures and is crossed only by the
+// deliberately bulky one. Read at import time, so it must be set before the
+// module below is imported.
+process.env.MAX_TXN_BLOB_CHARS = '5000';
+
 // Drives /transactions/sync deterministically. Declared before mock.module
 // because that call is hoisted above the imports below it (same hazard as
 // test/investments.test.ts).
@@ -47,7 +55,13 @@ const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
-const { syncItemTransactions, readItemTransactions, getItemAccountIds, TXN_SCHEMA_VERSION } =
+const {
+  syncItemTransactions,
+  readItemTransactions,
+  getItemAccountIds,
+  clearItemTransactions,
+  TXN_SCHEMA_VERSION,
+} =
   await import('@/lib/transactions');
 
 const ITEM = {
@@ -287,23 +301,176 @@ describe('hard stops leave the stored blob alone', () => {
   });
 });
 
+describe('a blob too large to persist', () => {
+  // Rows whose names are random, so gzip cannot compress the bulk away: the
+  // blob's size has to come from real entropy, or the encoded length barely
+  // moves however many rows are added. Two are dated outside the display
+  // window so the refusal can be shown not to drop the irreplaceable ones.
+  const bulky = () =>
+    Array.from({ length: 140 }, (_, i) => {
+      const age = i < 2 ? 900 - i * 100 : 3;
+      return txn({
+        transaction_id: i < 2 ? `old_${i + 1}` : `t${i}`,
+        date: daysAgo(age),
+        name: `MERCHANT ${crypto.randomUUID()}`,
+      });
+    });
+
+  test('refuses to write, and drops nothing from the returned set', async () => {
+    pages = [{ added: bulky() }];
+    const res = await readItemTransactions(ITEM, 1000);
+
+    // THE point of the change. The old code trimmed oldest-first until the blob
+    // fit, mutating the caller's state in place — and syncItem returns that same
+    // object, so the trimmed set reached lib/backfill.ts through this very
+    // function and reconstructed balances from a set with a hole in it.
+    expect(res.txns).toHaveLength(140);
+    // The two oldest are the ones the old code would have dropped first, and
+    // the ones no bank will re-serve.
+    expect(res.txns.map((t) => t.transaction_id)).toContain('old_1');
+    expect(res.txns.map((t) => t.transaction_id)).toContain('old_2');
+    expect(res.note).toContain("won't persist");
+  });
+
+  test('leaves the previously stored blob untouched', async () => {
+    // One small row fits and persists.
+    pages = [{ added: [txn()], next_cursor: 'cursor-small' }];
+    await syncItemTransactions(ITEM);
+    const stored = await fake.get<string>(testKey('txns:item_a'));
+    expect(stored).not.toBeNull();
+
+    // Now a pull that pushes it over. The stored blob must survive intact: the
+    // cursor has not advanced, so the deltas replay safely next time.
+    calls = [];
+    pages = [{ added: bulky() }];
+    await syncItemTransactions(ITEM);
+
+    expect(await fake.get<string>(testKey('txns:item_a'))).toBe(stored as string);
+  });
+
+  test('sets the blocked marker so the next sync does not re-pull', async () => {
+    pages = [{ added: bulky() }];
+    await syncItemTransactions(ITEM);
+
+    expect(await fake.get<string>(testKey('txns-blocked:item_a'))).not.toBeNull();
+  });
+
+  test('a failed persist never drops rows from the returned set', async () => {
+    pages = [{ added: [txn(), txn({ transaction_id: 't2' })] }];
+    fake.failNext('set');
+
+    const res = await syncItemTransactions(ITEM);
+
+    expect(res.txns.map((t) => t.transaction_id).sort()).toEqual(['t1', 't2']);
+  });
+
+  /** A marker recording a refusal at `chars`, as writeState would write it. */
+  const blockedAt = (chars: number) =>
+    fake.set(
+      testKey('txns-blocked:item_a'),
+      JSON.stringify({ at: '2026-01-15T00:00:00.000Z', chars })
+    );
+
+  test('a blocked item short-circuits instead of re-pulling from Plaid', async () => {
+    await blockedAt(99_999_999); // still far over the 5000 test ceiling
+
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    // The whole point of the marker: no Plaid call at all. Without it, every
+    // dashboard load would re-pull the Item's full history and refuse to write
+    // it again, forever, at real cost.
+    expect(calls).toHaveLength(0);
+    expect(res.txns).toEqual([]);
+    expect(res.note).toContain('too large to save');
+    expect(res.note).toContain('2026-01-15');
+    // The note must state what reconnecting costs, not just offer it.
+    expect(res.note).toContain('discards');
+  });
+
+  test('raising the ceiling unblocks the item', async () => {
+    // The legitimate fix is a bigger plan and a bigger limit. Before this was
+    // handled, the short-circuit fired before any size was computed, so raising
+    // the limit did nothing and reconnecting — which discards the stored
+    // history — was the only way out.
+    await blockedAt(1000); // under the 5000 ceiling now in force
+
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    expect(calls).toHaveLength(1);
+    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
+    expect(await fake.get(testKey('txns-blocked:item_a'))).toBeNull();
+  });
+
+  test('an uninterpretable marker clears rather than blocking forever', async () => {
+    await fake.set(testKey('txns-blocked:item_a'), 'not-json');
+
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    // Costs one wasted pull; writeState re-sets it if the blob is still too
+    // big. Better than a permanently stuck Item nothing can interpret.
+    expect(calls).toHaveLength(1);
+    expect(res.note).toBeNull();
+  });
+
+  test('disconnecting clears the marker so a reconnect is not blocked', async () => {
+    await blockedAt(99_999_999);
+    await clearItemTransactions('item_a');
+
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    expect(calls).toHaveLength(1);
+    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
+  });
+});
+
 describe('unreadable stored blob', () => {
-  // CHARACTERIZATION, NOT ENDORSEMENT. readState currently catches ANY throw
-  // and returns an empty state, so an unreadable blob is silently replaced by a
-  // full re-pull -- which recovers only what the bank still exposes, discarding
-  // the long-tail history this module exists to retain.
-  //
-  // This is the behaviour the readState change replaces with a hard stop. When
-  // that lands, this test should be REWRITTEN to assert the blob survives and a
-  // note is returned, not deleted.
-  test('currently starts clean and re-syncs rather than refusing', async () => {
+  // readState used to catch ANY throw and return an empty state, which the next
+  // writeState then persisted over the real blob: silent permanent loss of
+  // everything past the bank's window. It now hard-stops instead.
+  test('refuses to sync rather than overwriting history it cannot read', async () => {
     await fake.set(testKey('txns:item_a'), 'not-ciphertext');
 
     pages = [{ added: [txn({ transaction_id: 't_new' })] }];
     const res = await syncItemTransactions(ITEM);
 
-    expect(calls[0].cursor).toBeUndefined(); // the stored cursor was discarded
-    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t_new']);
-    expect(res.note).toBeNull(); // and nothing tells the user it happened
+    expect(calls).toHaveLength(0); // never reached Plaid
+    expect(res.txns).toEqual([]);
+    expect(res.note).toContain('refusing to re-sync over it');
+    // The one that actually matters: the blob is still there.
+    expect(await fake.get<string>(testKey('txns:item_a'))).toBe('not-ciphertext');
+  });
+
+  test('a failed Redis read is not treated as an empty store', async () => {
+    pages = [{ added: [txn()] }];
+    await syncItemTransactions(ITEM);
+    const stored = await fake.get<string>(testKey('txns:item_a'));
+
+    // A transient read failure used to mean "start clean", which would re-pull
+    // from scratch and persist the bank's short window over years of rows. The
+    // read is transient; that overwrite would not be.
+    calls = [];
+    // Two, because syncItem reads the blocked marker before the state blob and
+    // deliberately tolerates that first read failing. The second is the one
+    // under test.
+    fake.failNext('get', 2);
+    const res = await syncItemTransactions(ITEM);
+
+    expect(calls).toHaveLength(0);
+    expect(res.note).toContain('refusing to re-sync over it');
+    expect(await fake.get<string>(testKey('txns:item_a'))).toBe(stored as string);
+  });
+
+  test('an absent blob is still a legitimate fresh start', async () => {
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    // The one case that should start from empty, and the reason the null check
+    // sits outside the try rather than inside it.
+    expect(res.note).toBeNull();
+    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
   });
 });
