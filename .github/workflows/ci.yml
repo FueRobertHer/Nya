@@ -1,0 +1,50 @@
+name: CI
+
+# Typecheck and test on every pull request and every push to main.
+#
+# Until this existed, nothing automated gated a change: the only workflow was
+# sync-preview.yml, which merges main into preview on every push. So a broken
+# main reached the demo deployment unattended, and the only real gates were
+# whatever a contributor remembered to run locally plus Vercel's own build.
+#
+# That matters more than usual here because of what is coming: the container-
+# scoping work makes `k()` require a container id specifically so that an
+# unscoped key becomes a compile error. That guarantee is worth nothing if
+# `tsc --noEmit` only runs when someone remembers to run it.
+#
+# README tells contributors to run `bun run typecheck && bun run test`; this is
+# the same pair, so a green local run means a green CI run.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Supersede an in-flight run when new commits land on the same ref. Unlike
+# sync-preview (which queues, because every merge must land), a stale CI result
+# has no value once the code it described has been replaced.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Matches vercel.json's "bunVersion": "1.x", so CI and the deploy
+          # build run the same major.
+          bun-version: 1.x
+
+      # --frozen-lockfile, not a plain install: next is pinned to a canary
+      # build, and resolving it fresh could pull a different one than the
+      # lockfile records. CI must test what Vercel will actually deploy.
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      - run: bun test
