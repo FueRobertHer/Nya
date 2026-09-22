@@ -164,7 +164,23 @@ export const LOOKBACK_DAYS = 365;
 // Overridable because the ceiling it shadows is a property of the Upstash plan,
 // not of this code, and those differ. Tests also use it to reach the refusal
 // path, which no realistic fixture could otherwise trigger.
-const MAX_BLOB_CHARS = Number(process.env.MAX_TXN_BLOB_CHARS) || 8 * 1024 * 1024;
+//
+// Validated rather than trusted: a negative or non-numeric value would
+// otherwise sail through and put every Item over the ceiling at once, blocking
+// every sync in the account over a typo in an env var.
+const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
+const MAX_BLOB_CHARS = (() => {
+  const raw = process.env.MAX_TXN_BLOB_CHARS;
+  if (!raw) return DEFAULT_MAX_BLOB_CHARS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `transactions: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
+    );
+    return DEFAULT_MAX_BLOB_CHARS;
+  }
+  return parsed;
+})();
 // Log a warning well before the wall, so a blob on its way there is visible
 // while there is still time to do something about it.
 const BLOB_WARN_CHARS = MAX_BLOB_CHARS * 0.6;
@@ -251,6 +267,10 @@ function stateKey(item_id: string): string {
 // cursor never advances, so without this every dashboard load would re-pull the
 // Item's entire history from Plaid, forever, at real cost — a far worse failure
 // than the one refusing was meant to avoid.
+//
+// Note for anything that later walks the keyspace (export, backup, migration):
+// this is deliberately NOT under the `txns:` prefix, since it is metadata about
+// a blob rather than a blob. `txns:*` does not match it; a looser `txns*` would.
 function blockedKey(item_id: string): string {
   return k(`txns-blocked:${item_id}`);
 }
