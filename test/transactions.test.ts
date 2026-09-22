@@ -394,22 +394,49 @@ describe('a blob too large to persist', () => {
 });
 
 describe('unreadable stored blob', () => {
-  // CHARACTERIZATION, NOT ENDORSEMENT. readState currently catches ANY throw
-  // and returns an empty state, so an unreadable blob is silently replaced by a
-  // full re-pull -- which recovers only what the bank still exposes, discarding
-  // the long-tail history this module exists to retain.
-  //
-  // This is the behaviour the readState change replaces with a hard stop. When
-  // that lands, this test should be REWRITTEN to assert the blob survives and a
-  // note is returned, not deleted.
-  test('currently starts clean and re-syncs rather than refusing', async () => {
+  // readState used to catch ANY throw and return an empty state, which the next
+  // writeState then persisted over the real blob: silent permanent loss of
+  // everything past the bank's window. It now hard-stops instead.
+  test('refuses to sync rather than overwriting history it cannot read', async () => {
     await fake.set(testKey('txns:item_a'), 'not-ciphertext');
 
     pages = [{ added: [txn({ transaction_id: 't_new' })] }];
     const res = await syncItemTransactions(ITEM);
 
-    expect(calls[0].cursor).toBeUndefined(); // the stored cursor was discarded
-    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t_new']);
-    expect(res.note).toBeNull(); // and nothing tells the user it happened
+    expect(calls).toHaveLength(0); // never reached Plaid
+    expect(res.txns).toEqual([]);
+    expect(res.note).toContain('refusing to re-sync over it');
+    // The one that actually matters: the blob is still there.
+    expect(await fake.get<string>(testKey('txns:item_a'))).toBe('not-ciphertext');
+  });
+
+  test('a failed Redis read is not treated as an empty store', async () => {
+    pages = [{ added: [txn()] }];
+    await syncItemTransactions(ITEM);
+    const stored = await fake.get<string>(testKey('txns:item_a'));
+
+    // A transient read failure used to mean "start clean", which would re-pull
+    // from scratch and persist the bank's short window over years of rows. The
+    // read is transient; that overwrite would not be.
+    calls = [];
+    // Two, because syncItem reads the blocked marker before the state blob and
+    // deliberately tolerates that first read failing. The second is the one
+    // under test.
+    fake.failNext('get', 2);
+    const res = await syncItemTransactions(ITEM);
+
+    expect(calls).toHaveLength(0);
+    expect(res.note).toContain('refusing to re-sync over it');
+    expect(await fake.get<string>(testKey('txns:item_a'))).toBe(stored as string);
+  });
+
+  test('an absent blob is still a legitimate fresh start', async () => {
+    pages = [{ added: [txn()] }];
+    const res = await syncItemTransactions(ITEM);
+
+    // The one case that should start from empty, and the reason the null check
+    // sits outside the try rather than inside it.
+    expect(res.note).toBeNull();
+    expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
   });
 });

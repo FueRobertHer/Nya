@@ -397,10 +397,40 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
   };
 }
 
+/**
+ * The stored blob exists but could not be turned back into state.
+ *
+ * Thrown rather than swallowed because the caller's only other option is to
+ * carry on with an empty state, and the next writeState would then persist that
+ * emptiness over the real thing. See readState.
+ */
+class StateUnreadableError extends Error {
+  constructor(
+    readonly item_id: string,
+    readonly kind: 'read' | 'decode',
+    readonly reason: unknown
+  ) {
+    super(`transactions: stored state for ${item_id} is unreadable (${kind})`);
+    this.name = 'StateUnreadableError';
+  }
+}
+
 async function readState(item_id: string): Promise<ItemState> {
+  let blob: string | null;
   try {
-    const blob = await redis().get<string>(stateKey(item_id));
-    if (!blob) return emptyState();
+    blob = await redis().get<string>(stateKey(item_id));
+  } catch (err) {
+    // A Redis blip is NOT an empty store. Treating it as one would re-pull from
+    // scratch and then persist the bank's short window over years of retained
+    // rows — the read failing is transient, the overwrite is not.
+    throw new StateUnreadableError(item_id, 'read', err);
+  }
+
+  // Genuinely absent: a new Item, or one whose state was deliberately cleared.
+  // This is the ONLY case that legitimately starts from empty.
+  if (!blob) return emptyState();
+
+  try {
     const parsed = await decodeState(blob);
     const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
     if (version >= TXN_SCHEMA_VERSION) {
@@ -421,9 +451,19 @@ async function readState(item_id: string): Promise<ItemState> {
     // file header). Newly-captured fields stay null on old rows until Plaid
     // next `modified`s them.
     return migrateLegacyState(parsed as unknown as LegacyItemState);
-  } catch {
-    // Rotated key / corrupted / unreadable value: start clean and re-sync.
-    return emptyState();
+  } catch (err) {
+    // Rotated key, corrupted value, a cipher format this build predates.
+    //
+    // This used to return emptyState() and "start clean and re-sync". That was
+    // silent permanent loss: the empty state goes straight to writeState, which
+    // persists it over the stored blob, and the re-pull only recovers what the
+    // bank still exposes. Everything older — the long tail this module exists
+    // to hold — was gone, with nothing on screen to say so.
+    //
+    // It matters more than it looks. Introducing a second ciphertext format
+    // makes every old deploy's decrypt throw here, so the rollback path of an
+    // encryption change ran straight through this catch.
+    throw new StateUnreadableError(item_id, 'decode', err);
   }
 }
 
@@ -619,7 +659,23 @@ async function syncItem(
     // sync because Redis hiccuped.
   }
 
-  const stored = await readState(item.item_id);
+  // Hard stop on an unreadable blob, the same shape as the undecryptable-
+  // credentials stop above. Carrying on would mean syncing from an empty state
+  // and persisting that over history no bank will re-serve, so the one thing
+  // this must not do is reach writeState.
+  let stored: ItemState;
+  try {
+    stored = await readState(item.item_id);
+  } catch (err) {
+    if (err instanceof StateUnreadableError) {
+      console.error(err.message, err.reason);
+      return {
+        state: null,
+        note: `${item.institution_name}: stored history could not be read — refusing to re-sync over it`,
+      };
+    }
+    throw err;
+  }
 
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
