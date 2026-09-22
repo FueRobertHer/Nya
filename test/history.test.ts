@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 // Real AES-256-GCM, not a stub: encryption sits between every write and read in
 // this module, and a round-trip bug would look exactly like a logic bug.
@@ -31,7 +31,7 @@ const { encrypt } = await import('@/lib/crypto');
 /** Writes a real per-account snapshot for a specific date. recordSnapshot only
  *  ever writes today, so backdating has to go through the hash directly. */
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset('test:history:accounts', { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(testKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
 }
 
 type Hidden = Map<string, { type: string; hidden_at: string }>;
@@ -402,7 +402,7 @@ describe('getLatestAccountSnapshot', () => {
 
   test('skips an undecryptable date rather than giving up', async () => {
     await writeAccountSnapshot(daysAgo(4), { card: 100 });
-    await fake.hset('test:history:accounts', { [daysAgo(2)]: 'not-ciphertext' });
+    await fake.hset(testKey('history:accounts'), { [daysAgo(2)]: 'not-ciphertext' });
 
     expect(await getLatestAccountSnapshot()).toEqual({
       date: daysAgo(4),
@@ -473,7 +473,7 @@ describe('backfill schema flag', () => {
   // The migration path: a layer built by the previous algorithm carries the
   // legacy '1'. Without this the improvement would only ever reach new users.
   test('a legacy flag value forces a recompute', async () => {
-    await fake.set('test:history:backfill-done', '1');
+    await fake.set(testKey('history:backfill-done'), '1');
     expect(await isBackfillDone()).toBe(false);
   });
 
