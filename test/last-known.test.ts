@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -18,7 +18,7 @@ const { applyHidden } = await import('@/lib/hidden');
 const { accountBalanceMap } = await import('@/lib/networth');
 
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset('test:history:accounts', { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(testKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
 }
 
 // Recovery only looks back a bounded number of DAYS, so every fixture has to
@@ -155,12 +155,12 @@ describe('rememberAccounts', () => {
   // findRememberedAccount could resolve a type out of one.
   test('clears records left over from the previous per-account shape', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    await fake.hset('test:accounts:meta', {
+    await fake.hset(testKey('accounts:meta'), {
       old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
     });
 
     expect(await findRememberedAccount('old_acct_id')).toBeNull();
-    expect(await fake.hkeys('test:accounts:meta')).toEqual(['item_a']);
+    expect(await fake.hkeys(testKey('accounts:meta'))).toEqual(['item_a']);
   });
 
   // app/api/hidden-accounts needs an account's type to hide it, and for a
@@ -358,7 +358,7 @@ describe('what it refuses to do', () => {
   test('an unreadable record costs only its own Item', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await remember('item_b', [acct('save', 'Savings', 'depository')]);
-    await fake.hset('test:accounts:meta', { item_a: 'not-ciphertext' });
+    await fake.hset(testKey('accounts:meta'), { item_a: 'not-ciphertext' });
     await writeAccountSnapshot(RECENT, { card: 500, save: 2000 });
 
     const a = broken('item_a');
