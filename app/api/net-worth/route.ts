@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { computeNetWorth, accountBalanceMap, type InstitutionResult } from '@/lib/networth';
+import { computeNetWorth, accountBalanceMap, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import {
   recordSnapshot,
@@ -97,7 +97,7 @@ export async function GET(req: Request) {
     // below can't cost today's point. (The read is now issued earlier, above --
     // awaited, not issued, is what the guarantee rests on, because a rejection
     // surfaces where it is awaited.)
-    const clean = institutions.every((i) => !i.error);
+    const clean = institutions.every(isRecordable);
     // The date the point landed on, or null if it didn't. Taken from
     // recordSnapshot rather than read from the clock again, so the point this
     // route charts below is labelled with the day that was actually written

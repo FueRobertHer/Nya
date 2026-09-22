@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { computeNetWorth, accountBalanceMap } from '@/lib/networth';
+import { computeNetWorth, accountBalanceMap, isRecordable } from '@/lib/networth';
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
 import { rememberAccounts } from '@/lib/last-known';
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     const { institutions, netWorth } = await computeNetWorth();
 
     // Same rule as the dashboard fetch: only record clean, non-empty reads.
-    const clean = institutions.every((i) => !i.error);
+    const clean = institutions.every(isRecordable);
     if (!clean || institutions.length === 0) {
       return NextResponse.json({ recorded: false });
     }
