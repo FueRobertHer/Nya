@@ -3,10 +3,10 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
-import { fetchInvestmentTxns, valueDelta } from '@/lib/investments';
+import { fetchInvestmentTxns } from '@/lib/investments';
 import { getManualAccounts } from '@/lib/manual';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
-import { isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
+import { addInvestmentFlows, isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
 import {
   backfillPendingExhausted,
   clearBackfillPending,
@@ -188,22 +188,14 @@ export async function POST() {
         day[t.account_id] = (day[t.account_id] ?? 0) + t.amount;
         if (!oldestTxn || t.date < oldestTxn) oldestTxn = t.date;
       }
-      for (const t of invTxns) {
-        if (walkType[t.account_id] !== 'investment') continue;
-        const delta = valueDelta(t);
-        if (delta === 0) continue; // internal reallocation: buys, sells, corporate actions
-        const day = (dailyByAccount[t.date] ??= {});
-        // Back into the walk's convention (positive = value left the account),
-        // which is what the shared loop below un-applies.
-        day[t.account_id] = (day[t.account_id] ?? 0) + -delta;
-        // Deliberately NOT folded into oldestTxn. That marker stops the TOTAL
-        // series at the edge of the cash data; extending it would keep walking
-        // with every cash balance frozen, publishing a flatline as history.
-        // Tracked separately because an investment account's own series has
-        // real data out there and is drawn over it -- which is where a rollover
-        // older than the cash window lives. See reconstruct in lib/backfill.ts.
-        if (!oldestInvTxn || t.date < oldestInvTxn) oldestInvTxn = t.date;
-      }
+      // Deliberately NOT folded into oldestTxn. That marker stops the TOTAL
+      // series at the edge of the cash data; extending it would keep walking
+      // with every cash balance frozen, publishing a flatline as history.
+      // Tracked separately because an investment account's own series has
+      // real data out there and is drawn over it -- which is where a rollover
+      // older than the cash window lives. See reconstruct in lib/backfill.ts.
+      const oldestHere = addInvestmentFlows(dailyByAccount, invTxns, walkType);
+      if (oldestHere && (!oldestInvTxn || oldestHere < oldestInvTxn)) oldestInvTxn = oldestHere;
     }
 
     // A brokerage-only user has no cash horizon to preserve, so the hazard the

@@ -167,9 +167,16 @@ export function isRollover(t: InvestmentTxn): boolean {
   return !CONTRIBUTION_MARKER.test(residual);
 }
 
-/** A rollover arriving here, for the line shown alongside contributions. */
-export function isIncomingRollover(t: InvestmentTxn): boolean {
-  return isRollover(t) && valueDelta(t) > 0;
+/** No counted trades: the default for callers judging one row on its own. */
+const NONE: ReadonlySet<InvestmentTxn> = new Set();
+
+/**
+ * A rollover arriving here, for the line shown alongside contributions. Takes
+ * `counted` for the same reason isContribution does: a rollover can arrive as
+ * a single contribution buy too.
+ */
+export function isIncomingRollover(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn> = NONE): boolean {
+  return isRollover(t) && contributedAmount(t, counted) > 0;
 }
 
 /**
@@ -192,6 +199,10 @@ export function isIncomingRollover(t: InvestmentTxn): boolean {
  * - cash / fee / external -> -amount.
  * - anything unrecognized -> 0, so a subtype Plaid adds later can't silently
  *                            corrupt the reconstruction.
+ *
+ * Judges ONE row, so it cannot see a contribution booked as a single buy: that
+ * takes the rows beside it (countedTrades). Callers walking a set use
+ * walkDelta, which layers that answer on top of this.
  *
  * Known imprecision: a dividend that the broker reports as a single reinvestment
  * row typed `buy` is treated as internal, so its inflow is missed. The chart
@@ -217,11 +228,161 @@ export function valueDelta(t: InvestmentTxn): number {
   return 0;
 }
 
-/** Money the holder added from outside, for the year-to-date contributions line. */
-export function isContribution(t: InvestmentTxn): boolean {
+/**
+ * Signed change in account value from money CROSSING the account boundary:
+ * contributions, deposits, transfers, rollovers, withdrawals and distributions,
+ * in either direction. Zero for everything else.
+ *
+ * This is the "money added" side of the chart's added-vs-growth split, so the
+ * line it draws matters in both directions. Dividends, interest and fees are
+ * left out because they ARE growth (or its opposite). Buys and sells are left
+ * out because they are internal, even when an institution stamps them with an
+ * external-sounding subtype. Rollovers count: for this account they are money
+ * arriving, not money the market made, which is the question being answered
+ * (isContribution excludes them for a different one, the annual limit).
+ * Corporate actions are already zero in valueDelta.
+ */
+export function externalFlow(t: InvestmentTxn): number {
+  const subtype = (t.subtype || '').toLowerCase();
+  const type = (t.type || '').toLowerCase();
+  // A 401k loan repayment is money coming back in from the holder's paycheck.
+  // valueDelta already counts it (type cash); it just isn't in the external set.
+  if (subtype === 'loan payment' && type === 'cash') return -t.amount;
+  if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return 0;
+  if (type === 'buy' || type === 'sell') return 0;
+  // Plaid defines a distribution as money LEAVING the account. One arriving is
+  // a fund paying out into it (capital gains, say): return on the holding,
+  // which is growth, not money the holder added.
+  if (subtype === 'distribution' && -t.amount > 0) return 0;
+  return valueDelta(t);
+}
+
+// Trade subtypes that can mean money crossing the boundary, by direction: a buy
+// made with outside money (a paycheck, a 401k loan repayment) and a sell whose
+// proceeds leave the account (a distribution).
+const MONEY_IN_BUY_SUBTYPES = new Set(['contribution', 'loan payment']);
+const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution']);
+
+/**
+ * A single-row contribution or distribution: some recordkeepers report a
+ * paycheck contribution as one `buy` row (subtype contribution) that buys fund
+ * shares directly, with no cash row, and a payout as one `sell` row (subtype
+ * distribution). externalFlow alone reads both as internal trades, which would
+ * put every paycheck on the growth side. Their value change is `amount` itself:
+ * positive for shares bought with outside money, negative for shares sold and
+ * paid out. Whether a given one counts is countedTrades' decision.
+ */
+function tradeFlow(t: InvestmentTxn): number {
+  const subtype = (t.subtype || '').toLowerCase();
+  const type = (t.type || '').toLowerCase();
+  if (type === 'buy' && MONEY_IN_BUY_SUBTYPES.has(subtype)) return t.amount;
+  if (type === 'sell' && MONEY_OUT_SELL_SUBTYPES.has(subtype)) return t.amount;
+  return 0;
+}
+
+/** A non-trade row that moves money across the boundary under this subtype. */
+function isCashLeg(t: InvestmentTxn, subtype: string): boolean {
+  const type = (t.type || '').toLowerCase();
+  return (
+    type !== 'buy' &&
+    type !== 'sell' &&
+    (t.subtype || '').toLowerCase() === subtype &&
+    externalFlow(t) !== 0
+  );
+}
+
+/**
+ * The contribution and distribution trades (tradeFlow) in a set that carry
+ * their own money.
+ *
+ * Institutions report these one of two ways. Some book the money as a cash row
+ * (cash/contribution) and then the shares it bought as a buy that is purely
+ * internal. Others book only the buy. The question is which style an account
+ * uses, and it is answered PER ACCOUNT AND SUBTYPE from the evidence in the
+ * set: if an account has any cash row of that subtype, its trades of that
+ * subtype are the internal half and never count; if it has none, they are the
+ * only record of the money and always count.
+ *
+ * Deliberately not matched row to row. Pairing a cash row with a trade of the
+ * same amount on the same day broke on ordinary cases, each counting the money
+ * twice: a paycheck split across two funds (one cash row, two buys), an
+ * employer match (two cash rows, one buy), a cash row that settles days before
+ * the buy, and a distribution with tax withheld (one sell, a smaller cash row).
+ * An institution does not switch styles between paychecks, so the account-level
+ * answer covers all of them.
+ *
+ * Matched on the SAME subtype so an unrelated cash row can't suppress the
+ * trades: a rollover arriving as a cash transfer says nothing about how the
+ * same account books its paychecks.
+ *
+ * Decided over the whole set because no single row can answer it. The balance
+ * walk (addInvestmentFlows), the chart's money-added line (dailyFlows) and the
+ * year-to-date figures (contributedAmount) all read the same answer, so they
+ * cannot disagree about whether a paycheck happened.
+ */
+export function countedTrades(txns: InvestmentTxn[]): Set<InvestmentTxn> {
+  const cashStyle = new Set<string>(); // `${account_id}\0${subtype}` with a cash row
+  for (const t of txns) {
+    const subtype = (t.subtype || '').toLowerCase();
+    if (!MONEY_IN_BUY_SUBTYPES.has(subtype) && !MONEY_OUT_SELL_SUBTYPES.has(subtype)) continue;
+    if (isCashLeg(t, subtype)) cashStyle.add(`${t.account_id}\u0000${subtype}`);
+  }
+  const counted = new Set<InvestmentTxn>();
+  for (const t of txns) {
+    if (tradeFlow(t) === 0) continue;
+    if (!cashStyle.has(`${t.account_id}\u0000${(t.subtype || '').toLowerCase()}`)) counted.add(t);
+  }
+  return counted;
+}
+
+/**
+ * The change a row makes to the account's value, for the balance walk: a
+ * counted contribution trade's `amount` less its fees, and valueDelta for
+ * everything else. Fees come out of the shares, which is why they are taken
+ * off: $500 contributed with a $2 fee buys $498 of fund.
+ */
+export function walkDelta(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn>): number {
+  return counted.has(t) ? t.amount - (t.fees ?? 0) : valueDelta(t);
+}
+
+/**
+ * Money a row moved in or out, for the year-to-date contribution and rollover
+ * figures: a counted contribution trade's full `amount`, and valueDelta for
+ * everything else (which is what those figures always summed).
+ */
+export function contributedAmount(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn>): number {
+  return counted.has(t) ? t.amount : valueDelta(t);
+}
+
+/**
+ * Money crossing the account boundary, summed per date, ascending, with
+ * net-zero dates dropped. Counted contribution trades are included; see
+ * countedTrades for why the others are not.
+ */
+export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: number }[] {
+  const counted = countedTrades(txns);
+  const byDate = new Map<string, number>();
+  for (const t of txns) {
+    const flow = counted.has(t) ? t.amount : externalFlow(t);
+    if (flow !== 0) byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
+  }
+  return [...byDate]
+    .filter(([, amount]) => amount !== 0)
+    .map(([date, amount]) => ({ date, amount }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * Money the holder added from outside, for the year-to-date contributions line.
+ *
+ * Pass `counted` (countedTrades over the same set) to include contribution
+ * trades that carry their own money. Without it a paycheck booked as a single
+ * contribution buy reads as an internal trade and never reaches the figure.
+ */
+export function isContribution(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn> = NONE): boolean {
   // Rollovers wear contribution subtypes but aren't new money (see isRollover).
   if (isRollover(t)) return false;
-  return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && valueDelta(t) > 0;
+  return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && contributedAmount(t, counted) > 0;
 }
 
 /**

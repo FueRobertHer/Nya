@@ -32,7 +32,18 @@ mock.module('@/lib/plaid', () => ({
   },
 }));
 
-const { valueDelta, isContribution, isRollover, isIncomingRollover, fetchInvestmentTxns } =
+const {
+  valueDelta,
+  isContribution,
+  isRollover,
+  isIncomingRollover,
+  fetchInvestmentTxns,
+  externalFlow,
+  dailyFlows,
+  countedTrades,
+  walkDelta,
+  contributedAmount,
+} =
   await import('@/lib/investments');
 
 const txn = (over: Partial<InvestmentTxn> = {}): InvestmentTxn => ({
@@ -488,5 +499,232 @@ describe('fetchInvestmentTxns', () => {
     pages = [{ rows: [] }];
     await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01', ['acct']);
     expect(calls[0].account_ids).toEqual(['acct']);
+  });
+});
+
+// The "money added" side of the chart's added-vs-growth split. Anything counted
+// here is subtracted from growth, so both directions of error show on screen.
+describe('externalFlow', () => {
+  test('money crossing the boundary counts, in both directions', () => {
+    expect(externalFlow(txn({ subtype: 'contribution', amount: -500 }))).toBe(500);
+    expect(externalFlow(txn({ subtype: 'deposit', amount: -100 }))).toBe(100);
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'transfer', amount: -2000 }))).toBe(2000);
+    expect(externalFlow(txn({ subtype: 'withdrawal', amount: 300 }))).toBe(-300);
+    expect(externalFlow(txn({ subtype: 'distribution', amount: 50 }))).toBe(-50);
+  });
+
+  // For this account a rollover is money arriving, not money the market made.
+  test('counts a rollover', () => {
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'transfer', name: 'ROLLOVER FROM 401K', amount: -60_000 }))).toBe(60_000);
+  });
+
+  test('leaves growth out: dividends, interest and fees', () => {
+    expect(externalFlow(txn({ subtype: 'dividend', amount: -40 }))).toBe(0);
+    expect(externalFlow(txn({ subtype: 'interest', amount: -3 }))).toBe(0);
+    expect(externalFlow(txn({ type: 'fee', subtype: 'account fee', amount: 25 }))).toBe(0);
+  });
+
+  test('leaves internal movement out, even under an external-sounding subtype', () => {
+    expect(externalFlow(txn({ type: 'buy', subtype: 'buy', amount: 1000, fees: 1 }))).toBe(0);
+    expect(externalFlow(txn({ type: 'buy', subtype: 'contribution', amount: 1000 }))).toBe(0);
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'merger', amount: -900 }))).toBe(0);
+  });
+});
+
+describe('dailyFlows', () => {
+  test('sums per date, ascending, dropping net-zero days and non-flows', () => {
+    expect(
+      dailyFlows([
+        txn({ date: '2026-03-02', subtype: 'contribution', amount: -500 }),
+        txn({ date: '2026-03-01', subtype: 'deposit', amount: -100 }),
+        txn({ date: '2026-03-02', subtype: 'contribution', amount: -250 }),
+        txn({ date: '2026-03-03', subtype: 'deposit', amount: -100 }),
+        txn({ date: '2026-03-03', subtype: 'withdrawal', amount: 100 }),
+        txn({ date: '2026-03-04', subtype: 'dividend', amount: -40 }),
+      ])
+    ).toEqual([
+      { date: '2026-03-01', amount: 100 },
+      { date: '2026-03-02', amount: 750 },
+    ]);
+  });
+});
+
+describe('externalFlow edge cases from review', () => {
+  test('a 401k loan repayment is money added', () => {
+    expect(externalFlow(txn({ type: 'cash', subtype: 'loan payment', amount: -200 }))).toBe(200);
+  });
+
+  // Plaid defines a distribution as money leaving; one arriving is a fund
+  // paying out into the account, which is growth.
+  test('a distribution paid INTO the account is growth, not money added', () => {
+    expect(externalFlow(txn({ subtype: 'distribution', amount: -75 }))).toBe(0);
+  });
+});
+
+describe('dailyFlows with contribution trades', () => {
+  // Some recordkeepers book a paycheck as one buy that uses outside money.
+  test('a lone contribution buy is money added', () => {
+    expect(dailyFlows([txn({ type: 'buy', subtype: 'contribution', amount: 500 })])).toEqual([
+      { date: '2026-03-01', amount: 500 },
+    ]);
+  });
+
+  test('a lone distribution sell is money out', () => {
+    expect(dailyFlows([txn({ type: 'sell', subtype: 'distribution', amount: -800 })])).toEqual([
+      { date: '2026-03-01', amount: -800 },
+    ]);
+  });
+
+  // Others report the money arriving AND the shares it bought: counted once.
+  test('a contribution buy matched by a same-day cash contribution is not counted twice', () => {
+    expect(
+      dailyFlows([
+        txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 }),
+        txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'contribution', amount: 500 }),
+      ])
+    ).toEqual([{ date: '2026-03-01', amount: 500 }]);
+  });
+
+  // One paycheck split across two funds: the cash row is the money, the buys
+  // are where it went. Pairing rows one to one counted it twice.
+  test('a paycheck split across funds is counted once', () => {
+    expect(
+      dailyFlows([
+        txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 }),
+        txn({ investment_transaction_id: 'b1', type: 'buy', subtype: 'contribution', amount: 300 }),
+        txn({ investment_transaction_id: 'b2', type: 'buy', subtype: 'contribution', amount: 200 }),
+      ])
+    ).toEqual([{ date: '2026-03-01', amount: 500 }]);
+  });
+});
+
+// One answer, over the whole set, to "did this contribution trade carry its own
+// money", shared by the walk, the chart's flows and the year-to-date figures.
+describe('countedTrades', () => {
+  const buy = (over: Partial<InvestmentTxn> = {}) =>
+    txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'contribution', amount: 500, ...over });
+  const cashIn = (over: Partial<InvestmentTxn> = {}) =>
+    txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500, ...over });
+
+  test('a lone contribution buy counts', () => {
+    const b = buy();
+    expect([...countedTrades([b])]).toEqual([b]);
+  });
+
+  test('a same-day cash row of the same amount covers it', () => {
+    expect(countedTrades([cashIn(), buy()]).size).toBe(0);
+  });
+
+  // Decided per account: a cash row in the next account over proves nothing.
+  test('a cash row in another account does not cover it', () => {
+    expect(countedTrades([cashIn({ account_id: 'other' }), buy()]).size).toBe(1);
+  });
+
+  // An account that books cash rows books ALL its money that way, so its buys
+  // are internal whatever their dates or amounts. Each of these counted twice
+  // under same-day, same-amount pairing.
+  test('an account that books cash rows never counts its buys', () => {
+    // Settlement lag: cash on Friday, buy on Monday.
+    expect(countedTrades([cashIn({ date: '2026-02-27' }), buy({ date: '2026-03-02' })]).size).toBe(0);
+    // Employee contribution plus employer match, bought as one.
+    expect(
+      countedTrades([cashIn({ investment_transaction_id: 'e', amount: -300 }), cashIn({ amount: -200 }), buy()]).size
+    ).toBe(0);
+  });
+
+  test('a distribution with tax withheld is counted once', () => {
+    const rows = [
+      txn({ investment_transaction_id: 's', type: 'sell', subtype: 'distribution', amount: -1000 }),
+      txn({ investment_transaction_id: 'w', type: 'cash', subtype: 'tax withheld', amount: 100 }),
+      txn({ investment_transaction_id: 'd', type: 'cash', subtype: 'distribution', amount: 900 }),
+    ];
+    const counted = countedTrades(rows);
+    expect(counted.size).toBe(0);
+    expect(rows.reduce((sum, t) => sum + walkDelta(t, counted), 0)).toBe(-1000);
+  });
+
+  // Matched on the SAME subtype: a rollover arriving as a cash transfer says
+  // nothing about how the account books its paychecks.
+  test('an unrelated cash row does not suppress the buys', () => {
+    const rollover = txn({ investment_transaction_id: 'r', type: 'transfer', subtype: 'transfer', name: 'ROLLOVER', amount: -60_000 });
+    expect(countedTrades([rollover, buy()]).size).toBe(1);
+  });
+
+  // Same shape as a paycheck: buys made with outside money.
+  test('a loan repayment booked as a buy counts', () => {
+    expect(countedTrades([buy({ subtype: 'loan payment', amount: 200 })]).size).toBe(1);
+  });
+
+  test('ordinary trades are never counted', () => {
+    expect(countedTrades([txn({ type: 'buy', subtype: 'buy', amount: 500 })]).size).toBe(0);
+  });
+});
+
+describe('walkDelta and contributedAmount', () => {
+  // $500 of outside money with a $2 fee buys $498 of fund: the account's
+  // value moves by 498, while $500 is what was contributed.
+  test('a counted contribution buy moves value by amount less fees', () => {
+    const b = txn({ type: 'buy', subtype: 'contribution', amount: 500, fees: 2 });
+    const counted = countedTrades([b]);
+    expect(walkDelta(b, counted)).toBe(498);
+    expect(contributedAmount(b, counted)).toBe(500);
+  });
+
+  test('a counted distribution sell moves value out', () => {
+    const s = txn({ type: 'sell', subtype: 'distribution', amount: -800, fees: 0 });
+    expect(walkDelta(s, countedTrades([s]))).toBe(-800);
+  });
+
+  // Covered by the cash row, the buy is an internal trade again: the pair
+  // moves value by the cash row less the buy's fees, not twice the paycheck.
+  test('a covered buy falls back to valueDelta', () => {
+    const c = txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 });
+    const b = txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'contribution', amount: 500, fees: 2 });
+    const counted = countedTrades([c, b]);
+    expect(walkDelta(c, counted) + walkDelta(b, counted)).toBe(498);
+  });
+});
+
+describe('year-to-date figures with contribution trades', () => {
+  test('a lone contribution buy is contributed money', () => {
+    const b = txn({ type: 'buy', subtype: 'contribution', amount: 500 });
+    expect(isContribution(b)).toBe(false); // judged alone, as before
+    expect(isContribution(b, countedTrades([b]))).toBe(true);
+  });
+
+  test('a covered buy is not counted on top of its cash row', () => {
+    const c = txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 });
+    const b = txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'contribution', amount: 500 });
+    const counted = countedTrades([c, b]);
+    const total = [c, b]
+      .filter((t) => isContribution(t, counted))
+      .reduce((s, t) => s + contributedAmount(t, counted), 0);
+    expect(total).toBe(500);
+  });
+
+  test('a rollover arriving as a single buy is a rollover, not a contribution', () => {
+    const b = txn({ type: 'buy', subtype: 'contribution', name: 'ROLLOVER FROM 401K', amount: 60_000 });
+    const counted = countedTrades([b]);
+    expect(isIncomingRollover(b, counted)).toBe(true);
+    expect(isContribution(b, counted)).toBe(false);
+  });
+
+  // The readers must agree: what the chart calls money added over a span of
+  // contributions is what the year-to-date figure calls contributed.
+  // One account of each reporting style: buys only, and cash rows plus buys.
+  test('agrees with dailyFlows', () => {
+    const rows = [
+      txn({ investment_transaction_id: '1', account_id: 'k401', date: '2026-03-01', type: 'buy', subtype: 'contribution', amount: 500 }),
+      txn({ investment_transaction_id: '2', account_id: 'k401', date: '2026-03-15', type: 'buy', subtype: 'contribution', amount: 500 }),
+      txn({ investment_transaction_id: '3', account_id: 'ira', date: '2026-03-15', type: 'cash', subtype: 'contribution', amount: -500 }),
+      txn({ investment_transaction_id: '4', account_id: 'ira', date: '2026-03-15', type: 'buy', subtype: 'contribution', amount: 500 }),
+    ];
+    const counted = countedTrades(rows);
+    const ytd = rows
+      .filter((t) => isContribution(t, counted))
+      .reduce((s, t) => s + contributedAmount(t, counted), 0);
+    const flows = dailyFlows(rows).reduce((s, f) => s + f.amount, 0);
+    expect(ytd).toBe(1500);
+    expect(flows).toBe(1500);
   });
 });

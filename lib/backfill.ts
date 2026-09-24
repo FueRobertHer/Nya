@@ -10,8 +10,41 @@
 // fetching, deciding which accounts are walkable, and persisting.
 
 import { signedContribution } from './balance';
+// Pure classifiers only; nothing here calls Plaid.
+import { countedTrades, walkDelta, type InvestmentTxn } from './investments';
 
 export type WalkType = 'depository' | 'credit' | 'investment';
+
+/**
+ * Adds one Item's investment transactions to the walk's per-day table, for the
+ * accounts being walked as investments, and returns the oldest date it added
+ * (or null).
+ *
+ * Resolved over the Item's whole set rather than row by row, because whether a
+ * contribution trade carries its own money depends on the rows beside it (see
+ * countedTrades). Judged alone, a paycheck booked as a single contribution buy
+ * reads as an internal trade, and the walk carried every one of them back into
+ * the past as if the money had always been there.
+ */
+export function addInvestmentFlows(
+  dailyByAccount: Record<string, Record<string, number>>,
+  invTxns: InvestmentTxn[],
+  walkType: Record<string, WalkType>
+): string | null {
+  const counted = countedTrades(invTxns);
+  let oldest: string | null = null;
+  for (const t of invTxns) {
+    if (walkType[t.account_id] !== 'investment') continue;
+    const delta = walkDelta(t, counted);
+    if (delta === 0) continue; // internal reallocation: buys, sells, corporate actions
+    const day = (dailyByAccount[t.date] ??= {});
+    // Back into the walk's convention (positive = value left the account),
+    // which is what reconstruct un-applies.
+    day[t.account_id] = (day[t.account_id] ?? 0) + -delta;
+    if (!oldest || t.date < oldest) oldest = t.date;
+  }
+  return oldest;
+}
 
 export function isoDaysAgo(days: number, from: number = Date.now()): string {
   return new Date(from - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);

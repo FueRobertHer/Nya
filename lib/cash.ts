@@ -157,6 +157,19 @@ export function summarizeCash(holdings: CashHolding[]): CashSummary {
 }
 
 /**
+ * A cash share as a percentage for display: whole numbers from 10% up, one
+ * decimal below that, and "<0.1%" rather than "0.0%" for a nonzero share too
+ * small to show. A row that has just printed a cash amount and then says 0.0%
+ * reads as a contradiction, or worse, as a statement about the invested part.
+ */
+export function cashSharePct(share: number): string {
+  if (share > 0 && share < 0.0005) return '<0.1%';
+  // Judged after rounding, or 9.99% would print as "10.0%".
+  const oneDecimal = (share * 100).toFixed(1);
+  return Number(oneDecimal) >= 10 ? `${Math.round(share * 100)}%` : `${oneDecimal}%`;
+}
+
+/**
  * Per-account summaries, for the badge on an individual brokerage row.
  *
  * A holding with no `account_id` -- one from a localStorage payload written

@@ -37,6 +37,11 @@ function fullUsd(n: number): string {
   });
 }
 
+// Signed, for money added and growth: "+$1,200.00" / "-$80.00".
+function signedUsd(n: number): string {
+  return (n < 0 ? '-' : '+') + fullUsd(Math.abs(n));
+}
+
 // Compact currency for axis ticks: $12.5K / -$1.2M
 function compactUsd(n: number): string {
   const sign = n < 0 ? '-' : '';
@@ -68,9 +73,13 @@ function niceTicks(min: number, max: number): number[] {
 export default function NetWorthChart({
   points,
   label = 'Net worth',
+  baseline,
 }: {
   points: HistoryPoint[];
   label?: string;
+  /** Balance at a starting day plus money added since, by date (lib/growth.ts).
+   *  Drawn as a thin grey line; the balance above it is growth. */
+  baseline?: { date: string; value: number }[] | null;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
@@ -81,10 +90,14 @@ export default function NetWorthChart({
     // points arrive date-sorted ascending from the API
     const ts = points.map((p) => new Date(`${p.date}T00:00:00Z`).getTime());
     const vals = points.map((p) => p.value);
+    // Aligned to the balance points by date; null before the baseline starts.
+    const byDate = new Map((baseline ?? []).map((b) => [b.date, b.value] as const));
+    const base = points.map((p) => byDate.get(p.date) ?? null);
+    const inRange = [...vals, ...base.filter((b): b is number => b !== null)];
     const minT = ts[0];
     const maxT = ts[ts.length - 1];
-    let lo = Math.min(...vals);
-    let hi = Math.max(...vals);
+    let lo = Math.min(...inRange);
+    let hi = Math.max(...inRange);
     if (lo === hi) {
       // Flat series: open up a band so the line sits mid-chart.
       const bump = Math.abs(lo) * 0.05 + 1;
@@ -118,15 +131,42 @@ export default function NetWorthChart({
       else runs.push({ est, d: `M${pt(i - 1)}L${pt(i)}` });
     }
 
+    // One path: the baseline has a value for every point from its start on.
+    const baseStart = base.findIndex((b) => b !== null);
+    const basePath =
+      baseStart < 0
+        ? ''
+        : base
+            .map((b, i) => (b === null ? '' : `${i === baseStart ? 'M' : 'L'}${xs[i].toFixed(1)},${y(b).toFixed(1)}`))
+            .join('');
+
     const outline = points.map((_, i) => `${i === 0 ? 'M' : 'L'}${pt(i)}`).join('');
     const baseY = H - PAD_BOTTOM;
     const area = `${outline}L${xs[xs.length - 1].toFixed(1)},${baseY}L${xs[0].toFixed(1)},${baseY}Z`;
-    return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi), hasGap };
-  }, [points]);
+    return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi), hasGap, base, basePath, baseStart };
+  }, [points, baseline]);
 
-  const { vals, xs, y, runs, area, baseY, ticks, hasGap } = geo;
+  const { vals, xs, y, runs, area, baseY, ticks, hasGap, base, basePath, baseStart } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
+
+  /**
+   * Money added and growth from the baseline's start to point i, or null.
+   *
+   * Null on an estimated point: that value is the balance walked back from
+   * whenever backfill last ran, with no market movement in it, so "growth"
+   * there would be whatever the walk left behind. The summary with nothing
+   * scrubbed uses the last REAL point for the same reason.
+   */
+  function split(i: number): { added: number; growth: number } | null {
+    const b = base[i];
+    if (b === null || baseStart < 0 || points[i].estimated) return null;
+    return { added: b - (base[baseStart] as number), growth: vals[i] - b };
+  }
+  let lastReal = last;
+  while (lastReal > 0 && points[lastReal].estimated) lastReal--;
+  const shown = split(active ?? lastReal);
+  const shownDate = points[active ?? lastReal]?.date;
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
@@ -162,6 +202,14 @@ export default function NetWorthChart({
           </span>
         )}
       </div>
+      {shown && (
+        <div className="chart-readout-split">
+          {active === null
+            ? `${fmtDay(points[baseStart].date)} to ${fmtDay(shownDate)}: `
+            : ''}
+          {signedUsd(shown.added)} added · {signedUsd(shown.growth)} growth
+        </div>
+      )}
 
       <svg
         ref={svgRef}
@@ -184,6 +232,17 @@ export default function NetWorthChart({
         ))}
 
         <path d={area} fill="var(--accent)" opacity={0.1} />
+        {basePath && (
+          <path
+            className="chart-baseline"
+            d={basePath}
+            fill="none"
+            stroke="var(--muted)"
+            strokeWidth={1.25}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
         {runs.map((run, i) => (
           <path
             key={i}
@@ -229,6 +288,13 @@ export default function NetWorthChart({
         </text>
       </svg>
 
+      {baseStart >= 0 && (
+        <div className="chart-note">
+          Grey line: the balance on {fmtDay(points[baseStart].date)} plus money added since
+          (contributions, rollovers and transfers, less withdrawals). What the balance has above it
+          is growth.
+        </div>
+      )}
       {hasEstimated && (
         <div className="chart-note">
           Dashed segments are estimated: reconstructed from transactions, or a straight line
