@@ -12,3 +12,7 @@ next-env.d.ts
 # Local-only tooling: hardcodes a machine-specific browser path and signs a
 # session cookie from SESSION_SECRET, so it stays out of the repo.
 scripts/screenshots.ts
+
+# Backups from /api/ops/export and scripts/restore.ts. They hold your financial
+# data (encrypted, but with plain-text ids and dates) and must never be committed.
+*.ndjson

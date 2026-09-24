@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "restore": "bun scripts/restore.ts"
   },
   "dependencies": {
     "next": "16.3.0-canary.83",
