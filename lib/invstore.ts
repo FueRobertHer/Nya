@@ -12,20 +12,22 @@
 // rows nothing can re-serve. They were found by two reviews of this design, in
 // this order of danger:
 //
-// 1. A FAILED FETCH NEVER WRITES. A Plaid error returns no rows. Merging that
-//    would read as "everything was deleted".
+// 1. A FAILURE NEVER MAKES ANYTHING WORSE. A Plaid error returns no rows for
+//    the ranges it cut off, and reading that as "everything was deleted" is
+//    the obvious mistake. Only ranges that were answered AND verified judge or
+//    cover anything; what was answered before a failure is kept.
 // 2. NOTHING IS EVER DELETED. A row is only EXCLUDED, and only once two
 //    verified syncs at least a day apart both covered its account and date and
 //    neither returned it. It comes back the moment a sync returns it again.
 //    Absence on one fetch proves nothing: an institution can omit an account,
 //    return a short page, or re-key rows. Excluding instead of deleting means
 //    even a wrong call costs a hidden row, never a lost one.
-// 3. ONLY A VERIFIED FETCH COUNTS AS EVIDENCE. Offset pagination skips a row
-//    whenever the list shifts between pages (a pending trade settling does it).
-//    So a range is split by date until each request fits in one page and no
-//    offset is ever used; a fetch is verified only if every request returned
-//    exactly the total it reported, with no duplicate ids. Anything else is
-//    upserted, which is always safe, and proves nothing.
+// 3. ONLY A VERIFIED ANSWER COUNTS AS EVIDENCE, range by range. Offset
+//    pagination skips a row whenever the list shifts between pages (a pending
+//    trade settling does it). So a range is split by date until each request
+//    fits in one page; a range is verified only if its answer held exactly the
+//    total it reported, with no duplicate ids. Anything else is upserted, which
+//    is always safe, and proves nothing about its own dates only.
 // 4. COVERAGE IS PER ACCOUNT AND ONLY FROM VERIFIED FETCHES. The store claims to
 //    hold every row of an account for [from, through] and nothing more, so a
 //    reader can tell a quiet month from an unfetched one.
@@ -62,6 +64,10 @@ const WINDOW_DAYS = 365;
 const CONFIRM_MS = 24 * 60 * 60 * 1000;
 const FRESH_MS = 15 * 60 * 1000;
 const LOCK_MS = 120_000;
+// How long one sync may spend asking Plaid, so a first fill of a busy Item
+// stops and keeps what it has instead of running into the platform's time limit
+// and losing all of it. The rest is asked for on the next sync.
+const FETCH_BUDGET_MS = 40_000;
 
 const DAY = 86_400_000;
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -231,17 +237,24 @@ export async function storedInvestmentAccountIds(item_id: string): Promise<strin
 // ---------------------------------------------------------------------------
 // Fetching
 
+/**
+ * One date range a single request (or, for one crowded day, a run of offset
+ * pages) answered. Verified when the answer provably held every row Plaid has
+ * for those dates. `present` is the accounts that answer listed: only for them
+ * does a missing row mean anything.
+ */
+type Segment = { from: string; to: string; verified: boolean; present: string[] };
+
 type WindowFetch = {
   rows: InvestmentTransaction[];
   securities: Security[];
   /** Metadata for every account any response listed. */
   accounts: AccountBase[];
-  /** Accounts EVERY response listed: the only ones whose absence of rows means
-   *  anything. One request that leaves an account out says nothing about its
-   *  rows in that request's dates, so the account is not judged at all. */
-  present: string[];
-  /** Every request returned exactly the total it reported, with no duplicates. */
-  verified: boolean;
+  /** What was answered, range by range. Verification is per segment: one
+   *  crowded or failed range no longer makes the rest prove nothing. */
+  segments: Segment[];
+  /** Every range of the window was asked, with no failure and no budget cut. */
+  complete: boolean;
   note: string | null;
   pending: boolean;
 };
@@ -249,8 +262,15 @@ type WindowFetch = {
 /**
  * Every raw row in [start, end], split by date so that no request needs an
  * offset. A range whose total overflows one page is halved and each half asked
- * again; only a single day with more rows than a page falls back to offsets,
- * and that makes the whole fetch unverified.
+ * again, NEWEST HALF FIRST, so a fetch cut short by a failure or the budget has
+ * still covered the recent dates that matter most. A single day with more rows
+ * than a page is read with offsets and verified only if every page reported the
+ * same total and the ids add up to it.
+ *
+ * Stops asking once MAX_REQUESTS or the time budget is spent (a first fill of a
+ * busy Item can't be allowed to run past the platform's time limit, which would
+ * lose all of it), and on the first Plaid error. Either way what was answered
+ * is returned, so the caller can keep it.
  *
  * `beforeEachRequest` runs before every Plaid call; the sync uses it to keep
  * its lock alive through a long first fill.
@@ -259,14 +279,16 @@ async function fetchWindow(
   access_token: string,
   start: string,
   end: string,
-  beforeEachRequest: () => Promise<void> = async () => {}
+  beforeEachRequest: () => Promise<void> = async () => {},
+  budgetMs: number = FETCH_BUDGET_MS
 ): Promise<WindowFetch> {
   const rows: InvestmentTransaction[] = [];
   const securities = new Map<string, Security>();
   const accounts = new Map<string, AccountBase>();
-  let present: Set<string> | null = null;
-  let verified = true;
+  const segments: Segment[] = [];
+  const deadline = Date.now() + budgetMs;
   let requests = 0;
+  let complete = true;
 
   const ask = async (from: string, to: string, offset = 0) => {
     await beforeEachRequest();
@@ -278,15 +300,15 @@ async function fetchWindow(
       options: { count: PAGE_SIZE, offset, async_update: true },
     });
     for (const s of res.data.securities || []) securities.set(s.security_id, s);
-    const listed = new Set<string>();
+    const listed: string[] = [];
     for (const a of res.data.accounts || []) {
       accounts.set(a.account_id, a);
-      listed.add(a.account_id);
+      listed.push(a.account_id);
     }
-    present = present ? new Set([...present].filter((id) => listed.has(id))) : listed;
     return {
       page: res.data.investment_transactions || [],
       total: res.data.total_investment_transactions,
+      listed,
     };
   };
 
@@ -295,63 +317,87 @@ async function fetchWindow(
     for (const t of page) if (t.date >= from && t.date <= to) rows.push(t);
   };
 
+  const outOfBudget = () => requests >= MAX_REQUESTS || Date.now() >= deadline;
+
   const fetchRange = async (from: string, to: string): Promise<void> => {
-    if (requests >= MAX_REQUESTS) {
-      verified = false;
+    if (outOfBudget()) {
+      complete = false;
       return;
     }
-    const { page, total } = await ask(from, to);
-    if (typeof total !== 'number') {
+    const { page, total, listed } = await ask(from, to);
+    const hasTotal = typeof total === 'number';
+    if (!hasTotal && page.length < PAGE_SIZE) {
       // No total to compare against: this range proves nothing. A short page is
       // still everything it has, so take it rather than splitting down to
       // single days on a response that will never report one.
-      verified = false;
-      if (page.length < PAGE_SIZE) {
-        take(page, from, to);
-        return;
-      }
-    }
-    if (typeof total === 'number' && total <= PAGE_SIZE) {
-      if (page.length !== total) verified = false;
       take(page, from, to);
+      segments.push({ from, to, verified: false, present: listed });
+      return;
+    }
+    if (hasTotal && total <= PAGE_SIZE) {
+      take(page, from, to);
+      segments.push({ from, to, verified: page.length === total, present: listed });
       return;
     }
     if (from === to) {
-      // One day with more rows than a page: offsets are the only way, and they
-      // can skip. Take what comes and prove nothing with it.
-      verified = false;
+      // One crowded day: offsets are the only way. Verified only if the total
+      // held still across every page and the ids received add up to it, which
+      // catches a row skipped by a shift unless a delete and an insert cancel
+      // out exactly between two pages; marking still needs two syncs a day
+      // apart, so that rare case costs nothing permanent.
       take(page, from, to);
+      const ids = new Set(page.map((r) => r.investment_transaction_id));
+      let present = new Set(listed);
+      let steady = hasTotal;
       let offset = page.length;
-      while (typeof total === 'number' && offset < total && requests < MAX_REQUESTS) {
+      while (hasTotal && offset < total) {
+        if (outOfBudget()) {
+          complete = false;
+          steady = false;
+          break;
+        }
         const next = await ask(from, to, offset);
+        if (next.total !== total) steady = false;
+        present = new Set(next.listed.filter((id) => present.has(id)));
         if (next.page.length === 0) break;
         take(next.page, from, to);
+        for (const r of next.page) ids.add(r.investment_transaction_id);
         offset += next.page.length;
       }
+      segments.push({ from, to, verified: steady && ids.size === total, present: [...present] });
       return;
     }
     const mid = isoDay(dayMs(from) + Math.floor((dayMs(to) - dayMs(from)) / DAY / 2) * DAY);
+    await fetchRange(addDays(mid, 1), to); // newest half first
     await fetchRange(from, mid);
-    await fetchRange(addDays(mid, 1), to);
   };
 
+  let note: string | null = null;
+  let pending = false;
   try {
     await fetchRange(start, end);
   } catch (err) {
-    const { note, pending } = classifyFetchError(err);
-    return { rows: [], securities: [], accounts: [], present: [], verified: false, note, pending };
+    ({ note, pending } = classifyFetchError(err));
+    complete = false;
   }
 
-  // Unique ids: a duplicate means two requests overlapped or a page repeated.
-  if (new Set(rows.map((r) => r.investment_transaction_id)).size !== rows.length) verified = false;
+  // A duplicate id means two answers overlapped or a page repeated: neither
+  // range it appeared in proves anything.
+  const seen = new Map<string, number>();
+  for (const r of rows) seen.set(r.investment_transaction_id, (seen.get(r.investment_transaction_id) ?? 0) + 1);
+  const dupDates = rows.filter((r) => (seen.get(r.investment_transaction_id) ?? 0) > 1).map((r) => r.date);
+  for (const seg of segments) {
+    if (dupDates.some((d) => d >= seg.from && d <= seg.to)) seg.verified = false;
+  }
+
   return {
     rows,
     securities: [...securities.values()],
     accounts: [...accounts.values()],
-    present: [...(present ?? [])],
-    verified,
-    note: null,
-    pending: false,
+    segments,
+    complete,
+    note,
+    pending,
   };
 }
 
@@ -415,7 +461,10 @@ export function mergeFetch(
   // that can never be verified isn't re-fetched from Plaid on every request.
   state.attempted_at = nowIso;
 
-  // Account metadata from any successful response; `last_seen` only from a verified one.
+  // Account metadata from any response; `last_seen` only where a verified
+  // segment listed the account.
+  const verifiedSegs = fetch.segments.filter((g) => g.verified);
+  const verifiedFor = new Set(verifiedSegs.flatMap((g) => g.present));
   for (const a of fetch.accounts) {
     state.accounts[a.account_id] = {
       name: a.name ?? null,
@@ -423,28 +472,30 @@ export function mergeFetch(
       mask: a.mask ?? null,
       type: a.type ? String(a.type) : null,
       subtype: a.subtype ? String(a.subtype) : null,
-      last_seen: fetch.verified ? today : state.accounts[a.account_id]?.last_seen ?? null,
+      last_seen: verifiedFor.has(a.account_id) ? today : state.accounts[a.account_id]?.last_seen ?? null,
     };
   }
 
-  if (!fetch.verified) return state;
-
-  // Judge absence per account, only for accounts EVERY request listed that
-  // returned at least one row, and only from that account's oldest returned row
-  // on: before it the institution may simply keep less history.
-  const present = new Set(fetch.present);
+  // Judge absence only where a VERIFIED segment answered for the row's date and
+  // listed its account, and only from that account's oldest returned row on:
+  // before it the institution may simply keep less history. Each segment
+  // proves its own dates; a crowded, failed or unasked range proves nothing
+  // and judges nothing, instead of voiding the whole fetch.
   const oldest = new Map<string, string>();
   for (const r of fetch.rows) {
     const prior = oldest.get(r.account_id);
     if (!prior || r.date < prior) oldest.set(r.account_id, r.date);
   }
+  const provenFor = (account: string, date: string) =>
+    verifiedSegs.some((g) => date >= g.from && date <= g.to && g.present.includes(account));
   for (const [id, row] of Object.entries(state.txns)) {
     if (returned.has(id) || cancelled[id] || !row?.raw) continue;
     const account = row.raw.account_id;
     const from = oldest.get(account);
-    const judged = present.has(account) && !!from && row.raw.date >= from && row.raw.date <= window.to;
+    const judged = !!from && row.raw.date >= from && row.raw.date <= window.to && provenFor(account, row.raw.date);
     if (!judged) {
-      // Out of range: an unconfirmed mark can no longer be confirmed, so drop it.
+      // Not judged here: an unconfirmed mark can only be confirmed by a later
+      // verified answer for its date, so drop it rather than leave it hanging.
       if (row.missing_since && !row.excluded) state.txns[id] = { raw: row.raw, seen_at: row.seen_at };
       continue;
     }
@@ -456,20 +507,40 @@ export function mergeFetch(
     }
   }
 
-  // Coverage: every account every request listed, rows or not, now holds all
-  // of [window.from, window.to]. Joined to what it had if the two touch.
-  for (const account of present) {
-    const cov = state.coverage[account];
-    state.coverage[account] =
-      cov && window.from <= addDays(cov.through, 1)
-        ? {
-            from: cov.from < window.from ? cov.from : window.from,
-            through: cov.through > window.to ? cov.through : window.to,
-          }
-        : { from: window.from, through: window.to };
+  // Coverage, per account, from the verified segments that listed it: joined
+  // into runs of adjacent dates, and joined to what the account already had
+  // wherever they touch. When nothing touches, the most recent run replaces it
+  // (a gap: older coverage can no longer be claimed as one span with it).
+  const accountsWithProof = new Set(verifiedSegs.flatMap((g) => g.present));
+  for (const account of accountsWithProof) {
+    const runs: Coverage[] = [];
+    for (const g of verifiedSegs.filter((x) => x.present.includes(account)).sort((x, y) => (x.from < y.from ? -1 : 1))) {
+      const last = runs[runs.length - 1];
+      if (last && g.from <= addDays(last.through, 1)) {
+        if (g.to > last.through) last.through = g.to;
+      } else runs.push({ from: g.from, through: g.to });
+    }
+    let cov = state.coverage[account] ? { ...state.coverage[account] } : null;
+    const touches = (r: Coverage, c: Coverage) =>
+      r.from <= addDays(c.through, 1) && r.through >= addDays(c.from, -1);
+    if (cov && runs.some((r) => touches(r, cov!))) {
+      for (const r of runs) {
+        if (!touches(r, cov)) continue;
+        if (r.from < cov.from) cov.from = r.from;
+        if (r.through > cov.through) cov.through = r.through;
+      }
+    } else if (runs.length) {
+      cov = runs[runs.length - 1];
+    }
+    if (cov) state.coverage[account] = cov;
   }
-  state.verified_at = nowIso;
-  state.synced_at = nowIso;
+
+  // A clean sync: every range asked, every answer verified. Only this counts
+  // as fresh for the backfill, and dates the whole Item's last full check.
+  if (fetch.complete && fetch.segments.length > 0 && fetch.segments.every((g) => g.verified)) {
+    state.verified_at = nowIso;
+    state.synced_at = nowIso;
+  }
   return state;
 }
 
@@ -477,9 +548,14 @@ export function mergeFetch(
 export function nextWindow(state: InvStoreState, now: number): { from: string; to: string } {
   const today = isoDay(now);
   const floor = addDays(today, -FILL_DAYS);
-  const lastVerifiedDay = state.verified_at?.slice(0, 10) ?? null;
+  // The accounts the latest verified answer listed: closed or rotated-away
+  // accounts drop out, so they can't hold the Item in fill mode forever.
+  const latestSeen = Object.values(state.accounts).reduce<string | null>(
+    (max, a) => (a.last_seen && (!max || a.last_seen > max) ? a.last_seen : max),
+    null
+  );
   const current = Object.entries(state.accounts)
-    .filter(([, a]) => lastVerifiedDay && a.last_seen === lastVerifiedDay)
+    .filter(([, a]) => latestSeen && a.last_seen === latestSeen)
     .map(([id]) => id);
   const filling =
     current.length === 0 || current.some((id) => !state.coverage[id] || state.coverage[id].from > addDays(floor, 1));
@@ -506,21 +582,30 @@ export type InvSync = {
   storeNote: string | null;
   /** Rows marked missing but not yet confirmed, by account: evidence still pending. */
   unconfirmed: Record<string, string[]>;
+  /** Their ids. Readers still show them (a glitch must not hide a real row),
+   *  but the backfill leaves them out of its walk: right after Plaid re-keys a
+   *  batch, the old copies sit here for a day, and walking both would count
+   *  every flow twice in a history that is never rebuilt. */
+  unconfirmedIds: string[];
   /** Another sync held the lock, so this answer is whatever was stored. The
    *  backfill must wait rather than walk a store that is mid-fill. */
   busy: boolean;
 };
 
-function view(state: InvStoreState): Pick<InvSync, 'rows' | 'coverage' | 'unconfirmed'> {
+function view(state: InvStoreState): Pick<InvSync, 'rows' | 'coverage' | 'unconfirmed' | 'unconfirmedIds'> {
   const rows: InvestmentTxn[] = [];
   const unconfirmed: Record<string, string[]> = {};
+  const unconfirmedIds: string[] = [];
   for (const row of Object.values(state.txns)) {
     // A malformed row is skipped, not fatal: it stays stored, untouched.
     if (!row?.raw?.investment_transaction_id || row.excluded) continue;
     rows.push(toInvestmentTxn(row.raw, state.securities));
-    if (row.missing_since) (unconfirmed[row.raw.account_id] ??= []).push(row.raw.date);
+    if (row.missing_since) {
+      (unconfirmed[row.raw.account_id] ??= []).push(row.raw.date);
+      unconfirmedIds.push(row.raw.investment_transaction_id);
+    }
   }
-  return { rows, coverage: state.coverage, unconfirmed };
+  return { rows, coverage: state.coverage, unconfirmed, unconfirmedIds };
 }
 
 /**
@@ -558,7 +643,7 @@ export async function syncInvestments(
       state = await readInvStore(item.item_id);
     } catch (err) {
       console.error((err as Error).message, (err as InvStoreUnreadableError).reason);
-      storeNote = 'Saved investment history could not be read; showing live data only';
+      storeNote = 'Saved investment history could not be read';
     }
 
     const lastTry = opts.freshOnlyIfVerified ? state?.synced_at : state?.attempted_at ?? state?.synced_at;
@@ -571,7 +656,7 @@ export async function syncInvestments(
     try {
       access_token = await decrypt(item.encrypted_access_token);
     } catch {
-      const base = state ? view(state) : { rows: [], coverage: {}, unconfirmed: {} };
+      const base = state ? view(state) : { rows: [], coverage: {}, unconfirmed: {}, unconfirmedIds: [] };
       return { ...base, note: 'Could not decrypt stored credentials', pending: false, storeNote, busy: false };
     }
 
@@ -591,20 +676,26 @@ export async function syncInvestments(
     };
     const fetched = await fetchWindow(access_token, window.from, window.to, keepAlive);
 
-    // Rule 1: a failed fetch never writes.
-    if (fetched.note) {
-      const base = state ? view(state) : { rows: [], coverage: {}, unconfirmed: {} };
-      return { ...base, note: fetched.note, pending: fetched.pending, storeNote, busy: false };
+    // Rule 1: a failure never makes anything worse. With nothing answered
+    // there is nothing to write. With some ranges answered before it (or before
+    // the budget ran out), those are kept: upserts are always safe, and only
+    // the ranges that verified judge or cover anything.
+    const failure = fetched.note ? { note: fetched.note, pending: fetched.pending } : null;
+    if (failure && fetched.rows.length === 0 && fetched.segments.length === 0) {
+      const base = state ? view(state) : { rows: [], coverage: {}, unconfirmed: {}, unconfirmedIds: [] };
+      return { ...base, ...failure, storeNote, busy: false };
     }
-    if (!fetched.verified) {
+    const unverified = fetched.segments.filter((g) => !g.verified).length;
+    if (unverified || !fetched.complete) {
       console.warn(
-        `invstore: ${item.item_id} fetch of ${window.from}..${window.to} was not verifiable (${fetched.rows.length} rows); upserting only`
+        `invstore: ${item.item_id} fetch of ${window.from}..${window.to}: ${unverified} unverified range(s)${fetched.complete ? '' : ', not every range asked'}; those upsert only`
       );
     }
+    const answer = failure ?? { note: null, pending: false };
 
     const merged = mergeFetch(state ?? emptyState(), fetched, window, now);
     // Unreadable store, or another sync running: answer from this fetch alone.
-    if (!state || !locked) return { ...view(merged), note: null, pending: false, storeNote, busy: !locked };
+    if (!state || !locked) return { ...view(merged), ...answer, storeNote, busy: !locked };
 
     // Still ours? A lock that lapsed or was taken over means another sync may
     // have written since this one read, and writing now would undo its marks.
@@ -614,13 +705,13 @@ export async function syncInvestments(
     } catch {
       stillOurs = false;
     }
-    if (!stillOurs) return { ...view(merged), note: null, pending: false, storeNote, busy: true };
+    if (!stillOurs) return { ...view(merged), ...answer, storeNote, busy: true };
 
     const outcome = await writeInvStore(item.item_id, merged);
     if (outcome === 'oversize') {
       storeNote = 'Investment history is too large to save; showing live data';
     }
-    return { ...view(merged), note: null, pending: false, storeNote, busy: false };
+    return { ...view(merged), ...answer, storeNote, busy: false };
   } finally {
     if (locked) {
       try {

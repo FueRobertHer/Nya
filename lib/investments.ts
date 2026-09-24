@@ -489,6 +489,22 @@ export function classifyFetchError(err: any): { note: string; pending: boolean }
   if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') {
     return { note: 'Investment activity timed out', pending: true };
   }
+  // Temporary by Plaid's own classification: the institution is down or slow,
+  // Plaid had an internal error or is in maintenance, or a rate limit was hit
+  // (which a split first fill can do by itself). Treated as standing, the
+  // backfill would hold the Item's investments flat and mark itself done on the
+  // first run that met one. HTTP 429 and 5xx without an error body count too.
+  const type = err?.response?.data?.error_type;
+  const status = err?.response?.status;
+  if (
+    type === 'INSTITUTION_ERROR' ||
+    type === 'API_ERROR' ||
+    type === 'RATE_LIMIT_EXCEEDED' ||
+    status === 429 ||
+    (typeof status === 'number' && status >= 500)
+  ) {
+    return { note: 'Investment activity is temporarily unavailable', pending: true };
+  }
   if (code === 'ITEM_LOGIN_REQUIRED') {
     return { note: 'This account needs to be reconnected', pending: false };
   }

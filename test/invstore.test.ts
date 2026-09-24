@@ -195,8 +195,8 @@ describe('rule 2: nothing is deleted, and absence needs two verified syncs', () 
     expect(ids(sync.rows)).toEqual(['a', 'old']);
   });
 
-  // Re-keyed ids: until confirmed both copies are served (and the backfill is
-  // told to wait); once confirmed only the new ones remain. Never both for good.
+  // Re-keyed ids: until confirmed both copies are shown (the backfill leaves the
+  // old ones out of its walk); once confirmed only the new ones remain.
   test('re-keyed rows settle to one copy', async () => {
     plaid.rows = [row('a', '2026-09-01'), row('b', '2026-09-02')];
     await syncInvestments(ITEM, { now: NOW });
@@ -373,18 +373,36 @@ describe('review follow-ups', () => {
     expect(await fake.get<string>(key)).toBe(before!);
   });
 
-  test('duplicate ids across requests make the fetch unverified', async () => {
+  // Only the ranges the duplicate appeared in prove nothing: a verified range
+  // between them still covers, and coverage never spans a duplicate's date.
+  test('duplicate ids make only their own ranges unverified', async () => {
     plaid.rows = [row('dup', '2025-01-10'), row('dup', '2026-06-10'), ...spread(900)];
     const sync = await syncInvestments(ITEM, { now: NOW });
-    expect(sync.coverage.ira).toBeUndefined();
+    const cov = sync.coverage.ira;
+    expect(cov).toBeDefined();
+    for (const d of ['2025-01-10', '2026-06-10']) expect(cov!.from <= d && cov!.through >= d).toBe(false);
   });
 
-  test('a single day with more rows than a page is fetched, but unverified', async () => {
+  // A crowded day (a direct-indexing account's funding day) is read with
+  // offsets, and verified when the total holds still and the ids add up.
+  test('a single day with more rows than a page is read with offsets and verified', async () => {
     plaid.rows = Array.from({ length: 501 }, (_, i) => row(`d${i}`, '2026-03-03'));
     const sync = await syncInvestments(ITEM, { now: NOW });
     expect(sync.rows).toHaveLength(501);
     expect(plaid.calls.some((c) => c.offset > 0)).toBe(true);
-    expect(sync.coverage.ira).toBeUndefined();
+    expect(sync.coverage.ira).toEqual({ from: '2024-09-24', through: '2026-09-24' });
+  });
+
+  test('a crowded day whose total moves between pages is not verified', async () => {
+    plaid.rows = Array.from({ length: 501 }, (_, i) => row(`d${i}`, '2026-03-03'));
+    // The total reported for that day changes once its offset pages begin.
+    plaid.onCall = () => {
+      const last = plaid.calls[plaid.calls.length - 1];
+      plaid.wrongTotalOn = last.offset > 0 ? '2026-03-03' : null;
+    };
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    const cov = sync.coverage.ira;
+    expect(!!cov && cov.from <= '2026-03-03' && cov.through >= '2026-03-03').toBe(false);
   });
 
   // A row can only be marked while a two-year fill is judging it; once fills
@@ -544,5 +562,66 @@ describe('second review follow-ups', () => {
     expect(plaid.calls).toHaveLength(1);
     expect(ids(sync.rows)).toEqual(['a', 'b']);
     expect(sync.coverage.ira).toBeUndefined(); // proves nothing
+  });
+});
+
+describe('third review follow-ups', () => {
+  // A failure partway keeps what came before it: recent ranges are asked
+  // first, so they are the ones kept.
+  test('a failure partway keeps the ranges answered before it', async () => {
+    plaid.rows = Array.from({ length: 1200 }, (_, i) =>
+      row(`r${i}`, new Date(Date.UTC(2025, 0, 1) + (i % 600) * DAY).toISOString().slice(0, 10))
+    );
+    plaid.failOnCall = 4; // after the newest ranges were answered
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    expect(sync.note).toBeTruthy();
+    expect(sync.rows.length).toBeGreaterThan(0);
+    expect((await readInvStore('item1')).coverage.ira?.through).toBe('2026-09-24');
+    expect(plaid.calls[1].end).toBe('2026-09-24'); // after the first split, the newest half is asked first
+  });
+
+  // Temporary by Plaid's own classification, so the backfill waits for it.
+  test('a temporary Plaid failure is reported as pending', async () => {
+    plaid.onCall = () => {
+      throw { response: { status: 503, data: { error_type: 'INSTITUTION_ERROR', error_code: 'INSTITUTION_DOWN' } } };
+    };
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    expect(sync).toMatchObject({ note: 'Investment activity is temporarily unavailable', pending: true });
+  });
+});
+
+describe('third review: route and shape details', () => {
+  const get = async () => {
+    const { GET } = await import('@/app/api/investment-activity/route');
+    return (await GET(new Request('http://x/api/investment-activity?id=ira&item_id=item1'))).json();
+  };
+
+  // Rows fetched live are good for the TTL; without caching, an unwritable
+  // store would re-run the full download on every load.
+  test('a storage-only problem is cached', async () => {
+    await fake.set(key, 'not-a-ciphertext');
+    plaid.rows = [row('a', '2026-09-01')];
+    expect((await get()).note).toBe('Saved investment history could not be read');
+    const again = await get();
+    expect(again.from_cache).toBe(true);
+  });
+
+  test('a fetch failure and a storage problem are both reported', async () => {
+    await fake.set(key, 'not-a-ciphertext');
+    plaid.fail = 'ITEM_LOGIN_REQUIRED';
+    expect((await get()).note).toBe('This account needs to be reconnected. Saved investment history could not be read');
+  });
+
+  test('while another sync does the first download, it says so instead of "no activity"', async () => {
+    await fake.set(testKey('invtxns-lock:item1'), 'someone-else', { nx: true, px: 60_000 });
+    expect((await get()).note).toBe('Investment activity is still loading');
+  });
+
+  test('a stored `cancelled` that is not an object makes the store unreadable, not a crash', async () => {
+    await fake.set(key, await encodeJsonBlob({ schema_version: 1, txns: {}, accounts: {}, coverage: {}, securities: {}, cancelled: 'x' }));
+    plaid.rows = [row('a', '2026-09-01')];
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    expect(sync.storeNote).toBe('Saved investment history could not be read');
+    expect(ids(sync.rows)).toEqual(['a']);
   });
 });

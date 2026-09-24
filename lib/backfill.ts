@@ -15,45 +15,75 @@ import { countedTrades, walkDelta, type InvestmentTxn } from './investments';
 
 export type WalkType = 'depository' | 'credit' | 'investment';
 
+/** What the backfill needs from an Item's stored investment transactions
+ *  (lib/invstore.ts InvSync), kept structural so this module stays pure. */
+export type ItemInvestments = {
+  rows: InvestmentTxn[];
+  note: string | null;
+  pending: boolean;
+  busy: boolean;
+  coverage: Record<string, { from: string; through: string }>;
+  unconfirmedIds: string[];
+};
+
 /**
- * Whether an Item's investment accounts can be walked, and if not, whether to
- * wait for them, from its stored investment transactions (lib/invstore.ts).
+ * Which of an Item's investment accounts can be walked, whether to wait, and
+ * which rows to walk.
  *
- * Covered when every investment account has VERIFIED coverage from the walk's
- * start to at least yesterday. That is decided from coverage alone, even when
- * the latest fetch failed: the rows are the stored ones either way, and
- * coverage is exactly what says whether they are complete. An account with no
- * activity all year IS covered and walks flat, correctly.
+ * PER ACCOUNT. An account is walked when its own VERIFIED coverage runs from
+ * the window's start to at least yesterday (to today when the latest fetch
+ * failed: anything after the last verified sync is unknown, and a paycheck
+ * posted since would otherwise be missing from a walk that is never redone).
+ * One account short of that is held flat on its own; it no longer holds the
+ * Item's other accounts flat with it.
  *
- * Short of that it waits (the caller's retry cap bounds it) only when a retry
- * can actually help: Plaid is extracting (`pending`), another sync holds the
- * store (`busy`), or the fetch worked but coverage still falls short, which
- * the caller retries with a fresh fetch each run (it asks for freshness from
- * a verified sync only). A Plaid failure that won't fix itself (reauth, the
- * product unavailable) doesn't wait: nothing changes in five runs, and each
- * run repeats a billed balance call for every institution. That case is
- * walked if its stored coverage suffices, and held flat otherwise, as before.
+ * Waits (the caller's retry cap bounds it) only when a retry can help: Plaid
+ * extracting or temporarily failing (`pending`), another sync holding the store
+ * (`busy`), or a fetch that worked while some account's coverage still falls
+ * short, which the next run re-fetches. A failure that won't fix itself
+ * (reauth, the product unavailable) doesn't wait: five runs change nothing,
+ * and each repeats a billed balance call for every institution.
  *
- * Rows marked missing but not yet confirmed do NOT hold the walk up.
- * Confirming takes a day and the cap is a handful of page loads, so waiting
- * would spend every retry for nothing. They are walked as served.
+ * Rows marked missing but not yet confirmed are LEFT OUT of the walk. Right
+ * after Plaid re-keys a batch, the old copies are still here for a day beside
+ * the new ones, and walking both would count every flow twice. Leaving out a
+ * row that turns out to be real costs that one flow; they don't hold the walk
+ * up either, since confirming takes a day and the cap is a few page loads.
  */
 export function investmentReadiness(
-  inv: {
-    note: string | null;
-    pending: boolean;
-    busy: boolean;
-    coverage: Record<string, { from: string; through: string }>;
-  },
+  inv: ItemInvestments,
   investmentIds: string[],
-  windowStart: string,
-  yesterday: string
-): { covered: boolean; pending: boolean } {
-  const covered = investmentIds.every((id) => {
-    const cov = inv.coverage[id];
-    return !!cov && cov.from <= windowStart && cov.through >= yesterday;
-  });
-  return { covered, pending: inv.pending || inv.busy || (!covered && !inv.note) };
+  dates: { windowStart: string; yesterday: string; today: string }
+): { coveredIds: Set<string>; pending: boolean; walkRows: InvestmentTxn[] } {
+  const reachBy = inv.note ? dates.today : dates.yesterday;
+  const coveredIds = new Set(
+    investmentIds.filter((id) => {
+      const cov = inv.coverage[id];
+      return !!cov && cov.from <= dates.windowStart && cov.through >= reachBy;
+    })
+  );
+  const someShort = coveredIds.size < investmentIds.length;
+  const unconfirmed = new Set(inv.unconfirmedIds);
+  return {
+    coveredIds,
+    pending: inv.pending || inv.busy || (someShort && !inv.note),
+    walkRows: inv.rows.filter((r) => !unconfirmed.has(r.investment_transaction_id)),
+  };
+}
+
+/**
+ * Brings an Item's investment store up to date for the backfill and decides
+ * what to walk. Takes the sync as a function so the one thing that matters
+ * here, asking for freshness from a VERIFIED sync only, can be tested: a run
+ * that served an unverified store without fetching again would spend one of
+ * the backfill's capped retries and make no progress.
+ */
+export async function loadItemInvestments(
+  sync: (opts: { freshOnlyIfVerified: boolean }) => Promise<ItemInvestments>,
+  investmentIds: string[],
+  dates: { windowStart: string; yesterday: string; today: string }
+): Promise<{ coveredIds: Set<string>; pending: boolean; walkRows: InvestmentTxn[] }> {
+  return investmentReadiness(await sync({ freshOnlyIfVerified: true }), investmentIds, dates);
 }
 
 /**

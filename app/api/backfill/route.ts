@@ -6,7 +6,7 @@ import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { syncInvestments } from '@/lib/invstore';
 import { getManualAccounts } from '@/lib/manual';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
-import { addInvestmentFlows, investmentReadiness, isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
+import { addInvestmentFlows, isoDaysAgo, loadItemInvestments, reconstruct, type WalkType } from '@/lib/backfill';
 import {
   backfillPendingExhausted,
   clearBackfillPending,
@@ -116,24 +116,25 @@ export async function POST() {
           .map((a) => a.account_id);
         const hasInvestment = investmentIds.length > 0;
         // From the Item's stored investment transactions (lib/invstore.ts),
-        // brought up to date first. Every stored row goes to the walk, which
-        // judges paycheck trades over all of them and walks only the window.
-        const inv = hasInvestment ? await syncInvestments(item, { freshOnlyIfVerified: true }) : null;
-
-        // Covered, or worth waiting for: see investmentReadiness in lib/backfill.ts.
-        const readiness = inv
-          ? investmentReadiness(inv, investmentIds, isoDaysAgo(LOOKBACK_DAYS), isoDaysAgo(1))
-          : { covered: false, pending: false };
-        const invCovered = readiness.covered;
-        const invPending = readiness.pending;
+        // brought up to date first. Which accounts are walked, whether to wait,
+        // and which rows to walk: see investmentReadiness in lib/backfill.ts.
+        // The walk judges paycheck trades over every row it is given and walks
+        // only the window.
+        const inv = hasInvestment
+          ? await loadItemInvestments((opts) => syncInvestments(item, opts), investmentIds, {
+              windowStart: isoDaysAgo(LOOKBACK_DAYS),
+              yesterday: isoDaysAgo(1),
+              today: isoDaysAgo(0),
+            })
+          : null;
 
         return {
           accounts: bal.data.accounts,
           txns,
           note,
-          invTxns: inv?.rows ?? [],
-          invCovered,
-          invPending,
+          invTxns: inv?.walkRows ?? [],
+          invCoveredIds: inv?.coveredIds ?? new Set<string>(),
+          invPending: inv?.pending ?? false,
         };
       })
     );
@@ -161,7 +162,7 @@ export async function POST() {
     // the chart. Left unset, the client's next load recomputes.
     const invPending = perItem.some((p) => p.invPending);
 
-    for (const { accounts, txns, invTxns, invCovered } of perItem) {
+    for (const { accounts, txns, invTxns, invCoveredIds } of perItem) {
       for (const a of accounts) {
         const current = a.balances.current ?? 0;
         totalNow += signedContribution(a.type, current);
@@ -169,7 +170,7 @@ export async function POST() {
           walkType[a.account_id] = a.type;
           cashIds.add(a.account_id);
           balances[a.account_id] = current;
-        } else if (isInvestmentType(a.type) && invCovered) {
+        } else if (isInvestmentType(a.type) && invCoveredIds.has(a.account_id)) {
           walkType[a.account_id] = 'investment';
           balances[a.account_id] = current;
         }

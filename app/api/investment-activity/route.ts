@@ -99,7 +99,10 @@ export async function GET(req: Request) {
     // serves what is stored (and says so only if there is any); a storage
     // problem serves what was just fetched. Both can happen at once.
     const fetchNote = sync.note ? (mine.length ? `${sync.note}; showing saved activity` : sync.note) : null;
-    const note = [fetchNote, sync.storeNote].filter(Boolean).join('. ') || null;
+    // Another sync is mid-way through the first download: nothing is saved yet,
+    // and "no activity" would be wrong.
+    const loadingNote = sync.busy && mine.length === 0 ? 'Investment activity is still loading' : null;
+    const note = [fetchNote, loadingNote, sync.storeNote].filter(Boolean).join('. ') || null;
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT),
       ytd_contributions,

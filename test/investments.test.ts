@@ -673,3 +673,18 @@ describe('in-kind transfers as evidence', () => {
     expect(countedTrades([inKind, buy]).has(buy)).toBe(true);
   });
 });
+
+describe('classifyFetchError: temporary failures', () => {
+  // Temporary by Plaid's own classification: the backfill must wait for these,
+  // not hold investments flat and mark itself done.
+  test('institution, API and rate-limit errors are pending', () => {
+    for (const error_type of ['INSTITUTION_ERROR', 'API_ERROR', 'RATE_LIMIT_EXCEEDED']) {
+      expect(classifyFetchError({ response: { data: { error_type, error_code: 'X' } } }).pending).toBe(true);
+    }
+  });
+
+  test('HTTP 429 and 5xx without a Plaid body are pending', () => {
+    expect(classifyFetchError({ response: { status: 429 } }).pending).toBe(true);
+    expect(classifyFetchError({ response: { status: 503 } }).pending).toBe(true);
+  });
+});
