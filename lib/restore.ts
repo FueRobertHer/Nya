@@ -211,14 +211,14 @@ export async function targetKeys(client: RestoreClient): Promise<string[]> {
  * shell variable cannot quietly aim a restore somewhere else. Production needs
  * a separate, explicit confirmation on top.
  */
-export function checkTarget(named: string | undefined, confirmProduction: boolean): string {
+export function checkTarget(named: string | undefined, confirmProduction: boolean, action = 'Restoring into'): string {
   const actual = k('').replace(/:$/, '');
   if (!named) refuse(`Name the target with --target. This process would write to "${actual}".`);
   if (named !== actual) {
     refuse(`--target is "${named}" but REDIS_PREFIX resolves to "${actual}". Nothing was written.`);
   }
   if (actual === 'production' && !confirmProduction) {
-    refuse('Restoring into production also needs --confirm-production.');
+    refuse(`${action} production also needs --confirm-production.`);
   }
   return actual;
 }

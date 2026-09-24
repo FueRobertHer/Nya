@@ -603,17 +603,30 @@ writes with `k0`; switching writes to a data key, and re-encrypting existing
 data under it, come next. Never remove `PLAID_ENCRYPTION_KEY` while any value
 still uses `k0`.
 
-Data keys are managed with a local command, like restore:
+Data keys are managed with a local command, like restore. It asks for the
+master key at a hidden prompt (or reads it piped from a password manager's
+CLI); it never takes it from an environment variable or `.env.local`, so it
+can't pick up the wrong one or leave it in your shell history:
 
 ```bash
 REDIS_PREFIX=production bun run keys status --target production
-MASTER_KEY=... REDIS_PREFIX=production bun run keys create --target production --confirm-production
+REDIS_PREFIX=production bun run keys create --target production --confirm-production
 ```
 
+`create` refuses unless a deployment has recently reported running that same
+master key (each deployment records its master's fingerprint as it runs, so
+set `MASTER_KEY` in Vercel, redeploy and open the app once first), and every
+command refuses a master that doesn't open the keys already there.
+
 Rotating a data key needs no Vercel change. Rotating the master key re-wraps
-only the data keys (not your data) and never puts a second master in Vercel:
-`add-master` with both keys in your shell, update `MASTER_KEY` in Vercel and
-redeploy, then `drop-old-masters --confirm-redeployed`. See `scripts/keys.ts`.
+only the data keys (not your data), and never puts a second master in Vercel:
+`add-master` (asks for the current and the new master), set `MASTER_KEY` in
+Vercel and redeploy, open the app once, then `drop-old-masters
+--confirm-redeployed`, which refuses while any deployment still reports the
+old master. Two cautions: after that last step, rolling back to a deployment
+from before the rotation can't open any data key, and backups taken before it
+still need the old master. If Preview shares the master, rotate its prefix
+too. Details in `scripts/keys.ts`.
 
 **Keep `MASTER_KEY` in your password manager.** Without it, nothing encrypted
 with a data key can be read, from the database or from any backup.

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { attestMasterKey } from '@/lib/crypto';
 import { computeNetWorth, accountBalanceMap, isRecordable } from '@/lib/networth';
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
@@ -19,6 +20,9 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Record which master key this deployment runs, for scripts/keys.ts's
+    // safety checks (lib/crypto.ts). Best effort and throttled; never throws.
+    await attestMasterKey();
     const { institutions, netWorth } = await computeNetWorth();
 
     // Same rule as the dashboard fetch: only record clean, non-empty reads.
