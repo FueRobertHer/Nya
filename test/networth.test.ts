@@ -90,11 +90,13 @@ describe('measuredBalanceMap', () => {
     ({ institution_name: 'Bank', item_id: 'item', accounts, holdings: [], error: null,
        needs_reauth: false, liabilities: 'unavailable', ...over }) as InstitutionResult;
 
-  test('leaves out a failed institution whole, including anything recovered for it', () => {
+  // Not marked stale on purpose: the error alone has to keep it out, or a
+  // failed institution that carried any unflagged balance would be recorded.
+  test('leaves out a failed institution whole, on its error alone', () => {
     expect(
       measuredBalanceMap([
         inst([{ account_id: 'ok', balance: 1 }]),
-        inst([{ account_id: 'recovered', balance: 2, stale: true }], { error: 'Could not fetch balances' }),
+        inst([{ account_id: 'failed', balance: 2 }], { error: 'Could not fetch balances' }),
       ])
     ).toEqual({ ok: 1 });
   });
@@ -133,10 +135,20 @@ describe('recordFetch', () => {
     const date = await recordFetch(
       [
         inst([{ account_id: 'a', type: 'investment', balance: 10 }]),
-        inst([], { error: 'This account needs to be reconnected' }),
+        inst([{ account_id: 'b', type: 'depository', balance: 5 }], { error: 'This account needs to be reconnected' }),
       ],
-      10
+      15
     );
+    expect(date).toBeNull();
+    expect(await getHistory()).toEqual([]);
+    expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);
+    expect(await getAccountHistory('b')).toEqual([]);
+  });
+
+  // It answered, but short an account: no total, the returned accounts still count.
+  test('an institution missing an account records its accounts and no total', async () => {
+    fake.reset();
+    const date = await recordFetch([inst([{ account_id: 'a', type: 'investment', balance: 10 }], { unconfirmed_missing: 1 })], 10);
     expect(date).toBeNull();
     expect(await getHistory()).toEqual([]);
     expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);

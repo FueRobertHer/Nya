@@ -672,9 +672,14 @@ describe('the partial per-account layer', () => {
 
   // It is the breakdown of no stored total, so the totals series and the
   // hidden-account subtraction must never see it.
+  // A real total with no breakdown of its own must still be dropped when an
+  // account is hidden: reading the partial map as that breakdown would
+  // subtract a number the total was never built from.
   test('never reaches the totals series', async () => {
+    await fake.hset(testKey('history:net-worth'), { [today()]: await encrypt('1000') });
     await recordPartialAccounts({ ira: 500 });
-    expect(await getHistory()).toEqual([]);
+
+    expect(await getHistory()).toEqual([{ date: today(), value: 1000 }]);
     expect(await getHistory(hide(['ira', 'investment']))).toEqual([]);
   });
 

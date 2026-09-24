@@ -1190,9 +1190,9 @@ export default function Dashboard() {
                   )}
                   {historyPausedSince && (
                     <div className="stale-note">
-                      Nothing has been saved to history since {fmtDay(historyPausedSince)}. A day
-                      is only saved when every account refreshes, so it picks up again once they
-                      all do.
+                      No net-worth total has been saved since {fmtDay(historyPausedSince)}. A day
+                      is only saved when every institution refreshes with all of its accounts, so
+                      it picks up again once they do.
                     </div>
                   )}
                 </div>
