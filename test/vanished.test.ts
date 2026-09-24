@@ -88,6 +88,34 @@ describe('nothing to report', () => {
     expect(res).toEqual({ unconfirmed: [], accepted: [] });
     expect(await record('item_a')).toBeNull();
   });
+
+  test('an institution that replaces its entire id set reports nothing', async () => {
+    await remember('item_a', ['acct_1', 'acct_2']);
+
+    // A reauth can rotate every account_id (lib/last-known.ts:320 names this as
+    // a real case). Accounts do not all close at the same instant while new
+    // ones appear in the same response, so an all-miss against a non-empty
+    // fresh list is a replaced id set. Flagging it would close ONE gate that
+    // covers the whole snapshot, freezing history for every institution and for
+    // manual accounts for three days after a routine reconnect.
+    const res = await check('item_a', ['acct_9', 'acct_8'], NOW);
+
+    expect(res).toEqual({ unconfirmed: [], accepted: [] });
+    expect(await record('item_a')).toBeNull();
+  });
+
+  test('a rotation clears a window already in progress', async () => {
+    await remember('item_a', ['acct_1', 'acct_2']);
+    expect((await check('item_a', ['acct_1'], NOW)).unconfirmed).toEqual(['acct_2']);
+    expect(await record('item_a')).not.toBeNull();
+
+    // The reauth lands next. Leaving acct_2's start time behind would make the
+    // old window apply to an id set the institution no longer uses.
+    const res = await check('item_a', ['acct_9', 'acct_8'], NOW);
+
+    expect(res).toEqual({ unconfirmed: [], accepted: [] });
+    expect(await record('item_a')).toBeNull();
+  });
 });
 
 describe('an account disappears from a healthy fetch', () => {

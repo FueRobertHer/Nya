@@ -70,11 +70,11 @@ export type VanishedResult = {
  *  constant for every later call in the process. */
 const empty = (): VanishedResult => ({ unconfirmed: [], accepted: [] });
 
-/** Decode one stored record, tolerating anything that is not a plain object. */
-function parseRecord(blob: string | null | undefined, plain: string | null): VanishRecord {
-  if (!blob && !plain) return {};
+/** Decode one already-decrypted record, tolerating anything that is not a plain
+ *  object. */
+function parseRecord(plain: string): VanishRecord {
   try {
-    const parsed = JSON.parse(plain ?? '') as VanishRecord;
+    const parsed = JSON.parse(plain) as VanishRecord;
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -85,7 +85,7 @@ async function readRecord(item_id: string): Promise<VanishRecord> {
   try {
     const blob = await redis().hget<string>(VANISHED_HASH, item_id);
     if (!blob) return {};
-    return parseRecord(blob, await decrypt(blob));
+    return parseRecord(await decrypt(blob));
   } catch {
     // Unreadable record: treat as empty. The cost is that a disappearance in
     // progress restarts its window, which delays acceptance rather than
@@ -109,7 +109,7 @@ async function readAllRecords(): Promise<Record<string, VanishRecord>> {
   await Promise.all(
     Object.entries(map).map(async ([item_id, blob]) => {
       try {
-        out[item_id] = parseRecord(blob, await decrypt(blob));
+        out[item_id] = parseRecord(await decrypt(blob));
       } catch {
         out[item_id] = {};
       }
@@ -183,6 +183,28 @@ async function checkOne(
   if (candidates.size === 0) return empty();
 
   const fresh = new Set(freshIds);
+
+  // ACCOUNT-ID ROTATION. lib/last-known.ts:320 names "its account_id changed at
+  // reauth" as a real case in this codebase. When it happens, the healthy fetch
+  // carries an all-new id set, so EVERY remembered id reads as vanished. One
+  // gate covers the whole snapshot, so without this the routine act of
+  // reconnecting a bank would freeze history for every institution -- and for
+  // manual accounts -- for three days.
+  //
+  // Accounts do not all close at the same instant while new ones appear in the
+  // same response, so an all-miss against a non-empty fresh list is a
+  // replacement of the id set, not a mass closure. Clear the record and report
+  // nothing.
+  //
+  // If the heuristic is ever wrong, a genuine simultaneous closure of every
+  // account goes undetected, which is exactly the behaviour before this file
+  // existed. It trades a case that cannot be distinguished anyway for one that
+  // happens routinely.
+  if (remembered.length > 0 && !remembered.some((id) => fresh.has(id))) {
+    if (Object.keys(record).length > 0) await writeRecord(item_id, {});
+    return empty();
+  }
+
   const nowIso = new Date(now).toISOString();
   const cutoff = now - CONFIRM_AFTER_DAYS * 24 * 60 * 60 * 1000;
 
