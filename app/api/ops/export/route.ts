@@ -13,7 +13,10 @@ import { exportLines } from '@/lib/export';
 //   it. While off the route answers 404, as if it did not exist, so a leaked
 //   OPS_SECRET is useless on its own.
 // - POST ONLY. A GET would invite putting the secret in a URL, and URLs end up
-//   in logs, browser history and proxy caches.
+//   in logs, browser history and proxy caches. Every other method answers 404
+//   explicitly: left undefined, Next answers GET and HEAD with 405 and OPTIONS
+//   with 204 plus an Allow header, all of which reveal the route exists even
+//   while it is switched off.
 // - CONSTANT-TIME COMPARISON, as /api/ingest/balance does, since this is
 //   reachable by anyone on the internet.
 // - THE PREFIX IS NEVER TAKEN FROM THE REQUEST. It comes from the deployment's
@@ -31,9 +34,7 @@ import { exportLines } from '@/lib/export';
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  if (process.env.OPS_ENABLED !== '1') {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
+  if (process.env.OPS_ENABLED !== '1') return notFound();
 
   const secret = process.env.OPS_SECRET;
   const header = req.headers.get('authorization') ?? '';
@@ -76,3 +77,14 @@ export async function POST(req: Request) {
     },
   });
 }
+
+function notFound() {
+  return NextResponse.json({ error: 'Not found' }, { status: 404 });
+}
+
+export const GET = notFound;
+export const HEAD = notFound;
+export const OPTIONS = notFound;
+export const PUT = notFound;
+export const PATCH = notFound;
+export const DELETE = notFound;

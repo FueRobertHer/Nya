@@ -22,9 +22,12 @@
 //    the number 1 and restore would write back something the app never wrote.
 //
 // 3. PROVABLY COMPLETE. The last line is a footer with a key count and a
-//    SHA-256 over every record line. A download cut off mid-stream has no
-//    footer; an edited one fails the hash. Restore refuses both, because a
-//    partial archive restored over real data is worse than no archive.
+//    SHA-256 over the header and every record line. A download cut off
+//    mid-stream has no footer, and one damaged in storage or transit fails the
+//    hash. Restore refuses both, because a partial archive restored over real
+//    data is worse than no archive. The hash is an integrity check, not a
+//    signature: it catches accidents, and anyone deliberately editing the file
+//    can recompute it.
 //
 // NOT A POINT-IN-TIME SNAPSHOT. Keys are read one after another, so a write
 // landing mid-export can leave two keys from different moments. Avoid running
@@ -35,6 +38,11 @@
 //   {"key":"budgets","type":"string","ttl":null,"value":"<ciphertext>"}
 //   {"key":"history:net-worth","type":"hash","ttl":null,"value":{"2026-01-01":"<ciphertext>",...}}
 //   {"end":true,"keys":2,"sha256":"<hex>","unsupported":[]}
+//
+// The sha256 covers the UTF-8 bytes of the header line and every record line,
+// each including its trailing "\n", in file order. Not the footer. Restore
+// recomputes it over the lines exactly as read, never over re-serialized JSON,
+// since re-serializing can reorder keys.
 //
 // Keys are stored WITHOUT the environment prefix, and the header records which
 // prefix they came from, so restore can write them into a different namespace
@@ -99,11 +107,6 @@ export type ExportClient = {
   ttl(key: string): Promise<number>;
 };
 
-/** Escape Redis glob metacharacters, so a prefix is matched literally. */
-function globLiteral(s: string): string {
-  return s.replace(/[*?[\]\\]/g, '\\$&');
-}
-
 function isExcluded(relative: string): boolean {
   return EXCLUDED_PREFIXES.some((p) => relative.startsWith(p));
 }
@@ -125,8 +128,17 @@ async function listKeys(client: ExportClient, prefix: string): Promise<string[]>
   const keys = new Set<string>();
   let cursor: string | number = 0;
   do {
-    const [next, page] = await client.scan(cursor, { match: `${globLiteral(prefix)}*`, count: PAGE });
-    for (const key of page) keys.add(key);
+    // lib/storage.ts guarantees the prefix is a plain segment with no glob
+    // characters, so this pattern matches it literally.
+    const [next, page] = await client.scan(cursor, { match: `${prefix}*`, count: PAGE });
+    for (const key of page) {
+      // Checked rather than trusted. A key outside the prefix would otherwise
+      // be archived under a wrong name by the slice in exportLines. Thrown, not
+      // skipped: a pattern that matched something unexpected means the walk
+      // cannot be trusted at all.
+      if (!key.startsWith(prefix)) throw new Error(`Scan returned a key outside ${prefix}`);
+      keys.add(key);
+    }
     cursor = next;
   } while (String(cursor) !== '0');
   // Sorted so two exports of unchanged data are identical, which makes them
@@ -135,7 +147,9 @@ async function listKeys(client: ExportClient, prefix: string): Promise<string[]>
 }
 
 async function readHash(client: ExportClient, key: string): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
+  // No prototype: on a plain {} a field named "__proto__" would be swallowed by
+  // the setter instead of stored, and the archive would drop it silently.
+  const out: Record<string, string> = Object.create(null);
   let cursor: string | number = 0;
   do {
     const [next, flat] = await client.hscan(key, cursor, { count: PAGE });
@@ -179,9 +193,12 @@ export async function* exportLines(
     taken_at: now.toISOString(),
     excluded: EXCLUDED_PREFIXES.map((p) => `${p}*`),
   };
-  yield JSON.stringify(header) + '\n';
-
   const hash = createHash('sha256');
+  const headerLine = JSON.stringify(header) + '\n';
+  // Hashed so the era and prefix restore relies on are covered too.
+  hash.update(headerLine);
+  yield headerLine;
+
   const unsupported: ExportFooter['unsupported'] = [];
   let count = 0;
 

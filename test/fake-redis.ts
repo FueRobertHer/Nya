@@ -141,9 +141,13 @@ export class FakeRedis {
     this.ttls.set(key, seconds);
   }
 
-  /** Seconds remaining, or -1 when the key exists without one (Redis's answer). */
+  /** Seconds remaining; -1 when the key exists without one; -2 when there is
+   *  no such key. All three are Redis's answers, and the last matters: code
+   *  that treats a vanished key differently from a persistent one is otherwise
+   *  untestable. */
   async ttl(key: string): Promise<number> {
     this.gate('ttl');
+    if (!this.strings.has(key) && !this.hashes.has(key)) return -2;
     return this.ttls.get(key) ?? -1;
   }
 

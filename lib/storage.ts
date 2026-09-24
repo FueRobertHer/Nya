@@ -83,7 +83,25 @@ export function rawRedis(): Redis {
 // preview:…, dev:…). Vercel sets VERCEL_ENV; local `next dev` falls through
 // to 'dev'. REDIS_PREFIX overrides both, e.g. to point a branch at another
 // namespace deliberately.
-const ENV_PREFIX = process.env.REDIS_PREFIX ?? process.env.VERCEL_ENV ?? 'dev';
+//
+// The prefix must be a single plain segment: letters, digits, '-' and '_'.
+// A colon would nest one environment inside another ('production:restore-test'
+// lives under 'production:'), so anything that walks one environment's keys,
+// like lib/export.ts, would silently sweep up the other's too, and a restore
+// would then write them back as the outer environment's own data. Glob
+// characters would make a key-pattern match more than the prefix. Refused at
+// startup rather than tolerated: a misconfigured prefix should stop the app
+// loudly, not blend two databases together.
+const ENV_PREFIX = validPrefix(process.env.REDIS_PREFIX ?? process.env.VERCEL_ENV ?? 'dev');
+
+function validPrefix(prefix: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(prefix)) {
+    throw new Error(
+      `Invalid Redis key prefix ${JSON.stringify(prefix)}: use only letters, digits, '-' and '_' (check REDIS_PREFIX).`
+    );
+  }
+  return prefix;
+}
 
 export function k(key: string): string {
   return `${ENV_PREFIX}:${key}`;

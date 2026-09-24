@@ -449,10 +449,18 @@ The export route is off by default. To take one:
    is missing, the download was cut short; take it again.
 4. Remove `OPS_ENABLED` and redeploy. While it is unset the route answers 404.
 
-The archive holds your data **still encrypted**, so it is safe to store, and
-useless without `PLAID_ENCRYPTION_KEY`. Keep a copy of that key somewhere
-separate from both the archive and Vercel (a password manager, or on paper).
-Lose the key and the backup cannot be read.
+Balances, transactions, budgets, goals and access tokens stay **encrypted** in
+the archive, and cannot be read without `PLAID_ENCRYPTION_KEY`. Keep a copy of
+that key somewhere separate from both the archive and Vercel (a password
+manager, or on paper). Lose the key and the backup cannot be read.
+
+Not everything in it is encrypted, though, so still treat the file as private:
+dates, account and transaction ids, the names of your linked banks, and the
+merchant names you have renamed are stored as plain text.
+
+The last line also carries a checksum, so a file damaged in storage or transit
+is caught before it is restored. It is not a signature: it will not stop
+someone who edits the file on purpose.
 
 Caches and login rate-limit counters are left out on purpose. Avoid running
 it around 13:00 UTC, when the daily snapshot writes.
