@@ -1420,7 +1420,14 @@ export default function Dashboard() {
                                 {expandedAccounts.has(a.account_id) && (
                                   <tr>
                                     <td colSpan={2} className="acct-chart-cell">
-                                      <AccountSparkline accountId={a.account_id} />
+                                      <AccountSparkline
+                                        accountId={a.account_id}
+                                        itemId={
+                                          isInvestmentType(a.type) && !inst.manual
+                                            ? inst.item_id
+                                            : undefined
+                                        }
+                                      />
                                       <LiabilityDetail liability={a.liability} currency={a.currency} />
                                       {/* Not for manual accounts: they're typed
                                           by hand, and their synthetic

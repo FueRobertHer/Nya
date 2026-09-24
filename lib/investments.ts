@@ -217,6 +217,41 @@ export function valueDelta(t: InvestmentTxn): number {
   return 0;
 }
 
+/**
+ * Signed change in account value from money CROSSING the account boundary:
+ * contributions, deposits, transfers, rollovers, withdrawals and distributions,
+ * in either direction. Zero for everything else.
+ *
+ * This is the "money added" side of the chart's added-vs-growth split, so the
+ * line it draws matters in both directions. Dividends, interest and fees are
+ * left out because they ARE growth (or its opposite). Buys and sells are left
+ * out because they are internal, even when an institution stamps them with an
+ * external-sounding subtype. Rollovers count: for this account they are money
+ * arriving, not money the market made, which is the question being answered
+ * (isContribution excludes them for a different one, the annual limit).
+ * Corporate actions are already zero in valueDelta.
+ */
+export function externalFlow(t: InvestmentTxn): number {
+  const subtype = (t.subtype || '').toLowerCase();
+  const type = (t.type || '').toLowerCase();
+  if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return 0;
+  if (type === 'buy' || type === 'sell') return 0;
+  return valueDelta(t);
+}
+
+/** externalFlow summed per date, ascending, with net-zero dates dropped. */
+export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: number }[] {
+  const byDate = new Map<string, number>();
+  for (const t of txns) {
+    const flow = externalFlow(t);
+    if (flow !== 0) byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
+  }
+  return [...byDate]
+    .filter(([, amount]) => amount !== 0)
+    .map(([date, amount]) => ({ date, amount }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
 /** Money the holder added from outside, for the year-to-date contributions line. */
 export function isContribution(t: InvestmentTxn): boolean {
   // Rollovers wear contribution subtypes but aren't new money (see isRollover).

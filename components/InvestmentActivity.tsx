@@ -21,12 +21,43 @@ type InvestmentTxn = {
   security: string | null;
 };
 
-type Payload = {
+export type InvestmentActivityPayload = {
   txns: InvestmentTxn[];
   ytd_contributions: number;
   ytd_rollovers: number;
+  /** Money crossing the account boundary per day, for the chart's added-vs-
+   *  growth line. Null when unavailable or withheld (see the route). */
+  flows?: { date: string; amount: number }[] | null;
+  flows_from?: string;
   note: string | null;
 };
+type Payload = InvestmentActivityPayload;
+
+// One request per account for both readers. The expanded row mounts this list
+// and the balance chart together, and both want this payload: fetched
+// separately they would miss the server cache together and cost two live
+// Plaid calls. Reused for a minute, which covers that and an expand/collapse;
+// the server's own 15-minute cache covers the rest. A failure is dropped at
+// once so the next mount retries.
+const REUSE_MS = 60_000;
+const inflight = new Map<string, { at: number; promise: Promise<Payload> }>();
+
+export function loadInvestmentActivity(accountId: string, itemId: string): Promise<Payload> {
+  const key = `${itemId}:${accountId}`;
+  const hit = inflight.get(key);
+  if (hit && Date.now() - hit.at < REUSE_MS) return hit.promise;
+  const promise = fetch(
+    `/api/investment-activity?id=${encodeURIComponent(accountId)}&item_id=${encodeURIComponent(itemId)}`
+  ).then((res) => {
+    if (!res.ok) throw new Error(`investment-activity ${res.status}`);
+    return res.json() as Promise<Payload>;
+  });
+  inflight.set(key, { at: Date.now(), promise });
+  promise.catch(() => {
+    if (inflight.get(key)?.promise === promise) inflight.delete(key);
+  });
+  return promise;
+}
 
 function fmtDay(iso: string): string {
   // Parsed at local midnight, not UTC, so a date never renders as the day
@@ -69,13 +100,7 @@ export default function InvestmentActivity({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(
-      `/api/investment-activity?id=${encodeURIComponent(accountId)}&item_id=${encodeURIComponent(itemId)}`
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        return res.json();
-      })
+    loadInvestmentActivity(accountId, itemId)
       .then((d) => {
         if (!cancelled) setData(d);
       })

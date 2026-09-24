@@ -32,7 +32,7 @@ mock.module('@/lib/plaid', () => ({
   },
 }));
 
-const { valueDelta, isContribution, isRollover, isIncomingRollover, fetchInvestmentTxns } =
+const { valueDelta, isContribution, isRollover, isIncomingRollover, fetchInvestmentTxns, externalFlow, dailyFlows } =
   await import('@/lib/investments');
 
 const txn = (over: Partial<InvestmentTxn> = {}): InvestmentTxn => ({
@@ -488,5 +488,52 @@ describe('fetchInvestmentTxns', () => {
     pages = [{ rows: [] }];
     await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01', ['acct']);
     expect(calls[0].account_ids).toEqual(['acct']);
+  });
+});
+
+// The "money added" side of the chart's added-vs-growth split. Anything counted
+// here is subtracted from growth, so both directions of error show on screen.
+describe('externalFlow', () => {
+  test('money crossing the boundary counts, in both directions', () => {
+    expect(externalFlow(txn({ subtype: 'contribution', amount: -500 }))).toBe(500);
+    expect(externalFlow(txn({ subtype: 'deposit', amount: -100 }))).toBe(100);
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'transfer', amount: -2000 }))).toBe(2000);
+    expect(externalFlow(txn({ subtype: 'withdrawal', amount: 300 }))).toBe(-300);
+    expect(externalFlow(txn({ subtype: 'distribution', amount: 50 }))).toBe(-50);
+  });
+
+  // For this account a rollover is money arriving, not money the market made.
+  test('counts a rollover', () => {
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'transfer', name: 'ROLLOVER FROM 401K', amount: -60_000 }))).toBe(60_000);
+  });
+
+  test('leaves growth out: dividends, interest and fees', () => {
+    expect(externalFlow(txn({ subtype: 'dividend', amount: -40 }))).toBe(0);
+    expect(externalFlow(txn({ subtype: 'interest', amount: -3 }))).toBe(0);
+    expect(externalFlow(txn({ type: 'fee', subtype: 'account fee', amount: 25 }))).toBe(0);
+  });
+
+  test('leaves internal movement out, even under an external-sounding subtype', () => {
+    expect(externalFlow(txn({ type: 'buy', subtype: 'buy', amount: 1000, fees: 1 }))).toBe(0);
+    expect(externalFlow(txn({ type: 'buy', subtype: 'contribution', amount: 1000 }))).toBe(0);
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'merger', amount: -900 }))).toBe(0);
+  });
+});
+
+describe('dailyFlows', () => {
+  test('sums per date, ascending, dropping net-zero days and non-flows', () => {
+    expect(
+      dailyFlows([
+        txn({ date: '2026-03-02', subtype: 'contribution', amount: -500 }),
+        txn({ date: '2026-03-01', subtype: 'deposit', amount: -100 }),
+        txn({ date: '2026-03-02', subtype: 'contribution', amount: -250 }),
+        txn({ date: '2026-03-03', subtype: 'deposit', amount: -100 }),
+        txn({ date: '2026-03-03', subtype: 'withdrawal', amount: 100 }),
+        txn({ date: '2026-03-04', subtype: 'dividend', amount: -40 }),
+      ])
+    ).toEqual([
+      { date: '2026-03-01', amount: 100 },
+      { date: '2026-03-02', amount: 750 },
+    ]);
   });
 });

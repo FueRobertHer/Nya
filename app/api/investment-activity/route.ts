@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import {
+  dailyFlows,
   fetchInvestmentTxns,
   isContribution,
   isIncomingRollover,
@@ -55,9 +56,10 @@ export async function GET(req: Request) {
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const access_token = await decrypt(item.encrypted_access_token);
-    const { txns, note } = await fetchInvestmentTxns(
+    const flows_from = isoDaysAgo(LOOKBACK_DAYS);
+    const { txns, note, truncated } = await fetchInvestmentTxns(
       access_token,
-      isoDaysAgo(LOOKBACK_DAYS),
+      flows_from,
       isoDaysAgo(0),
       [account_id]
     );
@@ -80,10 +82,19 @@ export async function GET(req: Request) {
     const ytd_contributions = sum(thisYear.filter(isContribution));
     const ytd_rollovers = sum(thisYear.filter(isIncomingRollover));
 
+    // Money crossing the account boundary, per day, for the chart's split of
+    // the balance into money added and growth (lib/growth.ts). The whole
+    // window, not the displayed slice. Withheld when rows are missing: a note
+    // means none came back, and truncation drops the OLDEST ones, which would
+    // understate every running total after them and pass the gap off as growth.
+    const flows = note || truncated ? null : dailyFlows(mine);
+
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT), // Plaid returns newest first
       ytd_contributions,
       ytd_rollovers,
+      flows,
+      flows_from,
       note,
     };
 

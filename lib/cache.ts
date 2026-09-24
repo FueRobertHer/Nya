@@ -26,7 +26,7 @@ export const TRANSACTIONS_CACHE_KEY = k('cache:transactions');
 // of their TTL. Versioning the key rather than the field lets the old hash
 // expire wholesale on the TTL it already carries, instead of leaving dead
 // fields inside a live hash that every write renews.
-export const INVESTMENT_ACTIVITY_CACHE_KEY = k('cache:inv-activity:v2');
+export const INVESTMENT_ACTIVITY_CACHE_KEY = k('cache:inv-activity:v3');
 
 export async function readCache<T>(key: string): Promise<T | null> {
   try {
