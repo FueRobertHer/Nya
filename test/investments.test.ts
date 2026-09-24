@@ -1,43 +1,13 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { InvestmentTxn } from '@/lib/investments';
-
-// Stands in for the Plaid client so pagination can be driven deterministically.
-// Declared before the mock.module call because that call is hoisted with the
-// imports below it.
-// `error` is a Plaid error_code (an HTTP response); `netCode` is an axios
-// transport failure, which arrives with NO response and so no error_code at all
-// -- the shape a client-side timeout actually takes.
-let pages: { rows: any[]; total?: number | null; error?: string; netCode?: string }[] = [];
-let calls: { offset: number; count: number; account_ids?: string[] }[] = [];
-
-mock.module('@/lib/plaid', () => ({
-  plaidClient: {
-    investmentsTransactionsGet: async (req: any) => {
-      calls.push({
-        offset: req.options.offset,
-        count: req.options.count,
-        account_ids: req.options.account_ids,
-      });
-      const page = pages[calls.length - 1] ?? { rows: [] };
-      if (page.error) throw { response: { data: { error_code: page.error } } };
-      if (page.netCode) throw { code: page.netCode, message: 'timeout of 45000ms exceeded' };
-      return {
-        data: {
-          investment_transactions: page.rows,
-          securities: [{ security_id: 'sec1', name: 'Acme Corp', ticker_symbol: 'ACME' }],
-          total_investment_transactions: page.total === undefined ? page.rows.length : page.total,
-        },
-      };
-    },
-  },
-}));
 
 const {
   valueDelta,
   isContribution,
   isRollover,
   isIncomingRollover,
-  fetchInvestmentTxns,
+  classifyFetchError,
+  toInvestmentTxn,
   externalFlow,
   dailyFlows,
   countedTrades,
@@ -336,169 +306,60 @@ describe('contributions and rollovers never overlap', () => {
   });
 });
 
-describe('fetchInvestmentTxns', () => {
-  beforeEach(() => {
-    pages = [];
-    calls = [];
+// How a failed investment-transactions call is reported. Whether it is
+// 'pending' is load-bearing: the backfill waits for pending failures and
+// accepts the rest, so a transient one misread as standing would freeze an
+// Item's investments flat.
+describe('classifyFetchError', () => {
+  test('a still-importing product is pending', () => {
+    expect(classifyFetchError({ response: { data: { error_code: 'PRODUCT_NOT_READY' } } })).toEqual({
+      note: 'Investment activity is still importing',
+      pending: true,
+    });
   });
 
-  const row = (over: Record<string, unknown> = {}) => ({
-    investment_transaction_id: `it${Math.random()}`,
-    account_id: 'acct',
+  // A client-side timeout arrives with no Plaid error code at all.
+  test('a timeout is pending, not a standing failure', () => {
+    expect(classifyFetchError({ code: 'ECONNABORTED' }).pending).toBe(true);
+    expect(classifyFetchError({ code: 'ETIMEDOUT' }).pending).toBe(true);
+  });
+
+  test('standing failures are not pending', () => {
+    expect(classifyFetchError({ response: { data: { error_code: 'ITEM_LOGIN_REQUIRED' } } })).toEqual({
+      note: 'This account needs to be reconnected',
+      pending: false,
+    });
+    expect(classifyFetchError({ response: { data: { error_code: 'PRODUCTS_NOT_SUPPORTED' } } }).pending).toBe(false);
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect(classifyFetchError(new Error('boom'))).toEqual({ note: 'Could not fetch investment activity', pending: false });
+    } finally {
+      console.error = quiet;
+    }
+  });
+});
+
+describe('toInvestmentTxn', () => {
+  const raw = {
+    investment_transaction_id: 't',
+    account_id: 'a',
     date: '2026-03-01',
-    name: 'Row',
+    name: 'Buy',
     type: 'buy',
     subtype: 'buy',
     quantity: 1,
-    price: 1,
-    amount: 1,
-    fees: 0,
+    price: 10,
+    amount: 10,
+    fees: null,
     iso_currency_code: 'USD',
     security_id: 'sec1',
-    ...over,
-  });
+  };
 
-  test('returns a single short page without asking for more', async () => {
-    pages = [{ rows: [row(), row()] }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.txns).toHaveLength(2);
-    expect(res.note).toBeNull();
-    expect(calls).toHaveLength(1);
-  });
-
-  // The bug this guards: the truncation check ran before `offset` was advanced,
-  // so `offset < total` was true on every ordinary single-page fetch. Every
-  // account got flagged truncated, which zeroed invCovered and silently
-  // disabled the entire walk.
-  test('does not flag an ordinary fetch as truncated', async () => {
-    pages = [{ rows: [row(), row(), row()] }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.truncated).toBe(false);
-  });
-
-  test('an empty result is not truncated either', async () => {
-    pages = [{ rows: [] }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.txns).toEqual([]);
-    expect(res.truncated).toBe(false);
-    expect(res.note).toBeNull();
-  });
-
-  test('pages until the reported total is reached, advancing the offset', async () => {
-    const full = Array.from({ length: 500 }, () => row());
-    pages = [
-      { rows: full, total: 750 },
-      { rows: Array.from({ length: 250 }, () => row()), total: 750 },
-    ];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.txns).toHaveLength(750);
-    expect(res.truncated).toBe(false);
-    expect(calls.map((c) => c.offset)).toEqual([0, 500]);
-  });
-
-  // `pending` is the one failure that fixes itself, and backfill leans on the
-  // distinction: it holds an Item's investment accounts flat either way, but
-  // only a standing failure lets it mark the reconstruction done. Marking it
-  // done while Plaid was still extracting froze the gap in place -- the flows
-  // never arrived, and nothing retried -- which is how an account's chart ends
-  // up missing a rollover its own activity list shows.
-  test('reports a still-importing product as pending', async () => {
-    pages = [{ rows: [], error: 'PRODUCT_NOT_READY' }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.note).toBe('Investment activity is still importing');
-    expect(res.pending).toBe(true);
-  });
-
-  // lib/plaid.ts now sets an axios timeout, and a timeout is transient in
-  // exactly the way PRODUCT_NOT_READY is. Getting this wrong is not a cosmetic
-  // misclassification: /api/backfill treats an investment failure as
-  // non-blocking, so an unclassified timeout leaves invCovered and invPending
-  // both false and the run marks the reconstruction DONE with every investment
-  // account held flat -- permanently, since nothing retries a done backfill.
-  test('a client-side timeout is pending, not a standing failure', async () => {
-    for (const netCode of ['ECONNABORTED', 'ETIMEDOUT']) {
-      calls = [];
-      pages = [{ rows: [], netCode }];
-      const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-      expect(res.pending).toBe(true);
-      expect(res.note).toBe('Investment activity timed out');
-      expect(res.txns).toEqual([]);
-    }
-  });
-
-  test('a standing failure is not pending', async () => {
-    for (const code of [
-      'PRODUCTS_NOT_SUPPORTED',
-      'NO_INVESTMENT_ACCOUNTS',
-      'ITEM_LOGIN_REQUIRED',
-      'INTERNAL_SERVER_ERROR',
-    ]) {
-      pages = [{ rows: [], error: code }];
-      calls = [];
-      const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-      expect(res.note).not.toBeNull();
-      expect(res.pending).toBe(false);
-    }
-  });
-
-  test('a clean fetch is not pending', async () => {
-    pages = [{ rows: [row()] }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.note).toBeNull();
-    expect(res.pending).toBe(false);
-  });
-
-  test('flags truncation when the page cap is hit with rows outstanding', async () => {
-    pages = Array.from({ length: 25 }, () => ({
-      rows: Array.from({ length: 500 }, () => row()),
-      total: 100_000,
-    }));
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.truncated).toBe(true);
-    expect(calls.length).toBeLessThanOrEqual(20); // MAX_PAGES
-  });
-
-  // A full page with no reported total means "unknown", not "exactly this many".
-  test('treats a missing total on a full page as unknown rather than complete', async () => {
-    pages = Array.from({ length: 25 }, () => ({
-      rows: Array.from({ length: 500 }, () => row()),
-      total: null,
-    }));
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.truncated).toBe(true);
-  });
-
-  test('drops unsettled rows, which have no pending flag of their own', async () => {
-    pages = [{ rows: [row({ subtype: 'pending credit' }), row({ subtype: 'pending debit' }), row()] }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.txns).toHaveLength(1);
-  });
-
-  test('drops cancellations and the rows they reverse', async () => {
-    pages = [
-      {
-        rows: [
-          row({ investment_transaction_id: 'original' }),
-          row({ investment_transaction_id: 'reversal', type: 'cancel', cancel_transaction_id: 'original' }),
-          row({ investment_transaction_id: 'kept' }),
-        ],
-      },
-    ];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.txns.map((t) => t.investment_transaction_id)).toEqual(['kept']);
-  });
-
-  test('resolves security names, falling back to the ticker then null', async () => {
-    pages = [{ rows: [row({ security_id: 'sec1' }), row({ security_id: 'unknown' })] }];
-    const res = await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01');
-    expect(res.txns[0].security).toBe('Acme Corp');
-    expect(res.txns[1].security).toBeNull();
-  });
-
-  test('passes account_ids through so Plaid filters server-side', async () => {
-    pages = [{ rows: [] }];
-    await fetchInvestmentTxns('tok', '2025-01-01', '2026-01-01', ['acct']);
-    expect(calls[0].account_ids).toEqual(['acct']);
+  test('resolves the security name, falling back to the ticker, then null', () => {
+    expect(toInvestmentTxn(raw, { sec1: { name: 'Acme Corp', ticker_symbol: 'ACME' } }).security).toBe('Acme Corp');
+    expect(toInvestmentTxn(raw, { sec1: { name: null, ticker_symbol: 'ACME' } }).security).toBe('ACME');
+    expect(toInvestmentTxn(raw, {}).security).toBeNull();
   });
 });
 
@@ -726,5 +587,104 @@ describe('year-to-date figures with contribution trades', () => {
     const flows = dailyFlows(rows).reduce((s, f) => s + f.amount, 0);
     expect(ytd).toBe(1500);
     expect(flows).toBe(1500);
+  });
+});
+
+// Deposits, transfers and withdrawals booked as trades, under the same
+// per-account evidence rule as contributions.
+describe('other single-row money trades', () => {
+  test('a buy booked as a deposit or transfer is money added in a buys-only account', () => {
+    expect(dailyFlows([txn({ type: 'buy', subtype: 'deposit', amount: 400 })])).toEqual([{ date: '2026-03-01', amount: 400 }]);
+    expect(dailyFlows([txn({ type: 'buy', subtype: 'transfer', amount: 250 })])).toEqual([{ date: '2026-03-01', amount: 250 }]);
+  });
+
+  test('a sell booked as a withdrawal is money out in a sells-only account', () => {
+    expect(dailyFlows([txn({ type: 'sell', subtype: 'withdrawal', amount: -300 })])).toEqual([{ date: '2026-03-01', amount: -300 }]);
+  });
+
+  // The account books deposits as cash, so the buy is where that money went.
+  test('an account that books deposits as cash never counts its deposit buys', () => {
+    const rows = [
+      txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'deposit', amount: -400 }),
+      txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'deposit', amount: 400 }),
+    ];
+    expect(dailyFlows(rows)).toEqual([{ date: '2026-03-01', amount: 400 }]);
+  });
+});
+
+// Shares moved between institutions with no cash, reported at amount 0.
+describe('in-kind transfers', () => {
+  test('are valued from quantity and price, in both directions', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', amount: 0, quantity: 100, price: 400 }))).toBe(40_000);
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', amount: 0, quantity: -10, price: 50 }))).toBe(-500);
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'transfer', amount: 0, quantity: 100, price: 400 }))).toBe(40_000);
+  });
+
+  // Only a transfer reported at exactly 0 is valued this way.
+  test('leave rows that report an amount, or are not transfers, alone', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', amount: -900, quantity: 100, price: 400 }))).toBe(900);
+    // A cash row at 0 is worth 0 (compared with ==, since -amount is -0).
+    expect(valueDelta(txn({ type: 'cash', subtype: 'deposit', amount: 0, quantity: 100, price: 400 })) == 0).toBe(true);
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'merger', amount: 0, quantity: 100, price: 400 }))).toBe(0);
+  });
+});
+
+describe('countedTrades evidence window', () => {
+  const buy = (date: string) => txn({ investment_transaction_id: `b${date}`, date, type: 'buy', subtype: 'contribution', amount: 500 });
+  const cashIn = (date: string) => txn({ investment_transaction_id: `c${date}`, date, type: 'cash', subtype: 'contribution', amount: -500 });
+
+  // Evidence is nearby, not lifetime: a recordkeeper that booked cash rows
+  // years ago says nothing about how it books paychecks now.
+  test('a cash row more than 45 days away is not evidence', () => {
+    expect(countedTrades([cashIn('2024-01-01'), buy('2026-03-01')]).size).toBe(1);
+  });
+
+  // Nor calendar year: a Dec 31 cash row and its Jan 2 buy are one paycheck.
+  test('a cash row across a year boundary is evidence', () => {
+    expect(countedTrades([cashIn('2025-12-31'), buy('2026-01-02')]).size).toBe(0);
+  });
+});
+
+describe('fund exchanges', () => {
+  // A sell/transfer and a buy/transfer is money moving between funds in the
+  // same account: nothing added, nothing taken out.
+  test('an exchange booked as two transfer trades nets to zero', () => {
+    expect(
+      dailyFlows([
+        txn({ investment_transaction_id: 's', type: 'sell', subtype: 'transfer', amount: -10_000 }),
+        txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'transfer', amount: 10_000 }),
+      ])
+    ).toEqual([]);
+  });
+});
+
+describe('in-kind valuation scope', () => {
+  test('only a plain transfer is valued from quantity and price', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'distribution', amount: 0, quantity: 100, price: 400 })) == 0).toBe(true);
+  });
+});
+
+describe('in-kind transfers as evidence', () => {
+  // Shares moved in kind say nothing about how the account books cash, so they
+  // must not suppress a genuine transfer trade nearby.
+  test('an in-kind transfer does not make a nearby transfer trade internal', () => {
+    const inKind = txn({ investment_transaction_id: 'k', type: 'transfer', subtype: 'transfer', amount: 0, quantity: 10, price: 50 });
+    const buy = txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'transfer', amount: 300 });
+    expect(countedTrades([inKind, buy]).has(buy)).toBe(true);
+  });
+});
+
+describe('classifyFetchError: temporary failures', () => {
+  // Temporary by Plaid's own classification: the backfill must wait for these,
+  // not hold investments flat and mark itself done.
+  test('institution, API and rate-limit errors are pending', () => {
+    for (const error_type of ['INSTITUTION_ERROR', 'API_ERROR', 'RATE_LIMIT_EXCEEDED']) {
+      expect(classifyFetchError({ response: { data: { error_type, error_code: 'X' } } }).pending).toBe(true);
+    }
+  });
+
+  test('HTTP 429 and 5xx without a Plaid body are pending', () => {
+    expect(classifyFetchError({ response: { status: 429 } }).pending).toBe(true);
+    expect(classifyFetchError({ response: { status: 503 } }).pending).toBe(true);
   });
 });

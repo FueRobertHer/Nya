@@ -56,3 +56,20 @@ describe('contributionBaseline', () => {
     expect(contributionBaseline([e('2026-09-01', 1)], [], '2026-01-01')).toBeNull();
   });
 });
+
+describe('contributionBaseline start day', () => {
+  // A flow two days before the first recorded day may or may not be in that
+  // day's balance. Starting after a quiet spell avoids guessing.
+  test('skips a first day whose balance may not include a recent flow', () => {
+    const points = [r('2026-09-01', 1000), r('2026-09-02', 1500), r('2026-09-05', 1500), r('2026-09-06', 1510)];
+    const out = contributionBaseline(points, [{ date: '2026-08-30', amount: 500 }], '2026-01-01');
+    expect(out?.[0]).toEqual(r('2026-09-05', 1500));
+  });
+
+  // Nothing better available: the first real point it is.
+  test('falls back to the first real point when every candidate has a recent flow', () => {
+    const points = [r('2026-09-01', 1000), r('2026-09-02', 1100)];
+    const flows = [{ date: '2026-08-31', amount: 100 }, { date: '2026-09-01', amount: 100 }];
+    expect(contributionBaseline(points, flows, '2026-01-01')?.[0]).toEqual(r('2026-09-01', 1000));
+  });
+});

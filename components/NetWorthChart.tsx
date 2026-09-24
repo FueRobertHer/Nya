@@ -19,6 +19,7 @@
 // dashed too, even between real points: every day it spans is unmeasured.
 
 import { useMemo, useRef, useState } from 'react';
+import { formatMoney, compactMoney } from '@/lib/format';
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
@@ -30,25 +31,12 @@ const PAD_TOP = 12;
 const PAD_BOTTOM = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function fullUsd(n: number): string {
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
+// Every figure prints in the series' own currency. No currency (the net-worth
+// total, which has none of its own) formats as "$", as it always did.
 
 // Signed, for money added and growth: "+$1,200.00" / "-$80.00".
-function signedUsd(n: number): string {
-  return (n < 0 ? '-' : '+') + fullUsd(Math.abs(n));
-}
-
-// Compact currency for axis ticks: $12.5K / -$1.2M
-function compactUsd(n: number): string {
-  const sign = n < 0 ? '-' : '';
-  const abs = Math.abs(n);
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
-  return `${sign}$${Math.round(abs)}`;
+function signed(n: number, currency?: string | null): string {
+  return (n < 0 ? '-' : '+') + formatMoney(Math.abs(n), currency);
 }
 
 function fmtDay(iso: string): string {
@@ -74,9 +62,12 @@ export default function NetWorthChart({
   points,
   label = 'Net worth',
   baseline,
+  currency,
 }: {
   points: HistoryPoint[];
   label?: string;
+  /** ISO currency of the series (an account's), for every figure the chart prints. */
+  currency?: string | null;
   /** Balance at a starting day plus money added since, by date (lib/growth.ts).
    *  Drawn as a thin grey line; the balance above it is growth. */
   baseline?: { date: string; value: number }[] | null;
@@ -163,8 +154,10 @@ export default function NetWorthChart({
     if (b === null || baseStart < 0 || points[i].estimated) return null;
     return { added: b - (base[baseStart] as number), growth: vals[i] - b };
   }
+  // The last real point the baseline reaches: it can stop short of the end
+  // when the flows are only known up to an earlier day.
   let lastReal = last;
-  while (lastReal > 0 && points[lastReal].estimated) lastReal--;
+  while (lastReal > 0 && (points[lastReal].estimated || base[lastReal] === null)) lastReal--;
   const shown = split(active ?? lastReal);
   const shownDate = points[active ?? lastReal]?.date;
 
@@ -190,7 +183,7 @@ export default function NetWorthChart({
       <div className="chart-readout">
         {active !== null ? (
           <>
-            <span className="chart-readout-value">{fullUsd(vals[active])}</span>
+            <span className="chart-readout-value">{formatMoney(vals[active], currency)}</span>
             <span className="chart-readout-date">
               {fmtDay(points[active].date)}
               {points[active].estimated ? ' · estimated' : ''}
@@ -207,7 +200,7 @@ export default function NetWorthChart({
           {active === null
             ? `${fmtDay(points[baseStart].date)} to ${fmtDay(shownDate)}: `
             : ''}
-          {signedUsd(shown.added)} added · {signedUsd(shown.growth)} growth
+          {signed(shown.added, currency)} added · {signed(shown.growth, currency)} growth
         </div>
       )}
 
@@ -216,7 +209,7 @@ export default function NetWorthChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`${label} from ${fmtDay(points[0].date)} to ${fmtDay(points[last].date)}. Currently ${fullUsd(vals[last])}. Low ${fullUsd(Math.min(...vals))}, high ${fullUsd(Math.max(...vals))}.`}
+        aria-label={`${label} from ${fmtDay(points[0].date)} to ${fmtDay(points[last].date)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.`}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -226,7 +219,7 @@ export default function NetWorthChart({
           <g key={t}>
             <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
-              {compactUsd(t)}
+              {compactMoney(t, currency)}
             </text>
           </g>
         ))}
