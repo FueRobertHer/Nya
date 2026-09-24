@@ -591,6 +591,14 @@ encryption key makes previously stored tokens permanently undecryptable
 (you'd need to reconnect all accounts); losing/leaking the session secret
 would let someone forge a valid login cookie.
 
+**Key rotation is being added.** Stored values can now also be in a format
+that names the key that encrypted them (`v2.<keyid>.…`), so more than one key
+can be in use at once. `PLAID_ENCRYPTION_KEY` is always key `k0`; further keys
+go in `ENCRYPTION_KEYS` as `k1:<base64>,k2:<base64>`. For now the app only
+**reads** the new format and still writes everything with `k0`; switching
+writes to a new key, and re-encrypting existing data under it, come next.
+Never remove `PLAID_ENCRYPTION_KEY` while any value still uses `k0`.
+
 ### Login rate limiting
 
 `/api/login` allows at most 10 failed attempts per IP per 15 minutes
