@@ -110,6 +110,23 @@ describe('the archive', () => {
     expect(line).toContain('"a":"b"');
   });
 
+  test('hash fields come out sorted, whatever order Redis returns them in', async () => {
+    await fake.hset(testKey('h'), { b: '2', c: '3', a: '1' });
+    const reversing = Object.assign(Object.create(fake), {
+      hscan: async (key: string, cursor: string | number, opts?: { count?: number }) => {
+        const [next, flat] = await fake.hscan(key, cursor, opts);
+        const pairs: string[][] = [];
+        for (let i = 0; i < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+        return [next, pairs.reverse().flat()];
+      },
+    });
+
+    const [plain] = (await collect()).slice(1, -1);
+    const [reversed] = (await collect(reversing)).slice(1, -1);
+    expect(plain).toBe(reversed);
+    expect(Object.keys(JSON.parse(plain).value)).toEqual(['a', 'b', 'c']);
+  });
+
   test('two exports of unchanged data are identical', async () => {
     await fake.set(testKey('b'), '2');
     await fake.set(testKey('a'), '1');

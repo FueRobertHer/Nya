@@ -465,6 +465,54 @@ someone who edits the file on purpose.
 Caches and login rate-limit counters are left out on purpose. Avoid running
 it around 13:00 UTC, when the daily snapshot writes.
 
+### Restoring a backup
+
+Restore runs on your own machine, not as a web route: a real backup can be
+bigger than Vercel lets a request upload, and it keeps anything on the internet
+from being able to overwrite your data.
+
+1. `vercel env pull .env.local` so the command has the Upstash credentials.
+   Every environment shares one database, so these credentials can reach
+   production too. What decides where the restore writes is the prefix.
+2. Try it on a scratch namespace first, and check the file without writing:
+
+   ```bash
+   REDIS_PREFIX=restore-test bun run restore nya-export.ndjson --target restore-test --dry-run
+   REDIS_PREFIX=restore-test bun run restore nya-export.ndjson --target restore-test
+   ```
+
+   To look at the result, point a preview deployment at it by setting
+   `REDIS_PREFIX=restore-test` on that preview.
+
+The command refuses, and writes nothing, when:
+
+- the file is incomplete, damaged, or from a different key layout;
+- `--target` does not match `REDIS_PREFIX` (both are required, so a leftover
+  shell variable cannot aim it somewhere you did not mean);
+- the target already holds data and `--overwrite` is not given;
+- the target is `production` and `--confirm-production` is not given;
+- it would replace data with an archive holding no keys (`--allow-empty`
+  overrides), or with one taken from a different environment
+  (`--allow-different-source` overrides). Restoring into an **empty** target
+  from anywhere, like production into `restore-test`, needs neither.
+
+With `--overwrite`, it prints how many keys it is about to replace, saves the
+target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file,
+and checks that file holds every key it is about to delete. Then it
+**replaces** the target entirely (login rate-limit counters aside), so nothing
+newer than the archive survives. If the target changes while this is going on,
+it stops before deleting anything. It finishes by reading everything back and
+comparing it with the archive, and reports success only if they match exactly.
+If a restore stops part way, run it again with `--overwrite`.
+
+File paths are resolved from the repo root, since `bun run` runs there, and
+that is also where the pre-restore file is written.
+
+Don't use the app while a restore is running, and avoid 13:00 UTC: anything
+written to the target mid-restore makes the final comparison fail.
+
+`.ndjson` files are git-ignored so a backup is never committed by accident.
+
 ## 6. Install on your phone
 
 **iPhone (Safari):** open your deployed URL → Share icon → **Add to Home Screen**
