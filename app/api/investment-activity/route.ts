@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import {
+  contributedAmount,
+  countedTrades,
   dailyFlows,
   fetchInvestmentTxns,
   isContribution,
   isIncomingRollover,
-  valueDelta,
 } from '@/lib/investments';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 
@@ -72,15 +73,21 @@ export async function GET(req: Request) {
 
     const yearStart = `${new Date().getUTCFullYear()}-01-01`;
     const thisYear = mine.filter((t) => t.date >= yearStart);
-    const sum = (rows: typeof thisYear) => rows.reduce((total, t) => total + valueDelta(t), 0);
+    // Resolved over the whole window, like the walk and the chart's flows, so
+    // all three agree on which contribution trades carry their own money (see
+    // countedTrades). A paycheck booked as a single contribution buy would
+    // otherwise be missing from "contributed this year".
+    const counted = countedTrades(mine);
+    const sum = (rows: typeof thisYear) =>
+      rows.reduce((total, t) => total + contributedAmount(t, counted), 0);
 
     // Reported as two figures rather than one. A rollover is retirement money
     // that already existed moving between accounts, so folding it into
     // contributions makes a $60k 401k transfer read as a year of saving --
     // while dropping it entirely would leave a large arrival in the activity
     // list that no line above it accounts for.
-    const ytd_contributions = sum(thisYear.filter(isContribution));
-    const ytd_rollovers = sum(thisYear.filter(isIncomingRollover));
+    const ytd_contributions = sum(thisYear.filter((t) => isContribution(t, counted)));
+    const ytd_rollovers = sum(thisYear.filter((t) => isIncomingRollover(t, counted)));
 
     // Money crossing the account boundary, per day, for the chart's split of
     // the balance into money added and growth (lib/growth.ts). The whole

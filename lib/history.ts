@@ -577,7 +577,11 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 //       zero instead of dropped back to flat, and its own series is walked past
 //       the cash horizon. Both make a large arrival (a rollover) visible on the
 //       account's chart where it previously was not.
-const BACKFILL_SCHEMA = 3;
+//   4 - a contribution booked as a single buy (or a payout as a single sell)
+//       with no cash row beside it counts as money crossing the boundary
+//       (countedTrades in lib/investments.ts). Before, the walk read each as an
+//       internal trade and carried every 401k paycheck back into the past.
+const BACKFILL_SCHEMA = 4;
 
 export async function isBackfillDone(): Promise<boolean> {
   try {

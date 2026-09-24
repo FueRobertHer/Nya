@@ -167,9 +167,16 @@ export function isRollover(t: InvestmentTxn): boolean {
   return !CONTRIBUTION_MARKER.test(residual);
 }
 
-/** A rollover arriving here, for the line shown alongside contributions. */
-export function isIncomingRollover(t: InvestmentTxn): boolean {
-  return isRollover(t) && valueDelta(t) > 0;
+/** No counted trades: the default for callers judging one row on its own. */
+const NONE: ReadonlySet<InvestmentTxn> = new Set();
+
+/**
+ * A rollover arriving here, for the line shown alongside contributions. Takes
+ * `counted` for the same reason isContribution does: a rollover can arrive as
+ * a single contribution buy too.
+ */
+export function isIncomingRollover(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn> = NONE): boolean {
+  return isRollover(t) && contributedAmount(t, counted) > 0;
 }
 
 /**
@@ -192,6 +199,10 @@ export function isIncomingRollover(t: InvestmentTxn): boolean {
  * - cash / fee / external -> -amount.
  * - anything unrecognized -> 0, so a subtype Plaid adds later can't silently
  *                            corrupt the reconstruction.
+ *
+ * Judges ONE row, so it cannot see a contribution booked as a single buy: that
+ * takes the rows beside it (countedTrades). Callers walking a set use
+ * walkDelta, which layers that answer on top of this.
  *
  * Known imprecision: a dividend that the broker reports as a single reinvestment
  * row typed `buy` is treated as internal, so its inflow is missed. The chart
@@ -264,33 +275,69 @@ function tradeFlow(t: InvestmentTxn): number {
 }
 
 /**
- * Money crossing the account boundary, summed per date, ascending, with
- * net-zero dates dropped.
+ * The contribution trades (tradeFlow) in a set that carry their own money: the
+ * ones no cash-side flow on the same account and date already accounts for.
  *
- * A contribution trade (tradeFlow) counts only when no cash-side flow on the
- * same date already carries the same amount. Institutions that report the
- * money arriving AND the shares it bought would otherwise be counted twice.
- * Each cash flow can vouch for one trade.
+ * Some institutions report the money arriving as a cash row AND the shares it
+ * bought as a contribution buy; counting both would add the paycheck twice.
+ * Others report only the buy. So a trade counts unless a same-account,
+ * same-date cash-side flow of the same amount (within a cent) exists, and each
+ * cash flow vouches for one trade only.
+ *
+ * Decided over the whole set because no single row can answer it. The balance
+ * walk (app/api/backfill), the chart's money-added line (dailyFlows) and the
+ * year-to-date figures (contributedAmount) all read the same answer, so they
+ * cannot disagree about whether a paycheck happened.
  */
-export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: number }[] {
-  const byDate = new Map<string, number>();
+export function countedTrades(txns: InvestmentTxn[]): Set<InvestmentTxn> {
   const cashFlows = new Map<string, number[]>();
+  const key = (t: InvestmentTxn) => `${t.account_id}\u0000${t.date}`;
   for (const t of txns) {
     const flow = externalFlow(t);
-    if (flow === 0) continue;
-    byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
-    (cashFlows.get(t.date) ?? cashFlows.set(t.date, []).get(t.date)!).push(flow);
+    if (flow !== 0) (cashFlows.get(key(t)) ?? cashFlows.set(key(t), []).get(key(t))!).push(flow);
   }
+  const counted = new Set<InvestmentTxn>();
   for (const t of txns) {
     const flow = tradeFlow(t);
     if (flow === 0) continue;
-    const sameDay = cashFlows.get(t.date) ?? [];
+    const sameDay = cashFlows.get(key(t)) ?? [];
     const match = sameDay.findIndex((f) => Math.abs(f - flow) < 0.01);
-    if (match >= 0) {
-      sameDay.splice(match, 1);
-      continue;
-    }
-    byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
+    if (match >= 0) sameDay.splice(match, 1);
+    else counted.add(t);
+  }
+  return counted;
+}
+
+/**
+ * The change a row makes to the account's value, for the balance walk: a
+ * counted contribution trade's `amount` less its fees, and valueDelta for
+ * everything else. Fees come out of the shares, which is why they are taken
+ * off: $500 contributed with a $2 fee buys $498 of fund.
+ */
+export function walkDelta(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn>): number {
+  return counted.has(t) ? t.amount - (t.fees ?? 0) : valueDelta(t);
+}
+
+/**
+ * Money a row moved in or out, for the year-to-date contribution and rollover
+ * figures: a counted contribution trade's full `amount`, and valueDelta for
+ * everything else (which is what those figures always summed).
+ */
+export function contributedAmount(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn>): number {
+  return counted.has(t) ? t.amount : valueDelta(t);
+}
+
+/**
+ * Money crossing the account boundary, summed per date, ascending, with
+ * net-zero dates dropped. Counted contribution trades are included; see
+ * countedTrades for why the others are not.
+ */
+export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: number }[] {
+  const counted = countedTrades(txns);
+  const byDate = new Map<string, number>();
+  for (const t of txns) {
+    const flow = counted.has(t) ? t.amount : externalFlow(t);
+    if (flow !== 0) byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
   }
   return [...byDate]
     .filter(([, amount]) => amount !== 0)
@@ -298,11 +345,17 @@ export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: numbe
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-/** Money the holder added from outside, for the year-to-date contributions line. */
-export function isContribution(t: InvestmentTxn): boolean {
+/**
+ * Money the holder added from outside, for the year-to-date contributions line.
+ *
+ * Pass `counted` (countedTrades over the same set) to include contribution
+ * trades that carry their own money. Without it a paycheck booked as a single
+ * contribution buy reads as an internal trade and never reaches the figure.
+ */
+export function isContribution(t: InvestmentTxn, counted: ReadonlySet<InvestmentTxn> = NONE): boolean {
   // Rollovers wear contribution subtypes but aren't new money (see isRollover).
   if (isRollover(t)) return false;
-  return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && valueDelta(t) > 0;
+  return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && contributedAmount(t, counted) > 0;
 }
 
 /**

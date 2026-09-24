@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { isoDaysAgo, reconstruct, type WalkInput } from '@/lib/backfill';
+import { addInvestmentFlows, isoDaysAgo, reconstruct, type WalkInput } from '@/lib/backfill';
+import type { InvestmentTxn } from '@/lib/investments';
 
 // A fixed clock, so every date in these tests is a literal rather than a
 // computed one. The walk keys everything off `now`, which is why it takes one.
@@ -309,4 +310,61 @@ test('a flow for an account that is not being walked is ignored', () => {
   });
   const dates = byDate(accountPoints);
   expect(dates['2026-09-09']).toEqual({ cash: 1200 });
+});
+
+// The route feeds each Item's investment transactions through this before the
+// walk. A 401k paycheck booked as a single contribution buy is money arriving,
+// so walking backward it must come OUT of the past balance.
+describe('addInvestmentFlows', () => {
+  const row = (over: Partial<InvestmentTxn>): InvestmentTxn => ({
+    investment_transaction_id: 'x',
+    account_id: 'k401',
+    date: '2026-09-10',
+    name: 'Payroll contribution',
+    type: 'buy',
+    subtype: 'contribution',
+    quantity: 1,
+    price: 500,
+    amount: 500,
+    fees: null,
+    currency: 'USD',
+    security: 'Target 2055',
+    ...over,
+  });
+
+  const walkK401 = (rows: InvestmentTxn[]) => {
+    const dailyByAccount: Record<string, Record<string, number>> = {};
+    const walkType = { k401: 'investment' as const };
+    const oldest = addInvestmentFlows(dailyByAccount, rows, walkType);
+    const { accountPoints } = walk({ balances: { k401: 10_000 }, walkType, dailyByAccount });
+    return { oldest, dates: byDate(accountPoints) };
+  };
+
+  test('a lone contribution buy is walked back out of the past', () => {
+    const { oldest, dates } = walkK401([row({})]);
+    expect(oldest).toBe('2026-09-10');
+    expect(dates['2026-09-10'].k401).toBe(10_000);
+    expect(dates['2026-09-09'].k401).toBe(9_500);
+  });
+
+  // Reported as the money arriving AND the shares it bought: once, not twice.
+  test('a buy covered by a same-day cash row is walked back once', () => {
+    const { dates } = walkK401([
+      row({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 }),
+      row({ investment_transaction_id: 'b' }),
+    ]);
+    expect(dates['2026-09-09'].k401).toBe(9_500);
+  });
+
+  test('an ordinary buy moves nothing', () => {
+    const { oldest, dates } = walkK401([row({ subtype: 'buy' })]);
+    expect(oldest).toBeNull();
+    expect(dates['2026-09-09'].k401).toBe(10_000);
+  });
+
+  test('ignores accounts not walked as investments', () => {
+    const dailyByAccount: Record<string, Record<string, number>> = {};
+    expect(addInvestmentFlows(dailyByAccount, [row({})], {})).toBeNull();
+    expect(dailyByAccount).toEqual({});
+  });
 });
