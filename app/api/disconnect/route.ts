@@ -7,6 +7,7 @@ import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 import { pruneHidden } from '@/lib/hidden';
 import { rememberedIdsForItem, forgetItem } from '@/lib/last-known';
+import { forgetVanished } from '@/lib/vanished';
 
 export async function POST(req: Request) {
   try {
@@ -64,6 +65,9 @@ export async function POST(req: Request) {
     await clearItemTransactions(item_id);
     await pruneHidden([...accountIds]);
     await forgetItem(item_id);
+    // Its vanished-account record goes with it: the Item is gone, so nothing
+    // can confirm or clear those entries, and a relink starts clean.
+    await forgetVanished(item_id);
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches();

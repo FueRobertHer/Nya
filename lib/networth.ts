@@ -10,6 +10,7 @@ import { getItems, type StoredItem } from './storage';
 import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
 import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
+import { loadVanishedInputs, applyVanished } from './vanished';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -57,7 +58,38 @@ export type InstitutionResult = {
   stale_missing?: number;
   /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
   manual?: boolean;
+  /**
+   * HOW MANY accounts this institution is known to own that were absent from an
+   * otherwise successful fetch, and have not been absent long enough to accept
+   * as closed (lib/vanished.ts).
+   *
+   * Closes the snapshot and cache gates exactly as `error` does, and for the
+   * same reason: the total on hand is not a measurement of everything this
+   * institution holds, so recording it would write a silent drop into a history
+   * layer nothing rewrites. Unlike `error`, the accounts that DID answer are
+   * fresh and correct, so the card shows them rather than falling back to
+   * last-known balances.
+   *
+   * A count rather than the ids, because this object is sent to the client
+   * whole (app/api/net-worth/route.ts:144) and the ids would be the one place
+   * account ids leave the server in plaintext. Nothing downstream needs them;
+   * lib/vanished.ts keeps them encrypted in its own record.
+   */
+  unconfirmed_missing?: number;
 };
+
+/**
+ * Whether an institution's figures may be written to the permanent history
+ * layer or frozen into a cache.
+ *
+ * One definition, used by every gate, because they must agree: /api/snapshot,
+ * /api/net-worth and /api/ingest/balance each recorded the same
+ * `every(i => !i.error)` by hand, so a new reason to withhold had to be
+ * remembered in three places or it silently was not applied in the third.
+ */
+export function isRecordable(inst: InstitutionResult): boolean {
+  return !inst.error && !inst.unconfirmed_missing;
+}
 
 async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   const result: InstitutionResult = {
@@ -206,7 +238,34 @@ export async function computeNetWorth(): Promise<{
 
   // Fetch every institution concurrently instead of one at a time --
   // with N linked accounts this used to take N sequential round trips.
+  // The two reads the vanished check needs are whole hashes keyed by item_id,
+  // so they are issued alongside the Plaid fan-out rather than after it. They
+  // depend only on the Items, which are already in hand, and the fan-out takes
+  // seconds. Same reasoning as the eager() read in app/api/net-worth/route.ts.
+  const vanishedReads = loadVanishedInputs();
+
   const institutions = await Promise.all(items.map(fetchInstitution));
+
+  // An account missing from a SUCCESSFUL fetch is either a closure or a
+  // provider glitch, and until that resolves the total on hand is not a
+  // measurement of everything held. Only healthy institutions are checked: a
+  // failed fetch returns no accounts at all, which lib/last-known.ts already
+  // owns and which would otherwise look like every account vanishing at once.
+  const healthy = institutions.filter((i) => !i.error);
+  const vanished = await applyVanished(healthy, await vanishedReads);
+  for (const inst of healthy) {
+    const res = vanished[inst.item_id];
+    if (!res) continue;
+    if (res.unconfirmed.length > 0) inst.unconfirmed_missing = res.unconfirmed.length;
+    // Counts only. Account ids are encrypted at rest everywhere else in this
+    // codebase, and the institution NAME is no better: which bank someone uses
+    // is at least as identifying as an opaque Plaid id. The stale-balance
+    // warning in /api/net-worth:129 logs a count and a date for the same
+    // reason, and this matches it.
+    console.warn(
+      `net-worth: an institution is missing ${res.unconfirmed.length} account(s) pending confirmation, ${res.accepted.length} accepted as closed`
+    );
+  }
 
   // Manually-tracked accounts join the same list, so net worth, the Accounts
   // tab, per-account history, goals and insights all treat them like any other
