@@ -82,15 +82,20 @@ describe('the rotation', () => {
   });
 
   test('an empty body reports where it stands and changes nothing', async () => {
-    expect(await (await post()).json()).toEqual({ state: 'none' });
+    expect(await (await post()).json()).toEqual({ state: 'none', active_key: null });
     await post(JSON.stringify({ new_master_key: NEW }));
     const before = JSON.stringify(await fake.hgetall(keysHashKey()));
 
-    expect(await (await post('{}')).json()).toMatchObject({ state: 'prepared' });
+    expect(await (await post('{}')).json()).toMatchObject({ state: 'prepared', active_key: null });
     process.env.MASTER_KEY = NEW; // the redeploy
     expect(await (await post('')).json()).toMatchObject({ state: 'grace' });
     expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
     expect(await opens(CURRENT)).toBe(true);
+  });
+
+  test('the status names the data key new writes use', async () => {
+    await fake.set('test:crypto:active', KEY);
+    expect(await (await post()).json()).toMatchObject({ state: 'none', active_key: KEY });
   });
 
   test('finish_now on the new deployment removes the old locks', async () => {

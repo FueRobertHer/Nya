@@ -33,6 +33,8 @@ const {
   rotationKey,
   autoFinishSettled,
   ROTATION_GRACE_MS,
+  forgetActiveKey,
+  activeKeyName,
 } = await import('@/lib/crypto');
 
 const MASTER = Buffer.alloc(32, 3).toString('base64');
@@ -69,6 +71,7 @@ let K2 = '';
 const savedMaster = process.env.MASTER_KEY;
 beforeEach(async () => {
   fake.reset();
+  forgetActiveKey();
   process.env.MASTER_KEY = MASTER;
   await storeKey(1, K1_RAW);
   K2 = await storeKey(2, K2_RAW);
@@ -83,7 +86,8 @@ describe('v1, the format every stored value is in today', () => {
     expect(await decrypt(await encrypt('balance: 1234.56'))).toBe('balance: 1234.56');
   });
 
-  test('encrypt still writes v1: no header, nothing that needs a data key', async () => {
+  test('without a master, encrypt writes v1: no header, nothing that needs a data key', async () => {
+    delete process.env.MASTER_KEY;
     const out = await encrypt('x');
     expect(out).not.toContain('.');
     expect(formatOf(out)).toEqual({ version: 1, keyId: 'k0', flags: '-' });
@@ -99,6 +103,7 @@ describe('v1, the format every stored value is in today', () => {
   });
 
   test('needs neither MASTER_KEY nor Redis, so neither can break it', async () => {
+    delete process.env.MASTER_KEY;
     const v1 = await encrypt('safe');
     delete process.env.MASTER_KEY;
     fake.failNext('hget', 10);
@@ -248,7 +253,9 @@ describe('data keys', () => {
   });
 
   test('a missing MASTER_KEY breaks data keys only, never v1 or k0', async () => {
+    delete process.env.MASTER_KEY;
     const v1 = await encrypt('a');
+    process.env.MASTER_KEY = MASTER;
     const v2k0 = await encryptV2('b', 'k0');
     const v2k1 = await encryptV2('c', K1);
     delete process.env.MASTER_KEY;
@@ -599,6 +606,180 @@ describe('master rotation', () => {
         console.error = origError;
       }
       expect(await opens(MASTER, late)).toBe(true);
+    });
+  });
+});
+
+describe('7b: writes go to the active data key', () => {
+  const activeId = async () => (await fake.get<string>(activeKeyName())) as string;
+  const keyIds = async () => Object.keys((await fake.hgetall(keysHashKey())) ?? {}).sort();
+
+  beforeEach(() => {
+    // Start from no data keys, as production does before the first write.
+    fake.reset();
+    forgetActiveKey();
+  });
+
+  test('the first write with a master creates k1, makes it active, and uses it', async () => {
+    const out = await encrypt('balance 100');
+    const id = await activeId();
+
+    expect(id).toMatch(/^k1-[0-9a-f]{8}$/);
+    expect(await keyIds()).toEqual([id]);
+    expect(formatOf(out)).toEqual({ version: 2, keyId: id, flags: '-' });
+    expect(await decrypt(out)).toBe('balance 100');
+  });
+
+  test('later writes reuse it; no second key appears', async () => {
+    await encrypt('a');
+    forgetActiveKey(); // even after the process forgets, the stored pointer wins
+    await encrypt('b');
+    expect(await keyIds()).toHaveLength(1);
+  });
+
+  test('concurrent first writes agree on one key and leave no orphan', async () => {
+    const outs = await Promise.all(Array.from({ length: 8 }, (_, i) => encrypt(`v${i}`)));
+    const id = await activeId();
+    expect(await keyIds()).toEqual([id]);
+    for (const [i, out] of outs.entries()) expect(await decrypt(out)).toBe(`v${i}`);
+  });
+
+  test('an existing active key is used as is', async () => {
+    const id = await storeKey(5, new Uint8Array(32).fill(96));
+    await fake.set(activeKeyName(), id);
+    expect(formatOf(await encrypt('x')).keyId).toBe(id);
+    expect(await keyIds()).toEqual([id]);
+  });
+
+  test('while a master rotation is pending and no key exists, writes stay on k0', async () => {
+    await prepareMasterRotation(Buffer.alloc(32, 71).toString('base64'));
+    const out = await encrypt('x');
+    expect(formatOf(out).keyId).toBe('k0');
+    expect(await keyIds()).toEqual([]);
+    expect(await activeId()).toBeNull();
+  });
+
+  test('a pending rotation does not stop an existing active key being used', async () => {
+    await encrypt('first');
+    const id = await activeId();
+    await prepareMasterRotation(Buffer.alloc(32, 72).toString('base64'));
+    forgetActiveKey();
+    expect(formatOf(await encrypt('x')).keyId).toBe(id);
+  });
+
+  test('values written under the data key survive a full master rotation', async () => {
+    const out = await encrypt('balance 100');
+    const NEW = Buffer.alloc(32, 73).toString('base64');
+    await prepareMasterRotation(NEW, Date.now() - ROTATION_GRACE_MS - 1000);
+    process.env.MASTER_KEY = NEW;
+    await finishMasterRotation({ now: Date.now() });
+    forgetActiveKey();
+
+    expect(await decrypt(out)).toBe('balance 100');
+    // And new writes still use the same data key, now under the new master.
+    expect(formatOf(await encrypt('y')).keyId).toBe(formatOf(out).keyId);
+  });
+
+  test('without a master nothing is created and nothing is logged', async () => {
+    delete process.env.MASTER_KEY;
+    const logged: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => logged.push(a.join(' '));
+    try {
+      expect(formatOf(await encrypt('x')).keyId).toBe('k0');
+    } finally {
+      console.error = orig;
+    }
+    expect(logged).toEqual([]);
+    expect(await keyIds()).toEqual([]);
+  });
+
+  test('a new key is numbered after the keys that exist', async () => {
+    await storeKey(5, new Uint8Array(32).fill(95));
+    await encrypt('x');
+    expect(await activeId()).toMatch(/^k6-/);
+  });
+
+  test('a key that does not read back intact is never made active', async () => {
+    const realHset = fake.hset.bind(fake);
+    fake.hset = (async () => undefined) as typeof fake.hset; // the write is lost
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      expect(formatOf(await encrypt('x')).keyId).toBe('k0');
+    } finally {
+      fake.hset = realHset as typeof fake.hset;
+      console.error = orig;
+    }
+    expect(await activeId()).toBeNull();
+  });
+
+  test('the legacy key is never taken as the active data key', async () => {
+    await fake.set(activeKeyName(), 'k0');
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      expect(formatOf(await encrypt('x')).version).toBe(1);
+    } finally {
+      console.error = orig;
+    }
+  });
+
+  test('a cached active key is re-read when the master changes', async () => {
+    const A = MASTER;
+    const B = Buffer.alloc(32, 74).toString('base64');
+    const id1 = await storeKey(1, new Uint8Array(32).fill(81), A);
+    await fake.set(activeKeyName(), id1);
+    expect(formatOf(await encrypt('x')).keyId).toBe(id1); // cached under A
+
+    const id2 = await storeKey(2, new Uint8Array(32).fill(82), B);
+    await fake.set(activeKeyName(), id2);
+    process.env.MASTER_KEY = B;
+    expect(formatOf(await encrypt('y')).keyId).toBe(id2);
+  });
+
+  describe('falls back to k0 rather than failing a write', () => {
+    const quiet = async <T>(fn: () => Promise<T>) => {
+      const logged: string[] = [];
+      const orig = console.error;
+      console.error = (...a: unknown[]) => logged.push(a.join(' '));
+      try {
+        return { result: await fn(), logged };
+      } finally {
+        console.error = orig;
+      }
+    };
+
+    test('when Redis fails, and it retries next time', async () => {
+      fake.failNext('get');
+      const { result, logged } = await quiet(() => encrypt('x'));
+      expect(formatOf(result).keyId).toBe('k0');
+      expect(await decrypt(result)).toBe('x');
+      expect(logged.join(' ')).toContain('Writing with the legacy key');
+
+      expect(formatOf(await encrypt('y')).version).toBe(2);
+    });
+
+    test('when the active record is not a key id', async () => {
+      await fake.set(activeKeyName(), 'nonsense');
+      const { result } = await quiet(() => encrypt('x'));
+      expect(formatOf(result).keyId).toBe('k0');
+    });
+
+    test('when the active key cannot be opened with this master', async () => {
+      const id = await storeKey(6, new Uint8Array(32).fill(97), OTHER_MASTER);
+      await fake.set(activeKeyName(), id);
+      const { result } = await quiet(() => encrypt('x'));
+      expect(formatOf(result).keyId).toBe('k0');
+      expect(await decrypt(result)).toBe('x');
+    });
+
+    test('logs once per process, not on every write', async () => {
+      await fake.set(activeKeyName(), 'nonsense');
+      const { logged } = await quiet(async () => {
+        for (let i = 0; i < 5; i++) await encrypt('x');
+      });
+      expect(logged).toHaveLength(1);
     });
   });
 });

@@ -69,10 +69,14 @@
 // The two can never be confused: "." is not in the base64 alphabet, so a v1
 // value never contains one, and anything that does is versioned.
 //
-// This file currently only READS v2; encrypt() still writes v1 with k0, so
-// this change is fully revertible. Once anything has written v2 in
-// production, this reader must never be reverted, or those values become
-// unreadable.
+// WRITES go to the ACTIVE data key ("crypto:active") in v2. The first write
+// that has a master and finds no active key creates k1 (see activeKeyId). With
+// no master, or if the active key cannot be had for any reason, writes fall
+// back to v1 under k0, which every deployment can read: a missing or broken
+// master can make writes use the old key, never make them fail.
+//
+// Once anything has written v2 in production, this reader must never be
+// reverted to before it, or those values become unreadable.
 
 import { redis, kEnv } from './storage';
 
@@ -658,10 +662,106 @@ function v2Aad(header: string, context: string | undefined): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
+// The active data key: the one new writes use
+
+/** How long a process trusts the active key id it last read. A change (a
+ *  future data key rotation) is picked up within this. */
+const ACTIVE_CACHE_MS = 60 * 1000;
+
+export function activeKeyName(): string {
+  return kEnv('crypto:active');
+}
+
+let _active: { fingerprint: string; id: string; at: number } | null = null;
+let _fallbackLogged = false;
+
+/** Forget the cached active key id. For tests, and for code that has just
+ *  changed it. */
+export function forgetActiveKey(): void {
+  _active = null;
+  _fallbackLogged = false;
+}
+
+/**
+ * Create the first data key and make it active. Only when there is no active
+ * key and no master rotation is pending.
+ *
+ * The key is stored and proven to open before it is claimed as active with
+ * SET NX, so two instances racing to create one agree on a single winner; the
+ * loser deletes the key it made, which nothing can have used.
+ */
+async function createActiveKey(master: MasterKey, now: number): Promise<string> {
+  const all = ((await redis().hgetall(keysHashKey())) ?? {}) as Record<string, unknown>;
+  const numbers = Object.keys(all)
+    .filter((id) => KEY_ID.test(id) && id !== LEGACY_KEY_ID)
+    .map((id) => Number(id.slice(1, id.indexOf('-'))));
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const id = await dataKeyId(Math.max(0, ...numbers) + 1, raw);
+  const stored: StoredDataKey = { created_at: new Date(now).toISOString(), wrapped: { [master.fingerprint]: await master.wrap(id, raw) } };
+  await writeKey(id, stored);
+  // Proven from the store before anything relies on it.
+  const back = await redis().hget(keysHashKey(), id);
+  await unwrapDataKey(master, id, parseStoredDataKey(id, back));
+
+  if (await redis().set(activeKeyName(), id, { nx: true })) return id;
+  // Someone else claimed first: use theirs, remove ours.
+  await redis().hdel(keysHashKey(), id);
+  const winner = await redis().get(activeKeyName());
+  if (typeof winner !== 'string' || !KEY_ID.test(winner)) throw new MasterKeyError('Could not agree on an active data key.');
+  return winner;
+}
+
+/**
+ * The data key new writes should use, or null to write v1 under k0: when
+ * there is no master, or while a master rotation is pending and no data key
+ * exists yet. Throws on anything unexpected; encrypt() turns that into k0.
+ */
+async function activeKeyId(now: number = Date.now()): Promise<string | null> {
+  if (!process.env[MASTER_KEY_ENV]) return null;
+  const master = await masterKey();
+  if (_active && _active.fingerprint === master.fingerprint && now - _active.at >= 0 && now - _active.at < ACTIVE_CACHE_MS) {
+    return _active.id;
+  }
+  let id = await redis().get(activeKeyName());
+  if (id === null || id === undefined || id === '') {
+    // A key made now would only get the current master's lock, and finishing
+    // the rotation would then refuse. Keep writing k0 until it is done.
+    if (await rotationPending()) return null;
+    id = await createActiveKey(master, now);
+  }
+  if (typeof id !== 'string' || !KEY_ID.test(id) || id === LEGACY_KEY_ID) {
+    throw new MasterKeyError('The active data key record is not a data key id.');
+  }
+  _active = { fingerprint: master.fingerprint, id, at: now };
+  return id;
+}
+
+/** The active data key id as stored, without creating one. For status. */
+export async function readActiveKey(): Promise<string | null> {
+  const id = await redis().get(activeKeyName());
+  return typeof id === 'string' && KEY_ID.test(id) ? id : null;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 
-/** Encrypts a plaintext string in the v1 format with k0. */
+/**
+ * Encrypts a plaintext string: v2 under the active data key when there is a
+ * master, otherwise v1 under k0. Never fails because of the data key: if it
+ * cannot be had (Redis, a master that cannot open it), falls back to k0 and
+ * logs once per process, since k0 is readable by every deployment.
+ */
 export async function encrypt(plaintext: string): Promise<string> {
+  let id: string | null = null;
+  try {
+    id = await activeKeyId();
+    if (id) return await encryptV2(plaintext, id);
+  } catch (err) {
+    if (!_fallbackLogged) {
+      _fallbackLogged = true;
+      console.error('Writing with the legacy key: the active data key is unavailable.', err instanceof Error ? `${err.name}: ${err.message}` : err);
+    }
+  }
   return seal(await legacyKey(), utf8(plaintext));
 }
 
