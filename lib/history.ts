@@ -14,7 +14,9 @@
 // account be charted and a hidden one be subtracted from past totals. Those
 // have a third layer of their own (`history:accounts:est:ext`, see below): an
 // investment account can be walked back further than any total can honestly be
-// stated, and that span belongs to the chart only.
+// stated, and that span belongs to the chart only. And a fourth
+// (`history:accounts:partial`): balances measured on a day one institution
+// failed, so no total could be recorded but every other account still was.
 //
 // Every layer is a Redis hash keyed by UTC date (YYYY-MM-DD), values encrypted
 // with the same AES-256-GCM key as everything else financial, so a
@@ -47,6 +49,20 @@ const ACCOUNTS_EST_HASH = k('history:accounts:est');
 // account would then subtract the wrong number from a point nothing rewrites.
 // Kept apart, it feeds the per-account chart and nothing else.
 const ACCOUNTS_EST_EXT_HASH = k('history:accounts:est:ext');
+// Per-account balances MEASURED on a day the total could not be recorded: one
+// institution failed, so recordSnapshot wrote nothing, but every other
+// institution answered and its balances are as real as any snapshot's.
+// Without this, one broken bank turned every other account's chart into an
+// estimate for as long as it stayed broken (23 days, once).
+//
+// Its own key rather than ACCOUNTS_HASH because that hash means something this
+// one does not: each date there is the account-by-account breakdown of a
+// recorded TOTAL, and getHistory subtracts hidden accounts from that total by
+// reading it. A partial map is the breakdown of no total. getLatestAccountSnapshot
+// must not read it either: it relies on its newest date naming every account
+// that existed, and a partial map by definition leaves the failing
+// institution's accounts out. Feeds the per-account chart and nothing else.
+const ACCOUNTS_PARTIAL_HASH = k('history:accounts:partial');
 // The balances backfill folded into its flat `rest` term: everything that
 // isn't depository/credit (investments, loans, property, manual accounts),
 // captured as of the run that produced the estimated layer.
@@ -135,6 +151,50 @@ export async function recordSnapshot(
   }
 
   return today;
+}
+
+/**
+ * Records today's balances for the accounts a partly failed fetch did measure
+ * (see ACCOUNTS_PARTIAL_HASH). Only for when recordSnapshot didn't land.
+ *
+ * MERGED into anything already stored for today, because loads on a bad day
+ * can fail differently: a bank that answered at 9am and not at noon keeps its
+ * 9am balance. Newer values win for the same account.
+ *
+ * Skips the write, rather than starting from empty, whenever today's existing
+ * map can't be read or decrypted: overwriting would replace a fuller map with a
+ * smaller one, and a decrypt failure can be transient (a data key that didn't
+ * load). The cost of skipping is at most this one load's values.
+ *
+ * Two partial writes racing on the same day can lose one's values (both read,
+ * last write wins). Accepted: it costs part of one day's per-account points,
+ * and a field per account would put account ids in plaintext.
+ *
+ * Best-effort, never throws.
+ */
+export async function recordPartialAccounts(balances: Record<string, number>): Promise<void> {
+  if (Object.keys(balances).length === 0) return;
+  const today = new Date().toISOString().slice(0, 10);
+
+  let existing: Record<string, number> = {};
+  try {
+    const blob = await redis().hget<string>(ACCOUNTS_PARTIAL_HASH, today);
+    if (blob) {
+      const parsed = JSON.parse(await decrypt(blob));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      existing = parsed as Record<string, number>;
+    }
+  } catch {
+    return;
+  }
+
+  try {
+    await redis().hset(ACCOUNTS_PARTIAL_HASH, {
+      [today]: await encrypt(JSON.stringify({ ...existing, ...balances })),
+    });
+  } catch {
+    // Best-effort: the account's chart falls back to the estimate for today.
+  }
 }
 
 /**
@@ -432,10 +492,17 @@ export async function getRealSnapshotDates(): Promise<Set<string>> {
  * newer run: the estimated layer keeps points from an era whose walk reached
  * further back, and mixing two walks inside one line is what the precedence is
  * here to avoid.
+ *
+ * A partial measurement (ACCOUNTS_PARTIAL_HASH) sits between real and the
+ * estimates: it was measured, so it beats any reconstruction, but it only
+ * speaks for the accounts it names. Unlike a real map, one that leaves this
+ * account out says its institution failed that day, not that the account was
+ * gone, so the estimate still gets its turn.
  */
 export async function getAccountHistory(account_id: string): Promise<HistoryPoint[]> {
-  const [realMap, estMap, extMap] = await Promise.all([
+  const [realMap, partialMap, estMap, extMap] = await Promise.all([
     redis().hgetall<Record<string, string>>(ACCOUNTS_HASH),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_PARTIAL_HASH),
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH),
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH),
   ]);
@@ -455,6 +522,7 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 
   const dates = new Set([
     ...Object.keys(realMap ?? {}),
+    ...Object.keys(partialMap ?? {}),
     ...Object.keys(estMap ?? {}),
     ...Object.keys(extMap ?? {}),
   ]);
@@ -468,6 +536,8 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
         // put a reconstructed figure on a date that was actually measured.
         return real === null ? null : { date, value: real };
       }
+      const measured = await balanceIn(partialMap?.[date]);
+      if (measured !== null) return { date, value: measured };
       const value = (await balanceIn(extMap?.[date])) ?? (await balanceIn(estMap?.[date]));
       return value === null ? null : { date, value, estimated: true };
     })
@@ -662,9 +732,54 @@ export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
       return { date, value, ...(estimated ? { estimated: true } : {}) };
     })
   );
-  return points
-    .filter((p): p is HistoryPoint => p !== null)
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  return bridgeInteriorEstimates(
+    points.filter((p): p is HistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1))
+  );
+}
+
+const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
+
+/**
+ * Replaces every run of estimated points that has a real point on BOTH sides
+ * with a straight line between those two real points. Still `estimated`, so it
+ * still draws dashed. Leading and trailing estimates are left alone. Expects
+ * date-sorted points and returns a new array; never mutates what it is given
+ * (withTodayPoint's input shares point objects with the caller's).
+ *
+ * WHY. Inside a hole between two recorded days, the backward walk is a worse
+ * answer than the line. The walk starts from today's accounts, so it cannot see
+ * an account that has since been closed or deleted, and it holds manual and
+ * other flat accounts at today's balance. Both are errors in LEVEL that change
+ * on the day money moves between a seen and an unseen account. The one hole
+ * this was written for showed a 22% dip that never happened: a manually tracked
+ * 401k, since deleted, was rolled into a linked IRA mid-hole. Keeping the walk's
+ * shape and shifting it to meet both real ends was tried on that data and still
+ * drew a 9% dip followed by an 11% hump. The line is exact at both ends and
+ * cannot invent a swing. What it costs is the timing of real events inside the
+ * hole, which the dashed style already says are not known.
+ *
+ * For the TOTAL only. A single account's walk has neither error (it is that
+ * account's own flows), so getAccountHistory keeps it.
+ */
+export function bridgeInteriorEstimates(points: HistoryPoint[]): HistoryPoint[] {
+  const out = points.slice();
+  let lastReal = -1;
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].estimated) continue;
+    if (lastReal >= 0 && i - lastReal > 1) {
+      const from = out[lastReal];
+      const to = out[i];
+      const t0 = dayMs(from.date);
+      const span = dayMs(to.date) - t0;
+      for (let j = lastReal + 1; j < i; j++) {
+        const f = span > 0 ? (dayMs(out[j].date) - t0) / span : 0;
+        const value = Math.round((from.value + (to.value - from.value) * f) * 100) / 100;
+        out[j] = { date: out[j].date, value, estimated: true };
+      }
+    }
+    lastReal = i;
+  }
+  return out;
 }
 
 /**
@@ -687,6 +802,9 @@ export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
  * balances recovered by lib/last-known.ts can never reach here -- charting one
  * would draw last week's figure as though it had been measured today, the one
  * thing that module's display-only rule exists to prevent.
+ *
+ * Bridged again afterwards: today's point can be the real one that closes a
+ * hole, turning estimates getHistory left trailing into interior ones.
  */
 export function withTodayPoint(
   history: HistoryPoint[],
@@ -695,5 +813,5 @@ export function withTodayPoint(
 ): HistoryPoint[] {
   const rest = history.filter((p) => p.date !== today);
   rest.push({ date: today, value: visible });
-  return rest.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return bridgeInteriorEstimates(rest.sort((a, b) => (a.date < b.date ? -1 : 1)));
 }

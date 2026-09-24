@@ -10,10 +10,13 @@
 // above the plot instead of a floating tooltip, since on a phone the finger
 // covers exactly the point being read.
 //
-// Backfilled points (reconstructed from transaction history, see
-// /api/backfill) carry `estimated: true` and draw as a dashed segment, with
+// Estimated points carry `estimated: true` and draw as a dashed segment, with
 // a caption and an "estimated" readout suffix so the region reads as what it
-// is: an estimate, not a recorded balance.
+// is: an estimate, not a recorded balance. They are either reconstructed from
+// transaction history (see /api/backfill) or, in the net-worth total, a
+// straight line across days nothing was recorded (bridgeInteriorEstimates in
+// lib/history.ts). A segment joining two points more than a day apart draws
+// dashed too, even between real points: every day it spans is unmeasured.
 
 import { useMemo, useRef, useState } from 'react';
 
@@ -25,6 +28,7 @@ const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 const PAD_BOTTOM = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fullUsd(n: number): string {
   return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {
@@ -100,10 +104,15 @@ export default function NetWorthChart({
 
     // Split the line into solid (real) and dashed (estimated) runs. A segment
     // touching an estimated point draws dashed, so the style changes exactly
-    // at the boundary between reconstructed and recorded history.
+    // at the boundary between reconstructed and recorded history. So does one
+    // that skips days: a solid line across a three-week hole would claim
+    // three weeks of measurements that were never taken.
     const runs: { est: boolean; d: string }[] = [];
+    let hasGap = false;
     for (let i = 1; i < points.length; i++) {
-      const est = !!(points[i].estimated || points[i - 1].estimated);
+      const gap = ts[i] - ts[i - 1] > DAY_MS;
+      if (gap) hasGap = true;
+      const est = !!(points[i].estimated || points[i - 1].estimated || gap);
       const prev = runs[runs.length - 1];
       if (prev && prev.est === est) prev.d += `L${pt(i)}`;
       else runs.push({ est, d: `M${pt(i - 1)}L${pt(i)}` });
@@ -112,12 +121,12 @@ export default function NetWorthChart({
     const outline = points.map((_, i) => `${i === 0 ? 'M' : 'L'}${pt(i)}`).join('');
     const baseY = H - PAD_BOTTOM;
     const area = `${outline}L${xs[xs.length - 1].toFixed(1)},${baseY}L${xs[0].toFixed(1)},${baseY}Z`;
-    return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi) };
+    return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi), hasGap };
   }, [points]);
 
-  const { vals, xs, y, runs, area, baseY, ticks } = geo;
+  const { vals, xs, y, runs, area, baseY, ticks, hasGap } = geo;
   const last = points.length - 1;
-  const hasEstimated = points.some((p) => p.estimated);
+  const hasEstimated = points.some((p) => p.estimated) || hasGap;
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
@@ -221,7 +230,10 @@ export default function NetWorthChart({
       </svg>
 
       {hasEstimated && (
-        <div className="chart-note">Dashed segment is estimated from transaction history.</div>
+        <div className="chart-note">
+          Dashed segments are estimated: reconstructed from transactions, or a straight line
+          across days nothing was recorded.
+        </div>
       )}
     </div>
   );

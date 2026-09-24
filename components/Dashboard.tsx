@@ -827,6 +827,25 @@ export default function Dashboard() {
     [institutions]
   );
 
+  // The last recorded day, when recording has stalled. A day is only saved when
+  // every institution answers, so one broken bank stops the chart silently;
+  // this once went unnoticed for three weeks.
+  //
+  // Measured against the payload's as_of, not the clock, so the localStorage
+  // snapshot painted on open can't raise the alarm just for being old. Two days
+  // rather than one: the cron records at 13:00 UTC, so yesterday being the
+  // newest point is normal for most of the day.
+  const historyPausedSince = useMemo(() => {
+    if (!asOf) return null;
+    let lastReal: string | null = null;
+    for (const p of history) if (!p.estimated) lastReal = p.date; // date-sorted
+    if (!lastReal) return null;
+    const days =
+      (Date.parse(`${asOf.slice(0, 10)}T00:00:00Z`) - Date.parse(`${lastReal}T00:00:00Z`)) /
+      (24 * 60 * 60 * 1000);
+    return days >= 2 ? lastReal : null;
+  }, [history, asOf]);
+
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
     if (history.length < 2) return null;
@@ -1168,6 +1187,13 @@ export default function Dashboard() {
                       History builds as you use the app — check back tomorrow for your first
                       trend line.
                     </p>
+                  )}
+                  {historyPausedSince && (
+                    <div className="stale-note">
+                      Nothing has been saved to history since {fmtDay(historyPausedSince)}. A day
+                      is only saved when every account refreshes, so it picks up again once they
+                      all do.
+                    </div>
                   )}
                 </div>
 

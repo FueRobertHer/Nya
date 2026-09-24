@@ -1,5 +1,5 @@
 import { describe, expect, test, mock } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, testKey } from './fake-redis';
 import type { InstitutionResult } from '@/lib/networth';
 
 // Mock storage BEFORE lib/networth loads, even though nothing here touches
@@ -10,9 +10,11 @@ import type { InstitutionResult } from '@/lib/networth';
 // loaded, and its reads would silently come back empty. Which file loads first
 // depends on Bun's file order, so this passed locally and failed in CI.
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
-mock.module('@/lib/storage', () => storageMock(new FakeRedis()));
+const fake = new FakeRedis();
+mock.module('@/lib/storage', () => storageMock(fake));
 
-const { accountBalanceMap, isRecordable } = await import('@/lib/networth');
+const { accountBalanceMap, measuredBalanceMap, recordFetch, isRecordable } = await import('@/lib/networth');
+const { getAccountHistory, getHistory } = await import('@/lib/history');
 
 // accountBalanceMap feeds recordSnapshot, which writes the REAL history layer.
 // Nothing ever rewrites a real point for a past date, so anything wrong that
@@ -79,5 +81,78 @@ describe('isRecordable', () => {
     // Accepted closures leave the field unset, but a zero must not read as
     // "something is wrong" if one ever arrives.
     expect(isRecordable(inst({ unconfirmed_missing: 0 }))).toBe(true);
+  });
+});
+
+// What a partly failed fetch still measured, for the per-account charts.
+describe('measuredBalanceMap', () => {
+  const inst = (accounts: any[], over: Partial<InstitutionResult> = {}) =>
+    ({ institution_name: 'Bank', item_id: 'item', accounts, holdings: [], error: null,
+       needs_reauth: false, liabilities: 'unavailable', ...over }) as InstitutionResult;
+
+  test('leaves out a failed institution whole, including anything recovered for it', () => {
+    expect(
+      measuredBalanceMap([
+        inst([{ account_id: 'ok', balance: 1 }]),
+        inst([{ account_id: 'recovered', balance: 2, stale: true }], { error: 'Could not fetch balances' }),
+      ])
+    ).toEqual({ ok: 1 });
+  });
+
+  // It answered: the accounts it returned are real, whatever else is missing.
+  test('keeps an institution with an account missing from it', () => {
+    expect(measuredBalanceMap([inst([{ account_id: 'a', balance: 5 }], { unconfirmed_missing: 1 })])).toEqual({ a: 5 });
+  });
+
+  test('keeps manual accounts that loaded, and skips null and stale balances', () => {
+    expect(
+      measuredBalanceMap([
+        inst([{ account_id: 'manual_x', balance: 9 }], { manual: true } as any),
+        inst([{ account_id: 'n', balance: null }, { account_id: 's', balance: 3, stale: true }]),
+      ])
+    ).toEqual({ manual_x: 9 });
+  });
+});
+
+// The one recording rule for all three routes.
+describe('recordFetch', () => {
+  const today = () => new Date().toISOString().slice(0, 10);
+  const inst = (accounts: any[], over: Partial<InstitutionResult> = {}) =>
+    ({ institution_name: 'Bank', item_id: 'item', accounts, holdings: [], error: null,
+       needs_reauth: false, liabilities: 'unavailable', ...over }) as InstitutionResult;
+
+  test('a clean fetch records a real snapshot and no partial map', async () => {
+    fake.reset();
+    expect(await recordFetch([inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBe(today());
+    expect(await getHistory()).toEqual([{ date: today(), value: 10 }]);
+    expect(await fake.hkeys(testKey('history:accounts:partial'))).toEqual([]);
+  });
+
+  test('a partly failed fetch records the accounts that answered, and no total', async () => {
+    fake.reset();
+    const date = await recordFetch(
+      [
+        inst([{ account_id: 'a', type: 'investment', balance: 10 }]),
+        inst([], { error: 'This account needs to be reconnected' }),
+      ],
+      10
+    );
+    expect(date).toBeNull();
+    expect(await getHistory()).toEqual([]);
+    expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);
+  });
+
+  test('records nothing when nothing is linked', async () => {
+    fake.reset();
+    expect(await recordFetch([], 0)).toBeNull();
+    expect(await fake.hkeys(testKey('history:accounts:partial'))).toEqual([]);
+  });
+
+  // The total didn't land, so without the fallback the accounts would get nothing.
+  test('falls back to the partial map when the snapshot write fails', async () => {
+    fake.reset();
+    fake.failNext('hset');
+    expect(await recordFetch([inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBeNull();
+    expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);
   });
 });
