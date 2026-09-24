@@ -1422,6 +1422,7 @@ export default function Dashboard() {
                                     <td colSpan={2} className="acct-chart-cell">
                                       <AccountSparkline
                                         accountId={a.account_id}
+                                        currency={a.currency}
                                         itemId={
                                           isInvestmentType(a.type) && !inst.manual
                                             ? inst.item_id

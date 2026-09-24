@@ -92,3 +92,44 @@ describe('NetWorthChart split on estimated points', () => {
     expect(html).not.toContain('+$4,000.00 growth');
   });
 });
+
+describe('NetWorthChart currency', () => {
+  test('prints an account in its own currency', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart
+        currency="EUR"
+        points={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1100 },
+        ]}
+        baseline={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1000 },
+        ]}
+      />
+    );
+    expect(html).toContain('€');
+    expect(html).not.toContain('$');
+  });
+});
+
+describe('NetWorthChart when the baseline stops early', () => {
+  // Flows known only to an earlier day: the summary runs to that day rather
+  // than vanishing because the last point has no baseline.
+  test('summarises to the last day the baseline reaches', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart
+        points={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1100 },
+          { date: '2026-09-03', value: 1200 },
+        ]}
+        baseline={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1000 },
+        ]}
+      />
+    );
+    expect(html).toContain('+$0.00 added · +$100.00 growth');
+  });
+});
