@@ -17,6 +17,7 @@ export type FakeCommand =
   | 'hgetall'
   | 'expire'
   | 'scan'
+  | 'hscan'
   | 'type'
   | 'ttl';
 
@@ -140,9 +141,13 @@ export class FakeRedis {
     this.ttls.set(key, seconds);
   }
 
-  /** Seconds remaining, or -1 when the key exists without one (Redis's answer). */
+  /** Seconds remaining; -1 when the key exists without one; -2 when there is
+   *  no such key. All three are Redis's answers, and the last matters: code
+   *  that treats a vanished key differently from a persistent one is otherwise
+   *  untestable. */
   async ttl(key: string): Promise<number> {
     this.gate('ttl');
+    if (!this.strings.has(key) && !this.hashes.has(key)) return -2;
     return this.ttls.get(key) ?? -1;
   }
 
@@ -181,6 +186,24 @@ export class FakeRedis {
     return [next, page];
   }
 
+  /**
+   * Cursor-paginated walk of one hash, returning Upstash's flat
+   * [field, value, field, value, ...] page. Same deterministic caveat as scan.
+   */
+  async hscan(
+    key: string,
+    cursor: number | string,
+    opts?: { count?: number }
+  ): Promise<[string, string[]]> {
+    this.gate('hscan');
+    const entries = [...(this.hashes.get(key)?.entries() ?? [])];
+    const start = Number(cursor) || 0;
+    const count = opts?.count ?? 10;
+    const page = entries.slice(start, start + count).flat();
+    const next = start + count >= entries.length ? '0' : String(start + count);
+    return [next, page];
+  }
+
   reset(): void {
     this.strings.clear();
     this.hashes.clear();
@@ -215,6 +238,9 @@ export function testKey(key: string): string {
 export function storageMock(fake: FakeRedis) {
   return {
     redis: () => fake,
+    // The fake already stores and returns plain strings, which is exactly what
+    // the raw client promises, so one instance serves both.
+    rawRedis: () => fake,
     k: testKey,
     getItems: async () => [],
     saveItem: async () => {},

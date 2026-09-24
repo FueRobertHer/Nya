@@ -45,19 +45,37 @@ function resolveRedisUrl(): string | undefined {
 // the Upstash Marketplace integration injects (UPSTASH_REDIS_REST_*) and
 // the legacy names kept on stores auto-migrated from Vercel KV
 // (KV_REST_API_*).
+function credentials(): { url: string; token: string } {
+  const url = resolveRedisUrl();
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+  if (!url || !token) {
+    throw new Error(
+      'Missing Redis credentials: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or legacy KV_REST_API_URL / KV_REST_API_TOKEN).'
+    );
+  }
+  return { url, token };
+}
+
 let _redis: Redis | undefined;
 export function redis(): Redis {
-  if (!_redis) {
-    const url = resolveRedisUrl();
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
-    if (!url || !token) {
-      throw new Error(
-        'Missing Redis credentials: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or legacy KV_REST_API_URL / KV_REST_API_TOKEN).'
-      );
-    }
-    _redis = new Redis({ url, token });
-  }
+  if (!_redis) _redis = new Redis(credentials());
   return _redis;
+}
+
+/**
+ * A client that returns every value exactly as stored.
+ *
+ * The default client JSON-parses anything that looks like JSON on the way out,
+ * so a stored "1" comes back as the number 1 and a stored '{"a":1}' as an
+ * object. The app never notices, because it wrote those values through the
+ * same client. A byte-exact copy of the database does notice: writing the
+ * parsed form back would not reproduce what was there. Only lib/export.ts
+ * should need this.
+ */
+let _rawRedis: Redis | undefined;
+export function rawRedis(): Redis {
+  if (!_rawRedis) _rawRedis = new Redis({ ...credentials(), automaticDeserialization: false });
+  return _rawRedis;
 }
 
 // All environments share one Upstash database, isolated by key namespace:
@@ -65,7 +83,25 @@ export function redis(): Redis {
 // preview:…, dev:…). Vercel sets VERCEL_ENV; local `next dev` falls through
 // to 'dev'. REDIS_PREFIX overrides both, e.g. to point a branch at another
 // namespace deliberately.
-const ENV_PREFIX = process.env.REDIS_PREFIX ?? process.env.VERCEL_ENV ?? 'dev';
+//
+// The prefix must be a single plain segment: letters, digits, '-' and '_'.
+// A colon would nest one environment inside another ('production:restore-test'
+// lives under 'production:'), so anything that walks one environment's keys,
+// like lib/export.ts, would silently sweep up the other's too, and a restore
+// would then write them back as the outer environment's own data. Glob
+// characters would make a key-pattern match more than the prefix. Refused at
+// startup rather than tolerated: a misconfigured prefix should stop the app
+// loudly, not blend two databases together.
+const ENV_PREFIX = validPrefix(process.env.REDIS_PREFIX ?? process.env.VERCEL_ENV ?? 'dev');
+
+function validPrefix(prefix: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(prefix)) {
+    throw new Error(
+      `Invalid Redis key prefix ${JSON.stringify(prefix)}: use only letters, digits, '-' and '_' (check REDIS_PREFIX).`
+    );
+  }
+  return prefix;
+}
 
 export function k(key: string): string {
   return `${ENV_PREFIX}:${key}`;
