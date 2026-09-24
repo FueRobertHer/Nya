@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
+import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights, { type IdleCashAccount } from './Insights';
@@ -827,6 +828,9 @@ export default function Dashboard() {
     [institutions]
   );
 
+  // The last recorded day, when recording has stalled (see lib/history-status.ts).
+  const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
+
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
     if (history.length < 2) return null;
@@ -1168,6 +1172,13 @@ export default function Dashboard() {
                       History builds as you use the app — check back tomorrow for your first
                       trend line.
                     </p>
+                  )}
+                  {pausedSince && (
+                    <div className="stale-note">
+                      No net-worth total has been saved since {fmtDay(pausedSince)}. A day
+                      is only saved when every institution refreshes with all of its accounts, so
+                      it picks up again once they do.
+                    </div>
                   )}
                 </div>
 
