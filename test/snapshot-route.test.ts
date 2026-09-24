@@ -80,3 +80,31 @@ describe('the daily cron finishes a due master rotation', () => {
     expect(await opens(OLD)).toBe(true);
   });
 });
+
+// `recorded` used to say true whenever the fetch was clean, even if the total
+// then failed to write. It now reports whether the point actually landed.
+const { saveManualAccount } = await import('@/lib/manual');
+
+describe('the cron reports what it recorded', () => {
+  const withAccount = () =>
+    saveManualAccount({
+      account_id: 'manual_house',
+      name: 'House',
+      institution_name: 'Manual',
+      type: 'other',
+      subtype: null,
+      balance: 1000,
+      updated_at: new Date().toISOString(),
+    } as any);
+
+  test('true when the snapshot lands', async () => {
+    await withAccount();
+    expect(await (await cron()).json()).toEqual({ recorded: true });
+  });
+
+  test('false when the clean snapshot fails to write', async () => {
+    await withAccount();
+    fake.failNext('hset');
+    expect(await (await cron()).json()).toEqual({ recorded: false });
+  });
+});

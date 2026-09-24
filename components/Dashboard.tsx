@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
+import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights, { type IdleCashAccount } from './Insights';
@@ -827,24 +828,8 @@ export default function Dashboard() {
     [institutions]
   );
 
-  // The last recorded day, when recording has stalled. A day is only saved when
-  // every institution answers, so one broken bank stops the chart silently;
-  // this once went unnoticed for three weeks.
-  //
-  // Measured against the payload's as_of, not the clock, so the localStorage
-  // snapshot painted on open can't raise the alarm just for being old. Two days
-  // rather than one: the cron records at 13:00 UTC, so yesterday being the
-  // newest point is normal for most of the day.
-  const historyPausedSince = useMemo(() => {
-    if (!asOf) return null;
-    let lastReal: string | null = null;
-    for (const p of history) if (!p.estimated) lastReal = p.date; // date-sorted
-    if (!lastReal) return null;
-    const days =
-      (Date.parse(`${asOf.slice(0, 10)}T00:00:00Z`) - Date.parse(`${lastReal}T00:00:00Z`)) /
-      (24 * 60 * 60 * 1000);
-    return days >= 2 ? lastReal : null;
-  }, [history, asOf]);
+  // The last recorded day, when recording has stalled (see lib/history-status.ts).
+  const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
 
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
@@ -1188,9 +1173,9 @@ export default function Dashboard() {
                       trend line.
                     </p>
                   )}
-                  {historyPausedSince && (
+                  {pausedSince && (
                     <div className="stale-note">
-                      No net-worth total has been saved since {fmtDay(historyPausedSince)}. A day
+                      No net-worth total has been saved since {fmtDay(pausedSince)}. A day
                       is only saved when every institution refreshes with all of its accounts, so
                       it picks up again once they do.
                     </div>

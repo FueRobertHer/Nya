@@ -146,8 +146,19 @@ export async function recordSnapshot(
     } catch {
       // The total is in the chart either way. What's lost is the ability to
       // subtract a hidden account from THIS date later, which getHistory
-      // already handles by dropping the point it can't correct.
+      // already handles by dropping the point it can't correct. Today's
+      // partial map, if any, is left alone below, so the per-account charts
+      // still have something measured for today.
+      return today;
     }
+    // This map now supersedes any partial one written earlier today. Clearing
+    // it is what lets getAccountHistory read a partial map that sits beside a
+    // real one as the NEWER measurement: it can only have been written after
+    // the last snapshot. Best-effort: if this fails, an earlier partial reading
+    // shows for today in place of this one, which costs one day's precision.
+    try {
+      await redis().hdel(ACCOUNTS_PARTIAL_HASH, today);
+    } catch {}
   }
 
   return today;
@@ -493,11 +504,14 @@ export async function getRealSnapshotDates(): Promise<Set<string>> {
  * further back, and mixing two walks inside one line is what the precedence is
  * here to avoid.
  *
- * A partial measurement (ACCOUNTS_PARTIAL_HASH) sits between real and the
- * estimates: it was measured, so it beats any reconstruction, but it only
- * speaks for the accounts it names. Unlike a real map, one that leaves this
- * account out says its institution failed that day, not that the account was
- * gone, so the estimate still gets its turn.
+ * A partial measurement (ACCOUNTS_PARTIAL_HASH) comes FIRST for the accounts
+ * it names, even over a real map for the same date. recordSnapshot clears the
+ * day's partial map whenever it writes a real one, so a partial map beside a
+ * real map was written after it: the newer measurement of the same day, and
+ * possibly of an account that appeared after the snapshot. It only speaks for
+ * the accounts it names, though. One that leaves this account out says its
+ * institution failed at that moment, not that the account was gone, so the
+ * other layers still get their turn in the usual order.
  */
 export async function getAccountHistory(account_id: string): Promise<HistoryPoint[]> {
   const [realMap, partialMap, estMap, extMap] = await Promise.all([
@@ -529,6 +543,8 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 
   const points = await Promise.all(
     [...dates].map(async (date): Promise<HistoryPoint | null> => {
+      const measured = await balanceIn(partialMap?.[date]);
+      if (measured !== null) return { date, value: measured };
       if (realMap?.[date]) {
         const real = await balanceIn(realMap[date]);
         // A real map that doesn't name the account is an answer, not a gap: the
@@ -536,8 +552,6 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
         // put a reconstructed figure on a date that was actually measured.
         return real === null ? null : { date, value: real };
       }
-      const measured = await balanceIn(partialMap?.[date]);
-      if (measured !== null) return { date, value: measured };
       const value = (await balanceIn(extMap?.[date])) ?? (await balanceIn(estMap?.[date]));
       return value === null ? null : { date, value, estimated: true };
     })

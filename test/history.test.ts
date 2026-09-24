@@ -662,12 +662,50 @@ describe('the partial per-account layer', () => {
   });
 
   // A real map is authoritative even when it can't be read: falling through
-  // would put a partial or estimated figure on a date that has a real answer.
-  test('an unreadable real map is a gap, not a partial point', async () => {
-    await recordPartialAccounts({ ira: 500 });
+  // would put an estimated figure on a date that has a real answer.
+  test('an unreadable real map is a gap, not an estimate', async () => {
+    await replaceEstimatedAccounts([{ date: today(), balances: { ira: 1 } }]);
     await fake.hset(testKey('history:accounts'), { [today()]: 'not-a-ciphertext' });
 
     expect(await getAccountHistory('ira')).toEqual([]);
+  });
+
+  // recordSnapshot clears today's partial map, so one beside a real map was
+  // written later: the newer reading, possibly of an account the snapshot
+  // never saw.
+  test('a partial reading taken after the snapshot wins for the accounts it names', async () => {
+    await recordSnapshot(900, { ira: 900, cash: 50 });
+    await recordPartialAccounts({ ira: 950, opened_today: 20 });
+
+    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(950);
+    expect(valuesByDate(await getAccountHistory('opened_today'))[today()]).toBe(20);
+    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(50);
+  });
+
+  test('a snapshot clears the partial reading taken before it', async () => {
+    await recordPartialAccounts({ ira: 500 });
+    await recordSnapshot(900, { ira: 900 });
+
+    expect(await fake.hkeys(partialKey())).toEqual([]);
+  });
+
+  // The per-account write failing leaves no real breakdown for today, so the
+  // earlier partial reading is the only measurement the charts have.
+  test('keeps the partial reading when the snapshot breakdown fails to write', async () => {
+    await recordPartialAccounts({ ira: 500 });
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    fake.hset = (async (...args: Parameters<typeof hset>) => {
+      if (++calls === 2) throw new Error('upstash down'); // the breakdown, after the total
+      return hset(...args);
+    }) as typeof fake.hset;
+    try {
+      await recordSnapshot(900, { ira: 900 });
+    } finally {
+      fake.hset = hset;
+    }
+
+    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(500);
   });
 
   // It is the breakdown of no stored total, so the totals series and the
