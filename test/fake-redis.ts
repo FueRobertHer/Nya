@@ -11,6 +11,7 @@ export type FakeCommand =
   | 'incr'
   | 'del'
   | 'hset'
+  | 'hsetnx'
   | 'hget'
   | 'hdel'
   | 'hkeys'
@@ -111,6 +112,15 @@ export class FakeRedis {
     this.gate('hset');
     const h = this.hash(key);
     for (const [f, v] of Object.entries(fields)) h.set(f, v);
+  }
+
+  /** Set a field only if it does not exist. 1 if set, 0 if it already did. */
+  async hsetnx(key: string, field: string, value: string): Promise<0 | 1> {
+    this.gate('hsetnx');
+    const h = this.hash(key);
+    if (h.has(field)) return 0;
+    h.set(field, value);
+    return 1;
   }
 
   async hget<T>(key: string, field: string): Promise<T | null> {

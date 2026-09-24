@@ -450,9 +450,11 @@ The export route is off by default. To take one:
 4. Remove `OPS_ENABLED` and redeploy. While it is unset the route answers 404.
 
 Balances, transactions, budgets, goals and access tokens stay **encrypted** in
-the archive, and cannot be read without `PLAID_ENCRYPTION_KEY`. Keep a copy of
-that key somewhere separate from both the archive and Vercel (a password
-manager, or on paper). Lose the key and the backup cannot be read.
+the archive, and cannot be read without `PLAID_ENCRYPTION_KEY` (and, once data
+keys are in use, `MASTER_KEY`; the data keys themselves are in the archive,
+encrypted with it). Keep a copy of those keys somewhere separate from both the
+archive and Vercel (a password manager, or on paper). Lose them and the backup
+cannot be read.
 
 Not everything in it is encrypted, though, so still treat the file as private:
 dates, account and transaction ids, the names of your linked banks, and the
@@ -591,13 +593,30 @@ encryption key makes previously stored tokens permanently undecryptable
 (you'd need to reconnect all accounts); losing/leaking the session secret
 would let someone forge a valid login cookie.
 
-**Key rotation is being added.** Stored values can now also be in a format
-that names the key that encrypted them (`v2.<keyid>.…`), so more than one key
-can be in use at once. `PLAID_ENCRYPTION_KEY` is always key `k0`; further keys
-go in `ENCRYPTION_KEYS` as `k1:<base64>,k2:<base64>`. For now the app only
-**reads** the new format and still writes everything with `k0`; switching
-writes to a new key, and re-encrypting existing data under it, come next.
-Never remove `PLAID_ENCRYPTION_KEY` while any value still uses `k0`.
+**Key rotation is being added** (envelope encryption, `lib/crypto.ts`).
+Data is moving to **data keys** (`k1`, `k2`, …) that the app generates and
+stores in Redis, each encrypted with one **master key**, `MASTER_KEY`, the
+only new secret in the environment. `PLAID_ENCRYPTION_KEY` stays as key `k0`
+for everything written before this. Stored values can now name their key
+(`v2.<keyid>.<flags>.…`). For now the app only **reads** that format and still
+writes with `k0`; switching writes to a data key, and re-encrypting existing
+data under it, come next. Never remove `PLAID_ENCRYPTION_KEY` while any value
+still uses `k0`.
+
+Data keys are managed with a local command, like restore:
+
+```bash
+REDIS_PREFIX=production bun run keys status --target production
+MASTER_KEY=... REDIS_PREFIX=production bun run keys create --target production --confirm-production
+```
+
+Rotating a data key needs no Vercel change. Rotating the master key re-wraps
+only the data keys (not your data) and never puts a second master in Vercel:
+`add-master` with both keys in your shell, update `MASTER_KEY` in Vercel and
+redeploy, then `drop-old-masters --confirm-redeployed`. See `scripts/keys.ts`.
+
+**Keep `MASTER_KEY` in your password manager.** Without it, nothing encrypted
+with a data key can be read, from the database or from any backup.
 
 ### Login rate limiting
 
