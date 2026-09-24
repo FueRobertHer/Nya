@@ -150,13 +150,23 @@ export default function NetWorthChart({
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
 
-  /** Money added and growth from the baseline's start to point i, or null. */
+  /**
+   * Money added and growth from the baseline's start to point i, or null.
+   *
+   * Null on an estimated point: that value is the balance walked back from
+   * whenever backfill last ran, with no market movement in it, so "growth"
+   * there would be whatever the walk left behind. The summary with nothing
+   * scrubbed uses the last REAL point for the same reason.
+   */
   function split(i: number): { added: number; growth: number } | null {
     const b = base[i];
-    if (b === null || baseStart < 0) return null;
+    if (b === null || baseStart < 0 || points[i].estimated) return null;
     return { added: b - (base[baseStart] as number), growth: vals[i] - b };
   }
-  const shown = split(active ?? last);
+  let lastReal = last;
+  while (lastReal > 0 && points[lastReal].estimated) lastReal--;
+  const shown = split(active ?? lastReal);
+  const shownDate = points[active ?? lastReal]?.date;
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
@@ -194,7 +204,9 @@ export default function NetWorthChart({
       </div>
       {shown && (
         <div className="chart-readout-split">
-          {active === null ? `Since ${fmtDay(points[baseStart].date)}: ` : ''}
+          {active === null
+            ? `${fmtDay(points[baseStart].date)} to ${fmtDay(shownDate)}: `
+            : ''}
           {signedUsd(shown.added)} added · {signedUsd(shown.growth)} growth
         </div>
       )}

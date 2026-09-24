@@ -24,9 +24,13 @@ export type Flow = { date: string; amount: number };
  * start on. Null when there's nothing honest to draw: no flows (unavailable, or
  * withheld because rows were missing), or no real point inside their window.
  *
- * A flow dated ON the start day is treated as already in the starting balance.
- * Snapshots are taken during the day, so that is a guess either way; this one
- * keeps a same-day contribution from being counted twice.
+ * A flow counts from the day AFTER its date. The daily snapshot is taken at
+ * 13:00 UTC, before US markets open, and investment balances usually update
+ * overnight, so the snapshot on a flow's own date almost never includes it.
+ * Counting it that same day would show "+$60,000 added, -$60,000 growth" for a
+ * day and then snap back. The same rule means a flow dated on the start day is
+ * counted, not assumed to be in the starting balance: an account opened by a
+ * rollover would otherwise report the whole rollover as growth.
  */
 export function contributionBaseline(
   points: BalancePoint[],
@@ -41,10 +45,10 @@ export function contributionBaseline(
   const out: { date: string; value: number }[] = [];
   let added = 0;
   let next = 0;
-  while (next < sorted.length && sorted[next].date <= start.date) next++;
+  while (next < sorted.length && sorted[next].date < start.date) next++;
   for (const p of points) {
     if (p.date < start.date) continue;
-    while (next < sorted.length && sorted[next].date <= p.date) added += sorted[next++].amount;
+    while (next < sorted.length && sorted[next].date < p.date) added += sorted[next++].amount;
     out.push({ date: p.date, value: Math.round((start.value + added) * 100) / 100 });
   }
   return out;

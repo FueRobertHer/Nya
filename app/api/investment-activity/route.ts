@@ -56,10 +56,10 @@ export async function GET(req: Request) {
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const access_token = await decrypt(item.encrypted_access_token);
-    const flows_from = isoDaysAgo(LOOKBACK_DAYS);
+    const query_from = isoDaysAgo(LOOKBACK_DAYS);
     const { txns, note, truncated } = await fetchInvestmentTxns(
       access_token,
-      flows_from,
+      query_from,
       isoDaysAgo(0),
       [account_id]
     );
@@ -88,13 +88,20 @@ export async function GET(req: Request) {
     // means none came back, and truncation drops the OLDEST ones, which would
     // understate every running total after them and pass the gap off as growth.
     const flows = note || truncated ? null : dailyFlows(mine);
+    // Where the rows actually begin, not where the query did. An institution
+    // can return less than the year asked for, and every contribution before
+    // its oldest row would otherwise read as growth. The oldest row of ANY
+    // kind: a dividend proves the feed reaches that far as well as a deposit
+    // does. It can't predate the query's start. No rows at all proves nothing,
+    // so no line.
+    const covered_from = mine.reduce<string | null>((min, t) => (!min || t.date < min ? t.date : min), null);
 
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT), // Plaid returns newest first
       ytd_contributions,
       ytd_rollovers,
       flows,
-      flows_from,
+      flows_from: covered_from,
       note,
     };
 

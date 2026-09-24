@@ -234,17 +234,63 @@ export function valueDelta(t: InvestmentTxn): number {
 export function externalFlow(t: InvestmentTxn): number {
   const subtype = (t.subtype || '').toLowerCase();
   const type = (t.type || '').toLowerCase();
+  // A 401k loan repayment is money coming back in from the holder's paycheck.
+  // valueDelta already counts it (type cash); it just isn't in the external set.
+  if (subtype === 'loan payment' && type === 'cash') return -t.amount;
   if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return 0;
   if (type === 'buy' || type === 'sell') return 0;
+  // Plaid defines a distribution as money LEAVING the account. One arriving is
+  // a fund paying out into it (capital gains, say): return on the holding,
+  // which is growth, not money the holder added.
+  if (subtype === 'distribution' && -t.amount > 0) return 0;
   return valueDelta(t);
 }
 
-/** externalFlow summed per date, ascending, with net-zero dates dropped. */
+/**
+ * A single-row contribution or distribution: some recordkeepers report a
+ * paycheck contribution as one `buy` row (subtype contribution) that buys fund
+ * shares directly, with no cash row, and a payout as one `sell` row (subtype
+ * distribution). externalFlow alone reads both as internal trades, which would
+ * put every paycheck on the growth side. Their value change is `amount` itself:
+ * positive for shares bought with outside money, negative for shares sold and
+ * paid out. Only counted by dailyFlows when no cash row covers the same money.
+ */
+function tradeFlow(t: InvestmentTxn): number {
+  const subtype = (t.subtype || '').toLowerCase();
+  const type = (t.type || '').toLowerCase();
+  if (type === 'buy' && subtype === 'contribution') return t.amount;
+  if (type === 'sell' && subtype === 'distribution') return t.amount;
+  return 0;
+}
+
+/**
+ * Money crossing the account boundary, summed per date, ascending, with
+ * net-zero dates dropped.
+ *
+ * A contribution trade (tradeFlow) counts only when no cash-side flow on the
+ * same date already carries the same amount. Institutions that report the
+ * money arriving AND the shares it bought would otherwise be counted twice.
+ * Each cash flow can vouch for one trade.
+ */
 export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: number }[] {
   const byDate = new Map<string, number>();
+  const cashFlows = new Map<string, number[]>();
   for (const t of txns) {
     const flow = externalFlow(t);
-    if (flow !== 0) byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
+    if (flow === 0) continue;
+    byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
+    (cashFlows.get(t.date) ?? cashFlows.set(t.date, []).get(t.date)!).push(flow);
+  }
+  for (const t of txns) {
+    const flow = tradeFlow(t);
+    if (flow === 0) continue;
+    const sameDay = cashFlows.get(t.date) ?? [];
+    const match = sameDay.findIndex((f) => Math.abs(f - flow) < 0.01);
+    if (match >= 0) {
+      sameDay.splice(match, 1);
+      continue;
+    }
+    byDate.set(t.date, (byDate.get(t.date) ?? 0) + flow);
   }
   return [...byDate]
     .filter(([, amount]) => amount !== 0)

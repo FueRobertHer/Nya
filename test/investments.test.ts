@@ -537,3 +537,50 @@ describe('dailyFlows', () => {
     ]);
   });
 });
+
+describe('externalFlow edge cases from review', () => {
+  test('a 401k loan repayment is money added', () => {
+    expect(externalFlow(txn({ type: 'cash', subtype: 'loan payment', amount: -200 }))).toBe(200);
+  });
+
+  // Plaid defines a distribution as money leaving; one arriving is a fund
+  // paying out into the account, which is growth.
+  test('a distribution paid INTO the account is growth, not money added', () => {
+    expect(externalFlow(txn({ subtype: 'distribution', amount: -75 }))).toBe(0);
+  });
+});
+
+describe('dailyFlows with contribution trades', () => {
+  // Some recordkeepers book a paycheck as one buy that uses outside money.
+  test('a lone contribution buy is money added', () => {
+    expect(dailyFlows([txn({ type: 'buy', subtype: 'contribution', amount: 500 })])).toEqual([
+      { date: '2026-03-01', amount: 500 },
+    ]);
+  });
+
+  test('a lone distribution sell is money out', () => {
+    expect(dailyFlows([txn({ type: 'sell', subtype: 'distribution', amount: -800 })])).toEqual([
+      { date: '2026-03-01', amount: -800 },
+    ]);
+  });
+
+  // Others report the money arriving AND the shares it bought: counted once.
+  test('a contribution buy matched by a same-day cash contribution is not counted twice', () => {
+    expect(
+      dailyFlows([
+        txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 }),
+        txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'contribution', amount: 500 }),
+      ])
+    ).toEqual([{ date: '2026-03-01', amount: 500 }]);
+  });
+
+  test('each cash row vouches for one trade only', () => {
+    expect(
+      dailyFlows([
+        txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 }),
+        txn({ investment_transaction_id: 'b1', type: 'buy', subtype: 'contribution', amount: 500 }),
+        txn({ investment_transaction_id: 'b2', type: 'buy', subtype: 'contribution', amount: 500 }),
+      ])
+    ).toEqual([{ date: '2026-03-01', amount: 1000 }]);
+  });
+});

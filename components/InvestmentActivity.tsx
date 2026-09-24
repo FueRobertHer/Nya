@@ -28,7 +28,7 @@ export type InvestmentActivityPayload = {
   /** Money crossing the account boundary per day, for the chart's added-vs-
    *  growth line. Null when unavailable or withheld (see the route). */
   flows?: { date: string; amount: number }[] | null;
-  flows_from?: string;
+  flows_from?: string | null;
   note: string | null;
 };
 type Payload = InvestmentActivityPayload;

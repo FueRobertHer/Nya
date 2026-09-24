@@ -5,15 +5,29 @@ const r = (date: string, value: number) => ({ date, value });
 const e = (date: string, value: number) => ({ date, value, estimated: true });
 
 describe('contributionBaseline', () => {
-  test('the starting balance plus money added since, per point', () => {
-    const points = [r('2026-09-01', 1000), r('2026-09-02', 1010), r('2026-09-03', 1600), r('2026-09-04', 1650)];
+  // A flow counts from the day after its date: the 13:00 UTC snapshot on the
+  // flow's own date is taken before investment balances update.
+  test('the starting balance plus money added before each point', () => {
+    const points = [r('2026-09-01', 1000), r('2026-09-02', 1010), r('2026-09-03', 1015), r('2026-09-04', 1600)];
     const flows = [{ date: '2026-09-03', amount: 500 }];
     expect(contributionBaseline(points, flows, '2026-01-01')).toEqual([
       r('2026-09-01', 1000),
       r('2026-09-02', 1000),
-      r('2026-09-03', 1500),
+      r('2026-09-03', 1000),
       r('2026-09-04', 1500),
     ]);
+  });
+
+  // An account opened by a rollover: the first snapshot predates the money, so
+  // assuming it was already in the starting balance would call it all growth.
+  test('a flow dated on the start day is counted', () => {
+    expect(contributionBaseline([r('2026-09-01', 0), r('2026-09-02', 60_000)], [{ date: '2026-09-01', amount: 60_000 }], '2026-01-01'))
+      .toEqual([r('2026-09-01', 0), r('2026-09-02', 60_000)]);
+  });
+
+  test('flows before the start are already in the starting balance', () => {
+    expect(contributionBaseline([r('2026-09-01', 1000), r('2026-09-02', 1000)], [{ date: '2026-08-20', amount: 500 }], '2026-01-01'))
+      .toEqual([r('2026-09-01', 1000), r('2026-09-02', 1000)]);
   });
 
   // The backfilled region has no market movement in it: growth measured across
@@ -30,20 +44,15 @@ describe('contributionBaseline', () => {
     expect(out).toEqual([r('2026-09-01', 1000)]);
   });
 
-  // Already in the starting balance, or it would be counted twice.
-  test('a flow dated on the start day is not added again', () => {
-    expect(contributionBaseline([r('2026-09-01', 1000), r('2026-09-02', 1000)], [{ date: '2026-09-01', amount: 500 }], '2026-01-01'))
-      .toEqual([r('2026-09-01', 1000), r('2026-09-02', 1000)]);
-  });
-
   test('withdrawals bring it down', () => {
-    expect(contributionBaseline([r('2026-09-01', 1000), r('2026-09-02', 700)], [{ date: '2026-09-02', amount: -300 }], '2026-01-01'))
-      .toEqual([r('2026-09-01', 1000), r('2026-09-02', 700)]);
+    expect(
+      contributionBaseline([r('2026-09-01', 1000), r('2026-09-02', 1000), r('2026-09-03', 700)], [{ date: '2026-09-02', amount: -300 }], '2026-01-01')
+    ).toEqual([r('2026-09-01', 1000), r('2026-09-02', 1000), r('2026-09-03', 700)]);
   });
 
-  test('nothing to draw without flows or without a real point in the window', () => {
+  test('nothing to draw without flows, a window, or a real point in it', () => {
     expect(contributionBaseline([r('2026-09-01', 1)], null, '2026-01-01')).toBeNull();
-    expect(contributionBaseline([r('2026-09-01', 1)], [], undefined)).toBeNull();
+    expect(contributionBaseline([r('2026-09-01', 1)], [], null)).toBeNull();
     expect(contributionBaseline([e('2026-09-01', 1)], [], '2026-01-01')).toBeNull();
   });
 });

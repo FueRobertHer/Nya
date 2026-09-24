@@ -69,3 +69,26 @@ describe('NetWorthChart money added vs growth', () => {
     expect(html).not.toContain('growth');
   });
 });
+
+describe('NetWorthChart split on estimated points', () => {
+  // An estimated value has no market movement in it, so no growth figure;
+  // the summary falls back to the last real point.
+  test('summarises to the last real point, not a trailing estimate', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart
+        points={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1100 },
+          { date: '2026-09-03', value: 5000, estimated: true },
+        ]}
+        baseline={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1000 },
+          { date: '2026-09-03', value: 1000 },
+        ]}
+      />
+    );
+    expect(html).toContain('+$0.00 added · +$100.00 growth');
+    expect(html).not.toContain('+$4,000.00 growth');
+  });
+});
