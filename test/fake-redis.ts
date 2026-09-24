@@ -21,8 +21,9 @@ export type FakeCommand =
   | 'type'
   | 'ttl';
 
-/** Upstash's `set` options. Only `ex` is used by this codebase (lib/cache.ts). */
-type SetOptions = { ex?: number };
+/** Upstash's `set` options used by this codebase: `ex` (lib/cache.ts), and
+ *  `nx` with `px` for the rotation lock (lib/crypto.ts). */
+type SetOptions = { ex?: number; px?: number; nx?: boolean };
 
 /** Translates a Redis MATCH glob to a RegExp. Only `*` and `?` are supported,
  *  which is everything this codebase's patterns use. */
@@ -31,7 +32,31 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped.replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
 }
 
+/** What Upstash's default client does to a value on the way out: JSON is
+ *  parsed, anything else comes back as the string it was. */
+function upstashParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 export class FakeRedis {
+  /**
+   * @param opts.deserialize read values back the way Upstash's default client
+   *   does (parsing JSON), instead of as the raw stored strings. Off by
+   *   default because most modules store ciphertext, which is not JSON either
+   *   way; on for code that stores JSON and must cope with getting it back
+   *   parsed, as production does.
+   */
+  constructor(private readonly opts: { deserialize?: boolean } = {}) {}
+
+  private out(value: string | undefined): any {
+    if (value === undefined) return null;
+    return this.opts.deserialize ? upstashParse(value) : value;
+  }
+
   strings = new Map<string, string>();
   hashes = new Map<string, Hash>();
   ttls = new Map<string, number>();
@@ -77,7 +102,7 @@ export class FakeRedis {
 
   async get<T>(key: string): Promise<T | null> {
     this.gate('get');
-    return (this.strings.get(key) ?? null) as T | null;
+    return this.out(this.strings.get(key)) as T | null;
   }
 
   /**
@@ -85,10 +110,15 @@ export class FakeRedis {
    * signature silently swallowed lib/cache.ts's `{ ex: TTL_SECONDS }`, which is
    * why the cache module's expiry behaviour had never actually been asserted.
    */
-  async set(key: string, value: string, opts?: SetOptions): Promise<void> {
+  async set(key: string, value: string, opts?: SetOptions): Promise<'OK' | null> {
     this.gate('set');
+    // Like Redis: with nx, an existing key is left alone and the answer is null.
+    if (opts?.nx && (this.strings.has(key) || this.hashes.has(key))) return null;
     this.strings.set(key, value);
     if (opts?.ex !== undefined) this.ttls.set(key, opts.ex);
+    else if (opts?.px !== undefined) this.ttls.set(key, Math.ceil(opts.px / 1000));
+    else this.ttls.delete(key);
+    return 'OK';
   }
 
   async incr(key: string): Promise<number> {
@@ -115,7 +145,7 @@ export class FakeRedis {
 
   async hget<T>(key: string, field: string): Promise<T | null> {
     this.gate('hget');
-    return (this.hashes.get(key)?.get(field) ?? null) as T | null;
+    return this.out(this.hashes.get(key)?.get(field)) as T | null;
   }
 
   async hdel(key: string, ...fields: string[]): Promise<void> {
@@ -133,7 +163,7 @@ export class FakeRedis {
     this.gate('hgetall');
     const h = this.hashes.get(key);
     if (!h || h.size === 0) return null; // Upstash returns null, not {}
-    return Object.fromEntries(h) as T;
+    return Object.fromEntries([...h].map(([f, v]) => [f, this.out(v)])) as T;
   }
 
   async expire(key: string, seconds: number): Promise<void> {
@@ -242,6 +272,7 @@ export function storageMock(fake: FakeRedis) {
     // the raw client promises, so one instance serves both.
     rawRedis: () => fake,
     k: testKey,
+    kEnv: testKey,
     getItems: async () => [],
     saveItem: async () => {},
     removeItem: async () => {},

@@ -3,6 +3,7 @@ import { computeNetWorth, accountBalanceMap, isRecordable } from '@/lib/networth
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
 import { rememberAccounts } from '@/lib/last-known';
+import { finishMasterRotation } from '@/lib/crypto';
 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
 // net-worth chart stays gapless even on days the app isn't opened.
@@ -19,6 +20,11 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Finish a master key rotation if this deployment is the one it was
+    // rotating to (lib/crypto.ts). Also happens on first use of a data key;
+    // this makes sure it happens within a day even if none is used. Best
+    // effort: a failure here must not cost the day's snapshot.
+    await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', err instanceof Error ? err.message : err));
     const { institutions, netWorth } = await computeNetWorth();
 
     // Same rule as the dashboard fetch: only record clean, non-empty reads.

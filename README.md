@@ -450,9 +450,11 @@ The export route is off by default. To take one:
 4. Remove `OPS_ENABLED` and redeploy. While it is unset the route answers 404.
 
 Balances, transactions, budgets, goals and access tokens stay **encrypted** in
-the archive, and cannot be read without `PLAID_ENCRYPTION_KEY`. Keep a copy of
-that key somewhere separate from both the archive and Vercel (a password
-manager, or on paper). Lose the key and the backup cannot be read.
+the archive, and cannot be read without `PLAID_ENCRYPTION_KEY` (and, once data
+keys are in use, `MASTER_KEY`; the data keys themselves are in the archive,
+encrypted with it). Keep a copy of those keys somewhere separate from both the
+archive and Vercel (a password manager, or on paper). Lose them and the backup
+cannot be read.
 
 Not everything in it is encrypted, though, so still treat the file as private:
 dates, account and transaction ids, the names of your linked banks, and the
@@ -590,6 +592,66 @@ worth knowing. It's cleared on logout.
 encryption key makes previously stored tokens permanently undecryptable
 (you'd need to reconnect all accounts); losing/leaking the session secret
 would let someone forge a valid login cookie.
+
+**Key rotation is being added** (envelope encryption, `lib/crypto.ts`).
+Data is moving to **data keys** that the app generates and stores in Redis,
+each locked with one **master key**, `MASTER_KEY`, the only new secret in the
+environment. `PLAID_ENCRYPTION_KEY` stays as key `k0` for everything written
+before this. For now the app only **reads** the new format and still writes
+with `k0`; switching writes to a data key, and re-encrypting existing data
+under it, come next. Never remove `PLAID_ENCRYPTION_KEY` while any value still
+uses `k0`.
+
+**Rotating the master key** never touches your data, only the locks on the
+data keys, and never needs a second key in Vercel.
+
+1. Generate a new key (`openssl rand -base64 32`) and save it in your password
+   manager first.
+2. Set `OPS_ENABLED=1` (and `OPS_SECRET`, as for a backup), redeploy, then
+   send the new key to the running app, which still has the current one.
+   Reading it with `read -rs` keeps it out of your shell history:
+
+   ```bash
+   read -rs NEW_KEY   # paste the new key, press Enter
+   printf '{"new_master_key":"%s"}' "$NEW_KEY" | curl -sS -X POST \
+     https://your-app.vercel.app/api/ops/rotate-master \
+     -H "Authorization: Bearer $OPS_SECRET" -H 'Content-Type: application/json' --data-binary @-
+   ```
+
+   Every data key gets a second lock for the new key, checked before it is
+   saved. **Only continue if this returns `"prepared"`.** If it returns an
+   error, nothing was switched over; fix the cause and send it again.
+3. Check the `new_master_fingerprint` it returns matches the key you saved:
+
+   ```bash
+   { printf 'nya master key fingerprint:'; printf '%s' "$NEW_KEY" | openssl base64 -d -A; } \
+     | openssl dgst -sha256 -r | cut -c1-16
+   ```
+
+4. In Vercel, set `MASTER_KEY` to the new key, remove `OPS_ENABLED`, and
+   redeploy.
+
+That's all. Twenty-four hours later the app removes the old locks by itself;
+until then you can still roll back to the previous deployment. After that, the
+old key opens nothing in the database.
+
+- **Checking progress:** POST an empty body to the same URL (with
+  `OPS_ENABLED=1`). It answers `none`, `prepared` (the new key isn't deployed
+  yet), or `grace` with the time the old locks go.
+- **If something went wrong** (the new deployment can't read its data, you
+  sent a key you didn't save, or you never did step 4): roll back or keep the
+  current deployment, then send a new key. A new request replaces an
+  unfinished one.
+- **Preview** has its own key store. If it shares the master key, rotate it
+  separately, or scope `MASTER_KEY` to Production only.
+- **Backups** taken before a rotation still need the old key.
+- **What this does not do:** someone who already has a copy of the database or
+  a backup *and* the old key can still read that copy, and the data keys in it
+  don't change. After a real leak, the data keys need replacing too, which
+  comes with the re-encryption pass.
+
+**Keep `MASTER_KEY` in your password manager.** Without it, nothing encrypted
+with a data key can be read, from the database or from any backup.
 
 ### Login rate limiting
 
