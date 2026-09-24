@@ -1137,3 +1137,24 @@ button:disabled {
 .inv-activity .txn-table td {
   padding: 6px 0;
 }
+
+/* Reconnected accounts (components/AccountLinks.tsx): one block per decision,
+   separated by a hairline so a suggestion and its preview read as a unit. */
+.account-link-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--border, #262a33);
+}
+.account-link-row:first-of-type {
+  border-top: none;
+}
+.account-link-row p {
+  margin: 0 0 6px;
+}
+.account-link-linked {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
