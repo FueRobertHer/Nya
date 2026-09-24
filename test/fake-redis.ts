@@ -11,7 +11,6 @@ export type FakeCommand =
   | 'incr'
   | 'del'
   | 'hset'
-  | 'hsetnx'
   | 'hget'
   | 'hdel'
   | 'hkeys'
@@ -22,8 +21,9 @@ export type FakeCommand =
   | 'type'
   | 'ttl';
 
-/** Upstash's `set` options. Only `ex` is used by this codebase (lib/cache.ts). */
-type SetOptions = { ex?: number };
+/** Upstash's `set` options used by this codebase: `ex` (lib/cache.ts), and
+ *  `nx` with `px` for the rotation lock (lib/crypto.ts). */
+type SetOptions = { ex?: number; px?: number; nx?: boolean };
 
 /** Translates a Redis MATCH glob to a RegExp. Only `*` and `?` are supported,
  *  which is everything this codebase's patterns use. */
@@ -110,10 +110,15 @@ export class FakeRedis {
    * signature silently swallowed lib/cache.ts's `{ ex: TTL_SECONDS }`, which is
    * why the cache module's expiry behaviour had never actually been asserted.
    */
-  async set(key: string, value: string, opts?: SetOptions): Promise<void> {
+  async set(key: string, value: string, opts?: SetOptions): Promise<'OK' | null> {
     this.gate('set');
+    // Like Redis: with nx, an existing key is left alone and the answer is null.
+    if (opts?.nx && (this.strings.has(key) || this.hashes.has(key))) return null;
     this.strings.set(key, value);
     if (opts?.ex !== undefined) this.ttls.set(key, opts.ex);
+    else if (opts?.px !== undefined) this.ttls.set(key, Math.ceil(opts.px / 1000));
+    else this.ttls.delete(key);
+    return 'OK';
   }
 
   async incr(key: string): Promise<number> {
@@ -136,15 +141,6 @@ export class FakeRedis {
     this.gate('hset');
     const h = this.hash(key);
     for (const [f, v] of Object.entries(fields)) h.set(f, v);
-  }
-
-  /** Set a field only if it does not exist. 1 if set, 0 if it already did. */
-  async hsetnx(key: string, field: string, value: string): Promise<0 | 1> {
-    this.gate('hsetnx');
-    const h = this.hash(key);
-    if (h.has(field)) return 0;
-    h.set(field, value);
-    return 1;
   }
 
   async hget<T>(key: string, field: string): Promise<T | null> {

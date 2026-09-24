@@ -69,7 +69,7 @@ describe('locked like every ops route', () => {
 });
 
 describe('the rotation', () => {
-  test('step 1 adds the new lock and says what to do next, without echoing the key', async () => {
+  test('step 1 prepares, and returns the fingerprint to check, never the key', async () => {
     const res = await post(JSON.stringify({ new_master_key: NEW }));
     const text = await res.text();
 
@@ -81,20 +81,30 @@ describe('the rotation', () => {
     expect(await opens(NEW)).toBe(true);
   });
 
-  test('an empty POST after the redeploy finishes it', async () => {
+  test('an empty body reports where it stands and changes nothing', async () => {
+    expect(await (await post()).json()).toEqual({ state: 'none' });
     await post(JSON.stringify({ new_master_key: NEW }));
-    process.env.MASTER_KEY = NEW; // the redeploy
+    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
 
-    const res = await post();
-    expect(await res.json()).toEqual({ finished: 1, pending: 0 });
+    expect(await (await post('{}')).json()).toMatchObject({ state: 'prepared' });
+    process.env.MASTER_KEY = NEW; // the redeploy
+    expect(await (await post('')).json()).toMatchObject({ state: 'grace' });
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
+    expect(await opens(CURRENT)).toBe(true);
+  });
+
+  test('finish_now on the new deployment removes the old locks', async () => {
+    await post(JSON.stringify({ new_master_key: NEW }));
+    process.env.MASTER_KEY = NEW;
+
+    expect(await (await post(JSON.stringify({ finish_now: true }))).json()).toEqual({ state: 'finished', finished: 1 });
     expect(await opens(CURRENT)).toBe(false);
     expect(await opens(NEW)).toBe(true);
   });
 
-  test('an empty POST before the redeploy changes nothing and reports it pending', async () => {
+  test('finish_now on the old deployment does nothing', async () => {
     await post(JSON.stringify({ new_master_key: NEW }));
-    const res = await post('');
-    expect(await res.json()).toEqual({ finished: 0, pending: 1 });
+    expect(await (await post(JSON.stringify({ finish_now: true }))).json()).toMatchObject({ state: 'prepared' });
     expect(await opens(CURRENT)).toBe(true);
   });
 
@@ -106,15 +116,73 @@ describe('the rotation', () => {
     expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
   });
 
+  test('a running master that cannot open a key is a 409, not a server error', async () => {
+    process.env.MASTER_KEY = Buffer.alloc(32, 49).toString('base64');
+    const res = await post(JSON.stringify({ new_master_key: NEW }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('running master cannot open');
+  });
+
+  test('a lock that did not save is a 409 explaining it, not a server error', async () => {
+    const realHset = fake.hset.bind(fake);
+    fake.hset = (async () => undefined) as typeof fake.hset;
+    try {
+      const res = await post(JSON.stringify({ new_master_key: NEW }));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toContain('not wrapped for master key');
+    } finally {
+      fake.hset = realHset as typeof fake.hset;
+    }
+  });
+
   test('a malformed key is a 409 that does not echo it', async () => {
     const res = await post(JSON.stringify({ new_master_key: 'short' }));
     expect(res.status).toBe(409);
     expect(await res.text()).not.toContain('short"');
   });
 
-  test('bad bodies are rejected', async () => {
+  test('anything but the three known bodies is refused, and changes nothing', async () => {
+    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
+    for (const body of [
+      JSON.stringify({ new_master: NEW }), // misspelled
+      JSON.stringify({ newMasterKey: NEW }),
+      JSON.stringify({ new_master_key: NEW, finish_now: true }),
+      JSON.stringify({ finish_now: 'yes' }),
+      JSON.stringify(NEW), // a bare string
+      '[1]',
+      'null',
+    ]) {
+      expect((await post(body)).status).toBe(400);
+    }
     expect((await post('{nope')).status).toBe(400);
     expect((await post(JSON.stringify({ new_master_key: 5 }))).status).toBe(400);
     expect((await post('x'.repeat(2000))).status).toBe(413);
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
+  });
+
+  test('an unexpected failure is a 500 that repeats nothing from the error', async () => {
+    const realHgetall = fake.hgetall.bind(fake);
+    fake.hgetall = (async () => {
+      throw new Error('command was: ["hgetall","secret-looking-content"]');
+    }) as typeof fake.hgetall;
+    const logged: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => logged.push(a.join(' '));
+    try {
+      const res = await post(JSON.stringify({ new_master_key: NEW }));
+      expect(res.status).toBe(500);
+      expect(await res.text()).not.toContain('secret-looking-content');
+      expect(logged.join(' ')).not.toContain('secret-looking-content');
+    } finally {
+      fake.hgetall = realHgetall as typeof fake.hgetall;
+      console.error = origError;
+    }
+  });
+
+  test('a concurrent step is refused rather than interleaved', async () => {
+    await fake.set('test:crypto:rotation-lock', 'other', { nx: true, px: 60000 });
+    const res = await post(JSON.stringify({ new_master_key: NEW }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('Another rotation step');
   });
 });

@@ -30,13 +30,12 @@
 //     and never needs a second master in the environment:
 //       1. POST the new master to /api/ops/rotate-master. The running app,
 //          which has the current master, adds a lock for the new one to every
-//          data key (keeping the old lock) and checks it opens.
+//          data key, checks each, and records the rotation only when all are
+//          done.
 //       2. Set MASTER_KEY to the new master in Vercel and redeploy.
-//       3. The new deployment finishes by itself: the first time it uses a
-//          data key, and in the daily cron, it removes every old lock. The old
-//          master then opens nothing.
-//     Your data is never re-encrypted, so a rotation cannot damage it, and a
-//     half-finished one leaves every key openable by the running deployment.
+//       3. Nothing: 24 hours later (the rollback window) the new deployment
+//          removes the old locks by itself. See "Master rotation" below.
+//     Your data is never re-encrypted, so a rotation cannot damage it.
 //   - Backups (lib/export.ts) carry the wrapped keys like any other value.
 //
 // DATA KEY IDS COMMIT TO THEIR KEY. An id is "k<n>-<8 hex>", where the hex is
@@ -357,7 +356,7 @@ export function parseStoredDataKey(keyId: string, value: unknown): StoredDataKey
 const _dataKeys = new Map<string, Promise<CryptoKey>>();
 async function dataKey(keyId: string): Promise<CryptoKey> {
   const master = await masterKey();
-  finishRotationOnce(master.fingerprint);
+  finishRotationSoon(master.fingerprint);
   const cacheKey = `${master.fingerprint}:${keyId}`;
   const cached = _dataKeys.get(cacheKey);
   if (cached) return cached;
@@ -376,6 +375,30 @@ async function dataKey(keyId: string): Promise<CryptoKey> {
 
 // ---------------------------------------------------------------------------
 // Master rotation
+//
+// Three states, recorded in "crypto:rotation":
+//   none      no rotation in progress.
+//   prepared  every data key also has a lock for the new master, proven to
+//             open. Written only after a COMPLETE, verified prepare, so a
+//             prepare that fails partway leaves no record, and nothing is ever
+//             removed on the strength of a partial one.
+//   finished  after the new master has been running for ROTATION_GRACE_MS, its
+//             deployment removes the old locks and the record. The grace
+//             period is the rollback window: until then, rolling back to the
+//             old deployment still works.
+//
+// Changing only the master does NOT protect against someone who already holds
+// a copy of the database (or a backup) together with the old master: they can
+// open the data keys in that copy, and the data keys do not change. Responding
+// to that needs new data keys and re-encryption, which come with the
+// re-encryption pass.
+
+/** How long the old master's locks are kept after the new master is running. */
+export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+/** A rotation step holds a lock for at most this long. */
+const ROTATION_LOCK_MS = 60 * 1000;
+/** How often a process may try to finish a rotation on its own. */
+const AUTO_FINISH_EVERY_MS = 10 * 60 * 1000;
 
 /** A rotation cannot proceed. Nothing was changed when this is thrown. */
 export class RotationError extends Error {
@@ -383,6 +406,31 @@ export class RotationError extends Error {
     super(message);
     this.name = 'RotationError';
   }
+}
+
+export type RotationRecord = { from: string; next: string; prepared_at: string };
+
+export function rotationKey(): string {
+  return kEnv('crypto:rotation');
+}
+function rotationLockKey(): string {
+  return kEnv('crypto:rotation-lock');
+}
+
+async function readRotation(): Promise<RotationRecord | null> {
+  const value = await redis().get(rotationKey());
+  if (value === null || value === undefined) return null;
+  const r = (typeof value === 'string' ? JSON.parse(value) : value) as RotationRecord;
+  if (!r || typeof r.next !== 'string' || typeof r.from !== 'string' || typeof r.prepared_at !== 'string') {
+    throw new RotationError('The rotation record is unreadable. Start the rotation again.');
+  }
+  return r;
+}
+
+/** True while a rotation is prepared but not finished. New data keys must not
+ *  be created then: they would only get the old master's lock. */
+export async function rotationPending(): Promise<boolean> {
+  return (await readRotation()) !== null;
 }
 
 async function readAllKeys(): Promise<Map<string, StoredDataKey>> {
@@ -399,95 +447,164 @@ async function writeKey(id: string, stored: StoredDataKey): Promise<void> {
   await redis().hset(keysHashKey(), { [id]: JSON.stringify(stored) });
 }
 
-/**
- * Step 1 of a master rotation, run by the deployment that has the CURRENT
- * master: add a lock for the new master to every data key, keeping the old
- * one, and mark each key with where it is going.
- *
- * Safe to interrupt and to run again: every key is opened with the current
- * master before anything is written, each write only adds, and a key already
- * prepared for this new master is skipped. Refuses a second, different
- * rotation while one is unfinished.
- */
-export async function prepareMasterRotation(newMaterial: string): Promise<{ prepared: number; fingerprint: string }> {
-  const current = await masterKey();
-  let next: MasterKey;
+/** Run one rotation step at a time across every instance. */
+async function withRotationLock<T>(fn: () => Promise<T>): Promise<T> {
+  const token = crypto.randomUUID();
+  const got = await redis().set(rotationLockKey(), token, { nx: true, px: ROTATION_LOCK_MS });
+  if (!got) throw new RotationError('Another rotation step is running. Try again in a minute.');
   try {
-    next = await importMasterKey(newMaterial, 'The new master key');
-  } catch (err) {
-    throw new RotationError(err instanceof Error ? err.message : String(err));
-  }
-  if (next.fingerprint === current.fingerprint) {
-    throw new RotationError('The new master key is the same as the current one.');
-  }
-
-  const keys = await readAllKeys();
-  for (const [id, stored] of keys) {
-    if (stored.next && stored.next !== next.fingerprint && stored.next !== current.fingerprint) {
-      throw new RotationError(
-        `${id} is part of an unfinished rotation to master ${stored.next}. Finish that one first (deploy with that master). Nothing was changed.`
-      );
+    return await fn();
+  } finally {
+    try {
+      if ((await redis().get(rotationLockKey())) === token) await redis().del(rotationLockKey());
+    } catch {
+      // It expires on its own.
     }
   }
-  // Open everything first: a key the current master cannot open stops the
-  // rotation before anything is written.
-  const raw = new Map<string, Uint8Array>();
-  for (const [id, stored] of keys) raw.set(id, await unwrapDataKey(current, id, stored));
+}
 
-  for (const [id, stored] of keys) {
-    if (stored.next === next.fingerprint && stored.wrapped[next.fingerprint]) continue;
-    const lock = await next.wrap(id, raw.get(id)!);
-    // Checked before it is saved, so a bad lock is never stored.
-    await unwrapDataKey(next, id, { ...stored, wrapped: { [next.fingerprint]: lock } });
-    await writeKey(id, { ...stored, wrapped: { ...stored.wrapped, [next.fingerprint]: lock }, next: next.fingerprint });
-  }
+/**
+ * Step 1 of a master rotation, run by the deployment that has the CURRENT
+ * master: give every data key a lock for the new master as well, and record
+ * the rotation only once all of them are done and proven to open.
+ *
+ * Every data key must open with the current master first. Each key is left
+ * with exactly two locks, current and new; a lock for any other master is
+ * dropped, which is how a new request replaces an unfinished rotation (say,
+ * to a key that was mistyped or not saved). Interrupted, it leaves every key
+ * still openable by the current master and no record, so nothing is ever
+ * finished from it; running it again completes it.
+ */
+export async function prepareMasterRotation(
+  newMaterial: string,
+  now: number = Date.now()
+): Promise<{ prepared: number; fingerprint: string }> {
+  return withRotationLock(async () => {
+    const current = await masterKey();
+    let next: MasterKey;
+    try {
+      next = await importMasterKey(newMaterial, 'The new master key');
+    } catch (err) {
+      throw new RotationError(err instanceof Error ? err.message : String(err));
+    }
+    if (next.fingerprint === current.fingerprint) {
+      throw new RotationError('The new master key is the same as the current one.');
+    }
 
-  // Read back: both masters must open every key, so the deployment running
-  // now and the one about to be deployed both work.
-  const after = await readAllKeys();
-  for (const [id, stored] of after) {
-    await unwrapDataKey(current, id, stored);
-    await unwrapDataKey(next, id, stored);
-  }
-  return { prepared: after.size, fingerprint: next.fingerprint };
+    const keys = await readAllKeys();
+    // Open everything first: a key the current master cannot open stops the
+    // rotation before anything is written.
+    const raw = new Map<string, Uint8Array>();
+    for (const [id, stored] of keys) {
+      try {
+        raw.set(id, await unwrapDataKey(current, id, stored));
+      } catch (err) {
+        throw new RotationError(`The running master cannot open ${id}, so nothing was changed. (${err instanceof Error ? err.message : err})`);
+      }
+    }
+
+    // Any record from an earlier rotation is void from here on.
+    await redis().del(rotationKey());
+    for (const [id, stored] of keys) {
+      const lock = await next.wrap(id, raw.get(id)!);
+      // Checked before it is saved, so a bad lock is never stored.
+      await unwrapDataKey(next, id, { ...stored, wrapped: { [next.fingerprint]: lock } });
+      await writeKey(id, {
+        ...stored,
+        wrapped: { [current.fingerprint]: stored.wrapped[current.fingerprint], [next.fingerprint]: lock },
+        next: next.fingerprint,
+      });
+    }
+
+    // Read back: both masters must open every key, so the deployment running
+    // now and the one about to be deployed both work.
+    const after = await readAllKeys();
+    for (const [id, stored] of after) {
+      await unwrapDataKey(current, id, stored);
+      await unwrapDataKey(next, id, stored);
+      if (stored.next !== next.fingerprint) throw new RotationError(`${id} changed during the rotation. Run it again.`);
+    }
+    const record: RotationRecord = { from: current.fingerprint, next: next.fingerprint, prepared_at: new Date(now).toISOString() };
+    await redis().set(rotationKey(), JSON.stringify(record));
+    return { prepared: after.size, fingerprint: next.fingerprint };
+  });
+}
+
+export type RotationStatus =
+  | { state: 'none' }
+  | { state: 'prepared'; next: string; prepared_at: string; running: string }
+  | { state: 'grace'; next: string; finishes_at: string }
+  | { state: 'finished'; finished: number };
+
+/**
+ * Where a rotation stands, as seen by this deployment. Reads only.
+ * "prepared" means the new master is not running here yet (redeploy with it);
+ * "grace" means it is, and the old locks go at finishes_at.
+ */
+export async function rotationStatus(now: number = Date.now()): Promise<RotationStatus> {
+  const rec = await readRotation();
+  if (!rec) return { state: 'none' };
+  const running = process.env[MASTER_KEY_ENV] ? (await masterKey()).fingerprint : 'none';
+  if (rec.next !== running) return { state: 'prepared', next: rec.next, prepared_at: rec.prepared_at, running };
+  return { state: 'grace', next: rec.next, finishes_at: new Date(Date.parse(rec.prepared_at) + ROTATION_GRACE_MS).toISOString() };
 }
 
 /**
  * Step 3 of a master rotation, run by the deployment that has the NEW master:
- * remove every other lock from each data key that was being rotated to it.
+ * remove the other locks from every data key, then the record.
  *
- * Only touches keys whose rotation target is this deployment's master, so a
- * deployment still on the old master can never remove the new lock, and a key
- * is only rewritten after it is proven to open with this master. Idempotent,
- * so concurrent instances doing it at once is harmless.
+ * All or nothing: only when the record names this deployment's master, the
+ * grace period is over (or `force`), and EVERY key is marked for this master
+ * and proven to open with it. Otherwise nothing is removed. Keeps every other
+ * field of each key.
  */
-export async function finishMasterRotation(): Promise<{ finished: number; pending: number }> {
-  if (!process.env[MASTER_KEY_ENV]) return { finished: 0, pending: 0 };
-  const current = await masterKey();
-  const keys = await readAllKeys();
-  let finished = 0;
-  let pending = 0;
-  for (const [id, stored] of keys) {
-    if (!stored.next) continue;
-    if (stored.next !== current.fingerprint) {
-      pending++;
-      continue;
+export async function finishMasterRotation(
+  opts: { now?: number; force?: boolean } = {}
+): Promise<RotationStatus> {
+  const now = opts.now ?? Date.now();
+  if (!process.env[MASTER_KEY_ENV]) return { state: 'none' };
+  // Checked without the lock first, so the common "nothing to do" costs one read.
+  const status = await rotationStatus(now);
+  if (status.state !== 'grace') return status;
+  if (!opts.force && now < Date.parse(status.finishes_at)) return status;
+
+  return withRotationLock(async () => {
+    const rec = await readRotation();
+    const current = await masterKey();
+    if (!rec || rec.next !== current.fingerprint) return rotationStatus(now);
+
+    const keys = await readAllKeys();
+    for (const [id, stored] of keys) {
+      if (stored.next !== current.fingerprint || !stored.wrapped[current.fingerprint]) {
+        throw new RotationError(`${id} was not prepared for this master, so no locks were removed. Run the rotation again.`);
+      }
+      await unwrapDataKey(current, id, stored);
     }
-    await unwrapDataKey(current, id, stored);
-    await writeKey(id, { created_at: stored.created_at, wrapped: { [current.fingerprint]: stored.wrapped[current.fingerprint] } });
-    finished++;
-  }
-  return { finished, pending };
+    for (const [id, stored] of keys) {
+      const { next: _done, ...rest } = stored;
+      await writeKey(id, { ...rest, wrapped: { [current.fingerprint]: stored.wrapped[current.fingerprint] } });
+    }
+    await redis().del(rotationKey());
+    return { state: 'finished', finished: keys.size };
+  });
 }
 
-// Once per process per master, in the background, on first use of a data
-// key. Failures are forgotten so the next use tries again; the daily cron and
-// the rotate route try too.
-const _finishedFor = new Set<string>();
-function finishRotationOnce(fingerprint: string): void {
-  if (_finishedFor.has(fingerprint)) return;
-  _finishedFor.add(fingerprint);
-  finishMasterRotation().catch(() => _finishedFor.delete(fingerprint));
+// On first use of a data key, and then at most every few minutes per process
+// per master, try to finish a rotation that is due. Failures are logged and
+// tried again later, never thrown into the request.
+const _autoFinish = new Map<string, { at: number; run: Promise<unknown> }>();
+function finishRotationSoon(fingerprint: string, now: number = Date.now()): void {
+  const last = _autoFinish.get(fingerprint);
+  if (last && now - last.at >= 0 && now - last.at < AUTO_FINISH_EVERY_MS) return;
+  const run = finishMasterRotation({ now }).catch((err) =>
+    console.error('Master rotation finish failed', err instanceof Error ? err.message : err)
+  );
+  _autoFinish.set(fingerprint, { at: now, run });
+}
+
+/** For tests: wait for any automatic finish this process started. */
+export async function autoFinishSettled(): Promise<void> {
+  await Promise.all([..._autoFinish.values()].map((v) => v.run));
 }
 
 function keyFor(keyId: string): Promise<CryptoKey> {

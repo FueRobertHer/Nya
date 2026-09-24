@@ -28,6 +28,11 @@ const {
   RotationError,
   prepareMasterRotation,
   finishMasterRotation,
+  rotationStatus,
+  rotationPending,
+  rotationKey,
+  autoFinishSettled,
+  ROTATION_GRACE_MS,
 } = await import('@/lib/crypto');
 
 const MASTER = Buffer.alloc(32, 3).toString('base64');
@@ -291,12 +296,15 @@ describe('data keys', () => {
 });
 
 describe('master rotation', () => {
-  // Distinct masters per test where it matters, so data keys cached in memory
-  // under one master cannot answer for another.
+  // Distinct masters per test, so data keys cached in memory under one master
+  // cannot answer for another.
   const master = (n: number) => Buffer.alloc(32, n).toString('base64');
+  const fpOf = async (b64: string) => (await importMasterKey(b64)).fingerprint;
+  const T0 = Date.parse('2026-09-24T00:00:00.000Z');
+  const AFTER_GRACE = T0 + ROTATION_GRACE_MS + 1;
 
-  /** Everything checked against the store itself, never through decrypt(),
-   *  which keeps opened keys in memory. */
+  /** Checked against the store itself, never through decrypt(), which keeps
+   *  opened keys in memory. */
   async function opens(b64: string, id: string): Promise<boolean> {
     const stored = await fake.hget<any>(keysHashKey(), id);
     return unwrapDataKey(await importMasterKey(b64), id, stored).then(
@@ -304,139 +312,294 @@ describe('master rotation', () => {
       () => false
     );
   }
-  async function stored(id: string) {
-    return (await fake.hget<any>(keysHashKey(), id))!;
-  }
+  const stored = async (id: string) => (await fake.hget<any>(keysHashKey(), id))!;
+  const snapshot = async () => JSON.stringify([await fake.hgetall(keysHashKey()), await fake.get(rotationKey())]);
 
-  test('prepare adds the new lock, keeps the old one, and marks where it is going', async () => {
-    const NEW = master(21);
-    const { prepared, fingerprint } = await prepareMasterRotation(NEW);
+  describe('prepare', () => {
+    test('adds the new lock, keeps the current one, and records the rotation last', async () => {
+      const NEW = master(21);
+      const { prepared, fingerprint } = await prepareMasterRotation(NEW, T0);
 
-    expect(prepared).toBe(2);
-    expect(fingerprint).toBe((await importMasterKey(NEW)).fingerprint);
-    for (const id of [K1, K2]) {
-      expect(await opens(MASTER, id)).toBe(true);
-      expect(await opens(NEW, id)).toBe(true);
-      expect((await stored(id)).next).toBe(fingerprint);
-    }
-  });
-
-  test('the old deployment finishing does nothing, and reports what is pending', async () => {
-    await prepareMasterRotation(master(22));
-    expect(await finishMasterRotation()).toEqual({ finished: 0, pending: 2 });
-    expect(await opens(master(22), K1)).toBe(true);
-  });
-
-  test('the new deployment finishing removes the old lock: the old master opens nothing', async () => {
-    const NEW = master(23);
-    const value = await encryptV2('balance 100', K1);
-    await prepareMasterRotation(NEW);
-    process.env.MASTER_KEY = NEW;
-
-    expect(await finishMasterRotation()).toEqual({ finished: 2, pending: 0 });
-    for (const id of [K1, K2]) {
-      expect(await opens(MASTER, id)).toBe(false);
-      expect(await opens(NEW, id)).toBe(true);
-      expect((await stored(id)).next).toBeUndefined();
-    }
-    // The data itself was never touched.
-    expect(await decrypt(value)).toBe('balance 100');
-  });
-
-  test('the new deployment finishes by itself on first use of a data key', async () => {
-    const NEW = master(24);
-    await prepareMasterRotation(NEW);
-    process.env.MASTER_KEY = NEW;
-
-    const raw = new Uint8Array(32).fill(24);
-    const id = await storeKey(24, raw, NEW);
-    expect(await decrypt(await handBuilt(id, raw, 'x'))).toBe('x');
-    // Background: give it a moment.
-    await new Promise((r) => setTimeout(r, 20));
-    expect(await opens(MASTER, K1)).toBe(false);
-    expect(await opens(NEW, K1)).toBe(true);
-  });
-
-  test('running prepare twice is harmless, and resumes after an interruption', async () => {
-    const NEW = master(25);
-    fake.failNext('hset', 1);
-    await expect(prepareMasterRotation(NEW)).rejects.toThrow();
-    // Interrupted after nothing or part was written: every key still opens
-    // with the current master.
-    expect(await opens(MASTER, K1)).toBe(true);
-    expect(await opens(MASTER, K2)).toBe(true);
-
-    await prepareMasterRotation(NEW);
-    const once = JSON.stringify(await fake.hgetall(keysHashKey()));
-    await prepareMasterRotation(NEW);
-    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(once);
-  });
-
-  test('a lock that silently fails to save is caught by reading back', async () => {
-    const realHset = fake.hset.bind(fake);
-    fake.hset = (async () => undefined) as typeof fake.hset;
-    try {
-      await expect(prepareMasterRotation(master(32))).rejects.toBeInstanceOf(MasterKeyError);
-    } finally {
-      fake.hset = realHset as typeof fake.hset;
-    }
-  });
-
-  test('refuses the same key, writing nothing', async () => {
-    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
-    await expect(prepareMasterRotation(MASTER)).rejects.toBeInstanceOf(RotationError);
-    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
-  });
-
-  test('refuses a malformed new key, writing nothing, and never echoes it', async () => {
-    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
-    for (const bad of ['not base64!', Buffer.alloc(16).toString('base64'), '']) {
-      const err = await prepareMasterRotation(bad).catch((e) => e);
-      expect(err).toBeInstanceOf(RotationError);
-      if (bad) expect(err.message).not.toContain(bad);
-    }
-    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
-  });
-
-  test('refuses when the running master cannot open every key, writing nothing', async () => {
-    await storeKey(26, new Uint8Array(32).fill(26), OTHER_MASTER);
-    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
-    await expect(prepareMasterRotation(master(27))).rejects.toBeInstanceOf(MasterKeyError);
-    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
-  });
-
-  test('refuses a second, different rotation until the first is finished', async () => {
-    await prepareMasterRotation(master(28));
-    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
-    await expect(prepareMasterRotation(master(29))).rejects.toThrow(/unfinished rotation/);
-    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
-  });
-
-  test('prepares each key with exactly one write', async () => {
-    const NEW = await importMasterKey(master(30));
-    const realHset = fake.hset.bind(fake);
-    let writes = 0;
-    fake.hset = (async (key: string, fields: Record<string, string>) => {
-      writes++;
-      return realHset(key, fields);
-    }) as typeof fake.hset;
-    try {
-      await prepareMasterRotation(master(30));
-    } finally {
-      fake.hset = realHset as typeof fake.hset;
-    }
-    expect(writes).toBe(2);
-    expect(await opens(master(30), K1)).toBe(true);
-    expect(NEW.fingerprint).toBe((await stored(K1)).next);
-  });
-
-  test('with no data keys yet there is nothing to do', async () => {
-    fake.reset();
-    expect(await prepareMasterRotation(master(31))).toEqual({
-      prepared: 0,
-      fingerprint: (await importMasterKey(master(31))).fingerprint,
+      expect(prepared).toBe(2);
+      expect(fingerprint).toBe(await fpOf(NEW));
+      for (const id of [K1, K2]) {
+        expect(await opens(MASTER, id)).toBe(true);
+        expect(await opens(NEW, id)).toBe(true);
+        expect(Object.keys((await stored(id)).wrapped)).toHaveLength(2);
+      }
+      expect(await rotationPending()).toBe(true);
+      expect(await rotationStatus(T0)).toMatchObject({ state: 'prepared', next: fingerprint });
     });
-    expect(await finishMasterRotation()).toEqual({ finished: 0, pending: 0 });
+
+    test('keeps every other field of a stored key', async () => {
+      const s = await stored(K1);
+      await fake.hset(keysHashKey(), { [K1]: JSON.stringify({ ...s, note: 'kept' }) });
+      await prepareMasterRotation(master(22), T0);
+      expect((await stored(K1)).note).toBe('kept');
+      expect((await stored(K1)).created_at).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    test('interrupted, it leaves no record, every key openable, and runs again cleanly', async () => {
+      const NEW = master(23);
+      // Fails on the second key's write, after the first key was prepared.
+      const realHset = fake.hset.bind(fake);
+      let n = 0;
+      fake.hset = (async (key: string, fields: Record<string, string>) => {
+        if (++n === 2) throw new Error('upstash hiccup');
+        return realHset(key, fields);
+      }) as typeof fake.hset;
+      try {
+        await expect(prepareMasterRotation(NEW, T0)).rejects.toThrow('upstash hiccup');
+      } finally {
+        fake.hset = realHset as typeof fake.hset;
+      }
+      expect(await rotationPending()).toBe(false);
+      expect(await opens(MASTER, K1)).toBe(true);
+      expect(await opens(MASTER, K2)).toBe(true);
+
+      await prepareMasterRotation(NEW, T0);
+      expect(await opens(NEW, K1)).toBe(true);
+      expect(await opens(NEW, K2)).toBe(true);
+      expect(await rotationPending()).toBe(true);
+    });
+
+    test('a new rotation replaces an unfinished one, dropping the abandoned key', async () => {
+      // The mistyped-or-unsaved key case: prepare A, then prepare B instead.
+      const A = master(24);
+      const B = master(25);
+      await prepareMasterRotation(A, T0);
+      await prepareMasterRotation(B, T0);
+
+      for (const id of [K1, K2]) {
+        expect(await opens(MASTER, id)).toBe(true);
+        expect(await opens(B, id)).toBe(true);
+        expect(await opens(A, id)).toBe(false);
+        expect((await stored(id)).next).toBe(await fpOf(B));
+      }
+      expect(await rotationStatus(T0)).toMatchObject({ state: 'prepared', next: await fpOf(B) });
+    });
+
+    test('refuses the same key, writing nothing', async () => {
+      const before = await snapshot();
+      await expect(prepareMasterRotation(MASTER, T0)).rejects.toBeInstanceOf(RotationError);
+      expect(await snapshot()).toBe(before);
+    });
+
+    test('refuses a malformed new key, writing nothing, and never echoes it', async () => {
+      const before = await snapshot();
+      for (const bad of ['not base64!', Buffer.alloc(16).toString('base64'), '']) {
+        const err = await prepareMasterRotation(bad, T0).catch((e) => e);
+        expect(err).toBeInstanceOf(RotationError);
+        if (bad) expect(err.message).not.toContain(bad);
+      }
+      expect(await snapshot()).toBe(before);
+    });
+
+    test('refuses when the running master cannot open every key, writing nothing', async () => {
+      await storeKey(26, new Uint8Array(32).fill(26), OTHER_MASTER);
+      const before = await snapshot();
+      await expect(prepareMasterRotation(master(27), T0)).rejects.toThrow(/running master cannot open/);
+      expect(await snapshot()).toBe(before);
+    });
+
+    test('a lock that silently fails to save is caught by reading back, and no record is written', async () => {
+      const realHset = fake.hset.bind(fake);
+      fake.hset = (async () => undefined) as typeof fake.hset;
+      try {
+        await expect(prepareMasterRotation(master(28), T0)).rejects.toBeInstanceOf(MasterKeyError);
+      } finally {
+        fake.hset = realHset as typeof fake.hset;
+      }
+      expect(await rotationPending()).toBe(false);
+    });
+
+    test('the read-back also checks the current master still opens every key', async () => {
+      // A write that lands the new lock but loses the current one.
+      const realHset = fake.hset.bind(fake);
+      fake.hset = (async (key: string, fields: Record<string, string>) => {
+        const [[id, v]] = Object.entries(fields);
+        const parsed = JSON.parse(v);
+        const cur = await fpOf(MASTER);
+        delete parsed.wrapped[cur];
+        return realHset(key, { [id]: JSON.stringify(parsed) });
+      }) as typeof fake.hset;
+      try {
+        await expect(prepareMasterRotation(master(29), T0)).rejects.toBeInstanceOf(MasterKeyError);
+      } finally {
+        fake.hset = realHset as typeof fake.hset;
+      }
+      expect(await rotationPending()).toBe(false);
+    });
+
+    test('only one rotation step runs at a time', async () => {
+      await fake.set(`test:crypto:rotation-lock`, 'someone else', { nx: true, px: 60000 });
+      await expect(prepareMasterRotation(master(30), T0)).rejects.toThrow(/Another rotation step is running/);
+      await fake.del('test:crypto:rotation-lock');
+      await prepareMasterRotation(master(30), T0);
+      expect(await fake.get('test:crypto:rotation-lock')).toBeNull();
+    });
+
+    test('with no data keys yet it records the rotation and nothing else', async () => {
+      fake.reset();
+      expect(await prepareMasterRotation(master(31), T0)).toEqual({ prepared: 0, fingerprint: await fpOf(master(31)) });
+    });
+  });
+
+  describe('finish', () => {
+    test('does nothing on the old deployment', async () => {
+      const NEW = master(32);
+      await prepareMasterRotation(NEW, T0);
+      expect(await finishMasterRotation({ now: AFTER_GRACE, force: true })).toMatchObject({ state: 'prepared' });
+      expect(await opens(MASTER, K1)).toBe(true);
+    });
+
+    test('waits out the 24-hour rollback window on the new deployment', async () => {
+      const NEW = master(33);
+      await prepareMasterRotation(NEW, T0);
+      process.env.MASTER_KEY = NEW;
+
+      expect(await finishMasterRotation({ now: T0 + 60 * 60 * 1000 })).toMatchObject({ state: 'grace' });
+      expect(await opens(MASTER, K1)).toBe(true); // rollback still works
+    });
+
+    test('after the window it removes the old locks and the record; the data is untouched', async () => {
+      const NEW = master(34);
+      const value = await encryptV2('balance 100', K1);
+      await prepareMasterRotation(NEW, T0);
+      process.env.MASTER_KEY = NEW;
+
+      expect(await finishMasterRotation({ now: AFTER_GRACE })).toEqual({ state: 'finished', finished: 2 });
+      for (const id of [K1, K2]) {
+        expect(await opens(MASTER, id)).toBe(false);
+        expect(await opens(NEW, id)).toBe(true);
+        expect((await stored(id)).next).toBeUndefined();
+        expect((await stored(id)).created_at).toBe('2026-01-01T00:00:00.000Z');
+      }
+      expect(await rotationPending()).toBe(false);
+      expect(await decrypt(value)).toBe('balance 100');
+    });
+
+    test('keeps every other field of a stored key', async () => {
+      const NEW = master(46);
+      await prepareMasterRotation(NEW, T0);
+      const s = await stored(K1);
+      await fake.hset(keysHashKey(), { [K1]: JSON.stringify({ ...s, note: 'kept' }) });
+      process.env.MASTER_KEY = NEW;
+      await finishMasterRotation({ now: AFTER_GRACE });
+      expect((await stored(K1)).note).toBe('kept');
+    });
+
+    test('finish_now skips the window', async () => {
+      const NEW = master(35);
+      await prepareMasterRotation(NEW, T0);
+      process.env.MASTER_KEY = NEW;
+      expect(await finishMasterRotation({ now: T0 + 1000, force: true })).toEqual({ state: 'finished', finished: 2 });
+    });
+
+    test('all or nothing: one unprepared key and no lock is removed anywhere', async () => {
+      const NEW = master(36);
+      await prepareMasterRotation(NEW, T0);
+      // A key created after the prepare (what 7b must not do): old lock only.
+      const late = await storeKey(37, new Uint8Array(32).fill(37));
+      process.env.MASTER_KEY = NEW;
+      const before = await snapshot();
+
+      await expect(finishMasterRotation({ now: AFTER_GRACE })).rejects.toThrow(/was not prepared for this master/);
+      expect(await snapshot()).toBe(before);
+      expect(await opens(MASTER, K1)).toBe(true);
+      expect(await opens(MASTER, late)).toBe(true);
+    });
+
+    test('all or nothing: a key whose new lock does not open stops it before any write', async () => {
+      const NEW = master(38);
+      await prepareMasterRotation(NEW, T0);
+      const s = await stored(K2);
+      const fp = await fpOf(NEW);
+      s.wrapped[fp] = s.wrapped[await fpOf(MASTER)]; // a lock that is not NEW's
+      await fake.hset(keysHashKey(), { [K2]: JSON.stringify(s) });
+      process.env.MASTER_KEY = NEW;
+      const before = await snapshot();
+
+      await expect(finishMasterRotation({ now: AFTER_GRACE })).rejects.toBeInstanceOf(MasterKeyError);
+      expect(await snapshot()).toBe(before);
+    });
+
+    test('a partial prepare followed by the redeploy removes nothing', async () => {
+      // The reviewed failure: prepare dies after one key, the owner redeploys
+      // anyway. With no record, finish must leave every lock in place.
+      const NEW = master(39);
+      const realHset = fake.hset.bind(fake);
+      let n = 0;
+      fake.hset = (async (key: string, fields: Record<string, string>) => {
+        if (++n === 2) throw new Error('killed');
+        return realHset(key, fields);
+      }) as typeof fake.hset;
+      await prepareMasterRotation(NEW, T0).catch(() => {});
+      fake.hset = realHset as typeof fake.hset;
+      process.env.MASTER_KEY = NEW;
+
+      expect(await finishMasterRotation({ now: AFTER_GRACE, force: true })).toEqual({ state: 'none' });
+      expect(await opens(MASTER, K1)).toBe(true);
+      expect(await opens(MASTER, K2)).toBe(true);
+    });
+
+    test('without a master it does nothing at all', async () => {
+      await prepareMasterRotation(master(40), T0);
+      delete process.env.MASTER_KEY;
+      const before = fake.ops;
+      expect(await finishMasterRotation({ now: AFTER_GRACE, force: true })).toEqual({ state: 'none' });
+      expect(fake.ops).toBe(before);
+    });
+
+    test('the key store only accepts key ids', async () => {
+      await fake.hset(keysHashKey(), { active: 'x' });
+      await expect(prepareMasterRotation(master(41), T0)).rejects.toThrow(/Unexpected entry "active"/);
+    });
+  });
+
+  describe('automatic finish', () => {
+    test('happens on first use of a data key once the window has passed', async () => {
+      const NEW = master(42);
+      await prepareMasterRotation(NEW, Date.now() - ROTATION_GRACE_MS - 1000);
+      process.env.MASTER_KEY = NEW;
+
+      const raw = new Uint8Array(32).fill(42);
+      const id = await storeKey(42, raw, NEW);
+      // storeKey's fresh key has no "next"; mark it as prepared like the rest.
+      const s = await stored(id);
+      await fake.hset(keysHashKey(), { [id]: JSON.stringify({ ...s, next: await fpOf(NEW) }) });
+
+      expect(await decrypt(await handBuilt(id, raw, 'x'))).toBe('x');
+      await autoFinishSettled();
+      expect(await opens(MASTER, K1)).toBe(false);
+      expect(await opens(NEW, K1)).toBe(true);
+    });
+
+    test('is throttled, logs failures, and tries again later', async () => {
+      const NEW = master(43);
+      await prepareMasterRotation(NEW, Date.now() - ROTATION_GRACE_MS - 1000);
+      process.env.MASTER_KEY = NEW;
+      const late = await storeKey(44, new Uint8Array(32).fill(44)); // blocks finishing
+      const raw = new Uint8Array(32).fill(45);
+      const id = await storeKey(45, raw, NEW);
+
+      const errors: unknown[] = [];
+      const origError = console.error;
+      console.error = (...a: unknown[]) => errors.push(a.join(' '));
+      try {
+        const value = await handBuilt(id, raw, 'x');
+        await decrypt(value);
+        await autoFinishSettled();
+        const ops = fake.ops;
+        for (let i = 0; i < 20; i++) await decrypt(value);
+        await autoFinishSettled();
+        expect(fake.ops).toBe(ops); // throttled: no repeated attempts
+        expect(errors.join('\n')).toContain('was not prepared for this master');
+      } finally {
+        console.error = origError;
+      }
+      expect(await opens(MASTER, late)).toBe(true);
+    });
   });
 });
 

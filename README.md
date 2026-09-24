@@ -603,28 +603,52 @@ under it, come next. Never remove `PLAID_ENCRYPTION_KEY` while any value still
 uses `k0`.
 
 **Rotating the master key** never touches your data, only the locks on the
-data keys, and never needs a second key in Vercel:
+data keys, and never needs a second key in Vercel.
 
 1. Generate a new key (`openssl rand -base64 32`) and save it in your password
-   manager.
-2. With `OPS_ENABLED=1` and `OPS_SECRET` set (as for a backup), send it to the
-   running app, which still has the current key:
+   manager first.
+2. Set `OPS_ENABLED=1` (and `OPS_SECRET`, as for a backup), redeploy, then
+   send the new key to the running app, which still has the current one.
+   Reading it with `read -rs` keeps it out of your shell history:
 
    ```bash
-   curl -X POST https://your-app.vercel.app/api/ops/rotate-master \
-     -H "Authorization: Bearer $OPS_SECRET" -H 'Content-Type: application/json' \
-     -d '{"new_master_key":"<the new key>"}'
+   read -rs NEW_KEY   # paste the new key, press Enter
+   printf '{"new_master_key":"%s"}' "$NEW_KEY" | curl -sS -X POST \
+     https://your-app.vercel.app/api/ops/rotate-master \
+     -H "Authorization: Bearer $OPS_SECRET" -H 'Content-Type: application/json' --data-binary @-
    ```
 
    Every data key gets a second lock for the new key, checked before it is
-   saved. If anything fails, nothing changes.
-3. Set `MASTER_KEY` to the new key in Vercel and redeploy. The new deployment
-   removes the old locks by itself; the old key then opens nothing.
+   saved. **Only continue if this returns `"prepared"`.** If it returns an
+   error, nothing was switched over; fix the cause and send it again.
+3. Check the `new_master_fingerprint` it returns matches the key you saved:
 
-Remove `OPS_ENABLED` afterwards. Two cautions: once step 3 has finished,
-rolling back to a deployment from before the rotation can't open the data
-keys (redeploy the current version instead), and backups taken before the
-rotation still need the old key.
+   ```bash
+   { printf 'nya master key fingerprint:'; printf '%s' "$NEW_KEY" | openssl base64 -d -A; } \
+     | openssl dgst -sha256 -r | cut -c1-16
+   ```
+
+4. In Vercel, set `MASTER_KEY` to the new key, remove `OPS_ENABLED`, and
+   redeploy.
+
+That's all. Twenty-four hours later the app removes the old locks by itself;
+until then you can still roll back to the previous deployment. After that, the
+old key opens nothing in the database.
+
+- **Checking progress:** POST an empty body to the same URL (with
+  `OPS_ENABLED=1`). It answers `none`, `prepared` (the new key isn't deployed
+  yet), or `grace` with the time the old locks go.
+- **If something went wrong** (the new deployment can't read its data, you
+  sent a key you didn't save, or you never did step 4): roll back or keep the
+  current deployment, then send a new key. A new request replaces an
+  unfinished one.
+- **Preview** has its own key store. If it shares the master key, rotate it
+  separately, or scope `MASTER_KEY` to Production only.
+- **Backups** taken before a rotation still need the old key.
+- **What this does not do:** someone who already has a copy of the database or
+  a backup *and* the old key can still read that copy, and the data keys in it
+  don't change. After a real leak, the data keys need replacing too, which
+  comes with the re-encryption pass.
 
 **Keep `MASTER_KEY` in your password manager.** Without it, nothing encrypted
 with a data key can be read, from the database or from any backup.
