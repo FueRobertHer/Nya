@@ -141,23 +141,37 @@ async function listKeys(client: ExportClient, prefix: string): Promise<string[]>
     }
     cursor = next;
   } while (String(cursor) !== '0');
-  // Sorted so two exports of unchanged data are identical, which makes them
-  // diffable and makes the footer hash meaningful across runs.
-  return [...keys].sort();
+  // Sorted, with hash fields sorted too (readHash), so two exports of unchanged
+  // data are identical, which makes them diffable.
+  return [...keys].sort(byCodePoint);
+}
+
+/** Plain code-point order: stable across machines, unlike localeCompare. */
+export function byCodePoint(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 async function readHash(client: ExportClient, key: string): Promise<Record<string, string>> {
   // No prototype: on a plain {} a field named "__proto__" would be swallowed by
   // the setter instead of stored, and the archive would drop it silently.
-  const out: Record<string, string> = Object.create(null);
+  const fields = new Map<string, string>(); // a Map, so a repeated field is kept once
   let cursor: string | number = 0;
   do {
     const [next, flat] = await client.hscan(key, cursor, { count: PAGE });
     for (let i = 0; i + 1 < flat.length; i += 2) {
-      out[mustBeString(flat[i], key)] = mustBeString(flat[i + 1], key);
+      fields.set(mustBeString(flat[i], key), mustBeString(flat[i + 1], key));
     }
     cursor = next;
   } while (String(cursor) !== '0');
+
+  // Sorted, because Redis promises no field order: two HSCANs of an unchanged
+  // hash can disagree, and a hash written back in one order can scan out in
+  // another. Without this, two exports of the same data would differ and a
+  // restore's read-back would see a correctly restored hash as changed.
+  // (Integer-like field names still serialize first, in numeric order, since
+  // that is how JS orders object keys. Deterministic either way.)
+  const out: Record<string, string> = Object.create(null);
+  for (const field of [...fields.keys()].sort(byCodePoint)) out[field] = fields.get(field)!;
   return out;
 }
 
