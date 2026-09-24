@@ -8,6 +8,7 @@ import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights, { type IdleCashAccount } from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
+import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
@@ -321,8 +322,37 @@ export default function Dashboard() {
   const [txnsLoading, setTxnsLoading] = useState(false);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
-  const [budgets, setBudgets] = useState<Budgets>({});
-  const [goals, setGoals] = useState<Goal[]>([]);
+  // Budgets and goals are each saved as one whole list, so their loading and
+  // saving go through lib/whole-list-store.ts, which never lets an unloaded or
+  // stale list be saved over what is stored.
+  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState({}));
+  const [goalsState, setGoalsState] = useState<ListState<Goal[]>>(initialListState<Goal[]>([]));
+  const budgetsStore = useMemo(
+    () =>
+      createWholeListStore<Budgets>({
+        url: '/api/budgets',
+        field: 'budgets',
+        noun: 'budgets',
+        empty: {},
+        isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+        onChange: setBudgetsState,
+      }),
+    []
+  );
+  const goalsStore = useMemo(
+    () =>
+      createWholeListStore<Goal[]>({
+        url: '/api/goals',
+        field: 'goals',
+        noun: 'goals',
+        empty: [],
+        isValid: (v): v is Goal[] => Array.isArray(v),
+        onChange: setGoalsState,
+      }),
+    []
+  );
+  const budgets = budgetsState.value;
+  const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
   // type-to-confirm modal.
@@ -466,51 +496,9 @@ export default function Dashboard() {
   // empty when nothing is connected yet.
   useEffect(() => {
     loadTransactions();
-    fetch('/api/budgets')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.budgets) setBudgets(data.budgets);
-      })
-      .catch(() => {
-        // Budgets are additive; a failed load just shows none.
-      });
-    fetch('/api/goals')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.goals) setGoals(data.goals);
-      })
-      .catch(() => {
-        // Same: goals just show empty.
-      });
-  }, [loadTransactions]);
-
-  const saveBudgets = useCallback(async (next: Budgets) => {
-    setBudgets(next); // optimistic; the PUT below confirms
-    try {
-      const res = await fetch('/api/budgets', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ budgets: next }),
-      });
-      if (!res.ok) setError('Could not save budgets.');
-    } catch {
-      setError('Could not save budgets.');
-    }
-  }, []);
-
-  const saveGoals = useCallback(async (next: Goal[]) => {
-    setGoals(next); // optimistic
-    try {
-      const res = await fetch('/api/goals', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goals: next }),
-      });
-      if (!res.ok) setError('Could not save goals.');
-    } catch {
-      setError('Could not save goals.');
-    }
-  }, []);
+    budgetsStore.load();
+    goalsStore.load();
+  }, [loadTransactions, budgetsStore, goalsStore]);
 
   const recategorize = useCallback(async (transaction_id: string, category: string) => {
     // Optimistic local update; the server stores the override and clears its
@@ -797,7 +785,11 @@ export default function Dashboard() {
   const refreshAll = useCallback(() => {
     loadNetWorth(true);
     if (txns !== null) loadTransactions(true);
-  }, [loadNetWorth, loadTransactions, txns]);
+    // Retry a list that could not be loaded. One that loaded is left alone:
+    // reloading it mid-edit would only risk replacing what is on screen.
+    if (budgetsStore.get().status === 'error' && !budgetsStore.get().saving) budgetsStore.load();
+    if (goalsStore.get().status === 'error' && !goalsStore.get().saving) goalsStore.load();
+  }, [loadNetWorth, loadTransactions, txns, budgetsStore, goalsStore]);
 
   // Institutions showing recovered balances. Surfaced on the hero too, not just
   // on their own cards: the number someone actually reads is the total, and
@@ -1711,9 +1703,15 @@ export default function Dashboard() {
               <BudgetsTab
                 txns={txns}
                 budgets={budgets}
-                onSave={saveBudgets}
+                budgetsStatus={budgetsState.status}
+                budgetsError={budgetsState.error}
+                budgetsSaveError={budgetsState.saveError}
+                onSave={budgetsStore.save}
                 goals={goals}
-                onSaveGoals={saveGoals}
+                goalsStatus={goalsState.status}
+                goalsError={goalsState.error}
+                goalsSaveError={goalsState.saveError}
+                onSaveGoals={goalsStore.save}
                 // Hidden accounts stay in this list rather than being filtered
                 // out: GoalsCard needs them to tell "you hid this account" from
                 // "this account was disconnected". It excludes them from the

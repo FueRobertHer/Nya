@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server';
+import { StoredDataUnreadableError, describeUnreadable } from '@/lib/stored-json';
 import { getGoals, setGoals, type Goal } from '@/lib/goals';
 
 export async function GET() {
   try {
     return NextResponse.json({ goals: await getGoals() });
   } catch (err) {
+    // 409, not 500, and flagged: the client must not show "none" and let the
+    // next save overwrite what is there.
+    if (err instanceof StoredDataUnreadableError) {
+      console.error('Stored goals unreadable:', describeUnreadable(err));
+      return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
+    }
     console.error(err);
     return NextResponse.json({ error: 'Failed to load goals' }, { status: 500 });
   }
@@ -32,6 +39,10 @@ export async function PUT(req: Request) {
     await setGoals(clean);
     return NextResponse.json({ goals: clean });
   } catch (err) {
+    if (err instanceof StoredDataUnreadableError) {
+      console.error('Stored goals unreadable:', describeUnreadable(err));
+      return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
+    }
     console.error(err);
     return NextResponse.json({ error: 'Failed to save goals' }, { status: 500 });
   }
