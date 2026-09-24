@@ -45,9 +45,13 @@ const SETTLE_DAYS = 3;
 export function contributionBaseline(
   points: BalancePoint[],
   flows: Flow[] | null | undefined,
-  flowsFrom: string | null | undefined
+  flowsFrom: string | null | undefined,
+  /** Last date the flows are known complete for. Past it a contribution may
+   *  simply not be known yet, and would read as growth, so the line stops. */
+  flowsTo?: string | null
 ): { date: string; value: number }[] | null {
   if (!flows || !flowsFrom) return null;
+  if (flowsTo) points = points.filter((p) => p.date <= flowsTo);
   const sorted = [...flows].sort((a, b) => (a.date < b.date ? -1 : 1));
   const candidates = points.filter((p) => !p.estimated && p.date >= flowsFrom);
   if (candidates.length === 0) return null;

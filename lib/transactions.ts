@@ -36,7 +36,7 @@
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
-import { encodeJsonBlob, decodeJsonBlob, MAX_BLOB_CHARS, BLOB_WARN_CHARS } from './blob';
+import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { redis, k, type StoredItem } from './storage';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -443,9 +443,9 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
     // Refusing is recoverable: the cursor does not advance, the deltas are
     // idempotent, and the stored blob stays whatever it last was. Dropped
     // rows are not recoverable at all.
-    if (encoded.length > MAX_BLOB_CHARS) {
+    if (encoded.length > maxBlobChars()) {
       console.error(
-        `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${MAX_BLOB_CHARS} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
+        `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
       );
       try {
         const marker: BlockedMarker = { at: new Date().toISOString(), chars: encoded.length };
@@ -457,9 +457,9 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
       return { persisted: false, reason: 'oversize' };
     }
 
-    if (encoded.length > BLOB_WARN_CHARS) {
+    if (encoded.length > blobWarnChars()) {
       console.warn(
-        `transactions: ${item_id} blob is ${encoded.length} chars, past ${Math.round((encoded.length / MAX_BLOB_CHARS) * 100)}% of the ceiling`
+        `transactions: ${item_id} blob is ${encoded.length} chars, past ${Math.round((encoded.length / maxBlobChars()) * 100)}% of the ceiling`
       );
     }
 
@@ -614,7 +614,7 @@ async function syncItem(
       // An unparseable marker clears too, rather than blocking forever on a
       // value nothing can interpret. The cost is one wasted pull, and
       // writeState re-sets the marker if the blob is still too big.
-      if (!marker || marker.chars <= MAX_BLOB_CHARS) {
+      if (!marker || marker.chars <= maxBlobChars()) {
         await redis().del(blockedKey(item.item_id));
       } else {
         return {

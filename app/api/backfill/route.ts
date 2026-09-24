@@ -3,7 +3,7 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
-import { fetchInvestmentTxns } from '@/lib/investments';
+import { syncInvestments } from '@/lib/invstore';
 import { getManualAccounts } from '@/lib/manual';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
 import { addInvestmentFlows, isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
@@ -111,33 +111,58 @@ export async function POST() {
         // retry is the client noticing history is thin -- treating that as a
         // note would mean one plain checking account permanently blocks
         // backfill for everything else.
-        const hasInvestment = bal.data.accounts.some((a) => isInvestmentType(a.type));
-        const inv = hasInvestment
-          ? await fetchInvestmentTxns(access_token, isoDaysAgo(LOOKBACK_DAYS), isoDaysAgo(0))
-          : { txns: [], note: 'no investment accounts', truncated: false, pending: false };
+        const investmentIds = bal.data.accounts
+          .filter((a) => isInvestmentType(a.type))
+          .map((a) => a.account_id);
+        const hasInvestment = investmentIds.length > 0;
+        // From the Item's stored investment transactions (lib/invstore.ts),
+        // brought up to date first. Every stored row goes to the walk, which
+        // judges paycheck trades over all of them and walks only the window.
+        const inv = hasInvestment ? await syncInvestments(item) : null;
+
+        const windowStart = isoDaysAgo(LOOKBACK_DAYS);
+        const yesterday = isoDaysAgo(1);
+        // Covered when every investment account has VERIFIED coverage from the
+        // window's start to at least yesterday. Tracked apart from how many rows
+        // came back: an account with no activity all year IS covered, and
+        // walking it yields a flat series correctly. A Plaid failure, or
+        // coverage that stops short (an outage, or recent syncs that couldn't be
+        // verified), holds the Item's investments flat instead: a walk with a
+        // stretch of flows missing publishes a curve that looks fine and isn't.
+        // A storage-only problem doesn't count against it; the rows were
+        // fetched live.
+        const invCovered =
+          !!inv &&
+          !inv.note &&
+          investmentIds.every((id) => {
+            const cov = inv.coverage[id];
+            return !!cov && cov.from <= windowStart && cov.through >= yesterday;
+          });
+
+        // Worth waiting for, rather than accepting flat and marking done:
+        //   - Plaid is extracting right now (the async_update the fetch asks
+        //     for started it) and the same call works a minute later;
+        //   - another sync held the store's lock, possibly mid-fill;
+        //   - rows in the window are marked missing but not yet confirmed, so
+        //     the next verified sync may bring them back or exclude them;
+        //   - the fetch worked but coverage still falls short, which is almost
+        //     always a sync that couldn't be verified (a total that moved
+        //     between requests) and passes on the next one.
+        // All bounded by MAX_PENDING_RUNS, like the first always was, so an
+        // Item that can never be verified is accepted flat after a few loads.
+        const unconfirmedInWindow =
+          !!inv &&
+          investmentIds.some((id) => (inv.unconfirmed[id] ?? []).some((d) => d >= windowStart));
+        const coverageShort = !!inv && !inv.note && !invCovered;
+        const invPending = !!inv && (inv.pending || inv.busy || unconfirmedInWindow || coverageShort);
 
         return {
           accounts: bal.data.accounts,
           txns,
           note,
-          invTxns: inv.txns,
-          // Tracked separately from `invTxns.length`: an account whose product
-          // works but simply had no activity all year IS covered, and walking
-          // it correctly yields a flat series. Conflating the two would push it
-          // into the flat term, where hiding it later subtracts the wrong
-          // number from every estimated point.
-          //
-          // `truncated` also disqualifies it. Plaid returns newest first, so a
-          // capped fetch is missing its OLDEST rows -- the walk would run to the
-          // left edge with flows silently absent and publish a curve that looks
-          // fine and isn't.
-          invCovered: hasInvestment && !inv.note && !inv.truncated,
-          // The one investment failure that fixes itself: Plaid is extracting
-          // right now (the async_update fetchInvestmentTxns asks for is what
-          // started it) and the same call works a minute later. Kept separate
-          // from `note` so it can leave the done-flag unset below without
-          // aborting the run.
-          invPending: hasInvestment && inv.pending,
+          invTxns: inv?.rows ?? [],
+          invCovered,
+          invPending,
         };
       })
     );
@@ -194,7 +219,7 @@ export async function POST() {
       // Tracked separately because an investment account's own series has
       // real data out there and is drawn over it -- which is where a rollover
       // older than the cash window lives. See reconstruct in lib/backfill.ts.
-      const oldestHere = addInvestmentFlows(dailyByAccount, invTxns, walkType);
+      const oldestHere = addInvestmentFlows(dailyByAccount, invTxns, walkType, isoDaysAgo(LOOKBACK_DAYS));
       if (oldestHere && (!oldestInvTxn || oldestHere < oldestInvTxn)) oldestInvTxn = oldestHere;
     }
 

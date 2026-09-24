@@ -26,22 +26,32 @@ import { encrypt, decrypt } from './crypto';
 // Validated rather than trusted: a negative or non-numeric value would
 // otherwise sail through and put every Item over the ceiling at once, blocking
 // every sync in the account over a typo in an env var.
+//
+// Read when used, not when this module loads. Two stores import it now, and
+// whichever loads first would otherwise fix the value before anything else
+// had a chance to set it (tests do, and module caches are shared).
 const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
-export const MAX_BLOB_CHARS = (() => {
+let resolved: { raw: string | undefined; value: number } | null = null;
+export function maxBlobChars(): number {
   const raw = process.env.MAX_TXN_BLOB_CHARS;
-  if (!raw) return DEFAULT_MAX_BLOB_CHARS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    console.warn(
-      `transactions: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
-    );
-    return DEFAULT_MAX_BLOB_CHARS;
+  if (resolved && resolved.raw === raw) return resolved.value;
+  let value = DEFAULT_MAX_BLOB_CHARS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      console.warn(
+        `transactions: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
+      );
+    } else {
+      value = parsed;
+    }
   }
-  return parsed;
-})();
+  resolved = { raw, value };
+  return value;
+}
 // Log a warning well before the wall, so a blob on its way there is visible
 // while there is still time to do something about it.
-export const BLOB_WARN_CHARS = MAX_BLOB_CHARS * 0.6;
+export const blobWarnChars = () => maxBlobChars() * 0.6;
 
 // Blobs are gzip-compressed before encryption — financial JSON is highly
 // repetitive (field names, categories, institution names repeat on every row),

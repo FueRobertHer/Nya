@@ -29,12 +29,17 @@ export type WalkType = 'depository' | 'credit' | 'investment';
 export function addInvestmentFlows(
   dailyByAccount: Record<string, Record<string, number>>,
   invTxns: InvestmentTxn[],
-  walkType: Record<string, WalkType>
+  walkType: Record<string, WalkType>,
+  /** Only rows on or after this date are walked. The trades are still judged
+   *  over EVERY row passed in, so the answer matches the activity route's,
+   *  which sees the account's whole stored history. */
+  since?: string
 ): string | null {
   const counted = countedTrades(invTxns);
   let oldest: string | null = null;
   for (const t of invTxns) {
     if (walkType[t.account_id] !== 'investment') continue;
+    if (since && t.date < since) continue;
     const delta = walkDelta(t, counted);
     if (delta === 0) continue; // internal reallocation: buys, sells, corporate actions
     const day = (dailyByAccount[t.date] ??= {});

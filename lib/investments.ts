@@ -319,18 +319,24 @@ function isCashLeg(t: InvestmentTxn, subtype: string): boolean {
  * Institutions report these one of two ways. Some book the money as a cash row
  * (cash/contribution) and then the shares it bought as a buy that is purely
  * internal. Others book only the buy. The question is which style an account
- * uses, and it is answered PER ACCOUNT AND SUBTYPE from the evidence in the
- * set: if an account has any cash row of that subtype, its trades of that
- * subtype are the internal half and never count; if it has none, they are the
- * only record of the money and always count.
+ * uses, and it is answered PER ACCOUNT AND SUBTYPE from the evidence NEAR
+ * each trade: if the account has a cash row of that subtype within
+ * STYLE_EVIDENCE_DAYS of it, the trade is the internal half and doesn't count;
+ * if not, it is the only record of the money and counts.
  *
  * Deliberately not matched row to row. Pairing a cash row with a trade of the
  * same amount on the same day broke on ordinary cases, each counting the money
  * twice: a paycheck split across two funds (one cash row, two buys), an
  * employer match (two cash rows, one buy), a cash row that settles days before
  * the buy, and a distribution with tax withheld (one sell, a smaller cash row).
- * An institution does not switch styles between paychecks, so the account-level
- * answer covers all of them.
+ * An institution does not switch styles between paychecks, so nearby evidence
+ * answers for all of them.
+ *
+ * Nearby rather than lifetime or calendar year. With years of stored history,
+ * one cash row from before a recordkeeper change would flip every later trade
+ * to internal. By calendar year, a cash contribution on Dec 31 whose buy
+ * settles Jan 2 (or an RMD sold Dec 30 and paid Jan 3) would leave each year
+ * seeing one leg and count the money twice.
  *
  * Matched on the SAME subtype so an unrelated cash row can't suppress the
  * trades: a rollover arriving as a cash transfer says nothing about how the
@@ -339,19 +345,28 @@ function isCashLeg(t: InvestmentTxn, subtype: string): boolean {
  * Decided over the whole set because no single row can answer it. The balance
  * walk (addInvestmentFlows), the chart's money-added line (dailyFlows) and the
  * year-to-date figures (contributedAmount) all read the same answer, so they
- * cannot disagree about whether a paycheck happened.
+ * cannot disagree about whether a paycheck happened. Callers pass every row
+ * they have for the account, not a window of them, so that answer can't depend
+ * on where a window happens to start.
  */
+const STYLE_EVIDENCE_DAYS = 45;
+
 export function countedTrades(txns: InvestmentTxn[]): Set<InvestmentTxn> {
-  const cashStyle = new Set<string>(); // `${account_id}\0${subtype}` with a cash row
+  const cashLegDays = new Map<string, number[]>(); // `${account_id}\0${subtype}` -> day numbers
+  const dayNumber = (date: string) => Math.floor(Date.parse(`${date}T00:00:00Z`) / 86_400_000);
   for (const t of txns) {
     const subtype = (t.subtype || '').toLowerCase();
     if (!MONEY_IN_BUY_SUBTYPES.has(subtype) && !MONEY_OUT_SELL_SUBTYPES.has(subtype)) continue;
-    if (isCashLeg(t, subtype)) cashStyle.add(`${t.account_id}\u0000${subtype}`);
+    if (!isCashLeg(t, subtype)) continue;
+    const key = `${t.account_id}\u0000${subtype}`;
+    (cashLegDays.get(key) ?? cashLegDays.set(key, []).get(key)!).push(dayNumber(t.date));
   }
   const counted = new Set<InvestmentTxn>();
   for (const t of txns) {
     if (tradeFlow(t) === 0) continue;
-    if (!cashStyle.has(`${t.account_id}\u0000${(t.subtype || '').toLowerCase()}`)) counted.add(t);
+    const legs = cashLegDays.get(`${t.account_id}\u0000${(t.subtype || '').toLowerCase()}`) ?? [];
+    const day = dayNumber(t.date);
+    if (!legs.some((d) => Math.abs(d - day) <= STYLE_EVIDENCE_DAYS)) counted.add(t);
   }
   return counted;
 }
@@ -465,23 +480,7 @@ export async function fetchInvestmentTxns(
 
       for (const t of page_txns) {
         if (t.cancel_transaction_id) cancelled.add(t.cancel_transaction_id);
-        txns.push({
-          investment_transaction_id: t.investment_transaction_id,
-          account_id: t.account_id,
-          date: t.date,
-          name: t.name,
-          type: String(t.type),
-          subtype: String(t.subtype),
-          quantity: t.quantity,
-          price: t.price,
-          amount: t.amount,
-          fees: t.fees ?? null,
-          currency: t.iso_currency_code ?? null,
-          security:
-            securities[t.security_id ?? '']?.name ||
-            securities[t.security_id ?? '']?.ticker_symbol ||
-            null,
-        });
+        txns.push(toInvestmentTxn(t, securities));
       }
 
       // A short page means the end, whatever `total` claims. Without this a
@@ -501,57 +500,8 @@ export async function fetchInvestmentTxns(
     // The activity list is unaffected, since it only shows the newest rows.
     if (offset < total) truncated = true;
   } catch (err: any) {
-    const code = err?.response?.data?.error_code;
-    if (code === 'PRODUCT_NOT_READY') {
-      return {
-        txns: [],
-        note: 'Investment activity is still importing',
-        truncated: false,
-        pending: true,
-      };
-    }
-    // A client-side timeout (lib/plaid.ts) reaches here with no Plaid error
-    // code at all, because Plaid never answered. It is transient in exactly the
-    // way PRODUCT_NOT_READY is, so it gets the same `pending` treatment, and
-    // that classification is load-bearing rather than cosmetic: /api/backfill
-    // deliberately does NOT treat an investment failure as a blocking note, so
-    // an unclassified one would leave invCovered AND invPending both false, and
-    // the run would persist an estimated layer with every investment account
-    // held flat and then MARK IT DONE. Nothing retries a done backfill, so one
-    // slow call would permanently cost the chart its investment history.
-    // `pending` instead leaves the flag unset for the next load, bounded by the
-    // MAX_PENDING_RUNS counter that already exists for the same reason.
-    if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') {
-      return {
-        txns: [],
-        note: 'Investment activity timed out',
-        truncated: false,
-        pending: true,
-      };
-    }
-    if (code === 'ITEM_LOGIN_REQUIRED') {
-      return {
-        txns: [],
-        note: 'This account needs to be reconnected',
-        truncated: false,
-        pending: false,
-      };
-    }
-    if (code === 'PRODUCTS_NOT_SUPPORTED' || code === 'NO_INVESTMENT_ACCOUNTS') {
-      return {
-        txns: [],
-        note: 'Investment activity is not available here',
-        truncated: false,
-        pending: false,
-      };
-    }
-    console.error(err?.response?.data || err);
-    return {
-      txns: [],
-      note: 'Could not fetch investment activity',
-      truncated: false,
-      pending: false,
-    };
+    const { note, pending } = classifyFetchError(err);
+    return { txns: [], note, truncated: false, pending };
   }
 
   // Cancellations come in pairs: the reversing row and the row it reverses.
@@ -561,8 +511,82 @@ export async function fetchInvestmentTxns(
     (t) =>
       t.type.toLowerCase() !== 'cancel' &&
       !cancelled.has(t.investment_transaction_id) &&
-      !PENDING_SUBTYPES.has(t.subtype.toLowerCase())
+      !isPendingSubtype(t.subtype)
   );
 
   return { txns: clean, note: null, truncated, pending: false };
+}
+
+/** Pending rows: the stand-in Plaid uses for the pending flag cash rows carry. */
+export function isPendingSubtype(subtype: string | null | undefined): boolean {
+  return PENDING_SUBTYPES.has((subtype || '').toLowerCase());
+}
+
+/** A raw Plaid investment transaction in the shape the rest of the app reads. */
+export function toInvestmentTxn(
+  t: {
+    investment_transaction_id: string;
+    account_id: string;
+    date: string;
+    name: string;
+    type: unknown;
+    subtype: unknown;
+    quantity: number;
+    price: number;
+    amount: number;
+    fees?: number | null;
+    iso_currency_code?: string | null;
+    security_id?: string | null;
+  },
+  securities: Record<string, { name?: string | null; ticker_symbol?: string | null } | undefined>
+): InvestmentTxn {
+  const security = securities[t.security_id ?? ''];
+  return {
+    investment_transaction_id: t.investment_transaction_id,
+    account_id: t.account_id,
+    date: t.date,
+    name: t.name,
+    type: String(t.type),
+    subtype: String(t.subtype),
+    quantity: t.quantity,
+    price: t.price,
+    amount: t.amount,
+    fees: t.fees ?? null,
+    currency: t.iso_currency_code ?? null,
+    security: security?.name || security?.ticker_symbol || null,
+  };
+}
+
+/**
+ * What a failed investment-transactions call means: a note to show, and
+ * whether it will fix itself. Shared by fetchInvestmentTxns and the stored sync
+ * (lib/invstore.ts) so both classify every failure the same way.
+ */
+export function classifyFetchError(err: any): { note: string; pending: boolean } {
+  const code = err?.response?.data?.error_code;
+  if (code === 'PRODUCT_NOT_READY') {
+    return { note: 'Investment activity is still importing', pending: true };
+  }
+  // A client-side timeout (lib/plaid.ts) reaches here with no Plaid error
+  // code at all, because Plaid never answered. It is transient in exactly the
+  // way PRODUCT_NOT_READY is, so it gets the same `pending` treatment, and
+  // that classification is load-bearing rather than cosmetic: /api/backfill
+  // deliberately does NOT treat an investment failure as a blocking note, so
+  // an unclassified one would leave invCovered AND invPending both false, and
+  // the run would persist an estimated layer with every investment account
+  // held flat and then MARK IT DONE. Nothing retries a done backfill, so one
+  // slow call would permanently cost the chart its investment history.
+  // `pending` instead leaves the flag unset for the next load, bounded by the
+  // MAX_PENDING_RUNS counter that already exists for the same reason.
+  if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') {
+    return { note: 'Investment activity timed out', pending: true };
+  }
+  if (code === 'ITEM_LOGIN_REQUIRED') {
+    return { note: 'This account needs to be reconnected', pending: false };
+  }
+  if (code === 'PRODUCTS_NOT_SUPPORTED' || code === 'NO_INVESTMENT_ACCOUNTS') {
+    return { note: 'Investment activity is not available here', pending: false };
+  }
+  console.error(err?.response?.data || err);
+  return { note: 'Could not fetch investment activity', pending: false };
 }

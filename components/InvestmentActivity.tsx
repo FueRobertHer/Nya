@@ -29,6 +29,8 @@ export type InvestmentActivityPayload = {
    *  growth line. Null when unavailable or withheld (see the route). */
   flows?: { date: string; amount: number }[] | null;
   flows_from?: string | null;
+  /** Last date the flows are known complete for; the line stops there. */
+  flows_to?: string | null;
   note: string | null;
 };
 type Payload = InvestmentActivityPayload;
@@ -116,13 +118,15 @@ export default function InvestmentActivity({
   if (data === null) {
     return <div className="spinner" role="status" aria-label="Loading investment activity" />;
   }
-  if (data.note) return <p className="empty-note">{data.note}.</p>;
+  // With stored history, a note (institution down, storage problem) no longer
+  // means there is nothing to show: say it, then show what is stored.
   if (data.txns.length === 0) {
-    return <p className="empty-note">No investment activity in the last year.</p>;
+    return <p className="empty-note">{data.note ? `${data.note}.` : 'No investment activity yet.'}</p>;
   }
 
   return (
     <div className="inv-activity">
+      {data.note && <p className="empty-note">{data.note}; showing saved activity.</p>}
       {data.ytd_contributions > 0 && (
         <div className="type-tag">
           {formatMoney(data.ytd_contributions, data.txns[0]?.currency)} contributed this year

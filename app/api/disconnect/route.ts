@@ -4,6 +4,7 @@ import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
 import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
+import { clearInvestmentStore, storedInvestmentAccountIds } from '@/lib/invstore';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 import { pruneHidden } from '@/lib/hidden';
 import { rememberedIdsForItem, forgetItem } from '@/lib/last-known';
@@ -45,14 +46,16 @@ export async function POST(req: Request) {
     // point forever, and with the account gone from the live list there'd be no
     // Unhide button to stop it.
     //
-    // Three sources, unioned, because no one of them is complete. The
+    // Four sources, unioned, because no one of them is complete. The
     // transaction store misses an investments-only Item, or one linked but
     // never synced. The net-worth cache is null whenever it expired or any
     // institution errored. accounts:meta (lib/last-known.ts) covers any Item
     // that has ever loaded successfully and never expires, so it's the broadest
     // of the three, but it misses one linked and disconnected without a single
-    // successful load in between.
+    // successful load in between. The investment store fills the transaction
+    // store's gap for investments-only Items.
     const accountIds = new Set(await getItemAccountIds(item_id));
+    for (const id of await storedInvestmentAccountIds(item_id)) accountIds.add(id);
     for (const id of await rememberedIdsForItem(item_id)) accountIds.add(id);
     const cached = await readCache<{ institutions: any[] }>(NET_WORTH_CACHE_KEY);
     for (const inst of cached?.institutions ?? []) {
@@ -63,6 +66,9 @@ export async function POST(req: Request) {
     await removeItem(item_id);
     // Drop this Item's persisted sync cursor + transactions.
     await clearItemTransactions(item_id);
+    // And its stored investment transactions. A sync still running writes, then
+    // sees the Item gone and deletes what it wrote (lib/invstore.ts).
+    await clearInvestmentStore(item_id);
     await pruneHidden([...accountIds]);
     await forgetItem(item_id);
     // Its vanished-account record goes with it: the Item is gone, so nothing

@@ -64,7 +64,7 @@ export default function AccountSparkline({
   }, [accountId, itemId]);
 
   const baseline = useMemo(
-    () => (points && activity ? contributionBaseline(points, activity.flows, activity.flows_from) : null),
+    () => (points && activity ? contributionBaseline(points, activity.flows, activity.flows_from, activity.flows_to) : null),
     [points, activity]
   );
 
