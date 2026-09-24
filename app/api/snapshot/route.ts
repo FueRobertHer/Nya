@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { computeNetWorth, recordFetch, isRecordable } from '@/lib/networth';
 import { clearCaches } from '@/lib/cache';
 import { rememberAccounts } from '@/lib/last-known';
+import { recordDirectory } from '@/lib/links';
 import { finishMasterRotation } from '@/lib/crypto';
 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
@@ -42,6 +43,7 @@ export async function GET(req: Request) {
     // institution short (lib/last-known.ts reports the shortfall but cannot
     // undo it).
     await rememberAccounts(institutions);
+    await recordDirectory(institutions);
     await clearCaches(); // cached payloads now have yesterday's history
     return NextResponse.json({ recorded: recorded !== null });
   } catch (err: any) {

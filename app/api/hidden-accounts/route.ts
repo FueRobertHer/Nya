@@ -4,6 +4,7 @@ import { computeNetWorth } from '@/lib/networth';
 import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
 import { findRememberedAccount } from '@/lib/last-known';
+import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds } from '@/lib/links';
 
 // Hides or unhides ONE account per request.
 //
@@ -80,7 +81,24 @@ export async function POST(req: Request) {
       }
     }
 
-    await setAccountHidden(account_id, type ?? '', hidden);
+    if (hidden) {
+      // Hiding writes the current id; the link expansion (lib/links.ts) hides
+      // the account's earlier ids with it.
+      await setAccountHidden(account_id, type ?? '', true);
+    } else {
+      // Unhiding clears EVERY id the account has had. An earlier id left hidden
+      // would keep hiding it through the link, and Unhide would do nothing.
+      // Unlinked, this is just the one id. A failed read of the links fails
+      // the request rather than leaving the account half-hidden.
+      // Through ACTIVE links only, the same ones the display follows: a
+      // paused link joins two live accounts that are each hidden on their own.
+      // Strict: an unreadable live set would make every paused link look
+      // active, and this write would unhide the other account for good.
+      const active = effectiveLinks(await getLinks(), await liveAccountIds({ strict: true }));
+      for (const id of sameAccountIds(account_id, active)) {
+        await setAccountHidden(id, '', false);
+      }
+    }
 
     // The estimated layer can only subtract an account it knows about, either
     // via a per-date balance or via the flat term. If it knows neither -- the

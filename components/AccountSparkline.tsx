@@ -19,8 +19,12 @@ export default function AccountSparkline({
   accountId,
   itemId,
   currency,
+  previewWith,
 }: {
   accountId: string;
+  /** An earlier id to join onto this account's chart as a preview, before the
+   *  user links it (lib/links.ts). Read-only. */
+  previewWith?: string;
   /** The account's ISO currency, so its chart doesn't print a EUR account in $. */
   currency?: string | null;
   /** The account's Plaid Item, for an investment account; enables the split. */
@@ -32,7 +36,8 @@ export default function AccountSparkline({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/account-history?id=${encodeURIComponent(accountId)}`)
+    const withParam = previewWith ? `&with=${encodeURIComponent(previewWith)}` : '';
+    fetch(`/api/account-history?id=${encodeURIComponent(accountId)}${withParam}`)
       .then((res) => {
         if (!res.ok) throw new Error();
         return res.json();
@@ -46,7 +51,7 @@ export default function AccountSparkline({
     return () => {
       cancelled = true;
     };
-  }, [accountId]);
+  }, [accountId, previewWith]);
 
   useEffect(() => {
     if (!itemId) return;

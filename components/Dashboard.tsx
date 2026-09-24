@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
+import AccountLinks from './AccountLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -1224,6 +1225,11 @@ export default function Dashboard() {
                   </button>
                   {error && <div className="error">{error}</div>}
                 </div>
+
+                {/* Only renders when there is a reconnected account to link or
+                    a link to undo. A change reloads live, since links alter
+                    hidden accounts and per-account history. */}
+                <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and

@@ -1,10 +1,25 @@
 import { NextResponse } from 'next/server';
+import { effectiveLinks, getLinks, liveAccountIds, resolveId, type Link } from '@/lib/links';
 import { StoredDataUnreadableError, describeUnreadable } from '@/lib/stored-json';
 import { getGoals, setGoals, type Goal } from '@/lib/goals';
 
 export async function GET() {
   try {
-    return NextResponse.json({ goals: await getGoals() });
+    const goals = await getGoals();
+    // A goal tracking an account that has since been linked to a new id
+    // (lib/links.ts) follows it, so its progress keeps working after a
+    // reconnect. The stored goal isn't touched here; the next save from the
+    // client writes the current id, which is harmless and survives an unlink.
+    // Links that can't be read leave the ids as stored.
+    let links = new Map<string, Link>();
+    try {
+      links = effectiveLinks(await getLinks(), await liveAccountIds());
+    } catch {
+      links = new Map();
+    }
+    return NextResponse.json({
+      goals: goals.map((g) => (g.account_id ? { ...g, account_id: resolveId(g.account_id, links) } : g)),
+    });
   } catch (err) {
     // 409, not 500, and flagged: the client must not show "none" and let the
     // next save overwrite what is there.

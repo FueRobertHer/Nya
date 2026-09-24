@@ -42,6 +42,7 @@
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 import { rememberedIdsForItem, rememberedIdsByItem } from './last-known';
+import { getLinks, resolveId, type Link } from './link-core';
 
 const VANISHED_HASH = k('accounts:vanished');
 
@@ -289,6 +290,9 @@ export async function checkVanishedAll(
 export type VanishedInputs = {
   remembered: Record<string, string[]>;
   records: Record<string, VanishRecord>;
+  /** Account links (lib/links.ts). An id the user linked to an account that
+   *  is present is not missing: the account is there under its new id. */
+  links?: Map<string, Link>;
 };
 
 /**
@@ -297,8 +301,14 @@ export type VanishedInputs = {
  * whichever is slower rather than for both in series.
  */
 export async function loadVanishedInputs(): Promise<VanishedInputs> {
-  const [remembered, records] = await Promise.all([rememberedIdsByItem(), readAllRecords()]);
-  return { remembered, records };
+  const [remembered, records, links] = await Promise.all([
+    rememberedIdsByItem(),
+    readAllRecords(),
+    // Unreadable links mean a linked id reads as missing and pauses snapshots:
+    // the safe direction, the same as before links existed.
+    getLinks().catch(() => new Map<string, Link>()),
+  ]);
+  return { remembered, records, links };
 }
 
 /** The comparison itself, against already-loaded inputs. Writes happen here:
@@ -312,9 +322,15 @@ export async function applyVanished(
 
   await Promise.all(
     institutions.map(async (inst) => {
+      const fresh = inst.accounts.map((a) => a.account_id);
+      const freshSet = new Set(fresh);
+      // Earlier ids of accounts that are here now count as here.
+      const linkedHere = [...(inputs.links ?? new Map()).keys()].filter(
+        (old) => !freshSet.has(old) && freshSet.has(resolveId(old, inputs.links!))
+      );
       const res = await checkOne(
         inst.item_id,
-        inst.accounts.map((a) => a.account_id),
+        [...fresh, ...linkedHere],
         inputs.remembered[inst.item_id] ?? [],
         now,
         inputs.records[inst.item_id] ?? {}

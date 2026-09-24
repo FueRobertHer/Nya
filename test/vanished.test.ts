@@ -314,8 +314,9 @@ describe('cost', () => {
     // institutions cost only one more than batched, so any loose threshold
     // passes both.
     expect(three).toBe(two);
-    // Exactly two: one hgetall for the remembered hash, one for the records.
-    expect(two).toBe(2);
+    // Exactly three: one hgetall each for the remembered hash, the records,
+    // and the account links.
+    expect(two).toBe(3);
   });
 
   test('costs nothing at all when there are no institutions', async () => {
