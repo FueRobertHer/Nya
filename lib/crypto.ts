@@ -70,10 +70,11 @@
 // value never contains one, and anything that does is versioned.
 //
 // WRITES go to the ACTIVE data key ("crypto:active") in v2. The first write
-// that has a master and finds no active key creates k1 (see activeKeyId). With
-// no master, or if the active key cannot be had for any reason, writes fall
-// back to v1 under k0, which every deployment can read: a missing or broken
-// master can make writes use the old key, never make them fail.
+// that has the current master and finds no active key creates k1 (see
+// createActiveKey). With no master, or if the active key cannot be had for any
+// reason, writes fall back to v1 under k0, which every deployment can read: a
+// missing or broken master can make writes use the old key, never make them
+// fail.
 //
 // Once anything has written v2 in production, this reader must never be
 // reverted to before it, or those values become unreadable.
@@ -451,11 +452,15 @@ async function writeKey(id: string, stored: StoredDataKey): Promise<void> {
   await redis().hset(keysHashKey(), { [id]: JSON.stringify(stored) });
 }
 
-/** Run one rotation step at a time across every instance. */
-async function withRotationLock<T>(fn: () => Promise<T>): Promise<T> {
+/** Run one rotation step (or the creation of the first data key) at a time
+ *  across every instance. */
+async function withRotationLock<T>(fn: () => Promise<T>, onBusy?: () => Promise<T>): Promise<T> {
   const token = crypto.randomUUID();
   const got = await redis().set(rotationLockKey(), token, { nx: true, px: ROTATION_LOCK_MS });
-  if (!got) throw new RotationError('Another rotation step is running. Try again in a minute.');
+  if (!got) {
+    if (onBusy) return onBusy();
+    throw new RotationError('Another rotation step is running. Try again in a minute.');
+  }
   try {
     return await fn();
   } finally {
@@ -493,6 +498,10 @@ export async function prepareMasterRotation(
     }
     if (next.fingerprint === current.fingerprint) {
       throw new RotationError('The new master key is the same as the current one.');
+    }
+    const recorded = await readCurrentMaster();
+    if (recorded !== null && recorded !== current.fingerprint) {
+      throw new RotationError(`This deployment's master (${current.fingerprint}) is not the current one (${recorded}), so nothing was changed.`);
     }
 
     const keys = await readAllKeys();
@@ -588,6 +597,10 @@ export async function finishMasterRotation(
       const { next: _done, ...rest } = stored;
       await writeKey(id, { ...rest, wrapped: { [current.fingerprint]: stored.wrapped[current.fingerprint] } });
     }
+    // Before the record goes, so no moment exists with neither a pending
+    // rotation nor this master recorded, in which an old deployment could
+    // create a key only it can open.
+    await writeCurrentMaster(current.fingerprint);
     await redis().del(rotationKey());
     return { state: 'finished', finished: keys.size };
   });
@@ -664,57 +677,124 @@ function v2Aad(header: string, context: string | undefined): Uint8Array {
 // ---------------------------------------------------------------------------
 // The active data key: the one new writes use
 
-/** How long a process trusts the active key id it last read. A change (a
- *  future data key rotation) is picked up within this. */
+/** How long a process trusts the active key id it last read, and the data key
+ *  it opened for it. A change of active key is picked up within this, so
+ *  anything that switches keys and then relies on the old one no longer being
+ *  written (a re-encryption pass) must wait longer than this first. */
 const ACTIVE_CACHE_MS = 60 * 1000;
+/** While writes are falling back to k0, how often to log it again. */
+const FALLBACK_LOG_EVERY_MS = 60 * 60 * 1000;
 
 export function activeKeyName(): string {
   return kEnv('crypto:active');
 }
 
+/** Which master is current: set when the first data key is created and moved
+ *  by finishMasterRotation. A deployment holding any other master (an old
+ *  instance still warm, an old deployment's URL, an instant rollback) must
+ *  never create a data key: only it could open that key. */
+export function currentMasterKeyName(): string {
+  return kEnv('crypto:master');
+}
+
+// Stored as JSON rather than the bare fingerprint: Upstash's default client
+// parses values on read, and a hex string like "1e5..." would come back a number.
+async function readCurrentMaster(): Promise<string | null> {
+  const value = await redis().get(currentMasterKeyName());
+  if (value === null || value === undefined) return null;
+  const r = (typeof value === 'string' ? JSON.parse(value) : value) as { fingerprint?: unknown };
+  if (!r || typeof r.fingerprint !== 'string') throw new MasterKeyError('The current master record is unreadable.');
+  return r.fingerprint;
+}
+
+async function writeCurrentMaster(fingerprint: string): Promise<void> {
+  await redis().set(currentMasterKeyName(), JSON.stringify({ fingerprint }));
+}
+
 let _active: { fingerprint: string; id: string; at: number } | null = null;
-let _fallbackLogged = false;
+let _activeLoad: { fingerprint: string; run: Promise<string | null> } | null = null;
+let _fallback: { since: number; loggedAt: number; reason: string } | null = null;
 
 /** Forget the cached active key id. For tests, and for code that has just
  *  changed it. */
 export function forgetActiveKey(): void {
   _active = null;
-  _fallbackLogged = false;
+  _activeLoad = null;
+  _fallback = null;
 }
 
 /**
- * Create the first data key and make it active. Only when there is no active
- * key and no master rotation is pending.
+ * Create the first data key and make it active, or null to keep writing k0
+ * for now.
  *
- * The key is stored and proven to open before it is claimed as active with
- * SET NX, so two instances racing to create one agree on a single winner; the
- * loser deletes the key it made, which nothing can have used.
+ * Runs under the rotation lock, so it can never interleave with a master
+ * rotation step: a key made while a rotation is being prepared would get only
+ * the old master's lock, and the rotation could then never finish. If the lock
+ * is busy, this write uses k0 and a later one tries again.
+ *
+ * Inside the lock, and only then, it checks that no key has appeared, that no
+ * rotation is pending, and that this deployment's master is the current one.
+ * The key is stored and proven to open before it is claimed with SET NX.
  */
-async function createActiveKey(master: MasterKey, now: number): Promise<string> {
-  const all = ((await redis().hgetall(keysHashKey())) ?? {}) as Record<string, unknown>;
-  const numbers = Object.keys(all)
-    .filter((id) => KEY_ID.test(id) && id !== LEGACY_KEY_ID)
-    .map((id) => Number(id.slice(1, id.indexOf('-'))));
-  const raw = crypto.getRandomValues(new Uint8Array(32));
-  const id = await dataKeyId(Math.max(0, ...numbers) + 1, raw);
-  const stored: StoredDataKey = { created_at: new Date(now).toISOString(), wrapped: { [master.fingerprint]: await master.wrap(id, raw) } };
-  await writeKey(id, stored);
-  // Proven from the store before anything relies on it.
-  const back = await redis().hget(keysHashKey(), id);
-  await unwrapDataKey(master, id, parseStoredDataKey(id, back));
+async function createActiveKey(master: MasterKey, now: number): Promise<unknown> {
+  return withRotationLock(
+    async () => {
+      const existing = await redis().get(activeKeyName());
+      if (existing !== null && existing !== undefined && existing !== '') return existing;
+      if (await rotationPending()) return null;
+      const current = await readCurrentMaster();
+      if (current !== null && current !== master.fingerprint) {
+        throw new MasterKeyError(
+          `This deployment's master (${master.fingerprint}) is not the current one (${current}), so it will not create a data key.`
+        );
+      }
+      if (current === null) await writeCurrentMaster(master.fingerprint);
 
-  if (await redis().set(activeKeyName(), id, { nx: true })) return id;
-  // Someone else claimed first: use theirs, remove ours.
-  await redis().hdel(keysHashKey(), id);
-  const winner = await redis().get(activeKeyName());
-  if (typeof winner !== 'string' || !KEY_ID.test(winner)) throw new MasterKeyError('Could not agree on an active data key.');
-  return winner;
+      const all = ((await redis().hgetall(keysHashKey())) ?? {}) as Record<string, unknown>;
+      const numbers = Object.keys(all)
+        .filter((id) => KEY_ID.test(id) && id !== LEGACY_KEY_ID)
+        .map((id) => Number(id.slice(1, id.indexOf('-'))));
+      const raw = crypto.getRandomValues(new Uint8Array(32));
+      const id = await dataKeyId(Math.max(0, ...numbers) + 1, raw);
+      const stored: StoredDataKey = { created_at: new Date(now).toISOString(), wrapped: { [master.fingerprint]: await master.wrap(id, raw) } };
+      await writeKey(id, stored);
+      // Proven from the store before anything relies on it.
+      const back = await redis().hget(keysHashKey(), id);
+      await unwrapDataKey(master, id, parseStoredDataKey(id, back));
+
+      // Checked again right before the claim, in case the lock expired under a
+      // very slow step and a rotation was prepared meanwhile. Nothing can have
+      // used the key yet, so it is safe to remove.
+      if (await rotationPending()) {
+        await redis().hdel(keysHashKey(), id);
+        return null;
+      }
+      if (await redis().set(activeKeyName(), id, { nx: true })) return id;
+      // Something set it outside the lock (a restore, say): use that, remove ours.
+      await redis().hdel(keysHashKey(), id);
+      return redis().get(activeKeyName());
+    },
+    async () => null
+  );
+}
+
+function checkActiveId(id: unknown): string {
+  if (typeof id !== 'string' || !KEY_ID.test(id) || id === LEGACY_KEY_ID) {
+    throw new MasterKeyError('The active data key record is not a data key id.');
+  }
+  return id;
 }
 
 /**
  * The data key new writes should use, or null to write v1 under k0: when
- * there is no master, or while a master rotation is pending and no data key
- * exists yet. Throws on anything unexpected; encrypt() turns that into k0.
+ * there is no master, while a master rotation is pending and no data key
+ * exists yet, or while another instance holds the rotation lock. Throws on
+ * anything unexpected; encrypt() turns that into k0.
+ *
+ * On every refresh (at most once a minute) the key is reloaded from the store,
+ * so a key that has gone (a restore replaced the key store) or no longer opens
+ * with this master stops being written within a minute. Concurrent refreshes
+ * in one process share one.
  */
 async function activeKeyId(now: number = Date.now()): Promise<string | null> {
   if (!process.env[MASTER_KEY_ENV]) return null;
@@ -722,24 +802,76 @@ async function activeKeyId(now: number = Date.now()): Promise<string | null> {
   if (_active && _active.fingerprint === master.fingerprint && now - _active.at >= 0 && now - _active.at < ACTIVE_CACHE_MS) {
     return _active.id;
   }
-  let id = await redis().get(activeKeyName());
-  if (id === null || id === undefined || id === '') {
-    // A key made now would only get the current master's lock, and finishing
-    // the rotation would then refuse. Keep writing k0 until it is done.
-    if (await rotationPending()) return null;
-    id = await createActiveKey(master, now);
+  if (_activeLoad && _activeLoad.fingerprint === master.fingerprint) return _activeLoad.run;
+
+  const run = (async () => {
+    let stored = await redis().get(activeKeyName());
+    if (stored === null || stored === undefined || stored === '') {
+      stored = await createActiveKey(master, now);
+      if (stored === null) return null;
+    }
+    const id = checkActiveId(stored);
+    _dataKeys.delete(`${master.fingerprint}:${id}`);
+    await dataKey(id);
+    _active = { fingerprint: master.fingerprint, id, at: now };
+    return id;
+  })();
+  const entry = { fingerprint: master.fingerprint, run };
+  _activeLoad = entry;
+  try {
+    return await run;
+  } finally {
+    if (_activeLoad === entry) _activeLoad = null;
   }
-  if (typeof id !== 'string' || !KEY_ID.test(id) || id === LEGACY_KEY_ID) {
-    throw new MasterKeyError('The active data key record is not a data key id.');
-  }
-  _active = { fingerprint: master.fingerprint, id, at: now };
-  return id;
 }
 
-/** The active data key id as stored, without creating one. For status. */
-export async function readActiveKey(): Promise<string | null> {
-  const id = await redis().get(activeKeyName());
-  return typeof id === 'string' && KEY_ID.test(id) ? id : null;
+export type ActiveKeyStatus = {
+  /** The data key new writes use, or null while they still use k0. */
+  active_key: string | null;
+  /** Why new writes cannot use it, if they cannot. */
+  active_key_problem?: string;
+  /** When THIS instance started writing k0 because the active key was
+   *  unavailable. Other instances keep their own. */
+  this_instance_fallback_since?: string;
+};
+
+/** The active data key as stored and whether this deployment can use it.
+ *  Never creates one. For the ops status. */
+export async function activeKeyStatus(): Promise<ActiveKeyStatus> {
+  const out: ActiveKeyStatus = { active_key: null };
+  if (_fallback) out.this_instance_fallback_since = new Date(_fallback.since).toISOString();
+  const stored = await redis().get(activeKeyName());
+  if (stored === null || stored === undefined || stored === '') return out;
+  let id: string;
+  try {
+    id = checkActiveId(stored);
+  } catch (err) {
+    return { ...out, active_key_problem: (err as Error).message };
+  }
+  out.active_key = id;
+  try {
+    const master = await masterKey();
+    const value = await redis().hget(keysHashKey(), id);
+    if (value === null || value === undefined) throw new UnknownKeyError(id);
+    await unwrapDataKey(master, id, parseStoredDataKey(id, value));
+  } catch (err) {
+    if (!(err instanceof MasterKeyError || err instanceof UnknownKeyError)) throw err;
+    out.active_key_problem = err.message;
+  }
+  return out;
+}
+
+function noteFallback(err: unknown, now: number): void {
+  const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  if (!_fallback) _fallback = { since: now, loggedAt: -Infinity, reason };
+  _fallback.reason = reason;
+  if (now - _fallback.loggedAt >= FALLBACK_LOG_EVERY_MS || now < _fallback.loggedAt) {
+    _fallback.loggedAt = now;
+    console.error(
+      `Writing with the legacy key: the active data key is unavailable (since ${new Date(_fallback.since).toISOString()}).`,
+      reason
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -748,34 +880,52 @@ export async function readActiveKey(): Promise<string | null> {
 /**
  * Encrypts a plaintext string: v2 under the active data key when there is a
  * master, otherwise v1 under k0. Never fails because of the data key: if it
- * cannot be had (Redis, a master that cannot open it), falls back to k0 and
- * logs once per process, since k0 is readable by every deployment.
+ * cannot be had (Redis, a master that cannot open it), falls back to k0,
+ * which every deployment can read, and logs that (again every hour while it
+ * lasts). Only getting the key falls back; a failure to encrypt is thrown.
  */
 export async function encrypt(plaintext: string): Promise<string> {
-  let id: string | null = null;
+  const now = Date.now();
+  let v2: { id: string; key: CryptoKey } | null = null;
+  let failed: unknown = null;
   try {
-    id = await activeKeyId();
-    if (id) return await encryptV2(plaintext, id);
+    const id = await activeKeyId(now);
+    if (id) v2 = { id, key: await keyFor(id) };
   } catch (err) {
-    if (!_fallbackLogged) {
-      _fallbackLogged = true;
-      console.error('Writing with the legacy key: the active data key is unavailable.', err instanceof Error ? `${err.name}: ${err.message}` : err);
-    }
+    failed = err;
+    noteFallback(err, now);
   }
-  return seal(await legacyKey(), utf8(plaintext));
+  if (v2) {
+    _fallback = null;
+    return sealV2(plaintext, v2.id, v2.key, undefined);
+  }
+  let legacy: CryptoKey;
+  try {
+    legacy = await legacyKey();
+  } catch (err) {
+    if (failed === null) throw err;
+    const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    throw new MasterKeyError(`Cannot encrypt: the active data key is unavailable (${why(failed)}), and so is the legacy key (${why(err)}).`);
+  }
+  return seal(legacy, utf8(plaintext));
+}
+
+async function sealV2(plaintext: string, keyId: string, key: CryptoKey, context: string | undefined): Promise<string> {
+  const header = `v2.${keyId}.${context === undefined ? '-' : 'c'}`;
+  const body = await seal(key, utf8(plaintext), v2Aad(header, context));
+  return `${header}.${body}`;
 }
 
 /**
  * Encrypts in the v2 format with the named key, optionally bound to a
- * context. Not yet used for storage: a later change switches encrypt() to it
- * once every deployment can read v2.
+ * context. encrypt() uses this format for everything it writes under a data
+ * key; this form is for writing under a specific key (tests, and later the
+ * re-encryption pass and context-bound callers).
  */
 export async function encryptV2(plaintext: string, keyId: string, context?: string): Promise<string> {
   if (!KEY_ID.test(keyId)) throw new Error(`Invalid key id "${keyId}".`);
   checkContext(context);
-  const header = `v2.${keyId}.${context === undefined ? '-' : 'c'}`;
-  const body = await seal(await keyFor(keyId), utf8(plaintext), v2Aad(header, context));
-  return `${header}.${body}`;
+  return sealV2(plaintext, keyId, await keyFor(keyId), context);
 }
 
 /**

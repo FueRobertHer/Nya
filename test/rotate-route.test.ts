@@ -6,7 +6,7 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { importMasterKey, dataKeyId, keysHashKey, unwrapDataKey } = await import('@/lib/crypto');
+const { importMasterKey, dataKeyId, keysHashKey, unwrapDataKey, encrypt, forgetActiveKey } = await import('@/lib/crypto');
 const route = await import('@/app/api/ops/rotate-master/route');
 
 // Distinct from other files' masters.
@@ -17,6 +17,7 @@ let KEY = '';
 const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
+  forgetActiveKey();
   process.env.MASTER_KEY = CURRENT;
   process.env.OPS_ENABLED = '1';
   process.env.OPS_SECRET = 's3cret';
@@ -95,7 +96,22 @@ describe('the rotation', () => {
 
   test('the status names the data key new writes use', async () => {
     await fake.set('test:crypto:active', KEY);
-    expect(await (await post()).json()).toMatchObject({ state: 'none', active_key: KEY });
+    expect(await (await post()).json()).toEqual({ state: 'none', active_key: KEY });
+  });
+
+  test('the status shows a key created by the first write', async () => {
+    await fake.del(keysHashKey());
+    const out = await encrypt('x');
+    const body = await (await post()).json();
+    expect(body.active_key).toBe(out.split('.')[1]);
+    expect(body.active_key).toMatch(/^k1-/);
+  });
+
+  test('the status names a problem with the active key', async () => {
+    await fake.set('test:crypto:active', 'k0');
+    const body = await (await post()).json();
+    expect(body).toMatchObject({ state: 'none', active_key: null });
+    expect(body.active_key_problem).toContain('not a data key id');
   });
 
   test('finish_now on the new deployment removes the old locks', async () => {

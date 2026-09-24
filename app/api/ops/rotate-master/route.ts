@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import { opsGuard, notPost } from '@/lib/ops';
 import {
   MasterKeyError,
+  activeKeyStatus,
   RotationError,
   finishMasterRotation,
   prepareMasterRotation,
-  readActiveKey,
   rotationStatus,
 } from '@/lib/crypto';
 
@@ -56,8 +56,10 @@ export async function POST(req: Request) {
 
   try {
     if (fields.length === 0) {
-      // Status, plus which data key new writes use (null: still the legacy key).
-      return NextResponse.json({ ...(await rotationStatus()), active_key: await readActiveKey() });
+      // Status, plus which data key new writes use (null: still the legacy
+      // key), whether this deployment can use it, and whether the instance
+      // answering has been falling back to the legacy key.
+      return NextResponse.json({ ...(await rotationStatus()), ...(await activeKeyStatus()) });
     }
     if (fields.length === 1 && fields[0] === 'new_master_key') {
       if (typeof b.new_master_key !== 'string') return bad('new_master_key must be a string');
