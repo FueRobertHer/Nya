@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { attestMasterKey } from '@/lib/crypto';
 import { computeNetWorth, accountBalanceMap, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import {
@@ -56,9 +55,6 @@ function eager<T>(p: Promise<T>): Promise<T> {
 
 export async function GET(req: Request) {
   try {
-    // Record which master key this deployment runs, for scripts/keys.ts's
-    // safety checks (lib/crypto.ts). Best effort and throttled; never throws.
-    await attestMasterKey();
     // Live Plaid balance calls take seconds; serve the (encrypted) cached
     // payload when it's fresh. The Refresh button passes ?refresh=1 to force
     // a live fetch.

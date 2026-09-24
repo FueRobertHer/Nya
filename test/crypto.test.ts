@@ -20,13 +20,14 @@ const {
   keyCommitment,
   dataKeyId,
   unwrapDataKey,
-  attestMasterKey,
   keysHashKey,
-  mastersSeenKey,
   UnknownKeyError,
   MalformedCiphertextError,
   DecryptFailedError,
   MasterKeyError,
+  RotationError,
+  prepareMasterRotation,
+  finishMasterRotation,
 } = await import('@/lib/crypto');
 
 const MASTER = Buffer.alloc(32, 3).toString('base64');
@@ -35,7 +36,7 @@ const K1_RAW = new Uint8Array(32).fill(1);
 const K2_RAW = new Uint8Array(32).fill(2);
 const K1 = 'k1-012df8cb'; // pinned below; computed independently
 
-/** Store a data key the way scripts/keys.ts does, returning its id. */
+/** Store a data key as the app does, returning its id. */
 async function storeKey(n: number, raw: Uint8Array, masterB64 = MASTER, id?: string): Promise<string> {
   const m = await importMasterKey(masterB64);
   const keyId = id ?? (await dataKeyId(n, raw));
@@ -289,34 +290,153 @@ describe('data keys', () => {
   });
 });
 
-describe('deployments report their master', () => {
-  test('using a data key records this master', async () => {
-    const raw = new Uint8Array(32).fill(11);
-    const id = await storeKey(11, raw);
-    await fake.hdel(mastersSeenKey(), (await importMasterKey(MASTER)).fingerprint);
-    // Far in the future, so the throttle from earlier tests does not apply.
-    await attestMasterKey(Date.now() + 10 * 60 * 60 * 1000);
-    const seen = await fake.hgetall<Record<string, string>>(mastersSeenKey());
-    expect(Object.keys(seen ?? {})).toEqual([(await importMasterKey(MASTER)).fingerprint]);
+describe('master rotation', () => {
+  // Distinct masters per test where it matters, so data keys cached in memory
+  // under one master cannot answer for another.
+  const master = (n: number) => Buffer.alloc(32, n).toString('base64');
+
+  /** Everything checked against the store itself, never through decrypt(),
+   *  which keeps opened keys in memory. */
+  async function opens(b64: string, id: string): Promise<boolean> {
+    const stored = await fake.hget<any>(keysHashKey(), id);
+    return unwrapDataKey(await importMasterKey(b64), id, stored).then(
+      () => true,
+      () => false
+    );
+  }
+  async function stored(id: string) {
+    return (await fake.hget<any>(keysHashKey(), id))!;
+  }
+
+  test('prepare adds the new lock, keeps the old one, and marks where it is going', async () => {
+    const NEW = master(21);
+    const { prepared, fingerprint } = await prepareMasterRotation(NEW);
+
+    expect(prepared).toBe(2);
+    expect(fingerprint).toBe((await importMasterKey(NEW)).fingerprint);
+    for (const id of [K1, K2]) {
+      expect(await opens(MASTER, id)).toBe(true);
+      expect(await opens(NEW, id)).toBe(true);
+      expect((await stored(id)).next).toBe(fingerprint);
+    }
+  });
+
+  test('the old deployment finishing does nothing, and reports what is pending', async () => {
+    await prepareMasterRotation(master(22));
+    expect(await finishMasterRotation()).toEqual({ finished: 0, pending: 2 });
+    expect(await opens(master(22), K1)).toBe(true);
+  });
+
+  test('the new deployment finishing removes the old lock: the old master opens nothing', async () => {
+    const NEW = master(23);
+    const value = await encryptV2('balance 100', K1);
+    await prepareMasterRotation(NEW);
+    process.env.MASTER_KEY = NEW;
+
+    expect(await finishMasterRotation()).toEqual({ finished: 2, pending: 0 });
+    for (const id of [K1, K2]) {
+      expect(await opens(MASTER, id)).toBe(false);
+      expect(await opens(NEW, id)).toBe(true);
+      expect((await stored(id)).next).toBeUndefined();
+    }
+    // The data itself was never touched.
+    expect(await decrypt(value)).toBe('balance 100');
+  });
+
+  test('the new deployment finishes by itself on first use of a data key', async () => {
+    const NEW = master(24);
+    await prepareMasterRotation(NEW);
+    process.env.MASTER_KEY = NEW;
+
+    const raw = new Uint8Array(32).fill(24);
+    const id = await storeKey(24, raw, NEW);
     expect(await decrypt(await handBuilt(id, raw, 'x'))).toBe('x');
+    // Background: give it a moment.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await opens(MASTER, K1)).toBe(false);
+    expect(await opens(NEW, K1)).toBe(true);
   });
 
-  test('is throttled, and never throws', async () => {
-    const later = Date.now() + 20 * 60 * 60 * 1000;
-    await attestMasterKey(later);
-    const before = fake.ops;
-    await attestMasterKey(later + 1000);
-    expect(fake.ops).toBe(before);
+  test('running prepare twice is harmless, and resumes after an interruption', async () => {
+    const NEW = master(25);
+    fake.failNext('hset', 1);
+    await expect(prepareMasterRotation(NEW)).rejects.toThrow();
+    // Interrupted after nothing or part was written: every key still opens
+    // with the current master.
+    expect(await opens(MASTER, K1)).toBe(true);
+    expect(await opens(MASTER, K2)).toBe(true);
 
-    fake.failNext('hset');
-    await expect(attestMasterKey(later + 10 * 60 * 1000)).resolves.toBeUndefined();
+    await prepareMasterRotation(NEW);
+    const once = JSON.stringify(await fake.hgetall(keysHashKey()));
+    await prepareMasterRotation(NEW);
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(once);
   });
 
-  test('does nothing without a master', async () => {
-    delete process.env.MASTER_KEY;
-    const before = fake.ops;
-    await attestMasterKey(Date.now() + 30 * 60 * 60 * 1000);
-    expect(fake.ops).toBe(before);
+  test('a lock that silently fails to save is caught by reading back', async () => {
+    const realHset = fake.hset.bind(fake);
+    fake.hset = (async () => undefined) as typeof fake.hset;
+    try {
+      await expect(prepareMasterRotation(master(32))).rejects.toBeInstanceOf(MasterKeyError);
+    } finally {
+      fake.hset = realHset as typeof fake.hset;
+    }
+  });
+
+  test('refuses the same key, writing nothing', async () => {
+    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
+    await expect(prepareMasterRotation(MASTER)).rejects.toBeInstanceOf(RotationError);
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
+  });
+
+  test('refuses a malformed new key, writing nothing, and never echoes it', async () => {
+    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
+    for (const bad of ['not base64!', Buffer.alloc(16).toString('base64'), '']) {
+      const err = await prepareMasterRotation(bad).catch((e) => e);
+      expect(err).toBeInstanceOf(RotationError);
+      if (bad) expect(err.message).not.toContain(bad);
+    }
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
+  });
+
+  test('refuses when the running master cannot open every key, writing nothing', async () => {
+    await storeKey(26, new Uint8Array(32).fill(26), OTHER_MASTER);
+    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
+    await expect(prepareMasterRotation(master(27))).rejects.toBeInstanceOf(MasterKeyError);
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
+  });
+
+  test('refuses a second, different rotation until the first is finished', async () => {
+    await prepareMasterRotation(master(28));
+    const before = JSON.stringify(await fake.hgetall(keysHashKey()));
+    await expect(prepareMasterRotation(master(29))).rejects.toThrow(/unfinished rotation/);
+    expect(JSON.stringify(await fake.hgetall(keysHashKey()))).toBe(before);
+  });
+
+  test('prepares each key with exactly one write', async () => {
+    const NEW = await importMasterKey(master(30));
+    const realHset = fake.hset.bind(fake);
+    let writes = 0;
+    fake.hset = (async (key: string, fields: Record<string, string>) => {
+      writes++;
+      return realHset(key, fields);
+    }) as typeof fake.hset;
+    try {
+      await prepareMasterRotation(master(30));
+    } finally {
+      fake.hset = realHset as typeof fake.hset;
+    }
+    expect(writes).toBe(2);
+    expect(await opens(master(30), K1)).toBe(true);
+    expect(NEW.fingerprint).toBe((await stored(K1)).next);
+  });
+
+  test('with no data keys yet there is nothing to do', async () => {
+    fake.reset();
+    expect(await prepareMasterRotation(master(31))).toEqual({
+      prepared: 0,
+      fingerprint: (await importMasterKey(master(31))).fingerprint,
+    });
+    expect(await finishMasterRotation()).toEqual({ finished: 0, pending: 0 });
   });
 });
 

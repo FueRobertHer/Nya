@@ -21,17 +21,22 @@
 //
 // ENVELOPE ENCRYPTION, SO KEYS CAN ROTATE WITHOUT NEW ENV VARS.
 //
-// Data is encrypted with DATA KEYS. The app generates those itself
-// (scripts/keys.ts) and stores them in Redis ("crypto:keys"), each encrypted
+// Data is encrypted with DATA KEYS. The app generates those itself and
+// stores them in Redis ("crypto:keys"), each encrypted
 // ("wrapped") by the MASTER KEY, the one secret in the environment
 // (MASTER_KEY) and the one thing to keep a copy of. So:
 //
-//   - Rotating a data key is a command, with no Vercel change.
-//   - Rotating the master key re-wraps only the data keys, never the data, and
-//     runs locally. Each data key is stored wrapped under every master it has
-//     been given, keyed by that master's fingerprint, so a deployment still on
-//     the old master keeps working until it is redeployed. There is never a
-//     second master in the environment.
+//   - Rotating the master key re-locks only the data keys, never the data,
+//     and never needs a second master in the environment:
+//       1. POST the new master to /api/ops/rotate-master. The running app,
+//          which has the current master, adds a lock for the new one to every
+//          data key (keeping the old lock) and checks it opens.
+//       2. Set MASTER_KEY to the new master in Vercel and redeploy.
+//       3. The new deployment finishes by itself: the first time it uses a
+//          data key, and in the daily cron, it removes every old lock. The old
+//          master then opens nothing.
+//     Your data is never re-encrypted, so a rotation cannot damage it, and a
+//     half-finished one leaves every key openable by the running deployment.
 //   - Backups (lib/export.ts) carry the wrapped keys like any other value.
 //
 // DATA KEY IDS COMMIT TO THEIR KEY. An id is "k<n>-<8 hex>", where the hex is
@@ -44,12 +49,6 @@
 // directly. Everything written before this existed is under it, so it stays
 // readable until every value has been re-encrypted under a data key and that
 // has been proven by an export/restore.
-//
-// DEPLOYMENTS RECORD WHICH MASTER THEY RUN. Each process notes its master
-// key's fingerprint and the time in "crypto:masters-seen" (at most every few
-// minutes). scripts/keys.ts relies on it: it will not create a key for a master
-// no deployment is running, and will not drop an old master while a deployment
-// still reports it. A fingerprint reveals nothing usable about the key.
 //
 // TWO FORMATS.
 //
@@ -85,8 +84,6 @@ const LEGACY_KEY_ID = 'k0';
 const KEY_ID = /^(k0|k[1-9][0-9]{0,5}-[0-9a-f]{8})$/;
 const FLAGS = /^(-|[a-z]{1,8})$/;
 const KNOWN_FLAGS = new Set(['c']);
-/** How often a process re-records the master it runs. */
-const ATTEST_EVERY_MS = 5 * 60 * 1000;
 
 /** A stored value names a key this deployment does not have. Never answered
  *  by trying another key: that would hide a missing key until it mattered. */
@@ -280,32 +277,6 @@ function masterKey(): Promise<MasterKey> {
   return key;
 }
 
-export function mastersSeenKey(): string {
-  return kEnv('crypto:masters-seen');
-}
-
-let _lastAttest: { fingerprint: string; at: number } | null = null;
-
-/**
- * Record, at most every few minutes, that this process runs the master key it
- * has. Best effort: a failure here must never break a request, and nothing
- * but scripts/keys.ts's safety checks reads it. Does nothing without a master.
- */
-export async function attestMasterKey(now: number = Date.now()): Promise<void> {
-  try {
-    if (!process.env[MASTER_KEY_ENV]) return;
-    const { fingerprint } = await masterKey();
-    // Skipped only when the last record is recent AND not in the future: a
-    // clock that went backwards counts as due, rather than silencing reports.
-    const since = _lastAttest ? now - _lastAttest.at : Infinity;
-    if (_lastAttest && _lastAttest.fingerprint === fingerprint && since >= 0 && since < ATTEST_EVERY_MS) return;
-    _lastAttest = { fingerprint, at: now };
-    await redis().hset(mastersSeenKey(), { [fingerprint]: new Date(now).toISOString() });
-  } catch {
-    // Best effort, by design.
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Data keys
 
@@ -314,6 +285,10 @@ export type StoredDataKey = {
   created_at: string;
   /** master fingerprint -> wrapped key */
   wrapped: Record<string, string>;
+  /** During a master rotation: the fingerprint of the master being rotated
+   *  to. Once a deployment running that master sees it, the other locks are
+   *  removed and this is cleared. */
+  next?: string;
 };
 
 export function keysHashKey(): string {
@@ -382,7 +357,7 @@ export function parseStoredDataKey(keyId: string, value: unknown): StoredDataKey
 const _dataKeys = new Map<string, Promise<CryptoKey>>();
 async function dataKey(keyId: string): Promise<CryptoKey> {
   const master = await masterKey();
-  void attestMasterKey();
+  finishRotationOnce(master.fingerprint);
   const cacheKey = `${master.fingerprint}:${keyId}`;
   const cached = _dataKeys.get(cacheKey);
   if (cached) return cached;
@@ -397,6 +372,122 @@ async function dataKey(keyId: string): Promise<CryptoKey> {
     if (_dataKeys.get(cacheKey) === load) _dataKeys.delete(cacheKey);
   });
   return load;
+}
+
+// ---------------------------------------------------------------------------
+// Master rotation
+
+/** A rotation cannot proceed. Nothing was changed when this is thrown. */
+export class RotationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RotationError';
+  }
+}
+
+async function readAllKeys(): Promise<Map<string, StoredDataKey>> {
+  const all = ((await redis().hgetall(keysHashKey())) ?? {}) as Record<string, unknown>;
+  const out = new Map<string, StoredDataKey>();
+  for (const [id, value] of Object.entries(all)) {
+    if (!KEY_ID.test(id) || id === LEGACY_KEY_ID) throw new RotationError(`Unexpected entry "${id}" in the key store.`);
+    out.set(id, parseStoredDataKey(id, value));
+  }
+  return out;
+}
+
+async function writeKey(id: string, stored: StoredDataKey): Promise<void> {
+  await redis().hset(keysHashKey(), { [id]: JSON.stringify(stored) });
+}
+
+/**
+ * Step 1 of a master rotation, run by the deployment that has the CURRENT
+ * master: add a lock for the new master to every data key, keeping the old
+ * one, and mark each key with where it is going.
+ *
+ * Safe to interrupt and to run again: every key is opened with the current
+ * master before anything is written, each write only adds, and a key already
+ * prepared for this new master is skipped. Refuses a second, different
+ * rotation while one is unfinished.
+ */
+export async function prepareMasterRotation(newMaterial: string): Promise<{ prepared: number; fingerprint: string }> {
+  const current = await masterKey();
+  let next: MasterKey;
+  try {
+    next = await importMasterKey(newMaterial, 'The new master key');
+  } catch (err) {
+    throw new RotationError(err instanceof Error ? err.message : String(err));
+  }
+  if (next.fingerprint === current.fingerprint) {
+    throw new RotationError('The new master key is the same as the current one.');
+  }
+
+  const keys = await readAllKeys();
+  for (const [id, stored] of keys) {
+    if (stored.next && stored.next !== next.fingerprint && stored.next !== current.fingerprint) {
+      throw new RotationError(
+        `${id} is part of an unfinished rotation to master ${stored.next}. Finish that one first (deploy with that master). Nothing was changed.`
+      );
+    }
+  }
+  // Open everything first: a key the current master cannot open stops the
+  // rotation before anything is written.
+  const raw = new Map<string, Uint8Array>();
+  for (const [id, stored] of keys) raw.set(id, await unwrapDataKey(current, id, stored));
+
+  for (const [id, stored] of keys) {
+    if (stored.next === next.fingerprint && stored.wrapped[next.fingerprint]) continue;
+    const lock = await next.wrap(id, raw.get(id)!);
+    // Checked before it is saved, so a bad lock is never stored.
+    await unwrapDataKey(next, id, { ...stored, wrapped: { [next.fingerprint]: lock } });
+    await writeKey(id, { ...stored, wrapped: { ...stored.wrapped, [next.fingerprint]: lock }, next: next.fingerprint });
+  }
+
+  // Read back: both masters must open every key, so the deployment running
+  // now and the one about to be deployed both work.
+  const after = await readAllKeys();
+  for (const [id, stored] of after) {
+    await unwrapDataKey(current, id, stored);
+    await unwrapDataKey(next, id, stored);
+  }
+  return { prepared: after.size, fingerprint: next.fingerprint };
+}
+
+/**
+ * Step 3 of a master rotation, run by the deployment that has the NEW master:
+ * remove every other lock from each data key that was being rotated to it.
+ *
+ * Only touches keys whose rotation target is this deployment's master, so a
+ * deployment still on the old master can never remove the new lock, and a key
+ * is only rewritten after it is proven to open with this master. Idempotent,
+ * so concurrent instances doing it at once is harmless.
+ */
+export async function finishMasterRotation(): Promise<{ finished: number; pending: number }> {
+  if (!process.env[MASTER_KEY_ENV]) return { finished: 0, pending: 0 };
+  const current = await masterKey();
+  const keys = await readAllKeys();
+  let finished = 0;
+  let pending = 0;
+  for (const [id, stored] of keys) {
+    if (!stored.next) continue;
+    if (stored.next !== current.fingerprint) {
+      pending++;
+      continue;
+    }
+    await unwrapDataKey(current, id, stored);
+    await writeKey(id, { created_at: stored.created_at, wrapped: { [current.fingerprint]: stored.wrapped[current.fingerprint] } });
+    finished++;
+  }
+  return { finished, pending };
+}
+
+// Once per process per master, in the background, on first use of a data
+// key. Failures are forgotten so the next use tries again; the daily cron and
+// the rotate route try too.
+const _finishedFor = new Set<string>();
+function finishRotationOnce(fingerprint: string): void {
+  if (_finishedFor.has(fingerprint)) return;
+  _finishedFor.add(fingerprint);
+  finishMasterRotation().catch(() => _finishedFor.delete(fingerprint));
 }
 
 function keyFor(keyId: string): Promise<CryptoKey> {
