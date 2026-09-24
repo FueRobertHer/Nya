@@ -33,16 +33,22 @@ function meterState(ratio: number): '' | ' warn' | ' over' {
 export default function BudgetsTab({
   txns,
   budgets,
+  budgetsError = null,
   onSave,
   goals,
+  goalsError = null,
   onSaveGoals,
   accounts,
   loading,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
+  /** Set when the saved budgets could not be loaded: shown instead of the
+   *  list, and editing is hidden, so nothing can be saved over them. */
+  budgetsError?: string | null;
   onSave: (next: Budgets) => void;
   goals: Goal[];
+  goalsError?: string | null;
   onSaveGoals: (next: Goal[]) => void;
   accounts: GoalAccount[];
   loading: boolean;
@@ -150,6 +156,10 @@ export default function BudgetsTab({
           )}
         </div>
 
+        {budgetsError ? (
+          <p className="stale-note">{budgetsError}</p>
+        ) : (
+          <>
         {totalBudget > 0 && (
           <div className={`meter-track${meterState(totalRatio)}`}>
             <div
@@ -246,13 +256,15 @@ export default function BudgetsTab({
             Add Budget
           </button>
         </div>
+          </>
+        )}
 
         {mixedCurrency && (
           <div className="chart-note">Totals mix currencies and aren&apos;t converted.</div>
         )}
       </div>
 
-      <GoalsCard goals={goals} accounts={accounts} onSave={onSaveGoals} />
+      <GoalsCard goals={goals} error={goalsError} accounts={accounts} onSave={onSaveGoals} />
 
       <div className="card">
         <div className="inst-header">

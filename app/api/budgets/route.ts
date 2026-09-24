@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
+import { StoredDataUnreadableError } from '@/lib/stored-json';
 import { getBudgets, setBudgets, type Budgets } from '@/lib/budgets';
 
 export async function GET() {
   try {
     return NextResponse.json({ budgets: await getBudgets() });
   } catch (err) {
+    // 409, not 500, and flagged: the client must not show "none" and let the
+    // next save overwrite what is there.
+    if (err instanceof StoredDataUnreadableError) {
+      return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
+    }
     console.error(err);
     return NextResponse.json({ error: 'Failed to load budgets' }, { status: 500 });
   }
@@ -33,6 +39,9 @@ export async function PUT(req: Request) {
     await setBudgets(clean);
     return NextResponse.json({ budgets: clean });
   } catch (err) {
+    if (err instanceof StoredDataUnreadableError) {
+      return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
+    }
     console.error(err);
     return NextResponse.json({ error: 'Failed to save budgets' }, { status: 500 });
   }

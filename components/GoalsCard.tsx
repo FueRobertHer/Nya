@@ -28,10 +28,14 @@ export type GoalAccount = {
 
 export default function GoalsCard({
   goals,
+  error = null,
   accounts,
   onSave,
 }: {
   goals: Goal[];
+  /** Set when the saved goals could not be loaded: shown instead of the list,
+   *  with no way to add or edit, so nothing can be saved over them. */
+  error?: string | null;
   accounts: GoalAccount[];
   onSave: (next: Goal[]) => void;
 }) {
@@ -137,6 +141,17 @@ export default function GoalsCard({
       </div>
     </div>
   );
+
+  if (error) {
+    return (
+      <div className="card">
+        <div className="inst-header">
+          <div className="inst-name">Goals</div>
+        </div>
+        <p className="stale-note">{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="card">

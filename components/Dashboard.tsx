@@ -323,6 +323,15 @@ export default function Dashboard() {
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   const [budgets, setBudgets] = useState<Budgets>({});
   const [goals, setGoals] = useState<Goal[]>([]);
+  // Whether the saved budgets/goals actually loaded. Until they have, an empty
+  // list means "unknown", not "none", and saving is blocked: a save sends the
+  // whole list, so saving from an empty one would overwrite what is stored.
+  const budgetsLoaded = useRef(false);
+  const goalsLoaded = useRef(false);
+  // Set when they could not be loaded; the Budgets tab shows it in place of
+  // the lists and pauses editing.
+  const [budgetsError, setBudgetsError] = useState<string | null>(null);
+  const [goalsError, setGoalsError] = useState<string | null>(null);
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
   // type-to-confirm modal.
@@ -460,57 +469,112 @@ export default function Dashboard() {
     loadNetWorth();
   }, [loadNetWorth]);
 
+  // Budgets and goals are each saved as one whole list, so they are only
+  // editable once loaded. A failure leaves them marked not loaded, with a
+  // message, rather than showing an empty list that a save would write back.
+  const loadBudgets = useCallback(async () => {
+    budgetsLoaded.current = false;
+    try {
+      const res = await fetch('/api/budgets');
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.budgets) {
+        setBudgetsError(
+          data?.unreadable
+            ? 'Your saved budgets could not be read, so they have been left untouched and editing is paused.'
+            : 'Budgets could not be loaded. Editing is paused until they are; try reloading.'
+        );
+        return;
+      }
+      setBudgets(data.budgets);
+      setBudgetsError(null);
+      budgetsLoaded.current = true;
+    } catch {
+      setBudgetsError('Budgets could not be loaded. Editing is paused until they are; try reloading.');
+    }
+  }, []);
+
+  const loadGoals = useCallback(async () => {
+    goalsLoaded.current = false;
+    try {
+      const res = await fetch('/api/goals');
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(data?.goals)) {
+        setGoalsError(
+          data?.unreadable
+            ? 'Your saved goals could not be read, so they have been left untouched and editing is paused.'
+            : 'Goals could not be loaded. Editing is paused until they are; try reloading.'
+        );
+        return;
+      }
+      setGoals(data.goals);
+      setGoalsError(null);
+      goalsLoaded.current = true;
+    } catch {
+      setGoalsError('Goals could not be loaded. Editing is paused until they are; try reloading.');
+    }
+  }, []);
+
   // Everything else loads in parallel with net worth (no waterfall):
   // transactions feed Activity + insights, budgets/goals feed the Budgets
   // tab. All are cheap on the server (cached or Redis-only) and harmlessly
   // empty when nothing is connected yet.
   useEffect(() => {
     loadTransactions();
-    fetch('/api/budgets')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.budgets) setBudgets(data.budgets);
-      })
-      .catch(() => {
-        // Budgets are additive; a failed load just shows none.
-      });
-    fetch('/api/goals')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.goals) setGoals(data.goals);
-      })
-      .catch(() => {
-        // Same: goals just show empty.
-      });
-  }, [loadTransactions]);
+    loadBudgets();
+    loadGoals();
+  }, [loadTransactions, loadBudgets, loadGoals]);
 
-  const saveBudgets = useCallback(async (next: Budgets) => {
-    setBudgets(next); // optimistic; the PUT below confirms
-    try {
-      const res = await fetch('/api/budgets', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ budgets: next }),
-      });
-      if (!res.ok) setError('Could not save budgets.');
-    } catch {
-      setError('Could not save budgets.');
-    }
-  }, []);
+  const saveBudgets = useCallback(
+    async (next: Budgets) => {
+      // Never save over data that didn't load: the list on screen may not be
+      // what is stored.
+      if (!budgetsLoaded.current) {
+        setError('Budgets are still loading. Try again in a moment.');
+        return;
+      }
+      setBudgets(next); // optimistic; the PUT below confirms
+      try {
+        const res = await fetch('/api/budgets', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ budgets: next }),
+        });
+        if (!res.ok) {
+          setError('Could not save budgets.');
+          loadBudgets(); // put the screen back to what is actually saved
+        }
+      } catch {
+        setError('Could not save budgets.');
+        loadBudgets();
+      }
+    },
+    [loadBudgets]
+  );
 
-  const saveGoals = useCallback(async (next: Goal[]) => {
-    setGoals(next); // optimistic
-    try {
-      const res = await fetch('/api/goals', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goals: next }),
-      });
-      if (!res.ok) setError('Could not save goals.');
-    } catch {
-      setError('Could not save goals.');
-    }
-  }, []);
+  const saveGoals = useCallback(
+    async (next: Goal[]) => {
+      if (!goalsLoaded.current) {
+        setError('Goals are still loading. Try again in a moment.');
+        return;
+      }
+      setGoals(next); // optimistic
+      try {
+        const res = await fetch('/api/goals', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goals: next }),
+        });
+        if (!res.ok) {
+          setError('Could not save goals.');
+          loadGoals();
+        }
+      } catch {
+        setError('Could not save goals.');
+        loadGoals();
+      }
+    },
+    [loadGoals]
+  );
 
   const recategorize = useCallback(async (transaction_id: string, category: string) => {
     // Optimistic local update; the server stores the override and clears its
@@ -1711,8 +1775,10 @@ export default function Dashboard() {
               <BudgetsTab
                 txns={txns}
                 budgets={budgets}
+                budgetsError={budgetsError}
                 onSave={saveBudgets}
                 goals={goals}
+                goalsError={goalsError}
                 onSaveGoals={saveGoals}
                 // Hidden accounts stay in this list rather than being filtered
                 // out: GoalsCard needs them to tell "you hid this account" from
