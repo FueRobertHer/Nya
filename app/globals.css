@@ -528,6 +528,15 @@ button:disabled {
   font-size: 12px;
 }
 
+/* Money added vs growth, under the readout on an investment account's chart.
+   Tabular figures so the two amounts don't jitter while scrubbing. */
+.chart-readout-split {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin: -4px 0 8px;
+}
+
 .chart-svg {
   display: block;
   width: 100%;

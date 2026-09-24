@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import {
+  contributedAmount,
+  countedTrades,
+  dailyFlows,
   fetchInvestmentTxns,
   isContribution,
   isIncomingRollover,
-  valueDelta,
 } from '@/lib/investments';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 
@@ -55,9 +57,10 @@ export async function GET(req: Request) {
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const access_token = await decrypt(item.encrypted_access_token);
-    const { txns, note } = await fetchInvestmentTxns(
+    const query_from = isoDaysAgo(LOOKBACK_DAYS);
+    const { txns, note, truncated } = await fetchInvestmentTxns(
       access_token,
-      isoDaysAgo(LOOKBACK_DAYS),
+      query_from,
       isoDaysAgo(0),
       [account_id]
     );
@@ -70,20 +73,42 @@ export async function GET(req: Request) {
 
     const yearStart = `${new Date().getUTCFullYear()}-01-01`;
     const thisYear = mine.filter((t) => t.date >= yearStart);
-    const sum = (rows: typeof thisYear) => rows.reduce((total, t) => total + valueDelta(t), 0);
+    // Resolved over the whole window, like the walk and the chart's flows, so
+    // all three agree on which contribution trades carry their own money (see
+    // countedTrades). A paycheck booked as a single contribution buy would
+    // otherwise be missing from "contributed this year".
+    const counted = countedTrades(mine);
+    const sum = (rows: typeof thisYear) =>
+      rows.reduce((total, t) => total + contributedAmount(t, counted), 0);
 
     // Reported as two figures rather than one. A rollover is retirement money
     // that already existed moving between accounts, so folding it into
     // contributions makes a $60k 401k transfer read as a year of saving --
     // while dropping it entirely would leave a large arrival in the activity
     // list that no line above it accounts for.
-    const ytd_contributions = sum(thisYear.filter(isContribution));
-    const ytd_rollovers = sum(thisYear.filter(isIncomingRollover));
+    const ytd_contributions = sum(thisYear.filter((t) => isContribution(t, counted)));
+    const ytd_rollovers = sum(thisYear.filter((t) => isIncomingRollover(t, counted)));
+
+    // Money crossing the account boundary, per day, for the chart's split of
+    // the balance into money added and growth (lib/growth.ts). The whole
+    // window, not the displayed slice. Withheld when rows are missing: a note
+    // means none came back, and truncation drops the OLDEST ones, which would
+    // understate every running total after them and pass the gap off as growth.
+    const flows = note || truncated ? null : dailyFlows(mine);
+    // Where the rows actually begin, not where the query did. An institution
+    // can return less than the year asked for, and every contribution before
+    // its oldest row would otherwise read as growth. The oldest row of ANY
+    // kind: a dividend proves the feed reaches that far as well as a deposit
+    // does. It can't predate the query's start. No rows at all proves nothing,
+    // so no line.
+    const covered_from = mine.reduce<string | null>((min, t) => (!min || t.date < min ? t.date : min), null);
 
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT), // Plaid returns newest first
       ytd_contributions,
       ytd_rollovers,
+      flows,
+      flows_from: covered_from,
       note,
     };
 

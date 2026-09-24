@@ -44,3 +44,51 @@ describe('NetWorthChart segment styles', () => {
     expect(renderToStaticMarkup(<NetWorthChart points={points} />)).toContain('chart-note');
   });
 });
+
+describe('NetWorthChart money added vs growth', () => {
+  const points = [
+    { date: '2026-09-01', value: 1000 },
+    { date: '2026-09-02', value: 1600 },
+    { date: '2026-09-03', value: 1650 },
+  ];
+  const baseline = [
+    { date: '2026-09-01', value: 1000 },
+    { date: '2026-09-02', value: 1500 },
+    { date: '2026-09-03', value: 1500 },
+  ];
+
+  test('draws the baseline and says how the change splits', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baseline={baseline} />);
+    expect(html).toContain('class="chart-baseline"');
+    expect(html).toContain('+$500.00 added · +$150.00 growth');
+  });
+
+  test('draws nothing extra without a baseline', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(html).not.toContain('chart-baseline');
+    expect(html).not.toContain('growth');
+  });
+});
+
+describe('NetWorthChart split on estimated points', () => {
+  // An estimated value has no market movement in it, so no growth figure;
+  // the summary falls back to the last real point.
+  test('summarises to the last real point, not a trailing estimate', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart
+        points={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1100 },
+          { date: '2026-09-03', value: 5000, estimated: true },
+        ]}
+        baseline={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1000 },
+          { date: '2026-09-03', value: 1000 },
+        ]}
+      />
+    );
+    expect(html).toContain('+$0.00 added · +$100.00 growth');
+    expect(html).not.toContain('+$4,000.00 growth');
+  });
+});
