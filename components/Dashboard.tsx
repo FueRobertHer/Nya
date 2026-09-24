@@ -17,7 +17,7 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
-import { institutionCash, isCashHolding } from '@/lib/cash';
+import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
 
 type Account = {
   account_id: string;
@@ -1346,8 +1346,12 @@ export default function Dashboard() {
                                             positions Plaid priced, which can
                                             fall short of the balance rendered
                                             in the next column. */}
-                                        {cash.total > 0 &&
-                                          ` · ${(cash.share * 100).toFixed(cash.share >= 0.1 ? 0 : 1)}% of holdings`}
+                                        {/* Says whose share it is: "0.0% of
+                                            holdings" alone read as "0%
+                                            invested", the opposite of what it
+                                            meant. And never 0.0% while there
+                                            is cash to show. */}
+                                        {cash.total > 0 && ` · cash is ${cashSharePct(cash.share)} of holdings`}
                                       </div>
                                     )}
                                   </td>

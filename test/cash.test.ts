@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   cashByAccount,
+  cashSharePct,
   institutionCash,
   isCashByDesign,
   isCashHolding,
@@ -374,5 +375,19 @@ describe('institutionCash', () => {
       byAccount: {},
       flaggedAccounts: new Set(),
     });
+  });
+});
+
+describe('cashSharePct', () => {
+  test('whole numbers from 10% up, one decimal below', () => {
+    expect(cashSharePct(1)).toBe('100%');
+    expect(cashSharePct(0.456)).toBe('46%');
+    expect(cashSharePct(0.031)).toBe('3.1%');
+  });
+
+  // A row that shows a cash amount must not then call it 0.0%.
+  test('never prints 0.0% for a nonzero share', () => {
+    expect(cashSharePct(0.0001)).toBe('<0.1%');
+    expect(cashSharePct(0)).toBe('0.0%');
   });
 });
