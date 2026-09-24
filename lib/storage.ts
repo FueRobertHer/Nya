@@ -107,6 +107,20 @@ export function k(key: string): string {
   return `${ENV_PREFIX}:${key}`;
 }
 
+/**
+ * A key that belongs to the whole environment, never to one container.
+ *
+ * Identical to k() today. It exists so that when k() starts requiring a
+ * container id (#53), environment-wide stores keep their one location instead
+ * of being split per container. The encryption key store (lib/crypto.ts) is the
+ * reason: a data key id must mean the same key everywhere in an environment,
+ * or a value could not be decrypted without knowing which container's store to
+ * look in.
+ */
+export function kEnv(key: string): string {
+  return `${ENV_PREFIX}:${key}`;
+}
+
 export type StoredItem = {
   item_id: string;
   institution_name: string;

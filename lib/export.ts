@@ -14,8 +14,10 @@
 // 1. CIPHERTEXT VERBATIM, NEVER DECRYPTED. Decrypting would put years of
 //    financial data in plaintext in function memory and possibly in logs, and
 //    would make a restore re-encrypt rather than reproduce. The cost is that
-//    the archive is useless without PLAID_ENCRYPTION_KEY, so that key must be
-//    kept somewhere the database is not.
+//    the archive is useless without the keys: PLAID_ENCRYPTION_KEY for values
+//    still under k0, and MASTER_KEY for everything under a data key (the data
+//    keys themselves travel in the archive, wrapped). Keep those somewhere the
+//    database is not.
 //
 // 2. EXACT BYTES. Values are read through rawRedis(), not redis(). The default
 //    client JSON-parses on the way out, so a stored "1" would be archived as

@@ -1,29 +1,15 @@
-import { NextResponse } from 'next/server';
-import { secretsMatch } from '@/lib/auth';
+import { opsGuard, notPost } from '@/lib/ops';
 import { rawRedis } from '@/lib/storage';
 import { exportLines } from '@/lib/export';
 
 // Download a complete copy of this environment's data (see lib/export.ts for
 // the format and why the values stay encrypted).
 //
-// This route can read the whole database, so it is harder to reach than the
-// other self-authenticating routes:
-//
-// - OFF UNLESS OPS_ENABLED=1. Set it for the length of a backup, then remove
-//   it. While off the route answers 404, as if it did not exist, so a leaked
-//   OPS_SECRET is useless on its own.
-// - POST ONLY. A GET would invite putting the secret in a URL, and URLs end up
-//   in logs, browser history and proxy caches. Every other method answers 404
-//   explicitly: left undefined, Next answers GET and HEAD with 405 and OPTIONS
-//   with 204 plus an Allow header, all of which reveal the route exists even
-//   while it is switched off.
-// - CONSTANT-TIME COMPARISON, as /api/ingest/balance does, since this is
-//   reachable by anyone on the internet.
-// - THE PREFIX IS NEVER TAKEN FROM THE REQUEST. It comes from the deployment's
-//   own environment. Preview and production share one database, separated
-//   only by that prefix, and preview runs code merged in unattended.
-//
-// Excluded from the session gate in proxy.ts, like the other bearer routes.
+// It can read the whole database, so it is locked like every /api/ops route
+// (lib/ops.ts): off unless OPS_ENABLED=1, POST only, OPS_SECRET compared in
+// constant time. The prefix is never taken from the request: it comes from the
+// deployment's own environment. Preview and production share one database,
+// separated only by that prefix, and preview runs code merged in unattended.
 //
 // Example:
 //   curl -X POST https://<host>/api/ops/export \
@@ -34,16 +20,8 @@ import { exportLines } from '@/lib/export';
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  if (process.env.OPS_ENABLED !== '1') return notFound();
-
-  const secret = process.env.OPS_SECRET;
-  const header = req.headers.get('authorization') ?? '';
-  const presented = header.startsWith('Bearer ') ? header.slice(7) : '';
-  // `!secret` matters: without it an enabled route with no secret set would be
-  // open rather than closed.
-  if (!secret || !presented || !(await secretsMatch(presented, secret))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const refused = await opsGuard(req);
+  if (refused) return refused;
 
   const lines = exportLines(rawRedis());
   const encoder = new TextEncoder();
@@ -78,13 +56,4 @@ export async function POST(req: Request) {
   });
 }
 
-function notFound() {
-  return NextResponse.json({ error: 'Not found' }, { status: 404 });
-}
-
-export const GET = notFound;
-export const HEAD = notFound;
-export const OPTIONS = notFound;
-export const PUT = notFound;
-export const PATCH = notFound;
-export const DELETE = notFound;
+export const { GET, HEAD, OPTIONS, PUT, PATCH, DELETE } = notPost;
