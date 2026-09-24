@@ -28,6 +28,8 @@ const plaid = {
   failOnCall: 0,
   /** Runs on every call, before answering. */
   onCall: null as null | (() => Promise<void> | void),
+  /** Leave total_investment_transactions out of every response. */
+  noTotal: false,
 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
@@ -50,7 +52,7 @@ mock.module('@/lib/plaid', () => ({
           accounts: omitHere ? plaid.accounts.filter((a) => a.account_id !== plaid.omit!.account_id) : plaid.accounts,
           securities: [{ security_id: 's1', name: 'Target 2055', ticker_symbol: 'VFFVX' }],
           investment_transactions: page,
-          total_investment_transactions: inRange.length + (lie ? 1 : 0),
+          total_investment_transactions: plaid.noTotal ? undefined : inRange.length + (lie ? 1 : 0),
         },
       };
     },
@@ -95,6 +97,7 @@ beforeEach(() => {
   plaid.omit = null;
   plaid.failOnCall = 0;
   plaid.onCall = null;
+  plaid.noTotal = false;
 });
 
 describe('first fill', () => {
@@ -384,18 +387,27 @@ describe('review follow-ups', () => {
     expect(sync.coverage.ira).toBeUndefined();
   });
 
-  // Marked during the two-year fill, then never in a later one-year window.
+  // A row can only be marked while a two-year fill is judging it; once fills
+  // stop, later one-year windows never reach it, so a mark left behind could
+  // never be confirmed or cleared. It must be dropped.
   test('an unconfirmed mark is dropped once its row leaves the judged range', async () => {
-    plaid.rows = [row('old', '2025-01-05'), row('a', '2026-09-01')];
+    plaid.rows = [row('older', '2024-12-01'), row('old', '2025-01-05'), row('a', '2026-09-01')];
     await syncInvestments(ITEM, { now: NOW });
-    plaid.rows = [row('a', '2026-09-01'), row('older', '2024-12-01')]; // 'old' missing, still in the 730-day range
-    const coverage = (await readInvStore('item1')).coverage;
-    expect(coverage.ira.from).toBe('2024-09-24');
-    // The next window is one year, so 'old' (Jan 2025) is outside it.
+
+    // A new account: the next sync learns of it (one-year window), and the one
+    // after fills two years for it. In that fill 'old' goes missing: marked,
+    // not yet confirmed.
+    plaid.accounts.push({ account_id: 'roth', name: 'Roth', mask: '9', type: 'investment', subtype: 'roth' });
+    plaid.rows = [row('older', '2024-12-01'), row('a', '2026-09-01'), row('r', '2026-09-02', { account_id: 'roth' })];
     await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
-    const sync = await syncInvestments(ITEM, { now: NOW + 3 * DAY, maxAgeMs: 0 });
+    let sync = await syncInvestments(ITEM, { now: NOW + 2 * DAY, maxAgeMs: 0 });
+    expect(plaid.calls[plaid.calls.length - 1].start).toBe('2024-09-26');
+    expect(sync.unconfirmed.ira).toEqual(['2025-01-05']);
+
+    // Filled now: the one-year window no longer reaches 'old', so its mark goes.
+    sync = await syncInvestments(ITEM, { now: NOW + 3 * DAY, maxAgeMs: 0 });
     expect(ids(sync.rows)).toContain('old');
-    expect(sync.unconfirmed.ira ?? []).not.toContain('2025-01-05');
+    expect(sync.unconfirmed.ira ?? []).toEqual([]);
   });
 
   test('a cancelled trade stays excluded when a later fetch returns it without its cancel', async () => {
@@ -440,8 +452,11 @@ describe('review follow-ups', () => {
     plaid.onCall = async () => {
       await fake.set(lock, 'someone-else'); // ours lapsed and another took it
     };
-    await syncInvestments(ITEM, { now: NOW });
+    const sync = await syncInvestments(ITEM, { now: NOW });
     expect(await fake.get<string>(lock)).toBe('someone-else');
+    // Nor writes over what the new holder may have written.
+    expect(await fake.get(key)).toBeNull();
+    expect(sync.busy).toBe(true);
   });
 });
 
@@ -483,5 +498,51 @@ describe('/api/investment-activity', () => {
     expect(body.txns).toHaveLength(1);
     expect(body.note).toBe('Could not fetch investment activity; showing saved activity');
     expect((await get()).from_cache).toBe(false);
+  });
+});
+
+describe('second review follow-ups', () => {
+  test('the lock is refreshed before each request of a long fill', async () => {
+    const lock = testKey('invtxns-lock:item1');
+    plaid.rows = Array.from({ length: 1200 }, (_, i) =>
+      row(`r${i}`, new Date(Date.UTC(2025, 0, 1) + (i % 600) * DAY).toISOString().slice(0, 10))
+    );
+    const ttls: number[] = [];
+    plaid.onCall = async () => {
+      ttls.push(await fake.ttl(lock));
+      await fake.expire(lock, 1); // about to lapse
+    };
+    await syncInvestments(ITEM, { now: NOW });
+    expect(ttls.length).toBeGreaterThan(2);
+    expect(ttls.slice(1).every((t) => t === 120)).toBe(true); // refreshed each time
+  });
+
+  // Plaid can cancel a trade by re-issuing it under the same id, typed cancel.
+  test('a cancel row under the same id as the trade excludes the stored trade', async () => {
+    plaid.rows = [row('x', '2026-09-01'), row('a', '2026-09-02')];
+    await syncInvestments(ITEM, { now: NOW });
+    plaid.rows = [row('x', '2026-09-01', { type: 'cancel', subtype: 'cancel' }), row('a', '2026-09-02')];
+    const sync = await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
+    expect(ids(sync.rows)).toEqual(['a']);
+  });
+
+  // The backfill's runs are capped; one that serves an unverified store
+  // without fetching again would spend a retry for nothing.
+  test('freshOnlyIfVerified fetches again after an unverified sync', async () => {
+    plaid.rows = [row('a', '2026-09-20')];
+    plaid.wrongTotalOn = '2026-09-20';
+    await syncInvestments(ITEM, { now: NOW });
+    const calls = plaid.calls.length;
+    await syncInvestments(ITEM, { now: NOW + 60_000, freshOnlyIfVerified: true });
+    expect(plaid.calls.length).toBeGreaterThan(calls);
+  });
+
+  test('a response with no total is taken as is, not split down to single days', async () => {
+    plaid.rows = [row('a', '2026-09-01'), row('b', '2025-06-01')];
+    plaid.noTotal = true;
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    expect(plaid.calls).toHaveLength(1);
+    expect(ids(sync.rows)).toEqual(['a', 'b']);
+    expect(sync.coverage.ira).toBeUndefined(); // proves nothing
   });
 });

@@ -6,13 +6,8 @@
 //      TOTAL value, which is what lets the net-worth backfill walk brokerage
 //      balances backward instead of holding them flat at today's number.
 //
-// Unlike cash transactions there is no persisted store here. lib/transactions.ts
-// keeps a gzipped encrypted blob per Item because transactionsSync is
-// cursor-based and stateful -- losing the cursor loses the delta stream.
-// /investments/transactions/get is a plain date-range query, so it can be
-// re-asked at any time and needs nothing kept between calls.
-
-import { plaidClient } from './plaid';
+// Fetching and storing live in lib/invstore.ts; this module is the pure rules
+// for what a transaction means, plus the helpers the store shares.
 
 export type InvestmentTxn = {
   investment_transaction_id: string;
@@ -29,9 +24,6 @@ export type InvestmentTxn = {
   currency: string | null;
   security: string | null;
 };
-
-const PAGE_SIZE = 500;
-const MAX_PAGES = 20;
 
 // Unsettled rows. Investment transactions carry no `pending` boolean the way
 // cash transactions do (which backfill skips for the same reason) -- these two
@@ -313,6 +305,9 @@ function isCashLeg(t: InvestmentTxn, subtype: string): boolean {
     type !== 'buy' &&
     type !== 'sell' &&
     (t.subtype || '').toLowerCase() === subtype &&
+    // An in-kind transfer (amount 0, valued from its shares) moves securities,
+    // not cash, so it says nothing about how the account books its money.
+    t.amount !== 0 &&
     externalFlow(t) !== 0
   );
 }
@@ -430,102 +425,6 @@ export function isContribution(t: InvestmentTxn, counted: ReadonlySet<Investment
   return CONTRIBUTION_SUBTYPES.has((t.subtype || '').toLowerCase()) && contributedAmount(t, counted) > 0;
 }
 
-/**
- * Every investment transaction in [start, end], paginated.
- *
- * Returns a `note` instead of throwing, matching syncItem's contract in
- * lib/transactions.ts. Callers decide what an unavailable product means for
- * them: the backfill leaves that Item's investment accounts held flat and
- * carries on, rather than aborting a run it can't retry automatically.
- *
- * `pending` separates the one failure that fixes itself from the ones that
- * don't. PRODUCT_NOT_READY means Plaid is extracting right now and the same
- * call will work shortly (async_update below is what starts that extraction);
- * every other note is a standing property of the Item. The backfill needs the
- * distinction because it records a done-flag: holding an account flat because
- * the data hadn't arrived yet, and then marking the reconstruction complete,
- * freezes that gap in place with nothing to retry it.
- */
-export async function fetchInvestmentTxns(
-  access_token: string,
-  start: string,
-  end: string,
-  account_ids?: string[]
-): Promise<{ txns: InvestmentTxn[]; note: string | null; truncated: boolean; pending: boolean }> {
-  const txns: InvestmentTxn[] = [];
-  const securities: Record<string, any> = {};
-  const cancelled = new Set<string>();
-  let truncated = false;
-
-  try {
-    let offset = 0;
-    let total = Infinity;
-
-    for (let page = 0; page < MAX_PAGES && offset < total; page++) {
-      const res = await plaidClient.investmentsTransactionsGet({
-        access_token,
-        start_date: start,
-        end_date: end,
-        options: {
-          count: PAGE_SIZE,
-          offset,
-          ...(account_ids ? { account_ids } : {}),
-          // Lets Items that were linked without the investments product still
-          // serve this endpoint; Plaid extracts in the background and returns
-          // PRODUCT_NOT_READY until it finishes.
-          async_update: true,
-        },
-      });
-
-      (res.data.securities || []).forEach((s) => (securities[s.security_id] = s));
-      const page_txns = res.data.investment_transactions || [];
-      // A full page with no reported total means "unknown", not "exactly this
-      // many". Defaulting to the page length there would let the loop exit
-      // satisfied at MAX_PAGES with truncated: false, publishing a walk missing
-      // its oldest flows.
-      total =
-        res.data.total_investment_transactions ??
-        (page_txns.length === PAGE_SIZE ? Infinity : page_txns.length);
-
-      for (const t of page_txns) {
-        if (t.cancel_transaction_id) cancelled.add(t.cancel_transaction_id);
-        txns.push(toInvestmentTxn(t, securities));
-      }
-
-      // A short page means the end, whatever `total` claims. Without this a
-      // stale total would keep asking for pages that return nothing.
-      // Advanced BEFORE the short-page break, so the truncation test below
-      // compares a real count against the total. Breaking first left offset at
-      // its pre-page value, which made `offset < total` true on every ordinary
-      // single-page fetch and flagged the whole thing truncated.
-      offset += page_txns.length;
-      if (page_txns.length < PAGE_SIZE) break;
-    }
-
-    // Hit the page cap with rows still outstanding. Plaid returns newest first,
-    // so what's missing is the OLDEST activity -- exactly the part the backfill
-    // walk needs. Flagged rather than swallowed: a reconstruction missing its
-    // left edge is wrong in a way that looks perfectly reasonable on the chart.
-    // The activity list is unaffected, since it only shows the newest rows.
-    if (offset < total) truncated = true;
-  } catch (err: any) {
-    const { note, pending } = classifyFetchError(err);
-    return { txns: [], note, truncated: false, pending };
-  }
-
-  // Cancellations come in pairs: the reversing row and the row it reverses.
-  // Drop both. cancel_transaction_id is documented as a legacy field that is
-  // usually null, so dropping type 'cancel' is what does the real work here.
-  const clean = txns.filter(
-    (t) =>
-      t.type.toLowerCase() !== 'cancel' &&
-      !cancelled.has(t.investment_transaction_id) &&
-      !isPendingSubtype(t.subtype)
-  );
-
-  return { txns: clean, note: null, truncated, pending: false };
-}
-
 /** Pending rows: the stand-in Plaid uses for the pending flag cash rows carry. */
 export function isPendingSubtype(subtype: string | null | undefined): boolean {
   return PENDING_SUBTYPES.has((subtype || '').toLowerCase());
@@ -568,8 +467,8 @@ export function toInvestmentTxn(
 
 /**
  * What a failed investment-transactions call means: a note to show, and
- * whether it will fix itself. Shared by fetchInvestmentTxns and the stored sync
- * (lib/invstore.ts) so both classify every failure the same way.
+ * whether it will fix itself. Used by the stored sync (lib/invstore.ts); the
+ * backfill's decision to wait or give up rests on `pending` being right.
  */
 export function classifyFetchError(err: any): { note: string; pending: boolean } {
   const code = err?.response?.data?.error_code;

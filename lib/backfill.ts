@@ -25,18 +25,25 @@ export type WalkType = 'depository' | 'credit' | 'investment';
  * coverage is exactly what says whether they are complete. An account with no
  * activity all year IS covered and walks flat, correctly.
  *
- * Anything short of that waits (the caller's retry cap bounds it) rather than
- * walking with a stretch of flows missing, or holding the accounts flat and
- * marking the run done, which nothing would ever retry. Also waits while
- * another sync holds the store, or rows in the window are marked missing but
- * not yet confirmed either way.
+ * Short of that it waits (the caller's retry cap bounds it) only when a retry
+ * can actually help: Plaid is extracting (`pending`), another sync holds the
+ * store (`busy`), or the fetch worked but coverage still falls short, which
+ * the caller retries with a fresh fetch each run (it asks for freshness from
+ * a verified sync only). A Plaid failure that won't fix itself (reauth, the
+ * product unavailable) doesn't wait: nothing changes in five runs, and each
+ * run repeats a billed balance call for every institution. That case is
+ * walked if its stored coverage suffices, and held flat otherwise, as before.
+ *
+ * Rows marked missing but not yet confirmed do NOT hold the walk up.
+ * Confirming takes a day and the cap is a handful of page loads, so waiting
+ * would spend every retry for nothing. They are walked as served.
  */
 export function investmentReadiness(
   inv: {
+    note: string | null;
     pending: boolean;
     busy: boolean;
     coverage: Record<string, { from: string; through: string }>;
-    unconfirmed: Record<string, string[]>;
   },
   investmentIds: string[],
   windowStart: string,
@@ -46,10 +53,7 @@ export function investmentReadiness(
     const cov = inv.coverage[id];
     return !!cov && cov.from <= windowStart && cov.through >= yesterday;
   });
-  const unconfirmedInWindow = investmentIds.some((id) =>
-    (inv.unconfirmed[id] ?? []).some((d) => d >= windowStart)
-  );
-  return { covered, pending: inv.pending || inv.busy || unconfirmedInWindow || !covered };
+  return { covered, pending: inv.pending || inv.busy || (!covered && !inv.note) };
 }
 
 /**

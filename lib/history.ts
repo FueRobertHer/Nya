@@ -582,8 +582,11 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 //       (countedTrades in lib/investments.ts). Before, the walk read each as an
 //       internal trade and carried every 401k paycheck back into the past.
 //   5 - an in-kind transfer reported with amount 0 is valued from its quantity
-//       and price, and deposit, transfer and withdrawal trades count under the
-//       same per-account rule as contributions.
+//       and price; deposit, transfer and withdrawal trades count under the
+//       same rule as contributions, with sell/transfer as money out so an
+//       exchange nets to zero; and that rule is judged from cash rows within
+//       45 days of each trade. Investment rows come from the stored history
+//       (lib/invstore.ts).
 const BACKFILL_SCHEMA = 5;
 
 export async function isBackfillDone(): Promise<boolean> {

@@ -95,11 +95,11 @@ export async function GET(req: Request) {
     const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
     const flows_to = flowsKnown ? cov!.through : null;
 
-    // Said in full here so the client can print it as is. A fetch failure still
-    // serves what is stored; a storage problem serves what was just fetched.
-    const note = sync.note
-      ? `${sync.note}; showing saved activity`
-      : sync.storeNote;
+    // Said in full here so the client can print it as is. A fetch failure
+    // serves what is stored (and says so only if there is any); a storage
+    // problem serves what was just fetched. Both can happen at once.
+    const fetchNote = sync.note ? (mine.length ? `${sync.note}; showing saved activity` : sync.note) : null;
+    const note = [fetchNote, sync.storeNote].filter(Boolean).join('. ') || null;
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT),
       ytd_contributions,
@@ -110,11 +110,12 @@ export async function GET(req: Request) {
       note,
     };
 
-    // Not cached with a note (an outage or a storage problem should be
-    // re-checked on the next load, not pinned for the TTL), nor while another
-    // sync held the store: that answer is whatever was stored before it, which
-    // on a first link is nothing at all.
-    if (!note && !sync.busy) await writeAccountCache(cacheField, payload);
+    // Not cached after a Plaid failure (an outage should be re-checked on the
+    // next load), nor while another sync held the store: that answer is
+    // whatever was stored before it, which on a first link is nothing at all.
+    // A storage-only problem IS cached: the rows were just fetched live, and
+    // without it an unwritable store would re-run the full fetch every load.
+    if (!sync.note && !sync.busy) await writeAccountCache(cacheField, payload);
 
     return NextResponse.json({ ...payload, from_cache: false });
   } catch (err: any) {

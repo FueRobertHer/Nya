@@ -154,8 +154,10 @@ export default function NetWorthChart({
     if (b === null || baseStart < 0 || points[i].estimated) return null;
     return { added: b - (base[baseStart] as number), growth: vals[i] - b };
   }
+  // The last real point the baseline reaches: it can stop short of the end
+  // when the flows are only known up to an earlier day.
   let lastReal = last;
-  while (lastReal > 0 && points[lastReal].estimated) lastReal--;
+  while (lastReal > 0 && (points[lastReal].estimated || base[lastReal] === null)) lastReal--;
   const shown = split(active ?? lastReal);
   const shownDate = points[active ?? lastReal]?.date;
 

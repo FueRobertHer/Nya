@@ -170,7 +170,8 @@ export async function readInvStore(item_id: string): Promise<InvStoreState> {
     !isPlainObject(parsed.txns) ||
     !isPlainObject(parsed.accounts) ||
     !isPlainObject(parsed.coverage) ||
-    !isPlainObject(parsed.securities)
+    !isPlainObject(parsed.securities) ||
+    (parsed.cancelled !== undefined && !isPlainObject(parsed.cancelled))
   ) {
     throw new InvStoreUnreadableError(item_id, new Error('unrecognised shape or newer schema'));
   }
@@ -300,7 +301,16 @@ async function fetchWindow(
       return;
     }
     const { page, total } = await ask(from, to);
-    if (typeof total !== 'number') verified = false;
+    if (typeof total !== 'number') {
+      // No total to compare against: this range proves nothing. A short page is
+      // still everything it has, so take it rather than splitting down to
+      // single days on a response that will never report one.
+      verified = false;
+      if (page.length < PAGE_SIZE) {
+        take(page, from, to);
+        return;
+      }
+    }
     if (typeof total === 'number' && total <= PAGE_SIZE) {
       if (page.length !== total) verified = false;
       take(page, from, to);
@@ -380,10 +390,13 @@ export function mergeFetch(
   // cancel rows aren't stored, so a later partial fetch that returns the
   // original without its cancel would otherwise serve the cancelled trade again.
   state.cancelled ??= {};
+  // A cancel row tombstones the id it names and its own: Plaid can also cancel
+  // a trade by re-issuing it under the same id typed `cancel`, and
+  // cancel_transaction_id is a legacy field that is usually null.
   for (const r of fetch.rows) {
-    if (String(r.type).toLowerCase() === 'cancel' && r.cancel_transaction_id) {
-      state.cancelled[r.cancel_transaction_id] ??= today;
-    }
+    if (String(r.type).toLowerCase() !== 'cancel') continue;
+    state.cancelled[r.investment_transaction_id] ??= today;
+    if (r.cancel_transaction_id) state.cancelled[r.cancel_transaction_id] ??= today;
   }
   const cancelled = state.cancelled;
 
@@ -519,7 +532,14 @@ function view(state: InvStoreState): Pick<InvSync, 'rows' | 'coverage' | 'unconf
  */
 export async function syncInvestments(
   item: StoredItem,
-  opts: { maxAgeMs?: number; now?: number } = {}
+  opts: {
+    maxAgeMs?: number;
+    now?: number;
+    /** Only a VERIFIED sync counts as fresh. For the backfill, whose runs are
+     *  capped: a run that served an unverified store without fetching again
+     *  would spend a retry and make no progress. */
+    freshOnlyIfVerified?: boolean;
+  } = {}
 ): Promise<InvSync> {
   const now = opts.now ?? Date.now();
   const maxAgeMs = opts.maxAgeMs ?? FRESH_MS;
@@ -541,7 +561,7 @@ export async function syncInvestments(
       storeNote = 'Saved investment history could not be read; showing live data only';
     }
 
-    const lastTry = state?.attempted_at ?? state?.synced_at;
+    const lastTry = opts.freshOnlyIfVerified ? state?.synced_at : state?.attempted_at ?? state?.synced_at;
     const fresh = !!lastTry && now - Date.parse(lastTry) < maxAgeMs;
     if (state && (fresh || !locked)) {
       return { ...view(state), note: null, pending: false, storeNote, busy: !fresh && !locked };
@@ -585,6 +605,16 @@ export async function syncInvestments(
     const merged = mergeFetch(state ?? emptyState(), fetched, window, now);
     // Unreadable store, or another sync running: answer from this fetch alone.
     if (!state || !locked) return { ...view(merged), note: null, pending: false, storeNote, busy: !locked };
+
+    // Still ours? A lock that lapsed or was taken over means another sync may
+    // have written since this one read, and writing now would undo its marks.
+    let stillOurs = false;
+    try {
+      stillOurs = (await redis().get(lockKey(item.item_id))) === token;
+    } catch {
+      stillOurs = false;
+    }
+    if (!stillOurs) return { ...view(merged), note: null, pending: false, storeNote, busy: true };
 
     const outcome = await writeInvStore(item.item_id, merged);
     if (outcome === 'oversize') {

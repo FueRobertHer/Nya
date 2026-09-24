@@ -410,37 +410,37 @@ test('an in-kind transfer at amount 0 is walked back at its value', () => {
 });
 
 // Whether an Item's investment accounts can be walked, or should be waited for,
+// Whether an Item's investment accounts can be walked, or should be waited for,
 // from its stored investment transactions.
 describe('investmentReadiness', () => {
-  const base = { pending: false, busy: false, coverage: {}, unconfirmed: {} };
+  const base = { note: null, pending: false, busy: false, coverage: {} };
   const full = { from: '2025-09-01', through: '2026-09-13' };
+  const check = (inv: any) => investmentReadiness(inv, ['ira'], '2025-09-14', '2026-09-13');
 
   test('covered by verified coverage over the whole window', () => {
-    expect(investmentReadiness({ ...base, coverage: { ira: full } }, ['ira'], '2025-09-14', '2026-09-13')).toEqual({
-      covered: true,
-      pending: false,
-    });
+    expect(check({ ...base, coverage: { ira: full } })).toEqual({ covered: true, pending: false });
   });
 
-  // Coverage that stops short is waited for, never walked flat and marked done.
-  test('coverage that stops short waits', () => {
-    const r = investmentReadiness({ ...base, coverage: { ira: { ...full, through: '2026-09-01' } } }, ['ira'], '2025-09-14', '2026-09-13');
-    expect(r).toEqual({ covered: false, pending: true });
+  // The fetch worked but coverage stops short: retried with a fresh fetch,
+  // never walked flat and marked done on the first try.
+  test('coverage that stops short after a working fetch waits', () => {
+    expect(check({ ...base, coverage: { ira: { ...full, through: '2026-09-01' } } })).toEqual({ covered: false, pending: true });
+    expect(check(base).pending).toBe(true);
   });
 
-  test('no coverage at all waits (the capped retry decides when to give up)', () => {
-    expect(investmentReadiness(base, ['ira'], '2025-09-14', '2026-09-13').pending).toBe(true);
+  // Reauth, or the product unavailable: five retries change nothing and each
+  // repeats a billed balance call for every institution.
+  test('a failure that will not fix itself does not wait', () => {
+    expect(check({ ...base, note: 'Investment activity is not available here' })).toEqual({ covered: false, pending: false });
   });
 
-  test('a busy store, or unconfirmed rows in the window, wait even when covered', () => {
-    const covered = { ...base, coverage: { ira: full } };
-    expect(investmentReadiness({ ...covered, busy: true }, ['ira'], '2025-09-14', '2026-09-13').pending).toBe(true);
-    expect(
-      investmentReadiness({ ...covered, unconfirmed: { ira: ['2026-01-01'] } }, ['ira'], '2025-09-14', '2026-09-13').pending
-    ).toBe(true);
-    // Unconfirmed rows older than the window don't hold the walk up.
-    expect(
-      investmentReadiness({ ...covered, unconfirmed: { ira: ['2024-01-01'] } }, ['ira'], '2025-09-14', '2026-09-13').pending
-    ).toBe(false);
+  // The rows are the stored ones either way; coverage says if they are complete.
+  test('a failed fetch with complete stored coverage is still walked', () => {
+    expect(check({ ...base, note: 'This account needs to be reconnected', coverage: { ira: full } })).toEqual({ covered: true, pending: false });
+  });
+
+  test('Plaid still extracting, or another sync busy, waits', () => {
+    expect(check({ ...base, note: 'Investment activity is still importing', pending: true }).pending).toBe(true);
+    expect(check({ ...base, busy: true, coverage: { ira: full } }).pending).toBe(true);
   });
 });

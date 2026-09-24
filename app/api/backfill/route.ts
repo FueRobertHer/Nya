@@ -118,7 +118,7 @@ export async function POST() {
         // From the Item's stored investment transactions (lib/invstore.ts),
         // brought up to date first. Every stored row goes to the walk, which
         // judges paycheck trades over all of them and walks only the window.
-        const inv = hasInvestment ? await syncInvestments(item) : null;
+        const inv = hasInvestment ? await syncInvestments(item, { freshOnlyIfVerified: true }) : null;
 
         // Covered, or worth waiting for: see investmentReadiness in lib/backfill.ts.
         const readiness = inv
