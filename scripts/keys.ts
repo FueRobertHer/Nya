@@ -178,7 +178,14 @@ if (import.meta.main) {
   const argv = process.argv.slice(2);
   (async () => {
     parseArgs(argv);
-    await main(argv, redis() as unknown as KeysClient);
+    // Built on first use, so a wrong --target is refused before credentials
+    // are even looked for.
+    const lazy: KeysClient = {
+      hgetall: (key) => redis().hgetall(key),
+      hset: (key, fields) => redis().hset(key, fields),
+      hsetnx: (key, field, value) => redis().hsetnx(key, field, value),
+    };
+    await main(argv, lazy);
   })().catch((err) => {
     if (err instanceof RestoreRefused) console.error(`Refused: ${err.message}`);
     else console.error(`Failed: ${err instanceof Error ? err.message : err}`);
