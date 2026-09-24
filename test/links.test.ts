@@ -13,7 +13,12 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const { encrypt } = await import('@/lib/crypto');
 const links = await import('@/lib/links');
 const { getAccountHistory, recordSnapshot } = await import('@/lib/history');
-const { rememberAccounts } = await import('@/lib/last-known');
+const { rememberAccounts: rememberRaw } = await import('@/lib/last-known');
+// Accounts count as live only for a stored Item, as they do after a real load.
+const rememberAccounts = async (insts: any[]) => {
+  for (const i of insts) await fake.hset(testKey('plaid:items'), { [i.item_id]: JSON.stringify({ item_id: i.item_id }) });
+  await rememberRaw(insts);
+};
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 8, 24, 12);
@@ -212,14 +217,26 @@ describe('recordDirectory', () => {
     expect(fake.ops).toBe(1); // the read, no write
   });
 
-  test('prunes an unlinked disconnected entry after the window, but not a linked one', async () => {
+  // Decided from the stored Items, not a mark written on disconnect, so a
+  // load that raced the disconnect can't keep an entry forever.
+  test('prunes an unlinked entry of a removed Item after the window, but not a linked one', async () => {
     await links.recordDirectory([inst([{ account_id: 'gone' }, { account_id: 'kept' }], { item_id: 'old' })], NOW);
-    await links.markDisconnected('old', NOW);
     await links.linkAccounts('kept', 'new', {});
-    await links.recordDirectory([inst([{ account_id: 'new' }])], NOW + 50 * DAY);
+    await links.recordDirectory([inst([{ account_id: 'new' }])], NOW + 91 * DAY);
     const dir = await read();
     expect(dir.gone).toBeUndefined();
     expect(dir.kept).toBeDefined();
+  });
+
+  test('keeps an entry of a stored Item, and one inside the window', async () => {
+    await fake.hset(testKey('plaid:items'), { stored: JSON.stringify({ item_id: 'stored' }) });
+    await links.recordDirectory([inst([{ account_id: 'erroring' }], { item_id: 'stored' })], NOW);
+    await links.recordDirectory([inst([{ account_id: 'recent' }], { item_id: 'old' })], NOW + 10 * DAY);
+    // An earlier account offered by hand (90 days) still needs its entry.
+    await links.recordDirectory([inst([{ account_id: 'new' }])], NOW + 91 * DAY);
+    const dir = await read();
+    expect(dir.erroring).toBeDefined();
+    expect(dir.recent).toBeDefined();
   });
 });
 
@@ -411,9 +428,39 @@ describe('review follow-ups: following links', () => {
     expect(links.expandHidden(hidden, ls).get('old')?.type).toBe('depository');
   });
 
-  test('getEffectiveHidden fails closed on an unreadable link', async () => {
+  test('getEffectiveHidden fails closed on an unreadable link when something is hidden', async () => {
+    const { setAccountHidden } = await import('@/lib/hidden');
+    await setAccountHidden('new', 'credit', true);
     await fake.hset(testKey('account-links'), { old: 'not-a-ciphertext' });
     await expect(links.getEffectiveHidden()).rejects.toThrow();
+  });
+
+  // Nothing to hide, so a bad link must not take down the dashboard.
+  test('getEffectiveHidden ignores an unreadable link when nothing is hidden', async () => {
+    await fake.hset(testKey('account-links'), { old: 'not-a-ciphertext' });
+    expect((await links.getEffectiveHidden()).hidden.size).toBe(0);
+  });
+
+  // An unreadable live set would make a paused link look active, and Unhide
+  // would clear the other account's hidden flag for good.
+  test('Unhide fails rather than guess when the live accounts cannot be read', async () => {
+    const { setAccountHidden, getHiddenAccounts } = await import('@/lib/hidden');
+    await rememberAccounts([{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'old', type: 'credit' }, { account_id: 'new', type: 'credit' }] } as any]);
+    await links.linkAccounts('old', 'new', {});
+    await setAccountHidden('old', 'credit', true);
+    await setAccountHidden('new', 'credit', true);
+    await fake.hset(testKey('accounts:meta'), { i: 'not-a-ciphertext' });
+    const { POST } = await import('@/app/api/hidden-accounts/route');
+    const res = await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ account_id: 'new', hidden: false }) }));
+    expect(res.status).toBe(500);
+    expect([...(await getHiddenAccounts()).keys()].sort()).toEqual(['new', 'old']);
+  });
+
+  // A load in flight during a disconnect can write the Item's record back.
+  test('an Item no longer stored is not live', async () => {
+    await rememberAccounts([{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'a', type: 'credit' }] } as any]);
+    await rememberRaw([{ item_id: 'removed', institution_name: 'Bank', error: null, accounts: [{ account_id: 'b', type: 'credit' }] } as any]);
+    expect([...(await links.liveAccountIds())]).toEqual(['a']);
   });
 
   // Paused (the old id is live again): the two are separate accounts, each
@@ -459,14 +506,14 @@ describe('review follow-ups: following links', () => {
     expect(byDate['2026-07-10']).toBe(650);
   });
 
-  test('a load racing a disconnect does not clear the disconnected mark', async () => {
-    const inst = { item_id: 'gone', institution_name: 'Bank', institution_id: 'ins', error: null, accounts: [{ account_id: 'a1', type: 'credit' }] };
-    await links.recordDirectory([inst], NOW);
-    await links.markDisconnected('gone', NOW);
-    await links.recordDirectory([inst], NOW + DAY); // fetched before the disconnect landed
-    const { decrypt } = await import('@/lib/crypto');
-    const e = JSON.parse(await decrypt((await fake.hget<string>(testKey('accounts:directory'), 'a1'))!));
-    expect(e.disconnected_at).toBeTruthy();
+  // Suggestions, like manual choices, start from where the account's joined
+  // history starts, so they never overlap history linked on before.
+  test('no suggestion overlaps history already linked to the account', () => {
+    const { suggestions } = suggest({
+      spans: { A: span('2026-07-01', '2026-07-20') },
+      links: new Map([['A', { to: 'new', linked_at: '2026-08-01', evidence: { old_last: '2026-07-20' } }]]),
+    });
+    expect(suggestions).toEqual([]);
   });
 });
 
@@ -488,6 +535,24 @@ describe('review follow-ups: routes', () => {
     expect(linked.points[0]).toEqual({ date: '2026-06-01', value: 2 }); // X reported later, so it wins
   });
 
+  // The directory stamp can run past the last balance; the link records the
+  // later of the two, so the preview must too.
+  test('the preview orders by the date the link will record', async () => {
+    await rememberAccounts([{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'B', type: 'credit' }] } as any]);
+    await fake.hset(testKey('history:accounts'), {
+      '2026-06-01': await encrypt(JSON.stringify({ A: 1, X: 2 })),
+      '2026-08-01': await encrypt(JSON.stringify({ B: 4 })),
+    });
+    await fake.hset(testKey('accounts:directory'), {
+      A: await encrypt(JSON.stringify(entry({ item_id: 'gone', last_seen: '2026-07-10' }))),
+    });
+    // A's link records the directory stamp; X has only its balances.
+    await links.linkAccounts('X', 'B', { old_last: '2026-06-01' });
+    const { GET } = await import('@/app/api/account-history/route');
+    const preview = await (await GET(new Request('http://x/api/account-history?id=B&with=A'))).json();
+    expect(preview.points[0]).toEqual({ date: '2026-06-01', value: 1 }); // A was seen later, so it wins
+  });
+
   test('goals follow a link to the current account', async () => {
     const { setGoals } = await import('@/lib/goals');
     await setGoals([{ id: 'g', name: 'Pay off', target: 1000, account_id: 'old', created_at: '2026-01-01' } as any]);
@@ -506,5 +571,18 @@ describe('review follow-ups: routes', () => {
     expect((await post({ action: 'dismiss_all', old: 'made-up' })).status).toBe(409);
     expect((await post({ action: 'dismiss_all', old: 'A7' })).status).toBe(200);
     expect((await (await route.GET()).json()).unclaimed).toEqual([]);
+  });
+
+  test('lists an unreadable link so it can be removed, and never offers its old id', async () => {
+    await rememberAccounts([{ item_id: 'item_new', institution_name: 'Capital One', error: null, accounts: [{ account_id: 'new', type: 'credit' }] } as any]);
+    await fake.hset(testKey('accounts:directory'), { new: await encrypt(JSON.stringify(entry())) });
+    await fake.hset(testKey('history:accounts'), { '2026-07-16': await encrypt(JSON.stringify({ A7: 850 })) });
+    await fake.hset(testKey('account-links'), { A7: 'not-a-ciphertext' });
+    const route = await import('@/app/api/account-links/route');
+    const body = await (await route.GET()).json();
+    expect(body.broken).toEqual(['A7']);
+    expect(body.unclaimed).toEqual([]);
+    await route.DELETE(new Request('http://x', { method: 'DELETE', body: JSON.stringify({ old: 'A7' }) }));
+    expect((await (await route.GET()).json()).broken).toEqual([]);
   });
 });

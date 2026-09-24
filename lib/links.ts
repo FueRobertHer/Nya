@@ -27,17 +27,17 @@
 // The DIRECTORY is what makes a re-added institution matchable: a record of
 // every Plaid account seen, with its institution id, name, mask and type, kept
 // past a disconnect (accounts:meta and the stores are deleted then). Entries of
-// a disconnected institution that nothing links to are pruned after
-// PRUNE_AFTER_DAYS, so removing an institution still removes its names.
+// a removed Item that nothing links to are pruned PRUNE_AFTER_DAYS after they
+// were last seen, so removing an institution still removes its names.
 
-import { redis, k } from './storage';
+import { redis, k, getItems } from './storage';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
 import { measuredAccountHistoryKeys } from './history';
 import { isOwedType } from './balance';
 import { getHiddenAccounts, type HiddenMap } from './hidden';
 import { rememberedIdsByItem } from './last-known';
-import { getLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
+import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 
 // Lazy keys, not module constants: the container (#53) will be a parameter.
 const directoryKey = () => k('accounts:directory');
@@ -45,8 +45,6 @@ const dismissedKey = () => k('account-links:dismissed');
 
 /** How long after an old account was last seen a new one can be suggested as it. */
 export const MATCH_WINDOW_DAYS = 45;
-/** Unlinked directory entries of a disconnected institution are dropped after this. */
-const PRUNE_AFTER_DAYS = 45;
 const MAX_ID = 100;
 
 const DAY = 86_400_000;
@@ -71,7 +69,6 @@ export type DirectoryEntry = {
    *  balance, or the day it was first seen live. */
   first_seen: string;
   last_seen: string;
-  disconnected_at?: string | null;
 };
 
 /** Every readable entry, and the ids whose entries couldn't be read. Those
@@ -191,10 +188,6 @@ export async function recordDirectory(institutions: SeenInstitution[], now: numb
         persistent_account_id: a.persistent_account_id ?? prev?.persistent_account_id ?? null,
         first_seen: prev?.first_seen ?? spans[a.account_id]?.first ?? day,
         last_seen: day,
-        // A load that fetched just before a disconnect must not clear the
-        // mark: the same Item can't come back (a re-add is a new Item), so a
-        // mark on this Item's entry stays.
-        disconnected_at: prev?.item_id === inst.item_id ? prev?.disconnected_at ?? null : null,
       };
       if (prev && JSON.stringify({ ...prev, last_seen: day }) === JSON.stringify(next)) continue;
       writes[a.account_id] = await encrypt(JSON.stringify(next));
@@ -207,36 +200,31 @@ export async function recordDirectory(institutions: SeenInstitution[], now: numb
   }
 }
 
-/** Drops unlinked entries of institutions disconnected long enough ago. */
+/**
+ * Drops unlinked entries of removed Items not seen for PRUNE_AFTER_DAYS.
+ *
+ * Decided from the stored Items at prune time rather than a mark written on
+ * disconnect: a load that fetched just before the disconnect would write the
+ * entry back without the mark, and it would never be pruned. An entry is only
+ * written for an Item a load just fetched, so one whose Item is no longer
+ * stored has been disconnected.
+ */
 async function pruneDirectory(entries: Record<string, DirectoryEntry>, now: number): Promise<void> {
-  const stale = Object.entries(entries).filter(
-    ([, e]) => e.disconnected_at && now - Date.parse(e.disconnected_at) > PRUNE_AFTER_DAYS * DAY
-  );
-  if (stale.length === 0) return;
+  const cutoff = today(now - PRUNE_AFTER_DAYS * DAY);
+  const old = Object.entries(entries).filter(([, e]) => e.last_seen < cutoff);
+  if (old.length === 0) return;
   let links: Map<string, Link>;
+  let stored: Set<string>;
   try {
-    links = await getLinks();
+    [links, stored] = await Promise.all([getLinks(), getItems().then((items) => new Set(items.map((i) => i.item_id)))]);
   } catch {
-    return; // can't tell what is linked: prune nothing
+    return; // can't tell what is linked or stored: prune nothing
   }
+  const stale = old.filter(([, e]) => !stored.has(e.item_id));
+  if (stale.length === 0) return;
   const involved = new Set([...links.keys(), ...[...links.values()].map((l) => l.to)]);
   const doomed = stale.map(([id]) => id).filter((id) => !involved.has(id));
   if (doomed.length > 0) await redis().hdel(directoryKey(), ...doomed);
-}
-
-/** Marks an Item's entries as disconnected, starting their prune clock. */
-export async function markDisconnected(item_id: string, now: number = Date.now()): Promise<void> {
-  try {
-    const { entries } = await readDirectory();
-    const writes: Record<string, string> = {};
-    for (const [id, e] of Object.entries(entries)) {
-      if (e.item_id !== item_id || e.disconnected_at) continue;
-      writes[id] = await encrypt(JSON.stringify({ ...e, disconnected_at: new Date(now).toISOString() }));
-    }
-    if (Object.keys(writes).length > 0) await redis().hset(directoryKey(), writes);
-  } catch {
-    // Best effort: an unmarked entry is just never pruned.
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +268,19 @@ export type Unclaimed = {
  *  by hand. Reconnects happen close in time; a closed account's history is not
  *  offered to every account opened in the years after it. */
 export const ASSIGN_WINDOW_DAYS = 90;
+/** Unlinked directory entries of a removed Item are dropped this long after
+ *  they were last seen. No shorter than ASSIGN_WINDOW_DAYS: an earlier account
+ *  offered by hand still needs its entry for its name and its kind. */
+const PRUNE_AFTER_DAYS = ASSIGN_WINDOW_DAYS;
+
+/** When an account was last seen: the later of its directory stamp and its
+ *  last recorded balance. Recorded on a link as old_last, which orders earlier
+ *  ids (link-core sameAccountIds), so the preview must use the same rule. */
+export function lastSeenOf(id: string, directory: Record<string, DirectoryEntry>, spans: Record<string, Span>): string | null {
+  const d = directory[id]?.last_seen ?? null;
+  const s = spans[id]?.last ?? null;
+  return d && s ? (d > s ? d : s) : d ?? s;
+}
 
 const normal = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const label = (e: DirectoryEntry | undefined, id: string) =>
@@ -321,18 +322,16 @@ export function suggestLinks(input: {
   liveIds: Set<string>;
   links: Map<string, Link>;
   dismissed: Set<string>;
+  /** Old ids with an unreadable link: linked to something, so never offered. */
+  unreadableLinks?: Set<string>;
 }): { suggestions: Suggestion[]; unclaimed: Unclaimed[] } {
   const { directory, spans, liveIds, links, dismissed } = input;
-  const linkedAway = new Set(links.keys());
+  const linkedAway = new Set([...links.keys(), ...(input.unreadableLinks ?? [])]);
   const isOrphan = (id: string) =>
     !liveIds.has(id) && !linkedAway.has(id) && !isManualId(id) && !dismissed.has(dismissAllKey(id));
   const live = [...liveIds].filter((id) => !isManualId(id) && !linkedAway.has(id));
   const firstSeen = (id: string) => directory[id]?.first_seen ?? spans[id]?.first ?? null;
-  const lastSeen = (id: string) => {
-    const d = directory[id]?.last_seen ?? null;
-    const s = spans[id]?.last ?? null;
-    return d && s ? (d > s ? d : s) : d ?? s;
-  };
+  const lastSeen = (id: string) => lastSeenOf(id, directory, spans);
   /** Where a live account's history starts once its linked earlier ids count. */
   const startsAt = (n: string) => {
     let first = firstSeen(n);
@@ -352,8 +351,10 @@ export function suggestLinks(input: {
     if (!a || !b) return false;
     if (!sameInstitution(a, b) || a.type !== b.type || a.subtype !== b.subtype) return false;
     if (!a.mask || a.mask !== b.mask) return false;
+    // From where n's history starts once what is already linked to it
+    // counts, so a suggestion never overlaps history joined on before.
     const last = lastSeen(o);
-    const first = firstSeen(n);
+    const first = startsAt(n);
     if (!last || !first) return false;
     const gap = daysBetween(last, first);
     return gap >= 0 && gap <= MATCH_WINDOW_DAYS;
@@ -455,15 +456,23 @@ export async function unlinkAccount(old: string): Promise<void> {
   await redis().hdel(linksKey(), old);
 }
 
-/** Everything the suggestions need, read once. */
+/** Everything the suggestions need, read once. An unreadable link doesn't
+ *  fail it: the card lists those so the user can remove them. */
 export async function loadSuggestionInputs(liveIds: Set<string>) {
-  const [{ entries }, spans, links, dismissed] = await Promise.all([
+  const [{ entries }, spans, { links, unreadable }, dismissed] = await Promise.all([
     readDirectory(),
     historySpans(),
-    getLinks(),
+    readLinks(),
     getDismissed(),
   ]);
-  return { directory: entries, spans, liveIds, links, dismissed };
+  return { directory: entries, spans, liveIds, links, dismissed, unreadableLinks: unreadable };
+}
+
+/** When an earlier id was last seen, by the rule a link records (lastSeenOf),
+ *  for a preview of linking it. */
+export async function previewLastSeen(id: string): Promise<string | null> {
+  const [{ entries }, spans] = await Promise.all([readDirectory(), historySpans()]);
+  return lastSeenOf(id, entries, spans);
 }
 
 /** Directory labels for a set of ids, for the "Linked accounts" list; null
@@ -473,27 +482,32 @@ export async function directoryLabels(ids: string[]): Promise<Record<string, str
   return Object.fromEntries(ids.map((id) => [id, entries[id] ? label(entries[id], id) : null]));
 }
 
-/** The kind of an account as the directory knows it, for recording on a link. */
-export async function directoryType(id: string): Promise<string | null> {
-  const { entries } = await readDirectory();
-  return entries[id]?.type ?? null;
-}
 
 // ---------------------------------------------------------------------------
 // Readers
 
 /**
- * The Plaid account ids that are live now: every Item's remembered accounts
- * (accounts:meta), which are kept while an Item is erroring. Not a live Plaid
- * fetch: opening the Accounts tab must not fan out to every institution.
+ * The Plaid account ids that are live now: the remembered accounts
+ * (accounts:meta, kept while an Item is erroring) of every Item still stored.
+ * Not a live Plaid fetch: opening the Accounts tab must not fan out to every
+ * institution. Filtered by the stored Items because a load in flight when an
+ * Item is disconnected can write its record back after forgetItem, and nothing
+ * would ever remove it.
  *
- * Empty when accounts:meta can't be read (rememberedIdsByItem swallows it).
- * Callers use this only to PAUSE links whose old id is live again, so an empty
- * set errs toward following links: it can hide more, never reveal.
+ * By default, empty when either can't be read. Display callers use this only
+ * to PAUSE links whose old id is live again, so an empty set errs toward
+ * following links: it can hide more, never reveal. A caller that WRITES on the
+ * answer (Unhide clears every id it finds) passes strict, and fails instead.
  */
-export async function liveAccountIds(): Promise<Set<string>> {
-  const byItem = await rememberedIdsByItem();
-  return new Set(Object.values(byItem).flat());
+export async function liveAccountIds(opts: { strict?: boolean } = {}): Promise<Set<string>> {
+  try {
+    const [byItem, items] = await Promise.all([rememberedIdsByItem(opts.strict), getItems()]);
+    const stored = new Set(items.map((i) => i.item_id));
+    return new Set(Object.entries(byItem).flatMap(([item_id, ids]) => (stored.has(item_id) ? ids : [])));
+  } catch (err) {
+    if (opts.strict) throw err;
+    return new Set();
+  }
 }
 
 /**
@@ -506,9 +520,11 @@ export async function liveAccountIds(): Promise<Set<string>> {
  * total, so subtracting them all is exactly right, and an id that isn't in a
  * date's map subtracts nothing.
  *
- * Throws if the hidden set or the links can't be read, like getHiddenAccounts:
- * a hidden account reappearing on screen is the one outcome hiding must never
- * produce. The live ids err the other way when unreadable (see
+ * Throws if the hidden set can't be read, like getHiddenAccounts, or if
+ * something is hidden and the links can't be read: a hidden account
+ * reappearing on screen is the one outcome hiding must never produce. With
+ * nothing hidden the links don't matter, so a bad link can't take down the
+ * dashboard. The live ids err the other way when unreadable (see
  * liveAccountIds): a paused link then counts as active, which can only hide
  * more, never reveal.
  */
@@ -518,8 +534,17 @@ export async function getEffectiveHidden(): Promise<{
   /** One current id per hidden account: what the Hidden card lists. */
   forClient: { account_id: string; type: string }[];
 }> {
-  const [hidden, links, live] = await Promise.all([getHiddenAccounts(), getLinks(), liveAccountIds()]);
-  const effective = effectiveLinks(links, live);
+  const [hidden, links, live] = await Promise.all([
+    getHiddenAccounts(),
+    getLinks().then(
+      (l) => ({ ok: true as const, l }),
+      (err) => ({ ok: false as const, err })
+    ),
+    liveAccountIds(),
+  ]);
+  if (hidden.size === 0) return { hidden, forClient: [] };
+  if (!links.ok) throw links.err;
+  const effective = effectiveLinks(links.l, live);
   return { hidden: expandHidden(hidden, effective), forClient: hiddenForClient(hidden, effective) };
 }
 

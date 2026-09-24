@@ -13,21 +13,37 @@ export const linksKey = () => k('account-links');
 export type Link = { to: string; linked_at: string; evidence: Record<string, unknown> };
 
 /**
+ * Every readable link, old id -> link, and the old ids whose entries couldn't
+ * be read or parsed. For the Accounts tab card, which lists the unreadable
+ * ones so the user can remove them. Throws only if the hash can't be read.
+ */
+export async function readLinks(): Promise<{ links: Map<string, Link>; unreadable: Set<string> }> {
+  const raw = (await redis().hgetall<Record<string, string>>(linksKey())) ?? {};
+  const links = new Map<string, Link>();
+  const unreadable = new Set<string>();
+  await Promise.all(
+    Object.entries(raw).map(async ([old, blob]) => {
+      try {
+        const parsed = JSON.parse(await decrypt(blob)) as Link;
+        if (typeof parsed?.to !== 'string' || typeof parsed?.linked_at !== 'string') throw new Error('malformed');
+        links.set(old, parsed);
+      } catch {
+        unreadable.add(old);
+      }
+    })
+  );
+  return { links, unreadable };
+}
+
+/**
  * Every link, old id -> link. Throws on a failed read or an unreadable entry:
  * hidden accounts follow links, and treating "couldn't read" as "no links"
  * would put a hidden account back on screen.
  */
 export async function getLinks(): Promise<Map<string, Link>> {
-  const raw = (await redis().hgetall<Record<string, string>>(linksKey())) ?? {};
-  const out = new Map<string, Link>();
-  await Promise.all(
-    Object.entries(raw).map(async ([old, blob]) => {
-      const parsed = JSON.parse(await decrypt(blob)) as Link;
-      if (typeof parsed?.to !== 'string') throw new Error(`Account link ${old} is malformed`);
-      out.set(old, parsed);
-    })
-  );
-  return out;
+  const { links, unreadable } = await readLinks();
+  if (unreadable.size > 0) throw new Error(`Account link ${[...unreadable][0]} is unreadable`);
+  return links;
 }
 
 /**

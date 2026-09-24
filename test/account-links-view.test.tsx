@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AccountLinksView, type AccountLinksPayload } from '@/components/AccountLinks';
 
 const noop = () => {};
-const view = (data: AccountLinksPayload | null) =>
+const view = (data: AccountLinksPayload | null, picked: Record<string, string> = {}) =>
   renderToStaticMarkup(
-    <AccountLinksView data={data} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} />
+    <AccountLinksView data={data} busy={false} error="" preview={null} picked={picked} onPreview={noop} onPick={noop} onAct={noop} />
   );
 
 describe('AccountLinksView', () => {
@@ -45,5 +45,25 @@ describe('AccountLinksView', () => {
     expect(html).toContain('<option value="A19"');
     expect(html).toContain('Unlink');
     expect(html).toContain('this link is paused');
+  });
+
+  // A pick that is no longer offered (after Not this one) must not be what
+  // the buttons act on while the dropdown shows another account.
+  test('falls back to an offered account when the pick is no longer offered', () => {
+    const html = view(
+      {
+        suggestions: [],
+        unclaimed: [{ old: 'A7', old_label: null, first: '2026-07-12', last: '2026-07-16', last_balance: 850, candidates: [{ id: 'A19', label: 'Card' }] }],
+        links: [],
+      },
+      { A7: 'dismissed-one' }
+    );
+    expect(html).toContain('<option value="A19" selected="">');
+  });
+
+  test('lists unreadable links with Remove', () => {
+    const html = view({ suggestions: [], unclaimed: [], links: [], broken: ['A7'] });
+    expect(html).toContain('can&#x27;t be read');
+    expect(html).toContain('Remove');
   });
 });

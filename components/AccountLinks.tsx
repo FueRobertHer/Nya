@@ -37,7 +37,14 @@ type Unclaimed = {
   candidates: { id: string; label: string }[];
 };
 type Linked = { old: string; to: string; linked_at: string; old_label: string; to_label: string; conflict: boolean };
-export type AccountLinksPayload = { suggestions: Suggestion[]; unclaimed: Unclaimed[]; links: Linked[] };
+export type AccountLinksPayload = {
+  suggestions: Suggestion[];
+  unclaimed: Unclaimed[];
+  links: Linked[];
+  /** Saved links that can't be read. While one exists and an account is
+   *  hidden, the dashboard can't load, so each gets a Remove button. */
+  broken?: string[];
+};
 type Payload = AccountLinksPayload;
 
 function fmtDay(iso: string | null): string {
@@ -90,9 +97,20 @@ export default function AccountLinks({
         return;
       }
       setPreview(null);
+      // A pick may no longer be offered (Not this one removes it), so the
+      // dropdown starts again from what the reload offers.
+      if (body.old) {
+        setPicked((p) => {
+          const next = { ...p };
+          delete next[body.old];
+          return next;
+        });
+      }
       await load();
       // Dismissing changes no figures; linking and unlinking do.
       if (body.action !== 'dismiss' && body.action !== 'dismiss_all') onChanged();
+    } catch {
+      setError('Could not reach the server. Try again.');
     } finally {
       setBusy(false);
     }
@@ -136,7 +154,11 @@ export function AccountLinksView({
   onPick: (old: string, to: string) => void;
   onAct: (method: 'POST' | 'DELETE', body: Record<string, string>) => void;
 }) {
-  if (!data || (data.suggestions.length === 0 && data.unclaimed.length === 0 && data.links.length === 0)) {
+  const broken = data?.broken ?? [];
+  if (
+    !data ||
+    (data.suggestions.length === 0 && data.unclaimed.length === 0 && data.links.length === 0 && broken.length === 0)
+  ) {
     return null;
   }
 
@@ -183,7 +205,9 @@ export function AccountLinksView({
       ))}
 
       {data.unclaimed.map((u) => {
-        const to = picked[u.old] ?? u.candidates[0]?.id ?? '';
+        // Only a pick that is still offered: anything else would act on an
+        // account the dropdown isn't showing.
+        const to = u.candidates.some((c) => c.id === picked[u.old]) ? picked[u.old] : u.candidates[0]?.id ?? '';
         return (
           <div key={u.old} className="account-link-row">
             <p>
@@ -238,6 +262,24 @@ export function AccountLinksView({
               </span>
               <button className="link-btn danger-link" disabled={busy} onClick={() => onAct('DELETE', { old: l.old })}>
                 Unlink
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {broken.length > 0 && (
+        <div className="account-link-row">
+          <p className="type-tag">Unreadable</p>
+          <p className="chart-note">
+            {broken.length === 1 ? 'A saved link' : 'Some saved links'} can&apos;t be read. Remove{' '}
+            {broken.length === 1 ? 'it' : 'them'} and link again if needed.
+          </p>
+          {broken.map((old) => (
+            <div key={old} className="account-link-linked">
+              <span>Link from an earlier account</span>
+              <button className="link-btn danger-link" disabled={busy} onClick={() => onAct('DELETE', { old })}>
+                Remove
               </button>
             </div>
           ))}

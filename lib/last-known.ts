@@ -153,12 +153,17 @@ export async function rememberAccounts(institutions: Fillable[]): Promise<void> 
 }
 
 /** Every Item's remembered accounts. An unreadable record costs only that Item:
- *  a single rotated-key entry shouldn't take the rest down with it. */
-async function recallByItem(): Promise<Record<string, RememberedAccount[]>> {
+ *  a single rotated-key entry shouldn't take the rest down with it.
+ *
+ *  `strict` throws instead, on a failed read or any unreadable record, for a
+ *  caller that writes on the strength of the answer (lib/links.ts
+ *  liveAccountIds). */
+async function recallByItem(strict = false): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
     map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH);
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return {};
   }
   if (!map) return {};
@@ -183,7 +188,8 @@ async function recallByItem(): Promise<Record<string, RememberedAccount[]>> {
           (a) => typeof a?.account_id === 'string' && typeof a?.type === 'string'
         );
         if (accounts.length > 0) out[item_id] = accounts;
-      } catch {
+      } catch (err) {
+        if (strict) throw err;
         // Undecryptable record: that Item just won't be recoverable. Left in
         // place rather than deleted -- a rotated key is recoverable by putting
         // the old key back, and deleting would make that permanent.
@@ -248,8 +254,8 @@ export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
  * at once (lib/vanished.ts). Upstash is HTTP, so per-Item reads cost a round
  * trip each on the uncached dashboard path; this pays one for all of them.
  */
-export async function rememberedIdsByItem(): Promise<Record<string, string[]>> {
-  const byItem = await recallByItem();
+export async function rememberedIdsByItem(strict = false): Promise<Record<string, string[]>> {
+  const byItem = await recallByItem(strict);
   const out: Record<string, string[]> = {};
   for (const [item_id, accounts] of Object.entries(byItem)) {
     out[item_id] = accounts.map((a) => a.account_id);

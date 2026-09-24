@@ -92,7 +92,9 @@ export async function POST(req: Request) {
       // the request rather than leaving the account half-hidden.
       // Through ACTIVE links only, the same ones the display follows: a
       // paused link joins two live accounts that are each hidden on their own.
-      const active = effectiveLinks(await getLinks(), await liveAccountIds());
+      // Strict: an unreadable live set would make every paused link look
+      // active, and this write would unhide the other account for good.
+      const active = effectiveLinks(await getLinks(), await liveAccountIds({ strict: true }));
       for (const id of sameAccountIds(account_id, active)) {
         await setAccountHidden(id, '', false);
       }

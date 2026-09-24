@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import {
   directoryLabels,
-  directoryType,
   dismissAll,
   dismissPair,
   isUnclaimed,
@@ -17,7 +16,8 @@ import { clearCaches } from '@/lib/cache';
 // Linking an account's history across a reconnect (lib/links.ts).
 //
 // GET lists what to offer (suggestions with evidence, and balance-only history
-// the user can assign) and the links already made. POST links or dismisses,
+// the user can assign), the links already made, and any saved link that can't
+// be read (`broken`), so the user can remove it. POST links or dismisses,
 // DELETE unlinks. Everything reads stored state only: opening the Accounts tab
 // must not fan out to every institution's Plaid endpoints.
 //
@@ -51,7 +51,12 @@ export async function GET() {
       // re-added): the link is ignored until the user unlinks it.
       conflict: inputs.liveIds.has(old),
     }));
-    return NextResponse.json({ suggestions: offer.suggestions, unclaimed: offer.unclaimed, links });
+    return NextResponse.json({
+      suggestions: offer.suggestions,
+      unclaimed: offer.unclaimed,
+      links,
+      broken: [...inputs.unreadableLinks],
+    });
   } catch (err) {
     console.error(err);
     return NextResponse.json({ error: 'Failed to load account links' }, { status: 500 });
@@ -80,7 +85,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all", old, to }' }, { status: 400 });
     }
 
-    const { offer } = await offered();
+    const { inputs, offer } = await offered();
     if (!isOffered(old, to, offer)) {
       return NextResponse.json({ error: 'That pair is not currently offered' }, { status: 409 });
     }
@@ -98,7 +103,7 @@ export async function POST(req: Request) {
     // account's earlier id is subtracted with its own sign. An id known only
     // from balances takes the target's kind: the user said it is the same
     // account, and the preview is where a wrong pairing would show.
-    const old_type = (await directoryType(old)) ?? (await directoryType(to));
+    const old_type = inputs.directory[old]?.type ?? inputs.directory[to]?.type ?? null;
     await linkAccounts(
       old,
       to,

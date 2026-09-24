@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAccountHistory } from '@/lib/history';
-import { getLinks, effectiveLinks, historySpans, liveAccountIds, sameAccountIds, type Link } from '@/lib/links';
+import { getLinks, effectiveLinks, liveAccountIds, previewLastSeen, sameAccountIds, type Link } from '@/lib/links';
 
 // Balance history for a single account (real snapshots + estimated
 // backfill), for the per-account chart in the Accounts tab. Reads only from
@@ -28,16 +28,15 @@ export async function GET(req: Request) {
     } catch {
       links = new Map();
     }
-    // A preview is the link as it would be made: added with the date its
-    // history ends, so its history is ordered exactly as it will be once
-    // linked, and the chart shown is the chart the user will get.
+    // A preview is the link as it would be made: added with the date the
+    // link will record (lastSeenOf), so its history is ordered exactly as it
+    // will be once linked, and the chart shown is the chart the user will get.
     if (preview && preview !== id && !links.has(preview)) {
-      const spans = await historySpans();
       links = new Map(links);
       links.set(preview, {
         to: id,
         linked_at: new Date().toISOString(),
-        evidence: { old_last: spans[preview]?.last ?? null },
+        evidence: { old_last: await previewLastSeen(preview) },
       });
     }
     const older = sameAccountIds(id, links).filter((x) => x !== id);
