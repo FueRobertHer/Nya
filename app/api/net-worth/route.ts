@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { computeNetWorth, accountBalanceMap, isRecordable, type InstitutionResult } from '@/lib/networth';
+import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import {
-  recordSnapshot,
   getHistory,
   withTodayPoint,
   isBackfillDone,
@@ -76,7 +75,7 @@ export async function GET(req: Request) {
     // exact order they used to RUN in. That ordering is load-bearing, not
     // stylistic: the snapshot is still recorded before the hidden set is
     // awaited, so a hidden-read failure still cannot cost today's point (see
-    // the comment on recordSnapshot below). Only the waiting overlaps.
+    // the comment on recordFetch below). Only the waiting overlaps.
     //
     // On Upstash each of these is an HTTPS round trip (getHistory is several),
     // and they used to queue up behind a multi-second Plaid fetch that was
@@ -85,7 +84,6 @@ export async function GET(req: Request) {
     const historyPromise = eager(hiddenPromise.then((h) => getHistory(h)));
 
     const { institutions, netWorth } = await computeNetWorth();
-    const balances = accountBalanceMap(institutions);
 
     // Record today's snapshot only when every institution answered cleanly
     // and at least one is linked -- a partial fetch would chart an
@@ -99,11 +97,11 @@ export async function GET(req: Request) {
     // surfaces where it is awaited.)
     const clean = institutions.every(isRecordable);
     // The date the point landed on, or null if it didn't. Taken from
-    // recordSnapshot rather than read from the clock again, so the point this
+    // recordFetch rather than read from the clock again, so the point this
     // route charts below is labelled with the day that was actually written
-    // even if the request straddles UTC midnight.
-    const snapshotDate =
-      clean && institutions.length > 0 ? await recordSnapshot(netWorth, balances) : null;
+    // even if the request straddles UTC midnight. When it didn't land, the
+    // accounts that did answer are still recorded for their own charts.
+    const snapshotDate = await recordFetch(institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so
     // a later failure can still draw its card. Per institution, not gated on

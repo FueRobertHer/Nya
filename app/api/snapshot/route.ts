@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { computeNetWorth, accountBalanceMap, isRecordable } from '@/lib/networth';
-import { recordSnapshot } from '@/lib/history';
+import { computeNetWorth, recordFetch, isRecordable } from '@/lib/networth';
 import { clearCaches } from '@/lib/cache';
 import { rememberAccounts } from '@/lib/last-known';
 import { finishMasterRotation } from '@/lib/crypto';
@@ -27,13 +26,15 @@ export async function GET(req: Request) {
     await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', err instanceof Error ? err.message : err));
     const { institutions, netWorth } = await computeNetWorth();
 
-    // Same rule as the dashboard fetch: only record clean, non-empty reads.
+    // Same rule as the dashboard fetch: only a clean, non-empty read records a
+    // total. A partly failed one still records the accounts that answered, for
+    // their own charts: on a day the app isn't opened this is the only fetch.
+    const recorded = await recordFetch(institutions, netWorth);
     const clean = institutions.every(isRecordable);
     if (!clean || institutions.length === 0) {
       return NextResponse.json({ recorded: false });
     }
 
-    await recordSnapshot(netWorth, accountBalanceMap(institutions));
     // Record how to draw these accounts, alongside the balances. On a day the
     // app is never opened this cron is the only clean fetch there is, so
     // without it an account added since the last dashboard load would be in the
@@ -42,7 +43,7 @@ export async function GET(req: Request) {
     // undo it).
     await rememberAccounts(institutions);
     await clearCaches(); // cached payloads now have yesterday's history
-    return NextResponse.json({ recorded: true });
+    return NextResponse.json({ recorded: recorded !== null });
   } catch (err: any) {
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Snapshot failed' }, { status: 500 });
