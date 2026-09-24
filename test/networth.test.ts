@@ -1,5 +1,18 @@
-import { describe, expect, test } from 'bun:test';
-import { accountBalanceMap, isRecordable, type InstitutionResult } from '@/lib/networth';
+import { describe, expect, test, mock } from 'bun:test';
+import { FakeRedis, storageMock } from './fake-redis';
+import type { InstitutionResult } from '@/lib/networth';
+
+// Mock storage BEFORE lib/networth loads, even though nothing here touches
+// Redis. lib/networth imports lib/vanished, which pulls in lib/storage,
+// lib/last-known and lib/history. Bun shares one module cache across test
+// files, so if this file loaded them against the real storage first, a later
+// file's mock.module('@/lib/storage') would never reach the copies already
+// loaded, and its reads would silently come back empty. Which file loads first
+// depends on Bun's file order, so this passed locally and failed in CI.
+process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+mock.module('@/lib/storage', () => storageMock(new FakeRedis()));
+
+const { accountBalanceMap, isRecordable } = await import('@/lib/networth');
 
 // accountBalanceMap feeds recordSnapshot, which writes the REAL history layer.
 // Nothing ever rewrites a real point for a past date, so anything wrong that
