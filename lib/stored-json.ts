@@ -18,24 +18,61 @@
 //   - Redis unreachable       -> the Redis error, also never "empty"
 
 import { redis } from './storage';
-import { encrypt, decrypt } from './crypto';
+import {
+  encrypt,
+  decrypt,
+  DecryptFailedError,
+  MalformedCiphertextError,
+  MasterKeyError,
+  UnknownKeyError,
+} from './crypto';
 
 export class StoredDataUnreadableError extends Error {
-  constructor(readonly what: string) {
+  /** What actually went wrong, for the log: the user-facing message is the
+   *  same whatever it was. Crypto error messages name keys and formats,
+   *  never data. */
+  readonly cause?: unknown;
+
+  constructor(
+    readonly what: string,
+    cause?: unknown
+  ) {
     super(`Your saved ${what} could not be read, so they were left untouched.`);
     this.name = 'StoredDataUnreadableError';
+    this.cause = cause;
   }
+}
+
+/** Errors that mean the stored value itself cannot be read. Anything else (a
+ *  missing encryption key in the environment, a database error while loading
+ *  a data key) is a problem with this deployment, not with the data, so it is
+ *  left to surface as an ordinary server error. */
+function isUnreadable(err: unknown): boolean {
+  return (
+    err instanceof SyntaxError ||
+    err instanceof MalformedCiphertextError ||
+    err instanceof DecryptFailedError ||
+    err instanceof UnknownKeyError ||
+    err instanceof MasterKeyError
+  );
 }
 
 async function parse<T>(blob: string, what: string, isValid: (v: unknown) => v is T): Promise<T> {
   let value: unknown;
   try {
     value = JSON.parse(await decrypt(blob));
-  } catch {
-    throw new StoredDataUnreadableError(what);
+  } catch (err) {
+    if (isUnreadable(err)) throw new StoredDataUnreadableError(what, err);
+    throw err;
   }
-  if (!isValid(value)) throw new StoredDataUnreadableError(what);
+  if (!isValid(value)) throw new StoredDataUnreadableError(what, new Error('stored value has the wrong shape'));
   return value;
+}
+
+/** A line for the server log saying why, without any stored data. */
+export function describeUnreadable(err: StoredDataUnreadableError): string {
+  const c = err.cause;
+  return c instanceof Error ? `${c.name}: ${c.message}` : String(c);
 }
 
 /** The stored value, or null when nothing has ever been saved. */

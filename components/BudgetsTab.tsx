@@ -6,6 +6,7 @@
 // outflows, from the already-loaded transactions.
 
 import { useMemo, useState } from 'react';
+import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { detectRecurring } from '@/lib/recurring';
 import { formatMoney, dominantCurrency } from '@/lib/format';
@@ -33,23 +34,35 @@ function meterState(ratio: number): '' | ' warn' | ' over' {
 export default function BudgetsTab({
   txns,
   budgets,
+  budgetsStatus = 'ready',
   budgetsError = null,
+  budgetsSaveError = null,
   onSave,
   goals,
+  goalsStatus = 'ready',
   goalsError = null,
+  goalsSaveError = null,
   onSaveGoals,
   accounts,
   loading,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
-  /** Set when the saved budgets could not be loaded: shown instead of the
-   *  list, and editing is hidden, so nothing can be saved over them. */
+  /** Until 'ready', the list is unknown: shown as loading, never as "none",
+   *  and not editable (lib/whole-list-store.ts). */
+  budgetsStatus?: ListStatus;
+  /** Why the budgets could not be loaded; shown instead of the list. */
   budgetsError?: string | null;
-  onSave: (next: Budgets) => void;
+  /** Why the last save did not go through; shown above the list. */
+  budgetsSaveError?: string | null;
+  /** Resolves true once saved; forms only clear then, so nothing typed is
+   *  lost to a failed save. */
+  onSave: (next: Budgets) => Promise<boolean>;
   goals: Goal[];
+  goalsStatus?: ListStatus;
   goalsError?: string | null;
-  onSaveGoals: (next: Goal[]) => void;
+  goalsSaveError?: string | null;
+  onSaveGoals: (next: Goal[]) => Promise<boolean>;
   accounts: GoalAccount[];
   loading: boolean;
 }) {
@@ -121,26 +134,25 @@ export default function BudgetsTab({
     setEditAmount(String(budgets[category]));
   }
 
-  function saveEdit(category: string) {
+  async function saveEdit(category: string) {
     const value = Number(editAmount);
     if (!Number.isFinite(value) || value <= 0) return;
-    onSave({ ...budgets, [category]: value });
-    setEditing(null);
+    if (await onSave({ ...budgets, [category]: value })) setEditing(null);
   }
 
-  function removeBudget(category: string) {
+  async function removeBudget(category: string) {
     const next = { ...budgets };
     delete next[category];
-    onSave(next);
-    setEditing(null);
+    if (await onSave(next)) setEditing(null);
   }
 
-  function addBudget() {
+  async function addBudget() {
     const value = Number(newAmount);
     if (!newCategory || !Number.isFinite(value) || value <= 0) return;
-    onSave({ ...budgets, [newCategory]: value });
-    setNewCategory('');
-    setNewAmount('');
+    if (await onSave({ ...budgets, [newCategory]: value })) {
+      setNewCategory('');
+      setNewAmount('');
+    }
   }
 
   return (
@@ -148,7 +160,7 @@ export default function BudgetsTab({
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">{monthName} budgets</div>
-          {totalBudget > 0 && (
+          {totalBudget > 0 && budgetsStatus === 'ready' && (
             <div className="inst-total">
               {formatMoney(totalSpent, displayCurrency)} of{' '}
               {formatMoney(totalBudget, displayCurrency)}
@@ -156,10 +168,13 @@ export default function BudgetsTab({
           )}
         </div>
 
-        {budgetsError ? (
+        {budgetsStatus === 'loading' ? (
+          <p className="empty-note">Loading budgets…</p>
+        ) : budgetsStatus === 'error' ? (
           <p className="stale-note">{budgetsError}</p>
         ) : (
           <>
+        {budgetsSaveError && <p className="stale-note">{budgetsSaveError}</p>}
         {totalBudget > 0 && (
           <div className={`meter-track${meterState(totalRatio)}`}>
             <div
@@ -264,7 +279,14 @@ export default function BudgetsTab({
         )}
       </div>
 
-      <GoalsCard goals={goals} error={goalsError} accounts={accounts} onSave={onSaveGoals} />
+      <GoalsCard
+        goals={goals}
+        status={goalsStatus}
+        error={goalsError}
+        saveError={goalsSaveError}
+        accounts={accounts}
+        onSave={onSaveGoals}
+      />
 
       <div className="card">
         <div className="inst-header">

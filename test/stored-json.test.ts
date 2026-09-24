@@ -7,7 +7,7 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { encrypt } = await import('@/lib/crypto');
+const { encrypt, encryptV2, importMasterKey, dataKeyId, keysHashKey } = await import('@/lib/crypto');
 const { StoredDataUnreadableError } = await import('@/lib/stored-json');
 const { getGoals, setGoals } = await import('@/lib/goals');
 const { getBudgets, setBudgets } = await import('@/lib/budgets');
@@ -61,6 +61,31 @@ describe('goals', () => {
   });
 });
 
+describe('empty is a real value, not unreadable', () => {
+  test('an empty goal list saves and reads back', async () => {
+    await setGoals([GOAL]);
+    await setGoals([]);
+    expect(await getGoals()).toEqual([]);
+    await setGoals([GOAL]); // and can be saved over again
+    expect(await getGoals()).toEqual([GOAL]);
+  });
+
+  test('an empty budget set saves and reads back', async () => {
+    await setBudgets({ Groceries: 400 });
+    await setBudgets({});
+    expect(await getBudgets()).toEqual({});
+    await setBudgets({ Rent: 1000 });
+    expect(await getBudgets()).toEqual({ Rent: 1000 });
+  });
+
+  test('a stored empty string reads as never saved', async () => {
+    await fake.set(testKey('goals'), '');
+    expect(await getGoals()).toEqual([]);
+    await setGoals([GOAL]);
+    expect(await getGoals()).toEqual([GOAL]);
+  });
+});
+
 describe('budgets', () => {
   test('never saved reads as none, and round-trips', async () => {
     expect(await getBudgets()).toEqual({});
@@ -98,10 +123,65 @@ describe('the routes tell the dashboard, so it never shows "none"', () => {
 
   test('budgets: the same', async () => {
     await fake.set(testKey('budgets'), 'unreadable');
-    expect((await budgetsRoute.GET()).status).toBe(409);
+    const get = await budgetsRoute.GET();
+    expect(get.status).toBe(409);
+    expect(await get.json()).toMatchObject({ unreadable: true });
     const res = await put(budgetsRoute, { budgets: { Groceries: 400 } });
     expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ unreadable: true });
     expect(await fake.get<string>(testKey('budgets'))).toBe('unreadable');
+  });
+
+  test('the log says why, and never shows stored data', async () => {
+    const secret = 'enc-secret-looking-value-that-must-not-be-logged';
+    await fake.set(testKey('goals'), secret);
+    const logged: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => logged.push(a.join(' '));
+    try {
+      await goalsRoute.GET();
+    } finally {
+      console.error = origError;
+    }
+    const line = logged.join(' ');
+    expect(line).toContain('Stored goals unreadable');
+    expect(line).toContain('MalformedCiphertextError');
+    expect(line).not.toContain(secret);
+  });
+
+  test('a problem with the deployment, not the data, is a 500 without the flag', async () => {
+    // A v2 value under a data key: loading that key needs Redis, and a Redis
+    // failure there says nothing about whether the data is readable.
+    const master = Buffer.alloc(32, 61).toString('base64');
+    const saved = process.env.MASTER_KEY;
+    process.env.MASTER_KEY = master;
+    try {
+      const m = await importMasterKey(master);
+      const raw = new Uint8Array(32).fill(61);
+      const id = await dataKeyId(61, raw);
+      await fake.hset(keysHashKey(), {
+        [id]: JSON.stringify({ created_at: 'x', wrapped: { [m.fingerprint]: await m.wrap(id, raw) } }),
+      });
+      const value = await encryptV2(JSON.stringify([GOAL]), id);
+      await fake.set(testKey('goals'), value);
+      // A fresh id is not cached, so decrypting it must fetch the key.
+      const id2 = await dataKeyId(62, raw);
+      await fake.set(testKey('goals'), value.replace(`v2.${id}.`, `v2.${id2}.`));
+      fake.failNext('hget');
+
+      const origError = console.error;
+      console.error = () => {};
+      try {
+        const res = await goalsRoute.GET();
+        expect(res.status).toBe(500);
+        expect((await res.json()).unreadable).toBeUndefined();
+      } finally {
+        console.error = origError;
+      }
+    } finally {
+      if (saved === undefined) delete process.env.MASTER_KEY;
+      else process.env.MASTER_KEY = saved;
+    }
   });
 
   test('a readable store still loads and saves normally', async () => {

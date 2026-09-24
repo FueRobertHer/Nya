@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { StoredDataUnreadableError } from '@/lib/stored-json';
+import { StoredDataUnreadableError, describeUnreadable } from '@/lib/stored-json';
 import { getBudgets, setBudgets, type Budgets } from '@/lib/budgets';
 
 export async function GET() {
@@ -9,6 +9,7 @@ export async function GET() {
     // 409, not 500, and flagged: the client must not show "none" and let the
     // next save overwrite what is there.
     if (err instanceof StoredDataUnreadableError) {
+      console.error('Stored budgets unreadable:', describeUnreadable(err));
       return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
     }
     console.error(err);
@@ -40,6 +41,7 @@ export async function PUT(req: Request) {
     return NextResponse.json({ budgets: clean });
   } catch (err) {
     if (err instanceof StoredDataUnreadableError) {
+      console.error('Stored budgets unreadable:', describeUnreadable(err));
       return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
     }
     console.error(err);
