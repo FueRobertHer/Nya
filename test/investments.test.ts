@@ -585,14 +585,16 @@ describe('dailyFlows with contribution trades', () => {
     ).toEqual([{ date: '2026-03-01', amount: 500 }]);
   });
 
-  test('each cash row vouches for one trade only', () => {
+  // One paycheck split across two funds: the cash row is the money, the buys
+  // are where it went. Pairing rows one to one counted it twice.
+  test('a paycheck split across funds is counted once', () => {
     expect(
       dailyFlows([
         txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'contribution', amount: -500 }),
-        txn({ investment_transaction_id: 'b1', type: 'buy', subtype: 'contribution', amount: 500 }),
-        txn({ investment_transaction_id: 'b2', type: 'buy', subtype: 'contribution', amount: 500 }),
+        txn({ investment_transaction_id: 'b1', type: 'buy', subtype: 'contribution', amount: 300 }),
+        txn({ investment_transaction_id: 'b2', type: 'buy', subtype: 'contribution', amount: 200 }),
       ])
-    ).toEqual([{ date: '2026-03-01', amount: 1000 }]);
+    ).toEqual([{ date: '2026-03-01', amount: 500 }]);
   });
 });
 
@@ -613,14 +615,44 @@ describe('countedTrades', () => {
     expect(countedTrades([cashIn(), buy()]).size).toBe(0);
   });
 
-  // Matched per account: a cash row in the next account over proves nothing.
+  // Decided per account: a cash row in the next account over proves nothing.
   test('a cash row in another account does not cover it', () => {
     expect(countedTrades([cashIn({ account_id: 'other' }), buy()]).size).toBe(1);
   });
 
-  test('a cash row on another day or of another amount does not cover it', () => {
-    expect(countedTrades([cashIn({ date: '2026-03-02' }), buy()]).size).toBe(1);
-    expect(countedTrades([cashIn({ amount: -499 }), buy()]).size).toBe(1);
+  // An account that books cash rows books ALL its money that way, so its buys
+  // are internal whatever their dates or amounts. Each of these counted twice
+  // under same-day, same-amount pairing.
+  test('an account that books cash rows never counts its buys', () => {
+    // Settlement lag: cash on Friday, buy on Monday.
+    expect(countedTrades([cashIn({ date: '2026-02-27' }), buy({ date: '2026-03-02' })]).size).toBe(0);
+    // Employee contribution plus employer match, bought as one.
+    expect(
+      countedTrades([cashIn({ investment_transaction_id: 'e', amount: -300 }), cashIn({ amount: -200 }), buy()]).size
+    ).toBe(0);
+  });
+
+  test('a distribution with tax withheld is counted once', () => {
+    const rows = [
+      txn({ investment_transaction_id: 's', type: 'sell', subtype: 'distribution', amount: -1000 }),
+      txn({ investment_transaction_id: 'w', type: 'cash', subtype: 'tax withheld', amount: 100 }),
+      txn({ investment_transaction_id: 'd', type: 'cash', subtype: 'distribution', amount: 900 }),
+    ];
+    const counted = countedTrades(rows);
+    expect(counted.size).toBe(0);
+    expect(rows.reduce((sum, t) => sum + walkDelta(t, counted), 0)).toBe(-1000);
+  });
+
+  // Matched on the SAME subtype: a rollover arriving as a cash transfer says
+  // nothing about how the account books its paychecks.
+  test('an unrelated cash row does not suppress the buys', () => {
+    const rollover = txn({ investment_transaction_id: 'r', type: 'transfer', subtype: 'transfer', name: 'ROLLOVER', amount: -60_000 });
+    expect(countedTrades([rollover, buy()]).size).toBe(1);
+  });
+
+  // Same shape as a paycheck: buys made with outside money.
+  test('a loan repayment booked as a buy counts', () => {
+    expect(countedTrades([buy({ subtype: 'loan payment', amount: 200 })]).size).toBe(1);
   });
 
   test('ordinary trades are never counted', () => {
@@ -679,18 +711,20 @@ describe('year-to-date figures with contribution trades', () => {
 
   // The readers must agree: what the chart calls money added over a span of
   // contributions is what the year-to-date figure calls contributed.
+  // One account of each reporting style: buys only, and cash rows plus buys.
   test('agrees with dailyFlows', () => {
     const rows = [
-      txn({ investment_transaction_id: '1', date: '2026-03-01', type: 'buy', subtype: 'contribution', amount: 500 }),
-      txn({ investment_transaction_id: '2', date: '2026-03-15', type: 'cash', subtype: 'contribution', amount: -500 }),
-      txn({ investment_transaction_id: '3', date: '2026-03-15', type: 'buy', subtype: 'contribution', amount: 500 }),
+      txn({ investment_transaction_id: '1', account_id: 'k401', date: '2026-03-01', type: 'buy', subtype: 'contribution', amount: 500 }),
+      txn({ investment_transaction_id: '2', account_id: 'k401', date: '2026-03-15', type: 'buy', subtype: 'contribution', amount: 500 }),
+      txn({ investment_transaction_id: '3', account_id: 'ira', date: '2026-03-15', type: 'cash', subtype: 'contribution', amount: -500 }),
+      txn({ investment_transaction_id: '4', account_id: 'ira', date: '2026-03-15', type: 'buy', subtype: 'contribution', amount: 500 }),
     ];
     const counted = countedTrades(rows);
     const ytd = rows
       .filter((t) => isContribution(t, counted))
       .reduce((s, t) => s + contributedAmount(t, counted), 0);
     const flows = dailyFlows(rows).reduce((s, f) => s + f.amount, 0);
-    expect(ytd).toBe(1000);
-    expect(flows).toBe(1000);
+    expect(ytd).toBe(1500);
+    expect(flows).toBe(1500);
   });
 });

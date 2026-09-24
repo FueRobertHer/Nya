@@ -383,6 +383,9 @@ describe('cashSharePct', () => {
     expect(cashSharePct(1)).toBe('100%');
     expect(cashSharePct(0.456)).toBe('46%');
     expect(cashSharePct(0.031)).toBe('3.1%');
+    // Judged after rounding: 9.99% is not "10.0%".
+    expect(cashSharePct(0.0999)).toBe('10%');
+    expect(cashSharePct(0.0994)).toBe('9.9%');
   });
 
   // A row that shows a cash amount must not then call it 0.0%.

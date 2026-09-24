@@ -164,7 +164,9 @@ export function summarizeCash(holdings: CashHolding[]): CashSummary {
  */
 export function cashSharePct(share: number): string {
   if (share > 0 && share < 0.0005) return '<0.1%';
-  return `${(share * 100).toFixed(share >= 0.1 ? 0 : 1)}%`;
+  // Judged after rounding, or 9.99% would print as "10.0%".
+  const oneDecimal = (share * 100).toFixed(1);
+  return Number(oneDecimal) >= 10 ? `${Math.round(share * 100)}%` : `${oneDecimal}%`;
 }
 
 /**

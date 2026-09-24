@@ -257,6 +257,12 @@ export function externalFlow(t: InvestmentTxn): number {
   return valueDelta(t);
 }
 
+// Trade subtypes that can mean money crossing the boundary, by direction: a buy
+// made with outside money (a paycheck, a 401k loan repayment) and a sell whose
+// proceeds leave the account (a distribution).
+const MONEY_IN_BUY_SUBTYPES = new Set(['contribution', 'loan payment']);
+const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution']);
+
 /**
  * A single-row contribution or distribution: some recordkeepers report a
  * paycheck contribution as one `buy` row (subtype contribution) that buys fund
@@ -264,46 +270,67 @@ export function externalFlow(t: InvestmentTxn): number {
  * distribution). externalFlow alone reads both as internal trades, which would
  * put every paycheck on the growth side. Their value change is `amount` itself:
  * positive for shares bought with outside money, negative for shares sold and
- * paid out. Only counted by dailyFlows when no cash row covers the same money.
+ * paid out. Whether a given one counts is countedTrades' decision.
  */
 function tradeFlow(t: InvestmentTxn): number {
   const subtype = (t.subtype || '').toLowerCase();
   const type = (t.type || '').toLowerCase();
-  if (type === 'buy' && subtype === 'contribution') return t.amount;
-  if (type === 'sell' && subtype === 'distribution') return t.amount;
+  if (type === 'buy' && MONEY_IN_BUY_SUBTYPES.has(subtype)) return t.amount;
+  if (type === 'sell' && MONEY_OUT_SELL_SUBTYPES.has(subtype)) return t.amount;
   return 0;
 }
 
+/** A non-trade row that moves money across the boundary under this subtype. */
+function isCashLeg(t: InvestmentTxn, subtype: string): boolean {
+  const type = (t.type || '').toLowerCase();
+  return (
+    type !== 'buy' &&
+    type !== 'sell' &&
+    (t.subtype || '').toLowerCase() === subtype &&
+    externalFlow(t) !== 0
+  );
+}
+
 /**
- * The contribution trades (tradeFlow) in a set that carry their own money: the
- * ones no cash-side flow on the same account and date already accounts for.
+ * The contribution and distribution trades (tradeFlow) in a set that carry
+ * their own money.
  *
- * Some institutions report the money arriving as a cash row AND the shares it
- * bought as a contribution buy; counting both would add the paycheck twice.
- * Others report only the buy. So a trade counts unless a same-account,
- * same-date cash-side flow of the same amount (within a cent) exists, and each
- * cash flow vouches for one trade only.
+ * Institutions report these one of two ways. Some book the money as a cash row
+ * (cash/contribution) and then the shares it bought as a buy that is purely
+ * internal. Others book only the buy. The question is which style an account
+ * uses, and it is answered PER ACCOUNT AND SUBTYPE from the evidence in the
+ * set: if an account has any cash row of that subtype, its trades of that
+ * subtype are the internal half and never count; if it has none, they are the
+ * only record of the money and always count.
+ *
+ * Deliberately not matched row to row. Pairing a cash row with a trade of the
+ * same amount on the same day broke on ordinary cases, each counting the money
+ * twice: a paycheck split across two funds (one cash row, two buys), an
+ * employer match (two cash rows, one buy), a cash row that settles days before
+ * the buy, and a distribution with tax withheld (one sell, a smaller cash row).
+ * An institution does not switch styles between paychecks, so the account-level
+ * answer covers all of them.
+ *
+ * Matched on the SAME subtype so an unrelated cash row can't suppress the
+ * trades: a rollover arriving as a cash transfer says nothing about how the
+ * same account books its paychecks.
  *
  * Decided over the whole set because no single row can answer it. The balance
- * walk (app/api/backfill), the chart's money-added line (dailyFlows) and the
+ * walk (addInvestmentFlows), the chart's money-added line (dailyFlows) and the
  * year-to-date figures (contributedAmount) all read the same answer, so they
  * cannot disagree about whether a paycheck happened.
  */
 export function countedTrades(txns: InvestmentTxn[]): Set<InvestmentTxn> {
-  const cashFlows = new Map<string, number[]>();
-  const key = (t: InvestmentTxn) => `${t.account_id}\u0000${t.date}`;
+  const cashStyle = new Set<string>(); // `${account_id}\0${subtype}` with a cash row
   for (const t of txns) {
-    const flow = externalFlow(t);
-    if (flow !== 0) (cashFlows.get(key(t)) ?? cashFlows.set(key(t), []).get(key(t))!).push(flow);
+    const subtype = (t.subtype || '').toLowerCase();
+    if (!MONEY_IN_BUY_SUBTYPES.has(subtype) && !MONEY_OUT_SELL_SUBTYPES.has(subtype)) continue;
+    if (isCashLeg(t, subtype)) cashStyle.add(`${t.account_id}\u0000${subtype}`);
   }
   const counted = new Set<InvestmentTxn>();
   for (const t of txns) {
-    const flow = tradeFlow(t);
-    if (flow === 0) continue;
-    const sameDay = cashFlows.get(key(t)) ?? [];
-    const match = sameDay.findIndex((f) => Math.abs(f - flow) < 0.01);
-    if (match >= 0) sameDay.splice(match, 1);
-    else counted.add(t);
+    if (tradeFlow(t) === 0) continue;
+    if (!cashStyle.has(`${t.account_id}\u0000${(t.subtype || '').toLowerCase()}`)) counted.add(t);
   }
   return counted;
 }

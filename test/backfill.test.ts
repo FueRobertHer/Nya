@@ -356,6 +356,17 @@ describe('addInvestmentFlows', () => {
     expect(dates['2026-09-09'].k401).toBe(9_500);
   });
 
+  // An employer match bought together with the paycheck: two cash rows, one
+  // buy. The cash rows are the money; walked back once, as 500.
+  test('an employer match bought as one buy is walked back once', () => {
+    const { dates } = walkK401([
+      row({ investment_transaction_id: 'e', type: 'cash', subtype: 'contribution', amount: -300 }),
+      row({ investment_transaction_id: 'm', type: 'cash', subtype: 'contribution', amount: -200 }),
+      row({ investment_transaction_id: 'b' }),
+    ]);
+    expect(dates['2026-09-09'].k401).toBe(9_500);
+  });
+
   test('an ordinary buy moves nothing', () => {
     const { oldest, dates } = walkK401([row({ subtype: 'buy' })]);
     expect(oldest).toBeNull();
