@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
 import { rememberAccounts } from '@/lib/last-known';
+import { recordDirectory } from '@/lib/links';
 import { computeNetWorth, recordFetch } from '@/lib/networth';
 import { clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
@@ -140,6 +141,7 @@ export async function POST(req: Request) {
         // it learned about would otherwise sit in the snapshot with nothing to
         // render it from.
         await rememberAccounts(institutions);
+        await recordDirectory(institutions);
         return NextResponse.json({ updated, recorded, results });
       } catch (err) {
         // The balances did land; only the snapshot failed. Say so rather than

@@ -32,6 +32,10 @@ export type LiabilitiesState = 'on' | 'off' | 'loading' | 'unavailable';
 export type InstitutionResult = {
   institution_name: string;
   item_id: string;
+  /** Plaid's institution id, when the balance call returned one. Stable across
+   *  a disconnect and re-add, unlike item_id and the display name (which is
+   *  whatever the client sent at link time); lib/links.ts matches on it. */
+  institution_id?: string | null;
   accounts: any[];
   holdings: any[];
   error: string | null;
@@ -113,6 +117,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
 
   try {
     const balanceRes = await plaidClient.accountsBalanceGet({ access_token });
+    result.institution_id = balanceRes.data.item?.institution_id ?? null;
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
       name: a.name,
@@ -124,6 +129,9 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
       available: a.balances.available,
       limit: a.balances.limit, // credit line, for utilization
       currency: a.balances.iso_currency_code,
+      // Plaid's cross-Item identity for the account, where it offers one (Chase
+      // in production). Strong evidence when matching a re-added account.
+      persistent_account_id: a.persistent_account_id ?? null,
     }));
   } catch (err: any) {
     const code = err?.response?.data?.error_code;

@@ -4,7 +4,7 @@ import { readCache, writeCache, TRANSACTIONS_CACHE_KEY } from '@/lib/cache';
 import { getOverrides } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
-import { getHiddenAccounts } from '@/lib/hidden';
+import { getEffectiveHidden } from '@/lib/links';
 
 type TransactionsPayload = {
   transactions: Txn[];
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     // inside the sync (the only place account_id still exists), so they're
     // never shipped to the client. A read failure throws to the catch below
     // rather than silently surfacing transactions the user hid.
-    const hidden = await getHiddenAccounts();
+    const { hidden } = await getEffectiveHidden();
     const hiddenIds = new Set(hidden.keys());
     const [results, overrides, renames] = await Promise.all([
       Promise.all(items.map((item) => syncItemTransactions(item, hiddenIds))),

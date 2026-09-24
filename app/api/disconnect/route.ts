@@ -74,6 +74,10 @@ export async function POST(req: Request) {
     // Its vanished-account record goes with it: the Item is gone, so nothing
     // can confirm or clear those entries, and a relink starts clean.
     await forgetVanished(item_id);
+    // Its accounts stay in the account directory for a while, so that if the
+    // same institution is added back they can be matched to the new ones
+    // (lib/links.ts). Unlinked ones are pruned once the Item is gone and they
+    // haven't been seen for the window: nothing to do here.
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches();

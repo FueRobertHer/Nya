@@ -7,7 +7,8 @@ import {
   isBackfillDone,
   type HistoryPoint,
 } from '@/lib/history';
-import { getHiddenAccounts, applyHidden } from '@/lib/hidden';
+import { applyHidden } from '@/lib/hidden';
+import { getEffectiveHidden, recordDirectory } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 
 type NetWorthPayload = {
@@ -80,8 +81,10 @@ export async function GET(req: Request) {
     // On Upstash each of these is an HTTPS round trip (getHistory is several),
     // and they used to queue up behind a multi-second Plaid fetch that was
     // sitting idle on the network the whole time.
-    const hiddenPromise = eager(getHiddenAccounts());
-    const historyPromise = eager(hiddenPromise.then((h) => getHistory(h)));
+    // Hidden accounts follow account links (lib/links.ts): every id an account
+    // has had is hidden with it, and the client sees one current id each.
+    const hiddenPromise = eager(getEffectiveHidden());
+    const historyPromise = eager(hiddenPromise.then((h) => getHistory(h.hidden)));
 
     const { institutions, netWorth } = await computeNetWorth();
 
@@ -108,6 +111,11 @@ export async function GET(req: Request) {
     // `clean`: one broken bank shouldn't stop the others' records staying
     // fresh. Writes only, so the broken one's record survives.
     await rememberAccounts(institutions);
+    // And in the account directory, which outlives a disconnect so a re-added
+    // institution's accounts can be matched to the ones they replace. Started
+    // here and awaited before responding, so it overlaps the reads below
+    // instead of adding a round trip to every live load. It never throws.
+    const directoryWrite = recordDirectory(institutions);
 
     // Everything from here down is display-only. `visibleNetWorth` excludes
     // hidden accounts and is what ships as `netWorth` -- the client is never
@@ -129,7 +137,12 @@ export async function GET(req: Request) {
       );
     }
 
-    const hidden = await hiddenPromise;
+    const { hidden, forClient: hiddenList } = await hiddenPromise;
+    await directoryWrite;
+    // Plaid's cross-Item account identity is for matching on the server only
+    // (lib/links.ts); it has no business in the payload, the cache or the
+    // browser's localStorage.
+    for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
@@ -142,7 +155,7 @@ export async function GET(req: Request) {
       institutions,
       netWorth: visibleNetWorth,
       history,
-      hidden: [...hidden.entries()].map(([account_id, { type }]) => ({ account_id, type })),
+      hidden: hiddenList,
       as_of: new Date().toISOString(),
     };
 
