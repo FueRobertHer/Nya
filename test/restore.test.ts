@@ -79,6 +79,12 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
     expect(() => verifyArchive(cut)).toThrow(/footer/);
   });
 
+  test('Windows line endings are named as such, not as damage', async () => {
+    await seed();
+    const text = (await exportText()).replace(/\n/g, '\r\n');
+    expect(() => verifyArchive(text)).toThrow(/CRLF/);
+  });
+
   test('an edited record', async () => {
     await seed();
     const text = (await exportText()).replace('cipher-budgets', 'cipher-budgetz');
@@ -130,6 +136,7 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
     ['an empty hash', { key: 'h', type: 'hash', ttl: null, value: {} }, /empty hash/],
     ['an unknown type', { key: 'l', type: 'list', ttl: null, value: [] }, /unknown type/],
     ['a negative ttl', { key: 's', type: 'string', ttl: -1, value: 'x' }, /ttl/],
+    ['a zero ttl', { key: 's', type: 'string', ttl: 0, value: 'x' }, /ttl/],
     ['a non-string value', { key: 's', type: 'string', ttl: null, value: 1 }, /non-string/],
     ['a non-string hash value', { key: 'h', type: 'hash', ttl: null, value: { f: 1 } }, /non-string/],
     ['an early footer', { end: true, keys: 0, sha256: '', unsupported: [] }, /footer before/],
@@ -204,7 +211,7 @@ describe('restoreArchive', () => {
     await fake.set(testKey('ratelimit:login:1.2.3.4'), '2');
     await fake.set('production:budgets', 'another environment');
 
-    await restoreArchive(fake as any, archive, { overwrite: true });
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
 
     expect(await fake.get<string>(testKey('txns:item_from_later'))).toBeNull();
     expect(await fake.get<string>(testKey('cache:net-worth'))).toBeNull();
@@ -220,7 +227,7 @@ describe('restoreArchive', () => {
 
     await restoreArchive(fake as any, archive, { overwrite: false });
     const once = snapshot();
-    await restoreArchive(fake as any, archive, { overwrite: true });
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
 
     expect(snapshot()).toEqual(once);
   });
@@ -234,9 +241,117 @@ describe('restoreArchive', () => {
     fake.failNext('hset');
     await expect(restoreArchive(fake as any, archive, { overwrite: false })).rejects.toThrow();
     await expect(restoreArchive(fake as any, archive, { overwrite: false })).rejects.toThrow(/--overwrite/);
-    await restoreArchive(fake as any, archive, { overwrite: true });
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
 
     expect(snapshot()).toEqual(before);
+  });
+
+  test('a hash that comes back in a different field order still matches', async () => {
+    // Real Redis promises no HSCAN order and often returns a restored hash in a
+    // different order from the original. The fake keeps insertion order, so
+    // this client reverses every page to stand in for that.
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) fields[`2026-01-${String(i).padStart(2, '0')}`] = `cipher-${i}`;
+    await fake.hset(testKey('history:net-worth'), fields);
+    const reversing = Object.assign(Object.create(fake), {
+      hscan: async (key: string, cursor: string | number, opts?: { count?: number }) => {
+        const [next, flat] = await fake.hscan(key, cursor, opts);
+        const pairs: string[][] = [];
+        for (let i = 0; i < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+        return [next, pairs.reverse().flat()];
+      },
+    });
+
+    const archive = verifyArchive(await exportText());
+    fake.reset();
+    const result = await restoreArchive(reversing, archive, { overwrite: false });
+
+    expect(result.written).toBe(1);
+  });
+
+  test('restores an archive whose hash fields are not in sorted order', async () => {
+    // Exports taken before fields were sorted (the export as first merged)
+    // carry them in whatever order Redis returned. The read-back is sorted, so
+    // the comparison has to ignore order or such an archive could never pass.
+    await fake.hset(testKey('h'), { a: '1' });
+    const lines = linesOf(await exportText());
+    lines[1] = JSON.stringify({ key: 'h', type: 'hash', ttl: null, value: { c: '3', a: '1', b: '2' } });
+    const archive = verifyArchive(reseal(lines));
+    fake.reset();
+
+    const result = await restoreArchive(fake as any, archive, { overwrite: false });
+    expect(result.written).toBe(1);
+  });
+
+  test('refuses to delete a populated target that was not backed up', async () => {
+    await seed();
+    const archive = verifyArchive(await exportText());
+    await fake.set(testKey('budgets'), 'newer');
+
+    await expect(restoreArchive(fake as any, archive, { overwrite: true })).rejects.toThrow(/no backup/);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('newer');
+  });
+
+  test('refuses when the target changed after the backup, and deletes nothing', async () => {
+    await seed();
+    const archive = verifyArchive(await exportText());
+    const backedUp = await targetKeys(fake as any);
+    await fake.set(testKey('txns:written_after_backup'), 'new');
+
+    await expect(restoreArchive(fake as any, archive, { overwrite: true, backedUp })).rejects.toThrow(
+      /changed after it was backed up/
+    );
+    expect(await fake.get<string>(testKey('txns:written_after_backup'))).toBe('new');
+  });
+
+  test('refuses when a target checked empty has filled up since', async () => {
+    await seed();
+    const archive = verifyArchive(await exportText());
+    fake.reset();
+    await fake.set(testKey('arrived_meanwhile'), 'x');
+
+    await expect(restoreArchive(fake as any, archive, { overwrite: true, backedUp: [] })).rejects.toThrow(
+      /changed after/
+    );
+    expect(await fake.get<string>(testKey('arrived_meanwhile'))).toBe('x');
+  });
+
+  test('a key about to expire is given long enough to be read back', async () => {
+    await fake.set(testKey('short'), 'v', { ex: 600 });
+    const lines = linesOf(await exportText());
+    const rec = JSON.parse(lines[1]);
+    lines[1] = JSON.stringify({ ...rec, ttl: 2 });
+    const archive = verifyArchive(reseal(lines));
+    fake.reset();
+
+    await restoreArchive(fake as any, archive, { overwrite: false });
+    expect(await fake.ttl(testKey('short'))).toBe(60);
+  });
+
+  test('an extra key appearing at read-back fails it', async () => {
+    await seed();
+    const archive = verifyArchive(await exportText());
+    fake.reset();
+    const leaking = Object.assign(Object.create(fake), {
+      set: async (key: string, value: string, opts?: { ex: number }) => {
+        await fake.set(key, value, opts);
+        if (key === testKey('budgets')) await fake.set(testKey('zzz_unexpected'), 'x');
+      },
+    });
+
+    await expect(restoreArchive(leaking, archive, { overwrite: false })).rejects.toThrow(/1 unexpected/);
+  });
+
+  test('a corrupted hash value fails the read-back', async () => {
+    await seed();
+    const archive = verifyArchive(await exportText());
+    fake.reset();
+    const corrupting = Object.assign(Object.create(fake), {
+      hset: async (key: string, f: Record<string, string>) =>
+        fake.hset(key, key === testKey('history:net-worth') ? { ...f, '2026-01-01': 'wrong' } : f),
+    });
+
+    await expect(restoreArchive(corrupting, archive, { overwrite: false })).rejects.toThrow(/does not match/);
   });
 
   test('splits a large hash across several writes, and keeps every field', async () => {
@@ -333,6 +448,12 @@ describe('the command', () => {
       overwrite: true,
       confirmProduction: false,
       dryRun: false,
+      allowEmpty: false,
+      allowDifferentSource: false,
+    });
+    expect(parseArgs(['a', '--target', 'x', '--allow-empty', '--allow-different-source'])).toMatchObject({
+      allowEmpty: true,
+      allowDifferentSource: true,
     });
     expect(() => parseArgs(['a.ndjson', '--force'])).toThrow(/Unknown flag/);
     expect(() => parseArgs([])).toThrow(/Usage/);
@@ -367,6 +488,94 @@ describe('the command', () => {
     expect(saved).toHaveLength(1);
     const pre = verifyArchive(await Bun.file(join(dir, saved[0])).text());
     expect(pre.records.find((r) => r.key === 'budgets')!.value).toBe('newer');
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+
+  test('a dry run over a populated target writes no backup and deletes nothing', async () => {
+    const file = await archiveFile();
+    await fake.set(testKey('budgets'), 'current');
+
+    await main([file, '--target', 'test', '--overwrite', '--dry-run'], fake as any);
+
+    expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toEqual([]);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('current');
+  });
+
+  test('backs up a target holding a single key', async () => {
+    const file = await archiveFile();
+    fake.reset();
+    await fake.set(testKey('only'), 'one');
+
+    await main([file, '--target', 'test', '--overwrite'], fake as any);
+    expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toHaveLength(1);
+  });
+
+  test('a target that cannot be backed up is left alone, and says why', async () => {
+    const file = await archiveFile();
+    await fake.set(testKey('odd'), 'x');
+    const withList = Object.assign(Object.create(fake), {
+      type: async (key: string) => (key === testKey('odd') ? 'list' : fake.type(key)),
+    });
+
+    await expect(main([file, '--target', 'test', '--overwrite'], withList)).rejects.toThrow(
+      /Could not back up the target/
+    );
+    expect(await fake.get<string>(testKey('odd'))).toBe('x');
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+
+  test('a key that slips out of the backup stops the restore', async () => {
+    const file = await archiveFile();
+    await fake.set(testKey('slippery'), 'x');
+    // Present when the target is scanned, gone by the time the backup reads it.
+    const vanishing = Object.assign(Object.create(fake), {
+      type: async (key: string) => (key === testKey('slippery') ? 'none' : fake.type(key)),
+    });
+
+    await expect(main([file, '--target', 'test', '--overwrite'], vanishing)).rejects.toThrow(
+      /changed while it was being backed up/
+    );
+    expect(await fake.get<string>(testKey('slippery'))).toBe('x');
+  });
+
+  test('an empty archive will not empty a populated target without --allow-empty', async () => {
+    const path = join(dir, 'empty.ndjson');
+    await writeFile(path, await exportText()); // taken before seeding: no keys
+    await seed();
+
+    await expect(main([path, '--target', 'test', '--overwrite'], fake as any)).rejects.toThrow(/--allow-empty/);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+
+    await main([path, '--target', 'test', '--overwrite', '--allow-empty'], fake as any);
+    expect(await fake.get<string>(testKey('budgets'))).toBeNull();
+  });
+
+  test('an archive from another environment will not replace a populated target without saying so', async () => {
+    await seed();
+    const lines = linesOf(await exportText());
+    lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), env_prefix: 'dev' });
+    const path = join(dir, 'from-dev.ndjson');
+    await writeFile(path, reseal(lines));
+    await fake.set(testKey('budgets'), 'current');
+
+    await expect(main([path, '--target', 'test', '--overwrite'], fake as any)).rejects.toThrow(
+      /--allow-different-source/
+    );
+    expect(await fake.get<string>(testKey('budgets'))).toBe('current');
+
+    await main([path, '--target', 'test', '--overwrite', '--allow-different-source'], fake as any);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+
+  test('an archive from another environment restores into an EMPTY target with no extra flag', async () => {
+    await seed();
+    const lines = linesOf(await exportText());
+    lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), env_prefix: 'production' });
+    const path = join(dir, 'from-prod.ndjson');
+    await writeFile(path, reseal(lines));
+    fake.reset();
+
+    await main([path, '--target', 'test'], fake as any);
     expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
   });
 

@@ -28,6 +28,7 @@
 import { createHash } from 'node:crypto';
 import { k } from './storage';
 import {
+  byCodePoint,
   EXCLUDED_PREFIXES,
   EXPORT_FORMAT_VERSION,
   SCHEMA_ERA,
@@ -53,6 +54,14 @@ export type VerifiedArchive = {
 
 /** Stay well under Upstash's per-request limit when writing a large hash. */
 const HSET_CHUNK_CHARS = 512 * 1024;
+
+/**
+ * The shortest expiry a restored key is given. The archive records seconds
+ * remaining at export time; a key restored with only a few left could expire
+ * between being written and being read back, and fail a restore that worked.
+ * A TTL only ever marks disposable data, so a short extension costs nothing.
+ */
+const MIN_RESTORED_TTL = 60;
 
 /** Never deleted by an overwrite: a counter of failed logins belongs to the
  *  running environment, not to the data being restored. */
@@ -110,6 +119,11 @@ function checkRecord(raw: unknown, n: number): ExportRecord {
 export function verifyArchive(text: string): VerifiedArchive {
   // Every line, footer included, ends in "\n". Anything after the final one is
   // either a truncated line or something appended; either way not ours.
+  // Named specifically: an editor or a Windows download converting line
+  // endings would otherwise surface as a baffling checksum mismatch.
+  if (text.includes('\r\n')) {
+    refuse('The file has Windows (CRLF) line endings, so it was converted after export. Use the original download.');
+  }
   if (!text.endsWith('\n')) refuse('The file does not end with a complete line; it may be cut short.');
   const lines = text.slice(0, -1).split('\n');
   if (lines.length < 2) refuse('The file has no footer; it is incomplete.');
@@ -228,10 +242,18 @@ function chunkFields(value: Record<string, string>): Record<string, string>[] {
   return chunks;
 }
 
-/** A record's comparable form. TTLs count down, so only their presence is
- *  compared; everything else must match exactly. */
+/**
+ * A record's comparable form. TTLs count down, so only their presence is
+ * compared. Hash fields are compared as a sorted list of pairs: Redis promises
+ * no field order, so a correctly restored hash can come back in a different
+ * order, and comparing objects as serialized would call that a mismatch. Pairs
+ * rather than an object also keep a "__proto__" field in the comparison.
+ */
 function comparable(record: ExportRecord): string {
-  return JSON.stringify({ ...record, ttl: record.ttl === null ? null : 'set' });
+  const ttl = record.ttl === null ? null : 'set';
+  if (record.type === 'string') return JSON.stringify([record.key, 'string', ttl, record.value]);
+  const pairs = Object.entries(record.value).sort(([a], [b]) => byCodePoint(a, b));
+  return JSON.stringify([record.key, 'hash', ttl, pairs]);
 }
 
 export type RestoreResult = { written: number; deleted: number };
@@ -239,19 +261,29 @@ export type RestoreResult = { written: number; deleted: number };
 /**
  * Write a verified archive into this process's namespace.
  *
- * The target must be empty unless `overwrite` is set, and when it is set the
- * caller is responsible for having exported the target first. Throws on any
- * write failure and on any difference found reading it back.
+ * The target must be empty unless `overwrite` is set. When it holds anything,
+ * `backedUp` must list exactly the keys the caller saved before calling, and
+ * the target must still hold exactly those: only keys that are in a backup are
+ * ever deleted. A key written after the backup, or a target that filled up
+ * after being checked empty, is refused rather than lost. Throws on any write
+ * failure and on any difference found reading it back.
  */
 export async function restoreArchive(
   client: RestoreClient,
   archive: VerifiedArchive,
-  opts: { overwrite: boolean }
+  opts: { overwrite: boolean; backedUp?: string[] }
 ): Promise<RestoreResult> {
   const prefix = k('');
   const existing = await targetKeys(client);
   if (existing.length > 0 && !opts.overwrite) {
     refuse(`The target holds ${existing.length} keys. Pass --overwrite to replace them.`);
+  }
+  if (existing.length > 0) {
+    if (!opts.backedUp) refuse('The target holds data and no backup of it was taken.');
+    const saved = new Set(opts.backedUp);
+    if (existing.length !== saved.size || existing.some((key) => !saved.has(key))) {
+      refuse('The target changed after it was backed up. Nothing was deleted; run the restore again.');
+    }
   }
 
   // Delete first: replace, don't merge. Includes caches, which would otherwise
@@ -264,10 +296,10 @@ export async function restoreArchive(
   for (const record of archive.records) {
     const full = prefix + record.key;
     if (record.type === 'string') {
-      await client.set(full, record.value, record.ttl ? { ex: record.ttl } : undefined);
+      await client.set(full, record.value, record.ttl ? { ex: Math.max(record.ttl, MIN_RESTORED_TTL) } : undefined);
     } else {
       for (const chunk of chunkFields(record.value)) await client.hset(full, chunk);
-      if (record.ttl) await client.expire(full, record.ttl);
+      if (record.ttl) await client.expire(full, Math.max(record.ttl, MIN_RESTORED_TTL));
     }
   }
 

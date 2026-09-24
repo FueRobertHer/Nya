@@ -490,14 +490,23 @@ The command refuses, and writes nothing, when:
 - `--target` does not match `REDIS_PREFIX` (both are required, so a leftover
   shell variable cannot aim it somewhere you did not mean);
 - the target already holds data and `--overwrite` is not given;
-- the target is `production` and `--confirm-production` is not given.
+- the target is `production` and `--confirm-production` is not given;
+- it would replace data with an archive holding no keys (`--allow-empty`
+  overrides), or with one taken from a different environment
+  (`--allow-different-source` overrides). Restoring into an **empty** target
+  from anywhere, like production into `restore-test`, needs neither.
 
-With `--overwrite`, it first saves the target's current contents to a
-`nya-pre-restore-<target>-<time>.ndjson` file, then **replaces** the target
-entirely (login rate-limit counters aside), so nothing newer than the backup
-survives. It finishes by reading everything back and comparing it with the
-backup, and says so only if they match exactly. If a restore stops part way,
-run it again with `--overwrite`.
+With `--overwrite`, it prints how many keys it is about to replace, saves the
+target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file,
+and checks that file holds every key it is about to delete. Then it
+**replaces** the target entirely (login rate-limit counters aside), so nothing
+newer than the archive survives. If the target changes while this is going on,
+it stops before deleting anything. It finishes by reading everything back and
+comparing it with the archive, and reports success only if they match exactly.
+If a restore stops part way, run it again with `--overwrite`.
+
+File paths are resolved from the repo root, since `bun run` runs there, and
+that is also where the pre-restore file is written.
 
 Don't use the app while a restore is running, and avoid 13:00 UTC: anything
 written to the target mid-restore makes the final comparison fail.
