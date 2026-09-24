@@ -728,3 +728,42 @@ describe('year-to-date figures with contribution trades', () => {
     expect(flows).toBe(1500);
   });
 });
+
+// Deposits, transfers and withdrawals booked as trades, under the same
+// per-account evidence rule as contributions.
+describe('other single-row money trades', () => {
+  test('a buy booked as a deposit or transfer is money added in a buys-only account', () => {
+    expect(dailyFlows([txn({ type: 'buy', subtype: 'deposit', amount: 400 })])).toEqual([{ date: '2026-03-01', amount: 400 }]);
+    expect(dailyFlows([txn({ type: 'buy', subtype: 'transfer', amount: 250 })])).toEqual([{ date: '2026-03-01', amount: 250 }]);
+  });
+
+  test('a sell booked as a withdrawal is money out in a sells-only account', () => {
+    expect(dailyFlows([txn({ type: 'sell', subtype: 'withdrawal', amount: -300 })])).toEqual([{ date: '2026-03-01', amount: -300 }]);
+  });
+
+  // The account books deposits as cash, so the buy is where that money went.
+  test('an account that books deposits as cash never counts its deposit buys', () => {
+    const rows = [
+      txn({ investment_transaction_id: 'c', type: 'cash', subtype: 'deposit', amount: -400 }),
+      txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'deposit', amount: 400 }),
+    ];
+    expect(dailyFlows(rows)).toEqual([{ date: '2026-03-01', amount: 400 }]);
+  });
+});
+
+// Shares moved between institutions with no cash, reported at amount 0.
+describe('in-kind transfers', () => {
+  test('are valued from quantity and price, in both directions', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', amount: 0, quantity: 100, price: 400 }))).toBe(40_000);
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', amount: 0, quantity: -10, price: 50 }))).toBe(-500);
+    expect(externalFlow(txn({ type: 'transfer', subtype: 'transfer', amount: 0, quantity: 100, price: 400 }))).toBe(40_000);
+  });
+
+  // Only a transfer reported at exactly 0 is valued this way.
+  test('leave rows that report an amount, or are not transfers, alone', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'transfer', amount: -900, quantity: 100, price: 400 }))).toBe(900);
+    // A cash row at 0 is worth 0 (compared with ==, since -amount is -0).
+    expect(valueDelta(txn({ type: 'cash', subtype: 'deposit', amount: 0, quantity: 100, price: 400 })) == 0).toBe(true);
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'merger', amount: 0, quantity: 100, price: 400 }))).toBe(0);
+  });
+});

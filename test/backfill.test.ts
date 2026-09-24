@@ -379,3 +379,32 @@ describe('addInvestmentFlows', () => {
     expect(dailyByAccount).toEqual({});
   });
 });
+
+// Shares that arrived from another brokerage with no cash: walked back out of
+// the past at their value, not left in it.
+test('an in-kind transfer at amount 0 is walked back at its value', () => {
+  const dailyByAccount: Record<string, Record<string, number>> = {};
+  const walkType = { ira: 'investment' as const };
+  addInvestmentFlows(
+    dailyByAccount,
+    [
+      {
+        investment_transaction_id: 'acats',
+        account_id: 'ira',
+        date: '2026-09-10',
+        name: 'ACATS transfer in',
+        type: 'transfer',
+        subtype: 'transfer',
+        quantity: 100,
+        price: 400,
+        amount: 0,
+        fees: null,
+        currency: 'USD',
+        security: 'VTI',
+      },
+    ],
+    walkType
+  );
+  const { accountPoints } = walk({ balances: { ira: 50_000 }, walkType, dailyByAccount });
+  expect(byDate(accountPoints)['2026-09-09'].ira).toBe(10_000);
+});

@@ -18,8 +18,11 @@ import { contributionBaseline } from '@/lib/growth';
 export default function AccountSparkline({
   accountId,
   itemId,
+  currency,
 }: {
   accountId: string;
+  /** The account's ISO currency, so its chart doesn't print a EUR account in $. */
+  currency?: string | null;
   /** The account's Plaid Item, for an investment account; enables the split. */
   itemId?: string;
 }) {
@@ -76,5 +79,5 @@ export default function AccountSparkline({
       </p>
     );
   }
-  return <NetWorthChart points={points} label="Balance" baseline={baseline} />;
+  return <NetWorthChart points={points} label="Balance" baseline={baseline} currency={currency} />;
 }

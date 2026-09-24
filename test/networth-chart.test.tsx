@@ -92,3 +92,23 @@ describe('NetWorthChart split on estimated points', () => {
     expect(html).not.toContain('+$4,000.00 growth');
   });
 });
+
+describe('NetWorthChart currency', () => {
+  test('prints an account in its own currency', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart
+        currency="EUR"
+        points={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1100 },
+        ]}
+        baseline={[
+          { date: '2026-09-01', value: 1000 },
+          { date: '2026-09-02', value: 1000 },
+        ]}
+      />
+    );
+    expect(html).toContain('€');
+    expect(html).not.toContain('$');
+  });
+});

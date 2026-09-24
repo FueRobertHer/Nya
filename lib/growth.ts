@@ -31,17 +31,32 @@ export type Flow = { date: string; amount: number };
  * day and then snap back. The same rule means a flow dated on the start day is
  * counted, not assumed to be in the starting balance: an account opened by a
  * rollover would otherwise report the whole rollover as growth.
+ *
+ * The one place that rule can't be checked is BEFORE the start: a flow dated a
+ * day or two earlier may or may not be in the starting balance yet, depending
+ * on when the institution updated it. Guessing wrong books it as growth for the
+ * life of the chart, not just for a day. So the start is the first real point
+ * with no flow in the SETTLE_DAYS before it, where the starting balance is
+ * unambiguous, and only falls back to the first real point when every candidate
+ * has one (an account contributing every few days).
  */
+const SETTLE_DAYS = 3;
+
 export function contributionBaseline(
   points: BalancePoint[],
   flows: Flow[] | null | undefined,
   flowsFrom: string | null | undefined
 ): { date: string; value: number }[] | null {
   if (!flows || !flowsFrom) return null;
-  const start = points.find((p) => !p.estimated && p.date >= flowsFrom);
-  if (!start) return null;
-
   const sorted = [...flows].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const candidates = points.filter((p) => !p.estimated && p.date >= flowsFrom);
+  if (candidates.length === 0) return null;
+  const settled = (date: string) => {
+    const from = shiftDays(date, -SETTLE_DAYS);
+    return !sorted.some((f) => f.date >= from && f.date < date);
+  };
+  const start = candidates.find((p) => settled(p.date)) ?? candidates[0];
+
   const out: { date: string; value: number }[] = [];
   let added = 0;
   let next = 0;
@@ -52,4 +67,9 @@ export function contributionBaseline(
     out.push({ date: p.date, value: Math.round((start.value + added) * 100) / 100 });
   }
   return out;
+}
+
+/** A YYYY-MM-DD date moved by whole UTC days. */
+function shiftDays(date: string, days: number): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }

@@ -224,8 +224,25 @@ export function valueDelta(t: InvestmentTxn): number {
   // false under Object.is, so it's not worth leaving lying around.
   if (type === 'buy' || type === 'sell') return t.fees ? -t.fees : 0;
   if (type === 'cash' || type === 'fee') return -t.amount;
-  if (EXTERNAL_FLOW_SUBTYPES.has(subtype)) return -t.amount;
+  if (EXTERNAL_FLOW_SUBTYPES.has(subtype)) return t.amount === 0 ? inKindValue(t) : -t.amount;
   return 0;
+}
+
+/**
+ * The value of an in-kind transfer: shares moved between institutions with no
+ * cash, which some institutions report with `amount` 0 and the shares in
+ * `quantity` and `price`. Counted as 0, a $40k ACATS transfer would read as $40k
+ * of growth on the chart and be missing from the walk.
+ *
+ * Plaid documents quantity's sign only for trades (positive for a buy, negative
+ * for a sell), so a transfer is read the same way: positive is shares
+ * arriving. Only reached for a transfer-type external row whose amount is
+ * exactly 0, so no row that reports a cash amount is affected.
+ */
+function inKindValue(t: InvestmentTxn): number {
+  if ((t.type || '').toLowerCase() !== 'transfer') return 0;
+  const value = (t.quantity || 0) * (t.price || 0);
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
 }
 
 /**
@@ -258,10 +275,14 @@ export function externalFlow(t: InvestmentTxn): number {
 }
 
 // Trade subtypes that can mean money crossing the boundary, by direction: a buy
-// made with outside money (a paycheck, a 401k loan repayment) and a sell whose
-// proceeds leave the account (a distribution).
-const MONEY_IN_BUY_SUBTYPES = new Set(['contribution', 'loan payment']);
-const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution']);
+// made with outside money (a paycheck, a 401k loan repayment, a deposit or
+// transfer that lands directly as shares) and a sell whose proceeds leave the
+// account (a distribution or withdrawal). Plaid's documented pairings rarely
+// put deposit, transfer or withdrawal on a trade, but a recordkeeper that books
+// buys only has nowhere else to put them, and countedTrades still refuses them
+// in any account that books that subtype as cash.
+const MONEY_IN_BUY_SUBTYPES = new Set(['contribution', 'loan payment', 'deposit', 'transfer']);
+const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution', 'withdrawal']);
 
 /**
  * A single-row contribution or distribution: some recordkeepers report a

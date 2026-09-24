@@ -581,7 +581,10 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
 //       with no cash row beside it counts as money crossing the boundary
 //       (countedTrades in lib/investments.ts). Before, the walk read each as an
 //       internal trade and carried every 401k paycheck back into the past.
-const BACKFILL_SCHEMA = 4;
+//   5 - an in-kind transfer reported with amount 0 is valued from its quantity
+//       and price, and deposit, transfer and withdrawal trades count under the
+//       same per-account rule as contributions.
+const BACKFILL_SCHEMA = 5;
 
 export async function isBackfillDone(): Promise<boolean> {
   try {
