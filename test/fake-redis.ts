@@ -17,6 +17,7 @@ export type FakeCommand =
   | 'hgetall'
   | 'expire'
   | 'scan'
+  | 'hscan'
   | 'type'
   | 'ttl';
 
@@ -181,6 +182,24 @@ export class FakeRedis {
     return [next, page];
   }
 
+  /**
+   * Cursor-paginated walk of one hash, returning Upstash's flat
+   * [field, value, field, value, ...] page. Same deterministic caveat as scan.
+   */
+  async hscan(
+    key: string,
+    cursor: number | string,
+    opts?: { count?: number }
+  ): Promise<[string, string[]]> {
+    this.gate('hscan');
+    const entries = [...(this.hashes.get(key)?.entries() ?? [])];
+    const start = Number(cursor) || 0;
+    const count = opts?.count ?? 10;
+    const page = entries.slice(start, start + count).flat();
+    const next = start + count >= entries.length ? '0' : String(start + count);
+    return [next, page];
+  }
+
   reset(): void {
     this.strings.clear();
     this.hashes.clear();
@@ -215,6 +234,9 @@ export function testKey(key: string): string {
 export function storageMock(fake: FakeRedis) {
   return {
     redis: () => fake,
+    // The fake already stores and returns plain strings, which is exactly what
+    // the raw client promises, so one instance serves both.
+    rawRedis: () => fake,
     k: testKey,
     getItems: async () => [],
     saveItem: async () => {},

@@ -145,6 +145,8 @@ bills with their estimated next charge dates:
    - `INGEST_SECRET` (optional), generate with `openssl rand -base64 32`;
      authenticates scripted balance pushes to manual accounts. Leave it unset
      to keep that endpoint closed.
+   - `OPS_SECRET` and `OPS_ENABLED` (optional), for taking a backup. See
+     [Backing up your data](#backing-up-your-data).
 
 ## 3. Local development
 
@@ -425,6 +427,35 @@ safe while the point above holds and preview has its own database.
   exercise it on a preview.
 - If you use Plaid's OAuth bank logins, add the preview URL to the allowed
   redirect URIs alongside the production one.
+
+### Backing up your data
+
+Some of what Nya stores exists nowhere else: banks stop serving old
+transactions after a while, and no bank serves daily balance history at all.
+Take a backup before any risky change, and keep it somewhere other than
+Upstash.
+
+The export route is off by default. To take one:
+
+1. In Vercel, set `OPS_SECRET` (generate with `openssl rand -base64 32`) and
+   `OPS_ENABLED=1` on the environment you want to back up, then redeploy.
+2. Download it:
+
+   ```bash
+   curl -X POST https://your-app.vercel.app/api/ops/export -H "Authorization: Bearer $OPS_SECRET" -o nya-export.ndjson
+   ```
+
+3. Check the last line of the file is a footer (`{"end":true,...}`). If it
+   is missing, the download was cut short; take it again.
+4. Remove `OPS_ENABLED` and redeploy. While it is unset the route answers 404.
+
+The archive holds your data **still encrypted**, so it is safe to store, and
+useless without `PLAID_ENCRYPTION_KEY`. Keep a copy of that key somewhere
+separate from both the archive and Vercel (a password manager, or on paper).
+Lose the key and the backup cannot be read.
+
+Caches and login rate-limit counters are left out on purpose. Avoid running
+it around 13:00 UTC, when the daily snapshot writes.
 
 ## 6. Install on your phone
 

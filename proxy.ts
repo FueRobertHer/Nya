@@ -5,13 +5,15 @@ import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 // assets (which must be publicly fetchable for install/offline to work), the
 // cron snapshot endpoint (which authenticates itself via CRON_SECRET -- see
 // app/api/snapshot/route.ts), and the manual-balance ingest endpoint (which
-// authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts).
+// authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
+// and the ops export (OPS_SECRET, and off entirely unless OPS_ENABLED=1 -- see
+// app/api/ops/export/route.ts).
 //
 // Note the `$` anchors on the API entries: they exclude exactly those paths.
 // A bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/snapshot$|api/ingest/balance$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/snapshot$|api/ingest/balance$|api/ops/export$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 
