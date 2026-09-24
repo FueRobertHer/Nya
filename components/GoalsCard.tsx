@@ -5,6 +5,7 @@
 // once the goal is reached (state, not severity -- reaching a goal is good).
 
 import { useState } from 'react';
+import type { ListStatus } from '@/lib/whole-list-store';
 import { formatMoney } from '@/lib/format';
 
 export type Goal = {
@@ -28,12 +29,23 @@ export type GoalAccount = {
 
 export default function GoalsCard({
   goals,
+  status = 'ready',
+  error = null,
+  saveError = null,
   accounts,
   onSave,
 }: {
   goals: Goal[];
+  /** Until 'ready', the list is unknown: shown as loading, never as "none",
+   *  with no way to add or edit (lib/whole-list-store.ts). */
+  status?: ListStatus;
+  /** Why the goals could not be loaded; shown instead of the list. */
+  error?: string | null;
+  /** Why the last save did not go through; shown above the list. */
+  saveError?: string | null;
   accounts: GoalAccount[];
-  onSave: (next: Goal[]) => void;
+  /** Resolves true once saved; the form only closes then. */
+  onSave: (next: Goal[]) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -59,7 +71,7 @@ export default function GoalsCard({
     setAccountId(goal.account_id ?? '');
   }
 
-  function commit() {
+  async function commit() {
     const value = Number(target);
     if (!name.trim() || !Number.isFinite(value) || value <= 0) return;
     const entry: Goal = {
@@ -69,14 +81,14 @@ export default function GoalsCard({
       account_id: accountId || null,
     };
     const next = editing ? goals.map((g) => (g.id === editing ? entry : g)) : [...goals, entry];
-    onSave(next);
-    setEditing(null);
-    setAdding(false);
+    if (await onSave(next)) {
+      setEditing(null);
+      setAdding(false);
+    }
   }
 
-  function remove(id: string) {
-    onSave(goals.filter((g) => g.id !== id));
-    setEditing(null);
+  async function remove(id: string) {
+    if (await onSave(goals.filter((g) => g.id !== id))) setEditing(null);
   }
 
   const form = (
@@ -138,11 +150,28 @@ export default function GoalsCard({
     </div>
   );
 
+  if (status !== 'ready') {
+    return (
+      <div className="card">
+        <div className="inst-header">
+          <div className="inst-name">Goals</div>
+        </div>
+        {status === 'loading' ? (
+          <p className="empty-note">Loading goals…</p>
+        ) : (
+          <p className="stale-note">{error}</p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="card">
       <div className="inst-header">
         <div className="inst-name">Goals</div>
       </div>
+
+      {saveError && <p className="stale-note">{saveError}</p>}
 
       {goals.length === 0 && !adding && (
         <p className="empty-note">
