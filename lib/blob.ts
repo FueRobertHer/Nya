@@ -40,7 +40,7 @@ export function maxBlobChars(): number {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       console.warn(
-        `transactions: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
+        `blob: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
       );
     } else {
       value = parsed;

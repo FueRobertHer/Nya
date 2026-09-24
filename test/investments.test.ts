@@ -767,3 +767,38 @@ describe('in-kind transfers', () => {
     expect(valueDelta(txn({ type: 'transfer', subtype: 'merger', amount: 0, quantity: 100, price: 400 }))).toBe(0);
   });
 });
+
+describe('countedTrades evidence window', () => {
+  const buy = (date: string) => txn({ investment_transaction_id: `b${date}`, date, type: 'buy', subtype: 'contribution', amount: 500 });
+  const cashIn = (date: string) => txn({ investment_transaction_id: `c${date}`, date, type: 'cash', subtype: 'contribution', amount: -500 });
+
+  // Evidence is nearby, not lifetime: a recordkeeper that booked cash rows
+  // years ago says nothing about how it books paychecks now.
+  test('a cash row more than 45 days away is not evidence', () => {
+    expect(countedTrades([cashIn('2024-01-01'), buy('2026-03-01')]).size).toBe(1);
+  });
+
+  // Nor calendar year: a Dec 31 cash row and its Jan 2 buy are one paycheck.
+  test('a cash row across a year boundary is evidence', () => {
+    expect(countedTrades([cashIn('2025-12-31'), buy('2026-01-02')]).size).toBe(0);
+  });
+});
+
+describe('fund exchanges', () => {
+  // A sell/transfer and a buy/transfer is money moving between funds in the
+  // same account: nothing added, nothing taken out.
+  test('an exchange booked as two transfer trades nets to zero', () => {
+    expect(
+      dailyFlows([
+        txn({ investment_transaction_id: 's', type: 'sell', subtype: 'transfer', amount: -10_000 }),
+        txn({ investment_transaction_id: 'b', type: 'buy', subtype: 'transfer', amount: 10_000 }),
+      ])
+    ).toEqual([]);
+  });
+});
+
+describe('in-kind valuation scope', () => {
+  test('only a plain transfer is valued from quantity and price', () => {
+    expect(valueDelta(txn({ type: 'transfer', subtype: 'distribution', amount: 0, quantity: 100, price: 400 })) == 0).toBe(true);
+  });
+});

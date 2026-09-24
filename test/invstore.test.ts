@@ -22,6 +22,12 @@ const plaid = {
   wrongTotalOn: null as null | string,
   /** Also return rows outside the requested range. */
   leakOutOfRange: false,
+  /** Leave this account out of responses for ranges containing `on`. */
+  omit: null as null | { account_id: string; on: string },
+  /** Throw on this call number (1-based). */
+  failOnCall: 0,
+  /** Runs on every call, before answering. */
+  onCall: null as null | (() => Promise<void> | void),
 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
@@ -30,13 +36,18 @@ mock.module('@/lib/plaid', () => ({
       const offset = req.options?.offset ?? 0;
       const count = req.options?.count ?? 500;
       plaid.calls.push({ start, end, offset });
+      if (plaid.onCall) await plaid.onCall();
       if (plaid.fail) throw { response: { data: { error_code: plaid.fail } } };
+      if (plaid.failOnCall && plaid.calls.length === plaid.failOnCall) {
+        throw { response: { data: { error_code: 'INTERNAL_SERVER_ERROR' } } };
+      }
+      const omitHere = plaid.omit && plaid.omit.on >= start && plaid.omit.on <= end;
       const inRange = plaid.rows.filter((r) => r.date >= start && r.date <= end);
       const page = (plaid.leakOutOfRange ? plaid.rows : inRange).slice(offset, offset + count);
       const lie = plaid.wrongTotalOn && plaid.wrongTotalOn >= start && plaid.wrongTotalOn <= end;
       return {
         data: {
-          accounts: plaid.accounts,
+          accounts: omitHere ? plaid.accounts.filter((a) => a.account_id !== plaid.omit!.account_id) : plaid.accounts,
           securities: [{ security_id: 's1', name: 'Target 2055', ticker_symbol: 'VFFVX' }],
           investment_transactions: page,
           total_investment_transactions: inRange.length + (lie ? 1 : 0),
@@ -81,6 +92,9 @@ beforeEach(() => {
   plaid.fail = null;
   plaid.wrongTotalOn = null;
   plaid.leakOutOfRange = false;
+  plaid.omit = null;
+  plaid.failOnCall = 0;
+  plaid.onCall = null;
 });
 
 describe('first fill', () => {
@@ -312,5 +326,162 @@ describe('freshness and windows', () => {
     await syncInvestments(ITEM, { now: NOW });
     const sync = await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
     expect(sync.coverage.ira).toEqual({ from: '2024-09-24', through: '2026-09-25' });
+  });
+});
+
+// Cases the code review found untested, or tested too weakly to fail.
+describe('review follow-ups', () => {
+  // Enough rows that the fetch splits into several requests.
+  const spread = (n: number, account = 'ira') =>
+    Array.from({ length: n }, (_, i) =>
+      row(`${account}${i}`, new Date(Date.UTC(2025, 0, 1) + (i % 600) * DAY).toISOString().slice(0, 10), { account_id: account })
+    );
+
+  test('an account missing from one of several requests is not judged in any of them', async () => {
+    plaid.accounts.push({ account_id: 'roth', name: 'Roth', mask: '9', type: 'investment', subtype: 'roth' });
+    // Four rows a day: the one-year window splits into about four requests.
+    const roth = [
+      row('r_old', '2025-10-15', { account_id: 'roth' }),
+      row('r_mid', '2026-02-15', { account_id: 'roth' }),
+      row('r_end', '2026-08-01', { account_id: 'roth' }),
+    ];
+    plaid.rows = [...spread(2400), ...roth];
+    await syncInvestments(ITEM, { now: NOW });
+
+    // The request covering mid-February stops listing roth, and returns none of
+    // its rows. Roth is still listed, with rows, before and after it.
+    plaid.omit = { account_id: 'roth', on: '2026-02-15' };
+    plaid.rows = plaid.rows.filter((r) => r.investment_transaction_id !== 'r_mid');
+    await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
+    expect(plaid.calls.filter((c) => c.start > '2025-09-01').length).toBeGreaterThan(2);
+    const sync = await syncInvestments(ITEM, { now: NOW + 3 * DAY, maxAgeMs: 0 });
+    expect(ids(sync.rows)).toContain('r_mid');
+  });
+
+  test('a Plaid failure partway through a split fetch writes nothing', async () => {
+    plaid.rows = spread(1200);
+    await syncInvestments(ITEM, { now: NOW });
+    const before = await fake.get<string>(key);
+    // Still over one page within the one-year window, so it splits; the
+    // second request fails after the first succeeded.
+    plaid.failOnCall = plaid.calls.length + 2;
+    const sync = await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
+    expect(sync.note).toBeTruthy();
+    expect(await fake.get<string>(key)).toBe(before!);
+  });
+
+  test('duplicate ids across requests make the fetch unverified', async () => {
+    plaid.rows = [row('dup', '2025-01-10'), row('dup', '2026-06-10'), ...spread(900)];
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    expect(sync.coverage.ira).toBeUndefined();
+  });
+
+  test('a single day with more rows than a page is fetched, but unverified', async () => {
+    plaid.rows = Array.from({ length: 501 }, (_, i) => row(`d${i}`, '2026-03-03'));
+    const sync = await syncInvestments(ITEM, { now: NOW });
+    expect(sync.rows).toHaveLength(501);
+    expect(plaid.calls.some((c) => c.offset > 0)).toBe(true);
+    expect(sync.coverage.ira).toBeUndefined();
+  });
+
+  // Marked during the two-year fill, then never in a later one-year window.
+  test('an unconfirmed mark is dropped once its row leaves the judged range', async () => {
+    plaid.rows = [row('old', '2025-01-05'), row('a', '2026-09-01')];
+    await syncInvestments(ITEM, { now: NOW });
+    plaid.rows = [row('a', '2026-09-01'), row('older', '2024-12-01')]; // 'old' missing, still in the 730-day range
+    const coverage = (await readInvStore('item1')).coverage;
+    expect(coverage.ira.from).toBe('2024-09-24');
+    // The next window is one year, so 'old' (Jan 2025) is outside it.
+    await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
+    const sync = await syncInvestments(ITEM, { now: NOW + 3 * DAY, maxAgeMs: 0 });
+    expect(ids(sync.rows)).toContain('old');
+    expect(sync.unconfirmed.ira ?? []).not.toContain('2025-01-05');
+  });
+
+  test('a cancelled trade stays excluded when a later fetch returns it without its cancel', async () => {
+    plaid.rows = [row('orig', '2026-06-01'), row('c', '2026-06-02', { type: 'cancel', subtype: 'cancel', cancel_transaction_id: 'orig' })];
+    await syncInvestments(ITEM, { now: NOW });
+    plaid.rows = [row('orig', '2026-06-01'), row('new', '2026-09-20')];
+    plaid.wrongTotalOn = '2026-09-20'; // unverified: upsert only
+    const sync = await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
+    expect(ids(sync.rows)).toEqual(['new']);
+  });
+
+  test('an unverified sync still counts as recent, so Plaid is not asked again at once', async () => {
+    plaid.rows = [row('a', '2026-09-20')];
+    plaid.wrongTotalOn = '2026-09-20';
+    await syncInvestments(ITEM, { now: NOW });
+    const calls = plaid.calls.length;
+    await syncInvestments(ITEM, { now: NOW + 60_000 });
+    expect(plaid.calls.length).toBe(calls);
+  });
+
+  // The disconnect lands between this sync's check and its write: only a
+  // check AFTER the write catches it.
+  test('a disconnect that lands during the write still removes the blob', async () => {
+    plaid.rows = [row('a', '2026-09-01')];
+    const set = fake.set.bind(fake);
+    fake.set = (async (k: string, v: string, o?: any) => {
+      const r = await set(k, v, o);
+      if (k === key) items = [];
+      return r;
+    }) as typeof fake.set;
+    try {
+      await syncInvestments(ITEM, { now: NOW });
+    } finally {
+      fake.set = set;
+    }
+    expect(await fake.get(key)).toBeNull();
+  });
+
+  test('a sync never releases a lock it no longer holds', async () => {
+    plaid.rows = [row('a', '2026-09-01')];
+    const lock = testKey('invtxns-lock:item1');
+    plaid.onCall = async () => {
+      await fake.set(lock, 'someone-else'); // ours lapsed and another took it
+    };
+    await syncInvestments(ITEM, { now: NOW });
+    expect(await fake.get<string>(lock)).toBe('someone-else');
+  });
+});
+
+// The activity route reads the store: what it caches and how far the line runs.
+describe('/api/investment-activity', () => {
+  const get = async () => {
+    const { GET } = await import('@/app/api/investment-activity/route');
+    const res = await GET(new Request('http://x/api/investment-activity?id=ira&item_id=item1'));
+    return res.json();
+  };
+
+  test('a busy answer is not cached, so the next load sees the real rows', async () => {
+    await fake.set(testKey('invtxns-lock:item1'), 'someone-else', { nx: true, px: 60_000 });
+    plaid.rows = [row('a', '2026-09-01')];
+    await syncInvestments(ITEM); // blocked: stores nothing
+    expect((await get()).txns).toEqual([]);
+
+    await fake.del(testKey('invtxns-lock:item1'));
+    const second = await get();
+    expect(second.from_cache).toBe(false);
+    expect(second.txns.map((t: any) => t.investment_transaction_id)).toEqual(['a']);
+  });
+
+  test('the flows run from the later of coverage and the oldest row, to the end of coverage', async () => {
+    plaid.rows = [row('a', '2026-03-01'), row('b', '2026-09-01')];
+    const body = await get();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(body.flows_from).toBe('2026-03-01');
+    expect(body.flows_to).toBe(today);
+    expect(body.txns.map((t: any) => t.investment_transaction_id)).toEqual(['b', 'a']); // newest first
+  });
+
+  test('during an outage it serves saved rows with a note, and caches nothing', async () => {
+    plaid.rows = [row('a', '2026-09-01')];
+    // Synced an hour ago, so the route's sync is due and meets the outage.
+    await syncInvestments(ITEM, { now: Date.now() - 60 * 60 * 1000 });
+    plaid.fail = 'INSTITUTION_DOWN';
+    const body = await get();
+    expect(body.txns).toHaveLength(1);
+    expect(body.note).toBe('Could not fetch investment activity; showing saved activity');
+    expect((await get()).from_cache).toBe(false);
   });
 });

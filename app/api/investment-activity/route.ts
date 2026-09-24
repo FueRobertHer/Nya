@@ -87,12 +87,19 @@ export async function GET(req: Request) {
     const oldest = mine.length ? mine[mine.length - 1].date : null;
     const flowsKnown = !!cov && !!oldest;
     const flows = flowsKnown
-      ? dailyFlows(mine.filter((t) => t.date >= cov!.from && t.date <= cov!.through))
+      ? dailyFlows(
+          mine.filter((t) => t.date >= cov!.from && t.date <= cov!.through),
+          counted
+        )
       : null;
     const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
     const flows_to = flowsKnown ? cov!.through : null;
 
-    const note = sync.note ?? sync.storeNote;
+    // Said in full here so the client can print it as is. A fetch failure still
+    // serves what is stored; a storage problem serves what was just fetched.
+    const note = sync.note
+      ? `${sync.note}; showing saved activity`
+      : sync.storeNote;
     const payload = {
       txns: mine.slice(0, RECENT_LIMIT),
       ytd_contributions,
@@ -103,9 +110,11 @@ export async function GET(req: Request) {
       note,
     };
 
-    // Not cached with a note: an outage or a storage problem should be
-    // re-checked on the next load, not pinned for the TTL.
-    if (!note) await writeAccountCache(cacheField, payload);
+    // Not cached with a note (an outage or a storage problem should be
+    // re-checked on the next load, not pinned for the TTL), nor while another
+    // sync held the store: that answer is whatever was stored before it, which
+    // on a first link is nothing at all.
+    if (!note && !sync.busy) await writeAccountCache(cacheField, payload);
 
     return NextResponse.json({ ...payload, from_cache: false });
   } catch (err: any) {

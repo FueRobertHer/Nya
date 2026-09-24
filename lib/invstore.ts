@@ -107,8 +107,13 @@ export type InvStoreState = {
   securities: Record<string, SecuritySnapshot>;
   accounts: Record<string, AccountMeta>;
   coverage: Record<string, Coverage>;
+  /** Last VERIFIED sync. */
   synced_at: string | null;
   verified_at: string | null;
+  /** Last sync whose fetch worked, verified or not: what freshness is judged by. */
+  attempted_at?: string | null;
+  /** Ids named by a cancel row, with the day it was seen. Never served again. */
+  cancelled?: Record<string, string>;
 };
 
 export class InvStoreUnreadableError extends Error {
@@ -130,6 +135,8 @@ function emptyState(): InvStoreState {
     coverage: {},
     synced_at: null,
     verified_at: null,
+    attempted_at: null,
+    cancelled: {},
   };
 }
 
@@ -226,7 +233,12 @@ export async function storedInvestmentAccountIds(item_id: string): Promise<strin
 type WindowFetch = {
   rows: InvestmentTransaction[];
   securities: Security[];
+  /** Metadata for every account any response listed. */
   accounts: AccountBase[];
+  /** Accounts EVERY response listed: the only ones whose absence of rows means
+   *  anything. One request that leaves an account out says nothing about its
+   *  rows in that request's dates, so the account is not judged at all. */
+  present: string[];
   /** Every request returned exactly the total it reported, with no duplicates. */
   verified: boolean;
   note: string | null;
@@ -238,15 +250,25 @@ type WindowFetch = {
  * offset. A range whose total overflows one page is halved and each half asked
  * again; only a single day with more rows than a page falls back to offsets,
  * and that makes the whole fetch unverified.
+ *
+ * `beforeEachRequest` runs before every Plaid call; the sync uses it to keep
+ * its lock alive through a long first fill.
  */
-async function fetchWindow(access_token: string, start: string, end: string): Promise<WindowFetch> {
+async function fetchWindow(
+  access_token: string,
+  start: string,
+  end: string,
+  beforeEachRequest: () => Promise<void> = async () => {}
+): Promise<WindowFetch> {
   const rows: InvestmentTransaction[] = [];
   const securities = new Map<string, Security>();
-  let accounts: AccountBase[] = [];
+  const accounts = new Map<string, AccountBase>();
+  let present: Set<string> | null = null;
   let verified = true;
   let requests = 0;
 
   const ask = async (from: string, to: string, offset = 0) => {
+    await beforeEachRequest();
     requests++;
     const res = await plaidClient.investmentsTransactionsGet({
       access_token,
@@ -255,7 +277,12 @@ async function fetchWindow(access_token: string, start: string, end: string): Pr
       options: { count: PAGE_SIZE, offset, async_update: true },
     });
     for (const s of res.data.securities || []) securities.set(s.security_id, s);
-    if (res.data.accounts?.length) accounts = res.data.accounts;
+    const listed = new Set<string>();
+    for (const a of res.data.accounts || []) {
+      accounts.set(a.account_id, a);
+      listed.add(a.account_id);
+    }
+    present = present ? new Set([...present].filter((id) => listed.has(id))) : listed;
     return {
       page: res.data.investment_transactions || [],
       total: res.data.total_investment_transactions,
@@ -302,12 +329,20 @@ async function fetchWindow(access_token: string, start: string, end: string): Pr
     await fetchRange(start, end);
   } catch (err) {
     const { note, pending } = classifyFetchError(err);
-    return { rows: [], securities: [], accounts: [], verified: false, note, pending };
+    return { rows: [], securities: [], accounts: [], present: [], verified: false, note, pending };
   }
 
   // Unique ids: a duplicate means two requests overlapped or a page repeated.
   if (new Set(rows.map((r) => r.investment_transaction_id)).size !== rows.length) verified = false;
-  return { rows, securities: [...securities.values()], accounts, verified, note: null, pending: false };
+  return {
+    rows,
+    securities: [...securities.values()],
+    accounts: [...accounts.values()],
+    present: [...(present ?? [])],
+    verified,
+    note: null,
+    pending: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -341,24 +376,31 @@ export function mergeFetch(
   }
 
   const returned = new Set(fetch.rows.map((r) => r.investment_transaction_id));
-  const cancelled = new Set<string>();
+  // Ids named by a cancel row are tombstoned for good, not just excluded now:
+  // cancel rows aren't stored, so a later partial fetch that returns the
+  // original without its cancel would otherwise serve the cancelled trade again.
+  state.cancelled ??= {};
   for (const r of fetch.rows) {
     if (String(r.type).toLowerCase() === 'cancel' && r.cancel_transaction_id) {
-      cancelled.add(r.cancel_transaction_id);
+      state.cancelled[r.cancel_transaction_id] ??= today;
     }
   }
+  const cancelled = state.cancelled;
 
-  // Upserts are always safe. Pending rows and cancel rows are never stored.
+  // Upserts are always safe. Pending rows, cancel rows and cancelled originals
+  // are never stored as live rows.
   for (const r of fetch.rows) {
     if (String(r.type).toLowerCase() === 'cancel' || isPendingSubtype(String(r.subtype))) continue;
-    if (cancelled.has(r.investment_transaction_id)) continue;
+    if (cancelled[r.investment_transaction_id]) continue;
     state.txns[r.investment_transaction_id] = { raw: r, seen_at: today };
   }
-  // Named by a cancel row: excluded now, whatever its date.
-  for (const id of cancelled) {
+  for (const id of Object.keys(cancelled)) {
     const row = state.txns[id];
-    if (row) state.txns[id] = { ...row, excluded: true, missing_since: row.missing_since ?? nowIso };
+    if (row && !row.excluded) state.txns[id] = { ...row, excluded: true, missing_since: row.missing_since ?? nowIso };
   }
+  // Any fetch that worked counts as an attempt, verified or not, so an Item
+  // that can never be verified isn't re-fetched from Plaid on every request.
+  state.attempted_at = nowIso;
 
   // Account metadata from any successful response; `last_seen` only from a verified one.
   for (const a of fetch.accounts) {
@@ -374,17 +416,17 @@ export function mergeFetch(
 
   if (!fetch.verified) return state;
 
-  // Judge absence per account, only for accounts in the response that returned
-  // at least one row, and only from that account's oldest returned row on:
-  // before it the institution may simply keep less history.
-  const present = new Set(fetch.accounts.map((a) => a.account_id));
+  // Judge absence per account, only for accounts EVERY request listed that
+  // returned at least one row, and only from that account's oldest returned row
+  // on: before it the institution may simply keep less history.
+  const present = new Set(fetch.present);
   const oldest = new Map<string, string>();
   for (const r of fetch.rows) {
     const prior = oldest.get(r.account_id);
     if (!prior || r.date < prior) oldest.set(r.account_id, r.date);
   }
   for (const [id, row] of Object.entries(state.txns)) {
-    if (returned.has(id) || cancelled.has(id)) continue;
+    if (returned.has(id) || cancelled[id] || !row?.raw) continue;
     const account = row.raw.account_id;
     const from = oldest.get(account);
     const judged = present.has(account) && !!from && row.raw.date >= from && row.raw.date <= window.to;
@@ -401,7 +443,7 @@ export function mergeFetch(
     }
   }
 
-  // Coverage: every account in a verified response, rows or not, now holds all
+  // Coverage: every account every request listed, rows or not, now holds all
   // of [window.from, window.to]. Joined to what it had if the two touch.
   for (const account of present) {
     const cov = state.coverage[account];
@@ -460,7 +502,8 @@ function view(state: InvStoreState): Pick<InvSync, 'rows' | 'coverage' | 'unconf
   const rows: InvestmentTxn[] = [];
   const unconfirmed: Record<string, string[]> = {};
   for (const row of Object.values(state.txns)) {
-    if (row.excluded) continue;
+    // A malformed row is skipped, not fatal: it stays stored, untouched.
+    if (!row?.raw?.investment_transaction_id || row.excluded) continue;
     rows.push(toInvestmentTxn(row.raw, state.securities));
     if (row.missing_since) (unconfirmed[row.raw.account_id] ??= []).push(row.raw.date);
   }
@@ -498,7 +541,8 @@ export async function syncInvestments(
       storeNote = 'Saved investment history could not be read; showing live data only';
     }
 
-    const fresh = state?.synced_at && now - Date.parse(state.synced_at) < maxAgeMs;
+    const lastTry = state?.attempted_at ?? state?.synced_at;
+    const fresh = !!lastTry && now - Date.parse(lastTry) < maxAgeMs;
     if (state && (fresh || !locked)) {
       return { ...view(state), note: null, pending: false, storeNote, busy: !fresh && !locked };
     }
@@ -512,7 +556,20 @@ export async function syncInvestments(
     }
 
     const window = nextWindow(state ?? emptyState(), now);
-    const fetched = await fetchWindow(access_token, window.from, window.to);
+    // Refresh the lock before every request: a first fill can make dozens of
+    // calls, each allowed the full Plaid timeout, and a lock that lapsed mid-fill
+    // would let a second sync start from the same state.
+    const keepAlive = async () => {
+      if (!locked) return;
+      try {
+        if ((await redis().get(lockKey(item.item_id))) === token) {
+          await redis().set(lockKey(item.item_id), token, { px: LOCK_MS });
+        }
+      } catch {
+        // The lock still holds until its expiry; the next request tries again.
+      }
+    };
+    const fetched = await fetchWindow(access_token, window.from, window.to, keepAlive);
 
     // Rule 1: a failed fetch never writes.
     if (fetched.note) {

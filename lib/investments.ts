@@ -240,7 +240,10 @@ export function valueDelta(t: InvestmentTxn): number {
  * exactly 0, so no row that reports a cash amount is affected.
  */
 function inKindValue(t: InvestmentTxn): number {
+  // Only a plain transfer: a zero-amount distribution or withdrawal under type
+  // transfer is not shares moving between institutions.
   if ((t.type || '').toLowerCase() !== 'transfer') return 0;
+  if ((t.subtype || '').toLowerCase() !== 'transfer') return 0;
   const value = (t.quantity || 0) * (t.price || 0);
   return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
 }
@@ -282,7 +285,9 @@ export function externalFlow(t: InvestmentTxn): number {
 // buys only has nowhere else to put them, and countedTrades still refuses them
 // in any account that books that subtype as cash.
 const MONEY_IN_BUY_SUBTYPES = new Set(['contribution', 'loan payment', 'deposit', 'transfer']);
-const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution', 'withdrawal']);
+// Transfer is on both sides so a fund exchange booked as a sell/transfer and a
+// buy/transfer nets to zero instead of counting only the buy.
+const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution', 'withdrawal', 'transfer']);
 
 /**
  * A single-row contribution or distribution: some recordkeepers report a
@@ -395,8 +400,12 @@ export function contributedAmount(t: InvestmentTxn, counted: ReadonlySet<Investm
  * net-zero dates dropped. Counted contribution trades are included; see
  * countedTrades for why the others are not.
  */
-export function dailyFlows(txns: InvestmentTxn[]): { date: string; amount: number }[] {
-  const counted = countedTrades(txns);
+export function dailyFlows(
+  txns: InvestmentTxn[],
+  /** countedTrades decided over a WIDER set than `txns`, when the caller
+   *  clips rows to a range but the trades must be judged over everything. */
+  counted: ReadonlySet<InvestmentTxn> = countedTrades(txns)
+): { date: string; amount: number }[] {
   const byDate = new Map<string, number>();
   for (const t of txns) {
     const flow = counted.has(t) ? t.amount : externalFlow(t);

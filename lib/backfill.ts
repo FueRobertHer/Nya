@@ -16,6 +16,43 @@ import { countedTrades, walkDelta, type InvestmentTxn } from './investments';
 export type WalkType = 'depository' | 'credit' | 'investment';
 
 /**
+ * Whether an Item's investment accounts can be walked, and if not, whether to
+ * wait for them, from its stored investment transactions (lib/invstore.ts).
+ *
+ * Covered when every investment account has VERIFIED coverage from the walk's
+ * start to at least yesterday. That is decided from coverage alone, even when
+ * the latest fetch failed: the rows are the stored ones either way, and
+ * coverage is exactly what says whether they are complete. An account with no
+ * activity all year IS covered and walks flat, correctly.
+ *
+ * Anything short of that waits (the caller's retry cap bounds it) rather than
+ * walking with a stretch of flows missing, or holding the accounts flat and
+ * marking the run done, which nothing would ever retry. Also waits while
+ * another sync holds the store, or rows in the window are marked missing but
+ * not yet confirmed either way.
+ */
+export function investmentReadiness(
+  inv: {
+    pending: boolean;
+    busy: boolean;
+    coverage: Record<string, { from: string; through: string }>;
+    unconfirmed: Record<string, string[]>;
+  },
+  investmentIds: string[],
+  windowStart: string,
+  yesterday: string
+): { covered: boolean; pending: boolean } {
+  const covered = investmentIds.every((id) => {
+    const cov = inv.coverage[id];
+    return !!cov && cov.from <= windowStart && cov.through >= yesterday;
+  });
+  const unconfirmedInWindow = investmentIds.some((id) =>
+    (inv.unconfirmed[id] ?? []).some((d) => d >= windowStart)
+  );
+  return { covered, pending: inv.pending || inv.busy || unconfirmedInWindow || !covered };
+}
+
+/**
  * Adds one Item's investment transactions to the walk's per-day table, for the
  * accounts being walked as investments, and returns the oldest date it added
  * (or null).

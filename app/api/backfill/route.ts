@@ -6,7 +6,7 @@ import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { syncInvestments } from '@/lib/invstore';
 import { getManualAccounts } from '@/lib/manual';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
-import { addInvestmentFlows, isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
+import { addInvestmentFlows, investmentReadiness, isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
 import {
   backfillPendingExhausted,
   clearBackfillPending,
@@ -120,41 +120,12 @@ export async function POST() {
         // judges paycheck trades over all of them and walks only the window.
         const inv = hasInvestment ? await syncInvestments(item) : null;
 
-        const windowStart = isoDaysAgo(LOOKBACK_DAYS);
-        const yesterday = isoDaysAgo(1);
-        // Covered when every investment account has VERIFIED coverage from the
-        // window's start to at least yesterday. Tracked apart from how many rows
-        // came back: an account with no activity all year IS covered, and
-        // walking it yields a flat series correctly. A Plaid failure, or
-        // coverage that stops short (an outage, or recent syncs that couldn't be
-        // verified), holds the Item's investments flat instead: a walk with a
-        // stretch of flows missing publishes a curve that looks fine and isn't.
-        // A storage-only problem doesn't count against it; the rows were
-        // fetched live.
-        const invCovered =
-          !!inv &&
-          !inv.note &&
-          investmentIds.every((id) => {
-            const cov = inv.coverage[id];
-            return !!cov && cov.from <= windowStart && cov.through >= yesterday;
-          });
-
-        // Worth waiting for, rather than accepting flat and marking done:
-        //   - Plaid is extracting right now (the async_update the fetch asks
-        //     for started it) and the same call works a minute later;
-        //   - another sync held the store's lock, possibly mid-fill;
-        //   - rows in the window are marked missing but not yet confirmed, so
-        //     the next verified sync may bring them back or exclude them;
-        //   - the fetch worked but coverage still falls short, which is almost
-        //     always a sync that couldn't be verified (a total that moved
-        //     between requests) and passes on the next one.
-        // All bounded by MAX_PENDING_RUNS, like the first always was, so an
-        // Item that can never be verified is accepted flat after a few loads.
-        const unconfirmedInWindow =
-          !!inv &&
-          investmentIds.some((id) => (inv.unconfirmed[id] ?? []).some((d) => d >= windowStart));
-        const coverageShort = !!inv && !inv.note && !invCovered;
-        const invPending = !!inv && (inv.pending || inv.busy || unconfirmedInWindow || coverageShort);
+        // Covered, or worth waiting for: see investmentReadiness in lib/backfill.ts.
+        const readiness = inv
+          ? investmentReadiness(inv, investmentIds, isoDaysAgo(LOOKBACK_DAYS), isoDaysAgo(1))
+          : { covered: false, pending: false };
+        const invCovered = readiness.covered;
+        const invPending = readiness.pending;
 
         return {
           accounts: bal.data.accounts,

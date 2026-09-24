@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { addInvestmentFlows, isoDaysAgo, reconstruct, type WalkInput } from '@/lib/backfill';
+import { addInvestmentFlows, investmentReadiness, isoDaysAgo, reconstruct, type WalkInput } from '@/lib/backfill';
 import type { InvestmentTxn } from '@/lib/investments';
 
 // A fixed clock, so every date in these tests is a literal rather than a
@@ -407,4 +407,40 @@ test('an in-kind transfer at amount 0 is walked back at its value', () => {
   );
   const { accountPoints } = walk({ balances: { ira: 50_000 }, walkType, dailyByAccount });
   expect(byDate(accountPoints)['2026-09-09'].ira).toBe(10_000);
+});
+
+// Whether an Item's investment accounts can be walked, or should be waited for,
+// from its stored investment transactions.
+describe('investmentReadiness', () => {
+  const base = { pending: false, busy: false, coverage: {}, unconfirmed: {} };
+  const full = { from: '2025-09-01', through: '2026-09-13' };
+
+  test('covered by verified coverage over the whole window', () => {
+    expect(investmentReadiness({ ...base, coverage: { ira: full } }, ['ira'], '2025-09-14', '2026-09-13')).toEqual({
+      covered: true,
+      pending: false,
+    });
+  });
+
+  // Coverage that stops short is waited for, never walked flat and marked done.
+  test('coverage that stops short waits', () => {
+    const r = investmentReadiness({ ...base, coverage: { ira: { ...full, through: '2026-09-01' } } }, ['ira'], '2025-09-14', '2026-09-13');
+    expect(r).toEqual({ covered: false, pending: true });
+  });
+
+  test('no coverage at all waits (the capped retry decides when to give up)', () => {
+    expect(investmentReadiness(base, ['ira'], '2025-09-14', '2026-09-13').pending).toBe(true);
+  });
+
+  test('a busy store, or unconfirmed rows in the window, wait even when covered', () => {
+    const covered = { ...base, coverage: { ira: full } };
+    expect(investmentReadiness({ ...covered, busy: true }, ['ira'], '2025-09-14', '2026-09-13').pending).toBe(true);
+    expect(
+      investmentReadiness({ ...covered, unconfirmed: { ira: ['2026-01-01'] } }, ['ira'], '2025-09-14', '2026-09-13').pending
+    ).toBe(true);
+    // Unconfirmed rows older than the window don't hold the walk up.
+    expect(
+      investmentReadiness({ ...covered, unconfirmed: { ira: ['2024-01-01'] } }, ['ira'], '2025-09-14', '2026-09-13').pending
+    ).toBe(false);
+  });
 });

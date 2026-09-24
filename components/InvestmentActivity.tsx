@@ -126,7 +126,7 @@ export default function InvestmentActivity({
 
   return (
     <div className="inv-activity">
-      {data.note && <p className="empty-note">{data.note}; showing saved activity.</p>}
+      {data.note && <p className="empty-note">{data.note}.</p>}
       {data.ytd_contributions > 0 && (
         <div className="type-tag">
           {formatMoney(data.ytd_contributions, data.txns[0]?.currency)} contributed this year
