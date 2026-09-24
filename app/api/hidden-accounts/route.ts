@@ -4,7 +4,7 @@ import { computeNetWorth } from '@/lib/networth';
 import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
 import { findRememberedAccount } from '@/lib/last-known';
-import { getLinks, sameAccountIds } from '@/lib/links';
+import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds } from '@/lib/links';
 
 // Hides or unhides ONE account per request.
 //
@@ -90,7 +90,10 @@ export async function POST(req: Request) {
       // would keep hiding it through the link, and Unhide would do nothing.
       // Unlinked, this is just the one id. A failed read of the links fails
       // the request rather than leaving the account half-hidden.
-      for (const id of sameAccountIds(account_id, await getLinks())) {
+      // Through ACTIVE links only, the same ones the display follows: a
+      // paused link joins two live accounts that are each hidden on their own.
+      const active = effectiveLinks(await getLinks(), await liveAccountIds());
+      for (const id of sameAccountIds(account_id, active)) {
         await setAccountHidden(id, '', false);
       }
     }

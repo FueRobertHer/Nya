@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import {
   directoryLabels,
+  directoryType,
+  dismissAll,
   dismissPair,
+  isUnclaimed,
   isOffered,
   linkAccounts,
   liveAccountIds,
@@ -39,7 +42,10 @@ export async function GET() {
       old,
       to: l.to,
       linked_at: l.linked_at,
-      old_label: labels[old] ?? old,
+      // An account known only from balances has no name: say what it was.
+      old_label:
+        labels[old] ??
+        (typeof l.evidence?.old_last === 'string' ? `Earlier account (history to ${l.evidence.old_last})` : 'Earlier account'),
       to_label: labels[l.to] ?? l.to,
       // The old id is live again (Plaid returned it, or the old institution was
       // re-added): the link is ignored until the user unlinks it.
@@ -58,8 +64,20 @@ export async function POST(req: Request) {
     const old = id(body?.old);
     const to = id(body?.to);
     const action = body?.action;
+
+    // "None of these": stop offering this earlier account at all.
+    if (action === 'dismiss_all') {
+      if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
+      const { offer } = await offered();
+      if (!isUnclaimed(old, offer)) {
+        return NextResponse.json({ error: 'That account is not currently offered' }, { status: 409 });
+      }
+      await dismissAll(old);
+      return NextResponse.json({ dismissed: true });
+    }
+
     if (!old || !to || (action !== 'link' && action !== 'dismiss')) {
-      return NextResponse.json({ error: 'Expected { action: "link" | "dismiss", old, to }' }, { status: 400 });
+      return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all", old, to }' }, { status: 400 });
     }
 
     const { offer } = await offered();
@@ -75,9 +93,19 @@ export async function POST(req: Request) {
 
     const suggestion = offer.suggestions.find((s) => s.old === old && s.to === to);
     const unclaimed = offer.unclaimed.find((u) => u.old === old);
-    await linkAccounts(old, to, suggestion
-      ? { basis: 'suggested', ...suggestion.evidence }
-      : { basis: 'picked', old_first: unclaimed?.first, old_last: unclaimed?.last, old_last_balance: unclaimed?.last_balance });
+    // Recorded on the link: when the earlier id last reported (the order its
+    // history is joined in) and what kind of account it was, so a hidden
+    // account's earlier id is subtracted with its own sign. An id known only
+    // from balances takes the target's kind: the user said it is the same
+    // account, and the preview is where a wrong pairing would show.
+    const old_type = (await directoryType(old)) ?? (await directoryType(to));
+    await linkAccounts(
+      old,
+      to,
+      suggestion
+        ? { basis: 'suggested', old_type, ...suggestion.evidence }
+        : { basis: 'picked', old_type, old_first: unclaimed?.first, old_last: unclaimed?.last, old_last_balance: unclaimed?.last_balance }
+    );
     // Cached payloads carry per-account history and hidden subtraction.
     await clearCaches();
     return NextResponse.json({ linked: true });

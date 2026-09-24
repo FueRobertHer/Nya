@@ -112,8 +112,10 @@ export async function GET(req: Request) {
     // fresh. Writes only, so the broken one's record survives.
     await rememberAccounts(institutions);
     // And in the account directory, which outlives a disconnect so a re-added
-    // institution's accounts can be matched to the ones they replace.
-    await recordDirectory(institutions);
+    // institution's accounts can be matched to the ones they replace. Started
+    // here and awaited before responding, so it overlaps the reads below
+    // instead of adding a round trip to every live load. It never throws.
+    const directoryWrite = recordDirectory(institutions);
 
     // Everything from here down is display-only. `visibleNetWorth` excludes
     // hidden accounts and is what ships as `netWorth` -- the client is never
@@ -136,6 +138,11 @@ export async function GET(req: Request) {
     }
 
     const { hidden, forClient: hiddenList } = await hiddenPromise;
+    await directoryWrite;
+    // Plaid's cross-Item account identity is for matching on the server only
+    // (lib/links.ts); it has no business in the payload, the cache or the
+    // browser's localStorage.
+    for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.

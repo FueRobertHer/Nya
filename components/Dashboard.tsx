@@ -1229,7 +1229,7 @@ export default function Dashboard() {
                 {/* Only renders when there is a reconnected account to link or
                     a link to undo. A change reloads live, since links alter
                     hidden accounts and per-account history. */}
-                <AccountLinks onChanged={() => loadNetWorth(true)} />
+                <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and

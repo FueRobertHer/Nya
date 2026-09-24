@@ -63,6 +63,10 @@ const ACCOUNTS_EST_EXT_HASH = k('history:accounts:est:ext');
 // that existed, and a partial map by definition leaves the failing
 // institution's accounts out. Feeds the per-account chart and nothing else.
 const ACCOUNTS_PARTIAL_HASH = k('history:accounts:partial');
+
+/** The measured per-account layers' keys, for lib/links.ts, which reads them to
+ *  date accounts. One place for the names. */
+export const measuredAccountHistoryKeys = () => [ACCOUNTS_HASH, ACCOUNTS_PARTIAL_HASH];
 // The balances backfill folded into its flat `rest` term: everything that
 // isn't depository/credit (investments, loans, property, manual accounts),
 // captured as of the run that produced the estimated layer.

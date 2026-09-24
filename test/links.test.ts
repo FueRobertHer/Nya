@@ -130,7 +130,7 @@ describe('suggestLinks', () => {
     });
     expect(suggestions).toHaveLength(0);
     expect(unclaimed).toEqual([
-      { old: 'A7', first: '2026-07-12', last: '2026-07-16', last_balance: 850, candidates: [{ id: 'new', label: 'Capital One Quicksilver ••1234' }] },
+      { old: 'A7', old_label: null, first: '2026-07-12', last: '2026-07-16', last_balance: 850, candidates: [{ id: 'new', label: 'Capital One Quicksilver ••1234' }] },
     ]);
   });
 
@@ -152,7 +152,11 @@ describe('following links', () => {
 
   test('resolveId follows chains, and a cycle stops', () => {
     expect(links.resolveId('a', L([['a', 'b', '1'], ['b', 'c', '2']]))).toBe('c');
-    expect(() => links.resolveId('a', L([['a', 'b', '1'], ['b', 'a', '2']]))).not.toThrow();
+    // A cycle anywhere in the chain ends at a member of it, never loops.
+    expect(['a', 'b', 'c']).toContain(links.resolveId('x', L([['x', 'a', '1'], ['a', 'b', '1'], ['b', 'c', '2'], ['c', 'a', '3']])));
+    // A long chain resolves all the way.
+    const chain = L(Array.from({ length: 8 }, (_, i) => [`c${i}`, `c${i + 1}`, '1'] as [string, string, string]));
+    expect(links.resolveId('c0', chain)).toBe('c8');
   });
 
   test('sameAccountIds lists the current id first, then older ones newest link first', () => {
@@ -326,5 +330,181 @@ describe('readers that follow links', () => {
     const inst: any = { item_id: 'i', institution_name: 'Bank', error: 'down', accounts: [], holdings: [] };
     await fillFromLastKnown([inst]);
     expect(inst.accounts.map((a: any) => [a.account_id, a.balance])).toEqual([['new', 420]]);
+  });
+});
+
+describe('review follow-ups: what is offered by hand', () => {
+  // An account the strict matching can't pair (no mask here) still gets a
+  // manual path, instead of none for 45 days.
+  test('a known account that fails strict matching can be attached by hand', () => {
+    const { suggestions, unclaimed } = suggest({
+      directory: { old: entry({ item_id: 'item_old', mask: null, last_seen: '2026-07-16' }), new: entry({ mask: null }) },
+    });
+    expect(suggestions).toHaveLength(0);
+    expect(unclaimed.map((u) => [u.old, u.old_label, u.candidates.map((c) => c.id)])).toEqual([
+      ['old', 'Capital One Quicksilver', ['new']],
+    ]);
+  });
+
+  test('a same-day handoff is offered', () => {
+    const { unclaimed } = suggest({
+      directory: { new: entry({ first_seen: '2026-07-16' }) },
+      spans: { A7: span('2026-07-01', '2026-07-16') },
+    });
+    expect(unclaimed.map((u) => u.old)).toEqual(['A7']);
+  });
+
+  // A closed account's history is not offered to every account opened later.
+  test('only to accounts that appeared within the window after it stopped', () => {
+    const { unclaimed } = suggest({
+      directory: { new: entry({ first_seen: '2026-07-17' }) },
+      spans: { A7: span('2026-01-01', '2026-03-01') },
+    });
+    expect(unclaimed).toEqual([]);
+  });
+
+  test('"None of these" stops an account being offered at all', () => {
+    const { unclaimed } = suggest({
+      directory: { new: entry({ first_seen: '2026-07-17' }) },
+      spans: { A7: span('2026-07-01', '2026-07-16') },
+      dismissed: new Set([links.dismissAllKey('A7')]),
+    });
+    expect(unclaimed).toEqual([]);
+  });
+
+  // A debt linked to an asset would be subtracted with the wrong sign.
+  test('never across debt and asset when the earlier account is known', () => {
+    const { unclaimed } = suggest({
+      directory: {
+        old: entry({ item_id: 'item_old', type: 'depository', subtype: 'checking', mask: null, last_seen: '2026-07-16' }),
+        new: entry(), // a credit card
+      },
+    });
+    expect(unclaimed).toEqual([]);
+  });
+
+  // X would overlap history already joined onto the account from A.
+  test('not to an account whose linked history already covers those dates', () => {
+    const { unclaimed } = suggest({
+      directory: { new: entry({ first_seen: '2026-07-17' }) },
+      spans: { A: span('2026-07-01', '2026-07-16'), X: span('2026-07-05', '2026-07-14') },
+      links: new Map([['A', { to: 'new', linked_at: '2026-08-01', evidence: { old_last: '2026-07-16' } }]]),
+    });
+    expect(unclaimed.map((u) => u.old)).toEqual([]);
+  });
+});
+
+describe('review follow-ups: following links', () => {
+  // The account's own timeline decides who wins a shared date, not the order
+  // the user happened to link in, so the preview matches the result.
+  test('earlier ids are ordered by when they last reported', () => {
+    const ls = new Map([
+      ['A', { to: 'B', linked_at: '2026-09-01T00:00:00Z', evidence: { old_last: '2026-06-01' } }],
+      ['X', { to: 'B', linked_at: '2026-08-01T00:00:00Z', evidence: { old_last: '2026-07-01' } }],
+    ]);
+    expect(links.sameAccountIds('B', ls)).toEqual(['B', 'X', 'A']);
+  });
+
+  test('a hidden account’s earlier id is subtracted with its own recorded kind', () => {
+    const hidden = new Map([['new', { type: 'credit', hidden_at: 'x' }]]);
+    const ls = new Map([['old', { to: 'new', linked_at: '1', evidence: { old_type: 'depository' } }]]);
+    expect(links.expandHidden(hidden, ls).get('old')?.type).toBe('depository');
+  });
+
+  test('getEffectiveHidden fails closed on an unreadable link', async () => {
+    await fake.hset(testKey('account-links'), { old: 'not-a-ciphertext' });
+    await expect(links.getEffectiveHidden()).rejects.toThrow();
+  });
+
+  // Paused (the old id is live again): the two are separate accounts, each
+  // hidden or not on its own.
+  test('a paused link neither hides nor unhides the other account', async () => {
+    const { setAccountHidden, getHiddenAccounts } = await import('@/lib/hidden');
+    await rememberAccounts([{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'old', type: 'credit' }, { account_id: 'new', type: 'credit' }] } as any]);
+    await links.linkAccounts('old', 'new', {});
+    await setAccountHidden('old', 'credit', true);
+    expect([...(await links.getEffectiveHidden()).hidden.keys()]).toEqual(['old']);
+    await setAccountHidden('new', 'credit', true);
+    const { POST } = await import('@/app/api/hidden-accounts/route');
+    await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ account_id: 'new', hidden: false }) }));
+    expect([...(await getHiddenAccounts()).keys()]).toEqual(['old']);
+  });
+
+  test('last-known recovery ignores a paused link', async () => {
+    const { fillFromLastKnown } = await import('@/lib/last-known');
+    const recent = new Date(Date.now() - 2 * DAY).toISOString().slice(0, 10);
+    await rememberAccounts([{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'old', name: 'A', type: 'credit' }, { account_id: 'new', name: 'B', type: 'credit' }] } as any]);
+    await fake.hset(testKey('history:accounts'), { [recent]: await encrypt(JSON.stringify({ old: 100, new: 200 })) });
+    await links.linkAccounts('old', 'new', {});
+    const inst: any = { item_id: 'i', institution_name: 'Bank', error: 'down', accounts: [], holdings: [] };
+    await fillFromLastKnown([inst]);
+    expect(inst.accounts.map((a: any) => [a.account_id, a.balance]).sort()).toEqual([['new', 200], ['old', 100]]);
+  });
+
+  // The subtraction itself, through the expanded set, on a real date keyed by
+  // the old id and an estimated date keyed by the new one.
+  test('getHistory subtracts a hidden account under every id it has had', async () => {
+    const { getHistory, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat } = await import('@/lib/history');
+    await fake.hset(testKey('history:net-worth'), { '2026-07-15': await encrypt('1000') });
+    await fake.hset(testKey('history:accounts'), { '2026-07-15': await encrypt(JSON.stringify({ old: 300, cash: 700 })) });
+    await replaceEstimated([{ date: '2026-07-10', value: 900 }]);
+    await replaceEstimatedAccounts([{ date: '2026-07-10', balances: { old: 250, cash: 650 } }]);
+    await replaceEstimatedFlat([{ date: '2026-07-10', balances: {} }]);
+    const hidden = links.expandHidden(
+      new Map([['new', { type: 'depository', hidden_at: 'x' }]]),
+      new Map([['old', { to: 'new', linked_at: '1', evidence: {} }]])
+    );
+    const byDate = Object.fromEntries((await getHistory(hidden)).map((p) => [p.date, p.value]));
+    expect(byDate['2026-07-15']).toBe(700);
+    expect(byDate['2026-07-10']).toBe(650);
+  });
+
+  test('a load racing a disconnect does not clear the disconnected mark', async () => {
+    const inst = { item_id: 'gone', institution_name: 'Bank', institution_id: 'ins', error: null, accounts: [{ account_id: 'a1', type: 'credit' }] };
+    await links.recordDirectory([inst], NOW);
+    await links.markDisconnected('gone', NOW);
+    await links.recordDirectory([inst], NOW + DAY); // fetched before the disconnect landed
+    const { decrypt } = await import('@/lib/crypto');
+    const e = JSON.parse(await decrypt((await fake.hget<string>(testKey('accounts:directory'), 'a1'))!));
+    expect(e.disconnected_at).toBeTruthy();
+  });
+});
+
+describe('review follow-ups: routes', () => {
+  // The preview shows exactly the chart linking will produce.
+  test('the account-history preview matches the linked result', async () => {
+    await rememberAccounts([{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'B', type: 'credit' }] } as any]);
+    await fake.hset(testKey('history:accounts'), {
+      '2026-06-01': await encrypt(JSON.stringify({ A: 1, X: 2 })),
+      '2026-07-01': await encrypt(JSON.stringify({ X: 3 })),
+      '2026-08-01': await encrypt(JSON.stringify({ B: 4 })),
+    });
+    await links.linkAccounts('A', 'B', { old_last: '2026-06-01' });
+    const { GET } = await import('@/app/api/account-history/route');
+    const preview = await (await GET(new Request('http://x/api/account-history?id=B&with=X'))).json();
+    await links.linkAccounts('X', 'B', { old_last: '2026-07-01' });
+    const linked = await (await GET(new Request('http://x/api/account-history?id=B'))).json();
+    expect(preview.points).toEqual(linked.points);
+    expect(linked.points[0]).toEqual({ date: '2026-06-01', value: 2 }); // X reported later, so it wins
+  });
+
+  test('goals follow a link to the current account', async () => {
+    const { setGoals } = await import('@/lib/goals');
+    await setGoals([{ id: 'g', name: 'Pay off', target: 1000, account_id: 'old', created_at: '2026-01-01' } as any]);
+    await links.linkAccounts('old', 'new', {});
+    const { GET } = await import('@/app/api/goals/route');
+    const body = await (await GET()).json();
+    expect(body.goals[0].account_id).toBe('new');
+  });
+
+  test('"None of these" is accepted only for an offered account', async () => {
+    await rememberAccounts([{ item_id: 'item_new', institution_name: 'Capital One', error: null, accounts: [{ account_id: 'new', type: 'credit' }] } as any]);
+    await fake.hset(testKey('accounts:directory'), { new: await encrypt(JSON.stringify(entry())) });
+    await fake.hset(testKey('history:accounts'), { '2026-07-16': await encrypt(JSON.stringify({ A7: 850 })) });
+    const route = await import('@/app/api/account-links/route');
+    const post = (body: unknown) => route.POST(new Request('http://x', { method: 'POST', body: JSON.stringify(body) }));
+    expect((await post({ action: 'dismiss_all', old: 'made-up' })).status).toBe(409);
+    expect((await post({ action: 'dismiss_all', old: 'A7' })).status).toBe(200);
+    expect((await (await route.GET()).json()).unclaimed).toEqual([]);
   });
 });

@@ -37,10 +37,11 @@ describe('AccountLinksView', () => {
   test('offers balance-only history with a choice of account, and lists links with Unlink', () => {
     const html = view({
       suggestions: [],
-      unclaimed: [{ old: 'A7', first: '2026-07-12', last: '2026-07-16', last_balance: 850, candidates: [{ id: 'A19', label: 'Capital One Quicksilver ••1234' }] }],
+      unclaimed: [{ old: 'A7', old_label: null, first: '2026-07-12', last: '2026-07-16', last_balance: 850, candidates: [{ id: 'A19', label: 'Capital One Quicksilver ••1234' }] }],
       links: [{ old: 'A11', to: 'A15', linked_at: 'x', old_label: 'A11', to_label: 'Vanguard IRA ••1111', conflict: true }],
     });
-    expect(html).toContain('isn&#x27;t attached to any account');
+    expect(html).toContain('isn&#x27;t attached to any current account');
+    expect(html).toContain('None of these');
     expect(html).toContain('<option value="A19"');
     expect(html).toContain('Unlink');
     expect(html).toContain('this link is paused');

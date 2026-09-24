@@ -54,7 +54,7 @@
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 import { getLatestAccountSnapshot } from './history';
-import { getLinks, sameAccountIds, type Link } from './link-core';
+import { getLinks, effectiveLinks, sameAccountIds, type Link } from './link-core';
 
 const ACCOUNT_META_HASH = k('accounts:meta');
 
@@ -299,6 +299,12 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
     getLinks().catch(() => new Map<string, Link>()),
   ]);
   if (!last) return [];
+  // A link whose old id is live again is paused (see effectiveLinks): following
+  // it would give that account the new id's balance and count one twice.
+  const liveIds = new Set(
+    Object.values(byItem).flatMap((accounts) => accounts.map((a) => a.account_id))
+  );
+  const activeLinks = effectiveLinks(links, liveIds);
 
   const cutoff = new Date(Date.now() - MAX_SNAPSHOT_AGE_DAYS * 86_400_000)
     .toISOString()
@@ -334,7 +340,7 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
       // of guessed at, and the card says how many rows it could not show.
       // Under its current id, or an id it had before a reconnect that the user
       // linked to it (lib/links.ts): the snapshot may predate the new id.
-      const balance = sameAccountIds(m.account_id, links)
+      const balance = sameAccountIds(m.account_id, activeLinks)
         .map((id) => last.balances[id])
         .find((b) => typeof b === 'number');
       if (typeof balance !== 'number') continue;

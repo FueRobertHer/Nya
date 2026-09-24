@@ -28,7 +28,14 @@ type Suggestion = {
     new_first_balance: number | null;
   };
 };
-type Unclaimed = { old: string; first: string; last: string; last_balance: number; candidates: { id: string; label: string }[] };
+type Unclaimed = {
+  old: string;
+  old_label: string | null;
+  first: string;
+  last: string;
+  last_balance: number | null;
+  candidates: { id: string; label: string }[];
+};
 type Linked = { old: string; to: string; linked_at: string; old_label: string; to_label: string; conflict: boolean };
 export type AccountLinksPayload = { suggestions: Suggestion[]; unclaimed: Unclaimed[]; links: Linked[] };
 type Payload = AccountLinksPayload;
@@ -38,7 +45,15 @@ function fmtDay(iso: string | null): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function AccountLinks({ onChanged }: { onChanged: () => void }) {
+export default function AccountLinks({
+  onChanged,
+  refreshKey,
+}: {
+  onChanged: () => void;
+  /** Changes whenever the page's data reloads (its as-of time), so a re-added
+   *  institution's suggestion appears without reopening the tab. */
+  refreshKey?: string | null;
+}) {
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -58,7 +73,7 @@ export default function AccountLinks({ onChanged }: { onChanged: () => void }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const act = async (method: 'POST' | 'DELETE', body: Record<string, string>) => {
     setBusy(true);
@@ -77,7 +92,7 @@ export default function AccountLinks({ onChanged }: { onChanged: () => void }) {
       setPreview(null);
       await load();
       // Dismissing changes no figures; linking and unlinking do.
-      if (body.action !== 'dismiss') onChanged();
+      if (body.action !== 'dismiss' && body.action !== 'dismiss_all') onChanged();
     } finally {
       setBusy(false);
     }
@@ -172,9 +187,14 @@ export function AccountLinksView({
         return (
           <div key={u.old} className="account-link-row">
             <p>
-              Balance history from {fmtDay(u.first)} to {fmtDay(u.last)} (last balance{' '}
-              {formatMoney(u.last_balance)}) isn&apos;t attached to any account. It may belong to an
-              account you reconnected.
+              {u.old_label ? <strong>{u.old_label}</strong> : 'Balance history'} from {fmtDay(u.first)} to{' '}
+              {fmtDay(u.last)}
+              {u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''} isn&apos;t
+              attached to any current account. It may be one you reconnected.
+            </p>
+            <p className="chart-note">
+              Only attach it to the same account: its balances join that account&apos;s chart and
+              are counted as the same kind of account. Preview first to check they line up.
             </p>
             <label className="type-tag">
               Attach to{' '}
@@ -197,6 +217,9 @@ export function AccountLinksView({
               </button>
               <button className="link-btn danger-link" disabled={busy || !to} onClick={() => onAct('POST', { action: 'dismiss', old: u.old, to })}>
                 Not this one
+              </button>
+              <button className="link-btn danger-link" disabled={busy} onClick={() => onAct('POST', { action: 'dismiss_all', old: u.old })}>
+                None of these
               </button>
             </div>
             {isPreviewing(u.old, to) && <AccountSparkline accountId={to} previewWith={u.old} />}

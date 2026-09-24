@@ -33,6 +33,8 @@
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
+import { measuredAccountHistoryKeys } from './history';
+import { isOwedType } from './balance';
 import { getHiddenAccounts, type HiddenMap } from './hidden';
 import { rememberedIdsByItem } from './last-known';
 import { getLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
@@ -40,8 +42,6 @@ import { getLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Lin
 // Lazy keys, not module constants: the container (#53) will be a parameter.
 const directoryKey = () => k('accounts:directory');
 const dismissedKey = () => k('account-links:dismissed');
-const historyKey = () => k('history:accounts');
-const partialKey = () => k('history:accounts:partial');
 
 /** How long after an old account was last seen a new one can be suggested as it. */
 export const MATCH_WINDOW_DAYS = 45;
@@ -103,16 +103,23 @@ export type Span = { first: string; last: string; firstBalance: number; lastBala
  */
 export async function historySpans(): Promise<Record<string, Span>> {
   const spans: Record<string, Span> = {};
-  for (const key of [historyKey(), partialKey()]) {
-    const map = (await redis().hgetall<Record<string, string>>(key)) ?? {};
-    const dates = Object.keys(map).sort();
-    for (const date of dates) {
-      let balances: Record<string, number>;
-      try {
-        balances = JSON.parse(await decrypt(map[date])) as Record<string, number>;
-      } catch {
-        continue;
-      }
+  const maps = await Promise.all(
+    measuredAccountHistoryKeys().map(async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {})
+  );
+  for (const map of maps) {
+    // Decrypted in parallel: this reads every recorded date.
+    const decoded = await Promise.all(
+      Object.entries(map).map(async ([date, blob]) => {
+        try {
+          return [date, JSON.parse(await decrypt(blob)) as Record<string, number>] as const;
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const pair of decoded) {
+      if (!pair) continue;
+      const [date, balances] = pair;
       for (const [id, value] of Object.entries(balances ?? {})) {
         if (typeof value !== 'number' || !Number.isFinite(value)) continue;
         const s = spans[id];
@@ -184,7 +191,10 @@ export async function recordDirectory(institutions: SeenInstitution[], now: numb
         persistent_account_id: a.persistent_account_id ?? prev?.persistent_account_id ?? null,
         first_seen: prev?.first_seen ?? spans[a.account_id]?.first ?? day,
         last_seen: day,
-        disconnected_at: null,
+        // A load that fetched just before a disconnect must not clear the
+        // mark: the same Item can't come back (a re-add is a new Item), so a
+        // mark on this Item's entry stays.
+        disconnected_at: prev?.item_id === inst.item_id ? prev?.disconnected_at ?? null : null,
       };
       if (prev && JSON.stringify({ ...prev, last_seen: day }) === JSON.stringify(next)) continue;
       writes[a.account_id] = await encrypt(JSON.stringify(next));
@@ -252,15 +262,24 @@ export type Suggestion = {
   };
 };
 
-/** An account with recorded history and nothing else to say what it was. */
+/** An earlier account the user can attach by hand: one known only from its
+ *  balances (older than the directory), or one the strict matching couldn't
+ *  pair (no mask, a changed subtype, a longer gap, or "Not the same"). */
 export type Unclaimed = {
   old: string;
+  /** What it was, when the directory knows; otherwise null (balances only). */
+  old_label: string | null;
   first: string;
   last: string;
-  last_balance: number;
-  /** Live accounts it could be: first seen on or after its last day. */
+  last_balance: number | null;
+  /** Live accounts it could be (see suggestLinks for the rules). */
   candidates: { id: string; label: string }[];
 };
+
+/** How long after an earlier account stopped a new one can be offered for it
+ *  by hand. Reconnects happen close in time; a closed account's history is not
+ *  offered to every account opened in the years after it. */
+export const ASSIGN_WINDOW_DAYS = 90;
 
 const normal = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const label = (e: DirectoryEntry | undefined, id: string) =>
@@ -269,6 +288,12 @@ const sameInstitution = (a: DirectoryEntry, b: DirectoryEntry) =>
   a.institution_id && b.institution_id
     ? a.institution_id === b.institution_id
     : normal(a.institution_name) === normal(b.institution_name);
+/** Debt or asset. A link across the two would subtract a hidden account with
+ *  the wrong sign on every date its earlier id covers. */
+const owedClass = (type: string | null | undefined) => (type ? isOwedType(type) : null);
+
+/** The key that dismisses every candidate for one earlier account. */
+export const dismissAllKey = (old: string) => `${old}>*`;
 
 /**
  * What to offer the user. Pure: callers load the inputs.
@@ -279,9 +304,16 @@ const sameInstitution = (a: DirectoryEntry, b: DirectoryEntry) =>
  * institution, type, subtype and a non-null mask, uniquely in both directions.
  * A shared persistent_account_id is shown as strong evidence.
  *
- * UNCLAIMED history is an old id known only from balances (it predates the
- * directory). It can't be matched by details, so the user picks from the live
- * accounts that appeared after it; validatePick checks that choice.
+ * Every other orphan is UNCLAIMED: the user can attach it by hand to a live
+ * account that
+ *   - first appeared on or after the orphan's last day, and within
+ *     ASSIGN_WINDOW_DAYS of it;
+ *   - has no history already linked to it that overlaps the orphan's (an
+ *     earlier id attached to it before counts as where it starts);
+ *   - is the same kind of account (debt or asset) when the orphan's type is
+ *     known. For an orphan known only from balances it can't be checked, which
+ *     is why every choice is previewed first.
+ * "None of these" (dismissAllKey) stops an orphan being offered at all.
  */
 export function suggestLinks(input: {
   directory: Record<string, DirectoryEntry>;
@@ -292,13 +324,24 @@ export function suggestLinks(input: {
 }): { suggestions: Suggestion[]; unclaimed: Unclaimed[] } {
   const { directory, spans, liveIds, links, dismissed } = input;
   const linkedAway = new Set(links.keys());
-  const isOrphan = (id: string) => !liveIds.has(id) && !linkedAway.has(id) && !isManualId(id);
+  const isOrphan = (id: string) =>
+    !liveIds.has(id) && !linkedAway.has(id) && !isManualId(id) && !dismissed.has(dismissAllKey(id));
   const live = [...liveIds].filter((id) => !isManualId(id) && !linkedAway.has(id));
   const firstSeen = (id: string) => directory[id]?.first_seen ?? spans[id]?.first ?? null;
   const lastSeen = (id: string) => {
     const d = directory[id]?.last_seen ?? null;
     const s = spans[id]?.last ?? null;
     return d && s ? (d > s ? d : s) : d ?? s;
+  };
+  /** Where a live account's history starts once its linked earlier ids count. */
+  const startsAt = (n: string) => {
+    let first = firstSeen(n);
+    for (const old of links.keys()) {
+      if (resolveId(old, links) !== n) continue;
+      const f = spans[old]?.first ?? directory[old]?.first_seen ?? null;
+      if (f && (!first || f < first)) first = f;
+    }
+    return first;
   };
 
   const orphans = [...new Set([...Object.keys(directory), ...Object.keys(spans)])].filter(isOrphan);
@@ -340,17 +383,33 @@ export function suggestLinks(input: {
     });
   }
 
+  const suggested = new Set(suggestions.map((x) => x.old));
   const unclaimed: Unclaimed[] = [];
-  for (const o of orphans.filter((id) => !directory[id] && spans[id])) {
-    const span = spans[o];
+  for (const o of orphans.filter((id) => !suggested.has(id))) {
+    const last = lastSeen(o);
+    const first = spans[o]?.first ?? directory[o]?.first_seen ?? null;
+    if (!last || !first) continue;
+    const oldClass = owedClass(directory[o]?.type);
     const candidates = live
       .filter((n) => {
-        const first = firstSeen(n);
-        return !!first && first > span.last && !dismissed.has(`${o}>${n}`);
+        const start = startsAt(n);
+        if (!start) return false;
+        const gap = daysBetween(last, start);
+        if (gap < 0 || gap > ASSIGN_WINDOW_DAYS) return false;
+        const newClass = owedClass(directory[n]?.type);
+        if (oldClass !== null && newClass !== null && newClass !== oldClass) return false;
+        return !dismissed.has(`${o}>${n}`);
       })
       .map((n) => ({ id: n, label: label(directory[n], n) }));
     if (candidates.length === 0) continue;
-    unclaimed.push({ old: o, first: span.first, last: span.last, last_balance: span.lastBalance, candidates });
+    unclaimed.push({
+      old: o,
+      old_label: directory[o] ? label(directory[o], o) : null,
+      first,
+      last,
+      last_balance: spans[o]?.lastBalance ?? null,
+      candidates,
+    });
   }
   return { suggestions, unclaimed };
 }
@@ -365,6 +424,11 @@ export function isOffered(old: string, to: string, offered: ReturnType<typeof su
   return offered.unclaimed.some((u) => u.old === old && u.candidates.some((c) => c.id === to));
 }
 
+/** Whether "None of these" is offered for an earlier account right now. */
+export function isUnclaimed(old: string, offered: ReturnType<typeof suggestLinks>): boolean {
+  return offered.unclaimed.some((u) => u.old === old);
+}
+
 export async function getDismissed(): Promise<Set<string>> {
   try {
     return new Set(Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey())) ?? {}));
@@ -375,6 +439,11 @@ export async function getDismissed(): Promise<Set<string>> {
 
 export async function dismissPair(old: string, to: string, now: number = Date.now()): Promise<void> {
   await redis().hset(dismissedKey(), { [`${old.slice(0, MAX_ID)}>${to.slice(0, MAX_ID)}`]: new Date(now).toISOString() });
+}
+
+/** "None of these": never offer this earlier account again. */
+export async function dismissAll(old: string, now: number = Date.now()): Promise<void> {
+  await redis().hset(dismissedKey(), { [dismissAllKey(old.slice(0, MAX_ID))]: new Date(now).toISOString() });
 }
 
 export async function linkAccounts(old: string, to: string, evidence: Record<string, unknown>, now: number = Date.now()): Promise<void> {
@@ -397,10 +466,17 @@ export async function loadSuggestionInputs(liveIds: Set<string>) {
   return { directory: entries, spans, liveIds, links, dismissed };
 }
 
-/** Directory labels for a set of ids, for the "Linked accounts" list. */
-export async function directoryLabels(ids: string[]): Promise<Record<string, string>> {
+/** Directory labels for a set of ids, for the "Linked accounts" list; null
+ *  for an id the directory doesn't know (balance history only). */
+export async function directoryLabels(ids: string[]): Promise<Record<string, string | null>> {
   const { entries } = await readDirectory();
-  return Object.fromEntries(ids.map((id) => [id, label(entries[id], id)]));
+  return Object.fromEntries(ids.map((id) => [id, entries[id] ? label(entries[id], id) : null]));
+}
+
+/** The kind of an account as the directory knows it, for recording on a link. */
+export async function directoryType(id: string): Promise<string | null> {
+  const { entries } = await readDirectory();
+  return entries[id]?.type ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +486,10 @@ export async function directoryLabels(ids: string[]): Promise<Record<string, str
  * The Plaid account ids that are live now: every Item's remembered accounts
  * (accounts:meta), which are kept while an Item is erroring. Not a live Plaid
  * fetch: opening the Accounts tab must not fan out to every institution.
+ *
+ * Empty when accounts:meta can't be read (rememberedIdsByItem swallows it).
+ * Callers use this only to PAUSE links whose old id is live again, so an empty
+ * set errs toward following links: it can hide more, never reveal.
  */
 export async function liveAccountIds(): Promise<Set<string>> {
   const byItem = await rememberedIdsByItem();
@@ -426,8 +506,11 @@ export async function liveAccountIds(): Promise<Set<string>> {
  * total, so subtracting them all is exactly right, and an id that isn't in a
  * date's map subtracts nothing.
  *
- * Throws if anything can't be read, like getHiddenAccounts: a hidden account
- * reappearing on screen is the one outcome hiding must never produce.
+ * Throws if the hidden set or the links can't be read, like getHiddenAccounts:
+ * a hidden account reappearing on screen is the one outcome hiding must never
+ * produce. The live ids err the other way when unreadable (see
+ * liveAccountIds): a paused link then counts as active, which can only hide
+ * more, never reveal.
  */
 export async function getEffectiveHidden(): Promise<{
   /** Every id of every hidden account: what totals and filters subtract. */
@@ -444,7 +527,13 @@ export function expandHidden(hidden: HiddenMap, links: Map<string, Link>): Hidde
   if (links.size === 0) return hidden;
   const out: HiddenMap = new Map(hidden);
   for (const [id, entry] of hidden) {
-    for (const same of sameAccountIds(id, links)) if (!out.has(same)) out.set(same, entry);
+    for (const same of sameAccountIds(id, links)) {
+      if (out.has(same)) continue;
+      // Each id is subtracted with ITS OWN kind (debt or asset), recorded on
+      // the link when it was made; the hidden entry's type is the fallback.
+      const oldType = links.get(same)?.evidence?.old_type;
+      out.set(same, typeof oldType === 'string' ? { ...entry, type: oldType } : entry);
+    }
   }
   return out;
 }

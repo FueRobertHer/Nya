@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAccountHistory } from '@/lib/history';
-import { getLinks, effectiveLinks, liveAccountIds, sameAccountIds } from '@/lib/links';
+import { getLinks, effectiveLinks, historySpans, liveAccountIds, sameAccountIds, type Link } from '@/lib/links';
 
 // Balance history for a single account (real snapshots + estimated
 // backfill), for the per-account chart in the Accounts tab. Reads only from
@@ -22,14 +22,25 @@ export async function GET(req: Request) {
 
     // A chart that can't read the links shows the account unjoined, which is
     // what it showed before links existed. Nothing is hidden or revealed by it.
-    let older: string[] = [];
+    let links = new Map<string, Link>();
     try {
-      const links = effectiveLinks(await getLinks(), await liveAccountIds());
-      older = sameAccountIds(id, links).filter((x) => x !== id);
+      links = effectiveLinks(await getLinks(), await liveAccountIds());
     } catch {
-      older = [];
+      links = new Map();
     }
-    if (preview && preview !== id && !older.includes(preview)) older = [...older, preview];
+    // A preview is the link as it would be made: added with the date its
+    // history ends, so its history is ordered exactly as it will be once
+    // linked, and the chart shown is the chart the user will get.
+    if (preview && preview !== id && !links.has(preview)) {
+      const spans = await historySpans();
+      links = new Map(links);
+      links.set(preview, {
+        to: id,
+        linked_at: new Date().toISOString(),
+        evidence: { old_last: spans[preview]?.last ?? null },
+      });
+    }
+    const older = sameAccountIds(id, links).filter((x) => x !== id);
 
     const points = await getAccountHistory(id, older);
     return NextResponse.json({ points });
