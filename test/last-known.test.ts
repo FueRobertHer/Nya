@@ -524,7 +524,8 @@ describe('the total it produces', () => {
 
     expect(filled).toHaveLength(3);
     // hkeys + one hget for the winning snapshot date (never a full hgetall of
-    // every date since install), plus one hgetall of the metadata hash.
-    expect(fake.ops).toBe(3);
+    // every date since install), one hgetall of the metadata hash, and one of
+    // the account links (lib/links.ts). None of them per institution.
+    expect(fake.ops).toBe(4);
   });
 });

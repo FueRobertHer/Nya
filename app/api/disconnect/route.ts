@@ -5,6 +5,7 @@ import { getItems, removeItem } from '@/lib/storage';
 import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
 import { clearInvestmentStore, storedInvestmentAccountIds } from '@/lib/invstore';
+import { markDisconnected } from '@/lib/links';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 import { pruneHidden } from '@/lib/hidden';
 import { rememberedIdsForItem, forgetItem } from '@/lib/last-known';
@@ -74,6 +75,10 @@ export async function POST(req: Request) {
     // Its vanished-account record goes with it: the Item is gone, so nothing
     // can confirm or clear those entries, and a relink starts clean.
     await forgetVanished(item_id);
+    // Its accounts stay in the directory for a while, so that if the same
+    // institution is added back its accounts can be matched to these
+    // (lib/links.ts); unlinked ones are pruned after the window.
+    await markDisconnected(item_id);
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches();

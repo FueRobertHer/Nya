@@ -513,7 +513,14 @@ export async function getRealSnapshotDates(): Promise<Set<string>> {
  * institution failed at that moment, not that the account was gone, so the
  * other layers still get their turn in the usual order.
  */
-export async function getAccountHistory(account_id: string): Promise<HistoryPoint[]> {
+export async function getAccountHistory(
+  account_id: string,
+  /** Earlier ids of the SAME account (lib/links.ts), newest first. On each
+   *  date the current id wins, then these in order, so history recorded under
+   *  an id the account had before a reconnect joins up with its current one. */
+  olderIds: string[] = []
+): Promise<HistoryPoint[]> {
+  const ids = [account_id, ...olderIds.filter((id) => id !== account_id)];
   const [realMap, partialMap, estMap, extMap] = await Promise.all([
     redis().hgetall<Record<string, string>>(ACCOUNTS_HASH),
     redis().hgetall<Record<string, string>>(ACCOUNTS_PARTIAL_HASH),
@@ -521,14 +528,17 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH),
   ]);
 
-  /** This account's balance in one encrypted per-account map, or null when the
-   *  map is unreadable or doesn't name it. */
+  /** This account's balance in one encrypted per-account map, under the first
+   *  of its ids the map names, or null when the map is unreadable or names none. */
   async function balanceIn(blob: string | undefined): Promise<number | null> {
     if (!blob) return null;
     try {
       const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
-      const value = balances[account_id];
-      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+      for (const id of ids) {
+        const value = balances[id];
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -547,8 +557,8 @@ export async function getAccountHistory(account_id: string): Promise<HistoryPoin
       if (measured !== null) return { date, value: measured };
       if (realMap?.[date]) {
         const real = await balanceIn(realMap[date]);
-        // A real map that doesn't name the account is an answer, not a gap: the
-        // account wasn't there that day. Falling through to an estimate would
+        // A real map that names none of the account's ids is an answer, not a
+        // gap: the account wasn't there that day. Falling through to an estimate would
         // put a reconstructed figure on a date that was actually measured.
         return real === null ? null : { date, value: real };
       }

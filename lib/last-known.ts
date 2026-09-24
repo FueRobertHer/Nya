@@ -54,6 +54,7 @@
 import { redis, k } from './storage';
 import { encrypt, decrypt } from './crypto';
 import { getLatestAccountSnapshot } from './history';
+import { getLinks, sameAccountIds, type Link } from './link-core';
 
 const ACCOUNT_META_HASH = k('accounts:meta');
 
@@ -290,7 +291,13 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
   // recovered card carry the same "as of", which is the correct answer rather
   // than a convenient one -- snapshots exist only for days when everything
   // answered, so there is exactly one newest such day for all of them.
-  const [last, byItem] = await Promise.all([getLatestAccountSnapshot(), recallByItem()]);
+  const [last, byItem, links] = await Promise.all([
+    getLatestAccountSnapshot(),
+    recallByItem(),
+    // Recovery is display-only, so links that can't be read just mean an
+    // account known by an earlier id isn't found under it.
+    getLinks().catch(() => new Map<string, Link>()),
+  ]);
   if (!last) return [];
 
   const cutoff = new Date(Date.now() - MAX_SNAPSHOT_AGE_DAYS * 86_400_000)
@@ -325,7 +332,11 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
       // OVERSTATES net worth -- the failure this whole feature exists to
       // prevent. Since the reason is unknowable, the count is reported instead
       // of guessed at, and the card says how many rows it could not show.
-      const balance = last.balances[m.account_id];
+      // Under its current id, or an id it had before a reconnect that the user
+      // linked to it (lib/links.ts): the snapshot may predate the new id.
+      const balance = sameAccountIds(m.account_id, links)
+        .map((id) => last.balances[id])
+        .find((b) => typeof b === 'number');
       if (typeof balance !== 'number') continue;
       accounts.push({
         account_id: m.account_id,
