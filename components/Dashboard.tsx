@@ -102,6 +102,14 @@ type Institution = {
   // alongside stale_as_of. Nonzero means the subtotal is short, so the card
   // says so rather than presenting an incomplete figure as merely dated.
   stale_missing?: number;
+  // How many accounts this institution previously reported were absent from an
+  // otherwise SUCCESSFUL fetch (lib/vanished.ts). Unlike the stale fields there
+  // is no error alongside it: the balances shown are fresh and correct, they are
+  // just not all of them, so the total is short by whatever the missing ones
+  // held. History is paused while this is set, which is why it has to be said
+  // out loud -- otherwise the hero total simply drops and disagrees with the
+  // last charted point for three days with nothing to explain it.
+  unconfirmed_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
 };
 
@@ -817,6 +825,16 @@ export default function Dashboard() {
     [institutions]
   );
 
+  // Accounts that answered before and didn't this time, at institutions that
+  // are otherwise fine. Surfaced on the hero for the same reason as the stale
+  // cases: the total is what gets read, and this is a caveat on the total --
+  // it is short by however much those accounts held, and the chart is frozen
+  // until the absence resolves one way or the other.
+  const vanishedCount = useMemo(
+    () => institutions.reduce((n, i) => n + (i.unconfirmed_missing ?? 0), 0),
+    [institutions]
+  );
+
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
     if (history.length < 2) return null;
@@ -1129,6 +1147,13 @@ export default function Dashboard() {
                     <div className="as-of stale">
                       {incompleteCount} account{incompleteCount === 1 ? '' : 's'} couldn&apos;t be
                       shown, so this total is incomplete
+                    </div>
+                  )}
+                  {vanishedCount > 0 && (
+                    <div className="as-of stale">
+                      {vanishedCount} account{vanishedCount === 1 ? '' : 's'} stopped reporting, so
+                      this total is short by {vanishedCount === 1 ? 'it' : 'them'} · history is
+                      paused until that settles
                     </div>
                   )}
                   {uncountedInstitutions.length > 0 && (
@@ -1545,6 +1570,28 @@ export default function Dashboard() {
                             } couldn't be shown, so this total is incomplete`}
                           {inst.stale_too_old &&
                             ` · last known balances are from ${fmtDay(inst.stale_too_old)}, too old to show`}
+                        </div>
+                      )}
+
+                      {/* Its own block, NOT part of the error above, because
+                          there is no error: this institution answered and the
+                          balances on the card are fresh. It just answered with
+                          fewer accounts than it used to have, so the subtotal
+                          is short and nothing is being written to history
+                          until that resolves.
+
+                          Amber rather than red for the same reason the stale
+                          case is: the numbers shown are real. What is wrong is
+                          that there are not all of them. */}
+                      {!!inst.unconfirmed_missing && !inst.error && (
+                        <div className="stale-note">
+                          {inst.unconfirmed_missing} account
+                          {inst.unconfirmed_missing === 1 ? '' : 's'} this institution used to
+                          report {inst.unconfirmed_missing === 1 ? "isn't" : "aren't"} in its latest
+                          response · this subtotal is short by{' '}
+                          {inst.unconfirmed_missing === 1 ? 'it' : 'them'}, and history is paused
+                          until the {inst.unconfirmed_missing === 1 ? 'account' : 'accounts'} either
+                          come back or stay gone
                         </div>
                       )}
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
 import { rememberAccounts } from '@/lib/last-known';
-import { computeNetWorth, accountBalanceMap } from '@/lib/networth';
+import { computeNetWorth, accountBalanceMap, isRecordable } from '@/lib/networth';
 import { recordSnapshot } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
@@ -126,7 +126,7 @@ export async function POST(req: Request) {
       // non-empty read gets recorded.
       try {
         const { institutions, netWorth } = await computeNetWorth();
-        const clean = institutions.every((i) => !i.error);
+        const clean = institutions.every(isRecordable);
         // `recorded` reflects whether the point actually landed, not just
         // whether we tried: recordSnapshot swallows its own errors, and a
         // script that trusts this field deserves the truth. It returns the date

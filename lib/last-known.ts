@@ -240,6 +240,22 @@ export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
   }
 }
 
+/**
+ * Every Item's remembered account ids, in ONE read.
+ *
+ * The batch form of rememberedIdsForItem, for a caller comparing several Items
+ * at once (lib/vanished.ts). Upstash is HTTP, so per-Item reads cost a round
+ * trip each on the uncached dashboard path; this pays one for all of them.
+ */
+export async function rememberedIdsByItem(): Promise<Record<string, string[]>> {
+  const byItem = await recallByItem();
+  const out: Record<string, string[]> = {};
+  for (const [item_id, accounts] of Object.entries(byItem)) {
+    out[item_id] = accounts.map((a) => a.account_id);
+  }
+  return out;
+}
+
 /** Drops one Item's record, on disconnect. Safe because attribution is per
  *  Item: removing this record can't affect any other institution's recovery. */
 export async function forgetItem(item_id: string): Promise<void> {
