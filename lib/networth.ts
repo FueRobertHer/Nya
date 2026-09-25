@@ -11,6 +11,7 @@ import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual'
 import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
 import { loadVanishedInputs, applyVanished } from './vanished';
+import { recordSnapshot, recordPartialAccounts } from './history';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -31,6 +32,10 @@ export type LiabilitiesState = 'on' | 'off' | 'loading' | 'unavailable';
 export type InstitutionResult = {
   institution_name: string;
   item_id: string;
+  /** Plaid's institution id, when the balance call returned one. Stable across
+   *  a disconnect and re-add, unlike item_id and the display name (which is
+   *  whatever the client sent at link time); lib/links.ts matches on it. */
+  institution_id?: string | null;
   accounts: any[];
   holdings: any[];
   error: string | null;
@@ -112,6 +117,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
 
   try {
     const balanceRes = await plaidClient.accountsBalanceGet({ access_token });
+    result.institution_id = balanceRes.data.item?.institution_id ?? null;
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
       name: a.name,
@@ -123,6 +129,9 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
       available: a.balances.available,
       limit: a.balances.limit, // credit line, for utilization
       currency: a.balances.iso_currency_code,
+      // Plaid's cross-Item identity for the account, where it offers one (Chase
+      // in production). Strong evidence when matching a re-added account.
+      persistent_account_id: a.persistent_account_id ?? null,
     }));
   } catch (err: any) {
     const code = err?.response?.data?.error_code;
@@ -328,4 +337,43 @@ export function accountBalanceMap(institutions: InstitutionResult[]): Record<str
     });
   });
   return map;
+}
+
+/**
+ * The same map, over only the institutions that actually answered: what a
+ * partly failed fetch still measured.
+ *
+ * An institution with `error` is left out whole. Its accounts are either empty
+ * or, after lib/last-known.ts, recovered balances that were never measured
+ * today. One with `unconfirmed_missing` stays in: it answered, and the accounts
+ * it returned are real. That some other account is missing from it is a
+ * question for the total, not for these accounts' own charts.
+ */
+export function measuredBalanceMap(institutions: InstitutionResult[]): Record<string, number> {
+  return accountBalanceMap(institutions.filter((inst) => !inst.error));
+}
+
+/**
+ * Writes what a fetch measured to history, and returns the date the TOTAL
+ * landed on, or null if it didn't.
+ *
+ * The one place the recording rule lives, for the same reason isRecordable
+ * does: /api/net-worth, /api/snapshot and /api/ingest/balance must agree.
+ *
+ * A clean, non-empty fetch records a real snapshot. Otherwise (or if that
+ * write failed) the accounts that were measured still go to the partial
+ * per-account layer, so one broken bank doesn't turn every other account's
+ * chart into an estimate. Run it before fillFromLastKnown: recovered balances
+ * must never be written anywhere as measured.
+ */
+export async function recordFetch(
+  institutions: InstitutionResult[],
+  netWorth: number
+): Promise<string | null> {
+  const recorded =
+    institutions.length > 0 && institutions.every(isRecordable)
+      ? await recordSnapshot(netWorth, accountBalanceMap(institutions))
+      : null;
+  if (recorded === null) await recordPartialAccounts(measuredBalanceMap(institutions));
+  return recorded;
 }

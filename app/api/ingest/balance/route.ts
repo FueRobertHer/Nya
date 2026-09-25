@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
 import { rememberAccounts } from '@/lib/last-known';
-import { computeNetWorth, accountBalanceMap, isRecordable } from '@/lib/networth';
-import { recordSnapshot } from '@/lib/history';
+import { recordDirectory } from '@/lib/links';
+import { computeNetWorth, recordFetch } from '@/lib/networth';
 import { clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
 
@@ -126,23 +126,22 @@ export async function POST(req: Request) {
       // non-empty read gets recorded.
       try {
         const { institutions, netWorth } = await computeNetWorth();
-        const clean = institutions.every(isRecordable);
         // `recorded` reflects whether the point actually landed, not just
         // whether we tried: recordSnapshot swallows its own errors, and a
-        // script that trusts this field deserves the truth. It returns the date
-        // it wrote; collapsed to a boolean here because that is this endpoint's
-        // published response shape. True now means the TOTAL landed, so a
-        // failed per-account write no longer reports the chart as un-updated
-        // when the point is sitting in it.
-        const recorded =
-          clean && institutions.length > 0
-            ? (await recordSnapshot(netWorth, accountBalanceMap(institutions))) !== null
-            : false;
+        // script that trusts this field deserves the truth. recordFetch returns
+        // the date it wrote; collapsed to a boolean here because that is this
+        // endpoint's published response shape. True now means the TOTAL landed,
+        // so a failed per-account write no longer reports the chart as
+        // un-updated when the point is sitting in it. (A partly failed read
+        // still records the accounts that answered, but that is not the chart
+        // this field is about.)
+        const recorded = (await recordFetch(institutions, netWorth)) !== null;
         // Record how to draw these accounts, for the same reason /api/snapshot
         // does: this read may be the only clean one of the day, and an account
         // it learned about would otherwise sit in the snapshot with nothing to
         // render it from.
         await rememberAccounts(institutions);
+        await recordDirectory(institutions);
         return NextResponse.json({ updated, recorded, results });
       } catch (err) {
         // The balances did land; only the snapshot failed. Say so rather than

@@ -24,6 +24,8 @@ const {
   clearBackfillPending,
   getLatestAccountSnapshot,
   withTodayPoint,
+  recordPartialAccounts,
+  bridgeInteriorEstimates,
 } = await import('@/lib/history');
 
 const { encrypt } = await import('@/lib/crypto');
@@ -626,5 +628,213 @@ describe('recordSnapshot return value', () => {
     // subtracted from this date later. getHistory drops it rather than showing
     // it uncorrected; /api/net-worth re-adds it from live figures instead.
     expect(await getHistory(hide(['cash', 'depository']))).toHaveLength(0);
+  });
+});
+
+// One failing institution used to turn every other account's chart into an
+// estimate, because nothing at all was recorded on a day the total couldn't be.
+describe('the partial per-account layer', () => {
+  const today = () => new Date().toISOString().slice(0, 10);
+  const partialKey = () => testKey('history:accounts:partial');
+
+  test('a measured balance beats the estimate, and is not marked estimated', async () => {
+    await replaceEstimatedAccounts([{ date: today(), balances: { ira: 1 } }]);
+    await recordPartialAccounts({ ira: 500 });
+
+    const points = await getAccountHistory('ira');
+    expect(points).toEqual([{ date: today(), value: 500 }]);
+  });
+
+  test('a real snapshot beats it', async () => {
+    await recordPartialAccounts({ ira: 500 });
+    await recordSnapshot(900, { ira: 900 });
+
+    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(900);
+  });
+
+  // The failing institution's accounts are exactly the ones a partial map
+  // leaves out. For them absence means "not measured", not "gone".
+  test('an account it does not name falls through to the estimate', async () => {
+    await replaceEstimatedAccounts([{ date: today(), balances: { cash: 40 } }]);
+    await recordPartialAccounts({ ira: 500 });
+
+    expect(await getAccountHistory('cash')).toEqual([{ date: today(), value: 40, estimated: true }]);
+  });
+
+  // A real map is authoritative even when it can't be read: falling through
+  // would put an estimated figure on a date that has a real answer.
+  test('an unreadable real map is a gap, not an estimate', async () => {
+    await replaceEstimatedAccounts([{ date: today(), balances: { ira: 1 } }]);
+    await fake.hset(testKey('history:accounts'), { [today()]: 'not-a-ciphertext' });
+
+    expect(await getAccountHistory('ira')).toEqual([]);
+  });
+
+  // recordSnapshot clears today's partial map, so one beside a real map was
+  // written later: the newer reading, possibly of an account the snapshot
+  // never saw.
+  test('a partial reading taken after the snapshot wins for the accounts it names', async () => {
+    await recordSnapshot(900, { ira: 900, cash: 50 });
+    await recordPartialAccounts({ ira: 950, opened_today: 20 });
+
+    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(950);
+    expect(valuesByDate(await getAccountHistory('opened_today'))[today()]).toBe(20);
+    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(50);
+  });
+
+  test('a snapshot clears the partial reading taken before it', async () => {
+    await recordPartialAccounts({ ira: 500 });
+    await recordSnapshot(900, { ira: 900 });
+
+    expect(await fake.hkeys(partialKey())).toEqual([]);
+  });
+
+  // The per-account write failing leaves no real breakdown for today, so the
+  // earlier partial reading is the only measurement the charts have.
+  test('keeps the partial reading when the snapshot breakdown fails to write', async () => {
+    await recordPartialAccounts({ ira: 500 });
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    fake.hset = (async (...args: Parameters<typeof hset>) => {
+      if (++calls === 2) throw new Error('upstash down'); // the breakdown, after the total
+      return hset(...args);
+    }) as typeof fake.hset;
+    try {
+      await recordSnapshot(900, { ira: 900 });
+    } finally {
+      fake.hset = hset;
+    }
+
+    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(500);
+  });
+
+  // It is the breakdown of no stored total, so the totals series and the
+  // hidden-account subtraction must never see it.
+  // A real total with no breakdown of its own must still be dropped when an
+  // account is hidden: reading the partial map as that breakdown would
+  // subtract a number the total was never built from.
+  test('never reaches the totals series', async () => {
+    await fake.hset(testKey('history:net-worth'), { [today()]: await encrypt('1000') });
+    await recordPartialAccounts({ ira: 500 });
+
+    expect(await getHistory()).toEqual([{ date: today(), value: 1000 }]);
+    expect(await getHistory(hide(['ira', 'investment']))).toEqual([]);
+  });
+
+  // getLatestAccountSnapshot assumes its newest date names every account, and
+  // a partial map leaves the failing institution out by definition.
+  test('is invisible to the last-known lookup', async () => {
+    await writeAccountSnapshot('2026-01-01', { ira: 100, cash: 50 });
+    await recordPartialAccounts({ ira: 500 });
+
+    expect(await getLatestAccountSnapshot()).toEqual({ date: '2026-01-01', balances: { ira: 100, cash: 50 } });
+  });
+
+  test('merges a second write on the same day, newer values winning', async () => {
+    await recordPartialAccounts({ ira: 500, cash: 40 });
+    await recordPartialAccounts({ ira: 600 });
+
+    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(600);
+    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(40);
+  });
+
+  test('skips the write when today cannot be read, rather than clobbering it', async () => {
+    await recordPartialAccounts({ cash: 40 });
+    fake.failNext('hget');
+    await recordPartialAccounts({ ira: 600 });
+
+    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(40);
+    expect(await getAccountHistory('ira')).toEqual([]);
+  });
+
+  test('skips the write when today cannot be decrypted', async () => {
+    await fake.hset(partialKey(), { [today()]: 'not-a-ciphertext' });
+    await recordPartialAccounts({ ira: 600 });
+
+    expect(await fake.hget<string>(partialKey(), today())).toBe('not-a-ciphertext');
+  });
+
+  test('writes nothing for an empty map', async () => {
+    await recordPartialAccounts({});
+    expect(await fake.hkeys(partialKey())).toEqual([]);
+  });
+});
+
+// Inside a hole between two recorded days, the backward walk can be wrong in
+// level by whole accounts (a deleted manual account, a rollover from it), so
+// the total draws a straight line between the real ends instead.
+describe('bridgeInteriorEstimates', () => {
+  const r = (date: string, value: number) => ({ date, value });
+  const e = (date: string, value: number) => ({ date, value, estimated: true });
+
+  test('draws a straight line across an interior run, still estimated', () => {
+    expect(
+      bridgeInteriorEstimates([
+        r('2026-09-01', 100),
+        e('2026-09-02', 10),
+        e('2026-09-03', 999),
+        e('2026-09-04', 10),
+        r('2026-09-05', 200),
+      ])
+    ).toEqual([
+      r('2026-09-01', 100),
+      e('2026-09-02', 125),
+      e('2026-09-03', 150),
+      e('2026-09-04', 175),
+      r('2026-09-05', 200),
+    ]);
+  });
+
+  // By date, not by index: the run can itself have missing days.
+  test('interpolates by date when the run skips days', () => {
+    expect(
+      bridgeInteriorEstimates([r('2026-09-01', 0), e('2026-09-04', 5), r('2026-09-05', 400)])
+    ).toEqual([r('2026-09-01', 0), e('2026-09-04', 300), r('2026-09-05', 400)]);
+  });
+
+  // Before the first real point the walk is all there is, and after the last
+  // one there is no second end to draw a line to.
+  test('leaves leading and trailing estimates alone', () => {
+    const points = [e('2026-08-30', 7), r('2026-09-01', 100), e('2026-09-02', 3)];
+    expect(bridgeInteriorEstimates(points)).toEqual(points);
+  });
+
+  test('does not mutate what it is given', () => {
+    const points = [r('2026-09-01', 100), e('2026-09-02', 10), r('2026-09-03', 200)];
+    bridgeInteriorEstimates(points);
+    expect(points[1]).toEqual(e('2026-09-02', 10));
+  });
+
+  test('is idempotent', () => {
+    const once = bridgeInteriorEstimates([r('2026-09-01', 100), e('2026-09-02', 10), r('2026-09-04', 400)]);
+    expect(bridgeInteriorEstimates(once)).toEqual(once);
+  });
+
+  // getHistory bridges AFTER subtracting hidden accounts, so the line runs
+  // between the values the chart actually shows at each end.
+  test('getHistory bridges between the visible real values', async () => {
+    const realTotal = async (date: string, value: number, balances: Record<string, number>) => {
+      await fake.hset(testKey('history:net-worth'), { [date]: await encrypt(String(value)) });
+      await writeAccountSnapshot(date, balances);
+    };
+    await realTotal('2026-09-01', 1000, { cash: 600, ira: 400 });
+    await realTotal('2026-09-03', 1400, { cash: 1000, ira: 400 });
+    await writeEra(['2026-09-02'], 50, { cash: 50 }, { ira: 0 });
+
+    expect(await getHistory(hide(['ira', 'investment']))).toEqual([
+      r('2026-09-01', 600),
+      e('2026-09-02', 800),
+      r('2026-09-03', 1000),
+    ]);
+  });
+
+  // The request's own snapshot is added after getHistory, and can be the real
+  // point that closes a hole getHistory saw as trailing.
+  test('withTodayPoint bridges a run that today closes', () => {
+    expect(withTodayPoint([r('2026-09-19', 100), e('2026-09-20', 5)], '2026-09-21', 300)).toEqual([
+      r('2026-09-19', 100),
+      e('2026-09-20', 200),
+      r('2026-09-21', 300),
+    ]);
   });
 });

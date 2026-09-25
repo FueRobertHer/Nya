@@ -3,10 +3,10 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
-import { fetchInvestmentTxns, valueDelta } from '@/lib/investments';
+import { syncInvestments } from '@/lib/invstore';
 import { getManualAccounts } from '@/lib/manual';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
-import { isoDaysAgo, reconstruct, type WalkType } from '@/lib/backfill';
+import { addInvestmentFlows, isoDaysAgo, loadItemInvestments, reconstruct, type WalkType } from '@/lib/backfill';
 import {
   backfillPendingExhausted,
   clearBackfillPending,
@@ -111,33 +111,30 @@ export async function POST() {
         // retry is the client noticing history is thin -- treating that as a
         // note would mean one plain checking account permanently blocks
         // backfill for everything else.
-        const hasInvestment = bal.data.accounts.some((a) => isInvestmentType(a.type));
+        const investmentIds = bal.data.accounts
+          .filter((a) => isInvestmentType(a.type))
+          .map((a) => a.account_id);
+        const hasInvestment = investmentIds.length > 0;
+        // From the Item's stored investment transactions (lib/invstore.ts),
+        // brought up to date first. Which accounts are walked, whether to wait,
+        // and which rows to walk: see investmentReadiness in lib/backfill.ts.
+        // The walk judges paycheck trades over every row it is given and walks
+        // only the window.
         const inv = hasInvestment
-          ? await fetchInvestmentTxns(access_token, isoDaysAgo(LOOKBACK_DAYS), isoDaysAgo(0))
-          : { txns: [], note: 'no investment accounts', truncated: false, pending: false };
+          ? await loadItemInvestments((opts) => syncInvestments(item, opts), investmentIds, {
+              windowStart: isoDaysAgo(LOOKBACK_DAYS),
+              yesterday: isoDaysAgo(1),
+              today: isoDaysAgo(0),
+            })
+          : null;
 
         return {
           accounts: bal.data.accounts,
           txns,
           note,
-          invTxns: inv.txns,
-          // Tracked separately from `invTxns.length`: an account whose product
-          // works but simply had no activity all year IS covered, and walking
-          // it correctly yields a flat series. Conflating the two would push it
-          // into the flat term, where hiding it later subtracts the wrong
-          // number from every estimated point.
-          //
-          // `truncated` also disqualifies it. Plaid returns newest first, so a
-          // capped fetch is missing its OLDEST rows -- the walk would run to the
-          // left edge with flows silently absent and publish a curve that looks
-          // fine and isn't.
-          invCovered: hasInvestment && !inv.note && !inv.truncated,
-          // The one investment failure that fixes itself: Plaid is extracting
-          // right now (the async_update fetchInvestmentTxns asks for is what
-          // started it) and the same call works a minute later. Kept separate
-          // from `note` so it can leave the done-flag unset below without
-          // aborting the run.
-          invPending: hasInvestment && inv.pending,
+          invTxns: inv?.walkRows ?? [],
+          invCoveredIds: inv?.coveredIds ?? new Set<string>(),
+          invPending: inv?.pending ?? false,
         };
       })
     );
@@ -165,7 +162,7 @@ export async function POST() {
     // the chart. Left unset, the client's next load recomputes.
     const invPending = perItem.some((p) => p.invPending);
 
-    for (const { accounts, txns, invTxns, invCovered } of perItem) {
+    for (const { accounts, txns, invTxns, invCoveredIds } of perItem) {
       for (const a of accounts) {
         const current = a.balances.current ?? 0;
         totalNow += signedContribution(a.type, current);
@@ -173,7 +170,7 @@ export async function POST() {
           walkType[a.account_id] = a.type;
           cashIds.add(a.account_id);
           balances[a.account_id] = current;
-        } else if (isInvestmentType(a.type) && invCovered) {
+        } else if (isInvestmentType(a.type) && invCoveredIds.has(a.account_id)) {
           walkType[a.account_id] = 'investment';
           balances[a.account_id] = current;
         }
@@ -188,22 +185,14 @@ export async function POST() {
         day[t.account_id] = (day[t.account_id] ?? 0) + t.amount;
         if (!oldestTxn || t.date < oldestTxn) oldestTxn = t.date;
       }
-      for (const t of invTxns) {
-        if (walkType[t.account_id] !== 'investment') continue;
-        const delta = valueDelta(t);
-        if (delta === 0) continue; // internal reallocation: buys, sells, corporate actions
-        const day = (dailyByAccount[t.date] ??= {});
-        // Back into the walk's convention (positive = value left the account),
-        // which is what the shared loop below un-applies.
-        day[t.account_id] = (day[t.account_id] ?? 0) + -delta;
-        // Deliberately NOT folded into oldestTxn. That marker stops the TOTAL
-        // series at the edge of the cash data; extending it would keep walking
-        // with every cash balance frozen, publishing a flatline as history.
-        // Tracked separately because an investment account's own series has
-        // real data out there and is drawn over it -- which is where a rollover
-        // older than the cash window lives. See reconstruct in lib/backfill.ts.
-        if (!oldestInvTxn || t.date < oldestInvTxn) oldestInvTxn = t.date;
-      }
+      // Deliberately NOT folded into oldestTxn. That marker stops the TOTAL
+      // series at the edge of the cash data; extending it would keep walking
+      // with every cash balance frozen, publishing a flatline as history.
+      // Tracked separately because an investment account's own series has
+      // real data out there and is drawn over it -- which is where a rollover
+      // older than the cash window lives. See reconstruct in lib/backfill.ts.
+      const oldestHere = addInvestmentFlows(dailyByAccount, invTxns, walkType, isoDaysAgo(LOOKBACK_DAYS));
+      if (oldestHere && (!oldestInvTxn || oldestHere < oldestInvTxn)) oldestInvTxn = oldestHere;
     }
 
     // A brokerage-only user has no cash horizon to preserve, so the hazard the

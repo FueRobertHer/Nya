@@ -273,8 +273,17 @@ export function storageMock(fake: FakeRedis) {
     rawRedis: () => fake,
     k: testKey,
     kEnv: testKey,
-    getItems: async () => [],
-    saveItem: async () => {},
-    removeItem: async () => {},
+    // Backed by the fake, so code that filters by the stored Items sees the
+    // ones a test seeds (none unless it does).
+    getItems: async () =>
+      Object.values((await fake.hgetall<Record<string, unknown>>(testKey('plaid:items'))) ?? {}).map((v) =>
+        typeof v === 'string' ? JSON.parse(v) : v
+      ),
+    saveItem: async (item: { item_id: string }) => {
+      await fake.hset(testKey('plaid:items'), { [item.item_id]: JSON.stringify(item) });
+    },
+    removeItem: async (item_id: string) => {
+      await fake.hdel(testKey('plaid:items'), item_id);
+    },
   };
 }

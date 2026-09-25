@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
-import { computeNetWorth, accountBalanceMap, isRecordable, type InstitutionResult } from '@/lib/networth';
+import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
 import {
-  recordSnapshot,
   getHistory,
   withTodayPoint,
   isBackfillDone,
   type HistoryPoint,
 } from '@/lib/history';
-import { getHiddenAccounts, applyHidden } from '@/lib/hidden';
+import { applyHidden } from '@/lib/hidden';
+import { getEffectiveHidden, recordDirectory } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 
 type NetWorthPayload = {
@@ -76,16 +76,17 @@ export async function GET(req: Request) {
     // exact order they used to RUN in. That ordering is load-bearing, not
     // stylistic: the snapshot is still recorded before the hidden set is
     // awaited, so a hidden-read failure still cannot cost today's point (see
-    // the comment on recordSnapshot below). Only the waiting overlaps.
+    // the comment on recordFetch below). Only the waiting overlaps.
     //
     // On Upstash each of these is an HTTPS round trip (getHistory is several),
     // and they used to queue up behind a multi-second Plaid fetch that was
     // sitting idle on the network the whole time.
-    const hiddenPromise = eager(getHiddenAccounts());
-    const historyPromise = eager(hiddenPromise.then((h) => getHistory(h)));
+    // Hidden accounts follow account links (lib/links.ts): every id an account
+    // has had is hidden with it, and the client sees one current id each.
+    const hiddenPromise = eager(getEffectiveHidden());
+    const historyPromise = eager(hiddenPromise.then((h) => getHistory(h.hidden)));
 
     const { institutions, netWorth } = await computeNetWorth();
-    const balances = accountBalanceMap(institutions);
 
     // Record today's snapshot only when every institution answered cleanly
     // and at least one is linked -- a partial fetch would chart an
@@ -99,17 +100,22 @@ export async function GET(req: Request) {
     // surfaces where it is awaited.)
     const clean = institutions.every(isRecordable);
     // The date the point landed on, or null if it didn't. Taken from
-    // recordSnapshot rather than read from the clock again, so the point this
+    // recordFetch rather than read from the clock again, so the point this
     // route charts below is labelled with the day that was actually written
-    // even if the request straddles UTC midnight.
-    const snapshotDate =
-      clean && institutions.length > 0 ? await recordSnapshot(netWorth, balances) : null;
+    // even if the request straddles UTC midnight. When it didn't land, the
+    // accounts that did answer are still recorded for their own charts.
+    const snapshotDate = await recordFetch(institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so
     // a later failure can still draw its card. Per institution, not gated on
     // `clean`: one broken bank shouldn't stop the others' records staying
     // fresh. Writes only, so the broken one's record survives.
     await rememberAccounts(institutions);
+    // And in the account directory, which outlives a disconnect so a re-added
+    // institution's accounts can be matched to the ones they replace. Started
+    // here and awaited before responding, so it overlaps the reads below
+    // instead of adding a round trip to every live load. It never throws.
+    const directoryWrite = recordDirectory(institutions);
 
     // Everything from here down is display-only. `visibleNetWorth` excludes
     // hidden accounts and is what ships as `netWorth` -- the client is never
@@ -131,7 +137,12 @@ export async function GET(req: Request) {
       );
     }
 
-    const hidden = await hiddenPromise;
+    const { hidden, forClient: hiddenList } = await hiddenPromise;
+    await directoryWrite;
+    // Plaid's cross-Item account identity is for matching on the server only
+    // (lib/links.ts); it has no business in the payload, the cache or the
+    // browser's localStorage.
+    for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
@@ -144,7 +155,7 @@ export async function GET(req: Request) {
       institutions,
       netWorth: visibleNetWorth,
       history,
-      hidden: [...hidden.entries()].map(([account_id, { type }]) => ({ account_id, type })),
+      hidden: hiddenList,
       as_of: new Date().toISOString(),
     };
 

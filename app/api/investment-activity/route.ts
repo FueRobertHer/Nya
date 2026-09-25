@@ -1,16 +1,22 @@
 import { NextResponse } from 'next/server';
-import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import {
-  fetchInvestmentTxns,
+  contributedAmount,
+  countedTrades,
+  dailyFlows,
   isContribution,
   isIncomingRollover,
-  valueDelta,
 } from '@/lib/investments';
+import { syncInvestments } from '@/lib/invstore';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 
 // Recent buys, sells, dividends and fees for one investment account, plus what
-// the holder has put in this year.
+// the holder has put in this year and the per-day flows behind the chart's
+// money-added line.
+//
+// Reads the Item's stored investment transactions (lib/invstore.ts), which it
+// brings up to date first. So the list and the line reach past Plaid's window,
+// and keep showing what was stored when the institution is down.
 //
 // Takes item_id from the caller rather than resolving it from account_id. There
 // is no reverse index: getItemAccountIds reads the transaction store, which an
@@ -19,12 +25,7 @@ import { readAccountCache, writeAccountCache } from '@/lib/cache';
 // expired or any institution is erroring. The Accounts tab already renders each
 // account inside its institution, so it just passes the id it has.
 
-const LOOKBACK_DAYS = 365;
 const RECENT_LIMIT = 25;
-
-function isoDaysAgo(days: number): string {
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
 
 export async function GET(req: Request) {
   try {
@@ -43,53 +44,81 @@ export async function GET(req: Request) {
     const item = (await getItems()).find((i) => i.item_id === item_id);
     if (!item) return NextResponse.json({ error: 'Unknown item' }, { status: 404 });
 
-    // Keyed on the pair, not account_id alone. Plaid doesn't document that
-    // options.account_ids errors on an id belonging to a different Item (unlike
-    // the holdings endpoint, which does), so a mismatched request that came back
-    // 200-with-nothing could otherwise cache an empty result under the real
-    // account's field and blank its activity for the whole TTL.
-    // (Payloads written before rollovers were split out of ytd_contributions
-    // are not reachable: INVESTMENT_ACTIVITY_CACHE_KEY carries the version.)
+    // Keyed on the pair, not account_id alone, so a mismatched item_id can't
+    // cache an empty answer under the real account's field.
+    // (INVESTMENT_ACTIVITY_CACHE_KEY carries a version, so payloads with an
+    // older meaning are not reachable.)
     const cacheField = `${item_id}:${account_id}`;
     const cached = await readAccountCache(cacheField);
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 
-    const access_token = await decrypt(item.encrypted_access_token);
-    const { txns, note } = await fetchInvestmentTxns(
-      access_token,
-      isoDaysAgo(LOOKBACK_DAYS),
-      isoDaysAgo(0),
-      [account_id]
-    );
+    const sync = await syncInvestments(item);
+    // Newest first, explicitly: the store has no order of its own.
+    const mine = sync.rows
+      .filter((t) => t.account_id === account_id)
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
-    // account_ids already filters Plaid-side, and a mismatched item_id/
-    // account_id pair is rejected by Plaid rather than silently answered with
-    // the wrong Item's data. This is belt-and-braces on top of that, so a
-    // future change to the request options can't widen what comes back.
-    const mine = txns.filter((t) => t.account_id === account_id);
-
+    // Decided over every row the account has, the same set the backfill hands
+    // the walk, so the two can't disagree about a paycheck (see countedTrades).
+    const counted = countedTrades(mine);
     const yearStart = `${new Date().getUTCFullYear()}-01-01`;
     const thisYear = mine.filter((t) => t.date >= yearStart);
-    const sum = (rows: typeof thisYear) => rows.reduce((total, t) => total + valueDelta(t), 0);
+    const sum = (rows: typeof thisYear) =>
+      rows.reduce((total, t) => total + contributedAmount(t, counted), 0);
 
     // Reported as two figures rather than one. A rollover is retirement money
     // that already existed moving between accounts, so folding it into
     // contributions makes a $60k 401k transfer read as a year of saving --
     // while dropping it entirely would leave a large arrival in the activity
     // list that no line above it accounts for.
-    const ytd_contributions = sum(thisYear.filter(isContribution));
-    const ytd_rollovers = sum(thisYear.filter(isIncomingRollover));
+    const ytd_contributions = sum(thisYear.filter((t) => isContribution(t, counted)));
+    const ytd_rollovers = sum(thisYear.filter((t) => isIncomingRollover(t, counted)));
 
+    // The money-added line, only across dates the store has VERIFIED for this
+    // account, and it ends where they end. A contribution after `through` isn't
+    // known yet (an outage, or the last sync couldn't be verified), so drawing
+    // past it would book that contribution as growth.
+    //
+    // It starts at the later of the verified start and the account's oldest
+    // row: an institution can keep less history than was asked for, and every
+    // contribution before its oldest row would otherwise read as growth. No
+    // rows at all proves nothing about how far the feed reaches, so no line.
+    const cov = sync.coverage[account_id];
+    const oldest = mine.length ? mine[mine.length - 1].date : null;
+    const flowsKnown = !!cov && !!oldest;
+    const flows = flowsKnown
+      ? dailyFlows(
+          mine.filter((t) => t.date >= cov!.from && t.date <= cov!.through),
+          counted
+        )
+      : null;
+    const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
+    const flows_to = flowsKnown ? cov!.through : null;
+
+    // Said in full here so the client can print it as is. A fetch failure
+    // serves what is stored (and says so only if there is any); a storage
+    // problem serves what was just fetched. Both can happen at once.
+    const fetchNote = sync.note ? (mine.length ? `${sync.note}; showing saved activity` : sync.note) : null;
+    // Another sync is mid-way through the first download: nothing is saved yet,
+    // and "no activity" would be wrong.
+    const loadingNote = sync.busy && mine.length === 0 ? 'Investment activity is still loading' : null;
+    const note = [fetchNote, loadingNote, sync.storeNote].filter(Boolean).join('. ') || null;
     const payload = {
-      txns: mine.slice(0, RECENT_LIMIT), // Plaid returns newest first
+      txns: mine.slice(0, RECENT_LIMIT),
       ytd_contributions,
       ytd_rollovers,
+      flows,
+      flows_from,
+      flows_to,
       note,
     };
 
-    // Don't cache a warming-up product: it would pin "still importing" for 15
-    // minutes past the point where real data became available.
-    if (!note) await writeAccountCache(cacheField, payload);
+    // Not cached after a Plaid failure (an outage should be re-checked on the
+    // next load), nor while another sync held the store: that answer is
+    // whatever was stored before it, which on a first link is nothing at all.
+    // A storage-only problem IS cached: the rows were just fetched live, and
+    // without it an unwritable store would re-run the full fetch every load.
+    if (!sync.note && !sync.busy) await writeAccountCache(cacheField, payload);
 
     return NextResponse.json({ ...payload, from_cache: false });
   } catch (err: any) {

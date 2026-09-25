@@ -528,12 +528,24 @@ button:disabled {
   font-size: 12px;
 }
 
+/* Money added vs growth, under the readout on an investment account's chart.
+   Tabular figures so the two amounts don't jitter while scrubbing. */
+.chart-readout-split {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin: -4px 0 8px;
+}
+
 .chart-svg {
   display: block;
   width: 100%;
   height: auto;
   /* the chart is a scrub surface -- don't let touches pan the page */
   touch-action: none;
+  /* nor select its labels while dragging to compare two days */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .chart-tick {
@@ -545,6 +557,64 @@ button:disabled {
 .chart-xlabel {
   fill: var(--muted);
   font-size: 10px;
+}
+
+/* The info button at the end of the readout row: the explanations of the
+   lines are one tap away instead of under every chart. */
+.chart-info-btn {
+  width: auto;
+  margin-left: auto;
+  align-self: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  color: var(--muted);
+  line-height: 0;
+}
+
+.chart-info-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chart-info-btn[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.chart-info {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.chart-info p {
+  margin: 4px 0 0;
+}
+
+/* Time range buttons under a chart: a quiet segmented row, the chosen one in
+   the accent. Big enough to tap on a phone. */
+.chart-ranges {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.chart-range {
+  flex: 1;
+  width: auto;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart-range[aria-pressed="true"] {
+  background: rgba(91, 141, 239, 0.14);
+  color: var(--accent);
 }
 
 .chart-note {
@@ -1127,4 +1197,25 @@ button:disabled {
 
 .inv-activity .txn-table td {
   padding: 6px 0;
+}
+
+/* Reconnected accounts (components/AccountLinks.tsx): one block per decision,
+   separated by a hairline so a suggestion and its preview read as a unit. */
+.account-link-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--border, #262a33);
+}
+.account-link-row:first-of-type {
+  border-top: none;
+}
+.account-link-row p {
+  margin: 0 0 6px;
+}
+.account-link-linked {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
 }

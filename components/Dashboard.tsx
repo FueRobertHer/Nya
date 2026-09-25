@@ -4,6 +4,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
+import AccountLinks from './AccountLinks';
+import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights, { type IdleCashAccount } from './Insights';
@@ -16,7 +18,7 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
-import { institutionCash, isCashHolding } from '@/lib/cash';
+import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
 
 type Account = {
   account_id: string;
@@ -827,6 +829,9 @@ export default function Dashboard() {
     [institutions]
   );
 
+  // The last recorded day, when recording has stalled (see lib/history-status.ts).
+  const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
+
   // 30-day (or available-span) net-worth delta for the hero stat tile.
   const heroDelta = useMemo(() => {
     if (history.length < 2) return null;
@@ -1169,6 +1174,13 @@ export default function Dashboard() {
                       trend line.
                     </p>
                   )}
+                  {pausedSince && (
+                    <div className="stale-note">
+                      No net-worth total has been saved since {fmtDay(pausedSince)}. A day
+                      is only saved when every institution refreshes with all of its accounts, so
+                      it picks up again once they do.
+                    </div>
+                  )}
                 </div>
 
                 <Insights
@@ -1213,6 +1225,14 @@ export default function Dashboard() {
                   </button>
                   {error && <div className="error">{error}</div>}
                 </div>
+
+                {/* Behind Manage accounts, like the other account upkeep, so
+                    it doesn't take space in the everyday view; mounting only
+                    then also skips its history read until it is wanted. Within
+                    it, renders only when there is a reconnected account to link
+                    or a link to undo. A change reloads live, since links alter
+                    hidden accounts and per-account history. */}
+                {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and
@@ -1335,8 +1355,12 @@ export default function Dashboard() {
                                             positions Plaid priced, which can
                                             fall short of the balance rendered
                                             in the next column. */}
-                                        {cash.total > 0 &&
-                                          ` · ${(cash.share * 100).toFixed(cash.share >= 0.1 ? 0 : 1)}% of holdings`}
+                                        {/* Says whose share it is: "0.0% of
+                                            holdings" alone read as "0%
+                                            invested", the opposite of what it
+                                            meant. And never 0.0% while there
+                                            is cash to show. */}
+                                        {cash.total > 0 && ` · cash is ${cashSharePct(cash.share)} of holdings`}
                                       </div>
                                     )}
                                   </td>
@@ -1405,7 +1429,17 @@ export default function Dashboard() {
                                 {expandedAccounts.has(a.account_id) && (
                                   <tr>
                                     <td colSpan={2} className="acct-chart-cell">
-                                      <AccountSparkline accountId={a.account_id} />
+                                      <AccountSparkline
+                                        accountId={a.account_id}
+                                        currency={a.currency}
+                                        investment={isInvestmentType(a.type)}
+                                        owed={isOwedType(a.type)}
+                                        itemId={
+                                          isInvestmentType(a.type) && !inst.manual
+                                            ? inst.item_id
+                                            : undefined
+                                        }
+                                      />
                                       <LiabilityDetail liability={a.liability} currency={a.currency} />
                                       {/* Not for manual accounts: they're typed
                                           by hand, and their synthetic

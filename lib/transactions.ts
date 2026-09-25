@@ -35,7 +35,8 @@
 
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
-import { encrypt, decrypt } from './crypto';
+import { decrypt } from './crypto';
+import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { redis, k, type StoredItem } from './storage';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -150,40 +151,6 @@ type ItemState = {
 
 // Trailing window callers display / reconstruct by default.
 export const LOOKBACK_DAYS = 365;
-// Max size of a stored (compressed + encrypted) blob. Upstash's free-plan
-// *request-size* ceiling is 10 MB, and a get/set of an Item's blob is a single
-// request, so that — not the 100 MB max-record size — is the real wall. We keep
-// a margin below it; writeState REFUSES to persist a blob that would cross it.
-//
-// Measured in CHARACTERS, which is why the name says so: the value is base64
-// (see encodeState) travelling as ASCII in a JSON body, so one character is one
-// byte on the wire. Do not "correct" this by scaling for base64 expansion — the
-// expansion already happened before the measurement, and dividing would cut the
-// real ceiling to 6 MB for nothing.
-//
-// Overridable because the ceiling it shadows is a property of the Upstash plan,
-// not of this code, and those differ. Tests also use it to reach the refusal
-// path, which no realistic fixture could otherwise trigger.
-//
-// Validated rather than trusted: a negative or non-numeric value would
-// otherwise sail through and put every Item over the ceiling at once, blocking
-// every sync in the account over a typo in an env var.
-const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
-const MAX_BLOB_CHARS = (() => {
-  const raw = process.env.MAX_TXN_BLOB_CHARS;
-  if (!raw) return DEFAULT_MAX_BLOB_CHARS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    console.warn(
-      `transactions: ignoring MAX_TXN_BLOB_CHARS=${JSON.stringify(raw)} (must be a positive number); using ${DEFAULT_MAX_BLOB_CHARS}`
-    );
-    return DEFAULT_MAX_BLOB_CHARS;
-  }
-  return parsed;
-})();
-// Log a warning well before the wall, so a blob on its way there is visible
-// while there is still time to do something about it.
-const BLOB_WARN_CHARS = MAX_BLOB_CHARS * 0.6;
 // Runaway guard for a single call: 50 * 500 = 25k updates. The initial pull of
 // a very large Item can exceed this; we persist progress and finish on the
 // next call (see the partial-history note).
@@ -295,59 +262,9 @@ function emptyState(): ItemState {
   return { schema_version: TXN_SCHEMA_VERSION, cursor: '', accounts: {}, txns: {} };
 }
 
-// Blobs are gzip-compressed before encryption — financial JSON is highly
-// repetitive (field names, categories, institution names repeat on every row),
-// so it shrinks ~10×, which both saves Upstash storage/bandwidth and keeps each
-// blob well under the request-size ceiling. We use the Web CompressionStream
-// API rather than node:zlib to stay runtime-portable, matching lib/crypto.ts.
-// Compression runs *before* encryption because ciphertext is high-entropy and
-// wouldn't compress.
-
-async function gzipString(input: string): Promise<Uint8Array> {
-  const stream = new Response(input).body!.pipeThrough(new CompressionStream('gzip'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-async function gunzipToString(data: Uint8Array): Promise<string> {
-  // Pass the backing ArrayBuffer (a valid BodyInit) rather than the typed array
-  // itself, which trips the strict BodyInit generic.
-  const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-  const stream = new Response(buf).body!.pipeThrough(new DecompressionStream('gzip'));
-  return new Response(stream).text();
-}
-
-// encrypt/decrypt operate on UTF-8 strings, so the binary gzip output is
-// base64-wrapped going in and unwrapped coming out (same technique as crypto.ts).
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  return btoa(binary);
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
-}
-
-async function encodeState(state: ItemState): Promise<string> {
-  return encrypt(bytesToBase64(await gzipString(JSON.stringify(state))));
-}
-
-async function decodeState(blob: string): Promise<Partial<ItemState>> {
-  const inner = await decrypt(blob);
-  // Legacy blobs (written before compression) stored the JSON string directly.
-  // base64-decoding real JSON throws (it starts with '{', not a base64 char),
-  // so a failed unwrap means legacy: parse the decrypted string as-is.
-  let json: string;
-  try {
-    json = await gunzipToString(base64ToBytes(inner));
-  } catch {
-    json = inner;
-  }
-  return JSON.parse(json) as Partial<ItemState>;
-}
+// Encoding and the size ceiling live in lib/blob.ts, shared with lib/invstore.ts.
+const encodeState = (state: ItemState) => encodeJsonBlob(state);
+const decodeState = (blob: string) => decodeJsonBlob<Partial<ItemState>>(blob);
 
 // Shape of a pre-v2 stored blob: an account_id→name map and the lean 9-field
 // rows. Kept only for the one-time in-place upgrade in readState.
@@ -526,9 +443,9 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
     // Refusing is recoverable: the cursor does not advance, the deltas are
     // idempotent, and the stored blob stays whatever it last was. Dropped
     // rows are not recoverable at all.
-    if (encoded.length > MAX_BLOB_CHARS) {
+    if (encoded.length > maxBlobChars()) {
       console.error(
-        `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${MAX_BLOB_CHARS} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
+        `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
       );
       try {
         const marker: BlockedMarker = { at: new Date().toISOString(), chars: encoded.length };
@@ -540,9 +457,9 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
       return { persisted: false, reason: 'oversize' };
     }
 
-    if (encoded.length > BLOB_WARN_CHARS) {
+    if (encoded.length > blobWarnChars()) {
       console.warn(
-        `transactions: ${item_id} blob is ${encoded.length} chars, past ${Math.round((encoded.length / MAX_BLOB_CHARS) * 100)}% of the ceiling`
+        `transactions: ${item_id} blob is ${encoded.length} chars, past ${Math.round((encoded.length / maxBlobChars()) * 100)}% of the ceiling`
       );
     }
 
@@ -697,7 +614,7 @@ async function syncItem(
       // An unparseable marker clears too, rather than blocking forever on a
       // value nothing can interpret. The cost is one wasted pull, and
       // writeState re-sets the marker if the blob is still too big.
-      if (!marker || marker.chars <= MAX_BLOB_CHARS) {
+      if (!marker || marker.chars <= maxBlobChars()) {
         await redis().del(blockedKey(item.item_id));
       } else {
         return {
