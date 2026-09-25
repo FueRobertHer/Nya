@@ -12,7 +12,8 @@
 // date is not run again (checked again once its lock is held, and a recorded
 // day is never overwritten), and one being run elsewhere (a second delivery
 // of the cron) is left to it, so the catch-up cron (/api/snapshot/catchup)
-// only does the containers that failed, came back unclean, or were deferred.
+// only does the containers that failed, came back unclean, were deferred, or
+// had nothing linked (in case something was linked since; no Plaid calls).
 // `attempts` counts the runs started; a run refused before starting (blocked,
 // or its container no longer active) is stored as failed without adding one.
 // Entries older than RUNS_KEEP_DAYS are pruned.
@@ -53,8 +54,10 @@ export const REGISTRY_RETRY_MS = 1000;
  * No container is started later than this after the request began. The route
  * may run 300 s (maxDuration), and one container's run can take two Plaid
  * calls in series at up to 45 s each (balances, then holdings and liabilities
- * together), plus up to 3 s waiting out rate limits: 93 s, and the rest is
- * margin for the database. One not started is deferred to the catch-up run.
+ * together). A rate-limited balance call adds at most one more try (a 429
+ * that took up to 10 s, a 1 s wait, then up to 45 s: lib/rate-limit-retry.ts),
+ * so about 101 s at worst, and the rest is margin for the database. One not
+ * started is deferred to the catch-up run.
  */
 export const START_BUDGET_MS = 180_000;
 /** How long a run holds its container's lock: the route's maxDuration, so a
@@ -175,28 +178,44 @@ export async function readRuns(ctx: Ctx, limit: number = 30): Promise<({ date: s
 /**
  * Stores the outcome for the date. `attempts` counts the runs started, so
  * only "running" adds one (a read then a write: two writers at once can lose
- * one, which only miscounts). A recorded day is never overwritten, and a
- * deferral never replaces an earlier outcome, whose reason says more. Never
+ * one, which only miscounts). A recorded day is never overwritten. An outcome
+ * reached without the lock (a deferral, or a refusal before it was taken) is
+ * stored only when the day has no record yet: another invocation may hold the
+ * lock and be running, and an earlier outcome's reason says more. Never
  * throws: the record is best effort.
  */
-async function writeRun(ctx: Ctx, date: string, status: StoredStatus, reason: string | undefined, now: number): Promise<void> {
+async function writeRun(
+  ctx: Ctx,
+  date: string,
+  status: StoredStatus,
+  reason: string | undefined,
+  now: number,
+  opts: { onlyIfNew?: boolean } = {}
+): Promise<void> {
   try {
     const prev = await readRun(ctx, date);
     if (prev?.status === 'recorded' && status !== 'recorded') return;
-    if (prev && status === 'deferred') return;
+    if (prev && opts.onlyIfNew) return;
     const attempts = (prev?.attempts ?? 0) + (status === 'running' ? 1 : 0);
     const record: RunRecord = { status, ...(reason ? { reason } : {}), at: new Date(now).toISOString(), attempts };
     await redis().hset(runsKey(ctx), { [date]: JSON.stringify(record) });
-    if (status === 'running') await pruneRuns(ctx, now);
   } catch (err) {
     console.error('Snapshot: the outcome could not be recorded.', reasonOf(err));
+    return;
   }
+  await pruneRuns(ctx, now);
 }
 
+/** Drops outcomes older than RUNS_KEEP_DAYS. After every write, so a
+ *  container that is only ever refused is pruned too. Never throws. */
 async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
-  const cutoff = snapshotDate(now - RUNS_KEEP_DAYS * 24 * 60 * 60 * 1000);
-  const old = (await redis().hkeys(runsKey(ctx))).filter((date) => date < cutoff);
-  if (old.length > 0) await redis().hdel(runsKey(ctx), ...old);
+  try {
+    const cutoff = snapshotDate(now - RUNS_KEEP_DAYS * 24 * 60 * 60 * 1000);
+    const old = (await redis().hkeys(runsKey(ctx))).filter((date) => date < cutoff);
+    if (old.length > 0) await redis().hdel(runsKey(ctx), ...old);
+  } catch (err) {
+    console.error('Snapshot: old outcomes could not be pruned.', reasonOf(err));
+  }
 }
 
 /**
@@ -278,7 +297,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     try {
       if ((await readRun(ctx, date))?.status === 'recorded') return { container, status: 'already' };
       if (clock() - started > budget) {
-        await writeRun(ctx, date, 'deferred', undefined, clock());
+        await writeRun(ctx, date, 'deferred', undefined, clock(), { onlyIfNew: true });
         return { container, status: 'deferred' };
       }
       if (blocked) throw new ContainerError(blocked);
@@ -299,7 +318,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       console.error(`Snapshot failed for container ${container}:`, reasonOf(err));
       outcome = { status: 'failed', reason: reasonOf(err) };
     }
-    await writeRun(ctx, date, outcome.status, outcome.reason, clock());
+    await writeRun(ctx, date, outcome.status, outcome.reason, clock(), { onlyIfNew: !locked });
     if (locked) await release(ctx, token);
     return { container, ...outcome, ms: clock() - t0 };
   };
@@ -331,14 +350,17 @@ async function release(ctx: Ctx, token: string): Promise<void> {
   }
 }
 
-const SNAPSHOTTED = new Set<string>(['recorded', 'already', 'running', 'empty']);
+const SNAPSHOTTED = new Set<string>(['recorded', 'already', 'running']);
 
 /** Whether no container has a snapshot for the date, or is getting one: every
- *  container failed, came back unclean, was deferred, or was skipped (the only
- *  one restoring or archived, say). Nothing was recorded, and the cron says so
- *  with its status, not only in its body. */
+ *  container failed, came back unclean, was deferred, was skipped (the only
+ *  one restoring or archived, say), or had nothing linked. Nothing was
+ *  recorded, and the cron says so with its status, not only in its body.
+ *  Nothing linked is neutral: all of them empty is a quiet day, not a failure,
+ *  but one empty container does not hide every other one failing. */
 export function nothingSnapshotted(report: SnapshotReport): boolean {
-  return !report.results.some((r) => SNAPSHOTTED.has(r.status));
+  if (report.results.some((r) => SNAPSHOTTED.has(r.status))) return false;
+  return !report.results.every((r) => r.status === 'empty');
 }
 
 /** `fn` over every item, at most `limit` at a time, results in order. `fn`

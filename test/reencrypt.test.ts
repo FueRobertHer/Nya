@@ -623,7 +623,7 @@ describe('the route', () => {
 // The compare-and-set scripts, run by a real Redis when one is installed (the
 // test double above only imitates them). Skipped where there is none, as in CI.
 const hasRedis = Bun.which('redis-server') !== null;
-describe.skipIf(!hasRedis)('the scripts, on a real Redis', () => {
+describe.skipIf(!hasRedis && !process.env.CI)('the scripts, on a real Redis', () => {
   const port = 30000 + Math.floor(Math.random() * 20000);
   let server: ReturnType<typeof Bun.spawn> | null = null;
   let client: InstanceType<typeof Bun.RedisClient>;

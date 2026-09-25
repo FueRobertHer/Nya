@@ -593,8 +593,8 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   back unclean, was deferred, or is not active). Nothing linked is not a
   failure. A second entry two
   hours later (`/api/snapshot/catchup`) is the catch-up: containers already
-  recorded that day are skipped, the rest (failed, unclean, or not started
-  in time) are run again. Each container's outcomes are kept per date and
+  recorded that day are skipped, the rest (failed, unclean, not started in
+  time, or with nothing linked) are run again. Each container's outcomes are kept per date and
   served, newest first, by `GET /api/snapshot-runs`; they describe this
   environment's cron, so exports leave them out and a restore keeps them.
   Until the data moves into containers, only this deployment's container is

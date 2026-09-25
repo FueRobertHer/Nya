@@ -6,8 +6,9 @@ import { nothingSnapshotted, reasonOf, readRegistry, runSnapshots, snapshotDate 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
 // net-worth chart stays gapless even on days the app isn't opened. It runs
 // each container on its own (lib/snapshot-job.ts): the answer is 200 with a
-// result per container, even when some failed, because a 500 invites a retry
-// of the whole run. It answers 500 when nothing was snapshotted: the registry
+// result per container, even when some failed, so the status says whether the
+// day has a snapshot and the body says which containers need attention. It
+// answers 500 when nothing was snapshotted: the registry
 // could not be read, holds no container, or no container was recorded (all
 // failed, unclean, deferred, or not active; the same body, so the cause is in
 // the logs and the response alike). Nothing linked is not a failure. The

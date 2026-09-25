@@ -217,6 +217,23 @@ describe('while the data is still unscoped', () => {
     expect(nothingSnapshotted(report)).toBe(true);
   });
 
+  test('a refusal before the lock does not overwrite a run another invocation has going', async () => {
+    const registry = await register([[A, 'restoring'], [B, 'active']]);
+    const running = JSON.stringify({ status: 'running', at: 'x', attempts: 1 });
+    await fake.hset(kc({ container: B }, 'snapshot:runs'), { [DATE]: running });
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded' }) });
+    expect(report.results[1].status).toBe('failed');
+    expect(await readRun({ container: B }, DATE)).toMatchObject({ status: 'running', attempts: 1 });
+  });
+
+  test('a container that is only ever refused is still pruned', async () => {
+    const registry = await register([[A, 'active'], [B, 'active']]); // two active, no CONTAINER_ID: blocked
+    const old = new Date(Date.parse(`${DATE}T00:00:00Z`) - (RUNS_KEEP_DAYS + 1) * 86_400_000).toISOString().slice(0, 10);
+    await fake.hset(kc({ container: A }, 'snapshot:runs'), { [old]: JSON.stringify({ status: 'failed', at: 'x', attempts: 0 }) });
+    await runSnapshots(registry, { scheduledFor: DATE, clock: () => Date.parse(`${DATE}T13:00:00Z`), work: async () => ({ status: 'recorded' }) });
+    expect((await readRuns({ container: A })).map((r) => r.date)).toEqual([DATE]);
+  });
+
   test('a restore of another container that began after the registry was read stops the run', async () => {
     const registry = await register([[A, 'active'], [B, 'active']]);
     process.env.CONTAINER_ID = A;
@@ -345,18 +362,25 @@ describe('runs in progress', () => {
 describe('a run where nothing was snapshotted', () => {
   const r = (status: string) => ({ container: A, status }) as any;
   const report = (...s: string[]) => ({ scheduled_for: DATE, failed: 0, results: s.map(r) });
-  test('is one where no container was recorded, is already, is being run, or has nothing linked', () => {
+  test('is one where no container was recorded, is already, or is being run', () => {
     for (const none of [['failed'], ['unclean'], ['deferred'], ['skipped'], ['failed', 'skipped', 'deferred', 'unclean']]) {
       expect(nothingSnapshotted(report(...none))).toBe(true);
     }
-    for (const ok of ['recorded', 'already', 'running', 'empty']) {
+    for (const ok of ['recorded', 'already', 'running']) {
       expect(nothingSnapshotted(report('failed', ok))).toBe(false);
     }
+  });
+
+  test('nothing linked is neutral: a quiet day alone, but it hides no failure', () => {
+    expect(nothingSnapshotted(report('empty'))).toBe(false);
+    expect(nothingSnapshotted(report('empty', 'empty'))).toBe(false);
+    expect(nothingSnapshotted(report('empty', 'failed'))).toBe(true);
+    expect(nothingSnapshotted(report('empty', 'skipped'))).toBe(true);
   });
 });
 
 const hasRedis = Bun.which('redis-server') !== null;
-describe.skipIf(!hasRedis)('the lock release script, on a real Redis', () => {
+describe.skipIf(!hasRedis && !process.env.CI)('the lock release script, on a real Redis', () => {
   const port = 30000 + Math.floor(Math.random() * 20000);
   let server: ReturnType<typeof Bun.spawn> | null = null;
   let client: InstanceType<typeof Bun.RedisClient>;
