@@ -38,7 +38,8 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { containerLabel } from './blob-sizes';
-import { redis, k, type StoredItem } from './storage';
+import { redis, kc, type StoredItem } from './storage';
+import type { Ctx } from './containers';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -223,8 +224,8 @@ function daysAgoIso(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-function stateKey(item_id: string): string {
-  return k(`txns:${item_id}`);
+function stateKey(ctx: Ctx, item_id: string): string {
+  return kc(ctx, `txns:${item_id}`);
 }
 
 // Set when an Item's blob is too large to persist (see writeState). Its own key
@@ -239,8 +240,8 @@ function stateKey(item_id: string): string {
 // Note for anything that later walks the keyspace (export, backup, migration):
 // this is deliberately NOT under the `txns:` prefix, since it is metadata about
 // a blob rather than a blob. `txns:*` does not match it; a looser `txns*` would.
-function blockedKey(item_id: string): string {
-  return k(`txns-blocked:${item_id}`);
+function blockedKey(ctx: Ctx, item_id: string): string {
+  return kc(ctx, `txns-blocked:${item_id}`);
 }
 
 /** What the marker records: when the write was refused, and how big the blob
@@ -369,10 +370,10 @@ class StateUnreadableError extends Error {
   }
 }
 
-async function readState(item_id: string): Promise<ItemState> {
+async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
   let blob: string | null;
   try {
-    blob = await redis().get<string>(stateKey(item_id));
+    blob = await redis().get<string>(stateKey(ctx, item_id));
   } catch (err) {
     // A Redis blip is NOT an empty store. Treating it as one would re-pull from
     // scratch and then persist the bank's short window over years of retained
@@ -425,7 +426,7 @@ async function readState(item_id: string): Promise<ItemState> {
  *  caller must surface: the others resolve themselves on the next sync. */
 type WriteOutcome = { persisted: true } | { persisted: false; reason: 'oversize' | 'error' };
 
-async function writeState(item_id: string, state: ItemState): Promise<WriteOutcome> {
+async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<WriteOutcome> {
   try {
     const encoded = await encodeState(state);
 
@@ -450,7 +451,7 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
       );
       try {
         const marker: BlockedMarker = { at: new Date().toISOString(), chars: encoded.length };
-        await redis().set(blockedKey(item_id), JSON.stringify(marker));
+        await redis().set(blockedKey(ctx, item_id), JSON.stringify(marker));
       } catch {
         // Best effort. Without the marker the next sync re-pulls and refuses
         // again — wasteful, but still correct.
@@ -464,7 +465,7 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
       );
     }
 
-    await redis().set(stateKey(item_id), encoded);
+    await redis().set(stateKey(ctx, item_id), encoded);
     return { persisted: true };
   } catch (err) {
     // Persist failures are non-fatal for the current request (the in-memory
@@ -492,9 +493,9 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
  * must treat this as a partial answer and union it with another source. See
  * app/api/disconnect/route.ts.
  */
-export async function getItemAccountIds(item_id: string): Promise<string[]> {
+export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
   try {
-    return Object.keys((await readState(item_id)).accounts);
+    return Object.keys((await readState(ctx, item_id)).accounts);
   } catch {
     return [];
   }
@@ -507,9 +508,9 @@ export async function getItemAccountIds(item_id: string): Promise<string[]> {
  * condition tells the user to do, so it has to be the thing that resets it. A
  * marker left behind would block the freshly-relinked Item forever.
  */
-export async function clearItemTransactions(item_id: string): Promise<void> {
+export async function clearItemTransactions(ctx: Ctx, item_id: string): Promise<void> {
   try {
-    await redis().del(stateKey(item_id), blockedKey(item_id));
+    await redis().del(stateKey(ctx, item_id), blockedKey(ctx, item_id));
   } catch {
     // Best effort; a stale key is harmless once the Item is gone.
   }
@@ -587,7 +588,7 @@ function toStoredAccount(a: AccountBase): StoredAccount {
  * means usable-but-partial (e.g. the initial pull hit the page cap). Prior
  * stored state is left untouched on a hard stop.
  */
-async function syncItem(
+async function syncItem(ctx: Ctx, 
   item: StoredItem
 ): Promise<{ state: ItemState | null; note: string | null }> {
   let access_token: string;
@@ -601,7 +602,7 @@ async function syncItem(
   // before the Plaid call: pulling again would rebuild the same oversized state
   // and refuse to write it again, at full cost, on every dashboard load.
   try {
-    const raw = await redis().get<string>(blockedKey(item.item_id));
+    const raw = await redis().get<string>(blockedKey(ctx, item.item_id));
     if (raw) {
       const marker = parseBlocked(raw);
 
@@ -616,7 +617,7 @@ async function syncItem(
       // value nothing can interpret. The cost is one wasted pull, and
       // writeState re-sets the marker if the blob is still too big.
       if (!marker || marker.chars <= maxBlobChars()) {
-        await redis().del(blockedKey(item.item_id));
+        await redis().del(blockedKey(ctx, item.item_id));
       } else {
         return {
           state: null,
@@ -636,7 +637,7 @@ async function syncItem(
   // this must not do is reach writeState.
   let stored: ItemState;
   try {
-    stored = await readState(item.item_id);
+    stored = await readState(ctx, item.item_id);
   } catch (err) {
     if (err instanceof StateUnreadableError) {
       console.error(err.message, err.reason);
@@ -717,7 +718,7 @@ async function syncItem(
     // would exceed the request-size ceiling, refuses rather than dropping rows
     // to fit.
     if (cursor) state.cursor = cursor;
-    const write = await writeState(item.item_id, state);
+    const write = await writeState(ctx, item.item_id, state);
 
     // Couldn't persist because the blob is too large. `state` is still correct
     // and complete — nothing was trimmed out of it — so return it: the user
@@ -764,11 +765,11 @@ async function syncItem(
  * The persisted store itself is untouched: hiding never deletes data, so
  * unhiding brings every row straight back.
  */
-export async function syncItemTransactions(
+export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
   hiddenAccountIds?: Set<string>
 ): Promise<{ txns: Txn[]; note: string | null }> {
-  const { state, note } = await syncItem(item);
+  const { state, note } = await syncItem(ctx, item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
@@ -817,11 +818,11 @@ export async function syncItemTransactions(
  * which walks balances per account. Reads straight from the same persisted
  * store, so the two features share one Plaid pull.
  */
-export async function readItemTransactions(
+export async function readItemTransactions(ctx: Ctx, 
   item: StoredItem,
   sinceDays: number = LOOKBACK_DAYS
 ): Promise<{ txns: StoredTxn[]; note: string | null }> {
-  const { state, note } = await syncItem(item);
+  const { state, note } = await syncItem(ctx, item);
   if (!state) return { txns: [], note };
   const cutoff = daysAgoIso(sinceDays);
   const superseded = supersededPendingIds(state.txns);

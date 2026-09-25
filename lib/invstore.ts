@@ -47,7 +47,8 @@
 import type { AccountBase, InvestmentTransaction, Security } from 'plaid';
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
-import { redis, k, getItems, type StoredItem } from './storage';
+import { redis, kc, getItems, type StoredItem } from './storage';
+import type { Ctx } from './containers';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { containerLabel } from './blob-sizes';
 import { classifyFetchError, isPendingSubtype, toInvestmentTxn, type InvestmentTxn } from './investments';
@@ -130,8 +131,8 @@ export class InvStoreUnreadableError extends Error {
   }
 }
 
-const stateKey = (item_id: string) => k(`invtxns:${item_id}`);
-const lockKey = (item_id: string) => k(`invtxns-lock:${item_id}`);
+const stateKey = (ctx: Ctx, item_id: string) => kc(ctx, `invtxns:${item_id}`);
+const lockKey = (ctx: Ctx, item_id: string) => kc(ctx, `invtxns-lock:${item_id}`);
 
 function emptyState(): InvStoreState {
   return {
@@ -156,10 +157,10 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * throw: the caller must not write over any of them (a newer schema would lose
  * the fields this code doesn't know on a rollback).
  */
-export async function readInvStore(item_id: string): Promise<InvStoreState> {
+export async function readInvStore(ctx: Ctx, item_id: string): Promise<InvStoreState> {
   let blob: string | null;
   try {
-    blob = await redis().get<string>(stateKey(item_id));
+    blob = await redis().get<string>(stateKey(ctx, item_id));
   } catch (err) {
     throw new InvStoreUnreadableError(item_id, err);
   }
@@ -187,7 +188,7 @@ export async function readInvStore(item_id: string): Promise<InvStoreState> {
 
 type WriteOutcome = 'written' | 'oversize' | 'error' | 'item-gone';
 
-async function writeInvStore(item_id: string, state: InvStoreState): Promise<WriteOutcome> {
+async function writeInvStore(ctx: Ctx, item_id: string, state: InvStoreState): Promise<WriteOutcome> {
   try {
     const encoded = await encodeJsonBlob(state);
     // Refused, never trimmed: dropping the oldest rows would drop exactly the
@@ -201,13 +202,13 @@ async function writeInvStore(item_id: string, state: InvStoreState): Promise<Wri
     if (encoded.length > blobWarnChars()) {
       console.warn(`invstore: ${item_id} blob is ${encoded.length} chars, past 60% of the ceiling`);
     }
-    await redis().set(stateKey(item_id), encoded);
+    await redis().set(stateKey(ctx, item_id), encoded);
     // A disconnect that landed while this sync was running would otherwise be
     // undone here, leaving an orphaned blob of financial data that every export
     // then carries. Checked AFTER writing, so the window is closed rather than
     // narrowed: whichever finishes second, the key ends up gone.
-    if (!(await getItems()).some((i) => i.item_id === item_id)) {
-      await redis().del(stateKey(item_id));
+    if (!(await getItems(ctx)).some((i) => i.item_id === item_id)) {
+      await redis().del(stateKey(ctx, item_id));
       return 'item-gone';
     }
     return 'written';
@@ -218,18 +219,18 @@ async function writeInvStore(item_id: string, state: InvStoreState): Promise<Wri
 }
 
 /** Deletes an Item's stored investment transactions. Call on disconnect. */
-export async function clearInvestmentStore(item_id: string): Promise<void> {
+export async function clearInvestmentStore(ctx: Ctx, item_id: string): Promise<void> {
   try {
-    await redis().del(stateKey(item_id), lockKey(item_id));
+    await redis().del(stateKey(ctx, item_id), lockKey(ctx, item_id));
   } catch {
     // Best effort, like clearItemTransactions.
   }
 }
 
 /** Account ids the store knows for an Item, for disconnect's hidden-set cleanup. */
-export async function storedInvestmentAccountIds(item_id: string): Promise<string[]> {
+export async function storedInvestmentAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
   try {
-    return Object.keys((await readInvStore(item_id)).accounts);
+    return Object.keys((await readInvStore(ctx, item_id)).accounts);
   } catch {
     return [];
   }
@@ -616,7 +617,7 @@ function view(state: InvStoreState): Pick<InvSync, 'rows' | 'coverage' | 'unconf
  * `storeNote`. Returns stored rows during a Plaid outage, and live rows (not
  * written) when the store can't be read or another sync holds the lock.
  */
-export async function syncInvestments(
+export async function syncInvestments(ctx: Ctx, 
   item: StoredItem,
   opts: {
     maxAgeMs?: number;
@@ -632,7 +633,7 @@ export async function syncInvestments(
   const token = crypto.randomUUID();
   let locked = false;
   try {
-    locked = (await redis().set(lockKey(item.item_id), token, { nx: true, px: LOCK_MS })) === 'OK';
+    locked = (await redis().set(lockKey(ctx, item.item_id), token, { nx: true, px: LOCK_MS })) === 'OK';
   } catch {
     locked = false;
   }
@@ -641,7 +642,7 @@ export async function syncInvestments(
     let state: InvStoreState | null = null;
     let storeNote: string | null = null;
     try {
-      state = await readInvStore(item.item_id);
+      state = await readInvStore(ctx, item.item_id);
     } catch (err) {
       console.error((err as Error).message, (err as InvStoreUnreadableError).reason);
       storeNote = 'Saved investment history could not be read';
@@ -668,8 +669,8 @@ export async function syncInvestments(
     const keepAlive = async () => {
       if (!locked) return;
       try {
-        if ((await redis().get(lockKey(item.item_id))) === token) {
-          await redis().set(lockKey(item.item_id), token, { px: LOCK_MS });
+        if ((await redis().get(lockKey(ctx, item.item_id))) === token) {
+          await redis().set(lockKey(ctx, item.item_id), token, { px: LOCK_MS });
         }
       } catch {
         // The lock still holds until its expiry; the next request tries again.
@@ -702,13 +703,13 @@ export async function syncInvestments(
     // have written since this one read, and writing now would undo its marks.
     let stillOurs = false;
     try {
-      stillOurs = (await redis().get(lockKey(item.item_id))) === token;
+      stillOurs = (await redis().get(lockKey(ctx, item.item_id))) === token;
     } catch {
       stillOurs = false;
     }
     if (!stillOurs) return { ...view(merged), ...answer, storeNote, busy: true };
 
-    const outcome = await writeInvStore(item.item_id, merged);
+    const outcome = await writeInvStore(ctx, item.item_id, merged);
     if (outcome === 'oversize') {
       storeNote = 'Investment history is too large to save; showing live data';
     }
@@ -716,7 +717,7 @@ export async function syncInvestments(
   } finally {
     if (locked) {
       try {
-        if ((await redis().get(lockKey(item.item_id))) === token) await redis().del(lockKey(item.item_id));
+        if ((await redis().get(lockKey(ctx, item.item_id))) === token) await redis().del(lockKey(ctx, item.item_id));
       } catch {
         // The lock expires on its own.
       }

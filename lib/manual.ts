@@ -18,10 +18,11 @@
 // permanently corrupt that day's point. Callers depend on the throw to mark
 // the read as failed instead -- see computeNetWorth() in lib/networth.ts.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 
-const ACCOUNTS_HASH = k('manual:accounts');
+const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
 /** account_id prefix. Ids are random, never derived from the name -- they key
  *  balance history, so a name-derived id would let a recreated account inherit
@@ -104,9 +105,9 @@ function parseStoredAccount(id: string, plaintext: string): ManualAccount {
  * shorter one, and silently dropping an account understates net worth. See the
  * file header for why that matters more here than elsewhere.
  */
-export async function getManualAccounts(): Promise<ManualAccount[]> {
+export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   // Deliberately uncaught: a Redis error propagates to the caller.
-  const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_HASH);
+  const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx));
   if (!map) return []; // genuinely empty hash, the only clean empty result
 
   const accounts = await Promise.all(
@@ -122,8 +123,8 @@ export async function getManualAccounts(): Promise<ManualAccount[]> {
 }
 
 /** One account by id, or null if it doesn't exist. Throws on read failure, same as above. */
-export async function getManualAccount(account_id: string): Promise<ManualAccount | null> {
-  const blob = await redis().hget<string>(ACCOUNTS_HASH, account_id);
+export async function getManualAccount(ctx: Ctx, account_id: string): Promise<ManualAccount | null> {
+  const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), account_id);
   if (!blob) return null;
   try {
     return parseStoredAccount(account_id, await decrypt(blob));
@@ -134,12 +135,12 @@ export async function getManualAccount(account_id: string): Promise<ManualAccoun
 
 /** Creates or replaces one account. Single-field HSET, so concurrent writes to
  *  *different* accounts can't clobber each other. */
-export async function saveManualAccount(account: ManualAccount): Promise<void> {
-  await redis().hset(ACCOUNTS_HASH, { [account.account_id]: await encrypt(JSON.stringify(account)) });
+export async function saveManualAccount(ctx: Ctx, account: ManualAccount): Promise<void> {
+  await redis().hset(ACCOUNTS_HASH(ctx), { [account.account_id]: await encrypt(JSON.stringify(account)) });
 }
 
-export async function removeManualAccount(account_id: string): Promise<void> {
-  await redis().hdel(ACCOUNTS_HASH, account_id);
+export async function removeManualAccount(ctx: Ctx, account_id: string): Promise<void> {
+  await redis().hdel(ACCOUNTS_HASH(ctx), account_id);
 }
 
 /**
@@ -148,10 +149,10 @@ export async function removeManualAccount(account_id: string): Promise<void> {
  * type. Returns false if the account doesn't exist (the caller reports that
  * rather than silently succeeding).
  */
-export async function setManualBalance(account_id: string, balance: number): Promise<boolean> {
-  const existing = await getManualAccount(account_id);
+export async function setManualBalance(ctx: Ctx, account_id: string, balance: number): Promise<boolean> {
+  const existing = await getManualAccount(ctx, account_id);
   if (!existing) return false;
-  await saveManualAccount({ ...existing, balance, updated_at: new Date().toISOString() });
+  await saveManualAccount(ctx, { ...existing, balance, updated_at: new Date().toISOString() });
   return true;
 }
 

@@ -1,6 +1,8 @@
 import { describe, expect, test, mock } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey } from './fake-redis';
 import type { InstitutionResult } from '@/lib/networth';
+
+const ctx = TEST_CTX;
 
 // Mock storage BEFORE lib/networth loads, even though nothing here touches
 // Redis. lib/networth imports lib/vanished, which pulls in lib/storage,
@@ -125,14 +127,14 @@ describe('recordFetch', () => {
 
   test('a clean fetch records a real snapshot and no partial map', async () => {
     fake.reset();
-    expect(await recordFetch([inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBe(today());
-    expect(await getHistory()).toEqual([{ date: today(), value: 10 }]);
-    expect(await fake.hkeys(testKey('history:accounts:partial'))).toEqual([]);
+    expect(await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBe(today());
+    expect(await getHistory(ctx)).toEqual([{ date: today(), value: 10 }]);
+    expect(await fake.hkeys(ctxKey('history:accounts:partial'))).toEqual([]);
   });
 
   test('a partly failed fetch records the accounts that answered, and no total', async () => {
     fake.reset();
-    const date = await recordFetch(
+    const date = await recordFetch(ctx, 
       [
         inst([{ account_id: 'a', type: 'investment', balance: 10 }]),
         inst([{ account_id: 'b', type: 'depository', balance: 5 }], { error: 'This account needs to be reconnected' }),
@@ -140,31 +142,31 @@ describe('recordFetch', () => {
       15
     );
     expect(date).toBeNull();
-    expect(await getHistory()).toEqual([]);
-    expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);
-    expect(await getAccountHistory('b')).toEqual([]);
+    expect(await getHistory(ctx)).toEqual([]);
+    expect(await getAccountHistory(ctx, 'a')).toEqual([{ date: today(), value: 10 }]);
+    expect(await getAccountHistory(ctx, 'b')).toEqual([]);
   });
 
   // It answered, but short an account: no total, the returned accounts still count.
   test('an institution missing an account records its accounts and no total', async () => {
     fake.reset();
-    const date = await recordFetch([inst([{ account_id: 'a', type: 'investment', balance: 10 }], { unconfirmed_missing: 1 })], 10);
+    const date = await recordFetch(ctx, [inst([{ account_id: 'a', type: 'investment', balance: 10 }], { unconfirmed_missing: 1 })], 10);
     expect(date).toBeNull();
-    expect(await getHistory()).toEqual([]);
-    expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);
+    expect(await getHistory(ctx)).toEqual([]);
+    expect(await getAccountHistory(ctx, 'a')).toEqual([{ date: today(), value: 10 }]);
   });
 
   test('records nothing when nothing is linked', async () => {
     fake.reset();
-    expect(await recordFetch([], 0)).toBeNull();
-    expect(await fake.hkeys(testKey('history:accounts:partial'))).toEqual([]);
+    expect(await recordFetch(ctx, [], 0)).toBeNull();
+    expect(await fake.hkeys(ctxKey('history:accounts:partial'))).toEqual([]);
   });
 
   // The total didn't land, so without the fallback the accounts would get nothing.
   test('falls back to the partial map when the snapshot write fails', async () => {
     fake.reset();
     fake.failNext('hset');
-    expect(await recordFetch([inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBeNull();
-    expect(await getAccountHistory('a')).toEqual([{ date: today(), value: 10 }]);
+    expect(await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBeNull();
+    expect(await getAccountHistory(ctx, 'a')).toEqual([{ date: today(), value: 10 }]);
   });
 });

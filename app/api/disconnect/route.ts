@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
-import { cacheCtx, clearCaches, readCache, CacheKey } from '@/lib/cache';
+import { clearCaches, readCache, CacheKey } from '@/lib/cache';
 import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
 import { clearInvestmentStore, storedInvestmentAccountIds } from '@/lib/invstore';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
@@ -12,6 +13,7 @@ import { forgetVanished } from '@/lib/vanished';
 
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const { item_id } = await req.json();
 
     // Manual institutions are synthetic groupings, not Plaid Items. Without
@@ -25,7 +27,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const items = await getItems();
+    const items = await getItems(ctx);
     const item = items.find((i) => i.item_id === item_id);
 
     if (item) {
@@ -54,27 +56,26 @@ export async function POST(req: Request) {
     // of the three, but it misses one linked and disconnected without a single
     // successful load in between. The investment store fills the transaction
     // store's gap for investments-only Items.
-    const accountIds = new Set(await getItemAccountIds(item_id));
-    for (const id of await storedInvestmentAccountIds(item_id)) accountIds.add(id);
-    for (const id of await rememberedIdsForItem(item_id)) accountIds.add(id);
-    const ctx = await cacheCtx();
+    const accountIds = new Set(await getItemAccountIds(ctx, item_id));
+    for (const id of await storedInvestmentAccountIds(ctx, item_id)) accountIds.add(id);
+    for (const id of await rememberedIdsForItem(ctx, item_id)) accountIds.add(id);
     const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
     for (const inst of cached?.institutions ?? []) {
       if (inst.item_id !== item_id) continue;
       for (const a of inst.accounts ?? []) accountIds.add(a.account_id);
     }
 
-    await removeItem(item_id);
+    await removeItem(ctx, item_id);
     // Drop this Item's persisted sync cursor + transactions.
-    await clearItemTransactions(item_id);
+    await clearItemTransactions(ctx, item_id);
     // And its stored investment transactions. A sync still running writes, then
     // sees the Item gone and deletes what it wrote (lib/invstore.ts).
-    await clearInvestmentStore(item_id);
-    await pruneHidden([...accountIds]);
-    await forgetItem(item_id);
+    await clearInvestmentStore(ctx, item_id);
+    await pruneHidden(ctx, [...accountIds]);
+    await forgetItem(ctx, item_id);
     // Its vanished-account record goes with it: the Item is gone, so nothing
     // can confirm or clear those entries, and a relink starts clean.
-    await forgetVanished(item_id);
+    await forgetVanished(ctx, item_id);
     // Its accounts stay in the account directory for a while, so that if the
     // same institution is added back they can be matched to the new ones
     // (lib/links.ts). Unlinked ones are pruned once the Item is gone and they
@@ -85,6 +86,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
   }

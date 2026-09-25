@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import type { Ctx } from '@/lib/containers';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
@@ -18,7 +20,7 @@ import {
   isBackfillDone,
   markBackfillDone,
 } from '@/lib/history';
-import { cacheCtx, clearCaches } from '@/lib/cache';
+import { clearCaches } from '@/lib/cache';
 
 // Reconstructs up to a year of ESTIMATED history from transaction data --
 // the same trick Monarch/Copilot use. Plaid has no historical balances, but
@@ -72,20 +74,21 @@ const MAX_PENDING_RUNS = 5;
  * open indefinitely, a wedged extraction costs a full multi-institution Plaid
  * pull on every app open. The cap takes the first and bounds the second.
  */
-async function settleDoneFlag(invPending: boolean): Promise<boolean> {
-  if (invPending && !(await backfillPendingExhausted(MAX_PENDING_RUNS))) return true;
-  await markBackfillDone();
-  await clearBackfillPending();
+async function settleDoneFlag(ctx: Ctx, invPending: boolean): Promise<boolean> {
+  if (invPending && !(await backfillPendingExhausted(ctx, MAX_PENDING_RUNS))) return true;
+  await markBackfillDone(ctx);
+  await clearBackfillPending(ctx);
   return false;
 }
 
 export async function POST() {
   try {
-    if (await isBackfillDone()) {
+    const ctx = await dataCtx();
+    if (await isBackfillDone(ctx)) {
       return NextResponse.json({ skipped: true, reason: 'already backfilled' });
     }
 
-    const items = await getItems();
+    const items = await getItems(ctx);
     if (items.length === 0) {
       return NextResponse.json({ skipped: true, reason: 'no linked institutions' });
     }
@@ -102,7 +105,7 @@ export async function POST() {
       items.map(async (item) => {
         const access_token = await decrypt(item.encrypted_access_token);
         const bal = await plaidClient.accountsBalanceGet({ access_token });
-        const { txns, note } = await readItemTransactions(item, LOOKBACK_DAYS);
+        const { txns, note } = await readItemTransactions(ctx, item, LOOKBACK_DAYS);
 
         // Investment activity, but only where there's an investment account to
         // explain and only as a bonus: its failure is NOT a `note`. Most Items
@@ -121,7 +124,7 @@ export async function POST() {
         // The walk judges paycheck trades over every row it is given and walks
         // only the window.
         const inv = hasInvestment
-          ? await loadItemInvestments((opts) => syncInvestments(item, opts), investmentIds, {
+          ? await loadItemInvestments((opts) => syncInvestments(ctx, item, opts), investmentIds, {
               windowStart: isoDaysAgo(LOOKBACK_DAYS),
               yesterday: isoDaysAgo(1),
               today: isoDaysAgo(0),
@@ -219,16 +222,16 @@ export async function POST() {
     // created between them would land in the flat record without being in
     // totalNow, so hiding it later would subtract a contribution these points
     // never contained.
-    const manualAccounts = await getManualAccounts();
+    const manualAccounts = await getManualAccounts(ctx);
     for (const a of manualAccounts) {
       totalNow += signedContribution(a.type, a.balance);
     }
 
     if (!oldestTxn) {
-      await settleDoneFlag(invPending);
+      await settleDoneFlag(ctx, invPending);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
-      await clearCaches(await cacheCtx());
+      await clearCaches(ctx);
       return NextResponse.json({ backfilled: 0, reason: 'no transaction history' });
     }
 
@@ -276,21 +279,21 @@ export async function POST() {
     });
 
     // Real snapshots always win -- never overwrite one with an estimate.
-    const realDates = await getRealSnapshotDates();
+    const realDates = await getRealSnapshotDates(ctx);
     const estimatedTotals = totalPoints
       .filter((p) => !realDates.has(p.date))
       .map((p) => ({ date: p.date, value: p.walked + rest }));
     const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
 
-    await replaceEstimated(estimatedTotals);
+    await replaceEstimated(ctx, estimatedTotals);
     // Two layers, because the run speaks for these dates differently. Within
     // the cash horizon every account was walked and each date is the breakdown
     // of that date's estimated total, which is what the hidden-account
     // subtraction reads it as. Past the horizon only the investment accounts
     // were walked and there is no total at all, so those dates go to the
     // extension layer -- which feeds the per-account chart and nothing else.
-    await replaceEstimatedAccounts(estimatedAccounts.filter((p) => p.date >= oldestTxn));
-    await replaceEstimatedExtension(
+    await replaceEstimatedAccounts(ctx, estimatedAccounts.filter((p) => p.date >= oldestTxn));
+    await replaceEstimatedExtension(ctx, 
       estimatedAccounts.filter((p) => p.date < oldestTxn),
       oldestTxn
     );
@@ -298,9 +301,9 @@ export async function POST() {
     // identical across them -- what varies is which run a date belongs to, and
     // that's the whole point: a date retained from an earlier run keeps that
     // run's flat balances rather than being reinterpreted with these.
-    await replaceEstimatedFlat(estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
-    const waiting = await settleDoneFlag(invPending);
-    await clearCaches(await cacheCtx()); // cached payloads don't include the new history yet
+    await replaceEstimatedFlat(ctx, estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
+    const waiting = await settleDoneFlag(ctx, invPending);
+    await clearCaches(ctx); // cached payloads don't include the new history yet
 
     return NextResponse.json({
       backfilled: estimatedTotals.length,
@@ -316,6 +319,8 @@ export async function POST() {
       investments_pending: waiting,
     });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Backfill failed' }, { status: 500 });
   }

@@ -22,17 +22,18 @@
 // with the same AES-256-GCM key as everything else financial, so a
 // database-only leak doesn't expose your net-worth series either.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
 
-const HISTORY_HASH = k('history:net-worth');
-const ESTIMATED_HASH = k('history:net-worth:est');
+const HISTORY_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth');
+const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
 // Per-account balances, one JSON map { account_id: balance } per date, so
 // individual accounts can be charted too.
-const ACCOUNTS_HASH = k('history:accounts');
-const ACCOUNTS_EST_HASH = k('history:accounts:est');
+const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts');
+const ACCOUNTS_EST_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:est');
 // Per-account balances for dates BEYOND the estimated totals layer: backfill
 // walks an investment account past the oldest cash transaction, where its own
 // flows still have data but no total can honestly be stated (see reconstruct in
@@ -48,7 +49,7 @@ const ACCOUNTS_EST_HASH = k('history:accounts:est');
 // was in this total" with balances from a different run's walk, and hiding an
 // account would then subtract the wrong number from a point nothing rewrites.
 // Kept apart, it feeds the per-account chart and nothing else.
-const ACCOUNTS_EST_EXT_HASH = k('history:accounts:est:ext');
+const ACCOUNTS_EST_EXT_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:est:ext');
 // Per-account balances MEASURED on a day the total could not be recorded: one
 // institution failed, so recordSnapshot wrote nothing, but every other
 // institution answered and its balances are as real as any snapshot's.
@@ -62,11 +63,11 @@ const ACCOUNTS_EST_EXT_HASH = k('history:accounts:est:ext');
 // must not read it either: it relies on its newest date naming every account
 // that existed, and a partial map by definition leaves the failing
 // institution's accounts out. Feeds the per-account chart and nothing else.
-const ACCOUNTS_PARTIAL_HASH = k('history:accounts:partial');
+const ACCOUNTS_PARTIAL_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:partial');
 
 /** The measured per-account layers' keys, for lib/links.ts, which reads them to
  *  date accounts. One place for the names. */
-export const measuredAccountHistoryKeys = () => [ACCOUNTS_HASH, ACCOUNTS_PARTIAL_HASH];
+export const measuredAccountHistoryKeys = (ctx: Ctx) => [ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx)];
 // The balances backfill folded into its flat `rest` term: everything that
 // isn't depository/credit (investments, loans, property, manual accounts),
 // captured as of the run that produced the estimated layer.
@@ -97,20 +98,20 @@ export const measuredAccountHistoryKeys = () => [ACCOUNTS_HASH, ACCOUNTS_PARTIAL
 // when they aren't, so the same account can move between the two layers between
 // runs. That's why membership is always checked directly (see
 // estimatedLayerCovers) rather than inferred from account type.
-const ACCOUNTS_EST_FLAT_BY_DATE = k('history:accounts:est:flatd');
+const ACCOUNTS_EST_FLAT_BY_DATE = (ctx: Ctx) => kc(ctx, 'history:accounts:est:flatd');
 // The pre-per-date single record. Still read, never written: it's the only
 // thing that can describe estimated points written before this key existed.
 // A different key name rather than a reshape, because the old one is a plain
 // string and the new one a hash -- Redis would reject the write.
-const ACCOUNTS_EST_FLAT_LEGACY = k('history:accounts:est:flat');
-const BACKFILL_FLAG = k('history:backfill-done');
+const ACCOUNTS_EST_FLAT_LEGACY = (ctx: Ctx) => kc(ctx, 'history:accounts:est:flat');
+const BACKFILL_FLAG = (ctx: Ctx) => kc(ctx, 'history:backfill-done');
 // How many runs in a row have finished with an Item's investment data still
 // importing. Backfill withholds the done-flag in that state so the next load
 // rebuilds with the flows once they arrive, and this is what stops that being
 // unbounded: PRODUCT_NOT_READY is supposed to clear in minutes, but a wedged
 // extraction would otherwise re-run a full multi-institution Plaid pull on
 // every app open, forever.
-const BACKFILL_PENDING_TRIES = k('history:backfill-pending');
+const BACKFILL_PENDING_TRIES = (ctx: Ctx) => kc(ctx, 'history:backfill-pending');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 
@@ -131,14 +132,14 @@ export type HistoryPoint = { date: string; value: number; estimated?: boolean };
  * point that is genuinely in the chart's own layer. So: if the total lands the
  * date comes back, and a failed breakdown costs only the breakdown.
  */
-export async function recordSnapshot(
+export async function recordSnapshot(ctx: Ctx, 
   netWorth: number,
   accountBalances?: Record<string, number>
 ): Promise<string | null> {
   const today = new Date().toISOString().slice(0, 10);
 
   try {
-    await redis().hset(HISTORY_HASH, { [today]: await encrypt(String(netWorth)) });
+    await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(String(netWorth)) });
   } catch {
     // Best-effort: a missed snapshot just leaves a gap in the chart.
     return null;
@@ -146,7 +147,7 @@ export async function recordSnapshot(
 
   if (accountBalances && Object.keys(accountBalances).length > 0) {
     try {
-      await redis().hset(ACCOUNTS_HASH, { [today]: await encrypt(JSON.stringify(accountBalances)) });
+      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
     } catch {
       // The total is in the chart either way. What's lost is the ability to
       // subtract a hidden account from THIS date later, which getHistory
@@ -161,7 +162,7 @@ export async function recordSnapshot(
     // the last snapshot. Best-effort: if this fails, an earlier partial reading
     // shows for today in place of this one, which costs one day's precision.
     try {
-      await redis().hdel(ACCOUNTS_PARTIAL_HASH, today);
+      await redis().hdel(ACCOUNTS_PARTIAL_HASH(ctx), today);
     } catch {}
   }
 
@@ -187,13 +188,13 @@ export async function recordSnapshot(
  *
  * Best-effort, never throws.
  */
-export async function recordPartialAccounts(balances: Record<string, number>): Promise<void> {
+export async function recordPartialAccounts(ctx: Ctx, balances: Record<string, number>): Promise<void> {
   if (Object.keys(balances).length === 0) return;
   const today = new Date().toISOString().slice(0, 10);
 
   let existing: Record<string, number> = {};
   try {
-    const blob = await redis().hget<string>(ACCOUNTS_PARTIAL_HASH, today);
+    const blob = await redis().hget<string>(ACCOUNTS_PARTIAL_HASH(ctx), today);
     if (blob) {
       const parsed = JSON.parse(await decrypt(blob));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
@@ -204,7 +205,7 @@ export async function recordPartialAccounts(balances: Record<string, number>): P
   }
 
   try {
-    await redis().hset(ACCOUNTS_PARTIAL_HASH, {
+    await redis().hset(ACCOUNTS_PARTIAL_HASH(ctx), {
       [today]: await encrypt(JSON.stringify({ ...existing, ...balances })),
     });
   } catch {
@@ -262,8 +263,8 @@ async function replaceRange(
   await redis().hset(key, fields);
 }
 
-export async function replaceEstimated(points: { date: string; value: number }[]): Promise<void> {
-  await replaceRange(ESTIMATED_HASH, points, (p) => encrypt(String(p.value)));
+export async function replaceEstimated(ctx: Ctx, points: { date: string; value: number }[]): Promise<void> {
+  await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(String(p.value)));
 }
 
 /**
@@ -276,10 +277,10 @@ export async function replaceEstimated(points: { date: string; value: number }[]
  * between the flat term and the walk between runs is in exactly one source for
  * any given date.
  */
-export async function replaceEstimatedFlat(
+export async function replaceEstimatedFlat(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
-  await replaceRange(ACCOUNTS_EST_FLAT_BY_DATE, points, (p) =>
+  await replaceRange(ACCOUNTS_EST_FLAT_BY_DATE(ctx), points, (p) =>
     encrypt(JSON.stringify(p.balances))
   );
 }
@@ -295,10 +296,10 @@ export async function replaceEstimatedFlat(
  * type -- is actually in the flat term. Guessing from type left manual accounts
  * in neither map and silently un-subtracted from every estimated point.
  */
-export async function estimatedLayerCovers(account_id: string): Promise<boolean> {
-  if (account_id in ((await getEstimatedFlat()) ?? {})) return true;
+export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promise<boolean> {
+  if (account_id in ((await getEstimatedFlat(ctx)) ?? {})) return true;
   try {
-    const flatByDate = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE);
+    const flatByDate = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx));
     // Newest date, for the same reason as the walked map below.
     const newestFlat = Object.keys(flatByDate ?? {}).sort().pop();
     const flatSample = newestFlat ? flatByDate?.[newestFlat] : undefined;
@@ -310,7 +311,7 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
     return false; // unreadable: report not-covered, so the caller forces a recompute
   }
   try {
-    const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH);
+    const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx));
     // The NEWEST date, not an arbitrary one. Any date used to answer for all of
     // them, because backfill seeded every cash account before the walk and
     // rewrote the layer wholesale. Retention broke that: points older than the
@@ -343,9 +344,9 @@ export async function estimatedLayerCovers(account_id: string): Promise<boolean>
  * subtracting nothing would silently shift the whole estimated region by the
  * hidden balance.
  */
-export async function getEstimatedFlat(): Promise<Record<string, number> | null> {
+export async function getEstimatedFlat(ctx: Ctx): Promise<Record<string, number> | null> {
   try {
-    const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY);
+    const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
     if (!blob) return {}; // never written (layer predates this key) -- genuinely empty
     return JSON.parse(await decrypt(blob)) as Record<string, number>;
   } catch {
@@ -378,10 +379,10 @@ async function flatFor(
 /** Same, for the per-account estimated layer -- and range-scoped for the same
  *  reason, so retained total points keep the per-date maps that hidden-account
  *  subtraction reads for those dates. */
-export async function replaceEstimatedAccounts(
+export async function replaceEstimatedAccounts(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
-  await replaceRange(ACCOUNTS_EST_HASH, points, (p) => encrypt(JSON.stringify(p.balances)));
+  await replaceRange(ACCOUNTS_EST_HASH(ctx), points, (p) => encrypt(JSON.stringify(p.balances)));
 }
 
 /**
@@ -403,12 +404,12 @@ export async function replaceEstimatedAccounts(
  * So the extension is cleared from this horizon forward even on a run that
  * produces no extension points at all, which is the common case.
  */
-export async function replaceEstimatedExtension(
+export async function replaceEstimatedExtension(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[],
   coveredFrom: string
 ): Promise<void> {
   await replaceRange(
-    ACCOUNTS_EST_EXT_HASH,
+    ACCOUNTS_EST_EXT_HASH(ctx),
     points,
     (p) => encrypt(JSON.stringify(p.balances)),
     coveredFrom
@@ -442,13 +443,13 @@ export async function replaceEstimatedExtension(
  * date since install -- each an encrypted map of every account -- to decrypt
  * one, on the degraded path, forever growing.
  */
-export async function getLatestAccountSnapshot(): Promise<{
+export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
   date: string;
   balances: Record<string, number>;
 } | null> {
   let keys: string[];
   try {
-    keys = await redis().hkeys(ACCOUNTS_HASH);
+    keys = await redis().hkeys(ACCOUNTS_HASH(ctx));
   } catch {
     return null;
   }
@@ -470,7 +471,7 @@ export async function getLatestAccountSnapshot(): Promise<{
   for (const date of dates) {
     let balances: Record<string, number>;
     try {
-      const blob = await redis().hget<string>(ACCOUNTS_HASH, date);
+      const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), date);
       if (!blob) continue;
       balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
     } catch {
@@ -485,9 +486,9 @@ export async function getLatestAccountSnapshot(): Promise<{
   return null;
 }
 
-export async function getRealSnapshotDates(): Promise<Set<string>> {
+export async function getRealSnapshotDates(ctx: Ctx): Promise<Set<string>> {
   try {
-    return new Set(await redis().hkeys(HISTORY_HASH));
+    return new Set(await redis().hkeys(HISTORY_HASH(ctx)));
   } catch {
     return new Set();
   }
@@ -517,7 +518,7 @@ export async function getRealSnapshotDates(): Promise<Set<string>> {
  * institution failed at that moment, not that the account was gone, so the
  * other layers still get their turn in the usual order.
  */
-export async function getAccountHistory(
+export async function getAccountHistory(ctx: Ctx, 
   account_id: string,
   /** Earlier ids of the SAME account (lib/links.ts), newest first. On each
    *  date the current id wins, then these in order, so history recorded under
@@ -526,10 +527,10 @@ export async function getAccountHistory(
 ): Promise<HistoryPoint[]> {
   const ids = [account_id, ...olderIds.filter((id) => id !== account_id)];
   const [realMap, partialMap, estMap, extMap] = await Promise.all([
-    redis().hgetall<Record<string, string>>(ACCOUNTS_HASH),
-    redis().hgetall<Record<string, string>>(ACCOUNTS_PARTIAL_HASH),
-    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH),
-    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_PARTIAL_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH(ctx)),
   ]);
 
   /** This account's balance in one encrypted per-account map, under the first
@@ -603,9 +604,9 @@ export async function getAccountHistory(
 //       (lib/invstore.ts).
 const BACKFILL_SCHEMA = 5;
 
-export async function isBackfillDone(): Promise<boolean> {
+export async function isBackfillDone(ctx: Ctx): Promise<boolean> {
   try {
-    const flag = await redis().get(BACKFILL_FLAG);
+    const flag = await redis().get(BACKFILL_FLAG(ctx));
     if (!flag) return false;
     // Legacy '1' from before this was versioned means schema 1.
     return Number(flag) >= BACKFILL_SCHEMA;
@@ -614,8 +615,8 @@ export async function isBackfillDone(): Promise<boolean> {
   }
 }
 
-export async function markBackfillDone(): Promise<void> {
-  await redis().set(BACKFILL_FLAG, String(BACKFILL_SCHEMA));
+export async function markBackfillDone(ctx: Ctx): Promise<void> {
+  await redis().set(BACKFILL_FLAG(ctx), String(BACKFILL_SCHEMA));
 }
 
 /**
@@ -627,26 +628,26 @@ export async function markBackfillDone(): Promise<void> {
  * A failure to count returns true for the same reason: the retry is an
  * optimization, and an uncountable one is an unbounded one.
  */
-export async function backfillPendingExhausted(limit: number): Promise<boolean> {
+export async function backfillPendingExhausted(ctx: Ctx, limit: number): Promise<boolean> {
   try {
-    return (await redis().incr(BACKFILL_PENDING_TRIES)) >= limit;
+    return (await redis().incr(BACKFILL_PENDING_TRIES(ctx))) >= limit;
   } catch {
     return true;
   }
 }
 
 /** Forget the pending-run count: this run had nothing outstanding, or gave up. */
-export async function clearBackfillPending(): Promise<void> {
+export async function clearBackfillPending(ctx: Ctx): Promise<void> {
   try {
-    await redis().del(BACKFILL_PENDING_TRIES);
+    await redis().del(BACKFILL_PENDING_TRIES(ctx));
   } catch {
     // Worst case a later pending run gives up sooner than it needed to.
   }
 }
 
-export async function clearBackfillDone(): Promise<void> {
+export async function clearBackfillDone(ctx: Ctx): Promise<void> {
   try {
-    await redis().del(BACKFILL_FLAG);
+    await redis().del(BACKFILL_FLAG(ctx));
   } catch {
     // Worst case the next backfill is skipped; harmless.
   }
@@ -667,19 +668,19 @@ export async function clearBackfillDone(): Promise<void> {
  * institution is erroring (which is exactly when `computeNetWorth` returns no
  * accounts for it).
  */
-export async function getHistory(hidden?: HiddenMap): Promise<HistoryPoint[]> {
+export async function getHistory(ctx: Ctx, hidden?: HiddenMap): Promise<HistoryPoint[]> {
   const hiding = !!hidden && hidden.size > 0;
 
   // The per-account maps are only read when something is actually hidden.
   // Decrypting a year of them on every dashboard load to subtract nothing would
   // be pure waste, and nothing hidden is the common case.
   const [realMap, estMap, realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
-    redis().hgetall<Record<string, string>>(HISTORY_HASH),
-    redis().hgetall<Record<string, string>>(ESTIMATED_HASH),
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH) : null,
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH) : null,
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE) : null,
-    hiding ? getEstimatedFlat() : null,
+    redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)) : null,
+    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)) : null,
+    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)) : null,
+    hiding ? getEstimatedFlat(ctx) : null,
   ]);
 
   const entries: { date: string; blob: string; estimated: boolean }[] = [];

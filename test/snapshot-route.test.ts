@@ -1,5 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER } from './fake-redis';
+
+const ctx = TEST_CTX;
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -96,11 +98,11 @@ const { readCache, writeCache, CacheKey } = await import('@/lib/cache');
 const catchup = await import('@/app/api/snapshot/catchup/route');
 
 describe('the cron reports what it recorded, per container', () => {
-  const A = crypto.randomUUID() as any;
+  const A = TEST_CONTAINER as any;
   const today = new Date().toISOString().slice(0, 10);
   const register = () => fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
   const withAccount = () =>
-    saveManualAccount({
+    saveManualAccount(ctx, {
       account_id: 'manual_house',
       name: 'House',
       institution_name: 'Manual',
@@ -188,7 +190,7 @@ describe('the cron reports what it recorded, per container', () => {
       expect(res.status).toBe(500);
       expect((await res.json()).error).toContain('registry');
       expect(await readRuns({ container: A })).toEqual([]);
-      expect(await fake.hgetall(testKey('history:net-worth'))).toBeNull();
+      expect(await fake.hgetall(ctxKey('history:net-worth'))).toBeNull();
 
       fake.failNext('hgetall', 1); // one failure is retried
       expect((await cron()).status).toBe(200);

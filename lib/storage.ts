@@ -151,18 +151,18 @@ export type StoredItem = {
   encrypted_access_token: string;
 };
 
-const ITEMS_HASH = k('plaid:items');
+const ITEMS_HASH = (ctx: Ctx) => kc(ctx, 'plaid:items');
 
-export async function getItems(): Promise<StoredItem[]> {
-  const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH);
+export async function getItems(ctx: Ctx): Promise<StoredItem[]> {
+  const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH(ctx));
   if (!map) return [];
   return Object.values(map);
 }
 
-export async function saveItem(item: StoredItem): Promise<void> {
-  await redis().hset(ITEMS_HASH, { [item.item_id]: item });
+export async function saveItem(ctx: Ctx, item: StoredItem): Promise<void> {
+  await redis().hset(ITEMS_HASH(ctx), { [item.item_id]: item });
 }
 
-export async function removeItem(item_id: string): Promise<void> {
-  await redis().hdel(ITEMS_HASH, item_id);
+export async function removeItem(ctx: Ctx, item_id: string): Promise<void> {
+  await redis().hdel(ITEMS_HASH(ctx), item_id);
 }

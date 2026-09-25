@@ -1,5 +1,7 @@
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey } from './fake-redis';
+
+const ctx = TEST_CTX;
 
 // Real AES-256-GCM, not a stub: encryption sits between every write and read in
 // this module, and a round-trip bug would look exactly like a logic bug.
@@ -33,7 +35,7 @@ const { encrypt } = await import('@/lib/crypto');
 /** Writes a real per-account snapshot for a specific date. recordSnapshot only
  *  ever writes today, so backdating has to go through the hash directly. */
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset(testKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
 }
 
 type Hidden = Map<string, { type: string; hidden_at: string }>;
@@ -47,9 +49,9 @@ async function writeEra(
   walked: Record<string, number>,
   flat: Record<string, number>
 ) {
-  await replaceEstimated(dates.map((date) => ({ date, value: total })));
-  await replaceEstimatedAccounts(dates.map((date) => ({ date, balances: walked })));
-  await replaceEstimatedFlat(dates.map((date) => ({ date, balances: flat })));
+  await replaceEstimated(ctx, dates.map((date) => ({ date, value: total })));
+  await replaceEstimatedAccounts(ctx, dates.map((date) => ({ date, balances: walked })));
+  await replaceEstimatedFlat(ctx, dates.map((date) => ({ date, balances: flat })));
 }
 
 const valuesByDate = (points: { date: string; value: number }[]) =>
@@ -59,14 +61,14 @@ beforeEach(() => fake.reset());
 
 describe('layer merging', () => {
   test('real points win over estimated ones for the same date', async () => {
-    await replaceEstimated([
+    await replaceEstimated(ctx, [
       { date: '2026-01-01', value: 100 },
       { date: '2026-01-02', value: 200 },
     ]);
-    await recordSnapshot(999);
+    await recordSnapshot(ctx, 999);
     const today = new Date().toISOString().slice(0, 10);
 
-    const points = await getHistory();
+    const points = await getHistory(ctx);
     const byDate = valuesByDate(points);
     expect(byDate[today]).toBe(999);
     expect(points.find((p) => p.date === today)!.estimated).toBeUndefined();
@@ -74,12 +76,12 @@ describe('layer merging', () => {
   });
 
   test('points come back sorted by date', async () => {
-    await replaceEstimated([
+    await replaceEstimated(ctx, [
       { date: '2026-03-01', value: 3 },
       { date: '2026-01-01', value: 1 },
       { date: '2026-02-01', value: 2 },
     ]);
-    expect((await getHistory()).map((p) => p.date)).toEqual([
+    expect((await getHistory(ctx)).map((p) => p.date)).toEqual([
       '2026-01-01',
       '2026-02-01',
       '2026-03-01',
@@ -94,88 +96,88 @@ describe('replaceRange retention', () => {
   // running long enough to have older estimated points. The left edge jumped
   // forward by up to a year.
   test('keeps estimated points older than the new run can reach', async () => {
-    await replaceEstimated([
+    await replaceEstimated(ctx, [
       { date: '2024-03-20', value: 500 },
       { date: '2025-06-01', value: 600 },
     ]);
-    await replaceEstimated([{ date: '2025-06-01', value: 700 }]);
+    await replaceEstimated(ctx, [{ date: '2025-06-01', value: 700 }]);
 
-    const byDate = valuesByDate(await getHistory());
+    const byDate = valuesByDate(await getHistory(ctx));
     expect(byDate['2024-03-20']).toBe(500); // orphan retained
     expect(byDate['2025-06-01']).toBe(700); // in-window value replaced
   });
 
   test('drops in-window dates the new run no longer produces', async () => {
-    await replaceEstimated([
+    await replaceEstimated(ctx, [
       { date: '2026-01-01', value: 1 },
       { date: '2026-01-02', value: 2 },
       { date: '2026-01-03', value: 3 },
     ]);
-    await replaceEstimated([{ date: '2026-01-01', value: 10 }]);
+    await replaceEstimated(ctx, [{ date: '2026-01-01', value: 10 }]);
 
-    expect((await getHistory()).map((p) => p.date)).toEqual(['2026-01-01']);
+    expect((await getHistory(ctx)).map((p) => p.date)).toEqual(['2026-01-01']);
   });
 
   test('an empty run keeps everything rather than blanking the layer', async () => {
-    await replaceEstimated([{ date: '2026-01-01', value: 1 }]);
-    await replaceEstimated([]);
-    expect(await getHistory()).toHaveLength(1);
+    await replaceEstimated(ctx, [{ date: '2026-01-01', value: 1 }]);
+    await replaceEstimated(ctx, []);
+    expect(await getHistory(ctx)).toHaveLength(1);
   });
 
   test('real snapshots are never touched by an estimated recompute', async () => {
-    await recordSnapshot(4242, { cash: 4242 });
-    await replaceEstimated([{ date: '2026-01-01', value: 1 }]);
-    await replaceEstimated([]);
-    await replaceEstimatedAccounts([]);
+    await recordSnapshot(ctx, 4242, { cash: 4242 });
+    await replaceEstimated(ctx, [{ date: '2026-01-01', value: 1 }]);
+    await replaceEstimated(ctx, []);
+    await replaceEstimatedAccounts(ctx, []);
 
     const today = new Date().toISOString().slice(0, 10);
-    expect(valuesByDate(await getHistory())[today]).toBe(4242);
+    expect(valuesByDate(await getHistory(ctx))[today]).toBe(4242);
   });
 });
 
 describe('hidden-account subtraction', () => {
   test('subtracts a walked account by its per-date balance', async () => {
-    await replaceEstimated([
+    await replaceEstimated(ctx, [
       { date: '2026-01-01', value: 1000 },
       { date: '2026-01-02', value: 1100 },
     ]);
-    await replaceEstimatedAccounts([
+    await replaceEstimatedAccounts(ctx, [
       { date: '2026-01-01', balances: { cash: 400 } },
       { date: '2026-01-02', balances: { cash: 500 } },
     ]);
-    await replaceEstimatedFlat([
+    await replaceEstimatedFlat(ctx, [
       { date: '2026-01-01', balances: {} },
       { date: '2026-01-02', balances: {} },
     ]);
 
-    const byDate = valuesByDate(await getHistory(hide(['cash', 'depository'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['cash', 'depository'])));
     expect(byDate['2026-01-01']).toBe(600);
     expect(byDate['2026-01-02']).toBe(600);
   });
 
   test('subtracts a flat-held account by the balance baked into that date', async () => {
     await writeEra(['2026-01-01'], 1000, { cash: 400 }, { k401: 250 });
-    const byDate = valuesByDate(await getHistory(hide(['k401', 'investment'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['k401', 'investment'])));
     expect(byDate['2026-01-01']).toBe(750);
   });
 
   test('negates credit and loan balances, which are amounts owed', async () => {
     await writeEra(['2026-01-01'], 1000, { card: 200 }, {});
     // The card subtracts -200 from the total, so hiding it raises net worth.
-    const byDate = valuesByDate(await getHistory(hide(['card', 'credit'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['card', 'credit'])));
     expect(byDate['2026-01-01']).toBe(1200);
   });
 
   test('an account absent from both sources contributed nothing and is left alone', async () => {
     await writeEra(['2026-01-01'], 1000, { cash: 400 }, {});
-    const byDate = valuesByDate(await getHistory(hide(['linked-later', 'depository'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['linked-later', 'depository'])));
     expect(byDate['2026-01-01']).toBe(1000);
   });
 
   test('subtracts several hidden accounts independently', async () => {
     await writeEra(['2026-01-01'], 1000, { cash: 400 }, { k401: 250 });
     const byDate = valuesByDate(
-      await getHistory(hide(['cash', 'depository'], ['k401', 'investment']))
+      await getHistory(ctx, hide(['cash', 'depository'], ['k401', 'investment']))
     );
     expect(byDate['2026-01-01']).toBe(350);
   });
@@ -191,7 +193,7 @@ describe('hidden-account subtraction', () => {
     // Era 2 (a later, shorter window): the same 401k is now walked.
     await writeEra(['2026-01-01'], 120_000, { cash: 1000, k401: 41_000 }, {});
 
-    const byDate = valuesByDate(await getHistory(hide(['k401', 'investment'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['k401', 'investment'])));
     expect(byDate['2024-06-01']).toBe(50_000); // era 1's flat figure
     expect(byDate['2026-01-01']).toBe(79_000); // era 2's walked figure
   });
@@ -200,7 +202,7 @@ describe('hidden-account subtraction', () => {
     await writeEra(['2024-06-01'], 100_000, { cash: 1000, k401: 30_000 }, {});
     await writeEra(['2026-01-01'], 120_000, { cash: 1000 }, { k401: 45_000 });
 
-    const byDate = valuesByDate(await getHistory(hide(['k401', 'investment'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['k401', 'investment'])));
     expect(byDate['2024-06-01']).toBe(70_000);
     expect(byDate['2026-01-01']).toBe(75_000);
   });
@@ -209,7 +211,7 @@ describe('hidden-account subtraction', () => {
     await writeEra(['2024-06-01'], 100_000, {}, { mortgage: 310_000 });
     await writeEra(['2026-01-01'], 120_000, {}, { mortgage: 302_000 });
 
-    const byDate = valuesByDate(await getHistory(hide(['mortgage', 'loan'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['mortgage', 'loan'])));
     // Loans are owed, so hiding one raises the total by the amount baked in.
     expect(byDate['2024-06-01']).toBe(410_000);
     expect(byDate['2026-01-01']).toBe(422_000);
@@ -218,34 +220,34 @@ describe('hidden-account subtraction', () => {
   test('drops a point whose per-account map is missing rather than showing a spike', async () => {
     // A total with no matching per-account or flat map: recordSnapshot writes
     // the two as separate awaits, so the first can land and the second fail.
-    await replaceEstimated([{ date: '2026-01-01', value: 1000 }]);
-    expect(await getHistory(hide(['cash', 'depository']))).toHaveLength(0);
+    await replaceEstimated(ctx, [{ date: '2026-01-01', value: 1000 }]);
+    expect(await getHistory(ctx, hide(['cash', 'depository']))).toHaveLength(0);
   });
 
   test('real points use the real per-account map, not the estimated one', async () => {
-    await recordSnapshot(5000, { cash: 1500 });
+    await recordSnapshot(ctx, 5000, { cash: 1500 });
     const today = new Date().toISOString().slice(0, 10);
-    const byDate = valuesByDate(await getHistory(hide(['cash', 'depository'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['cash', 'depository'])));
     expect(byDate[today]).toBe(3500);
   });
 
   test('an empty hidden set leaves every value untouched', async () => {
     await writeEra(['2026-01-01'], 1000, { cash: 400 }, { k401: 250 });
-    expect(valuesByDate(await getHistory(new Map()))['2026-01-01']).toBe(1000);
-    expect(valuesByDate(await getHistory())['2026-01-01']).toBe(1000);
+    expect(valuesByDate(await getHistory(ctx, new Map()))['2026-01-01']).toBe(1000);
+    expect(valuesByDate(await getHistory(ctx))['2026-01-01']).toBe(1000);
   });
 });
 
 describe('getAccountHistory', () => {
   test('returns one account series, real winning over estimated', async () => {
-    await replaceEstimatedAccounts([
+    await replaceEstimatedAccounts(ctx, [
       { date: '2026-01-01', balances: { cash: 100 } },
       { date: '2026-01-02', balances: { cash: 200 } },
     ]);
-    await recordSnapshot(0, { cash: 999 });
+    await recordSnapshot(ctx, 0, { cash: 999 });
     const today = new Date().toISOString().slice(0, 10);
 
-    const points = await getAccountHistory('cash');
+    const points = await getAccountHistory(ctx, 'cash');
     expect(valuesByDate(points)['2026-01-01']).toBe(100);
     expect(valuesByDate(points)[today]).toBe(999);
   });
@@ -255,8 +257,8 @@ describe('getAccountHistory', () => {
   // data doesn't support.
   test('a flat-held account gets no estimated series', async () => {
     await writeEra(['2026-01-01', '2026-01-02'], 1000, { cash: 400 }, { k401: 250 });
-    expect(await getAccountHistory('k401')).toHaveLength(0);
-    expect(await getAccountHistory('cash')).toHaveLength(2);
+    expect(await getAccountHistory(ctx, 'k401')).toHaveLength(0);
+    expect(await getAccountHistory(ctx, 'cash')).toHaveLength(2);
   });
 });
 
@@ -267,13 +269,13 @@ describe('the extension layer', () => {
   // and these dates are older than the newest run's totals -- which is exactly
   // where an earlier run's totals are retained.
   test('extends an account series past where the totals stop', async () => {
-    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 400, ira: 60_000 } }]);
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }], '2026-01-01');
+    await replaceEstimatedAccounts(ctx, [{ date: '2026-01-01', balances: { cash: 400, ira: 60_000 } }]);
+    await replaceEstimatedExtension(ctx, [{ date: '2025-11-01', balances: { ira: 0 } }], '2026-01-01');
 
-    const series = valuesByDate(await getAccountHistory('ira'));
+    const series = valuesByDate(await getAccountHistory(ctx, 'ira'));
     expect(series['2025-11-01']).toBe(0);
     expect(series['2026-01-01']).toBe(60_000);
-    expect((await getAccountHistory('ira')).every((p) => p.estimated)).toBe(true);
+    expect((await getAccountHistory(ctx, 'ira')).every((p) => p.estimated)).toBe(true);
   });
 
   // The regression this split exists for: the extension used to be merged into
@@ -284,9 +286,9 @@ describe('the extension layer', () => {
     // An earlier era: a total, its breakdown, and its flat record.
     await writeEra(['2025-11-01'], 100_000, { cash: 1000, ira: 30_000 }, {});
     // A newer run whose walk reaches that far back only for the investments.
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }], '2025-12-01');
+    await replaceEstimatedExtension(ctx, [{ date: '2025-11-01', balances: { ira: 0 } }], '2025-12-01');
 
-    const byDate = valuesByDate(await getHistory(hide(['ira', 'investment'])));
+    const byDate = valuesByDate(await getHistory(ctx, hide(['ira', 'investment'])));
     expect(byDate['2025-11-01']).toBe(70_000); // the era's own 30k, not the new 0
   });
 
@@ -294,34 +296,34 @@ describe('the extension layer', () => {
   // accounts it walked, so a whole-map preference would drop a cash account's
   // retained point on every date the extension also covers.
   test('leaves accounts it does not name to the other layers', async () => {
-    await replaceEstimatedAccounts([{ date: '2025-11-01', balances: { cash: 1000, ira: 30_000 } }]);
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 0 } }], '2025-11-01');
+    await replaceEstimatedAccounts(ctx, [{ date: '2025-11-01', balances: { cash: 1000, ira: 30_000 } }]);
+    await replaceEstimatedExtension(ctx, [{ date: '2025-11-01', balances: { ira: 0 } }], '2025-11-01');
 
-    expect(valuesByDate(await getAccountHistory('cash'))['2025-11-01']).toBe(1000);
-    expect(valuesByDate(await getAccountHistory('ira'))['2025-11-01']).toBe(0);
+    expect(valuesByDate(await getAccountHistory(ctx, 'cash'))['2025-11-01']).toBe(1000);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))['2025-11-01']).toBe(0);
   });
 
   test('a real snapshot still wins over both', async () => {
-    await recordSnapshot(0, { ira: 999 });
+    await recordSnapshot(ctx, 0, { ira: 999 });
     const today = new Date().toISOString().slice(0, 10);
-    await replaceEstimatedExtension([{ date: today, balances: { ira: 0 } }], today);
+    await replaceEstimatedExtension(ctx, [{ date: today, balances: { ira: 0 } }], today);
 
-    const points = await getAccountHistory('ira');
+    const points = await getAccountHistory(ctx, 'ira');
     expect(valuesByDate(points)[today]).toBe(999);
     expect(points[0].estimated).toBeUndefined();
   });
 
   test('is range-scoped like every other layer', async () => {
-    await replaceEstimatedExtension(
+    await replaceEstimatedExtension(ctx, 
       [
         { date: '2025-06-01', balances: { ira: 1 } },
         { date: '2025-11-01', balances: { ira: 2 } },
       ],
       '2026-01-01'
     );
-    await replaceEstimatedExtension([{ date: '2025-11-01', balances: { ira: 3 } }], '2026-01-01');
+    await replaceEstimatedExtension(ctx, [{ date: '2025-11-01', balances: { ira: 3 } }], '2026-01-01');
 
-    const series = valuesByDate(await getAccountHistory('ira'));
+    const series = valuesByDate(await getAccountHistory(ctx, 'ira'));
     expect(series['2025-06-01']).toBe(1); // orphan retained
     expect(series['2025-11-01']).toBe(3);
   });
@@ -331,32 +333,32 @@ describe('the extension layer', () => {
   // The stale span then shadowed the newer walk on the very chart this layer
   // exists to fix, with an artifact step at the seam.
   test('an empty run still clears the span the full walk now covers', async () => {
-    await replaceEstimatedExtension([{ date: '2026-01-01', balances: { ira: 58_000 } }], '2026-02-01');
+    await replaceEstimatedExtension(ctx, [{ date: '2026-01-01', balances: { ira: 58_000 } }], '2026-02-01');
     // The next run walks everything from 2026-01-01, so it writes no extension.
-    await replaceEstimatedAccounts([{ date: '2026-01-01', balances: { cash: 10, ira: 70_000 } }]);
-    await replaceEstimatedExtension([], '2026-01-01');
+    await replaceEstimatedAccounts(ctx, [{ date: '2026-01-01', balances: { cash: 10, ira: 70_000 } }]);
+    await replaceEstimatedExtension(ctx, [], '2026-01-01');
 
-    expect(valuesByDate(await getAccountHistory('ira'))['2026-01-01']).toBe(70_000);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))['2026-01-01']).toBe(70_000);
   });
 
   test('but keeps the span the full walk still cannot reach', async () => {
-    await replaceEstimatedExtension([{ date: '2025-06-01', balances: { ira: 1 } }], '2026-02-01');
-    await replaceEstimatedExtension([], '2026-01-01');
+    await replaceEstimatedExtension(ctx, [{ date: '2025-06-01', balances: { ira: 1 } }], '2026-02-01');
+    await replaceEstimatedExtension(ctx, [], '2026-01-01');
 
-    expect(valuesByDate(await getAccountHistory('ira'))['2025-06-01']).toBe(1);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))['2025-06-01']).toBe(1);
   });
 });
 
 describe('estimatedLayerCovers', () => {
   test('finds walked and flat accounts, and misses unknown ones', async () => {
     await writeEra(['2026-01-01'], 1000, { cash: 400 }, { k401: 250 });
-    expect(await estimatedLayerCovers('cash')).toBe(true);
-    expect(await estimatedLayerCovers('k401')).toBe(true);
-    expect(await estimatedLayerCovers('never-seen')).toBe(false);
+    expect(await estimatedLayerCovers(ctx, 'cash')).toBe(true);
+    expect(await estimatedLayerCovers(ctx, 'k401')).toBe(true);
+    expect(await estimatedLayerCovers(ctx, 'never-seen')).toBe(false);
   });
 
   test('reports not-covered on an empty layer, so the caller forces a recompute', async () => {
-    expect(await estimatedLayerCovers('anything')).toBe(false);
+    expect(await estimatedLayerCovers(ctx, 'anything')).toBe(false);
   });
 
   // The newest date is the one the newest run wrote, and it holds every
@@ -365,11 +367,11 @@ describe('estimatedLayerCovers', () => {
   // different account set, and sampling one of those would under-report a cash
   // account and force a recompute on nearly every hide.
   test('answers from the newest date, not an arbitrary one', async () => {
-    await replaceEstimatedAccounts([
+    await replaceEstimatedAccounts(ctx, [
       { date: '2026-01-01', balances: { k401: 250 } },
       { date: '2026-02-01', balances: { cash: 400, k401: 250 } },
     ]);
-    expect(await estimatedLayerCovers('cash')).toBe(true);
+    expect(await estimatedLayerCovers(ctx, 'cash')).toBe(true);
   });
 });
 
@@ -382,7 +384,7 @@ describe('getLatestAccountSnapshot', () => {
     await writeAccountSnapshot(daysAgo(4), { card: 100 });
     await writeAccountSnapshot(daysAgo(2), { card: 150, checking: 200 });
 
-    expect(await getLatestAccountSnapshot()).toEqual({
+    expect(await getLatestAccountSnapshot(ctx)).toEqual({
       date: daysAgo(2),
       balances: { card: 150, checking: 200 },
     });
@@ -397,16 +399,16 @@ describe('getLatestAccountSnapshot', () => {
     await writeAccountSnapshot(daysAgo(4), { card: 100, closed_card: 4000 });
     await writeAccountSnapshot(daysAgo(2), { card: 150 });
 
-    const last = await getLatestAccountSnapshot();
+    const last = await getLatestAccountSnapshot(ctx);
     expect(last!.date).toBe(daysAgo(2));
     expect(last!.balances.closed_card).toBeUndefined();
   });
 
   test('skips an undecryptable date rather than giving up', async () => {
     await writeAccountSnapshot(daysAgo(4), { card: 100 });
-    await fake.hset(testKey('history:accounts'), { [daysAgo(2)]: 'not-ciphertext' });
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(2)]: 'not-ciphertext' });
 
-    expect(await getLatestAccountSnapshot()).toEqual({
+    expect(await getLatestAccountSnapshot(ctx)).toEqual({
       date: daysAgo(4),
       balances: { card: 100 },
     });
@@ -417,7 +419,7 @@ describe('getLatestAccountSnapshot', () => {
   // than silently showing nothing.
   test('returns an old snapshot rather than deciding it is too old', async () => {
     for (let m = 1; m <= 13; m++) await writeAccountSnapshot(daysAgo(m * 40), { card: 100 });
-    expect((await getLatestAccountSnapshot())!.date).toBe(daysAgo(40));
+    expect((await getLatestAccountSnapshot(ctx))!.date).toBe(daysAgo(40));
   });
 
   // Reads the date keys, then fetches only the winner. hgetall would pull every
@@ -427,7 +429,7 @@ describe('getLatestAccountSnapshot', () => {
     for (let d = 1; d <= 20; d++) await writeAccountSnapshot(daysAgo(d), { card: d });
     fake.ops = 0;
 
-    expect((await getLatestAccountSnapshot())!.balances).toEqual({ card: 1 });
+    expect((await getLatestAccountSnapshot(ctx))!.balances).toEqual({ card: 1 });
     expect(fake.ops).toBe(2); // hkeys, then one hget
   });
 
@@ -438,18 +440,18 @@ describe('getLatestAccountSnapshot', () => {
     await writeAccountSnapshot(daysAgo(2), { card: 100 });
     await writeAccountSnapshot(daysAgo(-5), { card: 999 });
 
-    expect(await getLatestAccountSnapshot()).toEqual({
+    expect(await getLatestAccountSnapshot(ctx)).toEqual({
       date: daysAgo(2),
       balances: { card: 100 },
     });
   });
 
   test('null on an empty layer, and skips a date whose balances are all unusable', async () => {
-    expect(await getLatestAccountSnapshot()).toBeNull();
+    expect(await getLatestAccountSnapshot(ctx)).toBeNull();
 
     await writeAccountSnapshot(daysAgo(4), { card: 100 });
     await writeAccountSnapshot(daysAgo(2), { card: 'lots' as unknown as number });
-    expect(await getLatestAccountSnapshot()).toEqual({
+    expect(await getLatestAccountSnapshot(ctx)).toEqual({
       date: daysAgo(4),
       balances: { card: 100 },
     });
@@ -457,32 +459,32 @@ describe('getLatestAccountSnapshot', () => {
 
   // Reconstructed figures must never be presented as observed ones.
   test('ignores the estimated layer entirely', async () => {
-    await replaceEstimatedAccounts([{ date: daysAgo(2), balances: { card: 999 } }]);
-    expect(await getLatestAccountSnapshot()).toBeNull();
+    await replaceEstimatedAccounts(ctx, [{ date: daysAgo(2), balances: { card: 999 } }]);
+    expect(await getLatestAccountSnapshot(ctx)).toBeNull();
   });
 });
 
 describe('backfill schema flag', () => {
   test('an unset flag means not done', async () => {
-    expect(await isBackfillDone()).toBe(false);
+    expect(await isBackfillDone(ctx)).toBe(false);
   });
 
   test('marking done makes it done', async () => {
-    await markBackfillDone();
-    expect(await isBackfillDone()).toBe(true);
+    await markBackfillDone(ctx);
+    expect(await isBackfillDone(ctx)).toBe(true);
   });
 
   // The migration path: a layer built by the previous algorithm carries the
   // legacy '1'. Without this the improvement would only ever reach new users.
   test('a legacy flag value forces a recompute', async () => {
-    await fake.set(testKey('history:backfill-done'), '1');
-    expect(await isBackfillDone()).toBe(false);
+    await fake.set(ctxKey('history:backfill-done'), '1');
+    expect(await isBackfillDone(ctx)).toBe(false);
   });
 
   test('clearing forces a recompute', async () => {
-    await markBackfillDone();
-    await clearBackfillDone();
-    expect(await isBackfillDone()).toBe(false);
+    await markBackfillDone(ctx);
+    await clearBackfillDone(ctx);
+    expect(await isBackfillDone(ctx)).toBe(false);
   });
 });
 
@@ -492,15 +494,15 @@ describe('backfill schema flag', () => {
 // institution's full Plaid pull on every app open, forever.
 describe('the pending-run count', () => {
   test('counts runs and reports when the wait is spent', async () => {
-    expect(await backfillPendingExhausted(3)).toBe(false); // 1
-    expect(await backfillPendingExhausted(3)).toBe(false); // 2
-    expect(await backfillPendingExhausted(3)).toBe(true); // 3
+    expect(await backfillPendingExhausted(ctx, 3)).toBe(false); // 1
+    expect(await backfillPendingExhausted(ctx, 3)).toBe(false); // 2
+    expect(await backfillPendingExhausted(ctx, 3)).toBe(true); // 3
   });
 
   test('clearing starts the wait over', async () => {
-    await backfillPendingExhausted(2);
-    await clearBackfillPending();
-    expect(await backfillPendingExhausted(2)).toBe(false);
+    await backfillPendingExhausted(ctx, 2);
+    await clearBackfillPending(ctx);
+    expect(await backfillPendingExhausted(ctx, 2)).toBe(false);
   });
 
   // An uncountable wait is an unbounded one, so it reports spent.
@@ -512,14 +514,14 @@ describe('the pending-run count', () => {
     });
     mock.module('@/lib/storage', () => storageMock(broken));
     try {
-      expect(await backfillPendingExhausted(5)).toBe(true);
+      expect(await backfillPendingExhausted(ctx, 5)).toBe(true);
     } finally {
       mock.module('@/lib/storage', () => storageMock(fake));
     }
   });
 });
 
-// /api/net-worth now issues getHistory() alongside the Plaid fetch, so the
+// /api/net-worth now issues getHistory(ctx) alongside the Plaid fetch, so the
 // series it gets back predates the snapshot that same request records. This is
 // what puts today's point back, and it is the only thing standing between the
 // chart and a total it disagrees with.
@@ -587,7 +589,7 @@ describe('recordSnapshot return value', () => {
   test('returns the date key it wrote', async () => {
     fake.reset();
     const today = new Date().toISOString().slice(0, 10);
-    expect(await recordSnapshot(123, { cash: 123 })).toBe(today);
+    expect(await recordSnapshot(ctx, 123, { cash: 123 })).toBe(today);
   });
 
   test('returns null when the total itself could not be written', async () => {
@@ -597,7 +599,7 @@ describe('recordSnapshot return value', () => {
       throw new Error('upstash down');
     };
     try {
-      expect(await recordSnapshot(123, { cash: 123 })).toBeNull();
+      expect(await recordSnapshot(ctx, 123, { cash: 123 })).toBeNull();
     } finally {
       fake.hset = hset;
     }
@@ -617,17 +619,17 @@ describe('recordSnapshot return value', () => {
       return hset(key, fields);
     };
     try {
-      expect(await recordSnapshot(4242, { cash: 4242 })).toBe(today);
+      expect(await recordSnapshot(ctx, 4242, { cash: 4242 })).toBe(today);
     } finally {
       fake.hset = hset;
     }
 
     // The total really is in the layer, which is what makes charting it honest.
-    expect(valuesByDate(await getHistory())[today]).toBe(4242);
+    expect(valuesByDate(await getHistory(ctx))[today]).toBe(4242);
     // ...and the breakdown really is absent, so a hidden account can't be
     // subtracted from this date later. getHistory drops it rather than showing
     // it uncorrected; /api/net-worth re-adds it from live figures instead.
-    expect(await getHistory(hide(['cash', 'depository']))).toHaveLength(0);
+    expect(await getHistory(ctx, hide(['cash', 'depository']))).toHaveLength(0);
   });
 });
 
@@ -635,56 +637,56 @@ describe('recordSnapshot return value', () => {
 // estimate, because nothing at all was recorded on a day the total couldn't be.
 describe('the partial per-account layer', () => {
   const today = () => new Date().toISOString().slice(0, 10);
-  const partialKey = () => testKey('history:accounts:partial');
+  const partialKey = () => ctxKey('history:accounts:partial');
 
   test('a measured balance beats the estimate, and is not marked estimated', async () => {
-    await replaceEstimatedAccounts([{ date: today(), balances: { ira: 1 } }]);
-    await recordPartialAccounts({ ira: 500 });
+    await replaceEstimatedAccounts(ctx, [{ date: today(), balances: { ira: 1 } }]);
+    await recordPartialAccounts(ctx, { ira: 500 });
 
-    const points = await getAccountHistory('ira');
+    const points = await getAccountHistory(ctx, 'ira');
     expect(points).toEqual([{ date: today(), value: 500 }]);
   });
 
   test('a real snapshot beats it', async () => {
-    await recordPartialAccounts({ ira: 500 });
-    await recordSnapshot(900, { ira: 900 });
+    await recordPartialAccounts(ctx, { ira: 500 });
+    await recordSnapshot(ctx, 900, { ira: 900 });
 
-    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(900);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))[today()]).toBe(900);
   });
 
   // The failing institution's accounts are exactly the ones a partial map
   // leaves out. For them absence means "not measured", not "gone".
   test('an account it does not name falls through to the estimate', async () => {
-    await replaceEstimatedAccounts([{ date: today(), balances: { cash: 40 } }]);
-    await recordPartialAccounts({ ira: 500 });
+    await replaceEstimatedAccounts(ctx, [{ date: today(), balances: { cash: 40 } }]);
+    await recordPartialAccounts(ctx, { ira: 500 });
 
-    expect(await getAccountHistory('cash')).toEqual([{ date: today(), value: 40, estimated: true }]);
+    expect(await getAccountHistory(ctx, 'cash')).toEqual([{ date: today(), value: 40, estimated: true }]);
   });
 
   // A real map is authoritative even when it can't be read: falling through
   // would put an estimated figure on a date that has a real answer.
   test('an unreadable real map is a gap, not an estimate', async () => {
-    await replaceEstimatedAccounts([{ date: today(), balances: { ira: 1 } }]);
-    await fake.hset(testKey('history:accounts'), { [today()]: 'not-a-ciphertext' });
+    await replaceEstimatedAccounts(ctx, [{ date: today(), balances: { ira: 1 } }]);
+    await fake.hset(ctxKey('history:accounts'), { [today()]: 'not-a-ciphertext' });
 
-    expect(await getAccountHistory('ira')).toEqual([]);
+    expect(await getAccountHistory(ctx, 'ira')).toEqual([]);
   });
 
   // recordSnapshot clears today's partial map, so one beside a real map was
   // written later: the newer reading, possibly of an account the snapshot
   // never saw.
   test('a partial reading taken after the snapshot wins for the accounts it names', async () => {
-    await recordSnapshot(900, { ira: 900, cash: 50 });
-    await recordPartialAccounts({ ira: 950, opened_today: 20 });
+    await recordSnapshot(ctx, 900, { ira: 900, cash: 50 });
+    await recordPartialAccounts(ctx, { ira: 950, opened_today: 20 });
 
-    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(950);
-    expect(valuesByDate(await getAccountHistory('opened_today'))[today()]).toBe(20);
-    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(50);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))[today()]).toBe(950);
+    expect(valuesByDate(await getAccountHistory(ctx, 'opened_today'))[today()]).toBe(20);
+    expect(valuesByDate(await getAccountHistory(ctx, 'cash'))[today()]).toBe(50);
   });
 
   test('a snapshot clears the partial reading taken before it', async () => {
-    await recordPartialAccounts({ ira: 500 });
-    await recordSnapshot(900, { ira: 900 });
+    await recordPartialAccounts(ctx, { ira: 500 });
+    await recordSnapshot(ctx, 900, { ira: 900 });
 
     expect(await fake.hkeys(partialKey())).toEqual([]);
   });
@@ -692,7 +694,7 @@ describe('the partial per-account layer', () => {
   // The per-account write failing leaves no real breakdown for today, so the
   // earlier partial reading is the only measurement the charts have.
   test('keeps the partial reading when the snapshot breakdown fails to write', async () => {
-    await recordPartialAccounts({ ira: 500 });
+    await recordPartialAccounts(ctx, { ira: 500 });
     const hset = fake.hset.bind(fake);
     let calls = 0;
     fake.hset = (async (...args: Parameters<typeof hset>) => {
@@ -700,12 +702,12 @@ describe('the partial per-account layer', () => {
       return hset(...args);
     }) as typeof fake.hset;
     try {
-      await recordSnapshot(900, { ira: 900 });
+      await recordSnapshot(ctx, 900, { ira: 900 });
     } finally {
       fake.hset = hset;
     }
 
-    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(500);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))[today()]).toBe(500);
   });
 
   // It is the breakdown of no stored total, so the totals series and the
@@ -714,48 +716,48 @@ describe('the partial per-account layer', () => {
   // account is hidden: reading the partial map as that breakdown would
   // subtract a number the total was never built from.
   test('never reaches the totals series', async () => {
-    await fake.hset(testKey('history:net-worth'), { [today()]: await encrypt('1000') });
-    await recordPartialAccounts({ ira: 500 });
+    await fake.hset(ctxKey('history:net-worth'), { [today()]: await encrypt('1000') });
+    await recordPartialAccounts(ctx, { ira: 500 });
 
-    expect(await getHistory()).toEqual([{ date: today(), value: 1000 }]);
-    expect(await getHistory(hide(['ira', 'investment']))).toEqual([]);
+    expect(await getHistory(ctx)).toEqual([{ date: today(), value: 1000 }]);
+    expect(await getHistory(ctx, hide(['ira', 'investment']))).toEqual([]);
   });
 
   // getLatestAccountSnapshot assumes its newest date names every account, and
   // a partial map leaves the failing institution out by definition.
   test('is invisible to the last-known lookup', async () => {
     await writeAccountSnapshot('2026-01-01', { ira: 100, cash: 50 });
-    await recordPartialAccounts({ ira: 500 });
+    await recordPartialAccounts(ctx, { ira: 500 });
 
-    expect(await getLatestAccountSnapshot()).toEqual({ date: '2026-01-01', balances: { ira: 100, cash: 50 } });
+    expect(await getLatestAccountSnapshot(ctx)).toEqual({ date: '2026-01-01', balances: { ira: 100, cash: 50 } });
   });
 
   test('merges a second write on the same day, newer values winning', async () => {
-    await recordPartialAccounts({ ira: 500, cash: 40 });
-    await recordPartialAccounts({ ira: 600 });
+    await recordPartialAccounts(ctx, { ira: 500, cash: 40 });
+    await recordPartialAccounts(ctx, { ira: 600 });
 
-    expect(valuesByDate(await getAccountHistory('ira'))[today()]).toBe(600);
-    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(40);
+    expect(valuesByDate(await getAccountHistory(ctx, 'ira'))[today()]).toBe(600);
+    expect(valuesByDate(await getAccountHistory(ctx, 'cash'))[today()]).toBe(40);
   });
 
   test('skips the write when today cannot be read, rather than clobbering it', async () => {
-    await recordPartialAccounts({ cash: 40 });
+    await recordPartialAccounts(ctx, { cash: 40 });
     fake.failNext('hget');
-    await recordPartialAccounts({ ira: 600 });
+    await recordPartialAccounts(ctx, { ira: 600 });
 
-    expect(valuesByDate(await getAccountHistory('cash'))[today()]).toBe(40);
-    expect(await getAccountHistory('ira')).toEqual([]);
+    expect(valuesByDate(await getAccountHistory(ctx, 'cash'))[today()]).toBe(40);
+    expect(await getAccountHistory(ctx, 'ira')).toEqual([]);
   });
 
   test('skips the write when today cannot be decrypted', async () => {
     await fake.hset(partialKey(), { [today()]: 'not-a-ciphertext' });
-    await recordPartialAccounts({ ira: 600 });
+    await recordPartialAccounts(ctx, { ira: 600 });
 
     expect(await fake.hget<string>(partialKey(), today())).toBe('not-a-ciphertext');
   });
 
   test('writes nothing for an empty map', async () => {
-    await recordPartialAccounts({});
+    await recordPartialAccounts(ctx, {});
     expect(await fake.hkeys(partialKey())).toEqual([]);
   });
 });
@@ -814,14 +816,14 @@ describe('bridgeInteriorEstimates', () => {
   // between the values the chart actually shows at each end.
   test('getHistory bridges between the visible real values', async () => {
     const realTotal = async (date: string, value: number, balances: Record<string, number>) => {
-      await fake.hset(testKey('history:net-worth'), { [date]: await encrypt(String(value)) });
+      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(String(value)) });
       await writeAccountSnapshot(date, balances);
     };
     await realTotal('2026-09-01', 1000, { cash: 600, ira: 400 });
     await realTotal('2026-09-03', 1400, { cash: 1000, ira: 400 });
     await writeEra(['2026-09-02'], 50, { cash: 50 }, { ira: 0 });
 
-    expect(await getHistory(hide(['ira', 'investment']))).toEqual([
+    expect(await getHistory(ctx, hide(['ira', 'investment']))).toEqual([
       r('2026-09-01', 600),
       e('2026-09-02', 800),
       r('2026-09-03', 1000),

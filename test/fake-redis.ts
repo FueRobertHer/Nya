@@ -319,6 +319,26 @@ export function testKey(key: string): string {
   return `test:${key}`;
 }
 
+/** The container tests keep their data in, unless a test needs another. A
+ *  valid v4 UUID, so it passes isContainerId. */
+export const TEST_CONTAINER = '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b';
+export const TEST_CTX = { container: TEST_CONTAINER } as { container: any };
+
+/** Registers TEST_CONTAINER as the one active container, so a route's
+ *  dataCtx() resolves to it. Pair with forgetEpochs() (lib/sessions.ts), which
+ *  drops the few seconds the deployment's container is reused for. */
+export async function registerTestContainer(fake: FakeRedis, status: 'active' | 'restoring' | 'archived' = 'active'): Promise<void> {
+  await fake.hset(testKey('containers'), {
+    [TEST_CONTAINER]: JSON.stringify({ status, primary: true, created_at: '2026-01-01T00:00:00.000Z' }),
+  });
+}
+
+/** A key inside a container, as the mocked kc() builds it (TEST_CTX's by
+ *  default). */
+export function ctxKey(key: string, ctx: { container: string } = TEST_CTX): string {
+  return testKey(`c:${ctx.container}:${key}`);
+}
+
 /**
  * The full shape of lib/storage, for `mock.module('@/lib/storage', ...)`.
  *
@@ -336,18 +356,18 @@ export function storageMock(fake: FakeRedis) {
     rawRedis: () => fake,
     k: testKey,
     kEnv: testKey,
-    kc: (ctx: { container: string }, key: string) => testKey(`c:${ctx.container}:${key}`),
+    kc: (ctx: { container: string }, key: string) => ctxKey(key, ctx),
     // Backed by the fake, so code that filters by the stored Items sees the
-    // ones a test seeds (none unless it does).
-    getItems: async () =>
-      Object.values((await fake.hgetall<Record<string, unknown>>(testKey('plaid:items'))) ?? {}).map((v) =>
+    // ones a test seeds (none unless it does), in the container asked for.
+    getItems: async (ctx: { container: string }) =>
+      Object.values((await fake.hgetall<Record<string, unknown>>(ctxKey('plaid:items', ctx))) ?? {}).map((v) =>
         typeof v === 'string' ? JSON.parse(v) : v
       ),
-    saveItem: async (item: { item_id: string }) => {
-      await fake.hset(testKey('plaid:items'), { [item.item_id]: JSON.stringify(item) });
+    saveItem: async (ctx: { container: string }, item: { item_id: string }) => {
+      await fake.hset(ctxKey('plaid:items', ctx), { [item.item_id]: JSON.stringify(item) });
     },
-    removeItem: async (item_id: string) => {
-      await fake.hdel(testKey('plaid:items'), item_id);
+    removeItem: async (ctx: { container: string }, item_id: string) => {
+      await fake.hdel(ctxKey('plaid:items', ctx), item_id);
     },
   };
 }

@@ -6,14 +6,15 @@
 // data in /api/transactions. Values are encrypted for consistency with
 // everything else financial.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 
-const OVERRIDES_HASH = k('txn-category-overrides');
+const OVERRIDES_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-overrides');
 
-export async function getOverrides(): Promise<Record<string, string>> {
+export async function getOverrides(ctx: Ctx): Promise<Record<string, string>> {
   try {
-    const map = await redis().hgetall<Record<string, string>>(OVERRIDES_HASH);
+    const map = await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx));
     if (!map) return {};
     const out: Record<string, string> = {};
     await Promise.all(
@@ -31,6 +32,6 @@ export async function getOverrides(): Promise<Record<string, string>> {
   }
 }
 
-export async function setOverride(transaction_id: string, category: string): Promise<void> {
-  await redis().hset(OVERRIDES_HASH, { [transaction_id]: await encrypt(category) });
+export async function setOverride(ctx: Ctx, transaction_id: string, category: string): Promise<void> {
+  await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(category) });
 }

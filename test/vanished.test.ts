@@ -1,5 +1,7 @@
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey } from './fake-redis';
+
+const ctx = TEST_CTX;
 
 // Real AES-256-GCM: both the remembered-accounts record this reads and the
 // vanished record it writes are encrypted, so a round-trip bug here would look
@@ -27,7 +29,7 @@ async function remember(item_id: string, ids: string[]): Promise<void> {
     limit: null,
     currency: 'USD',
   }));
-  await fake.hset(testKey('accounts:meta'), { [item_id]: await encrypt(JSON.stringify(accounts)) });
+  await fake.hset(ctxKey('accounts:meta'), { [item_id]: await encrypt(JSON.stringify(accounts)) });
 }
 
 const asAccounts = (ids: string[]) => ids.map((account_id) => ({ account_id }));
@@ -42,13 +44,13 @@ const asAccounts = (ids: string[]) => ids.map((account_id) => ({ account_id }));
  * that leaves none. Testing the single form would leave the real path unproven.
  */
 async function check(item_id: string, freshIds: string[], now: number) {
-  const all = await checkVanishedAll([{ item_id, accounts: asAccounts(freshIds) }], now);
+  const all = await checkVanishedAll(ctx, [{ item_id, accounts: asAccounts(freshIds) }], now);
   return all[item_id] ?? { unconfirmed: [], accepted: [] };
 }
 
 /** Read back the vanished record, for asserting on what was persisted. */
 async function record(item_id: string): Promise<Record<string, string> | null> {
-  const blob = await fake.hget<string>(testKey('accounts:vanished'), item_id);
+  const blob = await fake.hget<string>(ctxKey('accounts:vanished'), item_id);
   if (!blob) return null;
   const { decrypt } = await import('@/lib/crypto');
   return JSON.parse(await decrypt(blob));
@@ -222,7 +224,7 @@ describe('the glitch case', () => {
 describe('corrupt or missing state fails safe', () => {
   test('an unparseable timestamp is treated as just now, not as ancient', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await fake.hset(testKey('accounts:vanished'), {
+    await fake.hset(ctxKey('accounts:vanished'), {
       item_a: await encrypt(JSON.stringify({ acct_2: 'not-a-date' })),
     });
 
@@ -235,7 +237,7 @@ describe('corrupt or missing state fails safe', () => {
 
   test('an unreadable record restarts the window rather than accepting', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    await fake.hset(testKey('accounts:vanished'), { item_a: 'not-ciphertext' });
+    await fake.hset(ctxKey('accounts:vanished'), { item_a: 'not-ciphertext' });
 
     const res = await check('item_a', ['acct_1'], NOW);
     expect(res.unconfirmed).toEqual(['acct_2']);
@@ -295,11 +297,11 @@ describe('cost', () => {
     await remember('item_c', ['c1', 'c2']);
 
     fake.ops = 0;
-    await checkVanishedAll([healthy('item_a', ['a1', 'a2']), healthy('item_b', ['b1', 'b2'])], NOW);
+    await checkVanishedAll(ctx, [healthy('item_a', ['a1', 'a2']), healthy('item_b', ['b1', 'b2'])], NOW);
     const two = fake.ops;
 
     fake.ops = 0;
-    await checkVanishedAll(
+    await checkVanishedAll(ctx, 
       [
         healthy('item_a', ['a1', 'a2']),
         healthy('item_b', ['b1', 'b2']),
@@ -321,7 +323,7 @@ describe('cost', () => {
 
   test('costs nothing at all when there are no institutions', async () => {
     fake.ops = 0;
-    expect(await checkVanishedAll([], NOW)).toEqual({});
+    expect(await checkVanishedAll(ctx, [], NOW)).toEqual({});
     expect(fake.ops).toBe(0);
   });
 });
@@ -332,13 +334,13 @@ describe('the single-Item form', () => {
   test('behaves like the batch form', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
 
-    const res = await checkVanished('item_a', ['acct_1'], NOW);
+    const res = await checkVanished(ctx, 'item_a', ['acct_1'], NOW);
     expect(res.unconfirmed).toEqual(['acct_2']);
   });
 
   test('refuses an empty account list too', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
-    expect(await checkVanished('item_a', [], NOW)).toEqual({ unconfirmed: [], accepted: [] });
+    expect(await checkVanished(ctx, 'item_a', [], NOW)).toEqual({ unconfirmed: [], accepted: [] });
   });
 });
 
@@ -347,7 +349,7 @@ describe('forgetVanished', () => {
     await remember('item_a', ['acct_1', 'acct_2']);
     await check('item_a', ['acct_1'], NOW);
 
-    await forgetVanished('item_a');
+    await forgetVanished(ctx, 'item_a');
 
     expect(await record('item_a')).toBeNull();
   });

@@ -30,7 +30,8 @@
 // a removed Item that nothing links to are pruned PRUNE_AFTER_DAYS after they
 // were last seen, so removing an institution still removes its names.
 
-import { redis, k, getItems } from './storage';
+import { redis, kc, getItems } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
 import { measuredAccountHistoryKeys } from './history';
@@ -40,8 +41,8 @@ import { rememberedIdsByItem } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 
 // Lazy keys, not module constants: the container (#53) will be a parameter.
-const directoryKey = () => k('accounts:directory');
-const dismissedKey = () => k('account-links:dismissed');
+const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
+const dismissedKey = (ctx: Ctx) => kc(ctx, 'account-links:dismissed');
 
 /** How long after an old account was last seen a new one can be suggested as it. */
 export const MATCH_WINDOW_DAYS = 45;
@@ -74,8 +75,8 @@ export type DirectoryEntry = {
 /** Every readable entry, and the ids whose entries couldn't be read. Those
  *  are never rewritten: rewriting one would restart its first_seen and make
  *  an old account look brand new. */
-async function readDirectory(): Promise<{ entries: Record<string, DirectoryEntry>; unreadable: Set<string> }> {
-  const raw = (await redis().hgetall<Record<string, string>>(directoryKey())) ?? {};
+async function readDirectory(ctx: Ctx): Promise<{ entries: Record<string, DirectoryEntry>; unreadable: Set<string> }> {
+  const raw = (await redis().hgetall<Record<string, string>>(directoryKey(ctx))) ?? {};
   const entries: Record<string, DirectoryEntry> = {};
   const unreadable = new Set<string>();
   await Promise.all(
@@ -98,10 +99,10 @@ export type Span = { first: string; last: string; firstBalance: number; lastBala
  * disconnected before the directory existed. Reads every date, so it is only
  * used off the hot path (suggestions, and the one-time dating of new entries).
  */
-export async function historySpans(): Promise<Record<string, Span>> {
+export async function historySpans(ctx: Ctx): Promise<Record<string, Span>> {
   const spans: Record<string, Span> = {};
   const maps = await Promise.all(
-    measuredAccountHistoryKeys().map(async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {})
+    measuredAccountHistoryKeys(ctx).map(async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {})
   );
   for (const map of maps) {
     // Decrypted in parallel: this reads every recorded date.
@@ -161,16 +162,16 @@ type SeenInstitution = {
  * today: otherwise every existing account would look newly opened on the day
  * this shipped, and nothing could be matched to anything.
  */
-export async function recordDirectory(institutions: SeenInstitution[], now: number = Date.now()): Promise<void> {
+export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[], now: number = Date.now()): Promise<void> {
   try {
     const healthy = institutions.filter((i) => !i.error && !i.manual && i.accounts.length > 0);
     if (healthy.length === 0) return;
     const day = today(now);
-    const { entries, unreadable } = await readDirectory();
+    const { entries, unreadable } = await readDirectory(ctx);
 
     const fresh = healthy.flatMap((i) => i.accounts.map((a) => ({ inst: i, a })));
     const unknown = fresh.filter(({ a }) => !entries[a.account_id] && !unreadable.has(a.account_id));
-    const spans = unknown.length > 0 ? await historySpans() : {};
+    const spans = unknown.length > 0 ? await historySpans(ctx) : {};
 
     const writes: Record<string, string> = {};
     for (const { inst, a } of fresh) {
@@ -192,9 +193,9 @@ export async function recordDirectory(institutions: SeenInstitution[], now: numb
       if (prev && JSON.stringify({ ...prev, last_seen: day }) === JSON.stringify(next)) continue;
       writes[a.account_id] = await encrypt(JSON.stringify(next));
     }
-    if (Object.keys(writes).length > 0) await redis().hset(directoryKey(), writes);
+    if (Object.keys(writes).length > 0) await redis().hset(directoryKey(ctx), writes);
 
-    await pruneDirectory(entries, now);
+    await pruneDirectory(ctx, entries, now);
   } catch (err) {
     console.warn('links: could not record the account directory', err instanceof Error ? err.message : err);
   }
@@ -209,14 +210,14 @@ export async function recordDirectory(institutions: SeenInstitution[], now: numb
  * written for an Item a load just fetched, so one whose Item is no longer
  * stored has been disconnected.
  */
-async function pruneDirectory(entries: Record<string, DirectoryEntry>, now: number): Promise<void> {
+async function pruneDirectory(ctx: Ctx, entries: Record<string, DirectoryEntry>, now: number): Promise<void> {
   const cutoff = today(now - PRUNE_AFTER_DAYS * DAY);
   const old = Object.entries(entries).filter(([, e]) => e.last_seen < cutoff);
   if (old.length === 0) return;
   let links: Map<string, Link>;
   let stored: Set<string>;
   try {
-    [links, stored] = await Promise.all([getLinks(), getItems().then((items) => new Set(items.map((i) => i.item_id)))]);
+    [links, stored] = await Promise.all([getLinks(ctx), getItems(ctx).then((items) => new Set(items.map((i) => i.item_id)))]);
   } catch {
     return; // can't tell what is linked or stored: prune nothing
   }
@@ -224,7 +225,7 @@ async function pruneDirectory(entries: Record<string, DirectoryEntry>, now: numb
   if (stale.length === 0) return;
   const involved = new Set([...links.keys(), ...[...links.values()].map((l) => l.to)]);
   const doomed = stale.map(([id]) => id).filter((id) => !involved.has(id));
-  if (doomed.length > 0) await redis().hdel(directoryKey(), ...doomed);
+  if (doomed.length > 0) await redis().hdel(directoryKey(ctx), ...doomed);
 }
 
 // ---------------------------------------------------------------------------
@@ -430,55 +431,55 @@ export function isUnclaimed(old: string, offered: ReturnType<typeof suggestLinks
   return offered.unclaimed.some((u) => u.old === old);
 }
 
-export async function getDismissed(): Promise<Set<string>> {
+export async function getDismissed(ctx: Ctx): Promise<Set<string>> {
   try {
-    return new Set(Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey())) ?? {}));
+    return new Set(Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey(ctx))) ?? {}));
   } catch {
     return new Set();
   }
 }
 
-export async function dismissPair(old: string, to: string, now: number = Date.now()): Promise<void> {
-  await redis().hset(dismissedKey(), { [`${old.slice(0, MAX_ID)}>${to.slice(0, MAX_ID)}`]: new Date(now).toISOString() });
+export async function dismissPair(ctx: Ctx, old: string, to: string, now: number = Date.now()): Promise<void> {
+  await redis().hset(dismissedKey(ctx), { [`${old.slice(0, MAX_ID)}>${to.slice(0, MAX_ID)}`]: new Date(now).toISOString() });
 }
 
 /** "None of these": never offer this earlier account again. */
-export async function dismissAll(old: string, now: number = Date.now()): Promise<void> {
-  await redis().hset(dismissedKey(), { [dismissAllKey(old.slice(0, MAX_ID))]: new Date(now).toISOString() });
+export async function dismissAll(ctx: Ctx, old: string, now: number = Date.now()): Promise<void> {
+  await redis().hset(dismissedKey(ctx), { [dismissAllKey(old.slice(0, MAX_ID))]: new Date(now).toISOString() });
 }
 
-export async function linkAccounts(old: string, to: string, evidence: Record<string, unknown>, now: number = Date.now()): Promise<void> {
+export async function linkAccounts(ctx: Ctx, old: string, to: string, evidence: Record<string, unknown>, now: number = Date.now()): Promise<void> {
   const link: Link = { to, linked_at: new Date(now).toISOString(), evidence };
-  await redis().hset(linksKey(), { [old]: await encrypt(JSON.stringify(link)) });
+  await redis().hset(linksKey(ctx), { [old]: await encrypt(JSON.stringify(link)) });
 }
 
-export async function unlinkAccount(old: string): Promise<void> {
-  await redis().hdel(linksKey(), old);
+export async function unlinkAccount(ctx: Ctx, old: string): Promise<void> {
+  await redis().hdel(linksKey(ctx), old);
 }
 
 /** Everything the suggestions need, read once. An unreadable link doesn't
  *  fail it: the card lists those so the user can remove them. */
-export async function loadSuggestionInputs(liveIds: Set<string>) {
+export async function loadSuggestionInputs(ctx: Ctx, liveIds: Set<string>) {
   const [{ entries }, spans, { links, unreadable }, dismissed] = await Promise.all([
-    readDirectory(),
-    historySpans(),
-    readLinks(),
-    getDismissed(),
+    readDirectory(ctx),
+    historySpans(ctx),
+    readLinks(ctx),
+    getDismissed(ctx),
   ]);
   return { directory: entries, spans, liveIds, links, dismissed, unreadableLinks: unreadable };
 }
 
 /** When an earlier id was last seen, by the rule a link records (lastSeenOf),
  *  for a preview of linking it. */
-export async function previewLastSeen(id: string): Promise<string | null> {
-  const [{ entries }, spans] = await Promise.all([readDirectory(), historySpans()]);
+export async function previewLastSeen(ctx: Ctx, id: string): Promise<string | null> {
+  const [{ entries }, spans] = await Promise.all([readDirectory(ctx), historySpans(ctx)]);
   return lastSeenOf(id, entries, spans);
 }
 
 /** Directory labels for a set of ids, for the "Linked accounts" list; null
  *  for an id the directory doesn't know (balance history only). */
-export async function directoryLabels(ids: string[]): Promise<Record<string, string | null>> {
-  const { entries } = await readDirectory();
+export async function directoryLabels(ctx: Ctx, ids: string[]): Promise<Record<string, string | null>> {
+  const { entries } = await readDirectory(ctx);
   return Object.fromEntries(ids.map((id) => [id, entries[id] ? label(entries[id], id) : null]));
 }
 
@@ -499,9 +500,9 @@ export async function directoryLabels(ids: string[]): Promise<Record<string, str
  * following links: it can hide more, never reveal. A caller that WRITES on the
  * answer (Unhide clears every id it finds) passes strict, and fails instead.
  */
-export async function liveAccountIds(opts: { strict?: boolean } = {}): Promise<Set<string>> {
+export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean } = {}): Promise<Set<string>> {
   try {
-    const [byItem, items] = await Promise.all([rememberedIdsByItem(opts.strict), getItems()]);
+    const [byItem, items] = await Promise.all([rememberedIdsByItem(ctx, opts.strict), getItems(ctx)]);
     const stored = new Set(items.map((i) => i.item_id));
     return new Set(Object.entries(byItem).flatMap(([item_id, ids]) => (stored.has(item_id) ? ids : [])));
   } catch (err) {
@@ -528,19 +529,19 @@ export async function liveAccountIds(opts: { strict?: boolean } = {}): Promise<S
  * liveAccountIds): a paused link then counts as active, which can only hide
  * more, never reveal.
  */
-export async function getEffectiveHidden(): Promise<{
+export async function getEffectiveHidden(ctx: Ctx): Promise<{
   /** Every id of every hidden account: what totals and filters subtract. */
   hidden: HiddenMap;
   /** One current id per hidden account: what the Hidden card lists. */
   forClient: { account_id: string; type: string }[];
 }> {
   const [hidden, links, live] = await Promise.all([
-    getHiddenAccounts(),
-    getLinks().then(
+    getHiddenAccounts(ctx),
+    getLinks(ctx).then(
       (l) => ({ ok: true as const, l }),
       (err) => ({ ok: false as const, err })
     ),
-    liveAccountIds(),
+    liveAccountIds(ctx),
   ]);
   if (hidden.size === 0) return { hidden, forClient: [] };
   if (!links.ok) throw links.err;
