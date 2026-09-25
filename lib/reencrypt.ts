@@ -93,6 +93,7 @@ const EXACT: Record<string, Kind> = {
   'history:backfill-done': 'plain',
   'history:backfill-pending': 'plain',
   'account-links:dismissed': 'plain',
+  'blob-sizes': 'plain', // stored sizes of the blobs (lib/blob-sizes.ts)
 
   containers: 'plain', // the container registry
 };

@@ -578,6 +578,14 @@ usable tokens.
 Balance and transaction responses are also cached in Redis for 15 minutes
 (so the dashboard doesn't wait on live Plaid calls every load — the Refresh
 button forces a live fetch), encrypted with the same key. See `lib/cache.ts`.
+
+Each institution's stored transaction and investment history is one
+compressed, encrypted blob, refused (never trimmed) past a size ceiling
+(`MAX_TXN_BLOB_CHARS`, 8,388,608 characters by default). The size of every
+blob written is recorded, and `GET /api/storage-usage` reports them per
+institution and in total, with the ceiling and the container they belong to.
+A refusal's log line names the container too. Nothing enforces a quota yet;
+these are the numbers one would read. See `lib/blob-sizes.ts`.
 The daily net-worth history behind the Home-tab chart (`lib/history.ts`) is
 stored the same way: encrypted values, keyed by date. It has two layers:
 

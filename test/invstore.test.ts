@@ -637,3 +637,31 @@ describe('third review: route and shape details', () => {
     expect(ids(sync.rows)).toEqual(['a']);
   });
 });
+
+const { readStorageUsage } = await import('@/lib/blob-sizes');
+
+describe('stored size accounting (#58)', () => {
+  test('a write records the stored size, and a disconnect forgets it', async () => {
+    plaid.rows = [row('a', '2026-09-01')];
+    await syncInvestments(ITEM, { now: NOW });
+    const stored = (await fake.get<string>(testKey('invtxns:item1')))!;
+    expect((await readStorageUsage()).items).toEqual([{ item_id: 'item1', invtxns: { chars: stored.length, at: expect.any(String) } }]);
+
+    await clearInvestmentStore('item1');
+    expect(await readStorageUsage()).toEqual({ total_chars: 0, items: [] });
+  });
+
+  test('a sync that finds its Item disconnected leaves no size behind', async () => {
+    plaid.rows = [row('a', '2026-09-01')];
+    await syncInvestments(ITEM, { now: NOW });
+    expect((await readStorageUsage()).total_chars).toBeGreaterThan(0);
+
+    plaid.rows = [row('a', '2026-09-01'), row('b', '2026-09-10')];
+    plaid.onCall = async () => {
+      items = []; // disconnected while this sync ran
+    };
+    await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
+    expect(await fake.get(testKey('invtxns:item1'))).toBeNull();
+    expect(await readStorageUsage()).toEqual({ total_chars: 0, items: [] });
+  });
+});

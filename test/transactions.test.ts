@@ -63,6 +63,7 @@ const {
   TXN_SCHEMA_VERSION,
 } =
   await import('@/lib/transactions');
+const { readStorageUsage } = await import('@/lib/blob-sizes');
 
 const ITEM = {
   item_id: 'item_a',
@@ -424,6 +425,35 @@ describe('a blob too large to persist', () => {
 
     expect(calls).toHaveLength(1);
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
+  });
+});
+
+describe('stored size accounting (#58)', () => {
+  test('a write records the stored size; a refusal does not; a disconnect forgets it', async () => {
+    pages = [{ added: [txn()], next_cursor: 'c1' }];
+    await syncItemTransactions(ITEM);
+    const stored = (await fake.get<string>(testKey('txns:item_a')))!;
+    const usage = await readStorageUsage();
+    expect(usage.items).toEqual([{ item_id: 'item_a', txns: { chars: stored.length, at: expect.any(String) } }]);
+    expect(usage.total_chars).toBe(stored.length);
+
+    // Too big to write: the size on record stays that of the blob still stored.
+    calls = [];
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => errors.push(a.join(' '));
+    try {
+      pages = [{ added: Array.from({ length: 140 }, (_, i) => txn({ transaction_id: `b${i}`, name: `M ${crypto.randomUUID()}` })) }];
+      await syncItemTransactions(ITEM);
+    } finally {
+      console.error = origError;
+    }
+    expect((await readStorageUsage()).total_chars).toBe(stored.length);
+    // The ceiling error names the container (none is set up in this test).
+    expect(errors.join(' ')).toContain('refusing to persist item_a in no container');
+
+    await clearItemTransactions('item_a');
+    expect(await readStorageUsage()).toEqual({ total_chars: 0, items: [] });
   });
 });
 
