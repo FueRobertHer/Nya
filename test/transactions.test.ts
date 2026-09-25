@@ -431,6 +431,8 @@ describe('a blob too large to persist', () => {
 
 describe('a ceiling error names the container (#58)', () => {
   test('in the refusal log line', async () => {
+    // Another file may have left a resolved container behind for a few seconds.
+    (await import('@/lib/sessions')).forgetEpochs();
     const errors: string[] = [];
     const origError = console.error;
     console.error = (...a: unknown[]) => errors.push(a.join(' '));
