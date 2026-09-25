@@ -629,7 +629,9 @@ and readers see exactly the same data either way.
 
 1. Take a backup first (`/api/ops/export`, above). Don't run the pass while
    a restore is running.
-2. With `OPS_ENABLED=1`, check what is left. This writes nothing at all:
+2. With `OPS_ENABLED=1`, check what is left. This changes none of your data
+   and creates no key (like any read, it can finish a master rotation that is
+   already due):
 
    ```bash
    curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \

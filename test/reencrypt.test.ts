@@ -100,7 +100,7 @@ describe('the list of keys', () => {
         const templated = /^`([^`$]*)\$\{/.exec(arg);
         if (quoted) names.add(quoted[2]);
         else if (templated) names.add(`${templated[1]}x`);
-        else if (!/^(key|string|[a-zA-Z_]+: string)$/.test(arg)) opaque.push(`${file.slice(root.length + 1)}: k(${arg})`);
+        else if (!/^[a-zA-Z_]+: string$/.test(arg)) opaque.push(`${file.slice(root.length + 1)}: k(${arg})`);
       }
     }
     expect(names.size).toBeGreaterThan(20); // the scan found the stores
@@ -338,7 +338,10 @@ describe('the pass', () => {
     await seed();
     const realEval = fake.eval.bind(fake);
     fake.eval = (async () => {
-      throw new Error("ERR user_script:1: attempt to call field 'sha1hex' (a nil value)");
+      // The shape Upstash gives: the error, then the command it ran.
+      throw new Error(
+        "ERR user_script:1: attempt to call field 'sha1hex' (a nil value), command was: [[\"eval\",\"-- nya:probe\\nreturn redis.sha1hex('nya')\",0]]"
+      );
     }) as typeof fake.eval;
     const before = snapshot();
     try {
@@ -351,6 +354,40 @@ describe('the pass', () => {
       fake.eval = realEval as typeof fake.eval;
     }
     expect(snapshot()).toBe(before); // no data key created either
+  });
+
+  test('an Upstash error about something else is not mistaken for missing support', async () => {
+    const realEval = fake.eval.bind(fake);
+    const upstash = new Error(
+      'WRONGPASS invalid or missing auth token, command was: [["eval","-- nya:probe\\nreturn redis.sha1hex(\'nya\')",0]]'
+    );
+    fake.eval = (async () => {
+      throw upstash;
+    }) as typeof fake.eval;
+    try {
+      expect(await run().catch((e) => e)).toBe(upstash);
+      expect(await check().catch((e) => e)).toBe(upstash);
+    } finally {
+      fake.eval = realEval as typeof fake.eval;
+    }
+  });
+
+  test('a run reads the active key fresh, not from the minute-long cache', async () => {
+    await seed();
+    await encrypt('x'); // caches k1 as active
+    const m = await importMasterKey(MASTER);
+    const raw = new Uint8Array(32).fill(54);
+    const k2 = await dataKeyId(2, raw);
+    fake.hashes.get(keysHashKey())!.set(k2, JSON.stringify({ created_at: 'x', wrapped: { [m.fingerprint]: await m.wrap(k2, raw) } }));
+    fake.strings.set(activeKeyName(), k2); // a restore, say, changed it
+    expect(await run()).toMatchObject({ active_key: k2, moved: 5, complete: true });
+  });
+
+  test('an active key missing from the key store is refused with a reason', async () => {
+    fake.strings.set(activeKeyName(), 'k3-00000000');
+    const err = await run().catch((e) => e);
+    expect(err).toBeInstanceOf(MasterKeyError);
+    expect(err.message).toContain('not in the key store');
   });
 
   test('any other failure of the probe is not mistaken for missing support', async () => {
@@ -373,6 +410,14 @@ describe('the pass', () => {
     expect(await run()).toMatchObject({ moved: 2, complete: true });
     expect(await decrypt(fake.strings.get(testKey('cache:net-worth'))!)).toBe('{"total":1}');
     expect(fake.ttls.get(testKey('cache:net-worth'))).toBe(900);
+  });
+
+  test('old-format ciphertext in a key listed as plaintext is reported too', async () => {
+    fake.strings.set(testKey('history:backfill-done'), await legacy('3'));
+    fake.hashes.set(testKey('account-links:dismissed'), new Map([['a>b', '2026-01-01T00:00:00.000Z']]));
+    fake.strings.set(testKey('crypto:rotation-lock'), crypto.randomUUID());
+    const report = await check();
+    expect(report.unreadable.map((u) => u.key)).toEqual(['history:backfill-done']);
   });
 
   test('encrypted data in a key listed as plaintext is reported', async () => {
@@ -481,7 +526,9 @@ describe('the pass', () => {
       fake.eval = realEval as typeof fake.eval;
     }
     expect(report.changed_meanwhile).toBe(0);
-    expect(report.unreadable).toEqual([{ key: 'goals', reason: 'cannot be compared byte for byte (not valid UTF-8 text)' }]);
+    expect(report.unreadable).toEqual([
+      { key: 'goals', reason: 'could not be compared (it changed and changed back, or is not valid UTF-8 text); tried again next call' },
+    ]);
   });
 });
 

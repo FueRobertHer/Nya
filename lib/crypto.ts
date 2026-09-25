@@ -870,13 +870,35 @@ export async function activeKeyForReencryption(): Promise<string> {
   if (!process.env[MASTER_KEY_ENV]) {
     throw new MasterKeyError(`${MASTER_KEY_ENV} is not set, so there is no data key to move values to.`);
   }
-  const id = await activeKeyId();
+  // Read fresh, not from the minute-long cache: after a restore changed the
+  // active key, a pass must not keep asking for the old one.
+  _active = null;
+  let id: string | null;
+  try {
+    id = await activeKeyId();
+  } catch (err) {
+    if (err instanceof UnknownKeyError) {
+      throw new MasterKeyError(`The active data key ${err.keyId} is not in the key store, so nothing can be moved to it. Was the key store restored without it?`);
+    }
+    throw err;
+  }
   if (!id) {
     throw new MasterKeyError(
       'There is no active data key yet: a master rotation is pending, or another step holds its lock. Try again later.'
     );
   }
   return id;
+}
+
+/** Why k0 cannot be used, or null if it can. The message names only the
+ *  environment variable. For the re-encryption pass's report. */
+export async function legacyKeyProblem(): Promise<string | null> {
+  try {
+    await legacyKey();
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 function noteFallback(err: unknown, now: number): void {

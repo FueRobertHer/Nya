@@ -48,6 +48,7 @@ import {
   activeKeyName,
   activeKeyStatus,
   keysHashKey,
+  legacyKeyProblem,
   decrypt,
   encryptV2,
   formatOf,
@@ -220,7 +221,8 @@ class Unreadable extends Error {
 async function moved(
   ciphertext: string,
   active: string | null,
-  dryRun: boolean
+  dryRun: boolean,
+  legacyProblem: string | null
 ): Promise<{ from: string; next: string | null } | null> {
   let format;
   try {
@@ -232,6 +234,7 @@ async function moved(
   // Bound values need their context to be read, which only their owner knows.
   // None exist yet; when they do, their owner moves them.
   if (format.flags.includes('c')) throw new Unreadable('bound to a context; its owner must move it');
+  if (format.keyId === 'k0' && legacyProblem) throw new Unreadable(legacyProblem);
   let plain: string;
   try {
     plain = await decrypt(ciphertext);
@@ -252,8 +255,10 @@ async function probe(client: ReencryptClient): Promise<void> {
   try {
     answer = await client.eval(PROBE, [], []);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!/sha1hex|nil value|unknown command|NOSCRIPT|not supported/i.test(message)) throw err;
+    // Upstash appends ", command was: <the command>" to every error, and the
+    // command here names sha1hex, so only the part before it is looked at.
+    const message = (err instanceof Error ? err.message : String(err)).replace(/, command was: [\s\S]*$/, '');
+    if (!/attempt to call field 'sha1hex'|a nil value|unknown command|NOSCRIPT/i.test(message)) throw err;
     answer = null;
   }
   if (answer !== PROBE_ANSWER) {
@@ -261,8 +266,14 @@ async function probe(client: ReencryptClient): Promise<void> {
   }
 }
 
-/** A v2 value in a key listed as plaintext: the list is wrong about it. */
-const looksEncrypted = (v: unknown) => typeof v === 'string' && /^v2\.k[0-9]/.test(v);
+/**
+ * A value in a key listed as plaintext that looks like ciphertext: v2, or v1
+ * (base64 of at least a 12-byte IV and a 16-byte tag, so 40+ characters). No
+ * plaintext store holds either: they keep dates, counters, JSON, ids and lock
+ * tokens, none of which is long unbroken base64.
+ */
+const looksEncrypted = (v: unknown) =>
+  typeof v === 'string' && (/^v2\.k[0-9]/.test(v) || (v.length >= 40 && v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v)));
 
 async function inBatches<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
   for (let i = 0; i < items.length; i += PARALLEL) await Promise.all(items.slice(i, i + PARALLEL).map(fn));
@@ -301,6 +312,7 @@ export async function reencrypt(
     active = await activeKeyForReencryption();
   }
   const guard = [activeKeyName(), keysHashKey()];
+  const legacyProblem = await legacyKeyProblem();
 
   const report: ReencryptReport = {
     active_key: active,
@@ -324,9 +336,10 @@ export async function reencrypt(
   };
   /**
    * Counts one compare-and-set. `reread` fetches the value again: when the
-   * script said it changed but it reads back identical, the two sides hash
-   * different bytes (a value that is not valid UTF-8), and it would never
-   * move, so it is reported rather than retried forever.
+   * script said it changed but it reads back identical, either it changed and
+   * changed back, or the two sides hash different bytes (a value that is not
+   * valid UTF-8), which would never move. Reported rather than counted as a
+   * plain change, so a value stuck that way is visible.
    */
   const settle = async (answer: unknown, key: string, field: string | undefined, read: string, reread: () => Promise<unknown>) => {
     if (answer === 1) report.moved++;
@@ -335,7 +348,9 @@ export async function reencrypt(
       throw new MasterKeyError(
         'The active data key changed or left the key store during the pass (a restore?), so it stopped. Whatever was moved stays moved; call it again.'
       );
-    } else if ((await reread()) === read) unreadable(key, field, 'cannot be compared byte for byte (not valid UTF-8 text)');
+    } else if ((await reread()) === read) {
+      unreadable(key, field, 'could not be compared (it changed and changed back, or is not valid UTF-8 text); tried again next call');
+    }
     else report.changed_meanwhile++;
   };
 
@@ -356,7 +371,8 @@ export async function reencrypt(
     if (kind === 'plain') {
       // Checked, not trusted: a v2 value here means the list is wrong.
       if (type === 'string') {
-        if (looksEncrypted(await client.getrange(full, 0, PEEK - 1))) unreadable(key, undefined, 'listed as plaintext but holds encrypted data');
+        // Plaintext values are small (markers, counters), so read whole.
+        if (looksEncrypted(await client.get(full))) unreadable(key, undefined, 'listed as plaintext but holds encrypted data');
       } else if (type === 'hash') {
         let cursor: string | number = 0;
         do {
@@ -386,7 +402,7 @@ export async function reencrypt(
         continue;
       }
       try {
-        const m = await moved(value, active, opts.dryRun);
+        const m = await moved(value, active, opts.dryRun, legacyProblem);
         if (!m) continue;
         if (opts.dryRun) pending(m.from);
         else {
@@ -414,7 +430,7 @@ export async function reencrypt(
         };
         try {
           if (kind !== 'items') {
-            const m = await moved(value, active, opts.dryRun);
+            const m = await moved(value, active, opts.dryRun, legacyProblem);
             if (!m) return;
             if (opts.dryRun) pending(m.from);
             else await write(m.next!);
@@ -429,7 +445,7 @@ export async function reencrypt(
           }
           const token = item?.encrypted_access_token;
           if (typeof token !== 'string') throw new Unreadable('has no encrypted_access_token');
-          const m = await moved(token, active, opts.dryRun);
+          const m = await moved(token, active, opts.dryRun, legacyProblem);
           if (!m) return;
           if (opts.dryRun) pending(m.from);
           else await write(JSON.stringify({ ...item, encrypted_access_token: m.next }));
