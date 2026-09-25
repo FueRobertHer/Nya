@@ -27,6 +27,7 @@
 
 import { createHash } from 'node:crypto';
 import { k } from './storage';
+import { splitScoped } from './containers';
 import {
   byCodePoint,
   isExcluded,
@@ -167,7 +168,62 @@ export function verifyArchive(text: string): VerifiedArchive {
     refuse('The export could not carry some keys (see the footer), so restoring it would lose them.');
   }
 
+  // Every container the archive's keys live in must be in its own registry:
+  // otherwise it would restore data under a container that, once restored,
+  // does not exist.
+  const registry = archiveRegistry(records);
+  for (const record of records) {
+    const { container } = splitScoped(record.key);
+    if (container && !registry?.has(container)) {
+      refuse(`${record.key} is in container ${container}, which the archive's registry does not list.`);
+    }
+  }
+
   return { header: header as ExportHeader, records };
+}
+
+/** The key the container registry lives at, relative to the prefix (see
+ *  lib/containers.ts; environment-wide, so never inside a container). */
+const REGISTRY = 'containers';
+
+/** The container ids in an archive's registry, or null if it has none. */
+export function archiveRegistry(records: ExportRecord[]): Set<string> | null {
+  const r = records.find((x) => x.key === REGISTRY);
+  return r && r.type === 'hash' ? new Set(Object.keys(r.value)) : null;
+}
+
+/** The container ids in the target's registry, or null if it has none. */
+export async function targetRegistry(client: ExportClient): Promise<Set<string> | null> {
+  const ids = new Set<string>();
+  let cursor: string | number = 0;
+  do {
+    const [next, flat] = await client.hscan(k(REGISTRY), cursor, { count: 200 });
+    for (let i = 0; i + 1 < flat.length; i += 2) ids.add(String(flat[i]));
+    cursor = next;
+  } while (String(cursor) !== '0');
+  return ids.size > 0 ? ids : null;
+}
+
+/**
+ * A restore replaces the container registry along with everything else. That
+ * is only safe when the archive's registry lists the same containers as the
+ * target's: deployments name their container in CONTAINER_ID, and after a
+ * restore that dropped it (an archive from before containers existed, or from
+ * another environment) every one of them would name a container that no
+ * longer exists. Refused unless `replaceRegistry`, after which CONTAINER_ID
+ * must be set again to a container the restored registry lists (or a new one
+ * created).
+ */
+export function checkRegistry(archive: Set<string> | null, target: Set<string> | null, replaceRegistry: boolean): void {
+  if (!target || replaceRegistry) return;
+  const same = archive !== null && archive.size === target.size && [...target].every((id) => archive.has(id));
+  if (same) return;
+  const had = [...target].join(', ');
+  refuse(
+    archive
+      ? `The archive's containers (${[...archive].join(', ')}) are not the target's (${had}). Deployments name their container in CONTAINER_ID, which would then name one that does not exist. Pass --replace-registry to restore anyway, then set CONTAINER_ID to a container the archive lists.`
+      : `The archive has no container registry (it predates containers), so restoring it would remove the target's (${had}), and CONTAINER_ID would name a container that does not exist. Pass --replace-registry to restore anyway, then create a container again and set CONTAINER_ID.`
+  );
 }
 
 /** The storage commands a restore needs, on top of reading everything back. */
@@ -271,7 +327,7 @@ export type RestoreResult = { written: number; deleted: number };
 export async function restoreArchive(
   client: RestoreClient,
   archive: VerifiedArchive,
-  opts: { overwrite: boolean; backedUp?: string[] }
+  opts: { overwrite: boolean; backedUp?: string[]; replaceRegistry?: boolean }
 ): Promise<RestoreResult> {
   const prefix = k('');
   const existing = await targetKeys(client);
@@ -285,6 +341,8 @@ export async function restoreArchive(
       refuse('The target changed after it was backed up. Nothing was deleted; run the restore again.');
     }
   }
+
+  checkRegistry(archiveRegistry(archive.records), await targetRegistry(client), opts.replaceRegistry ?? false);
 
   // Delete first: replace, don't merge. Includes caches, which would otherwise
   // show numbers computed from the data being replaced.

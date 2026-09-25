@@ -9,7 +9,7 @@ const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { exportLines } = await import('@/lib/export');
-const { verifyArchive, restoreArchive, checkTarget, targetKeys, RestoreRefused } = await import(
+const { verifyArchive, restoreArchive, checkTarget, targetKeys, RestoreRefused, checkRegistry } = await import(
   '@/lib/restore'
 );
 const { main, parseArgs } = await import('@/scripts/restore');
@@ -413,6 +413,61 @@ describe('restoreArchive', () => {
   });
 });
 
+describe('the container registry', () => {
+  const A = '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b';
+  const B = '1c7a6b63-4d2e-4f30-9bac-2d3e4f5a6b7c';
+  const entry = JSON.stringify({ status: 'active', primary: true, created_at: 'x' });
+
+  test("an archive whose keys name a container missing from its registry is refused", async () => {
+    await seed();
+    await fake.set(testKey(`c:${A}:goals`), 'cipher-goals');
+    const unlisted = await exportText();
+    expect(() => verifyArchive(unlisted)).toThrow(/does not list/);
+
+    await fake.hset(testKey('containers'), { [A]: entry });
+    const listed = await exportText();
+    expect(verifyArchive(listed).records.map((r) => r.key)).toContain(`c:${A}:goals`);
+  });
+
+  test('checkRegistry: same containers, or none on the target, or asked to', () => {
+    const set = (...ids: string[]) => new Set(ids);
+    expect(() => checkRegistry(set(A), null, false)).not.toThrow(); // fresh target
+    expect(() => checkRegistry(null, null, false)).not.toThrow();
+    expect(() => checkRegistry(set(A), set(A), false)).not.toThrow();
+    expect(() => checkRegistry(null, set(A), false)).toThrow(/predates containers/);
+    expect(() => checkRegistry(set(B), set(A), false)).toThrow(/are not the target's/);
+    expect(() => checkRegistry(set(A, B), set(A), false)).toThrow(/are not the target's/);
+    expect(() => checkRegistry(null, set(A), true)).not.toThrow();
+    expect(() => checkRegistry(set(B), set(A), true)).not.toThrow();
+  });
+
+  test('restoreArchive refuses to drop the target registry, and deletes nothing', async () => {
+    await seed(); // an archive from before containers
+    const archive = verifyArchive(await exportText());
+    await fake.hset(testKey('containers'), { [A]: entry });
+    const existing = await targetKeys(fake as any);
+    const before = snapshot();
+
+    await expect(restoreArchive(fake as any, archive, { overwrite: true, backedUp: existing })).rejects.toThrow(
+      /predates containers/
+    );
+    expect(snapshot()).toEqual(before);
+
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: existing, replaceRegistry: true });
+    expect(await fake.hgetall(testKey('containers'))).toBeNull();
+  });
+
+  test('an archive with the same registry restores as usual', async () => {
+    await seed();
+    await fake.hset(testKey('containers'), { [A]: entry });
+    const archive = verifyArchive(await exportText());
+    await fake.set(testKey('budgets'), 'newer');
+    const existing = await targetKeys(fake as any);
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: existing });
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+});
+
 describe('checkTarget', () => {
   test('the named target must match the prefix this process writes to', () => {
     expect(checkTarget('test', false)).toBe('test');
@@ -446,6 +501,23 @@ describe('the command', () => {
     return path;
   }
 
+  test('an archive from before containers will not drop the target registry, even in a dry run', async () => {
+    const file = await archiveFile(); // no registry in it
+    const id = '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b';
+    await fake.hset(testKey('containers'), { [id]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
+
+    await expect(main([file, '--target', 'test', '--overwrite', '--dry-run'], fake as any)).rejects.toThrow(
+      /--replace-registry/
+    );
+    await expect(main([file, '--target', 'test', '--overwrite'], fake as any)).rejects.toThrow(/--replace-registry/);
+    expect(await fake.hgetall(testKey('containers'))).not.toBeNull();
+    expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toEqual([]); // refused before the backup
+
+    await main([file, '--target', 'test', '--overwrite', '--replace-registry'], fake as any);
+    expect(await fake.hgetall(testKey('containers'))).toBeNull();
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+
   test('parses its flags and rejects unknown ones', () => {
     expect(parseArgs(['a.ndjson', '--target', 'x', '--overwrite'])).toEqual({
       file: 'a.ndjson',
@@ -455,6 +527,7 @@ describe('the command', () => {
       dryRun: false,
       allowEmpty: false,
       allowDifferentSource: false,
+      replaceRegistry: false,
     });
     expect(parseArgs(['a', '--target', 'x', '--allow-empty', '--allow-different-source'])).toMatchObject({
       allowEmpty: true,
