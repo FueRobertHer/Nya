@@ -4,8 +4,8 @@
 //
 //   REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production
 //
-// Without --run it only reports what it would do. With --run it copies, reads
-// every copy back, and records what it copied. Run it again right before
+// Without --run it only reports what it would do. With --run it copies,
+// each write checked and recorded with it in one step. Run it again right before
 // deploying the release that reads containers, to pick up anything written
 // since; it refuses, writing nothing, if that release has already written a
 // key it would overwrite. See lib/move.ts, and "Moving the data into
@@ -85,7 +85,7 @@ export async function main(argv: string[], client: MoveClient): Promise<void> {
     console.log('Report only: nothing written. Pass --run to copy (any warning above means a run would be refused).');
     return;
   }
-  console.log('Copied and read back. The old keys are untouched.');
+  console.log('Copied. The old keys are untouched.');
 }
 
 if (import.meta.main) {

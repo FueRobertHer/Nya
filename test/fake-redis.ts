@@ -156,6 +156,12 @@ export class FakeRedis {
 
   async hdel(key: string, ...fields: string[]): Promise<void> {
     this.gate('hdel');
+    this.hdelNow(key, fields);
+  }
+
+  /** HDEL without the gate, for the scripts (a script runs whole or not at
+   *  all, so an armed failure never lands halfway through one). */
+  private hdelNow(key: string, fields: string[]): void {
     const h = this.hashes.get(key);
     if (!h) return;
     for (const f of fields) h.delete(f);
@@ -196,6 +202,11 @@ export class FakeRedis {
   /** Moves a key, replacing any at the destination, keeping its expiry. */
   async rename(from: string, to: string): Promise<'OK'> {
     this.gate('rename');
+    return this.renameNow(from, to);
+  }
+
+  /** RENAME without the gate, for the scripts. */
+  private renameNow(from: string, to: string): 'OK' {
     if (!this.strings.has(from) && !this.hashes.has(from)) throw new Error('ERR no such key');
     this.strings.delete(to);
     this.hashes.delete(to);
@@ -313,30 +324,45 @@ export class FakeRedis {
       this.ttls.delete(keys[0]);
       return 1;
     }
-    if (name === '-- nya:move-set' || name === '-- nya:move-swap' || name === '-- nya:move-delete') {
-      // The same digest lib/move.ts computes (and DIGEST_LUA in Redis).
-      const digestOf = (key: string): string => {
-        if (this.strings.has(key)) return sha1('S' + this.strings.get(key)!);
-        const h = this.hashes.get(key);
-        if (!h || h.size === 0) return '';
-        return sha1('H' + [...h.entries()].map(([f, v]) => sha1(`${f}\0${v}`)).sort().join(''));
-      };
-      if (digestOf(keys[0]) !== args[0]) return 0;
-      if (name === '-- nya:move-set') {
-        this.hashes.delete(keys[0]);
-        this.strings.set(keys[0], args[1]);
-        if (Number(args[2]) > 0) this.ttls.set(keys[0], Number(args[2]));
-        else this.ttls.delete(keys[0]);
-        this.hash(keys[1]).set(args[3], args[4]);
-      } else if (name === '-- nya:move-swap') {
-        await this.rename(keys[2], keys[0]);
-        this.hash(keys[1]).set(args[1], args[2]);
-      } else {
-        this.strings.delete(keys[0]);
-        this.hashes.delete(keys[0]);
-        this.ttls.delete(keys[0]);
-        await this.hdel(keys[1], args[1]);
-      }
+    // The same digest lib/move.ts computes (and DIGEST_LUA in Redis).
+    const digestOf = (key: string): string => {
+      if (this.strings.has(key)) return sha1('S' + this.strings.get(key)!);
+      const h = this.hashes.get(key);
+      if (!h || h.size === 0) return '';
+      return sha1('H' + [...h.entries()].map(([f, v]) => sha1(`${f}\0${v}`)).sort().join(''));
+    };
+    if (name === '-- nya:move-probe') return digestOf(keys[0]);
+    if (name === '-- nya:move-set') {
+      if (this.strings.get(keys[2]) !== args[5]) return -1;
+      const now = digestOf(keys[0]);
+      if (now === args[4] && this.hashes.get(keys[1])?.get(args[3]) === args[4]) return 1;
+      if (now !== args[0]) return 0;
+      this.hashes.delete(keys[0]);
+      this.strings.set(keys[0], args[1]);
+      if (Number(args[2]) > 0) this.ttls.set(keys[0], Number(args[2]));
+      else this.ttls.delete(keys[0]);
+      this.hash(keys[1]).set(args[3], args[4]);
+      return 1;
+    }
+    if (name === '-- nya:move-swap') {
+      if (this.strings.get(keys[3]) !== args[3]) return -1;
+      const now = digestOf(keys[0]);
+      if (now === args[2] && this.hashes.get(keys[1])?.get(args[1]) === args[2]) return 1;
+      if (now !== args[0]) return 0;
+      if (digestOf(keys[2]) !== args[2]) return -2;
+      this.renameNow(keys[2], keys[0]);
+      this.hash(keys[1]).set(args[1], args[2]);
+      return 1;
+    }
+    if (name === '-- nya:move-delete') {
+      if (this.strings.get(keys[2]) !== args[2]) return -1;
+      const now = digestOf(keys[0]);
+      if (now === '' && !this.hashes.get(keys[1])?.has(args[1])) return 1;
+      if (now !== args[0]) return 0;
+      this.strings.delete(keys[0]);
+      this.hashes.delete(keys[0]);
+      this.ttls.delete(keys[0]);
+      this.hdelNow(keys[1], [args[1]]);
       return 1;
     }
     if (name === '-- nya:container-create-first') {

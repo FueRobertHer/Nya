@@ -755,7 +755,11 @@ side changed since:
 
 - only the old key: copied again. If it was deleted there, the container's
   copy is deleted too, but only with `--propagate-deletes`, and never more
-  than a few at once;
+  than five at once. More than that is refused and the keys are named: if
+  they really should go (say an institution with several stored keys was
+  disconnected), delete each one by hand in the Upstash console,
+  `DEL <prefix>:c:<id>:<name>` and then `HDEL <prefix>:c:<id>:move:copied <name>`,
+  and run again;
 - only the container key: kept (the new release wrote or deleted it);
 - both: a **conflict**. The run is refused, nothing written, and the report
   names the key.

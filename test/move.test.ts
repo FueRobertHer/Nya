@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, TEST_CONTAINER, registerTestContainer } from './fake-redis';
@@ -7,7 +7,7 @@ import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, TEST_CONTAINER, regi
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { moveData, retireMove, digest, MoveRefused, isMoved, MOVED_KEYS, MOVED_PREFIXES, NOT_MOVED_PREFIXES, checkMoveTarget, MOVE_SET, MOVE_SWAP, MOVE_DELETE } = await import('@/lib/move');
+const { moveData, retireMove, digest, MoveRefused, isMoved, MOVED_KEYS, MOVED_PREFIXES, NOT_MOVED_PREFIXES, checkMoveTarget, MOVE_SET, MOVE_SWAP, MOVE_DELETE, MOVE_PROBE } = await import('@/lib/move');
 const script = await import('../scripts/move-data');
 const { forgetEpochs } = await import('@/lib/sessions');
 
@@ -98,9 +98,25 @@ describe('the first run', () => {
 
   test('a hash left half built by a run that died is not mixed into the copy', async () => {
     await fake.hset(testKey('hidden:accounts'), { a: '1' });
-    await fake.hset(ctxKey('move:tmp:hidden:accounts'), { stale: 'from a run that died' });
+    await fake.hset(ctxKey('move:tmp:0000-dead-run:hidden:accounts'), { stale: 'from a run that died' });
     await run();
     expect(await fake.hgetall<Record<string, string>>(ctxKey('hidden:accounts'))).toEqual({ a: '1' });
+  });
+
+  test('builds a hash under a name of its own run, which no other run touches', async () => {
+    await fake.hset(testKey('hidden:accounts'), { a: '1' });
+    const hset = fake.hset.bind(fake);
+    const built: string[] = [];
+    fake.hset = (async (key: string, value: Record<string, string>) => {
+      if (key.includes(':move:tmp:')) built.push(key.replace(`:${await fake.get<string>(ctxKey('move:lock'))}:`, ':<this run>:'));
+      return hset(key, value);
+    }) as typeof fake.hset;
+    try {
+      await run();
+    } finally {
+      fake.hset = hset;
+    }
+    expect(built.sort()).toEqual([ctxKey('move:tmp:<this run>:hidden:accounts'), ctxKey('move:tmp:<this run>:plaid:items')]);
   });
 
   test('a write the new release makes during the run is never written over', async () => {
@@ -307,8 +323,17 @@ describe('running it again', () => {
     await run();
     await fake.set(testKey('budgets'), 'v2');
     await fake.set(testKey('goals'), 'g2');
-    fake.failNext('eval', 2); // the first key's write, then the lock release
-    await expect(run()).rejects.toThrow();
+    // The first key's write fails; the lock release after it too.
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:move-set')) fake.failNext('eval', 2);
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      await expect(run()).rejects.toThrow();
+    } finally {
+      fake.eval = evalOrig;
+    }
     // Neither half-done: budgets untouched and still recorded as v1.
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('v1');
     await fake.set(testKey('budgets'), 'v3'); // the old release keeps writing
@@ -317,6 +342,65 @@ describe('running it again', () => {
     expect(report.conflicts).toEqual([]);
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('v3');
     expect(await fake.get<string>(ctxKey('goals'))).toBe('g2');
+  });
+
+  test('a run that outlives its lock stops before its next write', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await fake.set(testKey('goals'), 'g');
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      // The lock expired and another run took it.
+      if (script.startsWith('-- nya:move-set')) await fake.set(ctxKey('move:lock'), 'another run');
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      await expect(run()).rejects.toThrow('no longer holds its lock');
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(await fake.get<string>(ctxKey('budgets'))).toBeNull();
+    expect(await fake.get<string>(ctxKey('goals'))).toBeNull();
+    expect(await fake.get<string>(ctxKey('move:lock'))).toBe('another run'); // not released by the loser
+    await fake.del(ctxKey('move:lock'));
+  });
+
+  test('a write sent twice (a retry after a lost answer) is done once, without a false refusal', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await fake.hset(testKey('hidden:accounts'), { a: '1', b: '2' });
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (/^-- nya:move-(set|swap|delete)/.test(script)) await evalOrig(script, keys, args);
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      await run();
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
+    expect(await fake.hgetall<Record<string, string>>(ctxKey('hidden:accounts'))).toEqual({ a: '1', b: '2' });
+    const again = await plan();
+    expect(again.copied).toBe(0);
+    expect(again.conflicts).toEqual([]);
+  });
+
+  test('a database that digests differently, or cannot run the script, is refused before any read', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:move-probe')) return 'something else';
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      await expect(plan()).rejects.toThrow('digests plaid:items differently');
+      await expect(run()).rejects.toThrow('digests plaid:items differently');
+    } finally {
+      fake.eval = evalOrig;
+    }
+    fake.failNext('eval'); // the probe
+    await expect(run()).rejects.toThrow('could not run the move');
+    expect(await fake.get<string>(ctxKey('budgets'))).toBeNull();
+    expect(await fake.get<string>(ctxKey('move:lock'))).toBeNull();
   });
 
   test('one run at a time', async () => {
@@ -430,7 +514,7 @@ describe('the command', () => {
       console.log = log;
     }
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
-    expect(lines.join('\n')).toContain('Copied and read back');
+    expect(lines.join('\n')).toContain('Copied. The old keys are untouched.');
   });
 
   test('rejects an unknown flag', () => {
@@ -459,6 +543,11 @@ describe.skipIf(!hasRedis && !process.env.CI)('the compare-and-set scripts, on a
       }
     }
     await r.send('FLUSHALL', []);
+    await r.send('SET', ['lock', 'tok']);
+  });
+  afterAll(() => {
+    server?.kill();
+    server = null;
   });
   // Field names and values of the kinds stored: dates, ids, ciphertext, and
   // non-ASCII text, in an order Redis will not keep.
@@ -474,34 +563,59 @@ describe.skipIf(!hasRedis && !process.env.CI)('the compare-and-set scripts, on a
     await r.send('HSET', ['h', ...fields.flat()]);
     const s = digest({ kind: 'string', value: 'v2.k1.c.dGV4dA== ✓' })!;
     const h = digest({ kind: 'hash', fields: [...fields].reverse() })!;
-    expect(await evalScript(MOVE_DELETE, ['s', 'rec'], ['wrong', 's'])).toBe(0);
-    expect(await evalScript(MOVE_DELETE, ['s', 'rec'], [s, 's'])).toBe(1);
-    expect(await evalScript(MOVE_DELETE, ['h', 'rec'], [h, 'h'])).toBe(1);
-    expect(await r.send('EXISTS', ['s', 'h'])).toBe(0);
+    expect(await evalScript(MOVE_PROBE, ['s'], [])).toBe(s);
+    expect(await evalScript(MOVE_PROBE, ['h'], [])).toBe(h);
+    expect(await evalScript(MOVE_PROBE, ['none'], [])).toBe('');
+    await r.send('HSET', ['rec', 's', s, 'h', h]);
+    expect(await evalScript(MOVE_DELETE, ['s', 'rec', 'lock'], ['wrong', 's', 'tok'])).toBe(0);
+    expect(await evalScript(MOVE_DELETE, ['s', 'rec', 'lock'], [s, 's', 'tok'])).toBe(1);
+    expect(await evalScript(MOVE_DELETE, ['h', 'rec', 'lock'], [h, 'h', 'tok'])).toBe(1);
+    expect(await r.send('EXISTS', ['s', 'h', 'rec'])).toBe(0);
+    // A retried delete whose first answer was lost: done already.
+    expect(await evalScript(MOVE_DELETE, ['s', 'rec', 'lock'], [s, 's', 'tok'])).toBe(1);
   });
 
   test('a string is written, with its expiry and its record, only over what was expected', async () => {
-    expect(await evalScript(MOVE_SET, ['t', 'rec'], ['', 'value', '600', 'budgets', 'd1'])).toBe(1);
+    expect(await evalScript(MOVE_SET, ['t', 'rec', 'lock'], ['', 'value', '600', 'budgets', 'd1', 'tok'])).toBe(1);
     expect(await r.send('GET', ['t'])).toBe('value');
     expect(Number(await r.send('TTL', ['t']))).toBeGreaterThan(590);
     expect(await r.send('HGET', ['rec', 'budgets'])).toBe('d1');
     // Something else there now: refused, nothing changed.
-    expect(await evalScript(MOVE_SET, ['t', 'rec'], ['', 'other', '0', 'budgets', 'd2'])).toBe(0);
+    expect(await evalScript(MOVE_SET, ['t', 'rec', 'lock'], ['', 'other', '0', 'budgets', 'd2', 'tok'])).toBe(0);
     expect(await r.send('GET', ['t'])).toBe('value');
     expect(await r.send('HGET', ['rec', 'budgets'])).toBe('d1');
+    // The same write retried after it landed: done already.
+    const d = digest({ kind: 'string', value: 'value' })!;
+    await r.send('HSET', ['rec', 'budgets', d]);
+    expect(await evalScript(MOVE_SET, ['t', 'rec', 'lock'], ['', 'value', '600', 'budgets', d, 'tok'])).toBe(1);
   });
 
-  test('a hash is swapped in whole, only over what was expected', async () => {
+  test('nothing is written once the run no longer holds the lock', async () => {
+    await r.send('SET', ['lock', 'someone-else']);
+    expect(await evalScript(MOVE_SET, ['t', 'rec', 'lock'], ['', 'value', '0', 'budgets', 'd1', 'tok'])).toBe(-1);
+    await r.send('HSET', ['tmp', 'a', '1']);
+    const d = digest({ kind: 'hash', fields: [['a', '1']] })!;
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], ['', 'k', d, 'tok'])).toBe(-1);
+    await r.send('SET', ['s', 'x']);
+    expect(await evalScript(MOVE_DELETE, ['s', 'rec', 'lock'], [digest({ kind: 'string', value: 'x' })!, 's', 'tok'])).toBe(-1);
+    expect(await r.send('EXISTS', ['t', 'rec'])).toBe(0);
+    expect(await r.send('GET', ['s'])).toBe('x');
+  });
+
+  test('a hash is swapped in whole, only over what was expected and only when complete', async () => {
     await r.send('HSET', ['t', 'old', '1']);
     await r.send('HSET', ['tmp', ...fields.flat()]);
     const before = digest({ kind: 'hash', fields: [['old', '1']] })!;
-    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp'], ['not-it', 'hidden:accounts', 'd'])).toBe(0);
-    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp'], [before, 'hidden:accounts', 'd'])).toBe(1);
+    const d = digest({ kind: 'hash', fields })!;
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], ['not-it', 'hidden:accounts', d, 'tok'])).toBe(0);
+    // Not what should have been built: refused.
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], [before, 'hidden:accounts', 'other', 'tok'])).toBe(-2);
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], [before, 'hidden:accounts', d, 'tok'])).toBe(1);
     expect(await r.send('HGET', ['t', 'acct_é'])).toBe('naïve café ✓');
     expect(await r.send('HEXISTS', ['t', 'old'])).toBe(0);
     expect(await r.send('EXISTS', ['tmp'])).toBe(0);
-    expect(await r.send('HGET', ['rec', 'hidden:accounts'])).toBe('d');
-    server?.kill();
-    server = null;
+    expect(await r.send('HGET', ['rec', 'hidden:accounts'])).toBe(d);
+    // Retried after it landed (the temporary hash is gone by then): done.
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], [before, 'hidden:accounts', d, 'tok'])).toBe(1);
   });
 });

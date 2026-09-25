@@ -67,9 +67,11 @@ const MIN_RESTORED_TTL = 60;
 /** Never deleted by an overwrite: they belong to the running environment,
  *  not to the data being restored. A counter of failed logins, and a
  *  container's session epoch, which a restore must never lower or it would
- *  bring back sessions revoked since, and the snapshot cron's log and lock.
- *  Judged inside containers too. */
-const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:'];
+ *  bring back sessions revoked since, the snapshot cron's log and lock, and
+ *  the data move's record, lock and retirement (lib/move.ts: restoring over
+ *  them would let a later move run misjudge what it copied). Judged inside
+ *  containers too. */
+const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:', 'move:'];
 
 function isPreserved(relative: string): boolean {
   const { key } = splitScoped(relative);

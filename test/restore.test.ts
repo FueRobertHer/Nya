@@ -243,6 +243,18 @@ describe('restoreArchive', () => {
     expect(await fake.hget<string>(runsKey, '2026-09-25')).toBe('today');
   });
 
+  test("the data move's record is not data either: never exported, never replaced", async () => {
+    const recordKey = testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:move:copied');
+    await seed();
+    await fake.hset(recordKey, { budgets: 'd-old' });
+    const archive = verifyArchive(await exportText());
+    expect(archive.records.map((r) => r.key)).not.toContain('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:move:copied');
+
+    await fake.hset(recordKey, { budgets: 'd-now' });
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
+    expect(await fake.hget<string>(recordKey, 'budgets')).toBe('d-now');
+  });
+
   test('overwrite replaces: strays and stale caches go, rate limits stay', async () => {
     await seed();
     const archive = verifyArchive(await exportText());

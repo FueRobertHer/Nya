@@ -99,7 +99,7 @@ export function isMoved(key: string): boolean {
 const recordKey = (ctx: Ctx) => kc(ctx, 'move:copied');
 const lockKey = (ctx: Ctx) => kc(ctx, 'move:lock');
 const retiredKey = (ctx: Ctx) => kc(ctx, 'move:retired');
-const tempKey = (ctx: Ctx, key: string) => kc(ctx, `move:tmp:${key}`);
+const tempKey = (ctx: Ctx, run: string, key: string) => kc(ctx, `move:tmp:${run}:${key}`);
 /** Long enough for any run; a run that dies frees it by then. */
 export const MOVE_LOCK_SECONDS = 3600;
 /** More deletions than this in one run looks like the old keys being
@@ -130,25 +130,50 @@ local function digest(key)
   return 'type:' .. t
 end`;
 
+// Each write script answers 1 when the write is done, including when it was
+// done already (a retried request whose first answer was lost), 0 when the
+// container key no longer holds what the run expected, and -1 when the run
+// no longer holds the lock (it ran past the lock's expiry and another run may
+// have taken over), in which case nothing is written.
+
+/** Returns the digest of KEYS[1]: to check, before anything is written, that
+ *  Redis computes digests as this file does. */
+export const MOVE_PROBE = `-- nya:move-probe${DIGEST_LUA}
+return digest(KEYS[1])`;
+
 /** Writes a string if the target still has the expected digest ('' for
- *  none), and records it, in one step. The first line names the script for
- *  the test double. */
+ *  none), and records it, in one step. KEYS: target, record, lock. ARGV:
+ *  expected, value, ttl, field, new digest, token. The first line names the
+ *  script for the test double. */
 export const MOVE_SET = `-- nya:move-set${DIGEST_LUA}
-if digest(KEYS[1]) ~= ARGV[1] then return 0 end
+if redis.call('GET', KEYS[3]) ~= ARGV[6] then return -1 end
+local now = digest(KEYS[1])
+if now == ARGV[5] and redis.call('HGET', KEYS[2], ARGV[4]) == ARGV[5] then return 1 end
+if now ~= ARGV[1] then return 0 end
 if tonumber(ARGV[3]) > 0 then redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3]) else redis.call('SET', KEYS[1], ARGV[2]) end
 redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
 return 1`;
 
-/** Swaps a hash built aside into place, the same way. */
+/** Swaps a hash built aside into place, the same way, and only if the hash
+ *  built aside is exactly what it should be. KEYS: target, record, temporary,
+ *  lock. ARGV: expected, field, new digest, token. */
 export const MOVE_SWAP = `-- nya:move-swap${DIGEST_LUA}
-if digest(KEYS[1]) ~= ARGV[1] then return 0 end
+if redis.call('GET', KEYS[4]) ~= ARGV[4] then return -1 end
+local now = digest(KEYS[1])
+if now == ARGV[3] and redis.call('HGET', KEYS[2], ARGV[2]) == ARGV[3] then return 1 end
+if now ~= ARGV[1] then return 0 end
+if digest(KEYS[3]) ~= ARGV[3] then return -2 end
 redis.call('RENAME', KEYS[3], KEYS[1])
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
 return 1`;
 
-/** Deletes a key and its record, the same way. */
+/** Deletes a key and its record, the same way. KEYS: target, record, lock.
+ *  ARGV: expected, field, token. */
 export const MOVE_DELETE = `-- nya:move-delete${DIGEST_LUA}
-if digest(KEYS[1]) ~= ARGV[1] then return 0 end
+if redis.call('GET', KEYS[3]) ~= ARGV[3] then return -1 end
+local now = digest(KEYS[1])
+if now == '' and not redis.call('HGET', KEYS[2], ARGV[2]) then return 1 end
+if now ~= ARGV[1] then return 0 end
 redis.call('DEL', KEYS[1])
 redis.call('HDEL', KEYS[2], ARGV[2])
 return 1`;
@@ -234,33 +259,62 @@ export function digest(v: Value): string | null {
   return sha1('H' + v.fields.map(([f, val]) => sha1(`${f}\0${val}`)).sort().join(''));
 }
 
-/** Runs one compare-and-set script; a refusal means the container key
- *  changed after the plan read it. */
+/** Runs one compare-and-set script (see above for its answers). */
 async function cas(client: MoveClient, key: string, script: string, keys: string[], args: string[]): Promise<void> {
-  if (Number(await client.eval(script, keys, args)) !== 1) {
-    throw new MoveRefused(`${key} changed in the container while this run was going: nothing more was written. Run again to see what changed.`);
+  const answer = Number(await client.eval(script, keys, args));
+  if (answer === 1) return;
+  if (answer === -1) {
+    throw new MoveRefused(`This run no longer holds its lock (it ran longer than ${MOVE_LOCK_SECONDS / 60} minutes, and another run may have started): stopped before ${key}, nothing more was written. Run again.`);
   }
+  if (answer === -2) {
+    throw new MoveRefused(`${key} was not built in full before being swapped in (another run using the same key?): nothing was written for it. Run again.`);
+  }
+  throw new MoveRefused(`${key} changed in the container while this run was going: nothing more was written. Run again to see what changed.`);
 }
 
+type Run = { ctx: Ctx; token: string };
+
 /** Writes a planned copy or refresh, checked against what the plan saw. */
-async function writeValue(client: MoveClient, ctx: Ctx, key: string, v: Exclude<Value, null>, expected: string | null, d: string, ttl: number): Promise<void> {
+async function writeValue(client: MoveClient, run: Run, key: string, v: Exclude<Value, null>, expected: string | null, d: string, ttl: number): Promise<void> {
+  const { ctx, token } = run;
   const target = kc(ctx, key);
   if (v.kind === 'string') {
-    await cas(client, key, MOVE_SET, [target, recordKey(ctx)], [expected ?? '', v.value, String(Math.max(0, ttl)), key, d]);
+    await cas(client, key, MOVE_SET, [target, recordKey(ctx), lockKey(ctx)], [expected ?? '', v.value, String(Math.max(0, ttl)), key, d, token]);
     return;
   }
-  // Built aside, under a name of its own, and swapped in whole: RENAME
-  // replaces the target in one step, expiry and all.
-  const tmp = tempKey(ctx, key);
+  // Built aside, under a name of this run's own, and swapped in whole only if
+  // complete: RENAME replaces the target in one step, expiry and all.
+  const tmp = tempKey(ctx, token, key);
   try {
     await client.del(tmp);
     for (let i = 0; i < v.fields.length; i += PAGE) {
       await client.hset(tmp, Object.fromEntries(v.fields.slice(i, i + PAGE)));
     }
     if (ttl > 0) await client.expire(tmp, ttl);
-    await cas(client, key, MOVE_SWAP, [target, recordKey(ctx), tmp], [expected ?? '', key, d]);
+    await cas(client, key, MOVE_SWAP, [target, recordKey(ctx), tmp, lockKey(ctx)], [expected ?? '', key, d, token]);
   } finally {
     await client.del(tmp).catch(() => {});
+  }
+}
+
+/**
+ * Checks, before anything is read for real, that Redis digests a value as
+ * this file does (the scripts depend on it), on one key every environment in
+ * use has. Refuses on any difference or script failure, writing nothing.
+ */
+async function probe(client: MoveClient, oldKeys: Set<string>): Promise<void> {
+  const key = EXPECTED.find((k) => oldKeys.has(k));
+  if (!key) return;
+  const full = envPrefix() + key;
+  let theirs: unknown;
+  try {
+    theirs = await client.eval(MOVE_PROBE, [full], []);
+  } catch (err) {
+    throw new MoveRefused(`This database could not run the move's script (${err instanceof Error ? err.message.split(', command was')[0].slice(0, 160) : 'error'}). Nothing was written.`);
+  }
+  const ours = digest(await readValue(client, full)) ?? '';
+  if (theirs !== ours) {
+    throw new MoveRefused(`This database digests ${key} differently from this tool, so its checks could not be trusted. Nothing was written.`);
   }
 }
 
@@ -343,15 +397,17 @@ export async function moveData(client: MoveClient, ctx: Ctx, opts: MoveOptions):
     throw new MoveRefused('Another run is in progress for this container. Wait for it to finish, then run again.');
   }
   try {
-    return await plannedMove(client, ctx, opts);
+    return await plannedMove(client, { ctx, token }, opts);
   } finally {
     if (opts.run) await client.eval(MOVE_RELEASE, [lockKey(ctx)], [token]).catch(() => {}); // else it expires
   }
 }
 
-async function plannedMove(client: MoveClient, ctx: Ctx, opts: MoveOptions): Promise<MoveReport> {
+async function plannedMove(client: MoveClient, run: Run, opts: MoveOptions): Promise<MoveReport> {
+  const { ctx } = run;
   const prefix = envPrefix();
   const { keys, oldKeys } = await keysToJudge(client, ctx);
+  await probe(client, oldKeys);
   const plan: Planned[] = [];
   for (const key of keys) {
     const p = await judgeKey(client, ctx, key);
@@ -385,7 +441,7 @@ async function plannedMove(client: MoveClient, ctx: Ctx, opts: MoveOptions): Pro
     refusals.push(`None of ${EXPECTED.join(', ')} exists under "${prefix}". Check .env.local and REDIS_PREFIX point at the environment you mean; pass --allow-empty if it really holds no data.`);
   }
   if (report.deleted > MAX_DELETES) {
-    refusals.push(`${report.deleted} old keys were deleted since they were copied; more than ${MAX_DELETES} at once looks like the old keys being retired, not the old release deleting a few. Nothing is deleted from the container this way.`);
+    refusals.push(`${report.deleted} old keys were deleted since they were copied; more than ${MAX_DELETES} at once looks like the old keys being retired, not the old release deleting a few, so nothing is deleted from the container this way. If they should go, delete them by hand (see the README): ${entries.filter((e) => e.action === 'delete').map((e) => e.key).join(', ')}.`);
   } else if (report.deleted > 0 && !opts.propagateDeletes) {
     refusals.push(`${report.deleted} old key(s) were deleted since they were copied (${entries.filter((e) => e.action === 'delete').map((e) => e.key).join(', ')}). Check they should be, then pass --propagate-deletes to delete the container's copies too.`);
   }
@@ -412,9 +468,9 @@ async function plannedMove(client: MoveClient, ctx: Ctx, opts: MoveOptions): Pro
       if (p.digest === null) await client.hdel(recordKey(ctx), p.key);
       else if ((await client.hget(recordKey(ctx), p.key)) !== p.digest) await client.hset(recordKey(ctx), { [p.key]: p.digest });
     } else if (p.action === 'delete') {
-      await cas(client, p.key, MOVE_DELETE, [kc(ctx, p.key), recordKey(ctx)], [p.target!, p.key]);
+      await cas(client, p.key, MOVE_DELETE, [kc(ctx, p.key), recordKey(ctx), lockKey(ctx)], [p.target!, p.key, run.token]);
     } else {
-      await writeValue(client, ctx, p.key, p.source as Exclude<Value, null>, p.target, p.digest!, await client.ttl(prefix + p.key));
+      await writeValue(client, run, p.key, p.source as Exclude<Value, null>, p.target, p.digest!, await client.ttl(prefix + p.key));
     }
   }
   return report;
