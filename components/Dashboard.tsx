@@ -1226,10 +1226,13 @@ export default function Dashboard() {
                   {error && <div className="error">{error}</div>}
                 </div>
 
-                {/* Only renders when there is a reconnected account to link or
-                    a link to undo. A change reloads live, since links alter
+                {/* Behind Manage accounts, like the other account upkeep, so
+                    it doesn't take space in the everyday view; mounting only
+                    then also skips its history read until it is wanted. Within
+                    it, renders only when there is a reconnected account to link
+                    or a link to undo. A change reloads live, since links alter
                     hidden accounts and per-account history. */}
-                <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />
+                {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and
