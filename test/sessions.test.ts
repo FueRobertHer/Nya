@@ -63,7 +63,10 @@ describe('tokens', () => {
     const claims = JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/')));
     const forged = btoa(JSON.stringify({ ...claims, epoch: 99 })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     expect(await verifySessionToken(`${v}.${forged}.${sig}`)).toBeNull();
-    expect(await verifySessionToken(`${v}.${body}.${sig.slice(0, -1)}0`)).toBeNull();
+    // Change the last character to one it is not (a fixed "0" would be no
+    // change at all one time in sixteen).
+    const flipped = sig.slice(0, -1) + (sig.endsWith('0') ? '1' : '0');
+    expect(await verifySessionToken(`${v}.${body}.${flipped}`)).toBeNull();
     expect(await verifySessionToken(`${v}.${body}`)).toBeNull();
     expect(await verifySessionToken('')).toBeNull();
     expect(await verifySessionToken(null)).toBeNull();
