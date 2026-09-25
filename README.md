@@ -688,6 +688,7 @@ would split your data between two):
 2. In Vercel, set `CONTAINER_ID` to that id (Production) and redeploy.
 3. Check: an empty POST to the same route lists the containers and should
    say `"container_id_status": "ok"`.
+4. Remove `OPS_ENABLED` and redeploy.
 
 Preview has its own container (a separate prefix, a separate registry): do
 the same there if you use preview.

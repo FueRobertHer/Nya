@@ -54,6 +54,28 @@ export function asContainerId(s: string): ContainerId {
   return s;
 }
 
+const SCOPED = /^c:([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):([\s\S]+)$/;
+
+/**
+ * A key (relative to the environment prefix) split into its container and the
+ * key inside it: "c:<id>:goals" gives the id and "goals"; "goals" gives null
+ * and "goals". Everything that decides something by a key's name (what an
+ * export leaves out, how the re-encryption pass reads a key) must look at the
+ * inner key, or it would treat a container's cache as data, or miss it.
+ */
+export function splitScoped(key: string): { container: ContainerId | null; key: string } {
+  const m = SCOPED.exec(key);
+  return m ? { container: m[1] as ContainerId, key: m[2] } : { container: null, key };
+}
+
+/** Stores that belong to the whole environment (see kEnv in lib/storage.ts),
+ *  so never appear inside a container. */
+export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:'] as const;
+
+export function isEnvWide(key: string): boolean {
+  return ENV_WIDE_PREFIXES.some((p) => key === p || (p.endsWith(':') && key.startsWith(p)));
+}
+
 export function registryKey(): string {
   return kEnv('containers');
 }

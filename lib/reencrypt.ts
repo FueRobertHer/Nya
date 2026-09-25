@@ -43,6 +43,7 @@
 
 import { createHash } from 'node:crypto';
 import { rawRedis, k } from './storage';
+import { splitScoped, isEnvWide } from './containers';
 import {
   activeKeyForReencryption,
   activeKeyName,
@@ -109,9 +110,14 @@ const PREFIXES: [string, Kind][] = [
 /** How a key (without the environment prefix) is stored, or null if it is not
  *  on the list. */
 export function classify(key: string): Kind | null {
-  // A key inside a container is stored like the same key outside one.
-  const scoped = /^c:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:(.+)$/.exec(key);
-  if (scoped) return scoped[1].startsWith('c:') ? null : classify(scoped[1]);
+  // A key inside a container is stored like the same key outside one, except
+  // that environment-wide stores never belong in one, and containers never
+  // nest: either means a key was built wrongly, so it is reported.
+  const scoped = splitScoped(key);
+  if (scoped.container) {
+    if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
+    return classify(scoped.key);
+  }
   if (Object.hasOwn(EXACT, key)) return EXACT[key];
   for (const [prefix, kind] of PREFIXES) if (key.startsWith(prefix)) return kind;
   return null;

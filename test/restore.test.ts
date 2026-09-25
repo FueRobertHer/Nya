@@ -133,6 +133,11 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
   for (const [name, record, pattern] of [
     ['a repeated key', null, /repeats/],
     ['an excluded key', { key: 'cache:net-worth', type: 'string', ttl: null, value: 'x' }, /never include/],
+    [
+      "an excluded key inside a container",
+      { key: 'c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:cache:net-worth', type: 'string', ttl: null, value: 'x' },
+      /never include/,
+    ],
     ['an empty hash', { key: 'h', type: 'hash', ttl: null, value: {} }, /empty hash/],
     ['an unknown type', { key: 'l', type: 'list', ttl: null, value: [] }, /unknown type/],
     ['a negative ttl', { key: 's', type: 'string', ttl: -1, value: 'x' }, /ttl/],

@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { k } from './storage';
 import {
   byCodePoint,
-  EXCLUDED_PREFIXES,
+  isExcluded,
   EXPORT_FORMAT_VERSION,
   SCHEMA_ERA,
   exportLines,
@@ -88,7 +88,7 @@ function checkRecord(raw: unknown, n: number): ExportRecord {
   const { key, type, ttl, value } = raw;
 
   if (typeof key !== 'string' || key.length === 0) refuse(`Line ${n} has no key.`);
-  if (EXCLUDED_PREFIXES.some((p) => key.startsWith(p))) {
+  if (isExcluded(key)) {
     refuse(`Line ${n} holds ${key}, which exports never include.`);
   }
   if (ttl !== null && !(Number.isInteger(ttl) && (ttl as number) > 0)) {

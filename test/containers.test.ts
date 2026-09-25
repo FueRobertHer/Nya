@@ -15,7 +15,10 @@ const {
   registryKey,
   ContainerError,
   CREATE_FIRST,
+  splitScoped,
+  isEnvWide,
 } = await import('@/lib/containers');
+const { isExcluded } = await import('@/lib/export');
 const route = await import('@/app/api/ops/containers/route');
 
 const saved = { ...process.env };
@@ -56,6 +59,32 @@ console.log(JSON.stringify([kc({ container: ${JSON.stringify(id)} }, 'goals'), k
     });
     expect(out.exitCode).toBe(0);
     expect(JSON.parse(out.stdout.toString())).toEqual([`unit:c:${id}:goals`, 'unit:goals', 'unit:containers']);
+  });
+});
+
+describe('keys inside a container', () => {
+  const id = asContainerId('0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b');
+
+  test('split into the container and the key inside it', () => {
+    expect(splitScoped(`c:${id}:goals`)).toEqual({ container: id, key: 'goals' });
+    expect(splitScoped(`c:${id}:history:accounts`)).toEqual({ container: id, key: 'history:accounts' });
+    expect(splitScoped('goals')).toEqual({ container: null, key: 'goals' });
+    expect(splitScoped('c:not-an-id:goals')).toEqual({ container: null, key: 'c:not-an-id:goals' });
+    expect(splitScoped(`c:${id}:`)).toEqual({ container: null, key: `c:${id}:` });
+  });
+
+  test('a container cache or lock is left out of exports like any other', () => {
+    for (const key of ['cache:net-worth', 'ratelimit:login:x', 'invtxns-lock:item']) {
+      expect(isExcluded(key)).toBe(true);
+      expect(isExcluded(`c:${id}:${key}`)).toBe(true);
+    }
+    expect(isExcluded(`c:${id}:goals`)).toBe(false);
+    expect(isExcluded('goals')).toBe(false);
+  });
+
+  test('the environment-wide stores are named', () => {
+    for (const key of ['crypto:keys', 'containers', 'ratelimit:login:x']) expect(isEnvWide(key)).toBe(true);
+    for (const key of ['goals', 'containers:x', 'cache:net-worth', 'crypto']) expect(isEnvWide(key)).toBe(false);
   });
 });
 

@@ -93,7 +93,16 @@ describe('the list of keys', () => {
     const opaque: string[] = [];
     for (const file of files) {
       const src = readFileSync(file, 'utf8');
-      // kc(ctx, 'name'): the name is the second argument.
+      // kc(ctx, 'name'): the name is the second argument. Every "kc(" in the
+      // source must be one this reads, or it is reported: a call written some
+      // other way (kc(await resolveCtx(), ...)) would otherwise go unchecked.
+      const readKc = new Set<number>();
+      for (const m of src.matchAll(/\bkc\(\s*[A-Za-z_.]+\s*,\s*([^)]*?)\s*\)/g)) readKc.add(m.index!);
+      for (const m of src.matchAll(/\bkc\(/g)) {
+        if (readKc.has(m.index!) || /function kc\($/.test(src.slice(0, m.index! + 3))) continue;
+        if (src.startsWith('kc()', m.index!)) continue; // "kc()" in a comment
+        opaque.push(`${file.slice(root.length + 1)}: ${src.slice(m.index!, m.index! + 40).split('\n')[0]}`);
+      }
       for (const m of src.matchAll(/\bkc\(\s*[A-Za-z_.]+\s*,\s*([^)]*?)\s*\)/g)) {
         const quoted = /^(['"`])([^'"`$]*)\1$/.exec(m[1]);
         const templated = /^`([^`$]*)\$\{/.exec(m[1]);
@@ -135,6 +144,11 @@ describe('the list of keys', () => {
     expect(classify(`${c}brand-new`)).toBeNull();
     expect(classify(`${c}${c}goals`)).toBeNull(); // never nested
     expect(classify('c:not-a-uuid:goals')).toBeNull();
+    // Environment-wide stores never belong inside a container.
+    for (const envWide of ['crypto:keys', 'crypto:active', 'containers', 'ratelimit:login:1.2.3.4']) {
+      expect(classify(envWide)).toBe('plain');
+      expect(classify(`${c}${envWide}`)).toBeNull();
+    }
     expect(classify('something-new')).toBeNull();
     expect(classify('__proto__')).toBeNull();
   });

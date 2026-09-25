@@ -52,6 +52,7 @@
 
 import { createHash } from 'node:crypto';
 import { k } from './storage';
+import { splitScoped } from './containers';
 
 export const EXPORT_FORMAT_VERSION = 1;
 
@@ -110,8 +111,12 @@ export type ExportClient = {
   ttl(key: string): Promise<number>;
 };
 
-function isExcluded(relative: string): boolean {
-  return EXCLUDED_PREFIXES.some((p) => relative.startsWith(p));
+/** Whether a key (relative to the environment prefix) is left out, judged by
+ *  the key inside its container if it is in one: a container's cache is as
+ *  disposable as any other. Restore refuses the same keys. */
+export function isExcluded(relative: string): boolean {
+  const { key } = splitScoped(relative);
+  return EXCLUDED_PREFIXES.some((p) => key.startsWith(p));
 }
 
 /**
