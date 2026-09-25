@@ -156,7 +156,8 @@ return 1`;
 
 /** Swaps a hash built aside into place, the same way, and only if the hash
  *  built aside is exactly what it should be. KEYS: target, record, temporary,
- *  lock. ARGV: expected, field, new digest, token. */
+ *  lock. ARGV: expected, field, new digest, token, and '1' to drop the
+ *  temporary hash's own expiry (the copy has none). */
 export const MOVE_SWAP = `-- nya:move-swap${DIGEST_LUA}
 if redis.call('GET', KEYS[4]) ~= ARGV[4] then return -1 end
 local now = digest(KEYS[1])
@@ -164,7 +165,19 @@ if now == ARGV[3] and redis.call('HGET', KEYS[2], ARGV[2]) == ARGV[3] then retur
 if now ~= ARGV[1] then return 0 end
 if digest(KEYS[3]) ~= ARGV[3] then return -2 end
 redis.call('RENAME', KEYS[3], KEYS[1])
+if ARGV[5] == '1' then redis.call('PERSIST', KEYS[1]) end
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
+return 1`;
+
+/** Settles a conflict the operator reconciled by hand: records the old key's
+ *  current digest (or forgets it, for an old key that is gone), so the
+ *  container's value is judged newer and kept. Only if neither side changed
+ *  since the check. KEYS: old key, target, record, lock. ARGV: old digest
+ *  ('' for none), target digest ('' for none), field, token. */
+export const MOVE_RESOLVE = `-- nya:move-resolve${DIGEST_LUA}
+if redis.call('GET', KEYS[4]) ~= ARGV[4] then return -1 end
+if digest(KEYS[1]) ~= ARGV[1] or digest(KEYS[2]) ~= ARGV[2] then return 0 end
+if ARGV[1] == '' then redis.call('HDEL', KEYS[3], ARGV[3]) else redis.call('HSET', KEYS[3], ARGV[3], ARGV[1]) end
 return 1`;
 
 /** Deletes a key and its record, the same way. KEYS: target, record, lock.
@@ -267,7 +280,7 @@ async function cas(client: MoveClient, key: string, script: string, keys: string
     throw new MoveRefused(`This run no longer holds its lock (it ran longer than ${MOVE_LOCK_SECONDS / 60} minutes, and another run may have started): stopped before ${key}, nothing more was written. Run again.`);
   }
   if (answer === -2) {
-    throw new MoveRefused(`${key} was not built in full before being swapped in (another run using the same key?): nothing was written for it. Run again.`);
+    throw new MoveRefused(`${key} was built aside but did not hold what was planned when it was to be swapped in (it expired, something else wrote to it, or this database digests it differently): nothing was written for it. Run again; if it happens again, stop and look.`);
   }
   throw new MoveRefused(`${key} changed in the container while this run was going: nothing more was written. Run again to see what changed.`);
 }
@@ -290,8 +303,10 @@ async function writeValue(client: MoveClient, run: Run, key: string, v: Exclude<
     for (let i = 0; i < v.fields.length; i += PAGE) {
       await client.hset(tmp, Object.fromEntries(v.fields.slice(i, i + PAGE)));
     }
-    if (ttl > 0) await client.expire(tmp, ttl);
-    await cas(client, key, MOVE_SWAP, [target, recordKey(ctx), tmp, lockKey(ctx)], [expected ?? '', key, d, token]);
+    // Always an expiry, so a run killed before the swap leaves nothing for
+    // long; the swap drops it when the copy should have none.
+    await client.expire(tmp, ttl > 0 ? ttl : MOVE_LOCK_SECONDS);
+    await cas(client, key, MOVE_SWAP, [target, recordKey(ctx), tmp, lockKey(ctx)], [expected ?? '', key, d, token, ttl > 0 ? '0' : '1']);
   } finally {
     await client.del(tmp).catch(() => {});
   }
@@ -303,18 +318,27 @@ async function writeValue(client: MoveClient, run: Run, key: string, v: Exclude<
  * use has. Refuses on any difference or script failure, writing nothing.
  */
 async function probe(client: MoveClient, oldKeys: Set<string>): Promise<void> {
-  const key = EXPECTED.find((k) => oldKeys.has(k));
-  if (!key) return;
-  const full = envPrefix() + key;
-  let theirs: unknown;
-  try {
-    theirs = await client.eval(MOVE_PROBE, [full], []);
-  } catch (err) {
-    throw new MoveRefused(`This database could not run the move's script (${err instanceof Error ? err.message.split(', command was')[0].slice(0, 160) : 'error'}). Nothing was written.`);
+  const hash = EXPECTED.find((k) => oldKeys.has(k));
+  let str: string | undefined;
+  for (const k of MOVED_KEYS) {
+    if (oldKeys.has(k) && (await client.type(envPrefix() + k)) === 'string') {
+      str = k;
+      break;
+    }
   }
-  const ours = digest(await readValue(client, full)) ?? '';
-  if (theirs !== ours) {
-    throw new MoveRefused(`This database digests ${key} differently from this tool, so its checks could not be trusted. Nothing was written.`);
+  for (const key of [hash, str]) {
+    if (!key) continue;
+    const full = envPrefix() + key;
+    let theirs: unknown;
+    try {
+      theirs = await client.eval(MOVE_PROBE, [full], []);
+    } catch (err) {
+      throw new MoveRefused(`This database could not run the move's script (${err instanceof Error ? err.message.split(', command was')[0].slice(0, 160) : 'error'}). Nothing was written.`);
+    }
+    const ours = digest(await readValue(client, full)) ?? '';
+    if (theirs !== ours) {
+      throw new MoveRefused(`This database digests ${key} differently from this tool, so its checks could not be trusted. Nothing was written.`);
+    }
   }
 }
 
@@ -392,14 +416,21 @@ export async function moveData(client: MoveClient, ctx: Ctx, opts: MoveOptions):
   if (retired !== null && retired !== undefined) {
     throw new MoveRefused(`This container was retired from the move on ${retired}: the old keys are being or have been deleted, so there is nothing left to move. Nothing was written.`);
   }
+  if (!opts.run) return plannedMove(client, { ctx, token: '' }, opts);
+  return withLock(client, ctx, (token) => plannedMove(client, { ctx, token }, opts));
+}
+
+/** Runs fn holding the container's move lock, which only its holder
+ *  releases (a holder that dies frees it when it expires). */
+async function withLock<T>(client: MoveClient, ctx: Ctx, fn: (token: string) => Promise<T>): Promise<T> {
   const token = crypto.randomUUID();
-  if (opts.run && (await client.set(lockKey(ctx), token, { nx: true, ex: MOVE_LOCK_SECONDS })) === null) {
-    throw new MoveRefused('Another run is in progress for this container. Wait for it to finish, then run again.');
+  if ((await client.set(lockKey(ctx), token, { nx: true, ex: MOVE_LOCK_SECONDS })) === null) {
+    throw new MoveRefused(`Another run is in progress for this container. Wait for it to finish, then run again. If no run is going (one was killed), the lock frees itself within ${MOVE_LOCK_SECONDS / 60} minutes, or delete ${lockKey(ctx)} by hand.`);
   }
   try {
-    return await plannedMove(client, { ctx, token }, opts);
+    return await fn(token);
   } finally {
-    if (opts.run) await client.eval(MOVE_RELEASE, [lockKey(ctx)], [token]).catch(() => {}); // else it expires
+    await client.eval(MOVE_RELEASE, [lockKey(ctx)], [token]).catch(() => {}); // else it expires
   }
 }
 
@@ -483,14 +514,38 @@ async function plannedMove(client: MoveClient, run: Run, opts: MoveOptions): Pro
  * written to the old keys is left behind.
  */
 export async function retireMove(client: MoveClient, ctx: Ctx, now: Date = new Date()): Promise<void> {
-  const report = await moveData(client, ctx, { run: false });
-  const pending = report.copied + report.refreshed + report.deleted + report.conflicts.length;
-  if (pending > 0) {
-    throw new MoveRefused(
-      `Not retired: the move still has ${report.copied} to copy, ${report.refreshed} to refresh, ${report.deleted} to delete and ${report.conflicts.length} conflict(s). Finish it first, so nothing written to the old keys is left behind.`
-    );
-  }
-  await client.set(retiredKey(ctx), now.toISOString());
+  // Holding the lock: no run can be going while it is judged and marked.
+  await withLock(client, ctx, async () => {
+    const report = await moveData(client, ctx, { run: false });
+    const pending = report.copied + report.refreshed + report.deleted + report.conflicts.length;
+    if (pending > 0) {
+      throw new MoveRefused(
+        `Not retired: the move still has ${report.copied} to copy, ${report.refreshed} to refresh, ${report.deleted} to delete and ${report.conflicts.length} conflict(s). Finish it first, so nothing written to the old keys is left behind.`
+      );
+    }
+    await client.set(retiredKey(ctx), now.toISOString());
+  });
+}
+
+/**
+ * Settles one conflict after the operator reconciled it by hand: the value now
+ * in the container is the one to keep (put everything worth keeping from the
+ * old key into it first). Records the old key as seen, so the key is judged
+ * newer in the container and kept, and a later change to the old key is a
+ * conflict again. Refuses a key that is not in conflict, and writes nothing
+ * if either side changes meanwhile.
+ */
+export async function resolveConflict(client: MoveClient, ctx: Ctx, key: string): Promise<MoveEntry> {
+  if (!isMoved(key)) throw new MoveRefused(`${key} is not a key the move copies.`);
+  const retired = await client.get(retiredKey(ctx));
+  if (retired !== null && retired !== undefined) throw new MoveRefused(`This container was retired from the move on ${retired}. Nothing was written.`);
+  return withLock(client, ctx, async (token) => {
+    const p = await judgeKey(client, ctx, key);
+    if (p.action !== 'conflict') throw new MoveRefused(`${key} is not in conflict (${p.action}). Nothing was written.`);
+    await cas(client, key, MOVE_RESOLVE, [envPrefix() + key, kc(ctx, key), recordKey(ctx), lockKey(ctx)], [p.digest ?? '', p.target ?? '', key, token]);
+    const after = await judgeKey(client, ctx, key);
+    return { key, action: after.action, ...(after.reason ? { reason: after.reason } : {}) };
+  });
 }
 
 export function checkMoveTarget(

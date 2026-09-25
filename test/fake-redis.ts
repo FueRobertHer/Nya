@@ -351,7 +351,15 @@ export class FakeRedis {
       if (now !== args[0]) return 0;
       if (digestOf(keys[2]) !== args[2]) return -2;
       this.renameNow(keys[2], keys[0]);
+      if (args[4] === '1') this.ttls.delete(keys[0]);
       this.hash(keys[1]).set(args[1], args[2]);
+      return 1;
+    }
+    if (name === '-- nya:move-resolve') {
+      if (this.strings.get(keys[3]) !== args[3]) return -1;
+      if (digestOf(keys[0]) !== args[0] || digestOf(keys[1]) !== args[1]) return 0;
+      if (args[0] === '') this.hdelNow(keys[2], [args[2]]);
+      else this.hash(keys[2]).set(args[2], args[0]);
       return 1;
     }
     if (name === '-- nya:move-delete') {

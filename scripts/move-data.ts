@@ -27,10 +27,12 @@
 //   --retire               before deleting the old keys: mark the container
 //                          so no run is ever made again (only once a report
 //                          shows nothing left to do)
+//   --resolve <name>       settle a conflict reconciled by hand: keep what the
+//                          container holds now (see the README)
 
 import { rawRedis } from '@/lib/storage';
 import { deploymentContainer } from '@/lib/sessions';
-import { MoveRefused, checkMoveTarget, moveData, retireMove, type MoveClient } from '@/lib/move';
+import { MoveRefused, checkMoveTarget, moveData, retireMove, resolveConflict, type MoveClient } from '@/lib/move';
 
 export type MoveArgs = {
   target?: string;
@@ -39,6 +41,7 @@ export type MoveArgs = {
   allowEmpty: boolean;
   propagateDeletes: boolean;
   retire: boolean;
+  resolve?: string;
 };
 
 export function parseArgs(argv: string[]): MoveArgs {
@@ -51,6 +54,10 @@ export function parseArgs(argv: string[]): MoveArgs {
     else if (a === '--allow-empty') args.allowEmpty = true;
     else if (a === '--propagate-deletes') args.propagateDeletes = true;
     else if (a === '--retire') args.retire = true;
+    else if (a === '--resolve') {
+      args.resolve = argv[++i];
+      if (!args.resolve) throw new MoveRefused('--resolve needs the key name.');
+    }
     else throw new MoveRefused(`Unknown argument ${JSON.stringify(a)}.`);
   }
   return args;
@@ -63,8 +70,15 @@ export async function main(argv: string[], client: MoveClient): Promise<void> {
   if (dep.kind !== 'container') {
     throw new MoveRefused(dep.kind === 'none' ? 'No container exists yet. Create one first (see "Containers" in the README).' : dep.reason);
   }
+  if ((args.retire ? 1 : 0) + (args.run ? 1 : 0) + (args.resolve ? 1 : 0) > 1) {
+    throw new MoveRefused('--run, --retire and --resolve each go alone.');
+  }
+  if (args.resolve) {
+    const e = await resolveConflict(client, { container: dep.container }, args.resolve);
+    console.log(`${e.key} settled: now ${e.action}${e.reason ? ` (${e.reason})` : ''}. What the container holds is kept. Report again before the next run.`);
+    return;
+  }
   if (args.retire) {
-    if (args.run) throw new MoveRefused('--retire and --run do not go together.');
     await retireMove(client, { container: dep.container });
     console.log(`Container ${dep.container} retired from the move: no run will be made again. The old keys can now be deleted.`);
     return;

@@ -798,9 +798,17 @@ before merging.
    report again (step 3). Anything written to the old keys since step 5
    shows as a copy or refresh: run step 4 again to bring it across.
 7. Report once more: it should show nothing to copy, refresh or delete, and
-   no conflicts. A conflict means both releases wrote the same key; merge it
-   by hand before going on (for a date-keyed history hash, add the old key's
-   missing dates to the container's).
+   no conflicts. A conflict means both releases wrote the same key, and it
+   blocks every run until settled. Merge it by hand **into the container's
+   key** (for a date-keyed history hash, `HSET` the old key's missing dates
+   into `<prefix>:c:<id>:<name>`; never delete the container's own), then
+   settle it with `--resolve <name>` in place of `--run`. That records the
+   old key as seen, so the container's value is kept, and a later write to
+   the old key shows as a conflict again. Report again after.
+
+If a run is killed, its lock frees itself within the hour. When you are sure
+no run is going, delete `<prefix>:c:<id>:move:lock` by hand instead of
+waiting (any hash it was building expires on its own).
 8. Now open the app. Check the dashboard, the history chart's left edge, the
    transaction counts, that no institution re-downloads its whole history,
    and `GET /api/storage-usage`. Resume the ingest script.

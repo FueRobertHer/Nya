@@ -7,7 +7,7 @@ import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, TEST_CONTAINER, regi
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { moveData, retireMove, digest, MoveRefused, isMoved, MOVED_KEYS, MOVED_PREFIXES, NOT_MOVED_PREFIXES, checkMoveTarget, MOVE_SET, MOVE_SWAP, MOVE_DELETE, MOVE_PROBE } = await import('@/lib/move');
+const { moveData, retireMove, digest, MoveRefused, isMoved, MOVED_KEYS, MOVED_PREFIXES, NOT_MOVED_PREFIXES, checkMoveTarget, MOVE_SET, MOVE_SWAP, MOVE_DELETE, MOVE_PROBE, MOVE_RESOLVE, resolveConflict } = await import('@/lib/move');
 const script = await import('../scripts/move-data');
 const { forgetEpochs } = await import('@/lib/sessions');
 
@@ -384,6 +384,44 @@ describe('running it again', () => {
     expect(again.conflicts).toEqual([]);
   });
 
+  test('the probe checks a string as well as a hash', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    const evalOrig = fake.eval.bind(fake);
+    const probed: string[] = [];
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:move-probe')) {
+        probed.push(keys[0]);
+        if (keys[0] === testKey('budgets')) return 'something else';
+      }
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      await expect(run()).rejects.toThrow('digests budgets differently');
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(probed).toEqual([testKey('plaid:items'), testKey('budgets')]);
+    expect(await fake.get<string>(ctxKey('budgets'))).toBeNull();
+  });
+
+  test('a hash being built always expires, and the copy keeps the old key\'s expiry or none', async () => {
+    await fake.hset(testKey('hidden:accounts'), { a: '1' });
+    const expire = fake.expire.bind(fake);
+    const seen: number[] = [];
+    fake.expire = (async (key: string, seconds: number) => {
+      if (key.includes(':move:tmp:')) seen.push(seconds);
+      return expire(key, seconds);
+    }) as typeof fake.expire;
+    try {
+      await run();
+    } finally {
+      fake.expire = expire;
+    }
+    expect(seen.every((n) => n === 3600)).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(await fake.ttl(ctxKey('hidden:accounts'))).toBe(-1);
+  });
+
   test('a database that digests differently, or cannot run the script, is refused before any read', async () => {
     await fake.set(testKey('budgets'), 'b');
     const evalOrig = fake.eval.bind(fake);
@@ -436,6 +474,17 @@ describe('an environment that looks wrong', () => {
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
   });
 
+  test('retiring waits for a run in progress', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await run();
+    await fake.set(ctxKey('move:lock'), 'a run', { nx: true, ex: 3600 });
+    await expect(retireMove(client, ctx)).rejects.toThrow('Another run is in progress');
+    expect(await fake.get<string>(ctxKey('move:retired'))).toBeNull();
+    await fake.del(ctxKey('move:lock'));
+    await retireMove(client, ctx);
+    expect(await fake.get<string>(ctxKey('move:lock'))).toBeNull();
+  });
+
   test('once the old keys are gone, a run is refused rather than deleting the copies', async () => {
     await fake.set(testKey('budgets'), 'b');
     await fake.set(testKey('txns:item_1'), 'history no bank will serve again');
@@ -456,6 +505,83 @@ describe('an environment that looks wrong', () => {
     await expect(run()).rejects.toThrow('retired from the move on 2026-11-01');
     await expect(plan()).rejects.toThrow('retired');
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
+  });
+});
+
+describe('settling a conflict by hand', () => {
+  const HIST = 'history:net-worth';
+  test('merged into the container and settled, the key is kept, and runs go on', async () => {
+    await fake.hset(testKey(HIST), { A: '1', B: '2' });
+    await fake.set(testKey('budgets'), 'b1');
+    await run();
+    await fake.hset(testKey(HIST), { X: 'old side' });
+    await fake.hset(ctxKey(HIST), { Y: 'new side' });
+    await fake.set(testKey('budgets'), 'b2'); // held back while the conflict stands
+    await expect(run()).rejects.toThrow(MoveRefused);
+    // Merged by hand into the container: still a conflict until settled.
+    await fake.hset(ctxKey(HIST), { X: 'old side' });
+    expect((await plan()).conflicts.map((c) => c.key)).toEqual([HIST]);
+    const e = await resolveConflict(client, ctx, HIST);
+    expect(e.action).toBe('kept');
+    const report = await run();
+    expect(report.conflicts).toEqual([]);
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('b2');
+    expect(await fake.hgetall<Record<string, string>>(ctxKey(HIST))).toEqual({ A: '1', B: '2', X: 'old side', Y: 'new side' });
+    // A later write to the old key is a conflict again, never copied over.
+    await fake.hset(testKey(HIST), { Z: 'later' });
+    expect((await plan()).conflicts.map((c) => c.key)).toEqual([HIST]);
+    expect(await fake.get<string>(ctxKey('move:lock'))).toBeNull();
+  });
+
+  test('an old key deleted while the container changed is settled too', async () => {
+    await fake.set(testKey('goals'), 'g1');
+    await run();
+    await fake.del(testKey('goals'));
+    await fake.set(ctxKey('goals'), 'g-new');
+    expect((await plan()).conflicts.map((c) => c.key)).toEqual(['goals']);
+    expect((await resolveConflict(client, ctx, 'goals')).action).toBe('kept');
+    expect(await fake.hget<string>(ctxKey('move:copied'), 'goals')).toBeNull();
+    await run();
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('g-new');
+  });
+
+  test('refuses a key not in conflict, one not moved, and a change made meanwhile', async () => {
+    await fake.set(testKey('budgets'), 'b1');
+    await run();
+    await expect(resolveConflict(client, ctx, 'budgets')).rejects.toThrow('not in conflict (up-to-date)');
+    await expect(resolveConflict(client, ctx, 'cache:net-worth')).rejects.toThrow('not a key the move copies');
+    await fake.set(testKey('budgets'), 'b2');
+    await fake.set(ctxKey('budgets'), 'c2');
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:move-resolve')) await fake.set(testKey('budgets'), 'b3');
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      await expect(resolveConflict(client, ctx, 'budgets')).rejects.toThrow('changed');
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(await fake.hget<string>(ctxKey('move:copied'), 'budgets')).toBe(digest({ kind: 'string', value: 'b1' }));
+  });
+
+  test('the command settles one key and goes alone', async () => {
+    await registerTestContainer(fake);
+    forgetEpochs();
+    await fake.set(testKey('goals'), 'g1');
+    await run();
+    await fake.set(testKey('goals'), 'g2');
+    await fake.set(ctxKey('goals'), 'c2');
+    await expect(script.main(['--target', 'test', '--resolve', 'goals', '--run'], client)).rejects.toThrow('each go alone');
+    const log = console.log;
+    console.log = () => {};
+    try {
+      await script.main(['--target', 'test', '--resolve', 'goals'], client);
+    } finally {
+      console.log = log;
+    }
+    expect((await plan()).conflicts).toEqual([]);
+    expect(() => script.parseArgs(['--resolve'])).toThrow('needs the key name');
   });
 });
 
@@ -600,6 +726,34 @@ describe.skipIf(!hasRedis && !process.env.CI)('the compare-and-set scripts, on a
     expect(await evalScript(MOVE_DELETE, ['s', 'rec', 'lock'], [digest({ kind: 'string', value: 'x' })!, 's', 'tok'])).toBe(-1);
     expect(await r.send('EXISTS', ['t', 'rec'])).toBe(0);
     expect(await r.send('GET', ['s'])).toBe('x');
+  });
+
+  test('a settled conflict records the old key as seen, only if neither side changed', async () => {
+    await r.send('SET', ['old', 'o']);
+    await r.send('SET', ['t', 'c']);
+    const o = digest({ kind: 'string', value: 'o' })!;
+    const c = digest({ kind: 'string', value: 'c' })!;
+    expect(await evalScript(MOVE_RESOLVE, ['old', 't', 'rec', 'lock'], [o, 'wrong', 'k', 'tok'])).toBe(0);
+    expect(await evalScript(MOVE_RESOLVE, ['old', 't', 'rec', 'lock'], [o, c, 'k', 'other'])).toBe(-1);
+    expect(await r.send('EXISTS', ['rec'])).toBe(0);
+    expect(await evalScript(MOVE_RESOLVE, ['old', 't', 'rec', 'lock'], [o, c, 'k', 'tok'])).toBe(1);
+    expect(await r.send('HGET', ['rec', 'k'])).toBe(o);
+    await r.send('DEL', ['old']);
+    expect(await evalScript(MOVE_RESOLVE, ['old', 't', 'rec', 'lock'], ['', c, 'k', 'tok'])).toBe(1);
+    expect(await r.send('EXISTS', ['rec'])).toBe(0);
+  });
+
+  test('a swapped-in hash drops the expiry it was built with when asked', async () => {
+    await r.send('HSET', ['tmp', 'a', '1']);
+    await r.send('EXPIRE', ['tmp', '3600']);
+    const d = digest({ kind: 'hash', fields: [['a', '1']] })!;
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], ['', 'k', d, 'tok', '1'])).toBe(1);
+    expect(Number(await r.send('TTL', ['t']))).toBe(-1);
+    await r.send('HSET', ['tmp', 'a', '1']);
+    await r.send('EXPIRE', ['tmp', '600']);
+    await r.send('DEL', ['t', 'rec']);
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp', 'lock'], ['', 'k', d, 'tok', '0'])).toBe(1);
+    expect(Number(await r.send('TTL', ['t']))).toBeGreaterThan(590);
   });
 
   test('a hash is swapped in whole, only over what was expected and only when complete', async () => {
