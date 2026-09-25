@@ -1432,6 +1432,8 @@ export default function Dashboard() {
                                       <AccountSparkline
                                         accountId={a.account_id}
                                         currency={a.currency}
+                                        investment={isInvestmentType(a.type)}
+                                        owed={isOwedType(a.type)}
                                         itemId={
                                           isInvestmentType(a.type) && !inst.manual
                                             ? inst.item_id
