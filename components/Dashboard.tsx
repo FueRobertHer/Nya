@@ -151,6 +151,9 @@ type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 // on open (and still shows something useful offline) while fresh data loads
 // in the background. Cleared on logout.
 const LOCAL_CACHE_KEY = 'nya:dashboard';
+/** Set once this page has been sent to the login page because its session
+ *  ended: nothing may save the snapshot again after it was cleared. */
+let signedOut = false;
 
 // Currency-aware money, so a EUR/GBP account isn't rendered with a "$".
 // Delegates to the shared formatter (which falls back to $ for a null or
@@ -429,6 +432,9 @@ export default function Dashboard() {
       }
 
       try {
+        // A response still in flight when the session ended must not bring
+        // back the snapshot the redirect just cleared.
+        if (signedOut) return;
         localStorage.setItem(
           LOCAL_CACHE_KEY,
           JSON.stringify({
@@ -487,6 +493,7 @@ export default function Dashboard() {
         if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
           // The saved snapshot goes too: a device signed out elsewhere (a
           // lost phone) must not keep painting balances, offline included.
+          signedOut = true;
           try {
             localStorage.removeItem(LOCAL_CACHE_KEY);
           } catch {

@@ -15,8 +15,10 @@
 // deployment's container cannot be worked out (misconfigured, restoring,
 // more than one). Tokens from before sessions named a container are checked
 // against this deployment's container too, so "sign out everywhere" ends
-// them. Only in an environment with no container at all, and no CONTAINER_ID,
-// is an old token accepted unchecked: nothing could have revoked it.
+// them. Signing out everywhere also sets an environment-wide cutoff, and an
+// old token issued before it is refused whatever the container: a restore
+// that replaces the registry (and so the per-container epochs) cannot bring
+// those back. The cutoff, like the epoch, is never exported or restored.
 //
 // Checked on every gated request (proxy.ts). Each instance reuses what it read
 // for CHECK_REUSE_MS, and the proxy and the route handlers keep separate
@@ -26,7 +28,7 @@
 // turn an outage into a logout. A stored epoch that is not a count is not an
 // outage but damage, and fails closed.
 
-import { redis, kc } from './storage';
+import { redis, kc, kEnv } from './storage';
 import { CONTAINER_ENV, ContainerError, isContainerId, listContainers, type ContainerId, type Ctx } from './containers';
 import type { Session } from './auth';
 
@@ -34,6 +36,12 @@ export const CHECK_REUSE_MS = 5 * 1000;
 
 function epochKey(ctx: Ctx): string {
   return kc(ctx, 'sessions:epoch');
+}
+
+/** Environment-wide: old-format tokens issued before this time (ms) are
+ *  refused, whatever container is current (see the header). */
+function legacyCutoffKey(): string {
+  return kEnv('sessions:legacy-cutoff');
 }
 
 /** The stored epoch is not a count: damage, never "no revocations". */
@@ -52,6 +60,7 @@ export type Deployment =
 
 const _epochs = new Map<string, { epoch: number; at: number }>();
 let _deployment: { env: string; value: Deployment; at: number } | null = null;
+let _cutoff: { value: number; at: number } | null = null;
 let _failedAt: number | null = null;
 let _loggedFailure = false;
 
@@ -59,6 +68,7 @@ let _loggedFailure = false;
 export function forgetEpochs(): void {
   _epochs.clear();
   _deployment = null;
+  _cutoff = null;
   _failedAt = null;
   _loggedFailure = false;
 }
@@ -87,12 +97,24 @@ export async function currentEpoch(
   return epoch;
 }
 
-/** End every session for the container, including the caller's. Returns the
- *  new epoch, for the session issued next. */
+/** End every session for the container, including the caller's, and every
+ *  old-format session in the environment. Returns the new epoch, for the
+ *  session issued next. */
 export async function revokeAllSessions(container: ContainerId, now: number = Date.now()): Promise<number> {
+  await redis().set(legacyCutoffKey(), String(now));
+  _cutoff = { value: now, at: now };
   const epoch = Number(await redis().incr(epochKey({ container })));
   _epochs.set(container, { epoch, at: now });
   return epoch;
+}
+
+async function legacyCutoff(now: number): Promise<number> {
+  if (_cutoff && recent(_cutoff.at, now)) return _cutoff.value;
+  const value = await redis().get(legacyCutoffKey());
+  const cutoff = value === null || value === undefined ? 0 : Number(value);
+  if (!Number.isFinite(cutoff) || cutoff < 0) throw new EpochDamagedError();
+  _cutoff = { value: cutoff, at: now };
+  return cutoff;
 }
 
 /** Which container this deployment's sessions belong to (see the header). */
@@ -137,6 +159,7 @@ export async function sessionCurrent(session: Session, now: number = Date.now())
   // again, so an outage does not make every request wait on retries.
   if (_failedAt !== null && recent(_failedAt, now)) return true;
   try {
+    if (session.legacy && session.issuedAt < (await legacyCutoff(now))) return false;
     const dep = await deploymentContainer(now);
     let ok: boolean;
     if (dep.kind === 'none') ok = session.legacy;
@@ -147,8 +170,10 @@ export async function sessionCurrent(session: Session, now: number = Date.now())
     _loggedFailure = false;
     return ok;
   } catch (err) {
-    if (err instanceof EpochDamagedError) {
-      console.error(err.message);
+    // Damage, not an outage: a stored value that cannot be read, or a
+    // registry entry that cannot be. Refused, never waved through.
+    if (err instanceof EpochDamagedError || err instanceof ContainerError) {
+      console.error(`Session refused: ${err.message}`);
       return false;
     }
     _failedAt = now;
@@ -161,23 +186,18 @@ export async function sessionCurrent(session: Session, now: number = Date.now())
 }
 
 /**
- * The container a new session is for. Exactly one active container is the
- * only case handled: none means the operator has not created it yet (never
- * created here: a login racing another would mint two), and more than one
- * needs a way to choose that does not exist yet. It must also be the one this
- * deployment's CONTAINER_ID names, or the session would reach other data.
- * Throws a ContainerError, written for the operator, otherwise.
+ * The container a new session is for: this deployment's (the same rule every
+ * session is checked by, deploymentContainer). None is created here: a login
+ * racing another would mint two. Throws a ContainerError, written for the
+ * operator, when there is none or it cannot be worked out.
  */
 export async function loginContainer(): Promise<ContainerId> {
-  const active = (await listContainers()).filter((c) => c.status === 'active');
-  if (active.length === 0) {
+  const dep = await deploymentContainer();
+  if (dep.kind === 'container') return dep.container;
+  if (dep.kind === 'none') {
     throw new ContainerError(
       'No container exists yet, so no one can log in. Create one: with OPS_ENABLED=1 and OPS_SECRET set, POST {"create":true} to /api/ops/containers (see "Containers" in the README).'
     );
   }
-  if (active.length > 1) throw new ContainerError('More than one container exists; choosing one at login is not supported yet.');
-  const id = active[0].id;
-  const configured = process.env[CONTAINER_ENV];
-  if (configured && configured !== id) throw new ContainerError(`${CONTAINER_ENV} does not name the active container.`);
-  return id;
+  throw new ContainerError(`No one can log in until this is fixed: ${dep.reason}`);
 }

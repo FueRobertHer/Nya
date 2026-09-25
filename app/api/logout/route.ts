@@ -16,7 +16,13 @@ export async function POST(req: NextRequest) {
 
   if (everywhere) {
     const session = await verifySessionToken(req.cookies.get(SESSION_COOKIE_NAME)?.value);
-    const container = session ? await sessionContainer(session) : null;
+    let container;
+    try {
+      container = session ? await sessionContainer(session) : null;
+    } catch (err) {
+      console.error('Sign out everywhere could not check the session:', err instanceof Error ? err.name : err);
+      return NextResponse.json({ error: 'The database is unavailable, so nothing was signed out. Try again shortly.' }, { status: 503 });
+    }
     if (!container) {
       return NextResponse.json({ error: 'This session names no container, so there is nothing to sign out of.' }, { status: 409 });
     }

@@ -216,10 +216,12 @@ describe('restoreArchive', () => {
 
     // Revoked since the archive was taken: a restore must not bring those back.
     await fake.set(epochKey, '5');
+    await fake.set(testKey('sessions:legacy-cutoff'), '1700000000000');
     const existing = await targetKeys(fake as any);
     expect(existing).not.toContain(epochKey);
     await restoreArchive(fake as any, archive, { overwrite: true, backedUp: existing });
     expect(await fake.get<string>(epochKey)).toBe('5');
+    expect(await fake.get<string>(testKey('sessions:legacy-cutoff'))).toBe('1700000000000');
   });
 
   test('overwrite replaces: strays and stale caches go, rate limits stay', async () => {

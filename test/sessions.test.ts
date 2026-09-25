@@ -221,6 +221,33 @@ describe("a session only counts in this deployment's container", () => {
     expect(await quiet(() => sessionCurrent(s))).toBe(false);
   });
 
+  test('a signed-out old-format session stays signed out after the container changes', async () => {
+    const legacy = (await verifySessionToken(await legacyToken(Date.now() - 1000)))!;
+    await revokeAllSessions(container);
+    // A restore replaced the registry, and a new container was created, as the
+    // restore's refusal message says to.
+    await fake.del(testKey('containers'));
+    forgetEpochs();
+    const next = await createFirstContainer();
+    process.env.CONTAINER_ID = next;
+    expect(await sessionCurrent(legacy)).toBe(false);
+
+    // Or no container at all: still refused.
+    fake.hashes.delete(testKey('containers'));
+    delete process.env.CONTAINER_ID;
+    forgetEpochs();
+    expect(await sessionCurrent(legacy)).toBe(false);
+
+    // An old-format token issued after the cutoff is not affected by it.
+    expect(await sessionCurrent((await verifySessionToken(await legacyToken(Date.now() + 1)))!)).toBe(true);
+  });
+
+  test('a damaged registry refuses sessions instead of waving them through', async () => {
+    const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
+    await fake.hset(testKey('containers'), { [crypto.randomUUID()]: '{"status":"bogus"}' });
+    expect(await quiet(() => sessionCurrent(s))).toBe(false);
+  });
+
   test('an outage is remembered briefly, and logged again after it recovers', async () => {
     const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
     const logged: string[] = [];
@@ -281,6 +308,20 @@ describe('login', () => {
     expect((await quiet(() => login())).status).toBe(503);
   });
 
+  test('with two active containers, logs in to the one CONTAINER_ID names', async () => {
+    const second = asContainerId(crypto.randomUUID());
+    await fake.hset(testKey('containers'), { [second]: JSON.stringify({ status: 'active', primary: false, created_at: 'x' }) });
+    process.env.CONTAINER_ID = second;
+    forgetEpochs();
+    const res = await login();
+    expect(res.status).toBe(200);
+    expect(await verifySessionToken(decodeURIComponent(cookieOf(res)!))).toMatchObject({ container: second });
+
+    delete process.env.CONTAINER_ID; // then there is no way to choose
+    forgetEpochs();
+    expect((await quiet(() => login())).status).toBe(503);
+  });
+
   test('a wrong password is still a 401', async () => {
     expect((await login('nope')).status).toBe(401);
   });
@@ -326,6 +367,15 @@ describe('sign out everywhere', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
     expect((await proxy(new NextRequest('http://localhost/api/budgets', { headers: { cookie: `${SESSION_COOKIE_NAME}=${phone}` } }))).status).toBe(401);
+  });
+
+  test('with the database down, says so rather than that it failed to sign out', async () => {
+    const laptop = await createSessionToken({ container, epoch: 0 });
+    forgetEpochs();
+    fake.failNext('hgetall');
+    const res = await quiet(() => logout(laptop, { everywhere: true }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toContain('database is unavailable');
   });
 
   test('a plain logout ends only this one', async () => {
