@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { setAccountHidden } from '@/lib/hidden';
 import { computeNetWorth } from '@/lib/networth';
-import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
+import { cacheCtx, clearCaches, readCache, CacheKey } from '@/lib/cache';
 import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
 import { findRememberedAccount } from '@/lib/last-known';
 import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds } from '@/lib/links';
@@ -27,6 +27,7 @@ export async function POST(req: Request) {
     if (!account_id) {
       return NextResponse.json({ error: 'Missing account id' }, { status: 400 });
     }
+    const ctx = await cacheCtx();
 
     // The account's type is stored alongside the id so that subtracting it from
     // past totals never depends on a live Plaid fetch succeeding. Look it up
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
       // there: the cache lives for 15 minutes, so an account linked or created
       // in that window is missing from it, and treating that as "no such
       // account" would make a freshly added account impossible to hide.
-      const cached = await readCache<{ institutions: any[] }>(NET_WORTH_CACHE_KEY);
+      const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
       type = findType(cached?.institutions ?? []);
 
       const live = (await computeNetWorth()).institutions;
@@ -118,7 +119,7 @@ export async function POST(req: Request) {
     // Both cached payloads embed the visibility decision (net worth excludes
     // hidden accounts, transactions omit their rows), so both must go or the
     // change wouldn't show for up to the 15-minute TTL.
-    await clearCaches();
+    await clearCaches(ctx);
 
     // The caller has to act on this: clearing the flag only makes a recompute
     // POSSIBLE, it doesn't trigger one. The client's automatic backfill fires

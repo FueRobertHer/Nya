@@ -693,6 +693,10 @@ would split your data between two):
 Preview has its own container (a separate prefix, a separate registry): do
 the same there if you use preview.
 
+The caches are the first thing kept inside the container. Without a usable
+`CONTAINER_ID` the app still works, just uncached (every load fetches live),
+and the log says `Caching is off: the container could not be resolved`.
+
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.
 

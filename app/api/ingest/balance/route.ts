@@ -4,7 +4,7 @@ import { isOwedType } from '@/lib/balance';
 import { rememberAccounts } from '@/lib/last-known';
 import { recordDirectory } from '@/lib/links';
 import { computeNetWorth, recordFetch } from '@/lib/networth';
-import { clearCaches } from '@/lib/cache';
+import { cacheCtx, clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
 
 // Machine-writable balance updates for manual accounts, so anything that can
@@ -117,7 +117,7 @@ export async function POST(req: Request) {
     const updated = results.filter((r) => r.status === 'updated').length;
 
     if (updated > 0) {
-      await clearCaches();
+      await clearCaches(await cacheCtx());
 
       // Record the snapshot here rather than waiting for the app to be opened
       // or for the 13:00 UTC cron. Without this a nightly script would write

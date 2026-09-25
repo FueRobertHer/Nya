@@ -11,7 +11,7 @@ import {
   suggestLinks,
   unlinkAccount,
 } from '@/lib/links';
-import { clearCaches } from '@/lib/cache';
+import { cacheCtx, clearCaches } from '@/lib/cache';
 
 // Linking an account's history across a reconnect (lib/links.ts).
 //
@@ -112,7 +112,7 @@ export async function POST(req: Request) {
         : { basis: 'picked', old_type, old_first: unclaimed?.first, old_last: unclaimed?.last, old_last_balance: unclaimed?.last_balance }
     );
     // Cached payloads carry per-account history and hidden subtraction.
-    await clearCaches();
+    await clearCaches(await cacheCtx());
     return NextResponse.json({ linked: true });
   } catch (err) {
     console.error(err);
@@ -126,7 +126,7 @@ export async function DELETE(req: Request) {
     const old = id(body?.old);
     if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
     await unlinkAccount(old);
-    await clearCaches();
+    await clearCaches(await cacheCtx());
     return NextResponse.json({ unlinked: true });
   } catch (err) {
     console.error(err);

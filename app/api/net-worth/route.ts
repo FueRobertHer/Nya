@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
-import { readCache, writeCache, clearNetWorthCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
+import { cacheCtx, readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
   getHistory,
   withTodayPoint,
@@ -63,9 +63,10 @@ export async function GET(req: Request) {
     // Wanted on both paths and dependent on neither, so it runs alongside
     // whichever one we take rather than adding a round trip to the end of it.
     const stalePromise = eager(staleFlag());
+    const ctx = await cacheCtx();
 
     if (!refresh) {
-      const cached = await readCache<NetWorthPayload>(NET_WORTH_CACHE_KEY);
+      const cached = await readCache<NetWorthPayload>(ctx, CacheKey.NetWorth);
       if (cached) {
         return NextResponse.json({ ...cached, ...(await stalePromise), from_cache: true });
       }
@@ -170,9 +171,9 @@ export async function GET(req: Request) {
     // hiding the problem on every other load. Drop it so the next load also
     // sees the failure.
     if (clean) {
-      await writeCache(NET_WORTH_CACHE_KEY, payload);
+      await writeCache(ctx, CacheKey.NetWorth, payload);
     } else {
-      await clearNetWorthCache();
+      await clearNetWorthCache(ctx);
     }
 
     return NextResponse.json({ ...payload, ...(await stalePromise), from_cache: false });

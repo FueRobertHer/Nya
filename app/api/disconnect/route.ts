@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
-import { clearCaches, readCache, NET_WORTH_CACHE_KEY } from '@/lib/cache';
+import { cacheCtx, clearCaches, readCache, CacheKey } from '@/lib/cache';
 import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
 import { clearInvestmentStore, storedInvestmentAccountIds } from '@/lib/invstore';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
@@ -57,7 +57,8 @@ export async function POST(req: Request) {
     const accountIds = new Set(await getItemAccountIds(item_id));
     for (const id of await storedInvestmentAccountIds(item_id)) accountIds.add(id);
     for (const id of await rememberedIdsForItem(item_id)) accountIds.add(id);
-    const cached = await readCache<{ institutions: any[] }>(NET_WORTH_CACHE_KEY);
+    const ctx = await cacheCtx();
+    const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
     for (const inst of cached?.institutions ?? []) {
       if (inst.item_id !== item_id) continue;
       for (const a of inst.accounts ?? []) accountIds.add(a.account_id);
@@ -80,7 +81,7 @@ export async function POST(req: Request) {
     // haven't been seen for the window: nothing to do here.
 
     // Cached payloads no longer reflect the linked institutions.
-    await clearCaches();
+    await clearCaches(ctx);
 
     return NextResponse.json({ success: true });
   } catch (err: any) {

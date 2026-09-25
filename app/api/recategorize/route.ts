@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { setOverride } from '@/lib/overrides';
-import { clearTransactionsCache } from '@/lib/cache';
+import { cacheCtx, clearTransactionsCache } from '@/lib/cache';
 
 // Store a manual category for one transaction. The transactions route
 // applies these overrides on top of Plaid's auto-categorization.
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     }
 
     await setOverride(transaction_id, category.trim().toLowerCase());
-    await clearTransactionsCache(); // the cached payload has the old category
+    await clearTransactionsCache(await cacheCtx()); // the cached payload has the old category
 
     return NextResponse.json({ success: true });
   } catch (err) {

@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 // The rules under test were each found by a review of this design as a way to
@@ -591,6 +591,15 @@ describe('third review follow-ups', () => {
 });
 
 describe('third review: route and shape details', () => {
+  // The route's cache lives in the request's container (lib/cache.ts).
+  beforeEach(async () => {
+    const { createFirstContainer } = await import('@/lib/containers');
+    process.env.CONTAINER_ID = await createFirstContainer();
+  });
+  afterEach(() => {
+    delete process.env.CONTAINER_ID;
+  });
+
   const get = async () => {
     const { GET } = await import('@/app/api/investment-activity/route');
     return (await GET(new Request('http://x/api/investment-activity?id=ira&item_id=item1'))).json();

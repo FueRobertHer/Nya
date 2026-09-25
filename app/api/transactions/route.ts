@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getItems } from '@/lib/storage';
-import { readCache, writeCache, TRANSACTIONS_CACHE_KEY } from '@/lib/cache';
+import { cacheCtx, readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getOverrides } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
@@ -15,8 +15,9 @@ type TransactionsPayload = {
 export async function GET(req: Request) {
   try {
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
+    const ctx = await cacheCtx();
     if (!refresh) {
-      const cached = await readCache<TransactionsPayload>(TRANSACTIONS_CACHE_KEY);
+      const cached = await readCache<TransactionsPayload>(ctx, CacheKey.Transactions);
       if (cached) return NextResponse.json({ ...cached, from_cache: true });
     }
 
@@ -60,7 +61,7 @@ export async function GET(req: Request) {
     // institutions get re-checked on the next load instead of hiding for
     // the TTL.
     if (notes.length === 0) {
-      await writeCache(TRANSACTIONS_CACHE_KEY, payload);
+      await writeCache(ctx, CacheKey.Transactions, payload);
     }
 
     return NextResponse.json({ ...payload, from_cache: false });
