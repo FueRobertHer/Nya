@@ -104,6 +104,7 @@ const PREFIXES: [string, Kind][] = [
   ['invtxns-lock:', 'plain'],
   ['ratelimit:', 'plain'],
   ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
+  ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
 ];

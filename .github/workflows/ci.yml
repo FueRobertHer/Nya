@@ -47,4 +47,9 @@ jobs:
 
       - run: bun run typecheck
 
+      # The Lua scripts (compare-and-set, the snapshot lock) are also tested
+      # against a real Redis, which the runner does not ship. Those tests skip
+      # without one locally, but fail under CI rather than pass unseen.
+      - run: sudo apt-get update && sudo apt-get install -y redis-server
+
       - run: bun test

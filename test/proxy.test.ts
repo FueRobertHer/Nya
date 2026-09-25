@@ -8,13 +8,13 @@ const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 
 describe('the session gate', () => {
   test('skips exactly the routes that authenticate themselves', () => {
-    for (const path of ['/api/snapshot', '/api/ingest/balance', '/api/ops/export', '/api/ops/rotate-master', '/api/login']) {
+    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/ingest/balance', '/api/ops/export', '/api/ops/rotate-master', '/api/login']) {
       expect(gated(path)).toBe(false);
     }
   });
 
   test('still covers anything that merely starts with one of them', () => {
-    for (const path of ['/api/ops/rotate-master2', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/other']) {
+    for (const path of ['/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/other']) {
       expect(gated(path)).toBe(true);
     }
   });

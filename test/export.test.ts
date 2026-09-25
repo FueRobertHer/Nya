@@ -39,6 +39,8 @@ describe('the archive', () => {
         'c:*:invtxns-lock:*',
         'sessions:*',
         'c:*:sessions:*',
+        'snapshot:*',
+        'c:*:snapshot:*',
       ],
     });
   });

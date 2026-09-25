@@ -206,7 +206,7 @@ describe('the route', () => {
 
 // The create script on a real Redis, where one is installed (not in CI).
 const hasRedis = Bun.which('redis-server') !== null;
-describe.skipIf(!hasRedis)('the create script, on a real Redis', () => {
+describe.skipIf(!hasRedis && !process.env.CI)('the create script, on a real Redis', () => {
   const port = 30000 + Math.floor(Math.random() * 20000);
   let server: ReturnType<typeof Bun.spawn> | null = null;
   let client: InstanceType<typeof Bun.RedisClient>;

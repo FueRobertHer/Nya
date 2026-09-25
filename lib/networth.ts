@@ -6,6 +6,7 @@
 
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
+import { withRateLimitRetry } from './rate-limit-retry';
 import { getItems, type StoredItem } from './storage';
 import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
 import { normalizeLiabilities } from './liabilities';
@@ -116,7 +117,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   }
 
   try {
-    const balanceRes = await plaidClient.accountsBalanceGet({ access_token });
+    const balanceRes = await withRateLimitRetry(() => plaidClient.accountsBalanceGet({ access_token }));
     result.institution_id = balanceRes.data.item?.institution_id ?? null;
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
