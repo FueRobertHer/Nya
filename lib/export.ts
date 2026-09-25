@@ -65,12 +65,13 @@ export const EXPORT_FORMAT_VERSION = 1;
 export const SCHEMA_ERA = 'unscoped';
 
 /**
- * Deliberately left out. All are disposable and would be wrong after a
+ * Deliberately left out. None is data, and each would be wrong after a
  * restore: a cache entry would show numbers from the moment of export as if
- * current, a rate-limit counter would lock out a login it was never about, and
- * a sync lock would block a sync that isn't running.
+ * current, a rate-limit counter would lock out a login it was never about, a
+ * sync lock would block a sync that isn't running, and an old session epoch
+ * would bring back sessions revoked since (lib/sessions.ts).
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:'] as const;
+export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:'] as const;
 
 /** Page size for SCAN and HSCAN. history:accounts gains a field every day, and
  *  one HGETALL of years of it would be one oversized response. */

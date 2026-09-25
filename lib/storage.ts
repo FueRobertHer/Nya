@@ -129,15 +129,17 @@ export function kc(ctx: Ctx, key: string): string {
  * A key that belongs to the whole environment, never to one container.
  *
  * Identical to k() today, but it stays where it is when everything else moves
- * into containers (#53). Only three things are environment-wide, and nothing
- * else should be:
+ * into containers (#53). Only these are environment-wide, and nothing else
+ * should be:
  *   - the encryption key store (lib/crypto.ts): a data key id must mean the
  *     same key everywhere in an environment, or a value could not be
  *     decrypted without knowing which container's store to look in;
  *   - the container registry (lib/containers.ts), which says what containers
  *     exist, so cannot live inside one;
  *   - the login rate limiter (app/api/login), which runs before anyone is
- *     known.
+ *     known;
+ *   - the cutoff for sessions from before sessions named a container
+ *     (lib/sessions.ts), which by definition belong to none.
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;

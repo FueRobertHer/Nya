@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { sessionCurrent } from '@/lib/sessions';
 
 // Everything is protected EXCEPT the login page, the login API, static PWA
 // assets (which must be publicly fetchable for install/offline to work), the
@@ -17,9 +18,13 @@ export const config = {
   ],
 };
 
+// A session must be genuine, unexpired, issued under the current password
+// (lib/auth.ts) and not revoked (lib/sessions.ts). The last needs one Redis
+// read, reused for a few seconds per instance; this proxy runs on Node.
 export async function proxy(req: NextRequest) {
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const valid = await verifySessionToken(token);
+  const session = await verifySessionToken(token);
+  const valid = session !== null && (await sessionCurrent(session));
 
   if (!valid) {
     if (req.nextUrl.pathname.startsWith('/api/')) {

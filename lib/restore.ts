@@ -64,9 +64,16 @@ const HSET_CHUNK_CHARS = 512 * 1024;
  */
 const MIN_RESTORED_TTL = 60;
 
-/** Never deleted by an overwrite: a counter of failed logins belongs to the
- *  running environment, not to the data being restored. */
-const PRESERVED_PREFIX = 'ratelimit:';
+/** Never deleted by an overwrite: they belong to the running environment,
+ *  not to the data being restored. A counter of failed logins, and a
+ *  container's session epoch, which a restore must never lower or it would
+ *  bring back sessions revoked since. Judged inside containers too. */
+const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:'];
+
+function isPreserved(relative: string): boolean {
+  const { key } = splitScoped(relative);
+  return PRESERVED_PREFIXES.some((p) => key.startsWith(p));
+}
 
 function refuse(message: string): never {
   throw new RestoreRefused(message);
@@ -251,12 +258,12 @@ async function keysUnderPrefix(client: RestoreClient): Promise<string[]> {
 }
 
 /**
- * Keys that make the target count as holding data. Rate-limit counters do not:
- * they appear the moment anyone tries to log in, and are not data.
+ * Keys that make the target count as holding data. Rate-limit counters and
+ * session epochs do not: they are not data, and a restore leaves them alone.
  */
 export async function targetKeys(client: RestoreClient): Promise<string[]> {
   const prefix = k('');
-  return (await keysUnderPrefix(client)).filter((key) => !key.slice(prefix.length).startsWith(PRESERVED_PREFIX));
+  return (await keysUnderPrefix(client)).filter((key) => !isPreserved(key.slice(prefix.length)));
 }
 
 /**
