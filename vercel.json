@@ -5,6 +5,10 @@
     {
       "path": "/api/snapshot",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/snapshot?catchup=1",
+      "schedule": "0 15 * * *"
     }
   ]
 }

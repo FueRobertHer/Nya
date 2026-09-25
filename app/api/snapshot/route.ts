@@ -1,53 +1,48 @@
 import { NextResponse } from 'next/server';
-import { computeNetWorth, recordFetch, isRecordable } from '@/lib/networth';
-import { cacheCtx, clearCaches } from '@/lib/cache';
-import { rememberAccounts } from '@/lib/last-known';
-import { recordDirectory } from '@/lib/links';
+import { secretsMatch } from '@/lib/auth';
 import { finishMasterRotation } from '@/lib/crypto';
+import { readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
-// net-worth chart stays gapless even on days the app isn't opened.
+// net-worth chart stays gapless even on days the app isn't opened. It runs
+// each container on its own (lib/snapshot-job.ts): the answer is 200 with a
+// result per container, even when some failed, because a 500 invites a retry
+// of the whole run. The one 500 is a registry that cannot be read, when
+// nothing was run at all. A second, later cron entry is the catch-up: it
+// finds every container already recorded and runs only the rest.
 //
 // This route is excluded from the session gate in proxy.ts and instead
 // authenticates the cron caller: Vercel sends `Authorization: Bearer
 // ${CRON_SECRET}` automatically when a CRON_SECRET env var is set on the
 // project. Without a valid secret the route always 401s.
 
+export const maxDuration = 300;
+
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
+  if (!secret || !(await secretsMatch(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Finish a master key rotation if this deployment is the one it was
+  // rotating to (lib/crypto.ts). Also happens on first use of a data key;
+  // this makes sure it happens within a day even if none is used. Best
+  // effort: a failure here must not cost the day's snapshot.
+  await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', err instanceof Error ? err.message : err));
+
+  let registry;
   try {
-    // Finish a master key rotation if this deployment is the one it was
-    // rotating to (lib/crypto.ts). Also happens on first use of a data key;
-    // this makes sure it happens within a day even if none is used. Best
-    // effort: a failure here must not cost the day's snapshot.
-    await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', err instanceof Error ? err.message : err));
-    const { institutions, netWorth } = await computeNetWorth();
+    registry = await readRegistry();
+  } catch (err) {
+    console.error('Snapshot: the registry could not be read; nothing was snapshotted.', err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: 'The container registry could not be read; nothing was snapshotted.' }, { status: 500 });
+  }
 
-    // Same rule as the dashboard fetch: only a clean, non-empty read records a
-    // total. A partly failed one still records the accounts that answered, for
-    // their own charts: on a day the app isn't opened this is the only fetch.
-    const recorded = await recordFetch(institutions, netWorth);
-    const clean = institutions.every(isRecordable);
-    if (!clean || institutions.length === 0) {
-      return NextResponse.json({ recorded: false });
-    }
-
-    // Record how to draw these accounts, alongside the balances. On a day the
-    // app is never opened this cron is the only clean fetch there is, so
-    // without it an account added since the last dashboard load would be in the
-    // snapshot with nothing to render it from, and recovery would draw its
-    // institution short (lib/last-known.ts reports the shortfall but cannot
-    // undo it).
-    await rememberAccounts(institutions);
-    await recordDirectory(institutions);
-    await clearCaches(await cacheCtx()); // cached payloads now have yesterday's history
-    return NextResponse.json({ recorded: recorded !== null });
-  } catch (err: any) {
-    console.error(err?.response?.data || err);
+  try {
+    return NextResponse.json(await runSnapshots(registry, { scheduledFor: snapshotDate() }));
+  } catch (err) {
+    // runSnapshots reports each container's failure itself; this is a bug.
+    console.error('Snapshot run failed', err);
     return NextResponse.json({ error: 'Snapshot failed' }, { status: 500 });
   }
 }

@@ -29,7 +29,15 @@
 // outage but damage, and fails closed.
 
 import { redis, kc, kEnv } from './storage';
-import { CONTAINER_ENV, ContainerError, isContainerId, listContainers, type ContainerId, type Ctx } from './containers';
+import {
+  CONTAINER_ENV,
+  ContainerError,
+  isContainerId,
+  listContainers,
+  type ContainerId,
+  type ContainerRecord,
+  type Ctx,
+} from './containers';
 import type { Session } from './auth';
 
 export const CHECK_REUSE_MS = 5 * 1000;
@@ -128,25 +136,25 @@ async function legacyCutoff(now: number): Promise<number> {
 export async function deploymentContainer(now: number = Date.now()): Promise<Deployment> {
   const env = process.env[CONTAINER_ENV] ?? '';
   if (_deployment && _deployment.env === env && recent(_deployment.at, now)) return _deployment.value;
-
-  const all = await listContainers();
-  const active = all.filter((c) => c.status === 'active');
-  let value: Deployment;
-  if (env) {
-    const named = all.find((c) => c.id === env);
-    if (!isContainerId(env)) value = { kind: 'unusable', reason: `${CONTAINER_ENV} is not a container id.` };
-    else if (!named) value = { kind: 'unusable', reason: `${CONTAINER_ENV} names a container that is not in the registry.` };
-    else if (named.status !== 'active') value = { kind: 'unusable', reason: `${CONTAINER_ENV} names a container that is ${named.status}.` };
-    else value = { kind: 'container', container: named.id };
-  } else if (active.length === 1) {
-    value = { kind: 'container', container: active[0].id };
-  } else if (all.length === 0) {
-    value = { kind: 'none' };
-  } else {
-    value = { kind: 'unusable', reason: active.length === 0 ? 'No container is active.' : 'More than one container is active.' };
-  }
+  const value = pickDeployment(await listContainers(), env);
   _deployment = { env, value, at: now };
   return value;
+}
+
+/** The rule deploymentContainer applies, over a registry already read. Also
+ *  what the snapshot job uses to find the container today's data belongs to. */
+export function pickDeployment(all: (ContainerRecord & { id: ContainerId })[], env: string): Deployment {
+  const active = all.filter((c) => c.status === 'active');
+  if (env) {
+    const named = all.find((c) => c.id === env);
+    if (!isContainerId(env)) return { kind: 'unusable', reason: `${CONTAINER_ENV} is not a container id.` };
+    if (!named) return { kind: 'unusable', reason: `${CONTAINER_ENV} names a container that is not in the registry.` };
+    if (named.status !== 'active') return { kind: 'unusable', reason: `${CONTAINER_ENV} names a container that is ${named.status}.` };
+    return { kind: 'container', container: named.id };
+  }
+  if (active.length === 1) return { kind: 'container', container: active[0].id };
+  if (all.length === 0) return { kind: 'none' };
+  return { kind: 'unusable', reason: active.length === 0 ? 'No container is active.' : 'More than one container is active.' };
 }
 
 /**

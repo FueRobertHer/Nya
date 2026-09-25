@@ -585,7 +585,16 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   Vercel Cron (`vercel.json` → `/api/snapshot`, authenticated with
   `CRON_SECRET`), so the chart stays gapless even on days you don't open
   the app. Per-account balances are snapshotted alongside the total, which
-  is what feeds the tap-to-expand account charts.
+  is what feeds the tap-to-expand account charts. The cron runs each active
+  container on its own (`lib/snapshot-job.ts`) and answers 200 with one
+  result per container, even when some failed; it answers 500 only when the
+  container registry cannot be read (after one retry), when nothing ran. A
+  second entry two hours later is the catch-up: containers already recorded
+  that day are skipped, the rest (failed, unclean, or not started in time)
+  are run again. Each container's outcomes are kept per date and served,
+  newest first, by `GET /api/snapshot-runs`. Until the data moves into
+  containers, only this deployment's container is snapshotted and any other
+  is reported as skipped.
 - **Estimated backfill** — on first use (and after linking a new
   institution) the app reconstructs up to a year of history from
   transaction data (`/api/backfill`), at three levels of fidelity:

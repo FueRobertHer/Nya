@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -81,11 +81,16 @@ describe('the daily cron finishes a due master rotation', () => {
   });
 });
 
-// `recorded` used to say true whenever the fetch was clean, even if the total
-// then failed to write. It now reports whether the point actually landed.
+// The cron runs each container on its own (lib/snapshot-job.ts). Here, with
+// the real snapshot: one container, holding the (still unscoped) data.
 const { saveManualAccount } = await import('@/lib/manual');
+const { registryKey } = await import('@/lib/containers');
+const { readRuns } = await import('@/lib/snapshot-job');
 
-describe('the cron reports what it recorded', () => {
+describe('the cron reports what it recorded, per container', () => {
+  const A = crypto.randomUUID() as any;
+  const today = new Date().toISOString().slice(0, 10);
+  const register = () => fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
   const withAccount = () =>
     saveManualAccount({
       account_id: 'manual_house',
@@ -96,15 +101,58 @@ describe('the cron reports what it recorded', () => {
       balance: 1000,
       updated_at: new Date().toISOString(),
     } as any);
+  const results = async () => (await (await cron()).json()).results;
 
-  test('true when the snapshot lands', async () => {
+  test('recorded when the snapshot lands, and not run again that day', async () => {
+    await register();
     await withAccount();
-    expect(await (await cron()).json()).toEqual({ recorded: true });
+    expect(await results()).toEqual([{ container: A, status: 'recorded', ms: expect.any(Number) }]);
+    expect(await results()).toEqual([{ container: A, status: 'already' }]);
+    expect(await readRuns({ container: A })).toEqual([{ date: today, status: 'recorded', at: expect.any(String), attempts: 1 }]);
   });
 
-  test('false when the clean snapshot fails to write', async () => {
+  test('failed when the clean snapshot fails to write, and tried again', async () => {
+    await register();
     await withAccount();
     fake.failNext('hset');
-    expect(await (await cron()).json()).toEqual({ recorded: false });
+    const res = await cron();
+    expect(res.status).toBe(200);
+    expect((await res.json()).results).toEqual([
+      { container: A, status: 'failed', reason: 'The snapshot could not be written.', ms: expect.any(Number) },
+    ]);
+    expect((await results())[0].status).toBe('recorded');
+    expect((await readRuns({ container: A }))[0].attempts).toBe(2);
+  });
+
+  test('unclean with nothing linked', async () => {
+    await register();
+    expect(await results()).toEqual([{ container: A, status: 'unclean', reason: 'Nothing is linked.', ms: expect.any(Number) }]);
+  });
+
+  test('a registry that cannot be read is a loud 500, after one retry, and nothing is written', async () => {
+    await register();
+    await withAccount();
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      fake.failNext('hgetall', 2);
+      const res = await cron();
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toContain('registry');
+      expect(await readRuns({ container: A })).toEqual([]);
+      expect(await fake.hgetall(testKey('history:net-worth'))).toBeNull();
+
+      fake.failNext('hgetall', 1); // one failure is retried
+      expect((await cron()).status).toBe(200);
+    } finally {
+      console.error = errors;
+    }
+  });
+
+  test('refuses a wrong secret', async () => {
+    const res = await GET(new Request('http://x/api/snapshot', { headers: { authorization: 'Bearer nope' } }));
+    expect(res.status).toBe(401);
+    const none = await GET(new Request('http://x/api/snapshot'));
+    expect(none.status).toBe(401);
   });
 });

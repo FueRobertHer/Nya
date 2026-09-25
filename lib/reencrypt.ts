@@ -93,6 +93,7 @@ const EXACT: Record<string, Kind> = {
   'history:backfill-done': 'plain',
   'history:backfill-pending': 'plain',
   'account-links:dismissed': 'plain',
+  'snapshot:runs': 'plain', // the daily snapshot's outcomes (lib/snapshot-job.ts)
 
   containers: 'plain', // the container registry
 };
