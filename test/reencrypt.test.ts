@@ -92,15 +92,47 @@ describe('the list of keys', () => {
     const names = new Set<string>();
     const opaque: string[] = [];
     for (const file of files) {
-      const src = readFileSync(file, 'utf8');
+      // Comments blanked (offsets kept): a builder named in prose is not a
+      // call. Strings are matched first and kept as they are, so a "//" or
+      // "/*" inside one is never taken for a comment that hides code.
+      const src = readFileSync(file, 'utf8').replace(
+        /'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+        (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m)
+      );
+      const where = (i: number) => `${file.slice(root.length + 1)}: ${src.slice(i, i + 40).split('\n')[0]}`;
+      const read = new Set<number>(); // where each call this could read starts
+
+      // kc(ctx, 'name'): the name is the second argument.
+      for (const m of src.matchAll(/\bkc\(\s*[A-Za-z_.]+\s*,\s*([^)]*?)\s*\)/g)) {
+        read.add(m.index!);
+        const quoted = /^(['"`])([^'"`$]*)\1$/.exec(m[1]);
+        const templated = /^`([^`$]*)\$\{/.exec(m[1]);
+        if (quoted) names.add(quoted[2]);
+        else if (templated) names.add(`${templated[1]}x`);
+        else if (!/^[a-zA-Z_]+: string$/.test(m[1])) opaque.push(where(m.index!));
+      }
+      // k('name') and kEnv('name').
       for (const m of src.matchAll(/\bk(?:Env)?\(\s*([^)]*?)\s*\)/g)) {
+        read.add(m.index!);
         const arg = m[1];
-        if (arg === '') continue; // "k()" in a comment
         const quoted = /^(['"`])([^'"`$]*)\1$/.exec(arg);
         const templated = /^`([^`$]*)\$\{/.exec(arg);
         if (quoted) names.add(quoted[2]);
         else if (templated) names.add(`${templated[1]}x`);
-        else if (!/^[a-zA-Z_]+: string$/.test(arg)) opaque.push(`${file.slice(root.length + 1)}: k(${arg})`);
+        else if (!/^[a-zA-Z_]+: string$/.test(arg)) opaque.push(where(m.index!));
+      }
+      // Every other mention of kc or kEnv in code is reported: "kc (ctx, ...)",
+      // "kc?.(...)", "const f = kc", "import { kc as f }" would all build keys
+      // this scan cannot see. Only a plain import and the definitions pass.
+      const imports = [...src.matchAll(/import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"]/g)].map(
+        (m) => [m.index!, m.index! + m[0].length] as const
+      );
+      for (const m of src.matchAll(/\b(?:kc|kEnv)\b/g)) {
+        const i = m.index!;
+        if (read.has(i)) continue;
+        if (/\bfunction\s+$/.test(src.slice(Math.max(0, i - 20), i))) continue;
+        if (imports.some(([a, b]) => i > a && i < b) && !/^\w+\s+as\b/.test(src.slice(i))) continue;
+        opaque.push(where(i));
       }
     }
     expect(names.size).toBeGreaterThan(20); // the scan found the stores
@@ -120,6 +152,18 @@ describe('the list of keys', () => {
     expect(classify('history:accounts:est:flat')).toBe('string');
     expect(classify('cache:net-worth')).toBe('cipher');
     expect(classify('crypto:keys')).toBe('plain');
+    expect(classify('containers')).toBe('plain');
+    const c = 'c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:';
+    expect(classify(`${c}goals`)).toBe('string');
+    expect(classify(`${c}history:accounts`)).toBe('hash');
+    expect(classify(`${c}brand-new`)).toBeNull();
+    expect(classify(`${c}${c}goals`)).toBeNull(); // never nested
+    expect(classify('c:not-a-uuid:goals')).toBeNull();
+    // Environment-wide stores never belong inside a container.
+    for (const envWide of ['crypto:keys', 'crypto:active', 'containers', 'ratelimit:login:1.2.3.4']) {
+      expect(classify(envWide)).toBe('plain');
+      expect(classify(`${c}${envWide}`)).toBeNull();
+    }
     expect(classify('something-new')).toBeNull();
     expect(classify('__proto__')).toBeNull();
   });

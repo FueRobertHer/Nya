@@ -246,7 +246,7 @@ export class FakeRedis {
 
   /**
    * Runs the few Lua scripts this codebase sends, recognised by the name on
-   * their first line (lib/reencrypt.ts), with the same answers. Anything else
+   * their first line (lib/reencrypt.ts, lib/containers.ts), with the same answers. Anything else
    * throws, so a new script cannot pass a test without this learning what it
    * does. The real scripts are also run against a real Redis in
    * test/reencrypt.test.ts where one is installed.
@@ -273,6 +273,11 @@ export class FakeRedis {
       if (cur === undefined) return -1;
       if (sha1(cur) !== args[1]) return 0;
       this.hash(keys[0]).set(args[0], args[2]);
+      return 1;
+    }
+    if (name === '-- nya:container-create-first') {
+      if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
+      this.hash(keys[0]).set(args[0], args[1]);
       return 1;
     }
     throw new Error(`FakeRedis: unknown script ${name}`);
@@ -317,6 +322,7 @@ export function storageMock(fake: FakeRedis) {
     rawRedis: () => fake,
     k: testKey,
     kEnv: testKey,
+    kc: (ctx: { container: string }, key: string) => testKey(`c:${ctx.container}:${key}`),
     // Backed by the fake, so code that filters by the stored Items sees the
     // ones a test seeds (none unless it does).
     getItems: async () =>

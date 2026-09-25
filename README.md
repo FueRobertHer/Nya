@@ -672,6 +672,27 @@ unavailable, and if it is marked Sensitive in Vercel (so cannot be read back
 out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write)
 could never be read again.
 
+**Containers** (preparing for more than one user, #53). Every record will
+belong to a *container*; today there is one, and nothing uses it yet. It is
+created once, by you, never automatically (two requests racing to create one
+would split your data between two):
+
+1. With `OPS_ENABLED=1`, create it:
+
+   ```bash
+   curl -sS -X POST https://your-app.vercel.app/api/ops/containers -H "Authorization: Bearer $OPS_SECRET" \
+     -H 'Content-Type: application/json' -d '{"create":true}'
+   ```
+
+   It answers with the new id. Asking again is refused.
+2. In Vercel, set `CONTAINER_ID` to that id (Production) and redeploy.
+3. Check: an empty POST to the same route lists the containers and should
+   say `"container_id_status": "ok"`.
+4. Remove `OPS_ENABLED` and redeploy.
+
+Preview has its own container (a separate prefix, a separate registry): do
+the same there if you use preview.
+
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.
 

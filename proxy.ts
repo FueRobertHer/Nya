@@ -6,14 +6,14 @@ import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 // cron snapshot endpoint (which authenticates itself via CRON_SECRET -- see
 // app/api/snapshot/route.ts), and the manual-balance ingest endpoint (which
 // authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
-// and the ops routes, export, rotate-master and reencrypt (OPS_SECRET, and off entirely
+// and the ops routes, export, rotate-master, reencrypt and containers (OPS_SECRET, and off entirely
 // unless OPS_ENABLED=1 -- see lib/ops.ts).
 //
 // Note the `$` anchors on the API entries: they exclude exactly those paths.
 // A bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/snapshot$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/snapshot$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 

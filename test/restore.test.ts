@@ -133,6 +133,11 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
   for (const [name, record, pattern] of [
     ['a repeated key', null, /repeats/],
     ['an excluded key', { key: 'cache:net-worth', type: 'string', ttl: null, value: 'x' }, /never include/],
+    [
+      "an excluded key inside a container",
+      { key: 'c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:cache:net-worth', type: 'string', ttl: null, value: 'x' },
+      /never include/,
+    ],
     ['an empty hash', { key: 'h', type: 'hash', ttl: null, value: {} }, /empty hash/],
     ['an unknown type', { key: 'l', type: 'list', ttl: null, value: [] }, /unknown type/],
     ['a negative ttl', { key: 's', type: 'string', ttl: -1, value: 'x' }, /ttl/],
@@ -508,6 +513,16 @@ describe('the command', () => {
 
     await main([file, '--target', 'test', '--overwrite'], fake as any);
     expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toHaveLength(1);
+  });
+
+  test("a container's cache on the target does not stop an overwrite", async () => {
+    const file = await archiveFile();
+    // Left out of the backup, like every cache, so not "missing" from it.
+    await fake.set(testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:cache:net-worth'), 'stale');
+
+    await main([file, '--target', 'test', '--overwrite'], fake as any);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+    expect(await fake.get<string>(testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:cache:net-worth'))).toBeNull();
   });
 
   test('a target that cannot be backed up is left alone, and says why', async () => {

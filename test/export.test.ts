@@ -30,7 +30,7 @@ describe('the archive', () => {
       env_prefix: 'test',
       container_id: null,
       taken_at: NOW.toISOString(),
-      excluded: ['cache:*', 'ratelimit:*', 'invtxns-lock:*'],
+      excluded: ['cache:*', 'c:*:cache:*', 'ratelimit:*', 'c:*:ratelimit:*', 'invtxns-lock:*', 'c:*:invtxns-lock:*'],
     });
   });
 
