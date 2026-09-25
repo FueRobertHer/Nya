@@ -67,10 +67,21 @@ function keyOf(ctx: Ctx, which: CacheKey | typeof INVESTMENT_ACTIVITY): string {
   }
 }
 
-/** How long a process reuses the container it resolved. Short, so a
- *  container marked restoring or archived stops being cached into promptly;
- *  long enough that a cache hit is one Redis round trip, not two. */
-const CTX_REUSE_MS = 30 * 1000;
+/**
+ * How long a process reuses the container it resolved. Short, so a container
+ * marked restoring or archived stops being cached into promptly; long enough
+ * that a cache hit is one Redis round trip, not two.
+ *
+ * So for up to this long after a container is marked restoring, an instance
+ * may still read and write its caches. Anything that restores into a live
+ * container must clear its caches after its last write (or wait this long
+ * after marking it, before deleting), or a payload computed from half-restored
+ * data can be cached.
+ */
+export const CTX_REUSE_MS = 30 * 1000;
+/** Distinct reasons remembered for "log once". Past this, the memory starts
+ *  over, so a message that varies per request cannot grow it without bound. */
+const MAX_LOGGED_REASONS = 50;
 let _ctx: { env: string; ctx: Ctx; at: number } | null = null;
 const _logged = new Set<string>();
 
@@ -98,6 +109,7 @@ export async function cacheCtx(now: number = Date.now()): Promise<Ctx | null> {
           ? `${err.name}: ${err.message.replace(/, command was: [\s\S]*$/, '').slice(0, 200)}`
           : 'error';
     if (!_logged.has(why)) {
+      if (_logged.size >= MAX_LOGGED_REASONS) _logged.clear();
       _logged.add(why);
       console.error(`Caching is off: the container could not be resolved (${why}).`);
     }

@@ -17,6 +17,7 @@ const {
   clearNetWorthCache,
   clearTransactionsCache,
   CacheKey,
+  CTX_REUSE_MS,
 } = await import('@/lib/cache');
 const { createFirstContainer, asContainerId } = await import('@/lib/containers');
 
@@ -192,6 +193,53 @@ describe('without a container, no cache (and never a guessed key)', () => {
     const failed = await quiet(() => cacheCtx(t0));
     expect(failed.result).toBeNull();
     expect(await cacheCtx(t0 + 1)).toEqual(ctx); // the next request tries again
+  });
+
+  test('a container marked archived stops being cached into once the reuse runs out', async () => {
+    const t0 = Date.now();
+    expect(await cacheCtx(t0)).toEqual(ctx);
+    await fake.hset(testKey('containers'), { [ctx.container]: JSON.stringify({ status: 'archived', primary: true, created_at: 'x' }) });
+    expect(await cacheCtx(t0 + CTX_REUSE_MS - 1)).toEqual(ctx); // still within the reuse
+    const after = await quiet(() => cacheCtx(t0 + CTX_REUSE_MS + 1));
+    expect(after.result).toBeNull();
+  });
+
+  test('a database error is logged without the command Upstash appends', async () => {
+    const realHget = fake.hget.bind(fake);
+    fake.hget = (async () => {
+      throw new Error('ERR max daily request limit exceeded, command was: [["hget","test:containers","abc"]]');
+    }) as typeof fake.hget;
+    let logged: string[];
+    try {
+      ({ logged } = await quiet(() => cacheCtx()));
+    } finally {
+      fake.hget = realHget as typeof fake.hget;
+    }
+    expect(logged[0]).toContain('max daily request limit exceeded');
+    expect(logged[0]).not.toContain('command was');
+    expect(logged[0]).not.toContain('test:containers');
+  });
+
+  test('the reasons remembered for "log once" are bounded', async () => {
+    const realHget = fake.hget.bind(fake);
+    let n = 0;
+    fake.hget = (async () => {
+      throw new Error(`ERR varying ${n++}`);
+    }) as typeof fake.hget;
+    let logged: string[];
+    try {
+      ({ logged } = await quiet(async () => {
+        for (let i = 0; i < 120; i++) await cacheCtx();
+      }));
+      expect(logged).toHaveLength(120); // each message is new, so each is logged
+      // The memory was capped and started over, so the first message is no
+      // longer remembered: it is logged again. Unbounded, it would be silent.
+      n = 0;
+      const again = await quiet(() => cacheCtx());
+      expect(again.logged).toHaveLength(1);
+    } finally {
+      fake.hget = realHget as typeof fake.hget;
+    }
   });
 
   test('a changed CONTAINER_ID is not served from the reuse', async () => {
