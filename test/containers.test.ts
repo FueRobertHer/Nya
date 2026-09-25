@@ -1,8 +1,10 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { join } from 'node:path';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, unscopedDataKeys } from './fake-redis';
 
 const fake = new FakeRedis({ deserialize: true });
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const {
@@ -48,17 +50,17 @@ describe('container ids', () => {
     }
   });
 
-  test('kc puts the container segment in every key, and k and kEnv do not', () => {
+  test('kc puts the container segment in every key, and kEnv does not; k() is gone', () => {
     // Run against the real lib/storage in its own process: this file mocks it.
     const id = crypto.randomUUID();
-    const script = `import { k, kc, kEnv } from './lib/storage';
-console.log(JSON.stringify([kc({ container: ${JSON.stringify(id)} }, 'goals'), k('goals'), kEnv('containers')]));`;
+    const script = `import * as s from './lib/storage';
+console.log(JSON.stringify([s.kc({ container: ${JSON.stringify(id)} }, 'goals'), 'k' in s, s.kEnv('containers'), s.envPrefix()]));`;
     const out = Bun.spawnSync([process.execPath, '-e', script], {
       cwd: join(import.meta.dir, '..'),
       env: { ...process.env, REDIS_PREFIX: 'unit' },
     });
     expect(out.exitCode).toBe(0);
-    expect(JSON.parse(out.stdout.toString())).toEqual([`unit:c:${id}:goals`, 'unit:goals', 'unit:containers']);
+    expect(JSON.parse(out.stdout.toString())).toEqual([`unit:c:${id}:goals`, false, 'unit:containers', 'unit:']);
   });
 });
 

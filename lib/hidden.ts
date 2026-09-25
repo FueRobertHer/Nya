@@ -32,11 +32,12 @@
 // card's type would vanish and the whole series would jump by its balance while
 // the reauth banner was up, then jump back.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { signedContribution } from './balance';
 
-const HIDDEN_HASH = k('hidden:accounts');
+const HIDDEN_HASH = (ctx: Ctx) => kc(ctx, 'hidden:accounts');
 
 export type HiddenAccount = {
   type: string;
@@ -52,8 +53,8 @@ export type HiddenMap = Map<string, HiddenAccount>;
  * screen that was deliberately taken off it, which is the one outcome hiding
  * must never produce.
  */
-export async function getHiddenAccounts(): Promise<HiddenMap> {
-  const map = await redis().hgetall<Record<string, string>>(HIDDEN_HASH);
+export async function getHiddenAccounts(ctx: Ctx): Promise<HiddenMap> {
+  const map = await redis().hgetall<Record<string, string>>(HIDDEN_HASH(ctx));
   const out: HiddenMap = new Map();
   if (!map) return out; // genuinely empty hash
 
@@ -79,17 +80,17 @@ export async function getHiddenAccounts(): Promise<HiddenMap> {
 
 /** Hides or unhides one account. Single-field HSET/HDEL, so concurrent toggles
  *  of different accounts can't clobber each other. */
-export async function setAccountHidden(
+export async function setAccountHidden(ctx: Ctx, 
   account_id: string,
   type: string,
   hidden: boolean
 ): Promise<void> {
   if (!hidden) {
-    await redis().hdel(HIDDEN_HASH, account_id);
+    await redis().hdel(HIDDEN_HASH(ctx), account_id);
     return;
   }
   const value: HiddenAccount = { type, hidden_at: new Date().toISOString() };
-  await redis().hset(HIDDEN_HASH, { [account_id]: await encrypt(JSON.stringify(value)) });
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
 }
 
 /**
@@ -101,10 +102,10 @@ export async function setAccountHidden(
  * would go on subtracting it from every past point indefinitely, and with the
  * account gone from the live list there'd be no Unhide button to stop it.
  */
-export async function pruneHidden(account_ids: string[]): Promise<void> {
+export async function pruneHidden(ctx: Ctx, account_ids: string[]): Promise<void> {
   if (account_ids.length === 0) return;
   try {
-    await redis().hdel(HIDDEN_HASH, ...account_ids);
+    await redis().hdel(HIDDEN_HASH(ctx), ...account_ids);
   } catch {
     // Best effort. The next disconnect or delete of the same account retries.
   }

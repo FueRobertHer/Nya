@@ -7,21 +7,22 @@
 // unreadable blob is reported, never treated as "no budgets" (see
 // lib/stored-json.ts).
 
-import { k } from './storage';
+import { kc } from './storage';
+import type { Ctx } from './containers';
 import { readEncryptedJson, writeEncryptedJson } from './stored-json';
 
-const BUDGETS_KEY = k('budgets');
+const BUDGETS_KEY = (ctx: Ctx) => kc(ctx, 'budgets');
 
 export type Budgets = Record<string, number>;
 
 const isBudgets = (v: unknown): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Throws StoredDataUnreadableError if budgets were saved but cannot be read. */
-export async function getBudgets(): Promise<Budgets> {
-  return (await readEncryptedJson(BUDGETS_KEY, 'budgets', isBudgets)) ?? {};
+export async function getBudgets(ctx: Ctx): Promise<Budgets> {
+  return (await readEncryptedJson(BUDGETS_KEY(ctx), 'budgets', isBudgets)) ?? {};
 }
 
 /** Refuses (StoredDataUnreadableError) to replace budgets it cannot read. */
-export async function setBudgets(budgets: Budgets): Promise<void> {
-  await writeEncryptedJson(BUDGETS_KEY, 'budgets', budgets, isBudgets);
+export async function setBudgets(ctx: Ctx, budgets: Budgets): Promise<void> {
+  await writeEncryptedJson(BUDGETS_KEY(ctx), 'budgets', budgets, isBudgets);
 }

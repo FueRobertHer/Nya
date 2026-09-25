@@ -606,9 +606,7 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   time, or with nothing linked) are run again. Each container's outcomes are kept per date and
   served, newest first, by `GET /api/snapshot-runs`; they describe this
   environment's cron, so exports leave them out and a restore keeps them.
-  Until the data moves into containers, only this deployment's container is
-  snapshotted, any other is reported as skipped, and nothing runs while a
-  container is being restored.
+  Each container's snapshot reads and writes only its own data.
 - **Estimated backfill** — on first use (and after linking a new
   institution) the app reconstructs up to a year of history from
   transaction data (`/api/backfill`), at three levels of fidelity:
@@ -720,10 +718,10 @@ unavailable, and if it is marked Sensitive in Vercel (so cannot be read back
 out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write)
 could never be read again.
 
-**Containers** (preparing for more than one user, #53). Every record will
-belong to a *container*; today there is one, and nothing uses it yet. It is
-created once, by you, never automatically (two requests racing to create one
-would split your data between two):
+**Containers** (preparing for more than one user, #53). Every record
+belongs to a *container*, stored under `<prefix>:c:<container id>:`; today
+there is one. It is created once, by you, never automatically (two requests
+racing to create one would split your data between two):
 
 1. With `OPS_ENABLED=1`, create it:
 
@@ -741,9 +739,110 @@ would split your data between two):
 Preview has its own container (a separate prefix, a separate registry): do
 the same there if you use preview.
 
-The caches are the first thing kept inside the container. Without a usable
-`CONTAINER_ID` the app still works, just uncached (every load fetches live),
-and the log says `Caching is off: the container could not be resolved`.
+Every request works in this deployment's container: the one `CONTAINER_ID`
+names, or with it unset, the only active one. Without a usable container
+(none, `CONTAINER_ID` wrong, the container being restored, or more than one
+active) data requests are refused with a 503 saying why; nothing is read or
+written anywhere else.
+
+**Moving the data into containers** (once, when upgrading from a release from
+before containers). The data was stored under `<prefix>:<name>` and is now
+read from `<prefix>:c:<id>:<name>`. `bun run move-data` copies it across:
+byte for byte, leaving the old keys exactly as they were. It only copies a
+fixed list of keys (never caches, sessions or the container's own keys) and
+never copies a copy. It records what it copied, so a later run can tell which
+side changed since:
+
+- only the old key: copied again. If it was deleted there, the container's
+  copy is deleted too, but only with `--propagate-deletes`, and never more
+  than five at once. More than that is refused and the keys are named: if
+  they really should go (say an institution with several stored keys was
+  disconnected), delete each one by hand in the Upstash console,
+  `DEL <prefix>:c:<id>:<name>` and then `HDEL <prefix>:c:<id>:move:copied <name>`,
+  and run again;
+- only the container key: kept (the new release wrote or deleted it);
+- both: a **conflict**. The run is refused, nothing written, and the report
+  names the key.
+
+Every write checks the container key still holds what the run expected, in
+one step with its record, so a write the new release makes during a run is
+never written over (the run stops instead). Without `--run` it only reports;
+any warning it prints means a run would be refused.
+
+**Merging the release is the deploy**, so everything up to step 5 happens
+before merging.
+
+1. Take an export (see **Backing up your data**) and check it restores into
+   `restore-test`, using a checkout of `main` from before this release (this
+   release refuses archives from before containers). Rehearse steps 3 to 8
+   there with this release.
+2. Pick a quiet time away from 13:00 and 15:00 UTC (the snapshot crons).
+   **From step 4 until step 8, keep the app closed everywhere** (close any
+   open tab or installed app too: a page already loaded keeps talking to the
+   release it came from) and pause anything that calls `/api/ingest/balance`.
+   Even viewing the app writes (today's snapshot, the transaction sync).
+3. See what it would do:
+
+   ```bash
+   vercel env pull .env.local
+   REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production
+   ```
+
+   It warns if the environment holds none of the keys every environment in
+   use has (usually the wrong `.env.local` or prefix); a run is then refused
+   unless you pass `--allow-empty`.
+4. Copy: the same with `--run`.
+5. Merge the release. While it builds, the old release is still live: run
+   step 4 again once the build has started.
+6. When the new release is live, and **still without opening the app**,
+   report again (step 3). Anything written to the old keys since step 5
+   shows as a copy or refresh: run step 4 again to bring it across.
+7. Report once more: it should show nothing to copy, refresh or delete, and
+   no conflicts. A conflict means both releases wrote the same key, and it
+   blocks every run until settled. Merge it by hand **into the container's
+   key** (for a date-keyed history hash, `HSET` the old key's missing dates
+   into `<prefix>:c:<id>:<name>`; never delete the container's own), then
+   settle it with `--resolve <name>` in place of `--run`. That records the
+   old key as seen, so the container's value is kept, and a later write to
+   the old key shows as a conflict again. Report again after.
+
+If a run is killed, its lock frees itself within the hour. When you are sure
+no run is going, delete `<prefix>:c:<id>:move:lock` by hand instead of
+waiting (any hash it was building expires on its own).
+8. Now open the app. Check the dashboard, the history chart's left edge, the
+   transaction counts, that no institution re-downloads its whole history,
+   and `GET /api/storage-usage`. Resume the ingest script.
+
+An export from before the move is refused by `bun run restore` from now on;
+restore it with the previous release, then move it.
+
+**Don't run the re-encryption pass** (`/api/ops/reencrypt`) from step 4 until
+the old keys are deleted: it rewrites both copies differently, and every key
+would read as a conflict.
+
+**Rolling back** is redeploying the previous release, which reads only the old
+keys: anything the new release wrote is not there. Rolling forward again, the
+move carries across what changed only on one side; keys both releases wrote
+are conflicts to merge by hand. The shorter the time rolled back, the fewer.
+If you roll back with Vercel's Instant Rollback, later merges are not
+deployed to production until you undo it in the dashboard.
+
+**Preview** merges `main` automatically (`sync-preview.yml`), so it gets this
+release as soon as it merges. Its data is sandbox data: before merging, create
+its container (as above, in the preview environment), then wipe its old keys
+and re-link sandbox institutions after the merge, rather than moving them.
+
+**Deleting the old keys** comes weeks later, separately, after a fresh verified
+export. First retire the move:
+
+```bash
+REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production --retire
+```
+
+It is refused unless a report shows nothing left to copy, refresh or delete
+and no conflicts (the proof nothing written to the old keys is left behind),
+and afterwards every run is refused, so a run can never take the missing old
+keys for deletions to carry into the container.
 
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.

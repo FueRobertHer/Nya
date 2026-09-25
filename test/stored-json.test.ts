@@ -1,10 +1,14 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+
+const ctx = TEST_CTX;
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 // Deserializing like Upstash: what production reads back.
 const fake = new FakeRedis({ deserialize: true });
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt, encryptV2, importMasterKey, dataKeyId, keysHashKey } = await import('@/lib/crypto');
@@ -14,18 +18,22 @@ const { getBudgets, setBudgets } = await import('@/lib/budgets');
 const goalsRoute = await import('@/app/api/goals/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
 
-beforeEach(() => fake.reset());
+beforeEach(async () => {
+  fake.reset();
+  (await import('@/lib/sessions')).forgetEpochs();
+  await registerTestContainer(fake);
+});
 
 const GOAL = { id: 'g1', name: 'Emergency fund', target: 5000, account_id: null };
 
 describe('goals', () => {
   test('never saved reads as none', async () => {
-    expect(await getGoals()).toEqual([]);
+    expect(await getGoals(ctx)).toEqual([]);
   });
 
   test('round-trip', async () => {
-    await setGoals([GOAL]);
-    expect(await getGoals()).toEqual([GOAL]);
+    await setGoals(ctx, [GOAL]);
+    expect(await getGoals(ctx)).toEqual([GOAL]);
   });
 
   for (const [name, stored] of [
@@ -35,73 +43,73 @@ describe('goals', () => {
   ] as const) {
     test(`${name} is reported, never read as none`, async () => {
       const blob = stored === null ? await encrypt('not json') : stored.startsWith('{') ? await encrypt(stored) : stored;
-      await fake.set(testKey('goals'), blob);
-      await expect(getGoals()).rejects.toBeInstanceOf(StoredDataUnreadableError);
+      await fake.set(ctxKey('goals'), blob);
+      await expect(getGoals(ctx)).rejects.toBeInstanceOf(StoredDataUnreadableError);
     });
   }
 
   test('saving over an unreadable value is refused, and it is left exactly as it was', async () => {
     // The reported bug: unreadable read as empty, then the next save wrote a
     // one-goal list over it.
-    await fake.set(testKey('goals'), 'unreadable-but-recoverable-blob');
-    await expect(setGoals([GOAL])).rejects.toBeInstanceOf(StoredDataUnreadableError);
-    expect(await fake.get<string>(testKey('goals'))).toBe('unreadable-but-recoverable-blob');
+    await fake.set(ctxKey('goals'), 'unreadable-but-recoverable-blob');
+    await expect(setGoals(ctx, [GOAL])).rejects.toBeInstanceOf(StoredDataUnreadableError);
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('unreadable-but-recoverable-blob');
   });
 
   test('a Redis failure is an error, never none', async () => {
     fake.failNext('get');
-    await expect(getGoals()).rejects.toThrow(/armed failure/);
+    await expect(getGoals(ctx)).rejects.toThrow(/armed failure/);
   });
 
   test('a Redis failure while checking stops the save', async () => {
-    await setGoals([GOAL]);
+    await setGoals(ctx, [GOAL]);
     fake.failNext('get');
-    await expect(setGoals([])).rejects.toThrow(/armed failure/);
-    expect(await getGoals()).toEqual([GOAL]);
+    await expect(setGoals(ctx, [])).rejects.toThrow(/armed failure/);
+    expect(await getGoals(ctx)).toEqual([GOAL]);
   });
 });
 
 describe('empty is a real value, not unreadable', () => {
   test('an empty goal list saves and reads back', async () => {
-    await setGoals([GOAL]);
-    await setGoals([]);
-    expect(await getGoals()).toEqual([]);
-    await setGoals([GOAL]); // and can be saved over again
-    expect(await getGoals()).toEqual([GOAL]);
+    await setGoals(ctx, [GOAL]);
+    await setGoals(ctx, []);
+    expect(await getGoals(ctx)).toEqual([]);
+    await setGoals(ctx, [GOAL]); // and can be saved over again
+    expect(await getGoals(ctx)).toEqual([GOAL]);
   });
 
   test('an empty budget set saves and reads back', async () => {
-    await setBudgets({ Groceries: 400 });
-    await setBudgets({});
-    expect(await getBudgets()).toEqual({});
-    await setBudgets({ Rent: 1000 });
-    expect(await getBudgets()).toEqual({ Rent: 1000 });
+    await setBudgets(ctx, { Groceries: 400 });
+    await setBudgets(ctx, {});
+    expect(await getBudgets(ctx)).toEqual({});
+    await setBudgets(ctx, { Rent: 1000 });
+    expect(await getBudgets(ctx)).toEqual({ Rent: 1000 });
   });
 
   test('a stored empty string reads as never saved', async () => {
-    await fake.set(testKey('goals'), '');
-    expect(await getGoals()).toEqual([]);
-    await setGoals([GOAL]);
-    expect(await getGoals()).toEqual([GOAL]);
+    await fake.set(ctxKey('goals'), '');
+    expect(await getGoals(ctx)).toEqual([]);
+    await setGoals(ctx, [GOAL]);
+    expect(await getGoals(ctx)).toEqual([GOAL]);
   });
 });
 
 describe('budgets', () => {
   test('never saved reads as none, and round-trips', async () => {
-    expect(await getBudgets()).toEqual({});
-    await setBudgets({ Groceries: 400 });
-    expect(await getBudgets()).toEqual({ Groceries: 400 });
+    expect(await getBudgets(ctx)).toEqual({});
+    await setBudgets(ctx, { Groceries: 400 });
+    expect(await getBudgets(ctx)).toEqual({ Groceries: 400 });
   });
 
   test('the wrong shape is unreadable', async () => {
-    await fake.set(testKey('budgets'), await encrypt('[1,2]'));
-    await expect(getBudgets()).rejects.toBeInstanceOf(StoredDataUnreadableError);
+    await fake.set(ctxKey('budgets'), await encrypt('[1,2]'));
+    await expect(getBudgets(ctx)).rejects.toBeInstanceOf(StoredDataUnreadableError);
   });
 
   test('saving over an unreadable value is refused, and it is left alone', async () => {
-    await fake.set(testKey('budgets'), 'unreadable-blob');
-    await expect(setBudgets({ Groceries: 400 })).rejects.toBeInstanceOf(StoredDataUnreadableError);
-    expect(await fake.get<string>(testKey('budgets'))).toBe('unreadable-blob');
+    await fake.set(ctxKey('budgets'), 'unreadable-blob');
+    await expect(setBudgets(ctx, { Groceries: 400 })).rejects.toBeInstanceOf(StoredDataUnreadableError);
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('unreadable-blob');
   });
 });
 
@@ -110,7 +118,7 @@ describe('the routes tell the dashboard, so it never shows "none"', () => {
     route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }));
 
   test('goals: an unreadable store is a flagged 409 on load and on save', async () => {
-    await fake.set(testKey('goals'), 'unreadable');
+    await fake.set(ctxKey('goals'), 'unreadable');
     const get = await goalsRoute.GET();
     expect(get.status).toBe(409);
     expect(await get.json()).toMatchObject({ unreadable: true });
@@ -118,23 +126,23 @@ describe('the routes tell the dashboard, so it never shows "none"', () => {
     const res = await put(goalsRoute, { goals: [GOAL] });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ unreadable: true });
-    expect(await fake.get<string>(testKey('goals'))).toBe('unreadable');
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('unreadable');
   });
 
   test('budgets: the same', async () => {
-    await fake.set(testKey('budgets'), 'unreadable');
+    await fake.set(ctxKey('budgets'), 'unreadable');
     const get = await budgetsRoute.GET();
     expect(get.status).toBe(409);
     expect(await get.json()).toMatchObject({ unreadable: true });
     const res = await put(budgetsRoute, { budgets: { Groceries: 400 } });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ unreadable: true });
-    expect(await fake.get<string>(testKey('budgets'))).toBe('unreadable');
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('unreadable');
   });
 
   test('the log says why, and never shows stored data', async () => {
     const secret = 'enc-secret-looking-value-that-must-not-be-logged';
-    await fake.set(testKey('goals'), secret);
+    await fake.set(ctxKey('goals'), secret);
     const logged: string[] = [];
     const origError = console.error;
     console.error = (...a: unknown[]) => logged.push(a.join(' '));
@@ -163,10 +171,10 @@ describe('the routes tell the dashboard, so it never shows "none"', () => {
         [id]: JSON.stringify({ created_at: 'x', wrapped: { [m.fingerprint]: await m.wrap(id, raw) } }),
       });
       const value = await encryptV2(JSON.stringify([GOAL]), id);
-      await fake.set(testKey('goals'), value);
+      await fake.set(ctxKey('goals'), value);
       // A fresh id is not cached, so decrypting it must fetch the key.
       const id2 = await dataKeyId(62, raw);
-      await fake.set(testKey('goals'), value.replace(`v2.${id}.`, `v2.${id2}.`));
+      await fake.set(ctxKey('goals'), value.replace(`v2.${id}.`, `v2.${id2}.`));
       fake.failNext('hget');
 
       const origError = console.error;

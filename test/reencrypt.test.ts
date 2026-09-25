@@ -71,7 +71,7 @@ afterEach(() => {
 });
 
 describe('the list of keys', () => {
-  test('every key name in the code is on it, and none is built out of sight', () => {
+  test('every key name in the code is on it, and none is built out of sight', async () => {
     const root = join(import.meta.dir, '..');
     const files: string[] = [];
     const walk = (dir: string) => {
@@ -138,7 +138,11 @@ describe('the list of keys', () => {
     expect(names.size).toBeGreaterThan(20); // the scan found the stores
     // A key name the scan cannot read (a variable, a helper) could be a store
     // this file never hears of. Spell it out at the call, or list it here.
-    expect(opaque).toEqual([]);
+    // lib/move.ts builds keys only from its own lists, which test/move.test.ts
+    // checks against every key the code builds; they are classified below.
+    expect(opaque.filter((o) => !o.startsWith('lib/move.ts: kc(ctx, '))).toEqual([]);
+    const { MOVED_KEYS, MOVED_PREFIXES } = await import('@/lib/move');
+    for (const key of [...MOVED_KEYS, ...MOVED_PREFIXES.map((p) => `${p}x`)]) names.add(key);
     const missing = [...names].filter((n) => n !== '' && classify(n) === null);
     expect(missing).toEqual([]);
   });

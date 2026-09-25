@@ -112,6 +112,13 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
     expect(() => verifyArchive(reseal(lines))).toThrow(/key layout/);
   });
 
+  test('an archive from before containers says how to bring it in', async () => {
+    await seed();
+    const lines = linesOf(await exportText());
+    lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), schema_era: 'unscoped' });
+    expect(() => verifyArchive(reseal(lines))).toThrow(/release from before containers, then .*move-data/);
+  });
+
   test('a format version it does not know', async () => {
     const lines = linesOf(await exportText());
     lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), nya_export: 2 });
@@ -234,6 +241,18 @@ describe('restoreArchive', () => {
     await fake.hset(runsKey, { '2026-09-25': 'today' });
     await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
     expect(await fake.hget<string>(runsKey, '2026-09-25')).toBe('today');
+  });
+
+  test("the data move's record is not data either: never exported, never replaced", async () => {
+    const recordKey = testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:move:copied');
+    await seed();
+    await fake.hset(recordKey, { budgets: 'd-old' });
+    const archive = verifyArchive(await exportText());
+    expect(archive.records.map((r) => r.key)).not.toContain('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:move:copied');
+
+    await fake.hset(recordKey, { budgets: 'd-now' });
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
+    expect(await fake.hget<string>(recordKey, 'budgets')).toBe('d-now');
   });
 
   test('overwrite replaces: strays and stale caches go, rate limits stay', async () => {

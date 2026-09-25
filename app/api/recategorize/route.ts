@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { setOverride } from '@/lib/overrides';
-import { cacheCtx, clearTransactionsCache } from '@/lib/cache';
+import { clearTransactionsCache } from '@/lib/cache';
 
 // Store a manual category for one transaction. The transactions route
 // applies these overrides on top of Plaid's auto-categorization.
 
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const { transaction_id, category } = await req.json();
     if (typeof transaction_id !== 'string' || !transaction_id || transaction_id.length > 100) {
       return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
@@ -15,11 +17,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid category' }, { status: 400 });
     }
 
-    await setOverride(transaction_id, category.trim().toLowerCase());
-    await clearTransactionsCache(await cacheCtx()); // the cached payload has the old category
+    await setOverride(ctx, transaction_id, category.trim().toLowerCase());
+    await clearTransactionsCache(ctx); // the cached payload has the old category
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to recategorize' }, { status: 500 });
   }

@@ -10,14 +10,15 @@
 // of the fetched data in /api/transactions. Values are encrypted like every
 // other financial payload.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 
-const RENAMES_HASH = k('txn-vendor-renames');
+const RENAMES_HASH = (ctx: Ctx) => kc(ctx, 'txn-vendor-renames');
 
-export async function getRenames(): Promise<Record<string, string>> {
+export async function getRenames(ctx: Ctx): Promise<Record<string, string>> {
   try {
-    const map = await redis().hgetall<Record<string, string>>(RENAMES_HASH);
+    const map = await redis().hgetall<Record<string, string>>(RENAMES_HASH(ctx));
     if (!map) return {};
     const out: Record<string, string> = {};
     await Promise.all(
@@ -35,11 +36,11 @@ export async function getRenames(): Promise<Record<string, string>> {
   }
 }
 
-export async function setRename(vendor_key: string, name: string): Promise<void> {
-  await redis().hset(RENAMES_HASH, { [vendor_key]: await encrypt(name) });
+export async function setRename(ctx: Ctx, vendor_key: string, name: string): Promise<void> {
+  await redis().hset(RENAMES_HASH(ctx), { [vendor_key]: await encrypt(name) });
 }
 
 /** Remove a rename, reverting the vendor to its Plaid-provided name. */
-export async function clearRename(vendor_key: string): Promise<void> {
-  await redis().hdel(RENAMES_HASH, vendor_key);
+export async function clearRename(ctx: Ctx, vendor_key: string): Promise<void> {
+  await redis().hdel(RENAMES_HASH(ctx), vendor_key);
 }

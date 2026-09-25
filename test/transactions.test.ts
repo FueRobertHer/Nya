@@ -1,5 +1,7 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
+
+const ctx = TEST_CTX;
 
 // Real AES-256-GCM, not a stub. Every stored blob in this module goes through
 // encrypt -> gzip -> Redis and back, and the whole point of several of these
@@ -52,6 +54,8 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 const fake = new FakeRedis();
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
@@ -112,12 +116,12 @@ async function seedState(item_id: string, state: unknown): Promise<void> {
   const bytes = new Uint8Array(await new Response(gz).arrayBuffer());
   let binary = '';
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  await fake.set(testKey(`txns:${item_id}`), await encrypt(btoa(binary)));
+  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(btoa(binary)));
 }
 
 /** Writes a blob in the pre-compression encoding: JSON straight into encrypt. */
 async function seedUncompressedState(item_id: string, state: unknown): Promise<void> {
-  await fake.set(testKey(`txns:${item_id}`), await encrypt(JSON.stringify(state)));
+  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(JSON.stringify(state)));
 }
 
 beforeEach(() => {
@@ -129,7 +133,7 @@ beforeEach(() => {
 describe('persistence round trip', () => {
   test('stores state on first sync and resumes from the stored cursor', async () => {
     pages = [{ added: [txn()], next_cursor: 'cursor-1' }];
-    const first = await syncItemTransactions(ITEM);
+    const first = await syncItemTransactions(ctx, ITEM);
 
     expect(first.note).toBeNull();
     expect(first.txns.map((t) => t.transaction_id)).toEqual(['t1']);
@@ -138,7 +142,7 @@ describe('persistence round trip', () => {
     // Second sync: a different Plaid page, resuming from the persisted cursor.
     calls = [];
     pages = [{ added: [txn({ transaction_id: 't2', date: daysAgo(1) })], next_cursor: 'cursor-2' }];
-    const second = await syncItemTransactions(ITEM);
+    const second = await syncItemTransactions(ctx, ITEM);
 
     expect(calls[0].cursor).toBe('cursor-1');
     // t1 came from the persisted blob, t2 from this page: the store accumulates.
@@ -147,20 +151,20 @@ describe('persistence round trip', () => {
 
   test('a removed delta deletes the stored row', async () => {
     pages = [{ added: [txn(), txn({ transaction_id: 't2' })] }];
-    await syncItemTransactions(ITEM);
+    await syncItemTransactions(ctx, ITEM);
 
     calls = [];
     pages = [{ removed: [{ transaction_id: 't1' }] }];
-    const after = await syncItemTransactions(ITEM);
+    const after = await syncItemTransactions(ctx, ITEM);
 
     expect(after.txns.map((t) => t.transaction_id)).toEqual(['t2']);
   });
 
   test('getItemAccountIds reads the persisted account map', async () => {
     pages = [{ added: [txn()], accounts: [acct(), acct({ account_id: 'acct_2', name: 'Savings' })] }];
-    await syncItemTransactions(ITEM);
+    await syncItemTransactions(ctx, ITEM);
 
-    expect((await getItemAccountIds('item_a')).sort()).toEqual(['acct_1', 'acct_2']);
+    expect((await getItemAccountIds(ctx, 'item_a')).sort()).toEqual(['acct_1', 'acct_2']);
   });
 });
 
@@ -169,7 +173,7 @@ describe('retention beyond the display window', () => {
     pages = [{ added: [txn({ transaction_id: 'old', date: daysAgo(700) }), txn()] }];
 
     // The display projection filters to the trailing LOOKBACK_DAYS window.
-    const displayed = await syncItemTransactions(ITEM);
+    const displayed = await syncItemTransactions(ctx, ITEM);
     expect(displayed.txns.map((t) => t.transaction_id)).toEqual(['t1']);
 
     // But the row is still persisted, which is the entire premise of this
@@ -177,7 +181,7 @@ describe('retention beyond the display window', () => {
     // window to Plaid. A wider read finds it without another Plaid call.
     calls = [];
     pages = [{}];
-    const stored = await readItemTransactions(ITEM, 1000);
+    const stored = await readItemTransactions(ctx, ITEM, 1000);
     expect(stored.txns.map((t) => t.transaction_id).sort()).toEqual(['old', 't1']);
   });
 });
@@ -204,7 +208,7 @@ describe('stored blob compatibility', () => {
     });
 
     pages = [{}];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(calls[0].cursor).toBe('legacy-cursor');
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t_old']);
@@ -231,7 +235,7 @@ describe('stored blob compatibility', () => {
     });
 
     pages = [{}];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     // Re-pulling would only recover what the bank still exposes, so the upgrade
     // must preserve the row rather than start clean.
@@ -270,7 +274,7 @@ describe('stored blob compatibility', () => {
     });
 
     pages = [{}];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(calls[0].cursor).toBe('future-cursor');
     expect(res.txns[0].name).toBe('Future Merchant');
@@ -279,7 +283,7 @@ describe('stored blob compatibility', () => {
 
 describe('hard stops leave the stored blob alone', () => {
   test('undecryptable credentials stop before any Plaid call', async () => {
-    const res = await syncItemTransactions({ ...ITEM, encrypted_access_token: 'not-ciphertext' });
+    const res = await syncItemTransactions(ctx, { ...ITEM, encrypted_access_token: 'not-ciphertext' });
 
     expect(res.txns).toEqual([]);
     expect(res.note).toContain('could not decrypt stored credentials');
@@ -288,16 +292,16 @@ describe('hard stops leave the stored blob alone', () => {
 
   test('ITEM_LOGIN_REQUIRED does not overwrite the stored blob', async () => {
     pages = [{ added: [txn()] }];
-    await syncItemTransactions(ITEM);
-    const stored = await fake.get<string>(testKey('txns:item_a'));
+    await syncItemTransactions(ctx, ITEM);
+    const stored = await fake.get<string>(ctxKey('txns:item_a'));
     expect(stored).not.toBeNull();
 
     calls = [];
     pages = [{ error: 'ITEM_LOGIN_REQUIRED' }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(res.note).toContain('needs to be reconnected');
-    expect(await fake.get<string>(testKey('txns:item_a'))).toBe(stored as string);
+    expect(await fake.get<string>(ctxKey('txns:item_a'))).toBe(stored as string);
   });
 });
 
@@ -318,7 +322,7 @@ describe('a blob too large to persist', () => {
 
   test('refuses to write, and drops nothing from the returned set', async () => {
     pages = [{ added: bulky() }];
-    const res = await readItemTransactions(ITEM, 1000);
+    const res = await readItemTransactions(ctx, ITEM, 1000);
 
     // THE point of the change. The old code trimmed oldest-first until the blob
     // fit, mutating the caller's state in place — and syncItem returns that same
@@ -335,31 +339,31 @@ describe('a blob too large to persist', () => {
   test('leaves the previously stored blob untouched', async () => {
     // One small row fits and persists.
     pages = [{ added: [txn()], next_cursor: 'cursor-small' }];
-    await syncItemTransactions(ITEM);
-    const stored = await fake.get<string>(testKey('txns:item_a'));
+    await syncItemTransactions(ctx, ITEM);
+    const stored = await fake.get<string>(ctxKey('txns:item_a'));
     expect(stored).not.toBeNull();
 
     // Now a pull that pushes it over. The stored blob must survive intact: the
     // cursor has not advanced, so the deltas replay safely next time.
     calls = [];
     pages = [{ added: bulky() }];
-    await syncItemTransactions(ITEM);
+    await syncItemTransactions(ctx, ITEM);
 
-    expect(await fake.get<string>(testKey('txns:item_a'))).toBe(stored as string);
+    expect(await fake.get<string>(ctxKey('txns:item_a'))).toBe(stored as string);
   });
 
   test('sets the blocked marker so the next sync does not re-pull', async () => {
     pages = [{ added: bulky() }];
-    await syncItemTransactions(ITEM);
+    await syncItemTransactions(ctx, ITEM);
 
-    expect(await fake.get<string>(testKey('txns-blocked:item_a'))).not.toBeNull();
+    expect(await fake.get<string>(ctxKey('txns-blocked:item_a'))).not.toBeNull();
   });
 
   test('a failed persist never drops rows from the returned set', async () => {
     pages = [{ added: [txn(), txn({ transaction_id: 't2' })] }];
     fake.failNext('set');
 
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(res.txns.map((t) => t.transaction_id).sort()).toEqual(['t1', 't2']);
   });
@@ -367,7 +371,7 @@ describe('a blob too large to persist', () => {
   /** A marker recording a refusal at `chars`, as writeState would write it. */
   const blockedAt = (chars: number) =>
     fake.set(
-      testKey('txns-blocked:item_a'),
+      ctxKey('txns-blocked:item_a'),
       JSON.stringify({ at: '2026-01-15T00:00:00.000Z', chars })
     );
 
@@ -375,7 +379,7 @@ describe('a blob too large to persist', () => {
     await blockedAt(99_999_999); // still far over the 5000 test ceiling
 
     pages = [{ added: [txn()] }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     // The whole point of the marker: no Plaid call at all. Without it, every
     // dashboard load would re-pull the Item's full history and refuse to write
@@ -396,18 +400,18 @@ describe('a blob too large to persist', () => {
     await blockedAt(1000); // under the 5000 ceiling now in force
 
     pages = [{ added: [txn()] }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(calls).toHaveLength(1);
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
-    expect(await fake.get(testKey('txns-blocked:item_a'))).toBeNull();
+    expect(await fake.get(ctxKey('txns-blocked:item_a'))).toBeNull();
   });
 
   test('an uninterpretable marker clears rather than blocking forever', async () => {
-    await fake.set(testKey('txns-blocked:item_a'), 'not-json');
+    await fake.set(ctxKey('txns-blocked:item_a'), 'not-json');
 
     pages = [{ added: [txn()] }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     // Costs one wasted pull; writeState re-sets it if the blob is still too
     // big. Better than a permanently stuck Item nothing can interpret.
@@ -417,10 +421,10 @@ describe('a blob too large to persist', () => {
 
   test('disconnecting clears the marker so a reconnect is not blocked', async () => {
     await blockedAt(99_999_999);
-    await clearItemTransactions('item_a');
+    await clearItemTransactions(ctx, 'item_a');
 
     pages = [{ added: [txn()] }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(calls).toHaveLength(1);
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
@@ -434,12 +438,12 @@ describe('a ceiling error names the container (#58)', () => {
     console.error = (...a: unknown[]) => errors.push(a.join(' '));
     try {
       pages = [{ added: Array.from({ length: 140 }, (_, i) => txn({ transaction_id: `b${i}`, name: `M ${crypto.randomUUID()}` })) }];
-      await syncItemTransactions(ITEM);
+      await syncItemTransactions(ctx, ITEM);
     } finally {
       console.error = origError;
     }
-    // None is set up in this test.
-    expect(errors.join(' ')).toContain('refusing to persist item_a in no container');
+    // The container being synced, whatever this deployment's is.
+    expect(errors.join(' ')).toContain(`refusing to persist item_a in container ${TEST_CONTAINER}`);
   });
 });
 
@@ -448,22 +452,22 @@ describe('unreadable stored blob', () => {
   // writeState then persisted over the real blob: silent permanent loss of
   // everything past the bank's window. It now hard-stops instead.
   test('refuses to sync rather than overwriting history it cannot read', async () => {
-    await fake.set(testKey('txns:item_a'), 'not-ciphertext');
+    await fake.set(ctxKey('txns:item_a'), 'not-ciphertext');
 
     pages = [{ added: [txn({ transaction_id: 't_new' })] }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(calls).toHaveLength(0); // never reached Plaid
     expect(res.txns).toEqual([]);
     expect(res.note).toContain('refusing to re-sync over it');
     // The one that actually matters: the blob is still there.
-    expect(await fake.get<string>(testKey('txns:item_a'))).toBe('not-ciphertext');
+    expect(await fake.get<string>(ctxKey('txns:item_a'))).toBe('not-ciphertext');
   });
 
   test('a failed Redis read is not treated as an empty store', async () => {
     pages = [{ added: [txn()] }];
-    await syncItemTransactions(ITEM);
-    const stored = await fake.get<string>(testKey('txns:item_a'));
+    await syncItemTransactions(ctx, ITEM);
+    const stored = await fake.get<string>(ctxKey('txns:item_a'));
 
     // A transient read failure used to mean "start clean", which would re-pull
     // from scratch and persist the bank's short window over years of rows. The
@@ -473,16 +477,16 @@ describe('unreadable stored blob', () => {
     // deliberately tolerates that first read failing. The second is the one
     // under test.
     fake.failNext('get', 2);
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     expect(calls).toHaveLength(0);
     expect(res.note).toContain('refusing to re-sync over it');
-    expect(await fake.get<string>(testKey('txns:item_a'))).toBe(stored as string);
+    expect(await fake.get<string>(ctxKey('txns:item_a'))).toBe(stored as string);
   });
 
   test('an absent blob is still a legitimate fresh start', async () => {
     pages = [{ added: [txn()] }];
-    const res = await syncItemTransactions(ITEM);
+    const res = await syncItemTransactions(ctx, ITEM);
 
     // The one case that should start from empty, and the reason the null check
     // sits outside the try rather than inside it.

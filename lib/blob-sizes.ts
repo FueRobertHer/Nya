@@ -23,11 +23,10 @@
 // yet: when one comes, the refusal path it needs (tell the user, change
 // nothing) is the one the size ceiling already takes.
 //
-// Until the data moves into containers (PRs 10 to 13) every blob belongs to
-// this deployment's container (lib/sessions.ts); the walk then follows kc().
+// Measured for one container: the walk covers only its keys (kc()).
 
-import { redis, k, getItems } from './storage';
-import { deploymentContainer } from './sessions';
+import { redis, kc, getItems } from './storage';
+import type { Ctx } from './containers';
 import { maxBlobChars } from './blob';
 
 export type BlobKind = 'txns' | 'invtxns';
@@ -49,9 +48,9 @@ const PAGE = 200;
 
 /** Where each kind of blob lives, spelled out so the key-name check in
  *  test/reencrypt.test.ts can see them. */
-const blobPrefixes = (): [BlobKind, string][] => [
-  ['txns', k('txns:')],
-  ['invtxns', k('invtxns:')],
+const blobPrefixes = (ctx: Ctx): [BlobKind, string][] => [
+  ['txns', kc(ctx, 'txns:')],
+  ['invtxns', kc(ctx, 'invtxns:')],
 ];
 
 /** Every key matching the pattern, once each (SCAN may repeat a key). */
@@ -79,7 +78,7 @@ function blockedChars(value: unknown): number | undefined {
 }
 
 /** The stored size of every blob, by Item, largest first, and their total. */
-export async function readStorageUsage(): Promise<StorageUsage> {
+export async function readStorageUsage(ctx: Ctx): Promise<StorageUsage> {
   const byItem = new Map<string, ItemSizes>();
   const entry = (item_id: string) => {
     let e = byItem.get(item_id);
@@ -88,7 +87,7 @@ export async function readStorageUsage(): Promise<StorageUsage> {
   };
 
   let total = 0;
-  for (const [kind, prefix] of blobPrefixes()) {
+  for (const [kind, prefix] of blobPrefixes(ctx)) {
     const keys = await keysMatching(`${prefix}*`);
     const sizes = await Promise.all(keys.map((key) => redis().strlen(key)));
     keys.forEach((key, i) => {
@@ -99,7 +98,7 @@ export async function readStorageUsage(): Promise<StorageUsage> {
     });
   }
 
-  const blockedPrefix = k('txns-blocked:');
+  const blockedPrefix = kc(ctx, 'txns-blocked:');
   const blocked = await keysMatching(`${blockedPrefix}*`);
   const markers = await Promise.all(blocked.map((key) => redis().get(key)));
   blocked.forEach((key, i) => {
@@ -112,22 +111,10 @@ export async function readStorageUsage(): Promise<StorageUsage> {
 
   // Read after the walk, not before: an Item linked while it ran would
   // otherwise be called orphaned. A disconnect during it is reported as one.
-  const linked = new Set((await getItems()).map((i) => i.item_id));
+  const linked = new Set((await getItems(ctx)).map((i) => i.item_id));
   for (const e of byItem.values()) e.orphaned = !linked.has(e.item_id);
 
   const sum = (e: ItemSizes) => (e.txns ?? 0) + (e.invtxns ?? 0);
   const items = [...byItem.values()].sort((a, b) => sum(b) - sum(a) || (a.item_id < b.item_id ? -1 : 1));
   return { total_chars: total, items };
-}
-
-/** "container <id>", for a ceiling error: which container's data would not
- *  fit. Never throws: a log line must not fail for want of it. */
-export async function containerLabel(): Promise<string> {
-  try {
-    const dep = await deploymentContainer();
-    if (dep.kind === 'container') return `container ${dep.container}`;
-    return dep.kind === 'none' ? 'no container' : `an unresolved container (${dep.reason})`;
-  } catch (err) {
-    return `an unresolved container (${err instanceof Error ? err.name : 'error'})`;
-  }
 }

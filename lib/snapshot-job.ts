@@ -14,24 +14,19 @@
 // of the cron) is left to it, so the catch-up cron (/api/snapshot/catchup)
 // only does the containers that failed, came back unclean, were deferred, or
 // had nothing linked (in case something was linked since; no Plaid calls).
-// `attempts` counts the runs started; a run refused before starting (blocked,
-// or its container no longer active) is stored as failed without adding one.
+// `attempts` counts the runs started; a run refused before starting (its
+// container no longer active) is stored as failed without adding one.
 // Entries older than RUNS_KEEP_DAYS are pruned.
 //
 // "snapshot:" keys describe this environment's cron, not the data: exports
 // leave them out and a restore keeps the target's own (lib/export.ts,
 // lib/restore.ts).
 //
-// Until the data moves into containers (PRs 10 to 13), the app's data still
-// lives under unscoped keys, and those belong to one container: this
-// deployment's, by the rule sessions use (lib/sessions.ts). Only that one is
-// snapshotted. Any other active container is reported as skipped, never run
-// against the unscoped data. If this deployment's container cannot be worked
-// out, or any container is being restored, every container fails with the
-// reason: a guess that turned out wrong would write one container's history
-// into another's, and a restore may be writing the very keys a snapshot would.
-// The registry is read again once the lock is held. A restore that starts
-// after that, mid-run, is not excluded: restore does not look at the lock.
+// Each container's snapshot reads and writes only that container's data
+// (#53). A container that is not active is skipped before anything is read
+// or written, and its status is read again once its lock is held, since the
+// registry was read up to minutes before. A restore that starts after that,
+// mid-run, is not excluded: restore does not look at the lock.
 //
 // If the registry cannot be read it is tried once more, then the cron fails
 // loudly. It never falls back to a default container or to unscoped keys.
@@ -41,8 +36,7 @@
 
 import { redis, kc } from './storage';
 import { randomUUID } from 'node:crypto';
-import { CONTAINER_ENV, ContainerError, getContainer, listContainers, type ContainerId, type ContainerRecord, type Ctx } from './containers';
-import { pickDeployment } from './sessions';
+import { ContainerError, getContainer, listContainers, type ContainerId, type ContainerRecord, type Ctx } from './containers';
 import { computeNetWorth, recordFetch, isRecordable } from './networth';
 import { rememberAccounts } from './last-known';
 import { recordDirectory } from './links';
@@ -73,11 +67,6 @@ export const RUNS_KEEP_DAYS = 90;
 export const RELEASE_LOCK = `-- nya:release-lock
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`;
-/** False until the data moves into containers (PRs 10 to 13): until then only
- *  the container the unscoped data belongs to is run (see the header). Flip it
- *  only with a snapshot that reads each container's own data: the default one
- *  refuses to run while it is set. */
-export const DATA_IN_CONTAINERS = false;
 
 /** "empty": nothing is linked, so there is nothing to snapshot; not a
  *  failure. "unclean": something could not be read, so no total. */
@@ -219,14 +208,14 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
 }
 
 /**
- * The snapshot itself, for the container the unscoped data belongs to. The
+ * The snapshot itself, for one container, from that container's data. The
  * same rule as the dashboard: only a clean, non-empty read records a total. A
  * partly failed one still records the accounts that answered, for their own
  * charts: on a day the app is not opened this is the only fetch.
  */
 export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reason?: string }> {
-  const { institutions, netWorth } = await computeNetWorth();
-  const recorded = await recordFetch(institutions, netWorth);
+  const { institutions, netWorth } = await computeNetWorth(ctx);
+  const recorded = await recordFetch(ctx, institutions, netWorth);
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
   if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.' };
 
@@ -235,17 +224,11 @@ export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reaso
   // an account added since the last dashboard load would be in the snapshot
   // with nothing to render it from, and recovery would draw its institution
   // short (lib/last-known.ts reports the shortfall but cannot undo it).
-  await rememberAccounts(institutions);
-  await recordDirectory(institutions);
+  await rememberAccounts(ctx, institutions);
+  await recordDirectory(ctx, institutions);
   await clearCaches(ctx); // cached payloads now have yesterday's history
   if (recorded === null) return { status: 'failed', reason: 'The snapshot could not be written.' };
   return { status: 'recorded' };
-}
-
-/** snapshotData reads the unscoped data. Run once per container, it would
- *  fetch and record that same data for each, and mark each one recorded. */
-async function refuseScoped(): Promise<never> {
-  throw new ContainerError('The snapshot does not read data from containers yet.');
 }
 
 export type RunOptions = {
@@ -257,30 +240,15 @@ export type RunOptions = {
   work?: (ctx: Ctx) => Promise<{ status: RunStatus; reason?: string }>;
   concurrency?: number;
   budgetMs?: number;
-  /** Whether the app's data lives in containers yet (DATA_IN_CONTAINERS). */
-  scopedData?: boolean;
 };
 
 /** Runs every container in the registry for the date (see the header). */
 export async function runSnapshots(registry: Registry, opts: RunOptions): Promise<SnapshotReport> {
   const clock = opts.clock ?? Date.now;
-  const scoped = opts.scopedData ?? DATA_IN_CONTAINERS;
-  const work = opts.work ?? (scoped ? refuseScoped : snapshotData);
+  const work = opts.work ?? snapshotData;
   const budget = opts.budgetMs ?? START_BUDGET_MS;
   const date = opts.scheduledFor;
   const started = opts.startedAt ?? clock();
-
-  // While the data is unscoped, one container owns it, and nothing may run
-  // while that cannot be worked out or while any container is being restored.
-  let dep: { container: ContainerId } | null = null;
-  let blocked: string | null = null;
-  if (!scoped) {
-    const d = pickDeployment(registry, process.env[CONTAINER_ENV] ?? '');
-    if (registry.some((c) => c.status === 'restoring')) blocked = 'A container is being restored.';
-    else if (d.kind === 'container') dep = { container: d.container };
-    else blocked = d.kind === 'unusable' ? d.reason : 'No container is set up.';
-    if (blocked) console.error(`Snapshot: no container can be snapshotted: ${blocked}`);
-  }
 
   const one = async (c: Registry[number]): Promise<ContainerOutcome> => {
     const container = c.id;
@@ -288,7 +256,6 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     // Filtered here, before anything is read or written: a container being
     // restored would get a snapshot of half-restored data.
     if (c.status !== 'active') return { container, status: 'skipped', reason: `The container is ${c.status}.` };
-    if (dep && dep.container !== container) return { container, status: 'skipped', reason: 'Its data is not in containers yet.' };
 
     const t0 = clock();
     const token = randomUUID();
@@ -300,7 +267,6 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
         await writeRun(ctx, date, 'deferred', undefined, clock(), { onlyIfNew: true });
         return { container, status: 'deferred' };
       }
-      if (blocked) throw new ContainerError(blocked);
       locked = (await redis().set(lockKey(ctx), token, { nx: true, ex: LOCK_SECONDS })) !== null;
       if (!locked) return { container, status: 'running' };
       // With the lock held: another run may have finished between the check
@@ -311,7 +277,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       }
       // And the registry again: it was read up to minutes ago, and a restore
       // may have started since.
-      await recheck(container, scoped);
+      await recheck(container);
       await writeRun(ctx, date, 'running', undefined, clock());
       outcome = await work(ctx);
     } catch (err) {
@@ -327,18 +293,10 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };
 }
 
-/** The container is still active, and while the data is unscoped, no
- *  container is being restored. */
-async function recheck(container: ContainerId, scoped: boolean): Promise<void> {
-  if (scoped) {
-    const rec = await getContainer(container);
-    if (rec?.status !== 'active') throw new ContainerError(`The container is ${rec?.status ?? 'gone from the registry'}.`);
-    return;
-  }
-  const all = await listContainers();
-  const rec = all.find((c) => c.id === container);
+/** The container is still active. */
+async function recheck(container: ContainerId): Promise<void> {
+  const rec = await getContainer(container);
   if (rec?.status !== 'active') throw new ContainerError(`The container is ${rec?.status ?? 'gone from the registry'}.`);
-  if (all.some((c) => c.status === 'restoring')) throw new ContainerError('A container is being restored.');
 }
 
 /** Frees the lock if it is still this run's. Never throws: it expires. */

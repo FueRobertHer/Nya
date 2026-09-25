@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
-import { cacheCtx, readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
+import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
   getHistory,
   withTodayPoint,
@@ -32,8 +34,8 @@ type NetWorthPayload = {
 // 15-minute cache. Cached true would re-POST /api/backfill on every load for
 // the rest of the TTL; cached false would swallow a recompute that a
 // clearBackfillDone() elsewhere had just asked for.
-async function staleFlag(): Promise<{ backfill_stale: boolean }> {
-  return { backfill_stale: !(await isBackfillDone()) };
+async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean }> {
+  return { backfill_stale: !(await isBackfillDone(ctx)) };
 }
 
 /**
@@ -55,6 +57,7 @@ function eager<T>(p: Promise<T>): Promise<T> {
 
 export async function GET(req: Request) {
   try {
+    const ctx = await dataCtx();
     // Live Plaid balance calls take seconds; serve the (encrypted) cached
     // payload when it's fresh. The Refresh button passes ?refresh=1 to force
     // a live fetch.
@@ -62,8 +65,7 @@ export async function GET(req: Request) {
 
     // Wanted on both paths and dependent on neither, so it runs alongside
     // whichever one we take rather than adding a round trip to the end of it.
-    const stalePromise = eager(staleFlag());
-    const ctx = await cacheCtx();
+    const stalePromise = eager(staleFlag(ctx));
 
     if (!refresh) {
       const cached = await readCache<NetWorthPayload>(ctx, CacheKey.NetWorth);
@@ -84,10 +86,10 @@ export async function GET(req: Request) {
     // sitting idle on the network the whole time.
     // Hidden accounts follow account links (lib/links.ts): every id an account
     // has had is hidden with it, and the client sees one current id each.
-    const hiddenPromise = eager(getEffectiveHidden());
-    const historyPromise = eager(hiddenPromise.then((h) => getHistory(h.hidden)));
+    const hiddenPromise = eager(getEffectiveHidden(ctx));
+    const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
 
-    const { institutions, netWorth } = await computeNetWorth();
+    const { institutions, netWorth } = await computeNetWorth(ctx);
 
     // Record today's snapshot only when every institution answered cleanly
     // and at least one is linked -- a partial fetch would chart an
@@ -105,18 +107,18 @@ export async function GET(req: Request) {
     // route charts below is labelled with the day that was actually written
     // even if the request straddles UTC midnight. When it didn't land, the
     // accounts that did answer are still recorded for their own charts.
-    const snapshotDate = await recordFetch(institutions, netWorth);
+    const snapshotDate = await recordFetch(ctx, institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so
     // a later failure can still draw its card. Per institution, not gated on
     // `clean`: one broken bank shouldn't stop the others' records staying
     // fresh. Writes only, so the broken one's record survives.
-    await rememberAccounts(institutions);
+    await rememberAccounts(ctx, institutions);
     // And in the account directory, which outlives a disconnect so a re-added
     // institution's accounts can be matched to the ones they replace. Started
     // here and awaited before responding, so it overlaps the reads below
     // instead of adding a round trip to every live load. It never throws.
-    const directoryWrite = recordDirectory(institutions);
+    const directoryWrite = recordDirectory(ctx, institutions);
 
     // Everything from here down is display-only. `visibleNetWorth` excludes
     // hidden accounts and is what ships as `netWorth` -- the client is never
@@ -128,7 +130,7 @@ export async function GET(req: Request) {
     // below the two gates above, and never above them: `clean` is computed from
     // the live fetch, so a recovered balance can't be mistaken for a measured
     // one and written to history or frozen into the cache. See lib/last-known.ts.
-    const stale = await fillFromLastKnown(institutions);
+    const stale = await fillFromLastKnown(ctx, institutions);
     if (stale.length > 0) {
       // Counts and a date, not ids. Item and account ids are encrypted at rest
       // everywhere else in this codebase, so writing them to a log would be the
@@ -178,6 +180,8 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ...payload, ...(await stalePromise), from_cache: false });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to fetch net worth' }, { status: 500 });
   }
