@@ -56,8 +56,47 @@ describe('stored blob sizes, measured', () => {
     await fake.set(testKey('txns-blocked:item_a'), JSON.stringify({ at: 'x', chars: 9_000_000 }));
     await fake.set(testKey('txns-blocked:item_b'), 'junk');
     const usage = await readStorageUsage();
-    expect(usage.items).toEqual([{ item_id: 'item_a', orphaned: false, txns: 10, blocked_at: 9_000_000 }]);
+    expect(usage.items).toEqual([{ item_id: 'item_a', orphaned: false, txns: 10, blocked_at: 9_000_000, blocked: true }]);
     expect(usage.total_chars).toBe(10); // what is stored, not what was refused
+  });
+
+  test('a marker under a raised ceiling no longer reads as blocked', async () => {
+    await link('item_a');
+    await fake.set(testKey('txns-blocked:item_a'), JSON.stringify({ at: 'x', chars: 9_000_000 }));
+    process.env.MAX_TXN_BLOB_CHARS = '10000000';
+    try {
+      expect((await readStorageUsage()).items).toEqual([{ item_id: 'item_a', orphaned: false, blocked_at: 9_000_000, blocked: false }]);
+    } finally {
+      delete process.env.MAX_TXN_BLOB_CHARS;
+    }
+  });
+
+  test('a blob deleted between the walk and the measure is left out', async () => {
+    await link('item_a');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(10));
+    await fake.set(testKey('txns:item_b'), 'x'.repeat(10));
+    const strlen = fake.strlen.bind(fake);
+    fake.strlen = (async (key: string) => (key === testKey('txns:item_b') ? 0 : strlen(key))) as typeof fake.strlen;
+    try {
+      expect(await readStorageUsage()).toEqual({ total_chars: 10, items: [{ item_id: 'item_a', orphaned: false, txns: 10 }] });
+    } finally {
+      fake.strlen = strlen;
+    }
+  });
+
+  test('an Item linked while the walk ran is not called orphaned', async () => {
+    await fake.set(testKey('txns:item_new'), 'x'.repeat(10));
+    const strlen = fake.strlen.bind(fake);
+    // The link lands after the keyspace walk began.
+    fake.strlen = (async (key: string) => {
+      await link('item_new');
+      return strlen(key);
+    }) as typeof fake.strlen;
+    try {
+      expect((await readStorageUsage()).items).toEqual([{ item_id: 'item_new', orphaned: false, txns: 10 }]);
+    } finally {
+      fake.strlen = strlen;
+    }
   });
 
   test('only the blobs themselves are counted: not markers, locks, caches or another environment', async () => {

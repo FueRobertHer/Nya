@@ -28,6 +28,7 @@
 
 import { redis, k, getItems } from './storage';
 import { deploymentContainer } from './sessions';
+import { maxBlobChars } from './blob';
 
 export type BlobKind = 'txns' | 'invtxns';
 export type ItemSizes = {
@@ -36,8 +37,11 @@ export type ItemSizes = {
   orphaned: boolean;
   txns?: number;
   invtxns?: number;
-  /** The size the last transaction write was refused at, when blocked. */
+  /** The size the last transaction write was refused at, when it was. */
   blocked_at?: number;
+  /** Whether that size is still over the ceiling. False after the ceiling
+   *  was raised: the marker clears on the Item's next sync. */
+  blocked?: boolean;
 };
 export type StorageUsage = { total_chars: number; items: ItemSizes[] };
 
@@ -76,11 +80,10 @@ function blockedChars(value: unknown): number | undefined {
 
 /** The stored size of every blob, by Item, largest first, and their total. */
 export async function readStorageUsage(): Promise<StorageUsage> {
-  const linked = new Set((await getItems()).map((i) => i.item_id));
   const byItem = new Map<string, ItemSizes>();
   const entry = (item_id: string) => {
     let e = byItem.get(item_id);
-    if (!e) byItem.set(item_id, (e = { item_id, orphaned: !linked.has(item_id) }));
+    if (!e) byItem.set(item_id, (e = { item_id, orphaned: false }));
     return e;
   };
 
@@ -89,6 +92,8 @@ export async function readStorageUsage(): Promise<StorageUsage> {
     const keys = await keysMatching(`${prefix}*`);
     const sizes = await Promise.all(keys.map((key) => redis().strlen(key)));
     keys.forEach((key, i) => {
+      // Deleted between the walk and the measure: a real blob is never empty.
+      if (sizes[i] <= 0) return;
       entry(key.slice(prefix.length))[kind] = sizes[i];
       total += sizes[i];
     });
@@ -99,8 +104,16 @@ export async function readStorageUsage(): Promise<StorageUsage> {
   const markers = await Promise.all(blocked.map((key) => redis().get(key)));
   blocked.forEach((key, i) => {
     const chars = blockedChars(markers[i]);
-    if (chars !== undefined) entry(key.slice(blockedPrefix.length)).blocked_at = chars;
+    if (chars === undefined) return;
+    const e = entry(key.slice(blockedPrefix.length));
+    e.blocked_at = chars;
+    e.blocked = chars > maxBlobChars();
   });
+
+  // Read after the walk, not before: an Item linked while it ran would
+  // otherwise be called orphaned. A disconnect during it is reported as one.
+  const linked = new Set((await getItems()).map((i) => i.item_id));
+  for (const e of byItem.values()) e.orphaned = !linked.has(e.item_id);
 
   const sum = (e: ItemSizes) => (e.txns ?? 0) + (e.invtxns ?? 0);
   const items = [...byItem.values()].sort((a, b) => sum(b) - sum(a) || (a.item_id < b.item_id ? -1 : 1));
