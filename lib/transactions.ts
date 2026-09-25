@@ -37,6 +37,7 @@ import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'pl
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
+import { containerLabel } from './blob-sizes';
 import { redis, k, type StoredItem } from './storage';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -445,7 +446,7 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
     // rows are not recoverable at all.
     if (encoded.length > maxBlobChars()) {
       console.error(
-        `transactions: refusing to persist ${item_id} — blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
+        `transactions: refusing to persist ${item_id} in ${await containerLabel()}: blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
       );
       try {
         const marker: BlockedMarker = { at: new Date().toISOString(), chars: encoded.length };

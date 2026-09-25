@@ -49,6 +49,7 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { redis, k, getItems, type StoredItem } from './storage';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
+import { containerLabel } from './blob-sizes';
 import { classifyFetchError, isPendingSubtype, toInvestmentTxn, type InvestmentTxn } from './investments';
 
 export const INVSTORE_SCHEMA = 1;
@@ -193,7 +194,7 @@ async function writeInvStore(item_id: string, state: InvStoreState): Promise<Wri
     // ones no fetch can bring back (the same call as lib/transactions.ts).
     if (encoded.length > maxBlobChars()) {
       console.error(
-        `invstore: refusing to persist ${item_id}: blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling. Nothing was written or dropped.`
+        `invstore: refusing to persist ${item_id} in ${await containerLabel()}: blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling. Nothing was written or dropped.`
       );
       return 'oversize';
     }

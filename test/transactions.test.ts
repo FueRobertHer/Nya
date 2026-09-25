@@ -427,6 +427,22 @@ describe('a blob too large to persist', () => {
   });
 });
 
+describe('a ceiling error names the container (#58)', () => {
+  test('in the refusal log line', async () => {
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => errors.push(a.join(' '));
+    try {
+      pages = [{ added: Array.from({ length: 140 }, (_, i) => txn({ transaction_id: `b${i}`, name: `M ${crypto.randomUUID()}` })) }];
+      await syncItemTransactions(ITEM);
+    } finally {
+      console.error = origError;
+    }
+    // None is set up in this test.
+    expect(errors.join(' ')).toContain('refusing to persist item_a in no container');
+  });
+});
+
 describe('unreadable stored blob', () => {
   // readState used to catch ANY throw and return an empty state, which the next
   // writeState then persisted over the real blob: silent permanent loss of

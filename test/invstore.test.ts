@@ -267,13 +267,19 @@ describe('storage failures never overwrite', () => {
     await syncInvestments(ITEM, { now: NOW });
     const before = await fake.get<string>(key);
     process.env.MAX_TXN_BLOB_CHARS = '10';
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => errors.push(a.join(' '));
     try {
       plaid.rows = [row('a', '2026-09-01'), row('b', '2026-09-02')];
       const sync = await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
       expect(ids(sync.rows)).toEqual(['a', 'b']); // served live, nothing dropped
       expect(sync.storeNote).toContain('too large');
       expect(await fake.get<string>(key)).toBe(before!);
+      // The ceiling error names the container (#58).
+      expect(errors.join(' ')).toContain(`refusing to persist item1 in container ${process.env.CONTAINER_ID}`);
     } finally {
+      console.error = origError;
       delete process.env.MAX_TXN_BLOB_CHARS;
     }
   });
