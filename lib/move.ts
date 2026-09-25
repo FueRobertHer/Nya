@@ -25,16 +25,25 @@
 // changed since it was copied:
 //   - neither: up to date;
 //   - only the old key: copied again ("refresh"), or, if it was deleted,
-//     the container's copy is deleted too;
+//     the container's copy is deleted too (only with --propagate-deletes,
+//     and never many at once: that looks like the old keys being retired);
 //   - only the container key (the new release wrote or deleted it): kept;
 //   - both: a CONFLICT, a write on each side that one of them would lose.
 //     The whole run is refused, nothing written, and the report names the
 //     keys to reconcile by hand before the old keys are ever deleted.
 // A container key that exists with no record, and differs, is a conflict too.
-// A write is recorded as pending before it is made, so a run that dies midway
-// is recognized and finished by the next, not mistaken for the new release.
 //
-// One run at a time (a lock in the container). Without --run it only reports.
+// Every write is a compare-and-set, done in one step with its record (Lua):
+// the container key is written, replaced or deleted only if it still holds
+// what the plan saw, and the record changes with it. So a write the new
+// release makes during a run is never overwritten (the run stops instead),
+// and a run that dies leaves every key either copied and recorded or not
+// touched at all.
+//
+// Once the old keys are to be deleted, --retire marks the container: every
+// later run is refused, so a run can never mistake the missing old keys for
+// deletions to copy across. One run at a time (a lock in the container).
+// Without --run it only reports.
 
 import { createHash } from 'node:crypto';
 import type { Ctx } from './containers';
@@ -88,15 +97,66 @@ export function isMoved(key: string): boolean {
 }
 
 const recordKey = (ctx: Ctx) => kc(ctx, 'move:copied');
-const pendingKey = (ctx: Ctx) => kc(ctx, 'move:pending');
 const lockKey = (ctx: Ctx) => kc(ctx, 'move:lock');
+const retiredKey = (ctx: Ctx) => kc(ctx, 'move:retired');
 const tempKey = (ctx: Ctx, key: string) => kc(ctx, `move:tmp:${key}`);
 /** Long enough for any run; a run that dies frees it by then. */
 export const MOVE_LOCK_SECONDS = 3600;
+/** More deletions than this in one run looks like the old keys being
+ *  retired, not like the old release deleting a few: refused, flag or not. */
+export const MAX_DELETES = 5;
 
 /** Keys every environment in use has. Neither among the old keys usually
- *  means the wrong database or prefix, not an empty one. */
+ *  means the wrong database or prefix, or old keys already deleted. */
 const EXPECTED = ['plaid:items', 'history:net-worth'] as const;
+
+// The digest of a key, computed the same way here and in Lua, so a write can
+// check the container key still holds what the plan saw. Hashes are digested
+// without depending on field order (Lua's sort would depend on the locale):
+// each field and value is digested, and the sorted hex digests, which are
+// plain ASCII, digested together.
+const DIGEST_LUA = `
+local function digest(key)
+  local t = redis.call('TYPE', key)['ok']
+  if t == 'none' then return '' end
+  if t == 'string' then return redis.sha1hex('S' .. redis.call('GET', key)) end
+  if t == 'hash' then
+    local flat = redis.call('HGETALL', key)
+    local parts = {}
+    for i = 1, #flat, 2 do parts[#parts + 1] = redis.sha1hex(flat[i] .. '\\0' .. flat[i + 1]) end
+    table.sort(parts)
+    return redis.sha1hex('H' .. table.concat(parts))
+  end
+  return 'type:' .. t
+end`;
+
+/** Writes a string if the target still has the expected digest ('' for
+ *  none), and records it, in one step. The first line names the script for
+ *  the test double. */
+export const MOVE_SET = `-- nya:move-set${DIGEST_LUA}
+if digest(KEYS[1]) ~= ARGV[1] then return 0 end
+if tonumber(ARGV[3]) > 0 then redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3]) else redis.call('SET', KEYS[1], ARGV[2]) end
+redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
+return 1`;
+
+/** Swaps a hash built aside into place, the same way. */
+export const MOVE_SWAP = `-- nya:move-swap${DIGEST_LUA}
+if digest(KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('RENAME', KEYS[3], KEYS[1])
+redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
+return 1`;
+
+/** Deletes a key and its record, the same way. */
+export const MOVE_DELETE = `-- nya:move-delete${DIGEST_LUA}
+if digest(KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('HDEL', KEYS[2], ARGV[2])
+return 1`;
+
+/** Frees the lock only if it is still this run's (as lib/snapshot-job.ts). */
+export const MOVE_RELEASE = `-- nya:release-lock
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
 
 export type MoveClient = {
   scan(cursor: string | number, opts: { match: string; count: number }): Promise<[string | number, string[]]>;
@@ -109,9 +169,9 @@ export type MoveClient = {
   hkeys(key: string): Promise<string[]>;
   hdel(key: string, ...fields: string[]): Promise<unknown>;
   del(...keys: string[]): Promise<unknown>;
-  rename(from: string, to: string): Promise<unknown>;
   ttl(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<unknown>;
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
 };
 
 export type MoveAction = 'copy' | 'refresh' | 'delete' | 'up-to-date' | 'kept' | 'conflict';
@@ -160,21 +220,33 @@ async function readValue(client: MoveClient, key: string): Promise<Value> {
       cursor = next;
     } while (String(cursor) !== '0');
     if (fields.size === 0) return null; // deleted while being read
-    return { kind: 'hash', fields: [...fields.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) };
+    return { kind: 'hash', fields: [...fields.entries()] };
   }
   throw new MoveRefused(`${key} is a ${type}, which nothing here stores.`);
 }
 
-function digest(v: Value): string | null {
+const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
+
+/** The digest DIGEST_LUA computes for the same value; null for none. */
+export function digest(v: Value): string | null {
   if (v === null) return null;
-  const body = v.kind === 'string' ? `S${v.value}` : `H${JSON.stringify(v.fields)}`;
-  return createHash('sha256').update(body, 'utf8').digest('hex');
+  if (v.kind === 'string') return sha1(`S${v.value}`);
+  return sha1('H' + v.fields.map(([f, val]) => sha1(`${f}\0${val}`)).sort().join(''));
 }
 
-async function writeValue(client: MoveClient, ctx: Ctx, key: string, target: string, v: Exclude<Value, null>, ttl: number): Promise<void> {
+/** Runs one compare-and-set script; a refusal means the container key
+ *  changed after the plan read it. */
+async function cas(client: MoveClient, key: string, script: string, keys: string[], args: string[]): Promise<void> {
+  if (Number(await client.eval(script, keys, args)) !== 1) {
+    throw new MoveRefused(`${key} changed in the container while this run was going: nothing more was written. Run again to see what changed.`);
+  }
+}
+
+/** Writes a planned copy or refresh, checked against what the plan saw. */
+async function writeValue(client: MoveClient, ctx: Ctx, key: string, v: Exclude<Value, null>, expected: string | null, d: string, ttl: number): Promise<void> {
+  const target = kc(ctx, key);
   if (v.kind === 'string') {
-    // One request, expiry included: a run that dies cannot leave it without one.
-    await client.set(target, v.value, ttl > 0 ? { ex: ttl } : undefined);
+    await cas(client, key, MOVE_SET, [target, recordKey(ctx)], [expected ?? '', v.value, String(Math.max(0, ttl)), key, d]);
     return;
   }
   // Built aside, under a name of its own, and swapped in whole: RENAME
@@ -186,40 +258,41 @@ async function writeValue(client: MoveClient, ctx: Ctx, key: string, target: str
       await client.hset(tmp, Object.fromEntries(v.fields.slice(i, i + PAGE)));
     }
     if (ttl > 0) await client.expire(tmp, ttl);
-    await client.rename(tmp, target);
+    await cas(client, key, MOVE_SWAP, [target, recordKey(ctx), tmp], [expected ?? '', key, d]);
   } finally {
     await client.del(tmp).catch(() => {});
   }
 }
 
 /** Every key to judge: the old keys on the list, and every key this tool has
- *  copied or begun to (so a deletion on either side is seen). */
-async function keysToJudge(client: MoveClient, ctx: Ctx): Promise<string[]> {
+ *  copied (so a deletion on either side is seen). */
+async function keysToJudge(client: MoveClient, ctx: Ctx): Promise<{ keys: string[]; oldKeys: Set<string> }> {
   const prefix = envPrefix();
-  const found = new Set<string>();
+  const oldKeys = new Set<string>();
   let cursor: string | number = 0;
   do {
     const [next, page] = await client.scan(cursor, { match: `${prefix}*`, count: PAGE });
     for (const full of page) {
       if (!full.startsWith(prefix)) continue;
       const key = full.slice(prefix.length);
-      if (isMoved(key)) found.add(key); // never "c:...": not on the list
+      if (isMoved(key)) oldKeys.add(key); // never "c:...": not on the list
     }
     cursor = next;
   } while (String(cursor) !== '0');
-  for (const key of await client.hkeys(recordKey(ctx))) if (isMoved(key)) found.add(key);
-  for (const key of await client.hkeys(pendingKey(ctx))) if (isMoved(key)) found.add(key);
-  return [...found].sort();
+  const all = new Set(oldKeys);
+  for (const key of await client.hkeys(recordKey(ctx))) if (isMoved(key)) all.add(key);
+  return { keys: [...all].sort(), oldKeys };
 }
 
-type Planned = { key: string; action: MoveAction; source: Value; digest: string | null; reason?: string };
+type Planned = { key: string; action: MoveAction; source: Value; digest: string | null; target: string | null; reason?: string };
 
 /** Which side changed since the copy (see the header). */
 function judge(key: string, source: Value, target: Value, recorded: string | null): Planned {
   const s = digest(source);
   const t = digest(target);
-  const p = (action: MoveAction, reason?: string): Planned => ({ key, action, source, digest: s, ...(reason ? { reason } : {}) });
+  const p = (action: MoveAction, reason?: string): Planned => ({ key, action, source, digest: s, target: t, ...(reason ? { reason } : {}) });
   if (recorded === null) {
+    if (s === null) return t === null ? p('up-to-date') : p('kept', 'only in the container: the new release wrote it');
     if (t === null) return p('copy');
     if (t === s) return p('up-to-date');
     return p('conflict', 'the container already holds this key, and this tool did not write it');
@@ -238,41 +311,53 @@ function judge(key: string, source: Value, target: Value, recorded: string | nul
   return p('conflict', 'changed in both places since it was copied');
 }
 
+async function judgeKey(client: MoveClient, ctx: Ctx, key: string): Promise<Planned> {
+  const source = await readValue(client, envPrefix() + key);
+  const target = await readValue(client, kc(ctx, key));
+  const recorded = await client.hget(recordKey(ctx), key);
+  return judge(key, source, target, typeof recorded === 'string' ? recorded : null);
+}
+
+export type MoveOptions = {
+  run: boolean;
+  /** Go ahead in an environment with none of the EXPECTED old keys and
+   *  nothing copied yet: one that really holds no data. */
+  allowEmpty?: boolean;
+  /** Carry deletions of old keys across (a few at most, MAX_DELETES). */
+  propagateDeletes?: boolean;
+};
+
 /**
  * Plans the move and, with `run`, carries it out. Refuses (MoveRefused), with
- * nothing written, if any key conflicts, if another run holds the lock, or if
- * the old keys look like the wrong environment (unless `allowEmpty`).
+ * nothing written, if the container is retired, another run holds the lock,
+ * the environment looks wrong, any key conflicts, or deletions are not
+ * allowed or too many.
  */
-export async function moveData(client: MoveClient, ctx: Ctx, opts: { run: boolean; allowEmpty?: boolean }): Promise<MoveReport> {
+export async function moveData(client: MoveClient, ctx: Ctx, opts: MoveOptions): Promise<MoveReport> {
+  const retired = await client.get(retiredKey(ctx));
+  if (retired !== null && retired !== undefined) {
+    throw new MoveRefused(`This container was retired from the move on ${retired}: the old keys are being or have been deleted, so there is nothing left to move. Nothing was written.`);
+  }
   const token = crypto.randomUUID();
-  if (opts.run) {
-    if ((await client.set(lockKey(ctx), token, { nx: true, ex: MOVE_LOCK_SECONDS })) === null) {
-      throw new MoveRefused('Another run is in progress for this container. Wait for it to finish, then run again.');
-    }
+  if (opts.run && (await client.set(lockKey(ctx), token, { nx: true, ex: MOVE_LOCK_SECONDS })) === null) {
+    throw new MoveRefused('Another run is in progress for this container. Wait for it to finish, then run again.');
   }
   try {
     return await plannedMove(client, ctx, opts);
   } finally {
-    if (opts.run && (await client.get(lockKey(ctx))) === token) await client.del(lockKey(ctx));
+    if (opts.run) await client.eval(MOVE_RELEASE, [lockKey(ctx)], [token]).catch(() => {}); // else it expires
   }
 }
 
-async function plannedMove(client: MoveClient, ctx: Ctx, opts: { run: boolean; allowEmpty?: boolean }): Promise<MoveReport> {
+async function plannedMove(client: MoveClient, ctx: Ctx, opts: MoveOptions): Promise<MoveReport> {
   const prefix = envPrefix();
-  const keys = await keysToJudge(client, ctx);
+  const { keys, oldKeys } = await keysToJudge(client, ctx);
   const plan: Planned[] = [];
-  let sawExpected = false;
   for (const key of keys) {
-    const source = await readValue(client, prefix + key);
-    if (source !== null && (EXPECTED as readonly string[]).includes(key)) sawExpected = true;
-    const target = await readValue(client, kc(ctx, key));
-    const recorded = await client.hget(recordKey(ctx), key);
-    const pending = await client.hget(pendingKey(ctx), key);
-    // A write that landed but was never confirmed: the run died after it.
-    const t = digest(target);
-    const effective = typeof pending === 'string' && pending === t ? pending : typeof recorded === 'string' ? recorded : null;
-    if (source === null && target === null && effective === null) continue;
-    plan.push(judge(key, source, target, effective));
+    const p = await judgeKey(client, ctx, key);
+    // Gone from both sides before it was ever copied: nothing to say.
+    if (p.source === null && p.target === null && (await client.hget(recordKey(ctx), key)) === null) continue;
+    plan.push(p);
   }
 
   const entries: MoveEntry[] = plan.map(({ key, action, reason }) => ({ key, action, ...(reason ? { reason } : {}) }));
@@ -289,51 +374,69 @@ async function plannedMove(client: MoveClient, ctx: Ctx, opts: { run: boolean; a
     conflicts,
     entries,
   };
+
+  // The environment: a wrong .env.local or prefix, or old keys already gone.
+  const sawExpected = EXPECTED.some((k) => oldKeys.has(k));
   const recordedAny = (await client.hkeys(recordKey(ctx))).length > 0;
-  if (!sawExpected && !recordedAny && !opts.allowEmpty) {
-    const why = `None of ${EXPECTED.join(', ')} exists under "${prefix}". Check .env.local and REDIS_PREFIX point at the environment you mean; pass --allow-empty if it really holds no data.`;
-    if (opts.run) throw new MoveRefused(why);
-    console.warn(`Warning: ${why}`);
+  const refusals: string[] = [];
+  if (!sawExpected && recordedAny) {
+    refusals.push(`None of ${EXPECTED.join(', ')} exists under "${prefix}" any more, though this container was copied into: the old keys look deleted. Moving now would delete the container's copies.`);
+  } else if (!sawExpected && !opts.allowEmpty) {
+    refusals.push(`None of ${EXPECTED.join(', ')} exists under "${prefix}". Check .env.local and REDIS_PREFIX point at the environment you mean; pass --allow-empty if it really holds no data.`);
   }
-  if (!opts.run) return report;
+  if (report.deleted > MAX_DELETES) {
+    refusals.push(`${report.deleted} old keys were deleted since they were copied; more than ${MAX_DELETES} at once looks like the old keys being retired, not the old release deleting a few. Nothing is deleted from the container this way.`);
+  } else if (report.deleted > 0 && !opts.propagateDeletes) {
+    refusals.push(`${report.deleted} old key(s) were deleted since they were copied (${entries.filter((e) => e.action === 'delete').map((e) => e.key).join(', ')}). Check they should be, then pass --propagate-deletes to delete the container's copies too.`);
+  }
   if (conflicts.length > 0) {
-    throw new MoveRefused(
-      `${conflicts.length} key(s) changed on both sides since they were copied (${conflicts.map((c) => c.key).join(', ')}): ` +
-        'copying either way would lose a write. Nothing was written. Reconcile them by hand (see the README).'
+    refusals.push(
+      `${conflicts.length} key(s) changed on both sides since they were copied (${conflicts.map((c) => c.key).join(', ')}): copying either way would lose a write. Reconcile them by hand (see the README).`
     );
   }
+  if (!opts.run) {
+    for (const r of refusals) console.warn(`Warning: ${r}`);
+    return report;
+  }
+  if (refusals.length > 0) throw new MoveRefused(`${refusals.join(' ')} Nothing was written.`);
 
-  for (const p of plan) {
-    const target = kc(ctx, p.key);
-    if (p.action === 'kept') continue;
+  for (const planned of plan) {
+    if (planned.action === 'kept') continue;
+    // Judged again right before writing: a key that changed since the plan
+    // was made is left for the next run to see, never written over.
+    const p = await judgeKey(client, ctx, planned.key);
+    if (p.action !== planned.action || p.digest !== planned.digest || p.target !== planned.target) {
+      throw new MoveRefused(`${planned.key} changed while this run was going: nothing more was written. Run again to see what changed.`);
+    }
     if (p.action === 'up-to-date') {
       if (p.digest === null) await client.hdel(recordKey(ctx), p.key);
       else if ((await client.hget(recordKey(ctx), p.key)) !== p.digest) await client.hset(recordKey(ctx), { [p.key]: p.digest });
-      await client.hdel(pendingKey(ctx), p.key);
-      continue;
+    } else if (p.action === 'delete') {
+      await cas(client, p.key, MOVE_DELETE, [kc(ctx, p.key), recordKey(ctx)], [p.target!, p.key]);
+    } else {
+      await writeValue(client, ctx, p.key, p.source as Exclude<Value, null>, p.target, p.digest!, await client.ttl(prefix + p.key));
     }
-    if (p.action === 'delete') {
-      await client.del(target);
-      await client.hdel(recordKey(ctx), p.key);
-      await client.hdel(pendingKey(ctx), p.key);
-      continue;
-    }
-    // copy or refresh. Pending first, so a run that dies after the write is
-    // recognized by the next one rather than taken for the new release.
-    await client.hset(pendingKey(ctx), { [p.key]: p.digest! });
-    await writeValue(client, ctx, p.key, target, p.source as Exclude<Value, null>, await client.ttl(prefix + p.key));
-    const back = digest(await readValue(client, target));
-    if (back !== p.digest) {
-      throw new MoveRefused(`${p.key} did not read back as written. Run again: a run that stops here is safe to repeat.`);
-    }
-    await client.hset(recordKey(ctx), { [p.key]: p.digest! });
-    await client.hdel(pendingKey(ctx), p.key);
   }
   return report;
 }
 
-/** The environment to write, named twice (REDIS_PREFIX and --target), and
- *  production confirmed on top: the same rule as restore. */
+/**
+ * Marks the container retired from the move, before its old keys are
+ * deleted: every later run is refused. Only when a report shows nothing left
+ * to copy, refresh or delete, and no conflicts, which is the proof nothing
+ * written to the old keys is left behind.
+ */
+export async function retireMove(client: MoveClient, ctx: Ctx, now: Date = new Date()): Promise<void> {
+  const report = await moveData(client, ctx, { run: false });
+  const pending = report.copied + report.refreshed + report.deleted + report.conflicts.length;
+  if (pending > 0) {
+    throw new MoveRefused(
+      `Not retired: the move still has ${report.copied} to copy, ${report.refreshed} to refresh, ${report.deleted} to delete and ${report.conflicts.length} conflict(s). Finish it first, so nothing written to the old keys is left behind.`
+    );
+  }
+  await client.set(retiredKey(ctx), now.toISOString());
+}
+
 export function checkMoveTarget(
   named: string | undefined,
   confirmProduction: boolean,

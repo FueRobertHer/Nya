@@ -22,21 +22,35 @@
 //   --allow-empty          go ahead although the environment holds none of the
 //                          keys every environment in use has (a wrong
 //                          .env.local or REDIS_PREFIX usually)
+//   --propagate-deletes    delete the container's copies of old keys deleted
+//                          since they were copied (a few at most)
+//   --retire               before deleting the old keys: mark the container
+//                          so no run is ever made again (only once a report
+//                          shows nothing left to do)
 
 import { rawRedis } from '@/lib/storage';
 import { deploymentContainer } from '@/lib/sessions';
-import { MoveRefused, checkMoveTarget, moveData, type MoveClient } from '@/lib/move';
+import { MoveRefused, checkMoveTarget, moveData, retireMove, type MoveClient } from '@/lib/move';
 
-export type MoveArgs = { target?: string; confirmProduction: boolean; run: boolean; allowEmpty: boolean };
+export type MoveArgs = {
+  target?: string;
+  confirmProduction: boolean;
+  run: boolean;
+  allowEmpty: boolean;
+  propagateDeletes: boolean;
+  retire: boolean;
+};
 
 export function parseArgs(argv: string[]): MoveArgs {
-  const args: MoveArgs = { confirmProduction: false, run: false, allowEmpty: false };
+  const args: MoveArgs = { confirmProduction: false, run: false, allowEmpty: false, propagateDeletes: false, retire: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--target') args.target = argv[++i];
     else if (a === '--confirm-production') args.confirmProduction = true;
     else if (a === '--run') args.run = true;
     else if (a === '--allow-empty') args.allowEmpty = true;
+    else if (a === '--propagate-deletes') args.propagateDeletes = true;
+    else if (a === '--retire') args.retire = true;
     else throw new MoveRefused(`Unknown argument ${JSON.stringify(a)}.`);
   }
   return args;
@@ -49,7 +63,17 @@ export async function main(argv: string[], client: MoveClient): Promise<void> {
   if (dep.kind !== 'container') {
     throw new MoveRefused(dep.kind === 'none' ? 'No container exists yet. Create one first (see "Containers" in the README).' : dep.reason);
   }
-  const report = await moveData(client, { container: dep.container }, { run: args.run, allowEmpty: args.allowEmpty });
+  if (args.retire) {
+    if (args.run) throw new MoveRefused('--retire and --run do not go together.');
+    await retireMove(client, { container: dep.container });
+    console.log(`Container ${dep.container} retired from the move: no run will be made again. The old keys can now be deleted.`);
+    return;
+  }
+  const report = await moveData(client, { container: dep.container }, {
+    run: args.run,
+    allowEmpty: args.allowEmpty,
+    propagateDeletes: args.propagateDeletes,
+  });
   console.log(`Environment "${env}", container ${report.container}.`);
   console.log(
     `Copy: ${report.copied}. Refresh: ${report.refreshed}. Delete: ${report.deleted}. ` +
@@ -58,7 +82,7 @@ export async function main(argv: string[], client: MoveClient): Promise<void> {
   for (const e of report.entries) if (e.action === 'kept') console.log(`Kept: ${e.key} (${e.reason}).`);
   for (const c of report.conflicts) console.log(`Conflict: ${c.key} (${c.reason}).`);
   if (!args.run) {
-    console.log(report.conflicts.length > 0 ? 'Report only. A run would be refused.' : 'Report only: nothing written. Pass --run to copy.');
+    console.log('Report only: nothing written. Pass --run to copy (any warning above means a run would be refused).');
     return;
   }
   console.log('Copied and read back. The old keys are untouched.');

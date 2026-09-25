@@ -7,22 +7,27 @@ import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, TEST_CONTAINER, regi
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { moveData, MoveRefused, isMoved, MOVED_KEYS, MOVED_PREFIXES, NOT_MOVED_PREFIXES, checkMoveTarget } = await import('@/lib/move');
+const { moveData, retireMove, digest, MoveRefused, isMoved, MOVED_KEYS, MOVED_PREFIXES, NOT_MOVED_PREFIXES, checkMoveTarget, MOVE_SET, MOVE_SWAP, MOVE_DELETE } = await import('@/lib/move');
 const script = await import('../scripts/move-data');
 const { forgetEpochs } = await import('@/lib/sessions');
 
 const ctx = TEST_CTX;
 const client = fake as any;
-// Most tests seed only the keys they are about; the check for a wrong
-// environment (no plaid:items, no history) has its own test below.
-const run = () => moveData(client, ctx, { run: true, allowEmpty: true });
-const plan = () => moveData(client, ctx, { run: false, allowEmpty: true });
+// Deletions are carried across here unless a test says otherwise; the flag,
+// and the checks for a wrong or retired environment, have their own tests.
+const run = (o: object = {}) => moveData(client, ctx, { run: true, propagateDeletes: true, ...o });
+const plan = (o: object = {}) => moveData(client, ctx, { run: false, propagateDeletes: true, ...o });
+/** Every environment in use has its Plaid items; an old key the checks for a
+ *  wrong or retired environment look for. Left out of the counts below. */
+const ANCHOR = testKey('plaid:items');
 
 const saved = { ...process.env };
-beforeEach(() => {
+beforeEach(async () => {
   fake.reset();
   forgetEpochs();
+  await fake.hset(ANCHOR, { anchor: '{}' });
 });
+const others = <T extends { key: string }>(entries: T[]) => entries.filter((e) => e.key !== 'plaid:items');
 afterEach(() => {
   process.env = { ...saved };
 });
@@ -84,7 +89,7 @@ describe('the first run', () => {
     await fake.set(testKey('something-new'), 'x');
     await fake.set(ctxKey('goals', { container: '11111111-2222-4333-8444-555555555555' }), 'other container');
     const report = await run();
-    expect(report.entries.map((e) => e.key)).toEqual(['budgets']);
+    expect(others(report.entries).map((e) => e.key)).toEqual(['budgets']);
     const keys = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()] as string[];
     expect(keys.filter((k) => k.includes(`c:${TEST_CONTAINER}:c:`))).toEqual([]);
     expect(await fake.get<string>(ctxKey('cache:net-worth'))).toBeNull();
@@ -98,16 +103,45 @@ describe('the first run', () => {
     expect(await fake.hgetall<Record<string, string>>(ctxKey('hidden:accounts'))).toEqual({ a: '1' });
   });
 
-  test('a copy that does not read back as written stops the run, unrecorded', async () => {
-    await fake.set(testKey('budgets'), 'real');
-    const set = fake.set.bind(fake);
-    fake.set = (async (key: string, value: string, opts?: any) => set(key, key === ctxKey('budgets') ? 'mangled' : value, opts)) as typeof fake.set;
+  test('a write the new release makes during the run is never written over', async () => {
+    await fake.set(testKey('budgets'), 'v1');
+    await run();
+    await fake.set(testKey('budgets'), 'v2'); // a refresh is planned
+    // The new release writes the container key between the check and the write.
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:move-set')) await fake.set(ctxKey('budgets'), 'NEW-RELEASE');
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
     try {
-      await expect(run()).rejects.toThrow('did not read back');
+      await expect(run()).rejects.toThrow('changed in the container while this run was going');
     } finally {
-      fake.set = set;
+      fake.eval = evalOrig;
     }
-    expect(await fake.hget<string>(ctxKey('move:copied'), 'budgets')).toBeNull();
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('NEW-RELEASE');
+    // The next run sees it for what it is: changed on both sides.
+    expect((await plan()).conflicts.map((c) => c.key)).toEqual(['budgets']);
+  });
+
+  test('a key that changes between the plan and its write stops the run', async () => {
+    await fake.set(testKey('budgets'), 'v1');
+    await fake.set(testKey('goals'), 'g1');
+    await run();
+    await fake.set(testKey('budgets'), 'v2');
+    await fake.set(testKey('goals'), 'g2');
+    // After the plan, before the writes: the new release writes goals.
+    const hget = fake.hget.bind(fake);
+    let calls = 0;
+    fake.hget = (async (key: string, field: string) => {
+      if (key === ctxKey('move:copied') && field === 'budgets' && ++calls === 2) await fake.set(ctxKey('goals'), 'NEW-RELEASE');
+      return hget(key, field);
+    }) as typeof fake.hget;
+    try {
+      await expect(run()).rejects.toThrow('changed while this run was going');
+    } finally {
+      fake.hget = hget;
+    }
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('NEW-RELEASE');
   });
 
   test('carries an expiry, if a key has one', async () => {
@@ -161,7 +195,37 @@ describe('running it again', () => {
     expect(report.deleted).toBe(2);
     expect(await fake.type(ctxKey('manual:accounts'))).toBe('none');
     expect(await fake.get<string>(ctxKey('history:backfill-done'))).toBeNull();
-    expect(await fake.hkeys(ctxKey('move:copied'))).toEqual([]);
+    expect(await fake.hkeys(ctxKey('move:copied'))).toEqual(['plaid:items']);
+  });
+
+  test('deletions are carried across only when asked, and never many at once', async () => {
+    const keys = ['goals', 'budgets', 'txn-vendor-renames', 'history:backfill-done', 'history:backfill-pending', 'hidden:accounts'];
+    for (const k of keys) await fake.set(testKey(k), 'x');
+    await run();
+    await fake.del(testKey('goals'));
+    await expect(run({ propagateDeletes: false })).rejects.toThrow('--propagate-deletes');
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('x');
+    for (const k of keys) await fake.del(testKey(k));
+    await expect(run()).rejects.toThrow('looks like the old keys being retired');
+    for (const k of keys.slice(1)) expect(await fake.get<string>(ctxKey(k))).toBe('x');
+  });
+
+  test('an old key gone before it was read, with the container holding its own, is left alone', async () => {
+    await fake.set(testKey('goals'), 'old');
+    await fake.set(ctxKey('goals'), 'written by the new release');
+    const scan = fake.scan.bind(fake);
+    fake.scan = (async (cursor: any, opts: any) => {
+      const page = await scan(cursor, opts);
+      await fake.del(testKey('goals')); // deleted between the scan and the read
+      return page;
+    }) as typeof fake.scan;
+    try {
+      const report = await run();
+      expect(others(report.entries)).toEqual([{ key: 'goals', action: 'kept', reason: 'only in the container: the new release wrote it' }]);
+    } finally {
+      fake.scan = scan;
+    }
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('written by the new release');
   });
 
   test('a key deleted on both sides is simply forgotten', async () => {
@@ -169,9 +233,9 @@ describe('running it again', () => {
     await run();
     await fake.del(testKey('goals'), ctxKey('goals'));
     const report = await run();
-    expect(report.up_to_date).toBe(1);
+    expect(others(report.entries)).toEqual([{ key: 'goals', action: 'up-to-date' }]);
     expect(await fake.get<string>(ctxKey('goals'))).toBeNull();
-    expect((await fake.hkeys(ctxKey('move:copied'))).length).toBe(0);
+    expect(await fake.hkeys(ctxKey('move:copied'))).toEqual(['plaid:items']);
   });
 
   test('a key the new release wrote is kept, and the rest still copied', async () => {
@@ -237,28 +301,22 @@ describe('running it again', () => {
     expect(await fake.get<string>(ctxKey('goals'))).toBe('already there');
   });
 
-  test('a run that died after writing a copy is finished by the next, not taken for the new release', async () => {
+  test('a run that dies leaves each key copied and recorded, or untouched', async () => {
     await fake.set(testKey('budgets'), 'v1');
+    await fake.set(testKey('goals'), 'g1');
     await run();
     await fake.set(testKey('budgets'), 'v2');
-    // The copy of v2 lands; recording it does not.
-    const hset = fake.hset.bind(fake);
-    let calls = 0;
-    fake.hset = (async (key: string, fields: any) => {
-      if (key === ctxKey('move:copied') && ++calls === 1) throw new Error('network');
-      return hset(key, fields);
-    }) as typeof fake.hset;
-    try {
-      await expect(run()).rejects.toThrow('network');
-    } finally {
-      fake.hset = hset;
-    }
-    expect(await fake.get<string>(ctxKey('budgets'))).toBe('v2');
+    await fake.set(testKey('goals'), 'g2');
+    fake.failNext('eval', 2); // the first key's write, then the lock release
+    await expect(run()).rejects.toThrow();
+    // Neither half-done: budgets untouched and still recorded as v1.
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('v1');
     await fake.set(testKey('budgets'), 'v3'); // the old release keeps writing
+    await fake.del(ctxKey('move:lock')); // what the expiry would do
     const report = await run();
     expect(report.conflicts).toEqual([]);
-    expect(report.refreshed).toBe(1);
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('v3');
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('g2');
   });
 
   test('one run at a time', async () => {
@@ -275,6 +333,7 @@ describe('running it again', () => {
 
 describe('an environment that looks wrong', () => {
   test('with none of the keys every environment has, a run is refused and a report warns', async () => {
+    await fake.del(ANCHOR);
     await fake.set(testKey('budgets'), 'b');
     await expect(moveData(client, ctx, { run: true })).rejects.toThrow('allow-empty');
     expect(await fake.get<string>(ctxKey('budgets'))).toBeNull();
@@ -288,8 +347,30 @@ describe('an environment that looks wrong', () => {
     }
     expect(lines.join(' ')).toContain('allow-empty');
     // With the usual keys there, no complaint.
-    await fake.hset(testKey('plaid:items'), { i: '{}' });
+    await fake.hset(ANCHOR, { i: '{}' });
     await moveData(client, ctx, { run: true });
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
+  });
+
+  test('once the old keys are gone, a run is refused rather than deleting the copies', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await fake.set(testKey('txns:item_1'), 'history no bank will serve again');
+    await run();
+    // The old keys are deleted, weeks later.
+    await fake.del(ANCHOR, testKey('budgets'), testKey('txns:item_1'));
+    await expect(run()).rejects.toThrow('the old keys look deleted');
+    await expect(run({ allowEmpty: true })).rejects.toThrow('the old keys look deleted');
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
+    expect(await fake.get<string>(ctxKey('txns:item_1'))).toBe('history no bank will serve again');
+  });
+
+  test('retiring the move, once there is nothing left to do, stops every later run', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await expect(retireMove(client, ctx)).rejects.toThrow('Not retired');
+    await run();
+    await retireMove(client, ctx, new Date('2026-11-01T00:00:00Z'));
+    await expect(run()).rejects.toThrow('retired from the move on 2026-11-01');
+    await expect(plan()).rejects.toThrow('retired');
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
   });
 });
@@ -354,5 +435,73 @@ describe('the command', () => {
 
   test('rejects an unknown flag', () => {
     expect(() => script.parseArgs(['--force'])).toThrow('Unknown argument');
+  });
+});
+
+const hasRedis = Bun.which('redis-server') !== null;
+describe.skipIf(!hasRedis && !process.env.CI)('the compare-and-set scripts, on a real Redis', () => {
+  const port = 30000 + Math.floor(Math.random() * 20000);
+  let server: ReturnType<typeof Bun.spawn> | null = null;
+  let r: InstanceType<typeof Bun.RedisClient>;
+  const evalScript = (script: string, keys: string[], args: string[]) => r.send('EVAL', [script, String(keys.length), ...keys, ...args]);
+
+  beforeEach(async () => {
+    if (!server) {
+      server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
+      r = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
+      for (let i = 0; i < 50; i++) {
+        try {
+          await r.send('PING', []);
+          break;
+        } catch {
+          await Bun.sleep(50);
+        }
+      }
+    }
+    await r.send('FLUSHALL', []);
+  });
+  // Field names and values of the kinds stored: dates, ids, ciphertext, and
+  // non-ASCII text, in an order Redis will not keep.
+  const fields: [string, string][] = [
+    ['2026-09-25', 'v2.k1.c.QUJD'],
+    ['acct_é', 'naïve café ✓'],
+    ['2025-01-01', '{"a":1}'],
+    ['Z', ''],
+  ];
+
+  test('Redis digests a string and a hash exactly as the copier does', async () => {
+    await r.send('SET', ['s', 'v2.k1.c.dGV4dA== ✓']);
+    await r.send('HSET', ['h', ...fields.flat()]);
+    const s = digest({ kind: 'string', value: 'v2.k1.c.dGV4dA== ✓' })!;
+    const h = digest({ kind: 'hash', fields: [...fields].reverse() })!;
+    expect(await evalScript(MOVE_DELETE, ['s', 'rec'], ['wrong', 's'])).toBe(0);
+    expect(await evalScript(MOVE_DELETE, ['s', 'rec'], [s, 's'])).toBe(1);
+    expect(await evalScript(MOVE_DELETE, ['h', 'rec'], [h, 'h'])).toBe(1);
+    expect(await r.send('EXISTS', ['s', 'h'])).toBe(0);
+  });
+
+  test('a string is written, with its expiry and its record, only over what was expected', async () => {
+    expect(await evalScript(MOVE_SET, ['t', 'rec'], ['', 'value', '600', 'budgets', 'd1'])).toBe(1);
+    expect(await r.send('GET', ['t'])).toBe('value');
+    expect(Number(await r.send('TTL', ['t']))).toBeGreaterThan(590);
+    expect(await r.send('HGET', ['rec', 'budgets'])).toBe('d1');
+    // Something else there now: refused, nothing changed.
+    expect(await evalScript(MOVE_SET, ['t', 'rec'], ['', 'other', '0', 'budgets', 'd2'])).toBe(0);
+    expect(await r.send('GET', ['t'])).toBe('value');
+    expect(await r.send('HGET', ['rec', 'budgets'])).toBe('d1');
+  });
+
+  test('a hash is swapped in whole, only over what was expected', async () => {
+    await r.send('HSET', ['t', 'old', '1']);
+    await r.send('HSET', ['tmp', ...fields.flat()]);
+    const before = digest({ kind: 'hash', fields: [['old', '1']] })!;
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp'], ['not-it', 'hidden:accounts', 'd'])).toBe(0);
+    expect(await evalScript(MOVE_SWAP, ['t', 'rec', 'tmp'], [before, 'hidden:accounts', 'd'])).toBe(1);
+    expect(await r.send('HGET', ['t', 'acct_é'])).toBe('naïve café ✓');
+    expect(await r.send('HEXISTS', ['t', 'old'])).toBe(0);
+    expect(await r.send('EXISTS', ['tmp'])).toBe(0);
+    expect(await r.send('HGET', ['rec', 'hidden:accounts'])).toBe('d');
+    server?.kill();
+    server = null;
   });
 });

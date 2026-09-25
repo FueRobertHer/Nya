@@ -313,6 +313,32 @@ export class FakeRedis {
       this.ttls.delete(keys[0]);
       return 1;
     }
+    if (name === '-- nya:move-set' || name === '-- nya:move-swap' || name === '-- nya:move-delete') {
+      // The same digest lib/move.ts computes (and DIGEST_LUA in Redis).
+      const digestOf = (key: string): string => {
+        if (this.strings.has(key)) return sha1('S' + this.strings.get(key)!);
+        const h = this.hashes.get(key);
+        if (!h || h.size === 0) return '';
+        return sha1('H' + [...h.entries()].map(([f, v]) => sha1(`${f}\0${v}`)).sort().join(''));
+      };
+      if (digestOf(keys[0]) !== args[0]) return 0;
+      if (name === '-- nya:move-set') {
+        this.hashes.delete(keys[0]);
+        this.strings.set(keys[0], args[1]);
+        if (Number(args[2]) > 0) this.ttls.set(keys[0], Number(args[2]));
+        else this.ttls.delete(keys[0]);
+        this.hash(keys[1]).set(args[3], args[4]);
+      } else if (name === '-- nya:move-swap') {
+        await this.rename(keys[2], keys[0]);
+        this.hash(keys[1]).set(args[1], args[2]);
+      } else {
+        this.strings.delete(keys[0]);
+        this.hashes.delete(keys[0]);
+        this.ttls.delete(keys[0]);
+        await this.hdel(keys[1], args[1]);
+      }
+      return 1;
+    }
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
