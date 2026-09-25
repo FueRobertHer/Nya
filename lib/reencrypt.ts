@@ -26,6 +26,15 @@
 //     is already done cheaply, and stops at a time limit. Call it until it
 //     reports complete.
 //
+//   - ONLY WHILE THE KEY STILL EXISTS. Each write also checks, in the same
+//     step, that the key it encrypts with is still the active one and still
+//     in the key store. A restore that replaced the key store mid-pass stops
+//     the pass instead of leaving values under a key that exists nowhere.
+//     (Don't run it during a restore anyway.)
+//   - A CHECK WRITES NOTHING. Not even the first data key: that is only
+//     created by a run, after the database has been shown to support the
+//     scripts.
+//
 // "Complete" is a snapshot. An instance that cannot get the active key writes
 // k0 (and logs it), and one that has not yet noticed a change of active key
 // keeps writing the old one for up to a minute; either shows up on the next
@@ -36,6 +45,9 @@ import { createHash } from 'node:crypto';
 import { rawRedis, k } from './storage';
 import {
   activeKeyForReencryption,
+  activeKeyName,
+  activeKeyStatus,
+  keysHashKey,
   decrypt,
   encryptV2,
   formatOf,
@@ -49,8 +61,9 @@ import {
 export type Kind =
   | 'string' // the whole value is ciphertext
   | 'hash' // every field's value is ciphertext
+  | 'cipher' // either of those, whichever type the key has (the caches)
   | 'items' // plaid:items: JSON values whose encrypted_access_token is ciphertext
-  | 'plain'; // no ciphertext
+  | 'plain'; // no ciphertext (checked: a v2 value in one is reported)
 
 const EXACT: Record<string, Kind> = {
   goals: 'string',
@@ -86,7 +99,7 @@ const PREFIXES: [string, Kind][] = [
   ['txns-blocked:', 'plain'],
   ['invtxns-lock:', 'plain'],
   ['ratelimit:', 'plain'],
-  ['cache:', 'plain'], // disposable, and gone within minutes
+  ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
 ];
 
@@ -101,21 +114,32 @@ export function classify(key: string): Kind | null {
 // The compare-and-set scripts. The value read is compared by SHA-1, so an
 // 8 MiB transaction blob is not sent twice. The first line names the script
 // for the test double. A key's expiry is kept.
+//
+// KEYS[2] and KEYS[3] are crypto:active and crypto:keys: the write happens only
+// if the key it was encrypted with is still active and still stored.
+//
+// Answers: 1 written; 0 the value changed; -1 the value is gone; -2 the key it
+// was encrypted with is no longer the active one, or no longer stored.
 export const CAS_STRING = `-- nya:cas-string
+if redis.call('GET', KEYS[2]) ~= ARGV[3] or redis.call('HEXISTS', KEYS[3], ARGV[3]) == 0 then return -2 end
 local cur = redis.call('GET', KEYS[1])
-if not cur or redis.sha1hex(cur) ~= ARGV[1] then return 0 end
+if not cur then return -1 end
+if redis.sha1hex(cur) ~= ARGV[1] then return 0 end
 local ttl = redis.call('PTTL', KEYS[1])
 redis.call('SET', KEYS[1], ARGV[2])
 if ttl > 0 then redis.call('PEXPIRE', KEYS[1], ttl) end
 return 1`;
 
 export const CAS_HASH = `-- nya:cas-hash
+if redis.call('GET', KEYS[2]) ~= ARGV[4] or redis.call('HEXISTS', KEYS[3], ARGV[4]) == 0 then return -2 end
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
-if not cur or redis.sha1hex(cur) ~= ARGV[2] then return 0 end
+if not cur then return -1 end
+if redis.sha1hex(cur) ~= ARGV[2] then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 return 1`;
 
-/** Checked before anything is written: the scripts depend on redis.sha1hex. */
+/** Checked before anything is written or counted: the scripts depend on
+ *  redis.sha1hex. */
 export const PROBE = `-- nya:probe
 return redis.sha1hex('nya')`;
 const PROBE_ANSWER = sha1('nya');
@@ -131,22 +155,31 @@ export type ReencryptClient = {
   hscan(key: string, cursor: string | number, opts: { count: number }): Promise<[string | number, unknown[]]>;
   type(key: string): Promise<string>;
   get(key: string): Promise<unknown>;
+  hget(key: string, field: string): Promise<unknown>;
   getrange(key: string, start: number, end: number): Promise<unknown>;
   eval(script: string, keys: string[], args: string[]): Promise<unknown>;
 };
 
 export type ReencryptReport = {
-  active_key: string;
+  /** The key values are moved to. Null in a check made before the first data
+   *  key exists: then everything counts as still to move. */
+  active_key: string | null;
   dry_run: boolean;
   /** Reached the end of the database before the time limit. */
   walked_all: boolean;
   /** Values moved to the active key by this call. */
   moved: number;
-  /** Values still under another key, by key id (k0 is the legacy key). */
+  /** In a check: values still under another key, by key id (k0 is the legacy
+   *  key). A run moves them instead. */
   to_move: Record<string, number>;
-  /** Values that changed while being moved, so were left for next time. */
+  /** Values the app saved while they were being moved, so were left for next
+   *  time. */
   changed_meanwhile: number;
-  /** Values that could not be read, so were left alone. Listed up to a limit. */
+  /** Values deleted while being moved. Nothing to do. */
+  deleted_meanwhile: number;
+  /** Values left alone because they cannot be moved: not decryptable, a key
+   *  of the wrong type, bound to a context, an item that is not JSON, and so
+   *  on. Listed up to a limit, with the reason. */
   unreadable: { key: string; field?: string; reason: string }[];
   unreadable_count: number;
   /** Keys not on the list in this file. Nothing was done with them. */
@@ -182,8 +215,13 @@ class Unreadable extends Error {
 }
 
 /** The ciphertext re-encrypted under `active`, or null if it already is.
- *  Throws Unreadable for a value that cannot be moved. */
-async function moved(ciphertext: string, active: string, dryRun: boolean): Promise<{ from: string; next: string | null } | null> {
+ *  With no active key (a check before the first one exists), everything is
+ *  still to move. Throws Unreadable for a value that cannot be moved. */
+async function moved(
+  ciphertext: string,
+  active: string | null,
+  dryRun: boolean
+): Promise<{ from: string; next: string | null } | null> {
   let format;
   try {
     format = formatOf(ciphertext);
@@ -200,8 +238,31 @@ async function moved(ciphertext: string, active: string, dryRun: boolean): Promi
   } catch (err) {
     throw new Unreadable(reasonFor(err));
   }
-  return { from: format.keyId, next: dryRun ? null : await encryptV2(plain, active) };
+  if (dryRun || active === null) return { from: format.keyId, next: null };
+  const next = await encryptV2(plain, active);
+  // Proven before it is written: the new value must read back as the old one.
+  if ((await decrypt(next)) !== plain) throw new Error('A re-encrypted value did not read back.');
+  return { from: format.keyId, next };
 }
+
+/** The database must run the scripts; anything else it answers is an error
+ *  about something else (a network or auth failure), and is thrown as is. */
+async function probe(client: ReencryptClient): Promise<void> {
+  let answer: unknown;
+  try {
+    answer = await client.eval(PROBE, [], []);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/sha1hex|nil value|unknown command|NOSCRIPT|not supported/i.test(message)) throw err;
+    answer = null;
+  }
+  if (answer !== PROBE_ANSWER) {
+    throw new MasterKeyError('The database does not support the scripts this pass needs (redis.sha1hex), so nothing was changed.');
+  }
+}
+
+/** A v2 value in a key listed as plaintext: the list is wrong about it. */
+const looksEncrypted = (v: unknown) => typeof v === 'string' && /^v2\.k[0-9]/.test(v);
 
 async function inBatches<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
   for (let i = 0; i < items.length; i += PARALLEL) await Promise.all(items.slice(i, i + PARALLEL).map(fn));
@@ -220,7 +281,7 @@ async function listKeys(client: ReencryptClient, prefix: string): Promise<string
 
 /**
  * One call of the pass: walk every key until done or `budgetMs` runs out.
- * With `dryRun`, reads and checks everything and writes nothing.
+ * With `dryRun`, reads and checks everything and writes nothing at all.
  */
 export async function reencrypt(
   opts: { dryRun: boolean; budgetMs: number; now?: () => number; client?: ReencryptClient }
@@ -228,19 +289,18 @@ export async function reencrypt(
   const client = opts.client ?? (rawRedis() as unknown as ReencryptClient);
   const now = opts.now ?? Date.now;
   const deadline = now() + opts.budgetMs;
-  const active = await activeKeyForReencryption();
 
-  if (!opts.dryRun) {
-    let answer: unknown;
-    try {
-      answer = await client.eval(PROBE, [], []);
-    } catch {
-      answer = null;
-    }
-    if (answer !== PROBE_ANSWER) {
-      throw new MasterKeyError('The database does not support the scripts this pass needs (redis.sha1hex), so nothing was changed.');
-    }
+  await probe(client);
+  // A check only reads the active key; a run creates the first one if needed.
+  let active: string | null;
+  if (opts.dryRun) {
+    const status = await activeKeyStatus();
+    if (status.active_key_problem) throw new MasterKeyError(status.active_key_problem);
+    active = status.active_key;
+  } else {
+    active = await activeKeyForReencryption();
   }
+  const guard = [activeKeyName(), keysHashKey()];
 
   const report: ReencryptReport = {
     active_key: active,
@@ -249,6 +309,7 @@ export async function reencrypt(
     moved: 0,
     to_move: {},
     changed_meanwhile: 0,
+    deleted_meanwhile: 0,
     unreadable: [],
     unreadable_count: 0,
     unclassified: [],
@@ -261,9 +322,20 @@ export async function reencrypt(
   const pending = (from: string) => {
     report.to_move[from] = (report.to_move[from] ?? 0) + 1;
   };
-  /** Counts a compare-and-set: moved, or left because the value changed. */
-  const settle = (wrote: unknown) => {
-    if (wrote === 1) report.moved++;
+  /**
+   * Counts one compare-and-set. `reread` fetches the value again: when the
+   * script said it changed but it reads back identical, the two sides hash
+   * different bytes (a value that is not valid UTF-8), and it would never
+   * move, so it is reported rather than retried forever.
+   */
+  const settle = async (answer: unknown, key: string, field: string | undefined, read: string, reread: () => Promise<unknown>) => {
+    if (answer === 1) report.moved++;
+    else if (answer === -1) report.deleted_meanwhile++;
+    else if (answer === -2) {
+      throw new MasterKeyError(
+        'The active data key changed or left the key store during the pass (a restore?), so it stopped. Whatever was moved stays moved; call it again.'
+      );
+    } else if ((await reread()) === read) unreadable(key, field, 'cannot be compared byte for byte (not valid UTF-8 text)');
     else report.changed_meanwhile++;
   };
 
@@ -277,19 +349,36 @@ export async function reencrypt(
       report.unclassified.push(key);
       continue;
     }
-    if (kind === 'plain') continue;
 
     const type = await client.type(full);
     if (type === 'none') continue; // deleted since the scan
-    const expected = kind === 'string' ? 'string' : 'hash';
-    if (type !== expected) {
-      unreadable(key, undefined, `expected a ${expected}, found a ${type}`);
+
+    if (kind === 'plain') {
+      // Checked, not trusted: a v2 value here means the list is wrong.
+      if (type === 'string') {
+        if (looksEncrypted(await client.getrange(full, 0, PEEK - 1))) unreadable(key, undefined, 'listed as plaintext but holds encrypted data');
+      } else if (type === 'hash') {
+        let cursor: string | number = 0;
+        do {
+          const [next, flat] = await client.hscan(full, cursor, { count: PAGE });
+          for (let i = 0; i + 1 < flat.length; i += 2) {
+            if (looksEncrypted(flat[i + 1])) unreadable(key, String(flat[i]), 'listed as plaintext but holds encrypted data');
+          }
+          cursor = next;
+        } while (String(cursor) !== '0');
+      }
       continue;
     }
 
-    if (kind === 'string') {
+    const expected = kind === 'string' ? 'string' : kind === 'cipher' ? type : 'hash';
+    if (type !== expected || (type !== 'string' && type !== 'hash')) {
+      unreadable(key, undefined, `expected a ${kind === 'cipher' ? 'string or hash' : expected}, found a ${type}`);
+      continue;
+    }
+
+    if (type === 'string') {
       const peek = await client.getrange(full, 0, PEEK - 1);
-      if (typeof peek === 'string' && peek.startsWith(`v2.${active}.`)) continue;
+      if (active && typeof peek === 'string' && peek.startsWith(`v2.${active}.`)) continue;
       const value = await client.get(full);
       if (value === null || value === undefined) continue;
       if (typeof value !== 'string') {
@@ -300,7 +389,10 @@ export async function reencrypt(
         const m = await moved(value, active, opts.dryRun);
         if (!m) continue;
         if (opts.dryRun) pending(m.from);
-        else settle(await client.eval(CAS_STRING, [full], [sha1(value), m.next!]));
+        else {
+          const answer = await client.eval(CAS_STRING, [full, ...guard], [sha1(value), m.next!, active!]);
+          await settle(answer, key, undefined, value, () => client.get(full));
+        }
       } catch (err) {
         if (!(err instanceof Unreadable)) throw err;
         unreadable(key, undefined, err.message);
@@ -316,12 +408,16 @@ export async function reencrypt(
       for (let i = 0; i + 1 < flat.length; i += 2) fields.push([String(flat[i]), flat[i + 1]]);
       await inBatches(fields, async ([field, value]) => {
         if (typeof value !== 'string') return unreadable(key, field, 'not stored as text');
+        const write = async (rewritten: string) => {
+          const answer = await client.eval(CAS_HASH, [full, ...guard], [field, sha1(value), rewritten, active!]);
+          await settle(answer, key, field, value, () => client.hget(full, field));
+        };
         try {
-          if (kind === 'hash') {
+          if (kind !== 'items') {
             const m = await moved(value, active, opts.dryRun);
             if (!m) return;
             if (opts.dryRun) pending(m.from);
-            else settle(await client.eval(CAS_HASH, [full], [field, sha1(value), m.next!]));
+            else await write(m.next!);
             return;
           }
           // An item: only its access token is ciphertext.
@@ -336,10 +432,7 @@ export async function reencrypt(
           const m = await moved(token, active, opts.dryRun);
           if (!m) return;
           if (opts.dryRun) pending(m.from);
-          else {
-            const rewritten = JSON.stringify({ ...item, encrypted_access_token: m.next });
-            settle(await client.eval(CAS_HASH, [full], [field, sha1(value), rewritten]));
-          }
+          else await write(JSON.stringify({ ...item, encrypted_access_token: m.next }));
         } catch (err) {
           if (!(err instanceof Unreadable)) throw err;
           unreadable(key, field, err.message);

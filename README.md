@@ -627,8 +627,9 @@ value that is not under the active data key to it, safely while the app is
 running: a value is only written back if it has not changed since it was read,
 and readers see exactly the same data either way.
 
-1. Take a backup first (`/api/ops/export`, above).
-2. With `OPS_ENABLED=1`, check what is left, which changes nothing:
+1. Take a backup first (`/api/ops/export`, above). Don't run the pass while
+   a restore is running.
+2. With `OPS_ENABLED=1`, check what is left. This writes nothing at all:
 
    ```bash
    curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \
@@ -636,6 +637,8 @@ and readers see exactly the same data either way.
    ```
 
    `to_move` counts values by the key they are under (`k0` is the old one).
+   `active_key` is `null` until the first data key exists; the first run
+   creates it.
 3. Move them, repeating until it answers `"complete": true` (each call stops
    after about 40 seconds and carries on next time):
 
@@ -646,11 +649,20 @@ and readers see exactly the same data either way.
 
 4. Remove `OPS_ENABLED` and redeploy.
 
-It never shows values, only key and field names, counts and error types.
-Anything it lists under `unreadable` or `unclassified` was left exactly as it
-was: `unclassified` means a store it does not know about (a bug to report),
-`unreadable` a value that cannot be decrypted. `changed_meanwhile` values were
-saved by the app while being moved and are picked up next call.
+It never shows values, only key and field names, counts and reasons. What
+the fields mean:
+
+- `unclassified`: a store the pass does not know about. Left alone; a bug to
+  report.
+- `unreadable`: a value it cannot move, left exactly as it was, with the
+  reason: it cannot be decrypted, the key has an unexpected type, it is bound
+  to a context, it is listed as plaintext but is encrypted, and so on.
+- `changed_meanwhile`: saved by the app while being moved; picked up next call.
+- `deleted_meanwhile`: deleted by the app while being moved; nothing to do.
+
+If a call stops with "the active data key changed", something replaced the
+key store mid-pass (a restore, most likely): nothing was written under a key
+that no longer exists. Call it again once that is finished.
 
 **Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It
 costs nothing, the app still falls back to it if the data key is ever

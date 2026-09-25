@@ -71,25 +71,43 @@ afterEach(() => {
 });
 
 describe('the list of keys', () => {
-  test('every key name in the code is on it', () => {
+  test('every key name in the code is on it, and none is built out of sight', () => {
+    const root = join(import.meta.dir, '..');
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const path = join(dir, name);
+        if (name === 'node_modules' || name.startsWith('.')) continue;
         if (statSync(path).isDirectory()) walk(path);
         else if (/\.tsx?$/.test(name)) files.push(path);
       }
     };
-    walk('lib');
-    walk('app');
+    for (const dir of ['lib', 'app', 'scripts', 'components']) {
+      try {
+        walk(join(root, dir));
+      } catch {
+        // not every checkout has every directory
+      }
+    }
     const names = new Set<string>();
+    const opaque: string[] = [];
     for (const file of files) {
       const src = readFileSync(file, 'utf8');
-      for (const m of src.matchAll(/\bk(?:Env)?\(\s*'([^']+)'\s*\)/g)) names.add(m[1]);
-      for (const m of src.matchAll(/\bk(?:Env)?\(\s*`([^`$]*)\$\{/g)) names.add(`${m[1]}x`);
+      for (const m of src.matchAll(/\bk(?:Env)?\(\s*([^)]*?)\s*\)/g)) {
+        const arg = m[1];
+        if (arg === '') continue; // "k()" in a comment
+        const quoted = /^(['"`])([^'"`$]*)\1$/.exec(arg);
+        const templated = /^`([^`$]*)\$\{/.exec(arg);
+        if (quoted) names.add(quoted[2]);
+        else if (templated) names.add(`${templated[1]}x`);
+        else if (!/^(key|string|[a-zA-Z_]+: string)$/.test(arg)) opaque.push(`${file.slice(root.length + 1)}: k(${arg})`);
+      }
     }
     expect(names.size).toBeGreaterThan(20); // the scan found the stores
-    const missing = [...names].filter((n) => classify(n) === null);
+    // A key name the scan cannot read (a variable, a helper) could be a store
+    // this file never hears of. Spell it out at the call, or list it here.
+    expect(opaque).toEqual([]);
+    const missing = [...names].filter((n) => n !== '' && classify(n) === null);
     expect(missing).toEqual([]);
   });
 
@@ -100,29 +118,44 @@ describe('the list of keys', () => {
     expect(classify('invtxns-lock:abc')).toBe('plain');
     expect(classify('history:accounts')).toBe('hash');
     expect(classify('history:accounts:est:flat')).toBe('string');
+    expect(classify('cache:net-worth')).toBe('cipher');
+    expect(classify('crypto:keys')).toBe('plain');
     expect(classify('something-new')).toBeNull();
     expect(classify('__proto__')).toBeNull();
   });
 });
 
 describe('the pass', () => {
-  test('a check counts what is under k0 and writes nothing', async () => {
+  test('a check counts what is under k0 and writes nothing, not even a key', async () => {
     await seed();
     const before = snapshot();
     const report = await check();
-    expect(report).toMatchObject({ dry_run: true, walked_all: true, moved: 0, to_move: { k0: 5 }, complete: false });
+    expect(report).toMatchObject({ active_key: null, dry_run: true, walked_all: true, moved: 0, to_move: { k0: 5 }, complete: false });
     expect(report.unreadable).toEqual([]);
-    // Only the first data key was created, which any write would have done.
-    const after = JSON.parse(snapshot());
-    const data = (s: unknown[][]) => JSON.stringify(s.filter(([k]) => !String(k).includes(':crypto:')));
-    expect(data(after[0])).toBe(data(JSON.parse(before)[0]));
-    expect(data(after[1])).toBe(data(JSON.parse(before)[1]));
+    expect(snapshot()).toBe(before);
+  });
+
+  test('a check with an active key counts only what is not under it', async () => {
+    await seed();
+    fake.strings.set(testKey('budgets'), await encrypt('{"food":1}')); // creates k1, writes under it
+    const before = snapshot();
+    const report = await check();
+    expect(report.active_key).toMatch(/^k1-/);
+    expect(report.to_move).toEqual({ k0: 5 });
+    expect(snapshot()).toBe(before);
+  });
+
+  test('a check reports an active key this deployment cannot use', async () => {
+    fake.strings.set(activeKeyName(), 'k0');
+    const err = await check().catch((e) => e);
+    expect(err).toBeInstanceOf(MasterKeyError);
+    expect(err.message).toContain('not a data key id');
   });
 
   test('a run moves every value to the active key, and readers get the same data', async () => {
     await seed();
     const report = await run();
-    const active = report.active_key;
+    const active = report.active_key as string;
     expect(active).toMatch(/^k1-/);
     expect(report).toMatchObject({ walked_all: true, moved: 5, changed_meanwhile: 0, complete: true });
 
@@ -301,20 +334,154 @@ describe('the pass', () => {
     expect(snapshot()).toBe(before);
   });
 
-  test('a database without the needed script support is refused before any write', async () => {
+  test('a database without the needed script support is refused before anything, even a key', async () => {
     await seed();
     const realEval = fake.eval.bind(fake);
     fake.eval = (async () => {
-      throw new Error('ERR unknown command');
+      throw new Error("ERR user_script:1: attempt to call field 'sha1hex' (a nil value)");
     }) as typeof fake.eval;
+    const before = snapshot();
     try {
-      const err = await run().catch((e) => e);
-      expect(err).toBeInstanceOf(MasterKeyError);
-      expect(err.message).toContain('sha1hex');
+      for (const attempt of [run, check]) {
+        const err = await attempt().catch((e) => e);
+        expect(err).toBeInstanceOf(MasterKeyError);
+        expect(err.message).toContain('sha1hex');
+      }
     } finally {
       fake.eval = realEval as typeof fake.eval;
     }
-    expect((await check()).to_move).toEqual({ k0: 5 });
+    expect(snapshot()).toBe(before); // no data key created either
+  });
+
+  test('any other failure of the probe is not mistaken for missing support', async () => {
+    const realEval = fake.eval.bind(fake);
+    fake.eval = (async () => {
+      throw new TypeError('fetch failed');
+    }) as typeof fake.eval;
+    try {
+      const err = await run().catch((e) => e);
+      expect(err).toBeInstanceOf(TypeError);
+    } finally {
+      fake.eval = realEval as typeof fake.eval;
+    }
+  });
+
+  test('caches are moved too, keeping their expiry', async () => {
+    fake.strings.set(testKey('cache:net-worth'), await legacy('{"total":1}'));
+    fake.ttls.set(testKey('cache:net-worth'), 900);
+    fake.hashes.set(testKey('cache:inv-activity:v4'), new Map([['acct', await legacy('[]')]]));
+    expect(await run()).toMatchObject({ moved: 2, complete: true });
+    expect(await decrypt(fake.strings.get(testKey('cache:net-worth'))!)).toBe('{"total":1}');
+    expect(fake.ttls.get(testKey('cache:net-worth'))).toBe(900);
+  });
+
+  test('encrypted data in a key listed as plaintext is reported', async () => {
+    fake.strings.set(testKey('txns-blocked:item-1'), await encrypt('x'));
+    fake.hashes.set(testKey('account-links:dismissed'), new Map([['a>b', await encrypt('y')]]));
+    const report = await check();
+    expect(report.complete).toBe(false);
+    expect(report.unreadable.map((u) => [u.key, u.field, u.reason])).toEqual([
+      ['account-links:dismissed', 'a>b', 'listed as plaintext but holds encrypted data'],
+      ['txns-blocked:item-1', undefined, 'listed as plaintext but holds encrypted data'],
+    ]);
+  });
+
+  /** Runs `during` once, just before the first compare-and-set on `key`. */
+  async function runWith(key: string, during: () => Promise<void> | void) {
+    const realEval = fake.eval.bind(fake);
+    let done = false;
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (!done && keys[0] === testKey(key)) {
+        done = true;
+        await during();
+      }
+      return realEval(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      return await run();
+    } finally {
+      fake.eval = realEval as typeof fake.eval;
+    }
+  }
+
+  test('a hash field deleted mid-pass stays deleted', async () => {
+    await seed();
+    const report = await runWith('history:net-worth', () => {
+      fake.hashes.get(testKey('history:net-worth'))!.delete('2026-01-01');
+    });
+    expect(report).toMatchObject({ deleted_meanwhile: 1, changed_meanwhile: 0, complete: true });
+    expect(fake.hashes.get(testKey('history:net-worth'))!.has('2026-01-01')).toBe(false);
+  });
+
+  test('a string deleted mid-pass stays deleted', async () => {
+    await seed();
+    const report = await runWith('goals', () => {
+      fake.strings.delete(testKey('goals'));
+    });
+    expect(report.deleted_meanwhile).toBe(1);
+    expect(fake.strings.has(testKey('goals'))).toBe(false);
+  });
+
+  test('an item re-saved mid-pass keeps the new save', async () => {
+    await seed();
+    const newer = JSON.stringify({ item_id: 'item-1', institution_name: 'Renamed', encrypted_access_token: await legacy('access-2') });
+    const report = await runWith('plaid:items', () => {
+      fake.hashes.get(testKey('plaid:items'))!.set('item-1', newer);
+    });
+    expect(report.changed_meanwhile).toBe(1);
+    expect(fake.hashes.get(testKey('plaid:items'))!.get('item-1')).toBe(newer);
+    expect(await run()).toMatchObject({ moved: 1, complete: true });
+    const item = JSON.parse(fake.hashes.get(testKey('plaid:items'))!.get('item-1')!);
+    expect(item.institution_name).toBe('Renamed');
+    expect(await decrypt(item.encrypted_access_token)).toBe('access-2');
+  });
+
+  test('a key deleted between listing and reading is skipped', async () => {
+    await seed();
+    const realType = fake.type.bind(fake);
+    fake.type = (async (key: string) => {
+      if (key === testKey('goals')) fake.strings.delete(key);
+      return realType(key);
+    }) as typeof fake.type;
+    try {
+      expect(await run()).toMatchObject({ moved: 4, complete: true });
+    } finally {
+      fake.type = realType as typeof fake.type;
+    }
+  });
+
+  test('if the active key leaves the key store mid-pass (a restore), it stops without writing under it', async () => {
+    await seed();
+    const err = await runWith('history:net-worth', () => {
+      fake.hashes.delete(keysHashKey()); // a restore replaced the key store
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(MasterKeyError);
+    expect(err.message).toContain('stopped');
+    for (const v of fake.hashes.get(testKey('history:net-worth'))!.values()) expect(formatOf(v).keyId).toBe('k0');
+  });
+
+  test('if the active key changes mid-pass, it stops', async () => {
+    await seed();
+    const err = await runWith('goals', () => {
+      fake.strings.set(activeKeyName(), 'k9-00000000');
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(MasterKeyError);
+    expect(formatOf(fake.strings.get(testKey('goals'))!).keyId).toBe('k0');
+  });
+
+  test('a value that never compares equal is reported, not retried forever', async () => {
+    await seed();
+    const realEval = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) =>
+      keys[0] === testKey('goals') ? 0 : realEval(script, keys, args)) as typeof fake.eval;
+    let report;
+    try {
+      report = await run();
+    } finally {
+      fake.eval = realEval as typeof fake.eval;
+    }
+    expect(report.changed_meanwhile).toBe(0);
+    expect(report.unreadable).toEqual([{ key: 'goals', reason: 'cannot be compared byte for byte (not valid UTF-8 text)' }]);
   });
 });
 
@@ -395,30 +562,85 @@ describe.skipIf(!hasRedis)('the scripts, on a real Redis', () => {
     expect(await evalScript(PROBE, [], [])).toBe(sha1('nya'));
   });
 
+  const GUARD = ['active', 'keys'];
+  const setGuard = async (id = 'k1-aaaaaaaa') => {
+    await client.send('SET', ['active', id]);
+    await client.send('HSET', ['keys', id, '{}']);
+    return id;
+  };
+
   test('a string is replaced only while it still matches, keeping its expiry', async () => {
+    const id = await setGuard();
     await client.send('SET', ['s', 'old é', 'PX', '100000']);
-    expect(await evalScript(CAS_STRING, ['s'], [sha1('other'), 'new'])).toBe(0);
+    expect(await evalScript(CAS_STRING, ['s', ...GUARD], [sha1('other'), 'new', id])).toBe(0);
     expect(await client.send('GET', ['s'])).toBe('old é');
-    expect(await evalScript(CAS_STRING, ['s'], [sha1('old é'), 'new'])).toBe(1);
+    expect(await evalScript(CAS_STRING, ['s', ...GUARD], [sha1('old é'), 'new', id])).toBe(1);
     expect(await client.send('GET', ['s'])).toBe('new');
     expect(Number(await client.send('PTTL', ['s']))).toBeGreaterThan(90000);
 
     await client.send('SET', ['plain', 'v']);
-    expect(await evalScript(CAS_STRING, ['plain'], [sha1('v'), 'w'])).toBe(1);
+    expect(await evalScript(CAS_STRING, ['plain', ...GUARD], [sha1('v'), 'w', id])).toBe(1);
     expect(Number(await client.send('PTTL', ['plain']))).toBe(-1);
 
-    expect(await evalScript(CAS_STRING, ['missing'], [sha1(''), 'x'])).toBe(0);
+    expect(await evalScript(CAS_STRING, ['missing', ...GUARD], [sha1(''), 'x', id])).toBe(-1);
     expect(await client.send('EXISTS', ['missing'])).toBe(0);
   });
 
   test('a hash field is replaced only while it still matches', async () => {
+    const id = await setGuard();
     await client.send('HSET', ['h', 'f', 'old', 'g', 'keep']);
-    expect(await evalScript(CAS_HASH, ['h'], ['f', sha1('other'), 'new'])).toBe(0);
+    expect(await evalScript(CAS_HASH, ['h', ...GUARD], ['f', sha1('other'), 'new', id])).toBe(0);
     expect(await client.send('HGET', ['h', 'f'])).toBe('old');
-    expect(await evalScript(CAS_HASH, ['h'], ['f', sha1('old'), 'new'])).toBe(1);
+    expect(await evalScript(CAS_HASH, ['h', ...GUARD], ['f', sha1('old'), 'new', id])).toBe(1);
     expect(await client.send('HGET', ['h', 'f'])).toBe('new');
     expect(await client.send('HGET', ['h', 'g'])).toBe('keep');
-    expect(await evalScript(CAS_HASH, ['h'], ['gone', sha1(''), 'x'])).toBe(0);
+    expect(await evalScript(CAS_HASH, ['h', ...GUARD], ['gone', sha1(''), 'x', id])).toBe(-1);
     expect(await client.send('HEXISTS', ['h', 'gone'])).toBe(0);
+  });
+
+  test('nothing is written unless the key is still active and still stored', async () => {
+    const id = await setGuard();
+    await client.send('SET', ['s', 'old']);
+    await client.send('HSET', ['h', 'f', 'old']);
+    // Not the active key.
+    expect(await evalScript(CAS_STRING, ['s', ...GUARD], [sha1('old'), 'new', 'k2-bbbbbbbb'])).toBe(-2);
+    expect(await evalScript(CAS_HASH, ['h', ...GUARD], ['f', sha1('old'), 'new', 'k2-bbbbbbbb'])).toBe(-2);
+    // Active, but gone from the key store.
+    await client.send('DEL', ['keys']);
+    expect(await evalScript(CAS_STRING, ['s', ...GUARD], [sha1('old'), 'new', id])).toBe(-2);
+    expect(await evalScript(CAS_HASH, ['h', ...GUARD], ['f', sha1('old'), 'new', id])).toBe(-2);
+    // No active key at all.
+    await setGuard();
+    await client.send('DEL', ['active']);
+    expect(await evalScript(CAS_STRING, ['s', ...GUARD], [sha1('old'), 'new', id])).toBe(-2);
+    expect(await client.send('GET', ['s'])).toBe('old');
+    expect(await client.send('HGET', ['h', 'f'])).toBe('old');
+  });
+
+  test('the whole pass, run against it', async () => {
+    // The data lives in the real Redis; lib/crypto keeps its key store in the
+    // test double, so the two crypto keys the scripts check are mirrored.
+    await seed();
+    const realClient: import('@/lib/reencrypt').ReencryptClient = {
+      scan: async (cursor, o) => (await client.send('SCAN', [String(cursor), 'MATCH', o.match, 'COUNT', String(o.count)])) as [string, string[]],
+      hscan: async (key, cursor, o) => (await client.send('HSCAN', [key, String(cursor), 'COUNT', String(o.count)])) as [string, string[]],
+      type: async (key) => String(await client.send('TYPE', [key])),
+      get: (key) => client.send('GET', [key]),
+      hget: (key, field) => client.send('HGET', [key, field]),
+      getrange: (key, a, b) => client.send('GETRANGE', [key, String(a), String(b)]),
+      eval: (script, keys, args) => evalScript(script, keys, args),
+    };
+    for (const [key, value] of fake.strings) await client.send('SET', [key, value]);
+    for (const [key, h] of fake.hashes) for (const [f, v] of h) await client.send('HSET', [key, f, v]);
+    await encrypt('create the first data key');
+    await client.send('SET', [activeKeyName(), fake.strings.get(activeKeyName())!]);
+    for (const [f, v] of fake.hashes.get(keysHashKey())!) await client.send('HSET', [keysHashKey(), f, v]);
+
+    const report = await reencrypt({ dryRun: false, budgetMs: 60_000, client: realClient });
+    expect(report).toMatchObject({ moved: 5, unreadable_count: 0, complete: true });
+    expect(await decrypt(String(await client.send('GET', [testKey('goals')])))).toBe('[{"id":"g1"}]');
+    const item = JSON.parse(String(await client.send('HGET', [testKey('plaid:items'), 'item-1'])));
+    expect(await decrypt(item.encrypted_access_token)).toBe('access-sandbox-1');
+    expect(await reencrypt({ dryRun: true, budgetMs: 60_000, client: realClient })).toMatchObject({ complete: true });
   });
 });

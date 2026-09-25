@@ -238,32 +238,40 @@ export class FakeRedis {
     return [next, page];
   }
 
+  /** Byte offsets, like Redis. */
   async getrange(key: string, start: number, end: number): Promise<string> {
     this.gate('getrange');
-    return (this.strings.get(key) ?? '').slice(start, end + 1);
+    return Buffer.from(this.strings.get(key) ?? '', 'utf8').subarray(start, end + 1).toString('utf8');
   }
 
   /**
    * Runs the few Lua scripts this codebase sends, recognised by the name on
-   * their first line (lib/reencrypt.ts). Anything else throws, so a new script
-   * cannot pass a test without this learning what it does.
+   * their first line (lib/reencrypt.ts), with the same answers. Anything else
+   * throws, so a new script cannot pass a test without this learning what it
+   * does. The real scripts are also run against a real Redis in
+   * test/reencrypt.test.ts where one is installed.
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     this.gate('eval');
     const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
     const name = script.split('\n', 1)[0];
     if (name === '-- nya:probe') return sha1('nya');
+    const guardOk = (active: string) => this.strings.get(keys[1]) === active && (this.hashes.get(keys[2])?.has(active) ?? false);
     if (name === '-- nya:cas-string') {
+      if (!guardOk(args[2])) return -2;
       if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
       const cur = this.strings.get(keys[0]);
-      if (cur === undefined || sha1(cur) !== args[0]) return 0;
+      if (cur === undefined) return -1;
+      if (sha1(cur) !== args[0]) return 0;
       this.strings.set(keys[0], args[1]);
       return 1;
     }
     if (name === '-- nya:cas-hash') {
+      if (!guardOk(args[3])) return -2;
       if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
       const cur = this.hashes.get(keys[0])?.get(args[0]);
-      if (cur === undefined || sha1(cur) !== args[1]) return 0;
+      if (cur === undefined) return -1;
+      if (sha1(cur) !== args[1]) return 0;
       this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
