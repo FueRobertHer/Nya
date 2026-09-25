@@ -381,6 +381,28 @@ describe('sign out everywhere', () => {
     expect((await res.json()).error).toContain('database is unavailable');
   });
 
+  test('a damaged registry is named as such, not as an outage', async () => {
+    const laptop = await createSessionToken({ container, epoch: 0 });
+    await fake.hset(testKey('containers'), { [crypto.randomUUID()]: '{"status":"bogus"}' });
+    forgetEpochs();
+    const res = await quiet(() => logout(laptop, { everywhere: true }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('unreadable');
+  });
+
+  test('with no container yet, it still ends old-format sessions everywhere', async () => {
+    fake.reset();
+    delete process.env.CONTAINER_ID;
+    forgetEpochs();
+    const old = await legacyToken(Date.now() - 1000);
+    const other = (await verifySessionToken(await legacyToken(Date.now() - 2000)))!;
+    expect(await sessionCurrent(other)).toBe(true);
+
+    const res = await logout(old, { everywhere: true });
+    expect(res.status).toBe(200);
+    expect(await sessionCurrent(other)).toBe(false);
+  });
+
   test('a plain logout ends only this one', async () => {
     const phone = await createSessionToken({ container, epoch: 0 });
     const laptop = await createSessionToken({ container, epoch: 0 });

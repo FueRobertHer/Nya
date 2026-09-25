@@ -101,11 +101,18 @@ export async function currentEpoch(
  *  old-format session in the environment. Returns the new epoch, for the
  *  session issued next. */
 export async function revokeAllSessions(container: ContainerId, now: number = Date.now()): Promise<number> {
-  await redis().set(legacyCutoffKey(), String(now));
-  _cutoff = { value: now, at: now };
+  await revokeLegacySessions(now);
   const epoch = Number(await redis().incr(epochKey({ container })));
   _epochs.set(container, { epoch, at: now });
   return epoch;
+}
+
+/** End every old-format session in the environment. On its own, only for an
+ *  environment with no container yet, where old-format sessions are the only
+ *  kind (revokeAllSessions does this too). */
+export async function revokeLegacySessions(now: number = Date.now()): Promise<void> {
+  await redis().set(legacyCutoffKey(), String(now));
+  _cutoff = { value: now, at: now };
 }
 
 async function legacyCutoff(now: number): Promise<number> {

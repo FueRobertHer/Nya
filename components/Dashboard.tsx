@@ -742,6 +742,7 @@ export default function Dashboard() {
   }, [manualDraft, mutateManual]);
 
   const logout = useCallback(async () => {
+    signedOut = true; // no load still in flight may save the snapshot again
     try {
       localStorage.removeItem(LOCAL_CACHE_KEY);
     } catch {
@@ -766,6 +767,7 @@ export default function Dashboard() {
       window.alert(message || 'Could not sign out other devices. Try again.');
       return;
     }
+    signedOut = true; // as in logout
     try {
       localStorage.removeItem(LOCAL_CACHE_KEY);
     } catch {
