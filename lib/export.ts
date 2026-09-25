@@ -213,7 +213,8 @@ export async function* exportLines(
     env_prefix: prefix.replace(/:$/, ''),
     container_id: null,
     taken_at: now.toISOString(),
-    excluded: EXCLUDED_PREFIXES.map((p) => `${p}*`),
+    // Inside a container too (isExcluded).
+    excluded: EXCLUDED_PREFIXES.flatMap((p) => [`${p}*`, `c:*:${p}*`]),
   };
   const hash = createHash('sha256');
   const headerLine = JSON.stringify(header) + '\n';

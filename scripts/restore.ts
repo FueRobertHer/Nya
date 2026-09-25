@@ -26,7 +26,7 @@
 
 import { writeFile } from 'node:fs/promises';
 import { rawRedis } from '@/lib/storage';
-import { EXCLUDED_PREFIXES, exportLines } from '@/lib/export';
+import { exportLines, isExcluded } from '@/lib/export';
 import {
   RestoreRefused,
   checkTarget,
@@ -92,7 +92,8 @@ async function backUpTarget(client: RestoreClient, target: string, existing: str
   const prefix = `${target}:`;
   const unsaved = existing
     .map((key) => key.slice(prefix.length))
-    .filter((key) => !saved.has(key) && !EXCLUDED_PREFIXES.some((p) => key.startsWith(p)));
+    // The backup leaves out what every export leaves out, containers' included.
+    .filter((key) => !saved.has(key) && !isExcluded(key));
   if (unsaved.length > 0) {
     throw new RestoreRefused(
       `The target changed while it was being backed up (${unsaved.length} keys missing from the backup). Nothing was changed; run the restore again.`

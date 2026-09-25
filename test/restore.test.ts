@@ -515,6 +515,16 @@ describe('the command', () => {
     expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toHaveLength(1);
   });
 
+  test("a container's cache on the target does not stop an overwrite", async () => {
+    const file = await archiveFile();
+    // Left out of the backup, like every cache, so not "missing" from it.
+    await fake.set(testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:cache:net-worth'), 'stale');
+
+    await main([file, '--target', 'test', '--overwrite'], fake as any);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+    expect(await fake.get<string>(testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:cache:net-worth'))).toBeNull();
+  });
+
   test('a target that cannot be backed up is left alone, and says why', async () => {
     const file = await archiveFile();
     await fake.set(testKey('odd'), 'x');

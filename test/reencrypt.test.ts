@@ -92,32 +92,43 @@ describe('the list of keys', () => {
     const names = new Set<string>();
     const opaque: string[] = [];
     for (const file of files) {
-      const src = readFileSync(file, 'utf8');
-      // kc(ctx, 'name'): the name is the second argument. Every "kc(" in the
-      // source must be one this reads, or it is reported: a call written some
-      // other way (kc(await resolveCtx(), ...)) would otherwise go unchecked.
-      const readKc = new Set<number>();
-      for (const m of src.matchAll(/\bkc\(\s*[A-Za-z_.]+\s*,\s*([^)]*?)\s*\)/g)) readKc.add(m.index!);
-      for (const m of src.matchAll(/\bkc\(/g)) {
-        if (readKc.has(m.index!) || /function kc\($/.test(src.slice(0, m.index! + 3))) continue;
-        if (src.startsWith('kc()', m.index!)) continue; // "kc()" in a comment
-        opaque.push(`${file.slice(root.length + 1)}: ${src.slice(m.index!, m.index! + 40).split('\n')[0]}`);
-      }
+      // Comments blanked (offsets kept): a builder named in prose is not a
+      // call. "://" in a string is not a comment.
+      const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\/|(?<![:\\])\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, ' '));
+      const where = (i: number) => `${file.slice(root.length + 1)}: ${src.slice(i, i + 40).split('\n')[0]}`;
+      const read = new Set<number>(); // where each call this could read starts
+
+      // kc(ctx, 'name'): the name is the second argument.
       for (const m of src.matchAll(/\bkc\(\s*[A-Za-z_.]+\s*,\s*([^)]*?)\s*\)/g)) {
+        read.add(m.index!);
         const quoted = /^(['"`])([^'"`$]*)\1$/.exec(m[1]);
         const templated = /^`([^`$]*)\$\{/.exec(m[1]);
         if (quoted) names.add(quoted[2]);
         else if (templated) names.add(`${templated[1]}x`);
-        else if (!/^[a-zA-Z_]+: string$/.test(m[1])) opaque.push(`${file.slice(root.length + 1)}: kc(..., ${m[1]})`);
+        else if (!/^[a-zA-Z_]+: string$/.test(m[1])) opaque.push(where(m.index!));
       }
+      // k('name') and kEnv('name').
       for (const m of src.matchAll(/\bk(?:Env)?\(\s*([^)]*?)\s*\)/g)) {
+        read.add(m.index!);
         const arg = m[1];
-        if (arg === '') continue; // "k()" in a comment
         const quoted = /^(['"`])([^'"`$]*)\1$/.exec(arg);
         const templated = /^`([^`$]*)\$\{/.exec(arg);
         if (quoted) names.add(quoted[2]);
         else if (templated) names.add(`${templated[1]}x`);
-        else if (!/^[a-zA-Z_]+: string$/.test(arg)) opaque.push(`${file.slice(root.length + 1)}: k(${arg})`);
+        else if (!/^[a-zA-Z_]+: string$/.test(arg)) opaque.push(where(m.index!));
+      }
+      // Every other mention of kc or kEnv in code is reported: "kc (ctx, ...)",
+      // "kc?.(...)", "const f = kc", "import { kc as f }" would all build keys
+      // this scan cannot see. Only a plain import and the definitions pass.
+      const imports = [...src.matchAll(/import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"]/g)].map(
+        (m) => [m.index!, m.index! + m[0].length] as const
+      );
+      for (const m of src.matchAll(/\b(?:kc|kEnv)\b/g)) {
+        const i = m.index!;
+        if (read.has(i)) continue;
+        if (/\bfunction\s+$/.test(src.slice(Math.max(0, i - 20), i))) continue;
+        if (imports.some(([a, b]) => i > a && i < b) && !/^\w+\s+as\b/.test(src.slice(i))) continue;
+        opaque.push(where(i));
       }
     }
     expect(names.size).toBeGreaterThan(20); // the scan found the stores
