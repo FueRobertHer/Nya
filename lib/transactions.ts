@@ -37,7 +37,7 @@ import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'pl
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
-import { containerLabel, forgetBlobSize, recordBlobSize } from './blob-sizes';
+import { containerLabel } from './blob-sizes';
 import { redis, k, type StoredItem } from './storage';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -465,7 +465,6 @@ async function writeState(item_id: string, state: ItemState): Promise<WriteOutco
     }
 
     await redis().set(stateKey(item_id), encoded);
-    await recordBlobSize('txns', item_id, encoded.length);
     return { persisted: true };
   } catch (err) {
     // Persist failures are non-fatal for the current request (the in-memory
@@ -514,7 +513,6 @@ export async function clearItemTransactions(item_id: string): Promise<void> {
   } catch {
     // Best effort; a stale key is harmless once the Item is gone.
   }
-  await forgetBlobSize('txns', item_id);
 }
 
 function toStored(

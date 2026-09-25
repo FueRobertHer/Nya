@@ -1,89 +1,108 @@
 // lib/blob-sizes.ts
 //
-// How much each Item's stored blobs take (#58): the transaction store
-// (lib/transactions.ts) and the investment store (lib/invstore.ts), in stored
-// characters, which are bytes here (base64 travels as ASCII; lib/blob.ts).
-// Recorded on every write that lands, removed when the Item is disconnected.
+// How much the stored transaction and investment blobs take (#58): the
+// transaction store (lib/transactions.ts, "txns:<item_id>") and the investment
+// store (lib/invstore.ts, "invtxns:<item_id>"), in stored characters, which are
+// bytes here (base64 travels as ASCII; lib/blob.ts).
+//
+// Measured when asked, not recorded as blobs are written: a size recorded on
+// write drifts from the blob it describes (a disconnect racing a sync, two
+// syncs at once, a failed record, the re-encryption pass rewriting a blob) and
+// misses every blob no write has touched since, including the one most worth
+// knowing about, a blob blocked at the ceiling. Measuring reads the truth: one
+// keyspace walk and one STRLEN per blob, which stays small at a few blobs per
+// linked institution.
+//
+// Every blob is reported, including ones whose Item is no longer linked
+// (orphaned: a sync that finished after a disconnect can leave one), since
+// they cost the same. An Item blocked at the ceiling also carries the size its
+// last write was refused at (the marker in lib/transactions.ts).
 //
 // This is the number a storage quota would read, and what tells you whether one
 // import is about to cost an Upstash tier upgrade. Nothing enforces a quota
 // yet: when one comes, the refusal path it needs (tell the user, change
 // nothing) is the one the size ceiling already takes.
 //
-// Kept beside the blobs it describes, under the same (still unscoped) keys, so
-// it moves with them when the data moves into containers (PRs 10 to 13). Until
-// then every Item belongs to this deployment's container (lib/sessions.ts),
-// which is the container the totals are reported for.
-//
-// Best effort: a failed record never fails the write it describes. A size can
-// lag the blob by one write, never by more.
+// Until the data moves into containers (PRs 10 to 13) every blob belongs to
+// this deployment's container (lib/sessions.ts); the walk then follows kc().
 
-import { redis, k } from './storage';
+import { redis, k, getItems } from './storage';
 import { deploymentContainer } from './sessions';
 
 export type BlobKind = 'txns' | 'invtxns';
-export type BlobSize = { chars: number; at: string };
-export type ItemSizes = { item_id: string } & Partial<Record<BlobKind, BlobSize>>;
+export type ItemSizes = {
+  item_id: string;
+  /** Not among the linked Items: left behind, and still stored. */
+  orphaned: boolean;
+  txns?: number;
+  invtxns?: number;
+  /** The size the last transaction write was refused at, when blocked. */
+  blocked_at?: number;
+};
 export type StorageUsage = { total_chars: number; items: ItemSizes[] };
 
-const KINDS: readonly BlobKind[] = ['txns', 'invtxns'];
+const PAGE = 200;
 
-function sizesKey(): string {
-  return k('blob-sizes');
+/** Where each kind of blob lives, spelled out so the key-name check in
+ *  test/reencrypt.test.ts can see them. */
+const blobPrefixes = (): [BlobKind, string][] => [
+  ['txns', k('txns:')],
+  ['invtxns', k('invtxns:')],
+];
+
+/** Every key matching the pattern, once each (SCAN may repeat a key). */
+async function keysMatching(pattern: string): Promise<string[]> {
+  const found = new Set<string>();
+  let cursor: string | number = 0;
+  do {
+    const [next, page] = (await redis().scan(cursor, { match: pattern, count: PAGE })) as [string | number, string[]];
+    for (const key of page) found.add(key);
+    cursor = next;
+  } while (String(cursor) !== '0');
+  return [...found];
 }
 
-const field = (kind: BlobKind, item_id: string) => `${kind}:${item_id}`;
-
-/** Records the size of a blob just written. Never throws. */
-export async function recordBlobSize(kind: BlobKind, item_id: string, chars: number, now: number = Date.now()): Promise<void> {
-  try {
-    const size: BlobSize = { chars, at: new Date(now).toISOString() };
-    await redis().hset(sizesKey(), { [field(kind, item_id)]: JSON.stringify(size) });
-  } catch (err) {
-    console.warn(`blob-sizes: could not record the ${kind} size for ${item_id}`, err instanceof Error ? err.name : err);
-  }
-}
-
-/** Forgets a blob's size, when the blob itself is deleted. Never throws. */
-export async function forgetBlobSize(kind: BlobKind, item_id: string): Promise<void> {
-  try {
-    await redis().hdel(sizesKey(), field(kind, item_id));
-  } catch (err) {
-    console.warn(`blob-sizes: could not forget the ${kind} size for ${item_id}`, err instanceof Error ? err.name : err);
-  }
-}
-
-function parseSize(value: unknown): BlobSize | null {
+function blockedChars(value: unknown): number | undefined {
   let v: any = value;
   if (typeof value === 'string') {
     try {
       v = JSON.parse(value);
     } catch {
-      return null;
+      return undefined;
     }
   }
-  if (!v || typeof v !== 'object' || !Number.isSafeInteger(v.chars) || v.chars < 0 || typeof v.at !== 'string') return null;
-  return { chars: v.chars, at: v.at };
+  return v && Number.isSafeInteger(v.chars) && v.chars >= 0 ? v.chars : undefined;
 }
 
-/** Every recorded size, by Item, largest first, and their total. An entry
- *  that cannot be read is left out rather than failing the rest. */
+/** The stored size of every blob, by Item, largest first, and their total. */
 export async function readStorageUsage(): Promise<StorageUsage> {
-  const all = ((await redis().hgetall(sizesKey())) ?? {}) as Record<string, unknown>;
+  const linked = new Set((await getItems()).map((i) => i.item_id));
   const byItem = new Map<string, ItemSizes>();
+  const entry = (item_id: string) => {
+    let e = byItem.get(item_id);
+    if (!e) byItem.set(item_id, (e = { item_id, orphaned: !linked.has(item_id) }));
+    return e;
+  };
+
   let total = 0;
-  for (const [f, value] of Object.entries(all)) {
-    const sep = f.indexOf(':');
-    const kind = f.slice(0, sep) as BlobKind;
-    const item_id = f.slice(sep + 1);
-    const size = parseSize(value);
-    if (sep < 0 || !KINDS.includes(kind) || !item_id || !size) continue;
-    const entry = byItem.get(item_id) ?? { item_id };
-    entry[kind] = size;
-    byItem.set(item_id, entry);
-    total += size.chars;
+  for (const [kind, prefix] of blobPrefixes()) {
+    const keys = await keysMatching(`${prefix}*`);
+    const sizes = await Promise.all(keys.map((key) => redis().strlen(key)));
+    keys.forEach((key, i) => {
+      entry(key.slice(prefix.length))[kind] = sizes[i];
+      total += sizes[i];
+    });
   }
-  const sum = (e: ItemSizes) => KINDS.reduce((n, kind) => n + (e[kind]?.chars ?? 0), 0);
+
+  const blockedPrefix = k('txns-blocked:');
+  const blocked = await keysMatching(`${blockedPrefix}*`);
+  const markers = await Promise.all(blocked.map((key) => redis().get(key)));
+  blocked.forEach((key, i) => {
+    const chars = blockedChars(markers[i]);
+    if (chars !== undefined) entry(key.slice(blockedPrefix.length)).blocked_at = chars;
+  });
+
+  const sum = (e: ItemSizes) => (e.txns ?? 0) + (e.invtxns ?? 0);
   const items = [...byItem.values()].sort((a, b) => sum(b) - sum(a) || (a.item_id < b.item_id ? -1 : 1));
   return { total_chars: total, items };
 }
@@ -94,8 +113,8 @@ export async function containerLabel(): Promise<string> {
   try {
     const dep = await deploymentContainer();
     if (dep.kind === 'container') return `container ${dep.container}`;
-    return dep.kind === 'none' ? 'no container' : 'an unresolved container';
-  } catch {
-    return 'an unresolved container';
+    return dep.kind === 'none' ? 'no container' : `an unresolved container (${dep.reason})`;
+  } catch (err) {
+    return `an unresolved container (${err instanceof Error ? err.name : 'error'})`;
   }
 }

@@ -267,13 +267,19 @@ describe('storage failures never overwrite', () => {
     await syncInvestments(ITEM, { now: NOW });
     const before = await fake.get<string>(key);
     process.env.MAX_TXN_BLOB_CHARS = '10';
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => errors.push(a.join(' '));
     try {
       plaid.rows = [row('a', '2026-09-01'), row('b', '2026-09-02')];
       const sync = await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
       expect(ids(sync.rows)).toEqual(['a', 'b']); // served live, nothing dropped
       expect(sync.storeNote).toContain('too large');
       expect(await fake.get<string>(key)).toBe(before!);
+      // The ceiling error names the container (#58).
+      expect(errors.join(' ')).toContain(`refusing to persist item1 in container ${process.env.CONTAINER_ID}`);
     } finally {
+      console.error = origError;
       delete process.env.MAX_TXN_BLOB_CHARS;
     }
   });
@@ -635,33 +641,5 @@ describe('third review: route and shape details', () => {
     const sync = await syncInvestments(ITEM, { now: NOW });
     expect(sync.storeNote).toBe('Saved investment history could not be read');
     expect(ids(sync.rows)).toEqual(['a']);
-  });
-});
-
-const { readStorageUsage } = await import('@/lib/blob-sizes');
-
-describe('stored size accounting (#58)', () => {
-  test('a write records the stored size, and a disconnect forgets it', async () => {
-    plaid.rows = [row('a', '2026-09-01')];
-    await syncInvestments(ITEM, { now: NOW });
-    const stored = (await fake.get<string>(testKey('invtxns:item1')))!;
-    expect((await readStorageUsage()).items).toEqual([{ item_id: 'item1', invtxns: { chars: stored.length, at: expect.any(String) } }]);
-
-    await clearInvestmentStore('item1');
-    expect(await readStorageUsage()).toEqual({ total_chars: 0, items: [] });
-  });
-
-  test('a sync that finds its Item disconnected leaves no size behind', async () => {
-    plaid.rows = [row('a', '2026-09-01')];
-    await syncInvestments(ITEM, { now: NOW });
-    expect((await readStorageUsage()).total_chars).toBeGreaterThan(0);
-
-    plaid.rows = [row('a', '2026-09-01'), row('b', '2026-09-10')];
-    plaid.onCall = async () => {
-      items = []; // disconnected while this sync ran
-    };
-    await syncInvestments(ITEM, { now: NOW + DAY, maxAgeMs: 0 });
-    expect(await fake.get(testKey('invtxns:item1'))).toBeNull();
-    expect(await readStorageUsage()).toEqual({ total_chars: 0, items: [] });
   });
 });

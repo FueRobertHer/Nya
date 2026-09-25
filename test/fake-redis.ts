@@ -21,6 +21,7 @@ export type FakeCommand =
   | 'scan'
   | 'hscan'
   | 'type'
+  | 'strlen'
   | 'ttl'
   | 'getrange'
   | 'eval';
@@ -183,6 +184,13 @@ export class FakeRedis {
     this.gate('ttl');
     if (!this.strings.has(key) && !this.hashes.has(key)) return -2;
     return this.ttls.get(key) ?? -1;
+  }
+
+  /** Length of a string value; 0 for a missing key, like Redis. */
+  async strlen(key: string): Promise<number> {
+    this.gate('strlen');
+    if (this.hashes.has(key)) throw new Error('WRONGTYPE');
+    return this.strings.get(key)?.length ?? 0;
   }
 
   /** 'string' | 'hash' | 'none'. Needed because the two coexist in one

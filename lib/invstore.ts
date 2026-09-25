@@ -49,7 +49,7 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { redis, k, getItems, type StoredItem } from './storage';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
-import { containerLabel, forgetBlobSize, recordBlobSize } from './blob-sizes';
+import { containerLabel } from './blob-sizes';
 import { classifyFetchError, isPendingSubtype, toInvestmentTxn, type InvestmentTxn } from './investments';
 
 export const INVSTORE_SCHEMA = 1;
@@ -208,10 +208,8 @@ async function writeInvStore(item_id: string, state: InvStoreState): Promise<Wri
     // narrowed: whichever finishes second, the key ends up gone.
     if (!(await getItems()).some((i) => i.item_id === item_id)) {
       await redis().del(stateKey(item_id));
-      await forgetBlobSize('invtxns', item_id);
       return 'item-gone';
     }
-    await recordBlobSize('invtxns', item_id, encoded.length);
     return 'written';
   } catch (err) {
     console.warn(`invstore: failed to persist ${item_id}; the next sync will retry`, err);
@@ -226,7 +224,6 @@ export async function clearInvestmentStore(item_id: string): Promise<void> {
   } catch {
     // Best effort, like clearItemTransactions.
   }
-  await forgetBlobSize('invtxns', item_id);
 }
 
 /** Account ids the store knows for an Item, for disconnect's hidden-set cleanup. */

@@ -4,13 +4,15 @@ import { FakeRedis, storageMock, testKey } from './fake-redis';
 const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { recordBlobSize, forgetBlobSize, readStorageUsage, containerLabel } = await import('@/lib/blob-sizes');
+const { readStorageUsage, containerLabel } = await import('@/lib/blob-sizes');
 const { registryKey } = await import('@/lib/containers');
-const { forgetEpochs } = await import('@/lib/sessions');
+const { forgetEpochs, deploymentContainer } = await import('@/lib/sessions');
+const { saveItem } = await import('@/lib/storage');
 const route = await import('@/app/api/storage-usage/route');
 
 const A = crypto.randomUUID();
 const saved = { ...process.env };
+const link = (item_id: string) => saveItem({ item_id, institution_name: 'Bank', encrypted_access_token: 'x' } as any);
 beforeEach(() => {
   fake.reset();
   forgetEpochs();
@@ -20,55 +22,62 @@ afterEach(() => {
   process.env = { ...saved };
 });
 
-describe('stored blob sizes', () => {
-  test('are kept per Item and kind, totalled, largest Item first', async () => {
-    await recordBlobSize('txns', 'item_a', 100, 0);
-    await recordBlobSize('invtxns', 'item_a', 50, 0);
-    await recordBlobSize('txns', 'item_b', 400, 0);
-    await recordBlobSize('txns', 'item_a', 120, 0); // a later write replaces
-    const at = new Date(0).toISOString();
+describe('stored blob sizes, measured', () => {
+  test('are the stored lengths, per Item and kind, totalled, largest Item first', async () => {
+    await link('item_a');
+    await link('item_b');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(120));
+    await fake.set(testKey('invtxns:item_a'), 'x'.repeat(50));
+    await fake.set(testKey('txns:item_b'), 'x'.repeat(400));
     expect(await readStorageUsage()).toEqual({
       total_chars: 570,
       items: [
-        { item_id: 'item_b', txns: { chars: 400, at } },
-        { item_id: 'item_a', txns: { chars: 120, at }, invtxns: { chars: 50, at } },
+        { item_id: 'item_b', orphaned: false, txns: 400 },
+        { item_id: 'item_a', orphaned: false, txns: 120, invtxns: 50 },
       ],
     });
   });
 
-  test('forgetting one kind leaves the other', async () => {
-    await recordBlobSize('txns', 'item_a', 100);
-    await recordBlobSize('invtxns', 'item_a', 50);
-    await forgetBlobSize('txns', 'item_a');
+  test('a blob whose Item is no longer linked is counted, and marked', async () => {
+    await link('item_a');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(10));
+    await fake.set(testKey('txns:gone'), 'x'.repeat(30));
     const usage = await readStorageUsage();
-    expect(usage.total_chars).toBe(50);
-    expect(usage.items[0].txns).toBeUndefined();
+    expect(usage.total_chars).toBe(40);
+    expect(usage.items).toEqual([
+      { item_id: 'gone', orphaned: true, txns: 30 },
+      { item_id: 'item_a', orphaned: false, txns: 10 },
+    ]);
   });
 
-  test('an unreadable entry is left out, not counted', async () => {
-    await recordBlobSize('txns', 'item_a', 100);
-    await fake.hset(testKey('blob-sizes'), {
-      'txns:item_b': 'junk',
-      'other:item_c': JSON.stringify({ chars: 5, at: 'x' }),
-      'invtxns:item_d': JSON.stringify({ chars: -1, at: 'x' }),
-      nocolon: JSON.stringify({ chars: 5, at: 'x' }),
-    });
+  test('a blocked Item carries the size its write was refused at', async () => {
+    await link('item_a');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(10));
+    await fake.set(testKey('txns-blocked:item_a'), JSON.stringify({ at: 'x', chars: 9_000_000 }));
+    await fake.set(testKey('txns-blocked:item_b'), 'junk');
     const usage = await readStorageUsage();
-    expect(usage.total_chars).toBe(100);
-    expect(usage.items.map((i) => i.item_id)).toEqual(['item_a']);
+    expect(usage.items).toEqual([{ item_id: 'item_a', orphaned: false, txns: 10, blocked_at: 9_000_000 }]);
+    expect(usage.total_chars).toBe(10); // what is stored, not what was refused
   });
 
-  test('a failed record never throws', async () => {
-    fake.failNext('hset');
-    const warn = console.warn;
-    console.warn = () => {};
-    try {
-      await recordBlobSize('txns', 'item_a', 100);
-      fake.failNext('hdel');
-      await forgetBlobSize('txns', 'item_a');
-    } finally {
-      console.warn = warn;
-    }
+  test('only the blobs themselves are counted: not markers, locks, caches or another environment', async () => {
+    await link('item_a');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(10));
+    await fake.set(testKey('invtxns-lock:item_a'), 'lock');
+    await fake.set(testKey('cache:net-worth'), 'x'.repeat(99));
+    await fake.set('other-env:txns:item_a', 'x'.repeat(99));
+    expect((await readStorageUsage()).total_chars).toBe(10);
+  });
+
+  test('every page of the keyspace walk is read', async () => {
+    for (let i = 0; i < 450; i++) await fake.set(testKey(`txns:item_${i}`), 'xx');
+    const usage = await readStorageUsage();
+    expect(usage.items).toHaveLength(450);
+    expect(usage.total_chars).toBe(900);
+  });
+
+  test('nothing stored is an empty report', async () => {
+    await link('item_a');
     expect(await readStorageUsage()).toEqual({ total_chars: 0, items: [] });
   });
 });
@@ -81,29 +90,44 @@ describe('the container a ceiling error names', () => {
     expect(await containerLabel()).toBe(`container ${A}`);
     process.env.CONTAINER_ID = 'nope';
     forgetEpochs();
-    expect(await containerLabel()).toBe('an unresolved container');
+    expect(await containerLabel()).toBe('an unresolved container (CONTAINER_ID is not a container id.)');
     fake.failNext('hgetall');
     delete process.env.CONTAINER_ID;
     forgetEpochs();
-    expect(await containerLabel()).toBe('an unresolved container');
+    expect(await containerLabel()).toBe('an unresolved container (Error)');
   });
 });
 
 describe('/api/storage-usage', () => {
   test('reports the container, the ceiling and the sizes', async () => {
     await fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
-    await recordBlobSize('txns', 'item_a', 100, 0);
-    const body = await (await route.GET()).json();
-    expect(body).toEqual({
+    await link('item_a');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(100));
+    expect(await (await route.GET()).json()).toEqual({
       container: A,
       ceiling_chars: expect.any(Number),
       total_chars: 100,
-      items: [{ item_id: 'item_a', txns: { chars: 100, at: new Date(0).toISOString() } }],
+      items: [{ item_id: 'item_a', orphaned: false, txns: 100 }],
     });
   });
 
-  test('a failed read is a 500', async () => {
-    fake.failNext('hgetall', 2);
+  test('still reports the sizes when the container cannot be worked out, saying why', async () => {
+    await link('item_a');
+    await fake.set(testKey('txns:item_a'), 'x'.repeat(100));
+    fake.failNext('hgetall'); // the registry read
+    const body = await (await route.GET()).json();
+    expect(body.container).toBeNull();
+    expect(body.container_problem).toBe('The container registry could not be read.');
+    expect(body.total_chars).toBe(100);
+
+    forgetEpochs();
+    expect((await (await route.GET()).json()).container_problem).toBe('No container exists yet.');
+  });
+
+  test('a failed measurement is a 500', async () => {
+    await fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
+    await deploymentContainer(); // warm, so the failure below is the measurement's
+    fake.failNext('scan');
     const err = console.error;
     console.error = () => {};
     try {
