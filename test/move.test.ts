@@ -13,8 +13,10 @@ const { forgetEpochs } = await import('@/lib/sessions');
 
 const ctx = TEST_CTX;
 const client = fake as any;
-const run = () => moveData(client, ctx, { run: true });
-const plan = () => moveData(client, ctx, { run: false });
+// Most tests seed only the keys they are about; the check for a wrong
+// environment (no plaid:items, no history) has its own test below.
+const run = () => moveData(client, ctx, { run: true, allowEmpty: true });
+const plan = () => moveData(client, ctx, { run: false, allowEmpty: true });
 
 const saved = { ...process.env };
 beforeEach(() => {
@@ -59,7 +61,8 @@ describe('the first run', () => {
     expect(await fake.get<string>(testKey('budgets'))).toBe('v1-ciphertext');
     expect(await fake.hget<string>(testKey('history:accounts'), '2025-0000')).toBe('v0');
     // No temporary key is left behind.
-    expect(await fake.type(ctxKey('move:tmp'))).toBe('none');
+    const left = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()].filter((k: string) => k.includes(':move:tmp') || k.includes(':move:lock') || k.includes(':move:pending'));
+    expect(left).toEqual([]);
   });
 
   test('without --run it only reports', async () => {
@@ -90,7 +93,7 @@ describe('the first run', () => {
 
   test('a hash left half built by a run that died is not mixed into the copy', async () => {
     await fake.hset(testKey('hidden:accounts'), { a: '1' });
-    await fake.hset(ctxKey('move:tmp'), { stale: 'from a run that died' });
+    await fake.hset(ctxKey('move:tmp:hidden:accounts'), { stale: 'from a run that died' });
     await run();
     expect(await fake.hgetall<Record<string, string>>(ctxKey('hidden:accounts'))).toEqual({ a: '1' });
   });
@@ -111,17 +114,22 @@ describe('the first run', () => {
     await fake.set(testKey('history:backfill-pending'), '2', { ex: 600 });
     await run();
     expect(await fake.ttl(ctxKey('history:backfill-pending'))).toBe(600);
+    await fake.hset(testKey('accounts:vanished'), { item_1: 'x' });
+    await fake.expire(testKey('accounts:vanished'), 900);
+    await run();
+    expect(await fake.ttl(ctxKey('accounts:vanished'))).toBe(900);
   });
 });
 
 describe('running it again', () => {
-  test('finds everything up to date and writes nothing', async () => {
+  test('finds everything up to date and changes nothing', async () => {
     await seedOld();
     await run();
-    fake.ops = 0;
+    const before = await fake.hgetall<Record<string, string>>(ctxKey('move:copied'));
     const report = await run();
     expect(report.up_to_date).toBe(8);
-    expect(report.copied + report.refreshed).toBe(0);
+    expect(report.copied + report.refreshed + report.deleted + report.kept).toBe(0);
+    expect(await fake.hgetall<Record<string, string>>(ctxKey('move:copied'))).toEqual(before);
   });
 
   test('refreshes a key whose old value changed since, when nothing has written the copy', async () => {
@@ -143,15 +151,61 @@ describe('running it again', () => {
     expect(await fake.hgetall<Record<string, string>>(ctxKey('hidden:accounts'))).toEqual({ a: '1' });
   });
 
-  test('refuses, writing nothing, once the new release has written a key', async () => {
+  test('a key the old release deleted since is deleted from the container too', async () => {
+    await fake.hset(testKey('manual:accounts'), { m1: 'x' });
+    await fake.set(testKey('history:backfill-done'), '1');
+    await run();
+    await fake.hdel(testKey('manual:accounts'), 'm1'); // the last one: the hash is gone
+    await fake.del(testKey('history:backfill-done'));
+    const report = await run();
+    expect(report.deleted).toBe(2);
+    expect(await fake.type(ctxKey('manual:accounts'))).toBe('none');
+    expect(await fake.get<string>(ctxKey('history:backfill-done'))).toBeNull();
+    expect(await fake.hkeys(ctxKey('move:copied'))).toEqual([]);
+  });
+
+  test('a key deleted on both sides is simply forgotten', async () => {
+    await fake.set(testKey('goals'), 'g');
+    await run();
+    await fake.del(testKey('goals'), ctxKey('goals'));
+    const report = await run();
+    expect(report.up_to_date).toBe(1);
+    expect(await fake.get<string>(ctxKey('goals'))).toBeNull();
+    expect((await fake.hkeys(ctxKey('move:copied'))).length).toBe(0);
+  });
+
+  test('a key the new release wrote is kept, and the rest still copied', async () => {
     await seedOld();
     await run();
     await fake.set(ctxKey('budgets'), 'written by the new release');
     await fake.set(testKey('goals'), 'a new old key');
+    const report = await run();
+    expect(report.kept).toBe(1);
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('written by the new release');
+    expect(await fake.get<string>(ctxKey('goals'))).toBe('a new old key');
+  });
+
+  test('a key the new release deleted is not brought back', async () => {
+    await fake.hset(testKey('hidden:accounts'), { a: '1' });
+    await fake.set(testKey('history:backfill-done'), '1');
+    await run();
+    await fake.del(ctxKey('hidden:accounts'), ctxKey('history:backfill-done')); // unhidden; recompute asked for
+    const report = await run();
+    expect(report.kept).toBe(2);
+    expect(await fake.type(ctxKey('hidden:accounts'))).toBe('none');
+    expect(await fake.get<string>(ctxKey('history:backfill-done'))).toBeNull();
+  });
+
+  test('a key changed on both sides refuses the run, writing nothing', async () => {
+    await seedOld();
+    await run();
+    await fake.set(ctxKey('budgets'), 'written by the new release');
+    await fake.set(testKey('budgets'), 'written by the old release');
+    await fake.set(testKey('goals'), 'a new old key');
     await fake.set(testKey('txns:item_1'), 'changed');
 
     const dry = await plan();
-    expect(dry.conflicts).toEqual([{ key: 'budgets', action: 'conflict', reason: 'the container key was written after it was copied' }]);
+    expect(dry.conflicts).toEqual([{ key: 'budgets', action: 'conflict', reason: 'changed in both places since it was copied' }]);
 
     await expect(run()).rejects.toThrow(MoveRefused);
     expect(await fake.get<string>(ctxKey('budgets'))).toBe('written by the new release');
@@ -159,19 +213,84 @@ describe('running it again', () => {
     expect(await fake.get<string>(ctxKey('txns:item_1'))).toBe('blob-1');
   });
 
-  test('a container key it never copied is a conflict too', async () => {
+  test('deleted on one side and changed on the other is a conflict', async () => {
+    await fake.set(testKey('goals'), 'g');
+    await fake.set(testKey('budgets'), 'b');
+    await run();
+    await fake.del(testKey('goals'));
+    await fake.set(ctxKey('goals'), 'edited in the container');
+    await fake.set(testKey('budgets'), 'edited in the old');
+    await fake.del(ctxKey('budgets'));
+    const dry = await plan();
+    expect(dry.conflicts.map((c) => c.key).sort()).toEqual(['budgets', 'goals']);
+  });
+
+  test('a container key it never copied is a conflict, unless identical', async () => {
     await fake.set(testKey('goals'), 'old');
     await fake.set(ctxKey('goals'), 'already there');
+    await fake.set(testKey('budgets'), 'same');
+    await fake.set(ctxKey('budgets'), 'same');
     const dry = await plan();
-    expect(dry.conflicts[0]).toMatchObject({ key: 'goals', reason: 'the container already holds this key, and this tool did not write it' });
+    expect(dry.conflicts).toEqual([{ key: 'goals', action: 'conflict', reason: 'the container already holds this key, and this tool did not write it' }]);
+    expect(dry.up_to_date).toBe(1);
     await expect(run()).rejects.toThrow(MoveRefused);
     expect(await fake.get<string>(ctxKey('goals'))).toBe('already there');
   });
 
-  test('an identical container key it never copied is simply up to date', async () => {
-    await fake.set(testKey('goals'), 'same');
-    await fake.set(ctxKey('goals'), 'same');
-    expect((await run()).up_to_date).toBe(1);
+  test('a run that died after writing a copy is finished by the next, not taken for the new release', async () => {
+    await fake.set(testKey('budgets'), 'v1');
+    await run();
+    await fake.set(testKey('budgets'), 'v2');
+    // The copy of v2 lands; recording it does not.
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    fake.hset = (async (key: string, fields: any) => {
+      if (key === ctxKey('move:copied') && ++calls === 1) throw new Error('network');
+      return hset(key, fields);
+    }) as typeof fake.hset;
+    try {
+      await expect(run()).rejects.toThrow('network');
+    } finally {
+      fake.hset = hset;
+    }
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('v2');
+    await fake.set(testKey('budgets'), 'v3'); // the old release keeps writing
+    const report = await run();
+    expect(report.conflicts).toEqual([]);
+    expect(report.refreshed).toBe(1);
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('v3');
+  });
+
+  test('one run at a time', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await fake.set(ctxKey('move:lock'), 'another run', { nx: true, ex: 3600 });
+    await expect(run()).rejects.toThrow('Another run is in progress');
+    expect(await fake.get<string>(ctxKey('budgets'))).toBeNull();
+    expect(await fake.get<string>(ctxKey('move:lock'))).toBe('another run');
+    await fake.del(ctxKey('move:lock'));
+    await run();
+    expect(await fake.get<string>(ctxKey('move:lock'))).toBeNull(); // released
+  });
+});
+
+describe('an environment that looks wrong', () => {
+  test('with none of the keys every environment has, a run is refused and a report warns', async () => {
+    await fake.set(testKey('budgets'), 'b');
+    await expect(moveData(client, ctx, { run: true })).rejects.toThrow('allow-empty');
+    expect(await fake.get<string>(ctxKey('budgets'))).toBeNull();
+    const warn = console.warn;
+    const lines: string[] = [];
+    console.warn = (...a: unknown[]) => lines.push(a.join(' '));
+    try {
+      await moveData(client, ctx, { run: false });
+    } finally {
+      console.warn = warn;
+    }
+    expect(lines.join(' ')).toContain('allow-empty');
+    // With the usual keys there, no complaint.
+    await fake.hset(testKey('plaid:items'), { i: '{}' });
+    await moveData(client, ctx, { run: true });
+    expect(await fake.get<string>(ctxKey('budgets'))).toBe('b');
   });
 });
 
@@ -215,7 +334,7 @@ describe('the command', () => {
 
   test('refuses without a container, and moves into this deployment\'s', async () => {
     await fake.set(testKey('budgets'), 'b');
-    await expect(script.main(['--target', 'test', '--run'], client)).rejects.toThrow('No container exists yet');
+    await expect(script.main(['--target', 'test', '--run', '--allow-empty'], client)).rejects.toThrow('No container exists yet');
 
     await registerTestContainer(fake);
     forgetEpochs();
@@ -223,9 +342,9 @@ describe('the command', () => {
     const lines: string[] = [];
     console.log = (...a: unknown[]) => lines.push(a.join(' '));
     try {
-      await script.main(['--target', 'test'], client);
+      await script.main(['--target', 'test', '--allow-empty'], client);
       expect(await fake.get<string>(ctxKey('budgets'))).toBeNull(); // report only
-      await script.main(['--target', 'test', '--run'], client);
+      await script.main(['--target', 'test', '--run', '--allow-empty'], client);
     } finally {
       console.log = log;
     }

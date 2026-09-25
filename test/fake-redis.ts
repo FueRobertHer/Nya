@@ -157,7 +157,13 @@ export class FakeRedis {
   async hdel(key: string, ...fields: string[]): Promise<void> {
     this.gate('hdel');
     const h = this.hashes.get(key);
-    if (h) for (const f of fields) h.delete(f);
+    if (!h) return;
+    for (const f of fields) h.delete(f);
+    // Like Redis: a hash with no fields left no longer exists.
+    if (h.size === 0) {
+      this.hashes.delete(key);
+      this.ttls.delete(key);
+    }
   }
 
   async hkeys(key: string): Promise<string[]> {
@@ -348,6 +354,24 @@ export const TEST_CTX = { container: TEST_CONTAINER } as { container: any };
 export async function registerTestContainer(fake: FakeRedis, status: 'active' | 'restoring' | 'archived' = 'active'): Promise<void> {
   await fake.hset(testKey('containers'), {
     [TEST_CONTAINER]: JSON.stringify({ status, primary: true, created_at: '2026-01-01T00:00:00.000Z' }),
+  });
+}
+
+/** Environment-wide stores (kEnv): the only keys allowed outside a container. */
+const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff'];
+
+/**
+ * Every key the fake holds that is stored data outside any container. After
+ * the move (#53) nothing may write one, so data tests assert this is empty
+ * after every test: a write that slipped back to an unscoped key fails loudly
+ * even where the test only reads its container's keys.
+ */
+export function unscopedDataKeys(fake: FakeRedis): string[] {
+  const all = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()] as string[];
+  return all.filter((key) => {
+    if (!key.startsWith('test:') || key.startsWith('test:c:')) return false;
+    const rel = key.slice('test:'.length);
+    return !ENV_WIDE.some((p) => rel === p || (p.endsWith(':') && rel.startsWith(p)));
   });
 }
 

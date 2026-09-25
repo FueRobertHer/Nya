@@ -19,20 +19,24 @@
 //   --target <name>        required; must match REDIS_PREFIX
 //   --confirm-production   required on top of the above to write production
 //   --run                  copy (otherwise: report only)
+//   --allow-empty          go ahead although the environment holds none of the
+//                          keys every environment in use has (a wrong
+//                          .env.local or REDIS_PREFIX usually)
 
 import { rawRedis } from '@/lib/storage';
 import { deploymentContainer } from '@/lib/sessions';
 import { MoveRefused, checkMoveTarget, moveData, type MoveClient } from '@/lib/move';
 
-export type MoveArgs = { target?: string; confirmProduction: boolean; run: boolean };
+export type MoveArgs = { target?: string; confirmProduction: boolean; run: boolean; allowEmpty: boolean };
 
 export function parseArgs(argv: string[]): MoveArgs {
-  const args: MoveArgs = { confirmProduction: false, run: false };
+  const args: MoveArgs = { confirmProduction: false, run: false, allowEmpty: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--target') args.target = argv[++i];
     else if (a === '--confirm-production') args.confirmProduction = true;
     else if (a === '--run') args.run = true;
+    else if (a === '--allow-empty') args.allowEmpty = true;
     else throw new MoveRefused(`Unknown argument ${JSON.stringify(a)}.`);
   }
   return args;
@@ -45,9 +49,13 @@ export async function main(argv: string[], client: MoveClient): Promise<void> {
   if (dep.kind !== 'container') {
     throw new MoveRefused(dep.kind === 'none' ? 'No container exists yet. Create one first (see "Containers" in the README).' : dep.reason);
   }
-  const report = await moveData(client, { container: dep.container }, { run: args.run });
+  const report = await moveData(client, { container: dep.container }, { run: args.run, allowEmpty: args.allowEmpty });
   console.log(`Environment "${env}", container ${report.container}.`);
-  console.log(`To copy: ${report.copied}. To refresh: ${report.refreshed}. Already up to date: ${report.up_to_date}.`);
+  console.log(
+    `Copy: ${report.copied}. Refresh: ${report.refreshed}. Delete: ${report.deleted}. ` +
+      `Up to date: ${report.up_to_date}. Newer in the container, kept: ${report.kept}. Conflicts: ${report.conflicts.length}.`
+  );
+  for (const e of report.entries) if (e.action === 'kept') console.log(`Kept: ${e.key} (${e.reason}).`);
   for (const c of report.conflicts) console.log(`Conflict: ${c.key} (${c.reason}).`);
   if (!args.run) {
     console.log(report.conflicts.length > 0 ? 'Report only. A run would be refused.' : 'Report only: nothing written. Pass --run to copy.');

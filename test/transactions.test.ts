@@ -1,5 +1,5 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey } from './fake-redis';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
 
@@ -54,6 +54,8 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 const fake = new FakeRedis();
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
@@ -431,8 +433,6 @@ describe('a blob too large to persist', () => {
 
 describe('a ceiling error names the container (#58)', () => {
   test('in the refusal log line', async () => {
-    // Another file may have left a resolved container behind for a few seconds.
-    (await import('@/lib/sessions')).forgetEpochs();
     const errors: string[] = [];
     const origError = console.error;
     console.error = (...a: unknown[]) => errors.push(a.join(' '));
@@ -442,8 +442,8 @@ describe('a ceiling error names the container (#58)', () => {
     } finally {
       console.error = origError;
     }
-    // None is set up in this test.
-    expect(errors.join(' ')).toContain('refusing to persist item_a in no container');
+    // The container being synced, whatever this deployment's is.
+    expect(errors.join(' ')).toContain(`refusing to persist item_a in container ${TEST_CONTAINER}`);
   });
 });
 

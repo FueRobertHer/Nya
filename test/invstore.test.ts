@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER } from './fake-redis';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
 
@@ -9,6 +9,8 @@ const ctx = TEST_CTX;
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const fake = new FakeRedis();
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 const ITEM = { item_id: 'item1', institution_name: 'Vanguard', encrypted_access_token: '' };
 let items = [ITEM];
 mock.module('@/lib/storage', () => ({ ...storageMock(fake), getItems: async () => items }));
@@ -279,7 +281,7 @@ describe('storage failures never overwrite', () => {
       expect(sync.storeNote).toContain('too large');
       expect(await fake.get<string>(key)).toBe(before!);
       // The ceiling error names the container (#58).
-      expect(errors.join(' ')).toContain(`refusing to persist item1 in container ${process.env.CONTAINER_ID}`);
+      expect(errors.join(' ')).toContain(`refusing to persist item1 in container ${TEST_CONTAINER}`);
     } finally {
       console.error = origError;
       delete process.env.MAX_TXN_BLOB_CHARS;

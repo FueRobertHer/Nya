@@ -1,12 +1,14 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER } from './fake-redis';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
 
 const fake = new FakeRedis({ deserialize: true });
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { readStorageUsage, containerLabel } = await import('@/lib/blob-sizes');
+const { readStorageUsage } = await import('@/lib/blob-sizes');
 const { registryKey } = await import('@/lib/containers');
 const { forgetEpochs, deploymentContainer } = await import('@/lib/sessions');
 const { saveItem } = await import('@/lib/storage');
@@ -105,7 +107,7 @@ describe('stored blob sizes, measured', () => {
     await link('item_a');
     await fake.set(ctxKey('txns:item_a'), 'x'.repeat(10));
     await fake.set(ctxKey('invtxns-lock:item_a'), 'lock');
-    await fake.set(testKey('cache:net-worth'), 'x'.repeat(99));
+    await fake.set(ctxKey('cache:net-worth'), 'x'.repeat(99));
     await fake.set('other-env:txns:item_a', 'x'.repeat(99));
     expect((await readStorageUsage(ctx)).total_chars).toBe(10);
   });
@@ -120,22 +122,6 @@ describe('stored blob sizes, measured', () => {
   test('nothing stored is an empty report', async () => {
     await link('item_a');
     expect(await readStorageUsage(ctx)).toEqual({ total_chars: 0, items: [] });
-  });
-});
-
-describe('the container a ceiling error names', () => {
-  test('is the deployment container, or says why there is none', async () => {
-    expect(await containerLabel()).toBe('no container');
-    await fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
-    forgetEpochs();
-    expect(await containerLabel()).toBe(`container ${A}`);
-    process.env.CONTAINER_ID = 'nope';
-    forgetEpochs();
-    expect(await containerLabel()).toBe('an unresolved container (CONTAINER_ID is not a container id.)');
-    fake.failNext('hgetall');
-    delete process.env.CONTAINER_ID;
-    forgetEpochs();
-    expect(await containerLabel()).toBe('an unresolved container (Error)');
   });
 });
 

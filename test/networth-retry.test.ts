@@ -1,11 +1,13 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, TEST_CTX, ctxKey } from './fake-redis';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const fake = new FakeRedis({ deserialize: true });
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 // A balance call that is rate limited `limited` times before it answers.

@@ -50,7 +50,6 @@ import { decrypt } from './crypto';
 import { redis, kc, getItems, type StoredItem } from './storage';
 import type { Ctx } from './containers';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
-import { containerLabel } from './blob-sizes';
 import { classifyFetchError, isPendingSubtype, toInvestmentTxn, type InvestmentTxn } from './investments';
 
 export const INVSTORE_SCHEMA = 1;
@@ -195,7 +194,7 @@ async function writeInvStore(ctx: Ctx, item_id: string, state: InvStoreState): P
     // ones no fetch can bring back (the same call as lib/transactions.ts).
     if (encoded.length > maxBlobChars()) {
       console.error(
-        `invstore: refusing to persist ${item_id} in ${await containerLabel()}: blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling. Nothing was written or dropped.`
+        `invstore: refusing to persist ${item_id} in container ${ctx.container}: blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling. Nothing was written or dropped.`
       );
       return 'oversize';
     }

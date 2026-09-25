@@ -1,8 +1,10 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { join } from 'node:path';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, unscopedDataKeys } from './fake-redis';
 
 const fake = new FakeRedis({ deserialize: true });
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const {

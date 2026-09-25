@@ -27,7 +27,6 @@
 
 import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
-import { deploymentContainer } from './sessions';
 import { maxBlobChars } from './blob';
 
 export type BlobKind = 'txns' | 'invtxns';
@@ -118,16 +117,4 @@ export async function readStorageUsage(ctx: Ctx): Promise<StorageUsage> {
   const sum = (e: ItemSizes) => (e.txns ?? 0) + (e.invtxns ?? 0);
   const items = [...byItem.values()].sort((a, b) => sum(b) - sum(a) || (a.item_id < b.item_id ? -1 : 1));
   return { total_chars: total, items };
-}
-
-/** "container <id>", for a ceiling error: which container's data would not
- *  fit. Never throws: a log line must not fail for want of it. */
-export async function containerLabel(): Promise<string> {
-  try {
-    const dep = await deploymentContainer();
-    if (dep.kind === 'container') return `container ${dep.container}`;
-    return dep.kind === 'none' ? 'no container' : `an unresolved container (${dep.reason})`;
-  } catch (err) {
-    return `an unresolved container (${err instanceof Error ? err.name : 'error'})`;
-  }
 }

@@ -749,34 +749,66 @@ written anywhere else.
 before containers). The data was stored under `<prefix>:<name>` and is now
 read from `<prefix>:c:<id>:<name>`. `bun run move-data` copies it across:
 byte for byte, reading every copy back, and leaving the old keys exactly as
-they were, so rolling back is redeploying the previous release. It only
-copies a fixed list of keys (never caches, sessions or the container's own
-keys) and never copies a copy.
+they were. It only copies a fixed list of keys (never caches, sessions or the
+container's own keys) and never copies a copy. It records what it copied, so
+a later run can tell which side changed since: a key changed only in the old
+place is copied again (or deleted, if it was deleted there), a key changed
+only in the container is kept, and a key changed in **both** is a conflict: the
+run is refused, nothing written, and the report names the key. Without `--run`
+it only reports.
+
+**Merging the release is the deploy**, so everything before step 6 happens
+before merging.
 
 1. Take an export (see **Backing up your data**) and check it restores into
-   `restore-test`. Rehearse steps 3 to 6 there first.
-2. Pick a quiet time away from 13:00 and 15:00 UTC (the snapshot crons), and
-   don't link or change anything in the app until step 6 is done.
-3. See what it would do (it writes nothing without `--run`):
+   `restore-test`. Rehearse steps 3 to 7 there first.
+2. Pick a quiet time away from 13:00 and 15:00 UTC (the snapshot crons). From
+   step 4 until step 7, pause anything that calls `/api/ingest/balance` and
+   don't open the app at all: even viewing it writes (today's snapshot, the
+   transaction sync).
+3. See what it would do:
 
    ```bash
    vercel env pull .env.local
    REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production
    ```
+
+   It warns if the environment holds none of the keys every environment in
+   use has (usually the wrong `.env.local` or prefix) and a run is refused
+   until you pass `--allow-empty`.
 4. Copy: the same with `--run`.
-5. **Right before deploying**, run step 4 again. Anything the old release
-   wrote since is copied again; keys that have not changed are left alone.
-6. Deploy this release. Check the dashboard, the history chart's left edge,
-   the transaction counts, that no institution re-downloads its whole
-   history, and `GET /api/storage-usage`.
+5. Merge the release. While it builds, the old release is still live: run
+   step 4 again once the build has started, to pick up anything written
+   since.
+6. When it is live, check the dashboard, the history chart's left edge, the
+   transaction counts, that no institution re-downloads its whole history,
+   and `GET /api/storage-usage`.
+7. Report again (step 3). Anything written to the old keys between step 5 and
+   the release going live shows as a copy or refresh: run it with `--run` to
+   bring it across. A conflict means both releases wrote the same key; merge
+   it by hand (for a date-keyed history hash, the old key's missing dates can
+   be added to the container's).
 
-Running it again after deploying is safe: it refuses, writing nothing, if a
-key it would overwrite has been written by the new release. An export from
-before the move is refused by `bun run restore` from now on; restore it with
-the previous release, then move it.
+An export from before the move is refused by `bun run restore` from now on;
+restore it with the previous release, then move it.
 
-The old keys stay in the database, unused, until they are deleted
-separately, weeks later, after a fresh verified export.
+Don't run the re-encryption pass (`/api/ops/reencrypt`) between steps 4 and 7:
+it rewrites both copies differently, and every key would read as a conflict.
+
+**Rolling back** is redeploying the previous release, which reads only the old
+keys: anything the new release wrote is not there. Rolling forward again, the
+move carries across what changed only on one side; keys both releases wrote
+are conflicts to merge by hand. The shorter the time rolled back, the fewer.
+
+**Preview** merges `main` automatically (`sync-preview.yml`), so it gets this
+release as soon as it merges. Its data is sandbox data: before merging, create
+its container (as above, in the preview environment), then wipe its old keys
+and re-link sandbox institutions after the merge, rather than moving them.
+
+The old keys stay in the database, unused, until they are deleted separately,
+weeks later, after a fresh verified export, and only once a report (step 3)
+shows nothing to copy, refresh or delete and no conflicts: that is the proof
+nothing written to them was left behind.
 
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.

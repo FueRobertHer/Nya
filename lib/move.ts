@@ -19,18 +19,22 @@
 // RENAME, so a reader never sees half a hash.
 //
 // Safe to run again, and meant to be: once to copy, once more right before
-// deploying to pick up anything written since. What was copied is recorded
-// (a digest per key, in the container at "move:copied"). On a later run a
-// container key is:
-//   - up to date when it already equals the old key: nothing to do;
-//   - refreshed when it still holds what was copied (nothing has written it
-//     since) but the old key changed: copied again;
-//   - a CONFLICT when it holds anything else, meaning the new release has
-//     already written it. Overwriting it would lose that write, so the whole
-//     run is refused, nothing written.
-// A container key that exists with no record at all is a conflict too.
+// deploying to pick up anything written since, and after deploying to prove
+// nothing was left behind. What was copied is recorded (a digest per key, in
+// the container at "move:copied"), so each key can be judged by which side
+// changed since it was copied:
+//   - neither: up to date;
+//   - only the old key: copied again ("refresh"), or, if it was deleted,
+//     the container's copy is deleted too;
+//   - only the container key (the new release wrote or deleted it): kept;
+//   - both: a CONFLICT, a write on each side that one of them would lose.
+//     The whole run is refused, nothing written, and the report names the
+//     keys to reconcile by hand before the old keys are ever deleted.
+// A container key that exists with no record, and differs, is a conflict too.
+// A write is recorded as pending before it is made, so a run that dies midway
+// is recognized and finished by the next, not mistaken for the new release.
 //
-// Without --run it only reports what it would do.
+// One run at a time (a lock in the container). Without --run it only reports.
 
 import { createHash } from 'node:crypto';
 import type { Ctx } from './containers';
@@ -84,30 +88,42 @@ export function isMoved(key: string): boolean {
 }
 
 const recordKey = (ctx: Ctx) => kc(ctx, 'move:copied');
-const tempKey = (ctx: Ctx) => kc(ctx, 'move:tmp');
+const pendingKey = (ctx: Ctx) => kc(ctx, 'move:pending');
+const lockKey = (ctx: Ctx) => kc(ctx, 'move:lock');
+const tempKey = (ctx: Ctx, key: string) => kc(ctx, `move:tmp:${key}`);
+/** Long enough for any run; a run that dies frees it by then. */
+export const MOVE_LOCK_SECONDS = 3600;
+
+/** Keys every environment in use has. Neither among the old keys usually
+ *  means the wrong database or prefix, not an empty one. */
+const EXPECTED = ['plaid:items', 'history:net-worth'] as const;
 
 export type MoveClient = {
   scan(cursor: string | number, opts: { match: string; count: number }): Promise<[string | number, string[]]>;
   hscan(key: string, cursor: string | number, opts: { count: number }): Promise<[string | number, unknown[]]>;
   type(key: string): Promise<string>;
   get(key: string): Promise<unknown>;
-  set(key: string, value: string): Promise<unknown>;
+  set(key: string, value: string, opts?: { ex?: number; nx?: boolean }): Promise<unknown>;
   hset(key: string, fields: Record<string, string>): Promise<unknown>;
   hget(key: string, field: string): Promise<unknown>;
+  hkeys(key: string): Promise<string[]>;
+  hdel(key: string, ...fields: string[]): Promise<unknown>;
   del(...keys: string[]): Promise<unknown>;
   rename(from: string, to: string): Promise<unknown>;
   ttl(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<unknown>;
 };
 
-export type MoveAction = 'copy' | 'refresh' | 'up-to-date' | 'conflict';
+export type MoveAction = 'copy' | 'refresh' | 'delete' | 'up-to-date' | 'kept' | 'conflict';
 export type MoveEntry = { key: string; action: MoveAction; reason?: string };
 export type MoveReport = {
   run: boolean;
   container: string;
   copied: number;
   refreshed: number;
+  deleted: number;
   up_to_date: number;
+  kept: number;
   conflicts: MoveEntry[];
   entries: MoveEntry[];
 };
@@ -131,7 +147,10 @@ function mustBeString(value: unknown, key: string): string {
 async function readValue(client: MoveClient, key: string): Promise<Value> {
   const type = await client.type(key);
   if (type === 'none') return null;
-  if (type === 'string') return { kind: 'string', value: mustBeString(await client.get(key), key) };
+  if (type === 'string') {
+    const value = await client.get(key);
+    return value === null || value === undefined ? null : { kind: 'string', value: mustBeString(value, key) };
+  }
   if (type === 'hash') {
     const fields = new Map<string, string>();
     let cursor: string | number = 0;
@@ -140,35 +159,42 @@ async function readValue(client: MoveClient, key: string): Promise<Value> {
       for (let i = 0; i + 1 < flat.length; i += 2) fields.set(mustBeString(flat[i], key), mustBeString(flat[i + 1], key));
       cursor = next;
     } while (String(cursor) !== '0');
+    if (fields.size === 0) return null; // deleted while being read
     return { kind: 'hash', fields: [...fields.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) };
   }
   throw new MoveRefused(`${key} is a ${type}, which nothing here stores.`);
 }
 
-function digest(v: Value): string {
-  if (v === null) return 'none';
+function digest(v: Value): string | null {
+  if (v === null) return null;
   const body = v.kind === 'string' ? `S${v.value}` : `H${JSON.stringify(v.fields)}`;
   return createHash('sha256').update(body, 'utf8').digest('hex');
 }
 
-async function writeValue(client: MoveClient, ctx: Ctx, target: string, v: Exclude<Value, null>, ttl: number): Promise<void> {
+async function writeValue(client: MoveClient, ctx: Ctx, key: string, target: string, v: Exclude<Value, null>, ttl: number): Promise<void> {
   if (v.kind === 'string') {
-    await client.set(target, v.value);
-  } else {
-    // Built aside and swapped in whole: RENAME replaces the target in one step.
-    const tmp = tempKey(ctx);
+    // One request, expiry included: a run that dies cannot leave it without one.
+    await client.set(target, v.value, ttl > 0 ? { ex: ttl } : undefined);
+    return;
+  }
+  // Built aside, under a name of its own, and swapped in whole: RENAME
+  // replaces the target in one step, expiry and all.
+  const tmp = tempKey(ctx, key);
+  try {
     await client.del(tmp);
     for (let i = 0; i < v.fields.length; i += PAGE) {
       await client.hset(tmp, Object.fromEntries(v.fields.slice(i, i + PAGE)));
     }
-    if (v.fields.length === 0) await client.del(target);
-    else await client.rename(tmp, target);
+    if (ttl > 0) await client.expire(tmp, ttl);
+    await client.rename(tmp, target);
+  } finally {
+    await client.del(tmp).catch(() => {});
   }
-  if (ttl > 0) await client.expire(target, ttl);
 }
 
-/** The old keys that exist and are on the list, relative to the environment. */
-async function sourceKeys(client: MoveClient): Promise<string[]> {
+/** Every key to judge: the old keys on the list, and every key this tool has
+ *  copied or begun to (so a deletion on either side is seen). */
+async function keysToJudge(client: MoveClient, ctx: Ctx): Promise<string[]> {
   const prefix = envPrefix();
   const found = new Set<string>();
   let cursor: string | number = 0;
@@ -181,68 +207,127 @@ async function sourceKeys(client: MoveClient): Promise<string[]> {
     }
     cursor = next;
   } while (String(cursor) !== '0');
+  for (const key of await client.hkeys(recordKey(ctx))) if (isMoved(key)) found.add(key);
+  for (const key of await client.hkeys(pendingKey(ctx))) if (isMoved(key)) found.add(key);
   return [...found].sort();
+}
+
+type Planned = { key: string; action: MoveAction; source: Value; digest: string | null; reason?: string };
+
+/** Which side changed since the copy (see the header). */
+function judge(key: string, source: Value, target: Value, recorded: string | null): Planned {
+  const s = digest(source);
+  const t = digest(target);
+  const p = (action: MoveAction, reason?: string): Planned => ({ key, action, source, digest: s, ...(reason ? { reason } : {}) });
+  if (recorded === null) {
+    if (t === null) return p('copy');
+    if (t === s) return p('up-to-date');
+    return p('conflict', 'the container already holds this key, and this tool did not write it');
+  }
+  if (s === null) {
+    if (t === null) return p('up-to-date'); // deleted on both sides
+    if (t === recorded) return p('delete');
+    return p('conflict', 'deleted from the old key, but changed in the container since it was copied');
+  }
+  if (t === s) return p('up-to-date');
+  if (t === null) {
+    return s === recorded ? p('kept', 'deleted in the container since it was copied') : p('conflict', 'changed in the old key, but deleted in the container since it was copied');
+  }
+  if (t === recorded) return p('refresh');
+  if (s === recorded) return p('kept', 'changed in the container since it was copied');
+  return p('conflict', 'changed in both places since it was copied');
 }
 
 /**
  * Plans the move and, with `run`, carries it out. Refuses (MoveRefused), with
- * nothing written, if any container key conflicts.
+ * nothing written, if any key conflicts, if another run holds the lock, or if
+ * the old keys look like the wrong environment (unless `allowEmpty`).
  */
-export async function moveData(client: MoveClient, ctx: Ctx, opts: { run: boolean }): Promise<MoveReport> {
-  const prefix = envPrefix();
-  const keys = await sourceKeys(client);
-  const plan: { key: string; action: MoveAction; source: Exclude<Value, null>; digest: string; reason?: string }[] = [];
+export async function moveData(client: MoveClient, ctx: Ctx, opts: { run: boolean; allowEmpty?: boolean }): Promise<MoveReport> {
+  const token = crypto.randomUUID();
+  if (opts.run) {
+    if ((await client.set(lockKey(ctx), token, { nx: true, ex: MOVE_LOCK_SECONDS })) === null) {
+      throw new MoveRefused('Another run is in progress for this container. Wait for it to finish, then run again.');
+    }
+  }
+  try {
+    return await plannedMove(client, ctx, opts);
+  } finally {
+    if (opts.run && (await client.get(lockKey(ctx))) === token) await client.del(lockKey(ctx));
+  }
+}
 
+async function plannedMove(client: MoveClient, ctx: Ctx, opts: { run: boolean; allowEmpty?: boolean }): Promise<MoveReport> {
+  const prefix = envPrefix();
+  const keys = await keysToJudge(client, ctx);
+  const plan: Planned[] = [];
+  let sawExpected = false;
   for (const key of keys) {
     const source = await readValue(client, prefix + key);
-    if (source === null) continue; // deleted since the scan
+    if (source !== null && (EXPECTED as readonly string[]).includes(key)) sawExpected = true;
     const target = await readValue(client, kc(ctx, key));
-    const d = digest(source);
-    const t = digest(target);
     const recorded = await client.hget(recordKey(ctx), key);
-    if (target === null) plan.push({ key, action: 'copy', source, digest: d });
-    else if (t === d) plan.push({ key, action: 'up-to-date', source, digest: d });
-    else if (typeof recorded === 'string' && recorded === t) plan.push({ key, action: 'refresh', source, digest: d });
-    else
-      plan.push({
-        key,
-        action: 'conflict',
-        source,
-        digest: d,
-        reason: recorded === null || recorded === undefined ? 'the container already holds this key, and this tool did not write it' : 'the container key was written after it was copied',
-      });
+    const pending = await client.hget(pendingKey(ctx), key);
+    // A write that landed but was never confirmed: the run died after it.
+    const t = digest(target);
+    const effective = typeof pending === 'string' && pending === t ? pending : typeof recorded === 'string' ? recorded : null;
+    if (source === null && target === null && effective === null) continue;
+    plan.push(judge(key, source, target, effective));
   }
 
   const entries: MoveEntry[] = plan.map(({ key, action, reason }) => ({ key, action, ...(reason ? { reason } : {}) }));
+  const count = (a: MoveAction) => plan.filter((p) => p.action === a).length;
   const conflicts = entries.filter((e) => e.action === 'conflict');
   const report: MoveReport = {
     run: opts.run,
     container: ctx.container,
-    copied: plan.filter((p) => p.action === 'copy').length,
-    refreshed: plan.filter((p) => p.action === 'refresh').length,
-    up_to_date: plan.filter((p) => p.action === 'up-to-date').length,
+    copied: count('copy'),
+    refreshed: count('refresh'),
+    deleted: count('delete'),
+    up_to_date: count('up-to-date'),
+    kept: count('kept'),
     conflicts,
     entries,
   };
+  const recordedAny = (await client.hkeys(recordKey(ctx))).length > 0;
+  if (!sawExpected && !recordedAny && !opts.allowEmpty) {
+    const why = `None of ${EXPECTED.join(', ')} exists under "${prefix}". Check .env.local and REDIS_PREFIX point at the environment you mean; pass --allow-empty if it really holds no data.`;
+    if (opts.run) throw new MoveRefused(why);
+    console.warn(`Warning: ${why}`);
+  }
   if (!opts.run) return report;
   if (conflicts.length > 0) {
     throw new MoveRefused(
-      `${conflicts.length} container key(s) hold data this tool did not copy (${conflicts.map((c) => c.key).join(', ')}). ` +
-        'The new release has probably already written them; copying over them would lose that. Nothing was written.'
+      `${conflicts.length} key(s) changed on both sides since they were copied (${conflicts.map((c) => c.key).join(', ')}): ` +
+        'copying either way would lose a write. Nothing was written. Reconcile them by hand (see the README).'
     );
   }
 
   for (const p of plan) {
+    const target = kc(ctx, p.key);
+    if (p.action === 'kept') continue;
     if (p.action === 'up-to-date') {
-      await client.hset(recordKey(ctx), { [p.key]: p.digest });
+      if (p.digest === null) await client.hdel(recordKey(ctx), p.key);
+      else if ((await client.hget(recordKey(ctx), p.key)) !== p.digest) await client.hset(recordKey(ctx), { [p.key]: p.digest });
+      await client.hdel(pendingKey(ctx), p.key);
       continue;
     }
-    const target = kc(ctx, p.key);
-    await writeValue(client, ctx, target, p.source, await client.ttl(prefix + p.key));
-    // Read back: the copy is only recorded once it is known to be exact.
+    if (p.action === 'delete') {
+      await client.del(target);
+      await client.hdel(recordKey(ctx), p.key);
+      await client.hdel(pendingKey(ctx), p.key);
+      continue;
+    }
+    // copy or refresh. Pending first, so a run that dies after the write is
+    // recognized by the next one rather than taken for the new release.
+    await client.hset(pendingKey(ctx), { [p.key]: p.digest! });
+    await writeValue(client, ctx, p.key, target, p.source as Exclude<Value, null>, await client.ttl(prefix + p.key));
     const back = digest(await readValue(client, target));
-    if (back !== p.digest) throw new MoveRefused(`${p.key} did not read back as written. Run again; it is safe.`);
-    await client.hset(recordKey(ctx), { [p.key]: p.digest });
+    if (back !== p.digest) {
+      throw new MoveRefused(`${p.key} did not read back as written. Run again: a run that stops here is safe to repeat.`);
+    }
+    await client.hset(recordKey(ctx), { [p.key]: p.digest! });
+    await client.hdel(pendingKey(ctx), p.key);
   }
   return report;
 }
