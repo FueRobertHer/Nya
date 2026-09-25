@@ -2,6 +2,8 @@
 // modules under test use. Enough to exercise the real encryption and the real
 // merge/retention logic without a network or a live database.
 
+import { createHash } from 'node:crypto';
+
 type Hash = Map<string, string>;
 
 /** The commands a test can arm to fail via `failNext`. */
@@ -19,7 +21,9 @@ export type FakeCommand =
   | 'scan'
   | 'hscan'
   | 'type'
-  | 'ttl';
+  | 'ttl'
+  | 'getrange'
+  | 'eval';
 
 /** Upstash's `set` options used by this codebase: `ex` (lib/cache.ts), and
  *  `nx` with `px` for the rotation lock (lib/crypto.ts). */
@@ -232,6 +236,38 @@ export class FakeRedis {
     const page = entries.slice(start, start + count).flat();
     const next = start + count >= entries.length ? '0' : String(start + count);
     return [next, page];
+  }
+
+  async getrange(key: string, start: number, end: number): Promise<string> {
+    this.gate('getrange');
+    return (this.strings.get(key) ?? '').slice(start, end + 1);
+  }
+
+  /**
+   * Runs the few Lua scripts this codebase sends, recognised by the name on
+   * their first line (lib/reencrypt.ts). Anything else throws, so a new script
+   * cannot pass a test without this learning what it does.
+   */
+  async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    this.gate('eval');
+    const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
+    const name = script.split('\n', 1)[0];
+    if (name === '-- nya:probe') return sha1('nya');
+    if (name === '-- nya:cas-string') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const cur = this.strings.get(keys[0]);
+      if (cur === undefined || sha1(cur) !== args[0]) return 0;
+      this.strings.set(keys[0], args[1]);
+      return 1;
+    }
+    if (name === '-- nya:cas-hash') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const cur = this.hashes.get(keys[0])?.get(args[0]);
+      if (cur === undefined || sha1(cur) !== args[1]) return 0;
+      this.hash(keys[0]).set(args[0], args[2]);
+      return 1;
+    }
+    throw new Error(`FakeRedis: unknown script ${name}`);
   }
 
   reset(): void {

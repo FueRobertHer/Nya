@@ -861,6 +861,24 @@ export async function activeKeyStatus(): Promise<ActiveKeyStatus> {
   return out;
 }
 
+/**
+ * The active data key for the re-encryption pass (lib/reencrypt.ts), created
+ * if there is none yet. Unlike encrypt(), never falls back to k0: a pass that
+ * moved values to k0 would be undoing itself.
+ */
+export async function activeKeyForReencryption(): Promise<string> {
+  if (!process.env[MASTER_KEY_ENV]) {
+    throw new MasterKeyError(`${MASTER_KEY_ENV} is not set, so there is no data key to move values to.`);
+  }
+  const id = await activeKeyId();
+  if (!id) {
+    throw new MasterKeyError(
+      'There is no active data key yet: a master rotation is pending, or another step holds its lock. Try again later.'
+    );
+  }
+  return id;
+}
+
 function noteFallback(err: unknown, now: number): void {
   const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
   if (!_fallback) _fallback = { since: now, loggedAt: -Infinity, reason };

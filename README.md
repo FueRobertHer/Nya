@@ -606,7 +606,7 @@ key, `k0`: everything written before data keys existed is under it.
   in your password manager, and add it in Vercel as `MASTER_KEY` (Production,
   marked Sensitive). The next write creates the first data key, and from then
   on new data is written under it. Existing data stays under `k0` until the
-  re-encryption pass moves it (coming next).
+  re-encryption pass below moves it.
 - **Without `MASTER_KEY`** the app keeps writing under `k0`, exactly as before.
   If the data key can't be used for any reason, writes fall back to `k0` and the
   log says so ("Writing with the legacy key", repeated hourly while it lasts),
@@ -620,6 +620,43 @@ key, `k0`: everything written before data keys existed is under it.
   `active_key_problem` if this deployment cannot use it, and
   `this_instance_fallback_since` if the instance that answered has been
   writing under `k0` instead.
+
+**Moving existing data to the data key** (the re-encryption pass). Everything
+written before `MASTER_KEY` was set is still under `k0`. The pass moves every
+value that is not under the active data key to it, safely while the app is
+running: a value is only written back if it has not changed since it was read,
+and readers see exactly the same data either way.
+
+1. Take a backup first (`/api/ops/export`, above).
+2. With `OPS_ENABLED=1`, check what is left, which changes nothing:
+
+   ```bash
+   curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \
+     -H "Authorization: Bearer $OPS_SECRET"
+   ```
+
+   `to_move` counts values by the key they are under (`k0` is the old one).
+3. Move them, repeating until it answers `"complete": true` (each call stops
+   after about 40 seconds and carries on next time):
+
+   ```bash
+   curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \
+     -H "Authorization: Bearer $OPS_SECRET" -H 'Content-Type: application/json' -d '{"run":true}'
+   ```
+
+4. Remove `OPS_ENABLED` and redeploy.
+
+It never shows values, only key and field names, counts and error types.
+Anything it lists under `unreadable` or `unclassified` was left exactly as it
+was: `unclassified` means a store it does not know about (a bug to report),
+`unreadable` a value that cannot be decrypted. `changed_meanwhile` values were
+saved by the app while being moved and are picked up next call.
+
+**Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It
+costs nothing, the app still falls back to it if the data key is ever
+unavailable, and since it cannot be read back out of Vercel, removing it is
+permanent: any value still under `k0` then (an old backup, a fallback write)
+could never be read again.
 
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.
