@@ -13,14 +13,15 @@
 // the request resolved. Caches went first because they are disposable: a
 // mistake costs one cold load.
 //
-// A request that cannot resolve its container (CONTAINER_ID unset or wrong)
-// gets no cache, never a guessed key: every read misses, every write and
-// clear is skipped, and the problem is logged once per process. A cache is
+// A request that cannot resolve its container (CONTAINER_ID unset or wrong,
+// or the database failing) gets no cache, never a guessed key: every read
+// misses and every write is skipped, logged once per reason. Clears still
+// run where CONTAINER_ID points, since deleting cannot do harm. A cache is
 // never allowed to break the request that uses it.
 
 import { redis, k, kc } from './storage';
 import { encrypt, decrypt } from './crypto';
-import { ContainerError, resolveCtx, type Ctx } from './containers';
+import { CONTAINER_ENV, ContainerError, asContainerId, isContainerId, resolveCtx, type Ctx } from './containers';
 
 const TTL_SECONDS = 15 * 60;
 
@@ -66,19 +67,38 @@ function keyOf(ctx: Ctx, which: CacheKey | typeof INVESTMENT_ACTIVITY): string {
   }
 }
 
-let _loggedNoCtx = false;
+/** How long a process reuses the container it resolved. Short, so a
+ *  container marked restoring or archived stops being cached into promptly;
+ *  long enough that a cache hit is one Redis round trip, not two. */
+const CTX_REUSE_MS = 30 * 1000;
+let _ctx: { env: string; ctx: Ctx; at: number } | null = null;
+const _logged = new Set<string>();
 
 /**
  * The container a request's caches live in, or null for "no cache this
  * request". Resolve it once per request and pass it to every call below.
+ * A failure is logged once per distinct reason and never reused: the next
+ * request tries again.
  */
-export async function cacheCtx(): Promise<Ctx | null> {
+export async function cacheCtx(now: number = Date.now()): Promise<Ctx | null> {
+  const env = process.env[CONTAINER_ENV] ?? '';
+  if (_ctx && _ctx.env === env && now - _ctx.at >= 0 && now - _ctx.at < CTX_REUSE_MS) return _ctx.ctx;
   try {
-    return await resolveCtx();
+    const ctx = await resolveCtx();
+    _ctx = { env, ctx, at: now };
+    return ctx;
   } catch (err) {
-    if (!_loggedNoCtx) {
-      _loggedNoCtx = true;
-      const why = err instanceof ContainerError ? err.message : err instanceof Error ? err.name : 'error';
+    // A ContainerError is written for the operator. Anything else is the
+    // database failing; Upstash appends the command it ran, which here holds
+    // only the registry key and a container id, but it is cut off anyway.
+    const why =
+      err instanceof ContainerError
+        ? err.message
+        : err instanceof Error
+          ? `${err.name}: ${err.message.replace(/, command was: [\s\S]*$/, '').slice(0, 200)}`
+          : 'error';
+    if (!_logged.has(why)) {
+      _logged.add(why);
       console.error(`Caching is off: the container could not be resolved (${why}).`);
     }
     return null;
@@ -86,8 +106,9 @@ export async function cacheCtx(): Promise<Ctx | null> {
 }
 
 /** For tests. */
-export function forgetCacheCtxLog(): void {
-  _loggedNoCtx = false;
+export function forgetCacheCtx(): void {
+  _ctx = null;
+  _logged.clear();
 }
 
 export async function readCache<T>(ctx: Ctx | null, which: CacheKey): Promise<T | null> {
@@ -151,10 +172,25 @@ export async function writeAccountCache(ctx: Ctx | null, field: string, value: u
   }
 }
 
+/**
+ * Where to clear when the container could not be resolved: the one
+ * CONTAINER_ID names, unchecked. Deleting is harmless under a wrong id, and
+ * skipping it would leave a payload a mutation should have dropped, to be
+ * served again once resolving works. Only ever used to delete.
+ */
+function clearTarget(ctx: Ctx | null): Ctx | null {
+  if (ctx) return ctx;
+  const raw = process.env[CONTAINER_ENV];
+  return isContainerId(raw) ? { container: asContainerId(raw) } : null;
+}
+
 /** Drop all cached payloads -- call after any mutation (link/disconnect). */
 export async function clearCaches(ctx: Ctx | null): Promise<void> {
   try {
-    const keys = ctx ? [keyOf(ctx, CacheKey.NetWorth), keyOf(ctx, CacheKey.Transactions), keyOf(ctx, INVESTMENT_ACTIVITY)] : [];
+    const target = clearTarget(ctx);
+    const keys = target
+      ? [keyOf(target, CacheKey.NetWorth), keyOf(target, CacheKey.Transactions), keyOf(target, INVESTMENT_ACTIVITY)]
+      : [];
     await redis().del(...keys, ...LEGACY_KEYS());
   } catch {
     // Worst case the stale cache lives out its TTL.
@@ -165,9 +201,10 @@ export async function clearCaches(ctx: Ctx | null): Promise<void> {
  *  failed institution, so a healthy entry written before the failure can't keep
  *  being served alongside it for the rest of its TTL. */
 export async function clearNetWorthCache(ctx: Ctx | null): Promise<void> {
-  if (!ctx) return;
+  const target = clearTarget(ctx);
+  if (!target) return;
   try {
-    await redis().del(keyOf(ctx, CacheKey.NetWorth));
+    await redis().del(keyOf(target, CacheKey.NetWorth));
   } catch {
     // Worst case the stale cache lives out its TTL.
   }
@@ -175,9 +212,10 @@ export async function clearNetWorthCache(ctx: Ctx | null): Promise<void> {
 
 /** Drop only the transactions payload (e.g. after a recategorization). */
 export async function clearTransactionsCache(ctx: Ctx | null): Promise<void> {
-  if (!ctx) return;
+  const target = clearTarget(ctx);
+  if (!target) return;
   try {
-    await redis().del(keyOf(ctx, CacheKey.Transactions));
+    await redis().del(keyOf(target, CacheKey.Transactions));
   } catch {
     // Worst case the stale cache lives out its TTL.
   }

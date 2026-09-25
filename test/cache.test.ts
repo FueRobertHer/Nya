@@ -8,7 +8,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const {
   cacheCtx,
-  forgetCacheCtxLog,
+  forgetCacheCtx,
   readCache,
   writeCache,
   readAccountCache,
@@ -25,7 +25,7 @@ let ctx: { container: ReturnType<typeof asContainerId> };
 
 beforeEach(async () => {
   fake.reset();
-  forgetCacheCtxLog();
+  forgetCacheCtx();
   delete process.env.MASTER_KEY; // plain k0 writes: the cache is not about keys
   const id = await createFirstContainer();
   process.env.CONTAINER_ID = id;
@@ -124,7 +124,7 @@ describe('without a container, no cache (and never a guessed key)', () => {
     expect(logged[0]).toContain('Caching is off');
     expect(logged[0]).toContain('CONTAINER_ID is not set');
 
-    forgetCacheCtxLog();
+    forgetCacheCtx();
     process.env.CONTAINER_ID = crypto.randomUUID();
     const second = await quiet(() => cacheCtx());
     expect(second.result).toBeNull();
@@ -132,6 +132,7 @@ describe('without a container, no cache (and never a guessed key)', () => {
   });
 
   test('with no context every read misses and nothing is written', async () => {
+    delete process.env.CONTAINER_ID;
     const before = JSON.stringify([[...fake.strings], [...fake.hashes].map(([k, h]) => [k, [...h]])]);
     const ops = fake.ops;
     await writeCache(null, CacheKey.NetWorth, { a: 1 });
@@ -144,12 +145,76 @@ describe('without a container, no cache (and never a guessed key)', () => {
     expect(JSON.stringify([[...fake.strings], [...fake.hashes].map(([k, h]) => [k, [...h]])])).toBe(before);
   });
 
-  test('clearCaches with no context still drops the old unscoped keys', async () => {
+  test('clearCaches with no context and no CONTAINER_ID still drops the old unscoped keys', async () => {
     await writeCache(ctx, CacheKey.NetWorth, { a: 1 });
     await fake.set(testKey('cache:net-worth'), 'old');
+    delete process.env.CONTAINER_ID;
     await clearCaches(null);
     expect(await fake.get(testKey('cache:net-worth'))).toBeNull();
-    expect(await readCache<unknown>(ctx, CacheKey.NetWorth)).toEqual({ a: 1 }); // not its to clear
+    expect(await readCache<unknown>(ctx, CacheKey.NetWorth)).toEqual({ a: 1 }); // nothing names it
+  });
+
+  test('a clear that could not resolve the container still clears where CONTAINER_ID points', async () => {
+    // A registry read failing during a mutation must not leave the payload it
+    // should drop, to be served again once resolving works.
+    await writeCache(ctx, CacheKey.NetWorth, { a: 1 });
+    await writeCache(ctx, CacheKey.Transactions, { a: 1 });
+    await clearNetWorthCache(null);
+    expect(await readCache<unknown>(ctx, CacheKey.NetWorth)).toBeNull();
+    await clearTransactionsCache(null);
+    expect(await readCache<unknown>(ctx, CacheKey.Transactions)).toBeNull();
+    await writeAccountCache(ctx, 'f', { a: 1 });
+    await clearCaches(null);
+    expect(await readAccountCache<unknown>(ctx, 'f')).toBeNull();
+  });
+
+  test('an archived or restoring container gets no cache', async () => {
+    for (const status of ['archived', 'restoring']) {
+      await fake.hset(testKey('containers'), { [ctx.container]: JSON.stringify({ status, primary: true, created_at: 'x' }) });
+      forgetCacheCtx();
+      const { result, logged } = await quiet(() => cacheCtx());
+      expect(result).toBeNull();
+      expect(logged[0]).toContain(status);
+    }
+  });
+
+  test('a resolved container is reused for a short while, a failure never is', async () => {
+    const t0 = Date.now();
+    expect(await cacheCtx(t0)).toEqual(ctx);
+    const ops = fake.ops;
+    expect(await cacheCtx(t0 + 20_000)).toEqual(ctx);
+    expect(fake.ops).toBe(ops); // no registry read
+    await cacheCtx(t0 + 31_000);
+    expect(fake.ops).toBe(ops + 1); // read again
+
+    fake.failNext('hget');
+    forgetCacheCtx();
+    const failed = await quiet(() => cacheCtx(t0));
+    expect(failed.result).toBeNull();
+    expect(await cacheCtx(t0 + 1)).toEqual(ctx); // the next request tries again
+  });
+
+  test('a changed CONTAINER_ID is not served from the reuse', async () => {
+    const t0 = Date.now();
+    await cacheCtx(t0);
+    process.env.CONTAINER_ID = crypto.randomUUID();
+    const { result } = await quiet(() => cacheCtx(t0 + 1));
+    expect(result).toBeNull();
+  });
+
+  test('each distinct reason is logged once, and a database error says what failed', async () => {
+    delete process.env.CONTAINER_ID;
+    const first = await quiet(async () => {
+      await cacheCtx();
+      await cacheCtx();
+    });
+    expect(first.logged).toHaveLength(1);
+
+    process.env.CONTAINER_ID = ctx.container;
+    fake.failNext('hget');
+    const second = await quiet(() => cacheCtx());
+    expect(second.logged).toHaveLength(1);
+    expect(second.logged[0]).toContain('armed failure for hget');
   });
 
   test('a Redis failure while resolving is no cache, not a failed request', async () => {

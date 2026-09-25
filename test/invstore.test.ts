@@ -85,8 +85,20 @@ const row = (id: string, date: string, over: Row = {}): Row => ({
 const key = testKey('invtxns:item1');
 const ids = (rows: { investment_transaction_id: string }[]) => rows.map((r) => r.investment_transaction_id).sort();
 
-beforeEach(() => {
+// The investment-activity route caches in the request's container
+// (lib/cache.ts); without one every cache assertion would pass vacuously.
+beforeEach(async () => {
+  const { createFirstContainer } = await import('@/lib/containers');
+  const { forgetCacheCtx } = await import('@/lib/cache');
   fake.reset();
+  forgetCacheCtx();
+  process.env.CONTAINER_ID = await createFirstContainer();
+});
+afterEach(() => {
+  delete process.env.CONTAINER_ID;
+});
+
+beforeEach(() => {
   items = [ITEM];
   plaid.rows = [];
   plaid.accounts = [{ account_id: 'ira', name: 'IRA', mask: '1234', type: 'investment', subtype: 'ira' }];
@@ -591,15 +603,6 @@ describe('third review follow-ups', () => {
 });
 
 describe('third review: route and shape details', () => {
-  // The route's cache lives in the request's container (lib/cache.ts).
-  beforeEach(async () => {
-    const { createFirstContainer } = await import('@/lib/containers');
-    process.env.CONTAINER_ID = await createFirstContainer();
-  });
-  afterEach(() => {
-    delete process.env.CONTAINER_ID;
-  });
-
   const get = async () => {
     const { GET } = await import('@/app/api/investment-activity/route');
     return (await GET(new Request('http://x/api/investment-activity?id=ira&item_id=item1'))).json();
