@@ -103,6 +103,7 @@ const PREFIXES: [string, Kind][] = [
   ['txns-blocked:', 'plain'],
   ['invtxns-lock:', 'plain'],
   ['ratelimit:', 'plain'],
+  ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
 ];

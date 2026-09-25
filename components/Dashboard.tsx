@@ -711,6 +711,53 @@ export default function Dashboard() {
     window.location.href = '/login';
   }, []);
 
+  // Ends every session for this data, on every device, this one included
+  // (lib/sessions.ts). The other devices are sent to the login page on their
+  // next request.
+  const signOutEverywhere = useCallback(async () => {
+    if (!window.confirm('Sign out on every device, including this one?')) return;
+    const res = await fetch('/api/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ everywhere: true }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const message = await res?.json().then((b) => b?.error).catch(() => null);
+      window.alert(message || 'Could not sign out other devices. Try again.');
+      return;
+    }
+    try {
+      localStorage.removeItem(LOCAL_CACHE_KEY);
+    } catch {
+      // Best-effort.
+    }
+    window.location.href = '/login';
+  }, []);
+
+  // A session ended elsewhere (signed out everywhere, or the password changed)
+  // makes every API call answer 401. Without this the dashboard would sit
+  // showing load errors; send it to the login page instead.
+  useEffect(() => {
+    const original = window.fetch;
+    // Bound: a browser's fetch called without window as `this` throws.
+    const call = original.bind(window);
+    const watched = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const res = await call(input, init);
+      if (res.status === 401) {
+        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const url = new URL(raw, window.location.href);
+        if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
+          window.location.href = '/login';
+        }
+      }
+      return res;
+    };
+    window.fetch = Object.assign(watched, original) as typeof window.fetch;
+    return () => {
+      window.fetch = original;
+    };
+  }, []);
+
   const onSuccess = useCallback(
     async (public_token: string, metadata: PlaidLinkOnSuccessMetadata) => {
       if (linkMode === 'update') {
@@ -1076,6 +1123,9 @@ export default function Dashboard() {
             )}
             <button className="secondary logout-btn" onClick={logout}>
               Log out
+            </button>
+            <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
+              Sign out everywhere
             </button>
           </div>
         </div>

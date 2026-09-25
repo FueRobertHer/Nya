@@ -543,6 +543,17 @@ is now gated by `proxy.ts` (Next's renamed middleware convention), which
 checks a signed, expiring session cookie. Logging in at `/login` sets that
 cookie for 30 days.
 
+Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
+
+- **Sign out everywhere** (next to Log out) ends every session on every
+  device, this one included. Other devices are sent to the login page within
+  a few seconds.
+- **Changing `APP_PASSWORD`** (then redeploying) ends every session too.
+- A session belongs to the container (see **Containers**); logging in needs
+  one to exist, and says so if it does not.
+- Sessions from before this change stay valid until they expire (at most 30
+  days) and do not end on a password change; Sign out everywhere does end them.
+
 This is a single shared password, not per-user accounts — appropriate for
 one person's personal tracker, not for sharing with others. If you want
 real multi-user auth later, swap this for something like NextAuth/Auth.js
@@ -762,9 +773,9 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 
 ### What's still not covered
 
-- **Single household password**, not per-device or per-person sessions —
-  anyone with the password gets full access, including the ability to
-  disconnect your accounts.
+- **Single household password**, not per-person accounts: anyone with the
+  password gets full access, including the ability to disconnect your
+  accounts. Sessions can be ended everywhere, but not one device at a time.
 - Rate limiting covers only the login endpoint, not the data routes (those
   already require a valid session).
 

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createSessionToken, verifyPassword, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@/lib/auth';
 import { redis, kEnv } from '@/lib/storage';
+import { ContainerError, type ContainerId } from '@/lib/containers';
+import { currentEpoch, loginContainer } from '@/lib/sessions';
 
 // Brute-force protection: at most MAX_FAILURES wrong passwords per IP per
 // window, tracked in Redis. Successful login clears the counter. If Redis is
@@ -48,7 +50,15 @@ export async function POST(req: Request) {
       // Counter just expires on its own.
     }
 
-    const token = await createSessionToken();
+    let container: ContainerId;
+    try {
+      container = await loginContainer();
+    } catch (err) {
+      if (!(err instanceof ContainerError)) throw err;
+      console.error('Login refused:', err.message);
+      return NextResponse.json({ error: err.message }, { status: 503 });
+    }
+    const token = await createSessionToken({ container, epoch: await currentEpoch(container) });
     const res = NextResponse.json({ success: true });
     res.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,

@@ -207,6 +207,21 @@ describe('restoreArchive', () => {
     expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
   });
 
+  test("a container's session epoch is not data: never exported, never replaced", async () => {
+    const epochKey = testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:sessions:epoch');
+    await seed();
+    await fake.set(epochKey, '1');
+    const archive = verifyArchive(await exportText());
+    expect(archive.records.map((r) => r.key)).not.toContain('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:sessions:epoch');
+
+    // Revoked since the archive was taken: a restore must not bring those back.
+    await fake.set(epochKey, '5');
+    const existing = await targetKeys(fake as any);
+    expect(existing).not.toContain(epochKey);
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: existing });
+    expect(await fake.get<string>(epochKey)).toBe('5');
+  });
+
   test('overwrite replaces: strays and stale caches go, rate limits stay', async () => {
     await seed();
     const archive = verifyArchive(await exportText());
