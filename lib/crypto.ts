@@ -861,6 +861,48 @@ export async function activeKeyStatus(): Promise<ActiveKeyStatus> {
   return out;
 }
 
+/**
+ * The active data key for the re-encryption pass (lib/reencrypt.ts), created
+ * if there is none yet. Unlike encrypt(), never falls back to k0: a pass that
+ * moved values to k0 would be undoing itself.
+ */
+export async function activeKeyForReencryption(): Promise<string> {
+  if (!process.env[MASTER_KEY_ENV]) {
+    throw new MasterKeyError(`${MASTER_KEY_ENV} is not set, so there is no data key to move values to.`);
+  }
+  // Read fresh, not from the minute-long cache: after a restore changed the
+  // active key, a pass must not keep asking for the old one.
+  _active = null;
+  let id: string | null;
+  try {
+    id = await activeKeyId();
+  } catch (err) {
+    if (err instanceof UnknownKeyError) {
+      throw new MasterKeyError(`The active data key ${err.keyId} is not in the key store, so nothing can be moved to it. Was the key store restored without it?`);
+    }
+    throw err;
+  }
+  if (!id) {
+    throw new MasterKeyError(
+      'There is no active data key yet: a master rotation is pending, or another step holds its lock. Try again later.'
+    );
+  }
+  return id;
+}
+
+/** Why k0 cannot be used, or null if it can. The message names only the
+ *  environment variable. For the re-encryption pass's report. */
+export async function legacyKeyProblem(): Promise<string | null> {
+  try {
+    await legacyKey();
+    return null;
+  } catch {
+    // Not legacyKey()'s own message, which suggests generating a key: a new
+    // k0 cannot read anything written under the old one.
+    return `${LEGACY_KEY_ENV} is missing or invalid here. Restore the original: a new key cannot read existing data.`;
+  }
+}
+
 function noteFallback(err: unknown, now: number): void {
   const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
   if (!_fallback) _fallback = { since: now, loggedAt: -Infinity, reason };
