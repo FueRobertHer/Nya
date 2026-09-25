@@ -668,8 +668,8 @@ that no longer exists. Call it again once that is finished.
 
 **Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It
 costs nothing, the app still falls back to it if the data key is ever
-unavailable, and since it cannot be read back out of Vercel, removing it is
-permanent: any value still under `k0` then (an old backup, a fallback write)
+unavailable, and if it is marked Sensitive in Vercel (so cannot be read back
+out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write)
 could never be read again.
 
 **Rotating the master key** never touches your data, only the locks on the

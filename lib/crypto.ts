@@ -896,8 +896,10 @@ export async function legacyKeyProblem(): Promise<string | null> {
   try {
     await legacyKey();
     return null;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+  } catch {
+    // Not legacyKey()'s own message, which suggests generating a key: a new
+    // k0 cannot read anything written under the old one.
+    return `${LEGACY_KEY_ENV} is missing or invalid here. Restore the original: a new key cannot read existing data.`;
   }
 }
 
