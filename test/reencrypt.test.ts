@@ -93,8 +93,12 @@ describe('the list of keys', () => {
     const opaque: string[] = [];
     for (const file of files) {
       // Comments blanked (offsets kept): a builder named in prose is not a
-      // call. "://" in a string is not a comment.
-      const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\/|(?<![:\\])\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, ' '));
+      // call. Strings are matched first and kept as they are, so a "//" or
+      // "/*" inside one is never taken for a comment that hides code.
+      const src = readFileSync(file, 'utf8').replace(
+        /'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+        (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m)
+      );
       const where = (i: number) => `${file.slice(root.length + 1)}: ${src.slice(i, i + 40).split('\n')[0]}`;
       const read = new Set<number>(); // where each call this could read starts
 
