@@ -18,7 +18,7 @@ import {
   isBackfillDone,
   markBackfillDone,
 } from '@/lib/history';
-import { clearCaches } from '@/lib/cache';
+import { cacheCtx, clearCaches } from '@/lib/cache';
 
 // Reconstructs up to a year of ESTIMATED history from transaction data --
 // the same trick Monarch/Copilot use. Plaid has no historical balances, but
@@ -228,7 +228,7 @@ export async function POST() {
       await settleDoneFlag(invPending);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
-      await clearCaches();
+      await clearCaches(await cacheCtx());
       return NextResponse.json({ backfilled: 0, reason: 'no transaction history' });
     }
 
@@ -300,7 +300,7 @@ export async function POST() {
     // run's flat balances rather than being reinterpreted with these.
     await replaceEstimatedFlat(estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
     const waiting = await settleDoneFlag(invPending);
-    await clearCaches(); // cached payloads don't include the new history yet
+    await clearCaches(await cacheCtx()); // cached payloads don't include the new history yet
 
     return NextResponse.json({
       backfilled: estimatedTotals.length,

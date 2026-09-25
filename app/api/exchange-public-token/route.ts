@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { plaidClient } from '@/lib/plaid';
 import { encrypt } from '@/lib/crypto';
 import { saveItem } from '@/lib/storage';
-import { clearCaches } from '@/lib/cache';
+import { cacheCtx, clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 
 export async function POST(req: Request) {
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 
     // Cached payloads no longer reflect the linked institutions, and the
     // estimated history should be recomputed with the new accounts in it.
-    await clearCaches();
+    await clearCaches(await cacheCtx());
     await clearBackfillDone();
 
     return NextResponse.json({ success: true });

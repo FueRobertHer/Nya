@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 // The rules under test were each found by a review of this design as a way to
@@ -85,8 +85,20 @@ const row = (id: string, date: string, over: Row = {}): Row => ({
 const key = testKey('invtxns:item1');
 const ids = (rows: { investment_transaction_id: string }[]) => rows.map((r) => r.investment_transaction_id).sort();
 
-beforeEach(() => {
+// The investment-activity route caches in the request's container
+// (lib/cache.ts); without one every cache assertion would pass vacuously.
+beforeEach(async () => {
+  const { createFirstContainer } = await import('@/lib/containers');
+  const { forgetCacheCtx } = await import('@/lib/cache');
   fake.reset();
+  forgetCacheCtx();
+  process.env.CONTAINER_ID = await createFirstContainer();
+});
+afterEach(() => {
+  delete process.env.CONTAINER_ID;
+});
+
+beforeEach(() => {
   items = [ITEM];
   plaid.rows = [];
   plaid.accounts = [{ account_id: 'ira', name: 'IRA', mask: '1234', type: 'investment', subtype: 'ira' }];

@@ -13,7 +13,7 @@ import {
   type ManualType,
 } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
-import { clearCaches } from '@/lib/cache';
+import { cacheCtx, clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { pruneHidden } from '@/lib/hidden';
 
@@ -83,7 +83,7 @@ async function invalidate(balanceChanged: boolean): Promise<void> {
   // recompute this call just asked for. (/api/hidden-accounts already does it
   // in this order.)
   if (balanceChanged) await clearBackfillDone();
-  await clearCaches();
+  await clearCaches(await cacheCtx());
 }
 
 export async function GET() {

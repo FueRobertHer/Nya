@@ -8,7 +8,7 @@ import {
   isIncomingRollover,
 } from '@/lib/investments';
 import { syncInvestments } from '@/lib/invstore';
-import { readAccountCache, writeAccountCache } from '@/lib/cache';
+import { cacheCtx, readAccountCache, writeAccountCache } from '@/lib/cache';
 
 // Recent buys, sells, dividends and fees for one investment account, plus what
 // the holder has put in this year and the per-day flows behind the chart's
@@ -46,10 +46,11 @@ export async function GET(req: Request) {
 
     // Keyed on the pair, not account_id alone, so a mismatched item_id can't
     // cache an empty answer under the real account's field.
-    // (INVESTMENT_ACTIVITY_CACHE_KEY carries a version, so payloads with an
-    // older meaning are not reachable.)
+    // (The cache key carries a version, so payloads with an older meaning are
+    // not reachable.)
     const cacheField = `${item_id}:${account_id}`;
-    const cached = await readAccountCache(cacheField);
+    const ctx = await cacheCtx();
+    const cached = await readAccountCache(ctx, cacheField);
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const sync = await syncInvestments(item);
@@ -118,7 +119,7 @@ export async function GET(req: Request) {
     // whatever was stored before it, which on a first link is nothing at all.
     // A storage-only problem IS cached: the rows were just fetched live, and
     // without it an unwritable store would re-run the full fetch every load.
-    if (!sync.note && !sync.busy) await writeAccountCache(cacheField, payload);
+    if (!sync.note && !sync.busy) await writeAccountCache(ctx, cacheField, payload);
 
     return NextResponse.json({ ...payload, from_cache: false });
   } catch (err: any) {

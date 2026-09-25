@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { setRename, clearRename } from '@/lib/renames';
-import { clearTransactionsCache } from '@/lib/cache';
+import { cacheCtx, clearTransactionsCache } from '@/lib/cache';
 
 // Rename a vendor (applies to every transaction sharing the vendor key). An
 // empty name clears the rename, reverting to Plaid's name. The transactions
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     const trimmed = name.trim();
     if (trimmed) await setRename(vendor_key, trimmed);
     else await clearRename(vendor_key);
-    await clearTransactionsCache(); // the cached payload has the old name
+    await clearTransactionsCache(await cacheCtx()); // the cached payload has the old name
 
     return NextResponse.json({ success: true });
   } catch (err) {
