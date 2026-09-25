@@ -112,6 +112,13 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
     expect(() => verifyArchive(reseal(lines))).toThrow(/key layout/);
   });
 
+  test('an archive from before containers says how to bring it in', async () => {
+    await seed();
+    const lines = linesOf(await exportText());
+    lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), schema_era: 'unscoped' });
+    expect(() => verifyArchive(reseal(lines))).toThrow(/release from before containers, then .*move-data/);
+  });
+
   test('a format version it does not know', async () => {
     const lines = linesOf(await exportText());
     lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), nya_export: 2 });

@@ -606,9 +606,7 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   time, or with nothing linked) are run again. Each container's outcomes are kept per date and
   served, newest first, by `GET /api/snapshot-runs`; they describe this
   environment's cron, so exports leave them out and a restore keeps them.
-  Until the data moves into containers, only this deployment's container is
-  snapshotted, any other is reported as skipped, and nothing runs while a
-  container is being restored.
+  Each container's snapshot reads and writes only its own data.
 - **Estimated backfill** — on first use (and after linking a new
   institution) the app reconstructs up to a year of history from
   transaction data (`/api/backfill`), at three levels of fidelity:
@@ -720,10 +718,10 @@ unavailable, and if it is marked Sensitive in Vercel (so cannot be read back
 out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write)
 could never be read again.
 
-**Containers** (preparing for more than one user, #53). Every record will
-belong to a *container*; today there is one, and nothing uses it yet. It is
-created once, by you, never automatically (two requests racing to create one
-would split your data between two):
+**Containers** (preparing for more than one user, #53). Every record
+belongs to a *container*, stored under `<prefix>:c:<container id>:`; today
+there is one. It is created once, by you, never automatically (two requests
+racing to create one would split your data between two):
 
 1. With `OPS_ENABLED=1`, create it:
 
@@ -741,9 +739,44 @@ would split your data between two):
 Preview has its own container (a separate prefix, a separate registry): do
 the same there if you use preview.
 
-The caches are the first thing kept inside the container. Without a usable
-`CONTAINER_ID` the app still works, just uncached (every load fetches live),
-and the log says `Caching is off: the container could not be resolved`.
+Every request works in this deployment's container: the one `CONTAINER_ID`
+names, or with it unset, the only active one. Without a usable container
+(none, `CONTAINER_ID` wrong, the container being restored, or more than one
+active) data requests are refused with a 503 saying why; nothing is read or
+written anywhere else.
+
+**Moving the data into containers** (once, when upgrading from a release from
+before containers). The data was stored under `<prefix>:<name>` and is now
+read from `<prefix>:c:<id>:<name>`. `bun run move-data` copies it across:
+byte for byte, reading every copy back, and leaving the old keys exactly as
+they were, so rolling back is redeploying the previous release. It only
+copies a fixed list of keys (never caches, sessions or the container's own
+keys) and never copies a copy.
+
+1. Take an export (see **Backing up your data**) and check it restores into
+   `restore-test`. Rehearse steps 3 to 6 there first.
+2. Pick a quiet time away from 13:00 and 15:00 UTC (the snapshot crons), and
+   don't link or change anything in the app until step 6 is done.
+3. See what it would do (it writes nothing without `--run`):
+
+   ```bash
+   vercel env pull .env.local
+   REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production
+   ```
+4. Copy: the same with `--run`.
+5. **Right before deploying**, run step 4 again. Anything the old release
+   wrote since is copied again; keys that have not changed are left alone.
+6. Deploy this release. Check the dashboard, the history chart's left edge,
+   the transaction counts, that no institution re-downloads its whole
+   history, and `GET /api/storage-usage`.
+
+Running it again after deploying is safe: it refuses, writing nothing, if a
+key it would overwrite has been written by the new release. An export from
+before the move is refused by `bun run restore` from now on; restore it with
+the previous release, then move it.
+
+The old keys stay in the database, unused, until they are deleted
+separately, weeks later, after a fresh verified export.
 
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.

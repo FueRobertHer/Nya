@@ -42,7 +42,7 @@
 // field names, counts and error types only.
 
 import { createHash } from 'node:crypto';
-import { rawRedis, k } from './storage';
+import { rawRedis, envPrefix } from './storage';
 import { splitScoped, isEnvWide } from './containers';
 import {
   activeKeyForReencryption,
@@ -104,6 +104,7 @@ const PREFIXES: [string, Kind][] = [
   ['invtxns-lock:', 'plain'],
   ['ratelimit:', 'plain'],
   ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
+  ['move:', 'plain'], // the data move's record (lib/move.ts)
   ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
@@ -367,7 +368,7 @@ export async function reencrypt(
     else report.changed_meanwhile++;
   };
 
-  const prefix = k('');
+  const prefix = envPrefix();
   const keys = await listKeys(client, prefix);
   for (const full of keys) {
     if (now() >= deadline) return finish(report);

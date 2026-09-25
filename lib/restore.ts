@@ -26,7 +26,7 @@
 //    restore; anything else throws.
 
 import { createHash } from 'node:crypto';
-import { k, kEnv } from './storage';
+import { envPrefix, kEnv } from './storage';
 import { splitScoped } from './containers';
 import {
   byCodePoint,
@@ -145,7 +145,10 @@ export function verifyArchive(text: string): VerifiedArchive {
   // An archive from another key layout would restore keys nothing reads.
   if (header.schema_era !== SCHEMA_ERA) {
     refuse(
-      `Archive was taken under key layout ${JSON.stringify(header.schema_era)}; this code uses ${JSON.stringify(SCHEMA_ERA)}.`
+      `Archive was taken under key layout ${JSON.stringify(header.schema_era)}; this code uses ${JSON.stringify(SCHEMA_ERA)}.` +
+        (header.schema_era === 'unscoped'
+          ? ' Restore it with a release from before containers, then move the data into a container with `bun run move-data` (see "Moving the data into containers" in the README).'
+          : '')
     );
   }
 
@@ -244,7 +247,7 @@ export type RestoreClient = ExportClient & {
 
 /** Every key under this process's prefix, found by scanning. */
 async function keysUnderPrefix(client: RestoreClient): Promise<string[]> {
-  const prefix = k('');
+  const prefix = envPrefix();
   const keys = new Set<string>();
   let cursor: string | number = 0;
   do {
@@ -263,7 +266,7 @@ async function keysUnderPrefix(client: RestoreClient): Promise<string[]> {
  * session epochs do not: they are not data, and a restore leaves them alone.
  */
 export async function targetKeys(client: RestoreClient): Promise<string[]> {
-  const prefix = k('');
+  const prefix = envPrefix();
   return (await keysUnderPrefix(client)).filter((key) => !isPreserved(key.slice(prefix.length)));
 }
 
@@ -276,7 +279,7 @@ export async function targetKeys(client: RestoreClient): Promise<string[]> {
  * a separate, explicit confirmation on top.
  */
 export function checkTarget(named: string | undefined, confirmProduction: boolean): string {
-  const actual = k('').replace(/:$/, '');
+  const actual = envPrefix().replace(/:$/, '');
   if (!named) refuse(`Name the target with --target. This process would write to "${actual}".`);
   if (named !== actual) {
     refuse(`--target is "${named}" but REDIS_PREFIX resolves to "${actual}". Nothing was written.`);
@@ -337,7 +340,7 @@ export async function restoreArchive(
   archive: VerifiedArchive,
   opts: { overwrite: boolean; backedUp?: string[]; replaceRegistry?: boolean }
 ): Promise<RestoreResult> {
-  const prefix = k('');
+  const prefix = envPrefix();
   const existing = await targetKeys(client);
   if (existing.length > 0 && !opts.overwrite) {
     refuse(`The target holds ${existing.length} keys. Pass --overwrite to replace them.`);

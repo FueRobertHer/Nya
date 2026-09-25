@@ -22,6 +22,7 @@ export type FakeCommand =
   | 'hscan'
   | 'type'
   | 'strlen'
+  | 'rename'
   | 'ttl'
   | 'getrange'
   | 'eval';
@@ -184,6 +185,23 @@ export class FakeRedis {
     this.gate('ttl');
     if (!this.strings.has(key) && !this.hashes.has(key)) return -2;
     return this.ttls.get(key) ?? -1;
+  }
+
+  /** Moves a key, replacing any at the destination, keeping its expiry. */
+  async rename(from: string, to: string): Promise<'OK'> {
+    this.gate('rename');
+    if (!this.strings.has(from) && !this.hashes.has(from)) throw new Error('ERR no such key');
+    this.strings.delete(to);
+    this.hashes.delete(to);
+    this.ttls.delete(to);
+    if (this.strings.has(from)) this.strings.set(to, this.strings.get(from)!);
+    else this.hashes.set(to, this.hashes.get(from)!);
+    const ttl = this.ttls.get(from);
+    if (ttl !== undefined) this.ttls.set(to, ttl);
+    this.strings.delete(from);
+    this.hashes.delete(from);
+    this.ttls.delete(from);
+    return 'OK';
   }
 
   /** Length of a string value; 0 for a missing key, like Redis. */
@@ -354,7 +372,7 @@ export function storageMock(fake: FakeRedis) {
     // The fake already stores and returns plain strings, which is exactly what
     // the raw client promises, so one instance serves both.
     rawRedis: () => fake,
-    k: testKey,
+    envPrefix: () => testKey(''),
     kEnv: testKey,
     kc: (ctx: { container: string }, key: string) => ctxKey(key, ctx),
     // Backed by the fake, so code that filters by the stored Items sees the

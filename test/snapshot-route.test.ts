@@ -90,7 +90,7 @@ describe('the daily cron finishes a due master rotation', () => {
 });
 
 // The cron runs each container on its own (lib/snapshot-job.ts). Here, with
-// the real snapshot: one container, holding the (still unscoped) data.
+// the real snapshot: one container, holding its own data.
 const { saveManualAccount } = await import('@/lib/manual');
 const { registryKey } = await import('@/lib/containers');
 const { readRuns } = await import('@/lib/snapshot-job');

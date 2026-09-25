@@ -15,7 +15,7 @@
 //    the entry and the split view comes straight back.
 // 2. THE USER DECIDES. Suggestions come with evidence; nothing is linked
 //    automatically. With more than one user, "the user" is whoever owns the
-//    container (#53): every key here goes through k(), so links, suggestions
+//    container (#53): every key here goes through kc(), so links, suggestions
 //    and the directory can only ever involve one container's accounts.
 // 3. LINKS FOLLOW HISTORY, NOT TRANSACTIONS. After a disconnect the old Item's
 //    transaction stores are deleted, so what survives under an old id is its

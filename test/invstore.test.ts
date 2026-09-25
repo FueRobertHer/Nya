@@ -90,10 +90,8 @@ const ids = (rows: { investment_transaction_id: string }[]) => rows.map((r) => r
 // The investment-activity route caches in the request's container
 // (lib/cache.ts); without one every cache assertion would pass vacuously.
 beforeEach(async () => {
-  const { forgetCacheCtx } = await import('@/lib/cache');
   const { forgetEpochs } = await import('@/lib/sessions');
   fake.reset();
-  forgetCacheCtx();
   forgetEpochs();
   await registerTestContainer(fake);
   process.env.CONTAINER_ID = TEST_CONTAINER;

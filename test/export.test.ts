@@ -26,7 +26,7 @@ describe('the archive', () => {
 
     expect(header).toEqual({
       nya_export: 1,
-      schema_era: 'unscoped',
+      schema_era: 'containers',
       env_prefix: 'test',
       container_id: null,
       taken_at: NOW.toISOString(),
@@ -41,6 +41,8 @@ describe('the archive', () => {
         'c:*:sessions:*',
         'snapshot:*',
         'c:*:snapshot:*',
+        'move:*',
+        'c:*:move:*',
       ],
     });
   });
