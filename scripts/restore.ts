@@ -19,6 +19,9 @@
 //                          let an archive taken from another environment replace
 //                          a populated target (restoring into an EMPTY target from
 //                          anywhere, like production into restore-test, needs no flag)
+//   --replace-registry     let an archive whose containers differ from the
+//                          target's (or that has none) replace the target's
+//                          container registry; CONTAINER_ID must be set again
 //
 // Paths are resolved from the repo root, since `bun run` runs there.
 //
@@ -29,9 +32,12 @@ import { rawRedis } from '@/lib/storage';
 import { exportLines, isExcluded } from '@/lib/export';
 import {
   RestoreRefused,
+  archiveRegistry,
+  checkRegistry,
   checkTarget,
   restoreArchive,
   targetKeys,
+  targetRegistry,
   verifyArchive,
   type RestoreClient,
 } from '@/lib/restore';
@@ -44,6 +50,7 @@ export type RestoreArgs = {
   dryRun: boolean;
   allowEmpty: boolean;
   allowDifferentSource: boolean;
+  replaceRegistry: boolean;
 };
 
 export function parseArgs(argv: string[]): RestoreArgs {
@@ -54,6 +61,7 @@ export function parseArgs(argv: string[]): RestoreArgs {
     dryRun: false,
     allowEmpty: false,
     allowDifferentSource: false,
+    replaceRegistry: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -63,6 +71,7 @@ export function parseArgs(argv: string[]): RestoreArgs {
     else if (a === '--dry-run') args.dryRun = true;
     else if (a === '--allow-empty') args.allowEmpty = true;
     else if (a === '--allow-different-source') args.allowDifferentSource = true;
+    else if (a === '--replace-registry') args.replaceRegistry = true;
     else if (a.startsWith('--')) throw new RestoreRefused(`Unknown flag ${a}.`);
     else if (!args.file) args.file = a;
     else throw new RestoreRefused(`Unexpected argument ${a}.`);
@@ -138,6 +147,10 @@ export async function main(argv: string[], client: RestoreClient): Promise<void>
     }
   }
 
+  // Checked before the dry run returns, so a dry run says whether the real one
+  // would be refused.
+  checkRegistry(archiveRegistry(records), await targetRegistry(client), args.replaceRegistry);
+
   if (args.dryRun) {
     console.log('Dry run: nothing written.');
     return;
@@ -151,6 +164,7 @@ export async function main(argv: string[], client: RestoreClient): Promise<void>
   const { written, deleted } = await restoreArchive(client, archive, {
     overwrite: args.overwrite,
     backedUp: existing,
+    replaceRegistry: args.replaceRegistry,
   });
   console.log(`Restored ${written} keys into "${target}" (replaced ${deleted}). Read-back matches the archive.`);
 }

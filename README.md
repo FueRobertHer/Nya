@@ -497,6 +497,11 @@ The command refuses, and writes nothing, when:
   overrides), or with one taken from a different environment
   (`--allow-different-source` overrides). Restoring into an **empty** target
   from anywhere, like production into `restore-test`, needs neither.
+- the target has containers (see **Containers**) and the archive's are not
+  the same, for example an archive from before containers existed: restoring
+  it would leave `CONTAINER_ID` naming a container that no longer exists.
+  `--replace-registry` overrides; afterwards set `CONTAINER_ID` again (or
+  create a container, if the archive has none). A dry run reports this too.
 
 With `--overwrite`, it prints how many keys it is about to replace, saves the
 target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file,
