@@ -4,6 +4,12 @@
 // RATE_LIMIT_EXCEEDED. That is the one failure worth waiting out: it says
 // "not now", not "not this", and a failed balance call closes the snapshot
 // gate for the whole day (lib/networth.ts). Anything else is thrown at once.
+//
+// Only the balance call is wrapped: holdings and liabilities do not decide
+// the recorded total. Plaid's per-Item balance limit
+// (ACCOUNTS_BALANCE_GET_LIMIT) often outlasts these few seconds; this covers
+// the short bursts, and the catch-up cron covers the rest. On the dashboard it
+// can add up to 3 s to a load that would otherwise show a failed card.
 
 /** Waits between attempts, in ms: three tries in all, about 3 s at most. */
 export const RATE_LIMIT_DELAYS_MS = [1000, 2000] as const;

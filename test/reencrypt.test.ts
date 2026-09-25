@@ -148,6 +148,7 @@ describe('the list of keys', () => {
     expect(classify('txns-blocked:abc')).toBe('plain');
     expect(classify('invtxns:abc')).toBe('string');
     expect(classify('invtxns-lock:abc')).toBe('plain');
+    expect(classify('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:snapshot:runs')).toBe('plain');
     expect(classify('history:accounts')).toBe('hash');
     expect(classify('history:accounts:est:flat')).toBe('string');
     expect(classify('cache:net-worth')).toBe('cipher');

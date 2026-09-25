@@ -93,7 +93,6 @@ const EXACT: Record<string, Kind> = {
   'history:backfill-done': 'plain',
   'history:backfill-pending': 'plain',
   'account-links:dismissed': 'plain',
-  'snapshot:runs': 'plain', // the daily snapshot's outcomes (lib/snapshot-job.ts)
 
   containers: 'plain', // the container registry
 };
@@ -105,6 +104,7 @@ const PREFIXES: [string, Kind][] = [
   ['invtxns-lock:', 'plain'],
   ['ratelimit:', 'plain'],
   ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
+  ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
 ];

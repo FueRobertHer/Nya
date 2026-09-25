@@ -8,7 +8,8 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const { registryKey, ContainerError } = await import('@/lib/containers');
 const { kc } = await import('@/lib/storage');
-const { runSnapshots, readRegistry, readRuns, readRun, reasonOf, REGISTRY_RETRY_MS } = await import('@/lib/snapshot-job');
+const { runSnapshots, readRegistry, readRuns, readRun, reasonOf, nothingSucceeded, REGISTRY_RETRY_MS, LOCK_SECONDS } = await import('@/lib/snapshot-job');
+const { forgetEpochs } = await import('@/lib/sessions');
 const runsRoute = await import('@/app/api/snapshot-runs/route');
 const { withRateLimitRetry, isRateLimited } = await import('@/lib/rate-limit-retry');
 
@@ -28,6 +29,7 @@ const saved = { ...process.env };
 const errors = console.error;
 beforeEach(() => {
   fake.reset();
+  forgetEpochs();
   delete process.env.CONTAINER_ID;
   console.error = () => {};
 });
@@ -127,7 +129,8 @@ describe('once the data is in containers', () => {
       work: async () => ((t += 20), { status: 'recorded' }),
     });
     expect(report.results.map((r) => r.status)).toEqual(['recorded', 'deferred', 'deferred']);
-    expect(await readRun({ container: B }, DATE)).toBeNull();
+    // Recorded as deferred, so the day shows why it has no snapshot.
+    expect(await readRun({ container: B }, DATE)).toMatchObject({ status: 'deferred', attempts: 0 });
     // The catch-up run does them.
     const later = await runSnapshots(registry, { scheduledFor: DATE, scopedData: true, work: async () => ({ status: 'recorded' }) });
     expect(later.results.map((r) => r.status)).toEqual(['already', 'recorded', 'recorded']);
@@ -135,7 +138,7 @@ describe('once the data is in containers', () => {
 
   test('an outcome that cannot be recorded still reports the run', async () => {
     const registry = await register([[A, 'active']]);
-    fake.failNext('hset');
+    fake.failNext('hset', 2); // the "running" mark and the outcome
     const report = await runSnapshots(registry, { scheduledFor: DATE, scopedData: true, work: async () => ({ status: 'recorded' }) });
     expect(report.results[0].status).toBe('recorded');
     expect(await readRun({ container: A }, DATE)).toBeNull();
@@ -187,9 +190,91 @@ describe('while the data is still unscoped', () => {
     expect((named.results[0] as any).reason).toContain('not in the registry');
   });
 
+  test('a container being restored stops the unscoped run for every container', async () => {
+    const registry = await register([[A, 'restoring'], [B, 'active']]);
+    const ran: string[] = [];
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async (ctx) => (ran.push(ctx.container), { status: 'recorded' }) });
+    expect(ran).toEqual([]);
+    expect(report.results[1]).toMatchObject({ container: B, status: 'failed', reason: 'A container is being restored.' });
+    // A lock it never took (another invocation's) is not released.
+    await fake.set(kc({ container: B }, 'snapshot:lock'), 'other', { nx: true, ex: LOCK_SECONDS });
+    await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded' }) });
+    expect(await fake.get<string>(kc({ container: B }, 'snapshot:lock'))).toBe('other');
+  });
+
+  test('the default snapshot refuses to run once the data is said to be in containers', async () => {
+    const registry = await register([[A, 'active'], [B, 'active']]);
+    const report = await runSnapshots(registry, { scheduledFor: DATE, scopedData: true });
+    expect(report.results.map((r) => r.status)).toEqual(['failed', 'failed']);
+    expect((report.results[0] as any).reason).toBe('The snapshot does not read data from containers yet.');
+  });
+
   test('no containers: nothing to do', async () => {
     const report = await runSnapshots(await readRegistry(), { scheduledFor: DATE, work: async () => ({ status: 'recorded' }) });
     expect(report).toEqual({ scheduled_for: DATE, results: [], failed: 0 });
+  });
+});
+
+describe('runs in progress', () => {
+  test('are marked running before the work, so a killed run is visible', async () => {
+    const registry = await register([[A, 'active']]);
+    let during: unknown = null;
+    await runSnapshots(registry, {
+      scheduledFor: DATE,
+      scopedData: true,
+      work: async (ctx) => ((during = await readRun(ctx, DATE)), { status: 'recorded' }),
+    });
+    expect(during).toMatchObject({ status: 'running', attempts: 1 });
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', attempts: 1 });
+  });
+
+  test('a container another invocation is running is left to it, and its lock is released after', async () => {
+    const registry = await register([[A, 'active'], [B, 'active']]);
+    const lock = kc({ container: A }, 'snapshot:lock');
+    await fake.set(lock, DATE, { nx: true, ex: LOCK_SECONDS });
+    const ran: string[] = [];
+    const work = async (ctx: { container: Id }) => (ran.push(ctx.container), { status: 'recorded' } as const);
+    const report = await runSnapshots(registry, { scheduledFor: DATE, scopedData: true, work });
+    expect(report.results.map((r) => r.status)).toEqual(['running', 'recorded']);
+    expect(ran).toEqual([B]);
+    expect(await fake.get<string>(lock)).toBe(DATE); // not ours to release
+    expect(await fake.get(kc({ container: B }, 'snapshot:lock'))).toBeNull();
+    expect(await fake.ttl(lock)).toBe(LOCK_SECONDS);
+  });
+
+  test('a container whose restore began after the registry was read is not run', async () => {
+    const registry = await register([[A, 'active']]);
+    await fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'restoring', primary: true, created_at: 'x' }) });
+    const ran: string[] = [];
+    const report = await runSnapshots(registry, { scheduledFor: DATE, scopedData: true, work: async (ctx) => (ran.push(ctx.container), { status: 'recorded' }) });
+    expect(ran).toEqual([]);
+    expect(report.results[0]).toMatchObject({ status: 'failed', reason: 'The container is restoring.' });
+    expect(await fake.get(kc({ container: A }, 'snapshot:lock'))).toBeNull();
+  });
+
+  test('the start budget counts from when the request began', async () => {
+    const registry = await register([[A, 'active']]);
+    const report = await runSnapshots(registry, {
+      scheduledFor: DATE,
+      scopedData: true,
+      startedAt: 0,
+      clock: () => 11,
+      budgetMs: 10,
+      work: async () => ({ status: 'recorded' }),
+    });
+    expect(report.results[0].status).toBe('deferred');
+  });
+});
+
+describe('a run where nothing succeeded', () => {
+  const r = (status: string) => ({ container: A, status }) as any;
+  test('is every container that ran failing', () => {
+    expect(nothingSucceeded({ scheduled_for: DATE, failed: 1, results: [r('failed'), r('skipped'), r('deferred')] })).toBe(true);
+    expect(nothingSucceeded({ scheduled_for: DATE, failed: 1, results: [r('failed'), r('recorded')] })).toBe(false);
+    expect(nothingSucceeded({ scheduled_for: DATE, failed: 1, results: [r('failed'), r('already')] })).toBe(false);
+    expect(nothingSucceeded({ scheduled_for: DATE, failed: 1, results: [r('failed'), r('unclean')] })).toBe(false);
+    expect(nothingSucceeded({ scheduled_for: DATE, failed: 1, results: [r('failed'), r('running')] })).toBe(false);
+    expect(nothingSucceeded({ scheduled_for: DATE, failed: 0, results: [r('skipped')] })).toBe(false);
   });
 });
 
@@ -229,12 +314,15 @@ describe('the recorded outcomes', () => {
     expect(await readRuns({ container: A })).toEqual(want);
     expect(await readRuns({ container: A }, 1)).toEqual(want.slice(0, 1));
 
-    process.env.CONTAINER_ID = A;
+    // The container sessions and the job use: here the single active one.
     const res = await runsRoute.GET();
     expect(await res.json()).toEqual({ runs: want });
 
-    delete process.env.CONTAINER_ID;
-    expect((await runsRoute.GET()).status).toBe(503);
+    process.env.CONTAINER_ID = B; // not in the registry
+    forgetEpochs();
+    const bad = await runsRoute.GET();
+    expect(bad.status).toBe(503);
+    expect((await bad.json()).error).toContain('not in the registry');
   });
 });
 
@@ -243,6 +331,7 @@ describe('failure reasons', () => {
     expect(reasonOf(new Error('ERR wrong type, command was: ["hget","k","secret"]'))).toBe('Error: ERR wrong type');
     expect(reasonOf(new ContainerError('No container is active.'))).toBe('No container is active.');
     expect(reasonOf({ response: { status: 500 } })).toBe('object');
+    expect(reasonOf({ response: { data: { error_code: 'INSTITUTION_DOWN', error_message: 'secret detail' } } })).toBe('Plaid: INSTITUTION_DOWN');
     expect(reasonOf(new Error('x'.repeat(500))).length).toBeLessThan(200);
   });
 });

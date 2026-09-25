@@ -224,6 +224,18 @@ describe('restoreArchive', () => {
     expect(await fake.get<string>(testKey('sessions:legacy-cutoff'))).toBe('1700000000000');
   });
 
+  test("the snapshot cron's log is not data: never exported, never replaced", async () => {
+    const runsKey = testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:snapshot:runs');
+    await seed();
+    await fake.hset(runsKey, { '2026-01-01': 'old' });
+    const archive = verifyArchive(await exportText());
+    expect(archive.records.map((r) => r.key)).not.toContain('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:snapshot:runs');
+
+    await fake.hset(runsKey, { '2026-09-25': 'today' });
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
+    expect(await fake.hget<string>(runsKey, '2026-09-25')).toBe('today');
+  });
+
   test('overwrite replaces: strays and stale caches go, rate limits stay', async () => {
     await seed();
     const archive = verifyArchive(await exportText());

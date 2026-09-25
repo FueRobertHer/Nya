@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 import { secretsMatch } from '@/lib/auth';
 import { finishMasterRotation } from '@/lib/crypto';
-import { readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
+import { nothingSucceeded, readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
 // net-worth chart stays gapless even on days the app isn't opened. It runs
 // each container on its own (lib/snapshot-job.ts): the answer is 200 with a
 // result per container, even when some failed, because a 500 invites a retry
-// of the whole run. The one 500 is a registry that cannot be read, when
-// nothing was run at all. A second, later cron entry is the catch-up: it
-// finds every container already recorded and runs only the rest.
+// of the whole run. It answers 500 when nothing was snapshotted: the registry
+// could not be read, holds no container, or every container that ran failed
+// (the same body, so the cause is in the logs and the response alike). The
+// catch-up cron (/api/snapshot/catchup, two hours later) runs the same job:
+// containers already recorded that day are skipped.
 //
 // This route is excluded from the session gate in proxy.ts and instead
 // authenticates the cron caller: Vercel sends `Authorization: Bearer
@@ -19,6 +21,7 @@ import { readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
 export const maxDuration = 300;
 
 export async function GET(req: Request) {
+  const startedAt = Date.now();
   const secret = process.env.CRON_SECRET;
   if (!secret || !(await secretsMatch(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -38,8 +41,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'The container registry could not be read; nothing was snapshotted.' }, { status: 500 });
   }
 
+  if (registry.length === 0) {
+    // Nobody can log in without one either (lib/sessions.ts), so this is a
+    // setup that was never finished, not a quiet day.
+    const error = 'No container exists yet, so nothing was snapshotted. Create one (see "Containers" in the README).';
+    console.error(`Snapshot: ${error}`);
+    return NextResponse.json({ error }, { status: 500 });
+  }
+
   try {
-    return NextResponse.json(await runSnapshots(registry, { scheduledFor: snapshotDate() }));
+    const report = await runSnapshots(registry, { scheduledFor: snapshotDate(startedAt), startedAt });
+    return NextResponse.json(report, { status: nothingSucceeded(report) ? 500 : 200 });
   } catch (err) {
     // runSnapshots reports each container's failure itself; this is a bug.
     console.error('Snapshot run failed', err);

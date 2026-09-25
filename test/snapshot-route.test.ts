@@ -40,6 +40,12 @@ const opens = async (b64: string) =>
   );
 
 describe('the daily cron finishes a due master rotation', () => {
+  // A container, so the snapshot after the rotation has somewhere to run.
+  beforeEach(async () => {
+    const { registryKey } = await import('@/lib/containers');
+    await fake.hset(registryKey(), { [crypto.randomUUID()]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
+  });
+
   test('after the rollback window, on the new deployment', async () => {
     await prepareMasterRotation(NEW, Date.now() - ROTATION_GRACE_MS - 1000);
     process.env.MASTER_KEY = NEW;
@@ -86,6 +92,8 @@ describe('the daily cron finishes a due master rotation', () => {
 const { saveManualAccount } = await import('@/lib/manual');
 const { registryKey } = await import('@/lib/containers');
 const { readRuns } = await import('@/lib/snapshot-job');
+const { readCache, writeCache, CacheKey } = await import('@/lib/cache');
+const catchup = await import('@/app/api/snapshot/catchup/route');
 
 describe('the cron reports what it recorded, per container', () => {
   const A = crypto.randomUUID() as any;
@@ -114,14 +122,45 @@ describe('the cron reports what it recorded, per container', () => {
   test('failed when the clean snapshot fails to write, and tried again', async () => {
     await register();
     await withAccount();
-    fake.failNext('hset');
+    // The first hset is the run's "running" mark; the second, the total.
+    const hset = fake.hset.bind(fake);
+    let n = 0;
+    fake.hset = (async (...a: Parameters<typeof hset>) => {
+      if (++n === 2) throw new Error('down');
+      return hset(...a);
+    }) as typeof hset;
     const res = await cron();
-    expect(res.status).toBe(200);
+    fake.hset = hset;
+    expect(res.status).toBe(500); // nothing succeeded
     expect((await res.json()).results).toEqual([
       { container: A, status: 'failed', reason: 'The snapshot could not be written.', ms: expect.any(Number) },
     ]);
     expect((await results())[0].status).toBe('recorded');
     expect((await readRuns({ container: A }))[0].attempts).toBe(2);
+  });
+
+  test("a recorded snapshot clears the deployment container's caches", async () => {
+    await register();
+    await withAccount();
+    await writeCache({ container: A }, CacheKey.NetWorth, { stale: true });
+    expect(await readCache({ container: A }, CacheKey.NetWorth)).not.toBeNull();
+    await cron();
+    expect(await readCache({ container: A }, CacheKey.NetWorth)).toBeNull();
+  });
+
+  test('no container is a loud 500', async () => {
+    const res = await cron();
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toContain('No container exists yet');
+  });
+
+  test('the catch-up path is the same job', async () => {
+    await register();
+    await withAccount();
+    await cron();
+    const res = await catchup.GET(new Request('http://x/api/snapshot/catchup', { headers: { authorization: 'Bearer cron' } }));
+    expect((await res.json()).results).toEqual([{ container: A, status: 'already' }]);
+    expect(catchup.maxDuration).toBe(300);
   });
 
   test('unclean with nothing linked', async () => {

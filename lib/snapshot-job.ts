@@ -7,17 +7,24 @@
 //
 // Each run's outcome is kept in its container at "snapshot:runs", a hash of
 // date -> {status, reason?, at, attempts}, and read back by /api/snapshot-runs.
-// A container already recorded for the date is not run again, so a second
-// delivery of the cron, or the later catch-up run in vercel.json, only does
-// the containers that failed, came back unclean, or were never started.
+// A run is marked "running" before it starts, so one the platform killed
+// shows as that rather than as nothing. A container already recorded for the
+// date is not run again, and one being run elsewhere (a second delivery of
+// the cron) is left to it, so the catch-up cron (/api/snapshot/catchup) only
+// does the containers that failed, came back unclean, or were deferred.
+//
+// "snapshot:" keys describe this environment's cron, not the data: exports
+// leave them out and a restore keeps the target's own (lib/export.ts,
+// lib/restore.ts).
 //
 // Until the data moves into containers (PRs 10 to 13), the app's data still
 // lives under unscoped keys, and those belong to one container: this
 // deployment's, by the rule sessions use (lib/sessions.ts). Only that one is
 // snapshotted. Any other active container is reported as skipped, never run
-// against the unscoped data, and if this deployment's container cannot be
-// worked out, every container fails with the reason: a guess that turned out
-// wrong would write one container's history into another's.
+// against the unscoped data. If this deployment's container cannot be worked
+// out, or any container is being restored, every container fails with the
+// reason: a guess that turned out wrong would write one container's history
+// into another's, and a restore may be writing the very keys a snapshot would.
 //
 // If the registry cannot be read it is tried once more, then the cron fails
 // loudly. It never falls back to a default container or to unscoped keys.
@@ -26,7 +33,7 @@
 // for (scheduledFor), which is the seam that needs.
 
 import { redis, kc } from './storage';
-import { CONTAINER_ENV, ContainerError, listContainers, type ContainerId, type ContainerRecord, type Ctx } from './containers';
+import { CONTAINER_ENV, ContainerError, getContainer, listContainers, type ContainerId, type ContainerRecord, type Ctx } from './containers';
 import { pickDeployment } from './sessions';
 import { computeNetWorth, recordFetch, isRecordable } from './networth';
 import { rememberAccounts } from './last-known';
@@ -35,21 +42,33 @@ import { clearCaches } from './cache';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
-/** No container is started after this long, so a run fits the route's
- *  maxDuration (300 s) with room for the slowest Plaid call (45 s) to finish.
- *  One not started is reported as deferred, for the catch-up run. */
-export const START_BUDGET_MS = 200_000;
+/**
+ * No container is started later than this after the request began. The route
+ * may run 300 s (maxDuration), and one container's run can take two Plaid
+ * calls in series at up to 45 s each (balances, then holdings and liabilities
+ * together), plus up to 3 s waiting out rate limits: 93 s, and the rest is
+ * margin for the database. One not started is deferred to the catch-up run.
+ */
+export const START_BUDGET_MS = 180_000;
+/** How long a run holds its container's lock: the route's maxDuration, so a
+ *  run the platform killed releases it by the catch-up run. */
+export const LOCK_SECONDS = 300;
 /** False until the data moves into containers (PRs 10 to 13): until then only
- *  the container the unscoped data belongs to is run (see the header). The
- *  PR that moves the last of it flips this, and every active container runs. */
+ *  the container the unscoped data belongs to is run (see the header). Flip it
+ *  only with a snapshot that reads each container's own data: the default one
+ *  refuses to run while it is set. */
 export const DATA_IN_CONTAINERS = false;
 
 export type RunStatus = 'recorded' | 'unclean' | 'failed';
-export type RunRecord = { status: RunStatus; reason?: string; at: string; attempts: number };
+/** What is stored: a finished run's status, or "running" (started, not yet
+ *  finished, or killed) or "deferred" (not started in time). */
+export type StoredStatus = RunStatus | 'running' | 'deferred';
+export type RunRecord = { status: StoredStatus; reason?: string; at: string; attempts: number };
 
 export type ContainerOutcome = { container: ContainerId } & (
   | { status: RunStatus; reason?: string; ms: number }
   | { status: 'already' } // recorded earlier for this date
+  | { status: 'running' } // being run by another invocation
   | { status: 'skipped'; reason: string } // not run, and nothing written
   | { status: 'deferred' } // not started in time; the catch-up run does it
 );
@@ -58,8 +77,14 @@ export type SnapshotReport = { scheduled_for: string; results: ContainerOutcome[
 
 type Registry = (ContainerRecord & { id: ContainerId })[];
 
+const STORED = new Set<string>(['recorded', 'unclean', 'failed', 'running', 'deferred']);
+
 function runsKey(ctx: Ctx): string {
   return kc(ctx, 'snapshot:runs');
+}
+
+function lockKey(ctx: Ctx): string {
+  return kc(ctx, 'snapshot:lock');
 }
 
 /** The date a snapshot taken now is recorded under (lib/history.ts). */
@@ -76,7 +101,7 @@ export async function readRegistry(sleep: (ms: number) => Promise<void> = wait):
     return await listContainers();
   } catch (err) {
     if (err instanceof ContainerError) throw err;
-    console.error('Snapshot: the registry could not be read; trying once more.', errorName(err));
+    console.error('Snapshot: the registry could not be read; trying once more.', reasonOf(err));
     await sleep(REGISTRY_RETRY_MS);
     return await listContainers();
   }
@@ -86,10 +111,13 @@ function errorName(err: unknown): string {
   return err instanceof Error ? err.name : typeof err;
 }
 
-/** A short reason safe to store and return. Upstash errors end with the
- *  command and its arguments, which can include stored values: cut there. */
+/** A short reason safe to store, return and log. Upstash errors end with the
+ *  command and its arguments, which can include stored values: cut there.
+ *  Plaid's error code is kept; its response body is not. */
 export function reasonOf(err: unknown): string {
   if (err instanceof ContainerError) return err.message;
+  const plaid = (err as any)?.response?.data?.error_code;
+  if (typeof plaid === 'string') return `Plaid: ${plaid.slice(0, 80)}`;
   const message = err instanceof Error ? err.message : '';
   const cut = message.split(', command was')[0].slice(0, 160);
   return cut ? `${errorName(err)}: ${cut}` : errorName(err);
@@ -104,7 +132,7 @@ function parseRun(value: unknown): RunRecord | null {
       return null;
     }
   }
-  if (!r || typeof r !== 'object' || !['recorded', 'unclean', 'failed'].includes(r.status)) return null;
+  if (!r || typeof r !== 'object' || !STORED.has(r.status)) return null;
   if (typeof r.at !== 'string' || !Number.isSafeInteger(r.attempts)) return null;
   return { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}), at: r.at, attempts: r.attempts };
 }
@@ -125,14 +153,16 @@ export async function readRuns(ctx: Ctx, limit: number = 30): Promise<({ date: s
     .map(({ date, run }) => ({ date, ...run }));
 }
 
-async function writeRun(ctx: Ctx, date: string, status: RunStatus, reason: string | undefined, now: number): Promise<void> {
+/** Stores the outcome for the date. `attempts` counts the runs started, so
+ *  only "running" adds one. Never throws: the record is best effort. */
+async function writeRun(ctx: Ctx, date: string, status: StoredStatus, reason: string | undefined, now: number): Promise<void> {
   try {
     const prev = await readRun(ctx, date);
-    const record: RunRecord = { status, ...(reason ? { reason } : {}), at: new Date(now).toISOString(), attempts: (prev?.attempts ?? 0) + 1 };
+    const attempts = (prev?.attempts ?? 0) + (status === 'running' ? 1 : 0);
+    const record: RunRecord = { status, ...(reason ? { reason } : {}), at: new Date(now).toISOString(), attempts };
     await redis().hset(runsKey(ctx), { [date]: JSON.stringify(record) });
   } catch (err) {
-    // The snapshot itself is done or not either way; only the record is lost.
-    console.error('Snapshot: the outcome could not be recorded.', errorName(err));
+    console.error('Snapshot: the outcome could not be recorded.', reasonOf(err));
   }
 }
 
@@ -160,8 +190,16 @@ export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reaso
   return { status: 'recorded' };
 }
 
+/** snapshotData reads the unscoped data. Run once per container, it would
+ *  fetch and record that same data for each, and mark each one recorded. */
+async function refuseScoped(): Promise<never> {
+  throw new ContainerError('The snapshot does not read data from containers yet.');
+}
+
 export type RunOptions = {
   scheduledFor: string;
+  /** When the request began, for the start budget. */
+  startedAt?: number;
   /** For tests. */
   clock?: () => number;
   work?: (ctx: Ctx) => Promise<{ status: RunStatus; reason?: string }>;
@@ -174,42 +212,67 @@ export type RunOptions = {
 /** Runs every container in the registry for the date (see the header). */
 export async function runSnapshots(registry: Registry, opts: RunOptions): Promise<SnapshotReport> {
   const clock = opts.clock ?? Date.now;
-  const work = opts.work ?? snapshotData;
+  const scoped = opts.scopedData ?? DATA_IN_CONTAINERS;
+  const work = opts.work ?? (scoped ? refuseScoped : snapshotData);
   const budget = opts.budgetMs ?? START_BUDGET_MS;
   const date = opts.scheduledFor;
-  const started = clock();
-  const scoped = opts.scopedData ?? DATA_IN_CONTAINERS;
+  const started = opts.startedAt ?? clock();
 
-  const dep = scoped ? null : pickDeployment(registry, process.env[CONTAINER_ENV] ?? '');
-  if (dep?.kind === 'unusable') console.error(`Snapshot: no container can be snapshotted: ${dep.reason}`);
+  // While the data is unscoped, one container owns it, and nothing may run
+  // while that cannot be worked out or while any container is being restored.
+  let dep: { container: ContainerId } | null = null;
+  let blocked: string | null = null;
+  if (!scoped) {
+    const d = pickDeployment(registry, process.env[CONTAINER_ENV] ?? '');
+    if (registry.some((c) => c.status === 'restoring')) blocked = 'A container is being restored.';
+    else if (d.kind === 'container') dep = { container: d.container };
+    else blocked = d.kind === 'unusable' ? d.reason : 'No container is set up.';
+    if (blocked) console.error(`Snapshot: no container can be snapshotted: ${blocked}`);
+  }
 
   const one = async (c: Registry[number]): Promise<ContainerOutcome> => {
     const container = c.id;
+    const ctx: Ctx = { container };
     // Filtered here, before anything is read or written: a container being
     // restored would get a snapshot of half-restored data.
     if (c.status !== 'active') return { container, status: 'skipped', reason: `The container is ${c.status}.` };
-    if (dep?.kind === 'container' && dep.container !== container) {
-      return { container, status: 'skipped', reason: 'Its data is not in containers yet.' };
-    }
-    if (clock() - started > budget) return { container, status: 'deferred' };
+    if (dep && dep.container !== container) return { container, status: 'skipped', reason: 'Its data is not in containers yet.' };
 
-    const ctx: Ctx = { container };
     const t0 = clock();
+    let locked = false;
     let outcome: { status: RunStatus; reason?: string };
     try {
       if ((await readRun(ctx, date))?.status === 'recorded') return { container, status: 'already' };
-      if (dep && dep.kind !== 'container') throw new ContainerError(dep.kind === 'unusable' ? dep.reason : 'No container is set up.');
+      if (clock() - started > budget) {
+        await writeRun(ctx, date, 'deferred', undefined, clock());
+        return { container, status: 'deferred' };
+      }
+      if (blocked) throw new ContainerError(blocked);
+      locked = (await redis().set(lockKey(ctx), date, { nx: true, ex: LOCK_SECONDS })) !== null;
+      if (!locked) return { container, status: 'running' };
+      // Checked again with the lock held: the registry was read up to minutes
+      // ago, and a restore may have started since.
+      const now = await getContainer(container);
+      if (now?.status !== 'active') throw new ContainerError(`The container is ${now?.status ?? 'gone from the registry'}.`);
+      await writeRun(ctx, date, 'running', undefined, clock());
       outcome = await work(ctx);
     } catch (err) {
-      console.error(`Snapshot failed for container ${container}:`, (err as any)?.response?.data || err);
+      console.error(`Snapshot failed for container ${container}:`, reasonOf(err));
       outcome = { status: 'failed', reason: reasonOf(err) };
     }
     await writeRun(ctx, date, outcome.status, outcome.reason, clock());
+    if (locked) await redis().del(lockKey(ctx)).catch(() => {}); // else it expires
     return { container, ...outcome, ms: clock() - t0 };
   };
 
   const results = await inPool(registry, opts.concurrency ?? CONCURRENCY, one);
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };
+}
+
+/** Whether every container that ran failed: then nothing was snapshotted and
+ *  the cron should say so with its status, not only in its body. */
+export function nothingSucceeded(report: SnapshotReport): boolean {
+  return report.failed > 0 && report.results.every((r) => r.status === 'failed' || r.status === 'skipped' || r.status === 'deferred');
 }
 
 /** `fn` over every item, at most `limit` at a time, results in order. `fn`

@@ -7,7 +7,7 @@
       "schedule": "0 13 * * *"
     },
     {
-      "path": "/api/snapshot?catchup=1",
+      "path": "/api/snapshot/catchup",
       "schedule": "0 15 * * *"
     }
   ]
