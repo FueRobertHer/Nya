@@ -1,6 +1,7 @@
 'use client';
 
-// Accounts tab: linking an account's history across a reconnect (lib/links.ts).
+// Accounts tab, under Manage accounts: linking an account's history across a
+// reconnect (lib/links.ts).
 //
 // Shows only when there is something to decide or undo:
 //   - a suggestion: an account that stopped reporting and a new one that looks
