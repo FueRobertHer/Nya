@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { opsGuard, notPost } from '@/lib/ops';
 import {
   MasterKeyError,
+  activeKeyStatus,
   RotationError,
   finishMasterRotation,
   prepareMasterRotation,
@@ -11,7 +12,8 @@ import {
 // Rotate the master key (see lib/crypto.ts, "Master rotation"). Three bodies:
 //
 //   {"new_master_key": "<base64>"}   step 1: prepare every data key for it
-//   {} or empty                      report where a rotation stands
+//   {} or empty                      report where a rotation stands, and
+//                                    which data key new writes use
 //   {"finish_now": true}             remove the old locks now, skipping the
 //                                    24-hour rollback window (only works on
 //                                    the deployment running the new master)
@@ -54,7 +56,10 @@ export async function POST(req: Request) {
 
   try {
     if (fields.length === 0) {
-      return NextResponse.json(await rotationStatus());
+      // Status, plus which data key new writes use (null: still the legacy
+      // key), whether this deployment can use it, and whether the instance
+      // answering has been falling back to the legacy key.
+      return NextResponse.json({ ...(await rotationStatus()), ...(await activeKeyStatus()) });
     }
     if (fields.length === 1 && fields[0] === 'new_master_key') {
       if (typeof b.new_master_key !== 'string') return bad('new_master_key must be a string');

@@ -511,7 +511,11 @@ File paths are resolved from the repo root, since `bun run` runs there, and
 that is also where the pre-restore file is written.
 
 Don't use the app while a restore is running, and avoid 13:00 UTC: anything
-written to the target mid-restore makes the final comparison fail.
+written to the target mid-restore makes the final comparison fail. If a
+deployment serves the target (restoring over production, say), **redeploy it
+right after** the restore: a running instance remembers the data key it writes
+with for up to a minute, and if the restore replaced that key, anything it
+writes meanwhile can never be read.
 
 `.ndjson` files are git-ignored so a backup is never committed by accident.
 
@@ -593,14 +597,29 @@ encryption key makes previously stored tokens permanently undecryptable
 (you'd need to reconnect all accounts); losing/leaking the session secret
 would let someone forge a valid login cookie.
 
-**Key rotation is being added** (envelope encryption, `lib/crypto.ts`).
-Data is moving to **data keys** that the app generates and stores in Redis,
-each locked with one **master key**, `MASTER_KEY`, the only new secret in the
-environment. `PLAID_ENCRYPTION_KEY` stays as key `k0` for everything written
-before this. For now the app only **reads** the new format and still writes
-with `k0`; switching writes to a data key, and re-encrypting existing data
-under it, come next. Never remove `PLAID_ENCRYPTION_KEY` while any value still
-uses `k0`.
+**Encryption keys** (envelope encryption, `lib/crypto.ts`). Data is encrypted
+with **data keys** that the app generates and stores in Redis, each locked
+with one **master key**, `MASTER_KEY`. `PLAID_ENCRYPTION_KEY` is the original
+key, `k0`: everything written before data keys existed is under it.
+
+- **Turning it on:** generate a master key (`openssl rand -base64 32`), save it
+  in your password manager, and add it in Vercel as `MASTER_KEY` (Production,
+  marked Sensitive). The next write creates the first data key, and from then
+  on new data is written under it. Existing data stays under `k0` until the
+  re-encryption pass moves it (coming next).
+- **Without `MASTER_KEY`** the app keeps writing under `k0`, exactly as before.
+  If the data key can't be used for any reason, writes fall back to `k0` and the
+  log says so ("Writing with the legacy key", repeated hourly while it lasts),
+  so a problem with the master can never block a save.
+- Only a deployment with the **current** master creates a data key, never
+  while a master rotation is being prepared or is pending, and one at a time.
+  An old deployment still running after a rotation writes under `k0` instead.
+- **Never remove `PLAID_ENCRYPTION_KEY`** while any value still uses `k0`.
+- **Status:** an empty POST to `/api/ops/rotate-master` (with `OPS_ENABLED=1`)
+  reports `active_key`, the data key new writes use (`null` means still `k0`),
+  `active_key_problem` if this deployment cannot use it, and
+  `this_instance_fallback_since` if the instance that answered has been
+  writing under `k0` instead.
 
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.
