@@ -26,7 +26,7 @@
 //    restore; anything else throws.
 
 import { createHash } from 'node:crypto';
-import { k } from './storage';
+import { k, kEnv } from './storage';
 import { splitScoped } from './containers';
 import {
   byCodePoint,
@@ -197,7 +197,7 @@ export async function targetRegistry(client: ExportClient): Promise<Set<string> 
   const ids = new Set<string>();
   let cursor: string | number = 0;
   do {
-    const [next, flat] = await client.hscan(k(REGISTRY), cursor, { count: 200 });
+    const [next, flat] = await client.hscan(kEnv('containers'), cursor, { count: 200 });
     for (let i = 0; i + 1 < flat.length; i += 2) ids.add(String(flat[i]));
     cursor = next;
   } while (String(cursor) !== '0');
