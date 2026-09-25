@@ -549,10 +549,19 @@ Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
   device, this one included. Other devices are sent to the login page within
   a few seconds.
 - **Changing `APP_PASSWORD`** (then redeploying) ends every session too.
-- A session belongs to the container (see **Containers**); logging in needs
-  one to exist, and says so if it does not.
+- A session belongs to the container (see **Containers**) and only works in
+  a deployment using that container. **Logging in needs a container to
+  exist:** create it before deploying this version to a new environment
+  (production already has one). Existing sessions keep working either way;
+  without a container, new logins are refused with a message saying how to
+  create one. For local development, run the app with `OPS_ENABLED=1` and an
+  `OPS_SECRET` once, create the container with the same `curl` against
+  `http://localhost:3000`, and set `CONTAINER_ID` in `.env.local`.
 - Sessions from before this change stay valid until they expire (at most 30
   days) and do not end on a password change; Sign out everywhere does end them.
+- While the container cannot be worked out (a wrong `CONTAINER_ID`, or it is
+  being restored), no session is accepted. If the database itself is
+  unreachable, requests are let through, since every page needs it anyway.
 
 This is a single shared password, not per-user accounts — appropriate for
 one person's personal tracker, not for sharing with others. If you want

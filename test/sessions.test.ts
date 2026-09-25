@@ -6,7 +6,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { createSessionToken, verifySessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } = await import('@/lib/auth');
-const { currentEpoch, revokeAllSessions, sessionCurrent, forgetEpochs, EPOCH_REUSE_MS } = await import('@/lib/sessions');
+const { currentEpoch, revokeAllSessions, sessionCurrent, forgetEpochs, CHECK_REUSE_MS, deploymentContainer } = await import('@/lib/sessions');
 const { createFirstContainer, asContainerId } = await import('@/lib/containers');
 const { proxy } = await import('@/proxy');
 const loginRoute = await import('@/app/api/login/route');
@@ -118,7 +118,9 @@ describe('revocation', () => {
     expect(await sessionCurrent(before)).toBe(true);
 
     expect(await revokeAllSessions(container)).toBe(1);
-    expect(await sessionCurrent(before)).toBe(false); // this instance, at once
+    // At once in the same module; in production the proxy keeps its own copy,
+    // so there it takes up to CHECK_REUSE_MS.
+    expect(await sessionCurrent(before)).toBe(false);
 
     const after = (await verifySessionToken(await createSessionToken({ container, epoch: 1 })))!;
     expect(await sessionCurrent(after)).toBe(true);
@@ -130,7 +132,7 @@ describe('revocation', () => {
     expect(await sessionCurrent(s, t0)).toBe(true);
     await fake.incr(testKey(`c:${container}:sessions:epoch`)); // revoked elsewhere
     expect(await sessionCurrent(s, t0 + 1)).toBe(true); // still reusing what it read
-    expect(await sessionCurrent(s, t0 + EPOCH_REUSE_MS + 1)).toBe(false);
+    expect(await sessionCurrent(s, t0 + CHECK_REUSE_MS + 1)).toBe(false);
   });
 
   test('ends old-format sessions too', async () => {
@@ -154,6 +156,94 @@ describe('revocation', () => {
   });
 });
 
+describe("a session only counts in this deployment's container", () => {
+  const entry = (status: string) => JSON.stringify({ status, primary: true, created_at: 'x' });
+
+  test('old-format sessions are ended by sign out everywhere even with CONTAINER_ID unset', async () => {
+    delete process.env.CONTAINER_ID;
+    forgetEpochs();
+    const legacy = (await verifySessionToken(await legacyToken()))!;
+    expect(await sessionCurrent(legacy)).toBe(true);
+    await revokeAllSessions(container);
+    forgetEpochs();
+    expect(await sessionCurrent(legacy)).toBe(false);
+  });
+
+  test('an old-format session can sign out everywhere', async () => {
+    delete process.env.CONTAINER_ID;
+    const res = await logoutRoute.POST(
+      new NextRequest('http://localhost/api/logout', {
+        method: 'POST',
+        headers: { cookie: `${SESSION_COOKIE_NAME}=${await legacyToken()}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ everywhere: true }),
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(await currentEpoch(container, Date.now(), { fresh: true })).toBe(1);
+  });
+
+  test('a token naming another container is refused', async () => {
+    const other = asContainerId(crypto.randomUUID());
+    const s = (await verifySessionToken(await createSessionToken({ container: other, epoch: 0 })))!;
+    expect(await sessionCurrent(s)).toBe(false);
+  });
+
+  test('after CONTAINER_ID moves to another container, older tokens stop working', async () => {
+    const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
+    const next = asContainerId(crypto.randomUUID());
+    await fake.hset(testKey('containers'), { [next]: entry('active') });
+    process.env.CONTAINER_ID = next;
+    expect(await sessionCurrent(s)).toBe(false);
+  });
+
+  test('no session works while the container is not usable', async () => {
+    const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
+    const legacy = (await verifySessionToken(await legacyToken()))!;
+    await fake.hset(testKey('containers'), { [container]: entry('restoring') });
+    expect(await sessionCurrent(s)).toBe(false);
+    expect(await sessionCurrent(legacy)).toBe(false);
+    expect(await deploymentContainer()).toMatchObject({ kind: 'unusable' });
+  });
+
+  test('with no container at all, only an old-format session passes, unchecked', async () => {
+    const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
+    fake.reset();
+    delete process.env.CONTAINER_ID;
+    forgetEpochs();
+    expect(await deploymentContainer()).toEqual({ kind: 'none' });
+    expect(await sessionCurrent((await verifySessionToken(await legacyToken()))!)).toBe(true);
+    expect(await sessionCurrent(s)).toBe(false);
+  });
+
+  test('a damaged stored epoch refuses sessions rather than letting them through', async () => {
+    const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
+    await fake.set(testKey(`c:${container}:sessions:epoch`), 'garbage');
+    expect(await quiet(() => sessionCurrent(s))).toBe(false);
+  });
+
+  test('an outage is remembered briefly, and logged again after it recovers', async () => {
+    const s = (await verifySessionToken(await createSessionToken({ container, epoch: 0 })))!;
+    const logged: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => logged.push(a.join(' '));
+    try {
+      const t0 = Date.now();
+      fake.failNext('hgetall');
+      expect(await sessionCurrent(s, t0)).toBe(true);
+      const ops = fake.ops;
+      expect(await sessionCurrent(s, t0 + 1)).toBe(true);
+      expect(fake.ops).toBe(ops); // not asked again during the outage window
+
+      expect(await sessionCurrent(s, t0 + CHECK_REUSE_MS + 1)).toBe(true); // recovered
+      fake.failNext('hgetall');
+      expect(await sessionCurrent(s, t0 + 3 * CHECK_REUSE_MS)).toBe(true);
+    } finally {
+      console.error = orig;
+    }
+    expect(logged.filter((l) => l.includes('unavailable'))).toHaveLength(2);
+  });
+});
+
 describe('login', () => {
   const login = (password = 'hunter2') =>
     loginRoute.POST(new Request('http://x/api/login', { method: 'POST', body: JSON.stringify({ password }) }));
@@ -167,12 +257,22 @@ describe('login', () => {
     expect(await verifySessionToken(decodeURIComponent(cookieOf(res)!))).toMatchObject({ container, epoch: 2 });
   });
 
+  test('a new session starts on the current epoch, even if this instance read an older one', async () => {
+    await currentEpoch(container); // cached: 0
+    await fake.incr(testKey(`c:${container}:sessions:epoch`)); // another instance revoked
+    const res = await login();
+    const s = (await verifySessionToken(decodeURIComponent(cookieOf(res)!)))!;
+    expect(s.epoch).toBe(1);
+  });
+
   test('refuses when there is no container, and never creates one', async () => {
     fake.reset();
     delete process.env.CONTAINER_ID;
     const res = await quiet(() => login());
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toContain('No container');
+    const { error } = await res.json();
+    expect(error).toContain('No container');
+    expect(error).toContain('/api/ops/containers'); // says how to fix it
     expect(await fake.hgetall(testKey('containers'))).toBeNull();
   });
 

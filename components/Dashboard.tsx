@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
@@ -470,6 +470,39 @@ export default function Dashboard() {
     }
   }, []);
 
+  // A session ended elsewhere (signed out everywhere, or the password changed)
+  // makes every API call answer 401. Without this the dashboard would sit
+  // showing load errors; send it to the login page instead. A layout effect,
+  // so it is in place before any effect (this component's or a child's)
+  // makes the first requests.
+  useLayoutEffect(() => {
+    const original = window.fetch;
+    // Bound: a browser's fetch called without window as `this` throws.
+    const call = original.bind(window);
+    const watched = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const res = await call(input, init);
+      if (res.status === 401) {
+        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const url = new URL(raw, window.location.href);
+        if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
+          // The saved snapshot goes too: a device signed out elsewhere (a
+          // lost phone) must not keep painting balances, offline included.
+          try {
+            localStorage.removeItem(LOCAL_CACHE_KEY);
+          } catch {
+            // Best-effort.
+          }
+          window.location.href = '/login';
+        }
+      }
+      return res;
+    };
+    window.fetch = Object.assign(watched, original) as typeof window.fetch;
+    return () => {
+      window.fetch = original;
+    };
+  }, []);
+
   useEffect(() => {
     // Paint immediately from the last-known snapshot, then revalidate.
     try {
@@ -734,29 +767,6 @@ export default function Dashboard() {
     window.location.href = '/login';
   }, []);
 
-  // A session ended elsewhere (signed out everywhere, or the password changed)
-  // makes every API call answer 401. Without this the dashboard would sit
-  // showing load errors; send it to the login page instead.
-  useEffect(() => {
-    const original = window.fetch;
-    // Bound: a browser's fetch called without window as `this` throws.
-    const call = original.bind(window);
-    const watched = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const res = await call(input, init);
-      if (res.status === 401) {
-        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        const url = new URL(raw, window.location.href);
-        if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
-          window.location.href = '/login';
-        }
-      }
-      return res;
-    };
-    window.fetch = Object.assign(watched, original) as typeof window.fetch;
-    return () => {
-      window.fetch = original;
-    };
-  }, []);
 
   const onSuccess = useCallback(
     async (public_token: string, metadata: PlaidLinkOnSuccessMetadata) => {

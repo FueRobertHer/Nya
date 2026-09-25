@@ -58,7 +58,7 @@ export async function POST(req: Request) {
       console.error('Login refused:', err.message);
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
-    const token = await createSessionToken({ container, epoch: await currentEpoch(container) });
+    const token = await createSessionToken({ container, epoch: await currentEpoch(container, Date.now(), { fresh: true }) });
     const res = NextResponse.json({ success: true });
     res.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,

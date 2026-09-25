@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   if (everywhere) {
     const session = await verifySessionToken(req.cookies.get(SESSION_COOKIE_NAME)?.value);
-    const container = session ? sessionContainer(session) : null;
+    const container = session ? await sessionContainer(session) : null;
     if (!container) {
       return NextResponse.json({ error: 'This session names no container, so there is nothing to sign out of.' }, { status: 409 });
     }
