@@ -9,9 +9,13 @@
 // date -> {status, reason?, at, attempts}, and read back by /api/snapshot-runs.
 // A run is marked "running" before it starts, so one the platform killed
 // shows as that rather than as nothing. A container already recorded for the
-// date is not run again, and one being run elsewhere (a second delivery of
-// the cron) is left to it, so the catch-up cron (/api/snapshot/catchup) only
-// does the containers that failed, came back unclean, or were deferred.
+// date is not run again (checked again once its lock is held, and a recorded
+// day is never overwritten), and one being run elsewhere (a second delivery
+// of the cron) is left to it, so the catch-up cron (/api/snapshot/catchup)
+// only does the containers that failed, came back unclean, or were deferred.
+// `attempts` counts the runs started; a run refused before starting (blocked,
+// or its container no longer active) is stored as failed without adding one.
+// Entries older than RUNS_KEEP_DAYS are pruned.
 //
 // "snapshot:" keys describe this environment's cron, not the data: exports
 // leave them out and a restore keeps the target's own (lib/export.ts,
@@ -25,6 +29,8 @@
 // out, or any container is being restored, every container fails with the
 // reason: a guess that turned out wrong would write one container's history
 // into another's, and a restore may be writing the very keys a snapshot would.
+// The registry is read again once the lock is held. A restore that starts
+// after that, mid-run, is not excluded: restore does not look at the lock.
 //
 // If the registry cannot be read it is tried once more, then the cron fails
 // loudly. It never falls back to a default container or to unscoped keys.
@@ -33,6 +39,7 @@
 // for (scheduledFor), which is the seam that needs.
 
 import { redis, kc } from './storage';
+import { randomUUID } from 'node:crypto';
 import { CONTAINER_ENV, ContainerError, getContainer, listContainers, type ContainerId, type ContainerRecord, type Ctx } from './containers';
 import { pickDeployment } from './sessions';
 import { computeNetWorth, recordFetch, isRecordable } from './networth';
@@ -51,15 +58,27 @@ export const REGISTRY_RETRY_MS = 1000;
  */
 export const START_BUDGET_MS = 180_000;
 /** How long a run holds its container's lock: the route's maxDuration, so a
- *  run the platform killed releases it by the catch-up run. */
+ *  run the platform killed releases it by the catch-up run. The lock holds a
+ *  token only its taker releases, so a run that outlives it (anywhere the
+ *  platform does not end the function at maxDuration) cannot free another's. */
 export const LOCK_SECONDS = 300;
+/** How many days of outcomes are kept. */
+export const RUNS_KEEP_DAYS = 90;
+
+/** Deletes the lock only if it still holds this run's token. The first line
+ *  names the script for the test double. */
+export const RELEASE_LOCK = `-- nya:release-lock
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
 /** False until the data moves into containers (PRs 10 to 13): until then only
  *  the container the unscoped data belongs to is run (see the header). Flip it
  *  only with a snapshot that reads each container's own data: the default one
  *  refuses to run while it is set. */
 export const DATA_IN_CONTAINERS = false;
 
-export type RunStatus = 'recorded' | 'unclean' | 'failed';
+/** "empty": nothing is linked, so there is nothing to snapshot; not a
+ *  failure. "unclean": something could not be read, so no total. */
+export type RunStatus = 'recorded' | 'empty' | 'unclean' | 'failed';
 /** What is stored: a finished run's status, or "running" (started, not yet
  *  finished, or killed) or "deferred" (not started in time). */
 export type StoredStatus = RunStatus | 'running' | 'deferred';
@@ -77,7 +96,7 @@ export type SnapshotReport = { scheduled_for: string; results: ContainerOutcome[
 
 type Registry = (ContainerRecord & { id: ContainerId })[];
 
-const STORED = new Set<string>(['recorded', 'unclean', 'failed', 'running', 'deferred']);
+const STORED = new Set<string>(['recorded', 'empty', 'unclean', 'failed', 'running', 'deferred']);
 
 function runsKey(ctx: Ctx): string {
   return kc(ctx, 'snapshot:runs');
@@ -153,17 +172,31 @@ export async function readRuns(ctx: Ctx, limit: number = 30): Promise<({ date: s
     .map(({ date, run }) => ({ date, ...run }));
 }
 
-/** Stores the outcome for the date. `attempts` counts the runs started, so
- *  only "running" adds one. Never throws: the record is best effort. */
+/**
+ * Stores the outcome for the date. `attempts` counts the runs started, so
+ * only "running" adds one (a read then a write: two writers at once can lose
+ * one, which only miscounts). A recorded day is never overwritten, and a
+ * deferral never replaces an earlier outcome, whose reason says more. Never
+ * throws: the record is best effort.
+ */
 async function writeRun(ctx: Ctx, date: string, status: StoredStatus, reason: string | undefined, now: number): Promise<void> {
   try {
     const prev = await readRun(ctx, date);
+    if (prev?.status === 'recorded' && status !== 'recorded') return;
+    if (prev && status === 'deferred') return;
     const attempts = (prev?.attempts ?? 0) + (status === 'running' ? 1 : 0);
     const record: RunRecord = { status, ...(reason ? { reason } : {}), at: new Date(now).toISOString(), attempts };
     await redis().hset(runsKey(ctx), { [date]: JSON.stringify(record) });
+    if (status === 'running') await pruneRuns(ctx, now);
   } catch (err) {
     console.error('Snapshot: the outcome could not be recorded.', reasonOf(err));
   }
+}
+
+async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
+  const cutoff = snapshotDate(now - RUNS_KEEP_DAYS * 24 * 60 * 60 * 1000);
+  const old = (await redis().hkeys(runsKey(ctx))).filter((date) => date < cutoff);
+  if (old.length > 0) await redis().hdel(runsKey(ctx), ...old);
 }
 
 /**
@@ -175,7 +208,7 @@ async function writeRun(ctx: Ctx, date: string, status: StoredStatus, reason: st
 export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reason?: string }> {
   const { institutions, netWorth } = await computeNetWorth();
   const recorded = await recordFetch(institutions, netWorth);
-  if (institutions.length === 0) return { status: 'unclean', reason: 'Nothing is linked.' };
+  if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
   if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.' };
 
   // Record how to draw these accounts, alongside the balances. On a day the
@@ -239,6 +272,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     if (dep && dep.container !== container) return { container, status: 'skipped', reason: 'Its data is not in containers yet.' };
 
     const t0 = clock();
+    const token = randomUUID();
     let locked = false;
     let outcome: { status: RunStatus; reason?: string };
     try {
@@ -248,12 +282,17 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
         return { container, status: 'deferred' };
       }
       if (blocked) throw new ContainerError(blocked);
-      locked = (await redis().set(lockKey(ctx), date, { nx: true, ex: LOCK_SECONDS })) !== null;
+      locked = (await redis().set(lockKey(ctx), token, { nx: true, ex: LOCK_SECONDS })) !== null;
       if (!locked) return { container, status: 'running' };
-      // Checked again with the lock held: the registry was read up to minutes
-      // ago, and a restore may have started since.
-      const now = await getContainer(container);
-      if (now?.status !== 'active') throw new ContainerError(`The container is ${now?.status ?? 'gone from the registry'}.`);
+      // With the lock held: another run may have finished between the check
+      // above and taking the lock.
+      if ((await readRun(ctx, date))?.status === 'recorded') {
+        await release(ctx, token);
+        return { container, status: 'already' };
+      }
+      // And the registry again: it was read up to minutes ago, and a restore
+      // may have started since.
+      await recheck(container, scoped);
       await writeRun(ctx, date, 'running', undefined, clock());
       outcome = await work(ctx);
     } catch (err) {
@@ -261,7 +300,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       outcome = { status: 'failed', reason: reasonOf(err) };
     }
     await writeRun(ctx, date, outcome.status, outcome.reason, clock());
-    if (locked) await redis().del(lockKey(ctx)).catch(() => {}); // else it expires
+    if (locked) await release(ctx, token);
     return { container, ...outcome, ms: clock() - t0 };
   };
 
@@ -269,10 +308,37 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };
 }
 
-/** Whether every container that ran failed: then nothing was snapshotted and
- *  the cron should say so with its status, not only in its body. */
-export function nothingSucceeded(report: SnapshotReport): boolean {
-  return report.failed > 0 && report.results.every((r) => r.status === 'failed' || r.status === 'skipped' || r.status === 'deferred');
+/** The container is still active, and while the data is unscoped, no
+ *  container is being restored. */
+async function recheck(container: ContainerId, scoped: boolean): Promise<void> {
+  if (scoped) {
+    const rec = await getContainer(container);
+    if (rec?.status !== 'active') throw new ContainerError(`The container is ${rec?.status ?? 'gone from the registry'}.`);
+    return;
+  }
+  const all = await listContainers();
+  const rec = all.find((c) => c.id === container);
+  if (rec?.status !== 'active') throw new ContainerError(`The container is ${rec?.status ?? 'gone from the registry'}.`);
+  if (all.some((c) => c.status === 'restoring')) throw new ContainerError('A container is being restored.');
+}
+
+/** Frees the lock if it is still this run's. Never throws: it expires. */
+async function release(ctx: Ctx, token: string): Promise<void> {
+  try {
+    await redis().eval(RELEASE_LOCK, [lockKey(ctx)], [token]);
+  } catch (err) {
+    console.error('Snapshot: the lock could not be released; it will expire.', reasonOf(err));
+  }
+}
+
+const SNAPSHOTTED = new Set<string>(['recorded', 'already', 'running', 'empty']);
+
+/** Whether no container has a snapshot for the date, or is getting one: every
+ *  container failed, came back unclean, was deferred, or was skipped (the only
+ *  one restoring or archived, say). Nothing was recorded, and the cron says so
+ *  with its status, not only in its body. */
+export function nothingSnapshotted(report: SnapshotReport): boolean {
+  return !report.results.some((r) => SNAPSHOTTED.has(r.status));
 }
 
 /** `fn` over every item, at most `limit` at a time, results in order. `fn`

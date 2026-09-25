@@ -275,6 +275,12 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
+    if (name === '-- nya:release-lock') {
+      if (this.strings.get(keys[0]) !== args[0]) return 0;
+      this.strings.delete(keys[0]);
+      this.ttls.delete(keys[0]);
+      return 1;
+    }
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
       this.hash(keys[0]).set(args[0], args[1]);

@@ -7,6 +7,8 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
 // A balance call that is rate limited `limited` times before it answers.
+// mock.module is process-wide in Bun, so every Plaid call fetchInstitution can
+// make is stubbed, not only the one under test.
 const plaid = { limited: 0, calls: 0 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
@@ -20,6 +22,8 @@ mock.module('@/lib/plaid', () => ({
         },
       };
     },
+    investmentsHoldingsGet: async () => ({ data: { holdings: [], securities: [] } }),
+    liabilitiesGet: async () => ({ data: { liabilities: {} } }),
   },
 }));
 

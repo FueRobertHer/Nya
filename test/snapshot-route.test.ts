@@ -163,9 +163,18 @@ describe('the cron reports what it recorded, per container', () => {
     expect(catchup.maxDuration).toBe(300);
   });
 
-  test('unclean with nothing linked', async () => {
+  test('nothing linked is not a failure', async () => {
     await register();
-    expect(await results()).toEqual([{ container: A, status: 'unclean', reason: 'Nothing is linked.', ms: expect.any(Number) }]);
+    const res = await cron();
+    expect(res.status).toBe(200);
+    expect((await res.json()).results).toEqual([{ container: A, status: 'empty', reason: 'Nothing is linked.', ms: expect.any(Number) }]);
+  });
+
+  test('a sole container that is not active is a loud 500, not a quiet day', async () => {
+    await fake.hset(registryKey(), { [A]: JSON.stringify({ status: 'restoring', primary: true, created_at: 'x' }) });
+    const res = await cron();
+    expect(res.status).toBe(500);
+    expect((await res.json()).results).toEqual([{ container: A, status: 'skipped', reason: 'The container is restoring.' }]);
   });
 
   test('a registry that cannot be read is a loud 500, after one retry, and nothing is written', async () => {

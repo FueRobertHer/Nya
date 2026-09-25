@@ -589,7 +589,9 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   container on its own (`lib/snapshot-job.ts`) and answers 200 with one
   result per container, even when some failed. It answers 500 when nothing
   was snapshotted: the container registry cannot be read (after one retry),
-  holds no container, or every container that ran failed. A second entry two
+  holds no container, or no container was recorded (every one failed, came
+  back unclean, was deferred, or is not active). Nothing linked is not a
+  failure. A second entry two
   hours later (`/api/snapshot/catchup`) is the catch-up: containers already
   recorded that day are skipped, the rest (failed, unclean, or not started
   in time) are run again. Each container's outcomes are kept per date and

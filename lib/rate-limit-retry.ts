@@ -13,6 +13,10 @@
 
 /** Waits between attempts, in ms: three tries in all, about 3 s at most. */
 export const RATE_LIMIT_DELAYS_MS = [1000, 2000] as const;
+/** No retry once this long has passed since the first try. A 429 is normally
+ *  immediate; one that took most of the 45 s timeout to arrive is not waited
+ *  out again, or three tries could outlast the snapshot's time budget. */
+export const RATE_LIMIT_MAX_ELAPSED_MS = 10_000;
 
 export function isRateLimited(err: any): boolean {
   const res = err?.response;
@@ -25,13 +29,16 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 export async function withRateLimitRetry<T>(
   call: () => Promise<T>,
   delays: readonly number[] = RATE_LIMIT_DELAYS_MS,
-  sleep: (ms: number) => Promise<void> = wait
+  sleep: (ms: number) => Promise<void> = wait,
+  now: () => number = Date.now
 ): Promise<T> {
+  const start = now();
   for (let attempt = 0; ; attempt++) {
     try {
       return await call();
     } catch (err) {
       if (attempt >= delays.length || !isRateLimited(err)) throw err;
+      if (now() - start > RATE_LIMIT_MAX_ELAPSED_MS) throw err;
       await sleep(delays[attempt]);
     }
   }

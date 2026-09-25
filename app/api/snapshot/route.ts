@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 import { secretsMatch } from '@/lib/auth';
 import { finishMasterRotation } from '@/lib/crypto';
-import { nothingSucceeded, readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
+import { nothingSnapshotted, reasonOf, readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
 
 // Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
 // net-worth chart stays gapless even on days the app isn't opened. It runs
 // each container on its own (lib/snapshot-job.ts): the answer is 200 with a
 // result per container, even when some failed, because a 500 invites a retry
 // of the whole run. It answers 500 when nothing was snapshotted: the registry
-// could not be read, holds no container, or every container that ran failed
-// (the same body, so the cause is in the logs and the response alike). The
+// could not be read, holds no container, or no container was recorded (all
+// failed, unclean, deferred, or not active; the same body, so the cause is in
+// the logs and the response alike). Nothing linked is not a failure. The
 // catch-up cron (/api/snapshot/catchup, two hours later) runs the same job:
 // containers already recorded that day are skipped.
 //
@@ -31,13 +32,13 @@ export async function GET(req: Request) {
   // rotating to (lib/crypto.ts). Also happens on first use of a data key;
   // this makes sure it happens within a day even if none is used. Best
   // effort: a failure here must not cost the day's snapshot.
-  await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', err instanceof Error ? err.message : err));
+  await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', reasonOf(err)));
 
   let registry;
   try {
     registry = await readRegistry();
   } catch (err) {
-    console.error('Snapshot: the registry could not be read; nothing was snapshotted.', err instanceof Error ? err.message : err);
+    console.error('Snapshot: the registry could not be read; nothing was snapshotted.', reasonOf(err));
     return NextResponse.json({ error: 'The container registry could not be read; nothing was snapshotted.' }, { status: 500 });
   }
 
@@ -51,10 +52,10 @@ export async function GET(req: Request) {
 
   try {
     const report = await runSnapshots(registry, { scheduledFor: snapshotDate(startedAt), startedAt });
-    return NextResponse.json(report, { status: nothingSucceeded(report) ? 500 : 200 });
+    return NextResponse.json(report, { status: nothingSnapshotted(report) ? 500 : 200 });
   } catch (err) {
     // runSnapshots reports each container's failure itself; this is a bug.
-    console.error('Snapshot run failed', err);
+    console.error('Snapshot run failed', reasonOf(err));
     return NextResponse.json({ error: 'Snapshot failed' }, { status: 500 });
   }
 }
