@@ -93,6 +93,14 @@ describe('the list of keys', () => {
     const opaque: string[] = [];
     for (const file of files) {
       const src = readFileSync(file, 'utf8');
+      // kc(ctx, 'name'): the name is the second argument.
+      for (const m of src.matchAll(/\bkc\(\s*[A-Za-z_.]+\s*,\s*([^)]*?)\s*\)/g)) {
+        const quoted = /^(['"`])([^'"`$]*)\1$/.exec(m[1]);
+        const templated = /^`([^`$]*)\$\{/.exec(m[1]);
+        if (quoted) names.add(quoted[2]);
+        else if (templated) names.add(`${templated[1]}x`);
+        else if (!/^[a-zA-Z_]+: string$/.test(m[1])) opaque.push(`${file.slice(root.length + 1)}: kc(..., ${m[1]})`);
+      }
       for (const m of src.matchAll(/\bk(?:Env)?\(\s*([^)]*?)\s*\)/g)) {
         const arg = m[1];
         if (arg === '') continue; // "k()" in a comment
@@ -120,6 +128,13 @@ describe('the list of keys', () => {
     expect(classify('history:accounts:est:flat')).toBe('string');
     expect(classify('cache:net-worth')).toBe('cipher');
     expect(classify('crypto:keys')).toBe('plain');
+    expect(classify('containers')).toBe('plain');
+    const c = 'c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:';
+    expect(classify(`${c}goals`)).toBe('string');
+    expect(classify(`${c}history:accounts`)).toBe('hash');
+    expect(classify(`${c}brand-new`)).toBeNull();
+    expect(classify(`${c}${c}goals`)).toBeNull(); // never nested
+    expect(classify('c:not-a-uuid:goals')).toBeNull();
     expect(classify('something-new')).toBeNull();
     expect(classify('__proto__')).toBeNull();
   });

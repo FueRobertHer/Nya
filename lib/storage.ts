@@ -10,6 +10,7 @@
 // blob) so that two concurrent link flows can't clobber each other's writes.
 
 import { Redis } from '@upstash/redis';
+import type { Ctx } from './containers';
 
 // The @upstash/redis client speaks HTTP, so it needs the *REST* URL
 // (https://<host>), not a rediss:// connection string. Vercel's Upstash
@@ -103,19 +104,40 @@ function validPrefix(prefix: string): string {
   return prefix;
 }
 
+/**
+ * A key in the environment, not yet in any container.
+ *
+ * @deprecated Every record is moving into a container (#53): use kc()
+ * for anything that belongs to one, or kEnv() for the few environment-wide
+ * stores. Kept until the move, after which it is removed.
+ */
 export function k(key: string): string {
   return `${ENV_PREFIX}:${key}`;
 }
 
 /**
+ * A key inside one container: "<env>:c:<container id>:<key>".
+ *
+ * The container segment comes from a Ctx, which only resolveCtx() (or a test)
+ * produces, so a key cannot be built for a container nobody resolved.
+ */
+export function kc(ctx: Ctx, key: string): string {
+  return `${ENV_PREFIX}:c:${ctx.container}:${key}`;
+}
+
+/**
  * A key that belongs to the whole environment, never to one container.
  *
- * Identical to k() today. It exists so that when k() starts requiring a
- * container id (#53), environment-wide stores keep their one location instead
- * of being split per container. The encryption key store (lib/crypto.ts) is the
- * reason: a data key id must mean the same key everywhere in an environment,
- * or a value could not be decrypted without knowing which container's store to
- * look in.
+ * Identical to k() today, but it stays where it is when everything else moves
+ * into containers (#53). Only three things are environment-wide, and nothing
+ * else should be:
+ *   - the encryption key store (lib/crypto.ts): a data key id must mean the
+ *     same key everywhere in an environment, or a value could not be
+ *     decrypted without knowing which container's store to look in;
+ *   - the container registry (lib/containers.ts), which says what containers
+ *     exist, so cannot live inside one;
+ *   - the login rate limiter (app/api/login), which runs before anyone is
+ *     known.
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;

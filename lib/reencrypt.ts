@@ -92,6 +92,8 @@ const EXACT: Record<string, Kind> = {
   'history:backfill-done': 'plain',
   'history:backfill-pending': 'plain',
   'account-links:dismissed': 'plain',
+
+  containers: 'plain', // the container registry
 };
 
 const PREFIXES: [string, Kind][] = [
@@ -107,6 +109,9 @@ const PREFIXES: [string, Kind][] = [
 /** How a key (without the environment prefix) is stored, or null if it is not
  *  on the list. */
 export function classify(key: string): Kind | null {
+  // A key inside a container is stored like the same key outside one.
+  const scoped = /^c:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:(.+)$/.exec(key);
+  if (scoped) return scoped[1].startsWith('c:') ? null : classify(scoped[1]);
   if (Object.hasOwn(EXACT, key)) return EXACT[key];
   for (const [prefix, kind] of PREFIXES) if (key.startsWith(prefix)) return kind;
   return null;

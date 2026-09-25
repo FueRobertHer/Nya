@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSessionToken, verifyPassword, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@/lib/auth';
-import { redis, k } from '@/lib/storage';
+import { redis, kEnv } from '@/lib/storage';
 
 // Brute-force protection: at most MAX_FAILURES wrong passwords per IP per
 // window, tracked in Redis. Successful login clears the counter. If Redis is
@@ -11,7 +11,8 @@ const WINDOW_SECONDS = 15 * 60;
 function rateLimitKey(req: Request): string {
   // Vercel sets x-forwarded-for; first hop is the client.
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-  return k(`ratelimit:login:${ip}`);
+  // Environment-wide: it runs before anyone, or any container, is known.
+  return kEnv(`ratelimit:login:${ip}`);
 }
 
 export async function POST(req: Request) {
