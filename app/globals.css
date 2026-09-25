@@ -543,6 +543,9 @@ button:disabled {
   height: auto;
   /* the chart is a scrub surface -- don't let touches pan the page */
   touch-action: none;
+  /* nor select its labels while dragging to compare two days */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .chart-tick {

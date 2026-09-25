@@ -153,6 +153,12 @@ describe('NetWorthChart time ranges', () => {
     expect(html).toContain('aria-pressed="true">6M<');
   });
 
+  // Its change includes money added, so a percentage would read as a return.
+  test('an investment shows no percentage', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={year} rangeSet="investment" />);
+    expect(html).toMatch(/chart-readout-value">\+\$[\d,.]+</);
+  });
+
   test('opens an investment on year to date, and offers no 3Y or 5Y yet', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={year} rangeSet="investment" />);
     expect(html).toContain('Year to date');

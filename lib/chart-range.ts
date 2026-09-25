@@ -22,6 +22,14 @@ const MONTHS: Partial<Record<RangeKey, number>> = { '1M': 1, '3M': 3, '6M': 6, '
 const DAY_MS = 86_400_000;
 const parse = (d: string) => Date.parse(`${d}T00:00:00Z`);
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+const daysBetween = (a: string, b: string) => Math.round((parse(b) - parse(a)) / DAY_MS);
+
+/** Year to date isn't offered until it covers this many days: on January 2
+ *  it would be a one-day chart. */
+const MIN_YTD_DAYS = 14;
+/** A range whose first point comes more than this long after its start is
+ *  labelled with that point's date: a gap means it covers less than its name. */
+const LATE_START_DAYS = 7;
 
 /** A YYYY-MM-DD date moved back whole calendar months, clamped to the month's
  *  last day (Mar 31 less a month is Feb 28 or 29). */
@@ -49,7 +57,8 @@ export function sliceRange<P extends { date: string }>(points: P[], key: RangeKe
 }
 
 /** The ranges worth offering: All, and each range the history reaches past
- *  that still has two points to draw. */
+ *  that still has two points to draw (and year to date once it spans two
+ *  weeks). */
 export function availableRanges(points: { date: string }[], set: RangeSet): RangeKey[] {
   if (points.length < 2) return ['ALL'];
   const first = points[0].date;
@@ -57,20 +66,31 @@ export function availableRanges(points: { date: string }[], set: RangeSet): Rang
   return RANGE_SETS[set].keys.filter((key) => {
     const start = rangeStart(key, last);
     if (start === null) return true;
+    if (key === 'YTD' && daysBetween(start, last) < MIN_YTD_DAYS) return false;
     return first < start && sliceRange(points, key).length >= 2;
   });
 }
 
-/** The range a chart opens on: the set's initial range, else the next longer
- *  one offered (in January, YTD falls through to 1Y), else All. */
-export function initialRange(available: RangeKey[], set: RangeSet): RangeKey {
+/** The range a chart opens on: the set's initial range, else the next one
+ *  along the buttons that is offered and at least as long (in early January,
+ *  YTD falls through to 1Y), else All. "At least as long" is by where each
+ *  starts: before July, YTD comes after 6M but is shorter than it. */
+export function initialRange(available: RangeKey[], set: RangeSet, last: string): RangeKey {
   const { keys, initial } = RANGE_SETS[set];
-  for (const key of keys.slice(keys.indexOf(initial))) if (available.includes(key)) return key;
+  const want = rangeStart(initial, last)!;
+  for (const key of keys.slice(keys.indexOf(initial))) {
+    const start = rangeStart(key, last);
+    if (available.includes(key) && (start === null || start <= want)) return key;
+  }
   return 'ALL';
 }
 
-/** What the range covers, in words, for the readout. */
-export function rangeLabel(key: RangeKey, first: string): string {
+/** What the range covers, in words, for the readout: its name, or the date
+ *  its first point is from when that is well after the range's start (a gap
+ *  in the history), so the label never claims more than is shown. */
+export function rangeLabel(key: RangeKey, first: string, last: string): string {
+  const start = rangeStart(key, last);
+  if (start !== null && daysBetween(start, first) > LATE_START_DAYS) key = 'ALL';
   switch (key) {
     case '1M':
       return 'Past month';
@@ -91,6 +111,17 @@ export function rangeLabel(key: RangeKey, first: string): string {
       return `Since ${d}`;
     }
   }
+}
+
+/**
+ * What the fingers on the chart mean, from the day each is nearest (in the
+ * order they touched): one scrubs, two measure between the first two, none
+ * clears. Two on the same day scrub it. A mouse drag is the same as two.
+ */
+export function touchGesture(at: number[]): { active: number | null; measure: [number, number] | null } {
+  if (at.length === 0) return { active: null, measure: null };
+  if (at.length === 1 || at[0] === at[1]) return { active: at[0], measure: null };
+  return { active: null, measure: at[0] < at[1] ? [at[0], at[1]] : [at[1], at[0]] };
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

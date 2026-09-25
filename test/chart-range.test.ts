@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   availableRanges,
+  rangeLabel,
+  touchGesture,
   axisTicks,
   initialRange,
   monthsBefore,
@@ -61,9 +63,25 @@ describe('which ranges are offered', () => {
   });
 
   test('opens on the usual range, else the next longer one, else All', () => {
-    expect(initialRange(['1M', '3M', '6M', 'YTD', '1Y', 'ALL'], 'balance')).toBe('6M');
-    expect(initialRange(['1M', '3M', '1Y', 'ALL'], 'investment')).toBe('1Y'); // January: no YTD yet
-    expect(initialRange(['1M', 'ALL'], 'balance')).toBe('ALL');
+    expect(initialRange(['1M', '3M', '6M', 'YTD', '1Y', 'ALL'], 'balance', '2026-09-24')).toBe('6M');
+    expect(initialRange(['1M', '3M', '1Y', 'ALL'], 'investment', '2026-01-05')).toBe('1Y'); // January: no YTD yet
+    expect(initialRange(['1M', 'ALL'], 'balance', '2026-09-24')).toBe('ALL');
+  });
+
+  // Before July, year to date is shorter than 6 months, so it is not a
+  // stand-in for it, whatever order the buttons are in.
+  test('never falls through to a shorter range', () => {
+    const offered = availableRanges(daily('2025-11-01', '2026-02-15'), 'balance');
+    expect(offered).toEqual(['1M', '3M', 'YTD', 'ALL']);
+    expect(initialRange(offered, 'balance', '2026-02-15')).toBe('ALL');
+  });
+
+  test('year to date waits until it covers two weeks', () => {
+    expect(availableRanges(daily('2025-06-01', '2026-01-02'), 'investment')).not.toContain('YTD');
+    expect(availableRanges(daily('2025-06-01', '2026-01-14'), 'investment')).not.toContain('YTD');
+    expect(availableRanges(daily('2025-06-01', '2026-01-15'), 'investment')).toContain('YTD');
+    const offered = availableRanges(daily('2024-06-01', '2026-01-02'), 'investment');
+    expect(initialRange(offered, 'investment', '2026-01-02')).toBe('1Y');
   });
 });
 
@@ -97,5 +115,29 @@ describe('time axis labels', () => {
     for (const first of ['2026-07-24', '2026-06-24', '2025-12-01', '2023-09-24', '2016-01-01']) {
       expect(axisTicks(first, '2026-09-24').length).toBeLessThanOrEqual(6);
     }
+  });
+});
+
+describe('range labels', () => {
+  test('a range is called by its name', () => {
+    expect(rangeLabel('1M', '2026-08-24', '2026-09-24')).toBe('Past month');
+  });
+
+  // A gap: the range starts Aug 24 but its first point is Sep 20.
+  test('one whose first point comes well after its start is dated instead', () => {
+    expect(rangeLabel('1M', '2026-09-20', '2026-09-24')).toBe('Since Sep 20, 2026');
+  });
+});
+
+describe('touch gestures', () => {
+  test('one finger scrubs, two measure in order, none clears', () => {
+    expect(touchGesture([4])).toEqual({ active: 4, measure: null });
+    expect(touchGesture([9, 2])).toEqual({ active: null, measure: [2, 9] });
+    expect(touchGesture([3, 3])).toEqual({ active: 3, measure: null });
+    expect(touchGesture([])).toEqual({ active: null, measure: null });
+  });
+
+  test('a third finger is ignored', () => {
+    expect(touchGesture([1, 5, 8])).toEqual({ active: null, measure: [1, 5] });
   });
 });

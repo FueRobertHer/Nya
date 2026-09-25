@@ -31,6 +31,7 @@ import {
   initialRange,
   rangeLabel,
   sliceRange,
+  touchGesture,
   type RangeKey,
   type RangeSet,
 } from '@/lib/chart-range';
@@ -109,12 +110,14 @@ export default function NetWorthChart({
   rangeSet?: RangeSet;
   /** Open on this range instead of the set's usual one (a preview shows All). */
   initialRange?: RangeKey;
-  /** A debt: its change has no percentage, which would read as a return. */
+  /** A debt: its change has no percentage, which would read as a return.
+   *  Nor does an investment's: its change includes money added, and the
+   *  added and growth line says how much of it is growth. */
   owed?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const [active, setActive] = useState<number | null>(null);
-  const [measure, setMeasure] = useState<[number, number] | null>(null);
+  const [activeState, setActive] = useState<number | null>(null);
+  const [measureState, setMeasure] = useState<[number, number] | null>(null);
   const [picked, setPicked] = useState<RangeKey | null>(forcedRange ?? null);
   const [showInfo, setShowInfo] = useState(false);
   const infoId = useId();
@@ -123,8 +126,25 @@ export default function NetWorthChart({
   const dragFrom = useRef<number | null>(null);
 
   const ranges = useMemo(() => availableRanges(allPoints, rangeSet), [allPoints, rangeSet]);
-  const range = picked && ranges.includes(picked) ? picked : initialRange(ranges, rangeSet);
+  const range =
+    picked && ranges.includes(picked)
+      ? picked
+      : initialRange(ranges, rangeSet, allPoints[allPoints.length - 1]?.date ?? '');
   const points = useMemo(() => sliceRange(allPoints, range), [allPoints, range]);
+
+  // Scrubbed and measured days are indices into `points`: new points (a
+  // reload, or another range) make them point at other days, or past the end.
+  // Cleared here, during render, so this render never reads a stale one.
+  const [gesturePoints, setGesturePoints] = useState(points);
+  let active = activeState;
+  let measure = measureState;
+  if (gesturePoints !== points) {
+    setGesturePoints(points);
+    setActive(null);
+    setMeasure(null);
+    active = null;
+    measure = null;
+  }
   const baseline = useMemo(() => (baselineFor ? baselineFor(points) : null), [baselineFor, points]);
 
   // Geometry depends only on the data -- memoized so per-pointermove
@@ -229,10 +249,11 @@ export default function NetWorthChart({
     return { added, growth: vals[j] - vals[i] - added };
   }
   /** "+$2,340.00 (+4.1%)", marked approximate when it starts or ends on an
-   *  estimate. No percentage for a debt, or from a zero or negative start. */
+   *  estimate. No percentage for a debt or an investment (see `owed`), or
+   *  from a zero or negative start. */
   function change(i: number, j: number): { text: string; approx: boolean } {
     const d = vals[j] - vals[i];
-    const pct = !owed && vals[i] > 0 ? ` (${d < 0 ? '-' : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
+    const pct = !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? '-' : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
     const approx = !!(points[i].estimated || points[j].estimated);
     return { text: `${approx ? '≈ ' : ''}${signed(d, currency)}${pct}`, approx };
   }
@@ -281,31 +302,28 @@ export default function NetWorthChart({
     return best;
   }
 
-  /** Two indices in order, or null when they're the same day. */
-  function pair(a: number, b: number): [number, number] | null {
-    return a === b ? null : a < b ? [a, b] : [b, a];
-  }
-
-  // Touch: one finger scrubs, two measure between them.
+  // Touch and pen: one finger scrubs, two measure between them.
   function fromTouches() {
-    const at = [...pointers.current.values()].map(indexAt);
-    if (at.length >= 2) {
-      const m = pair(at[0], at[1]);
-      setMeasure(m);
-      setActive(m ? null : at[0]);
-    } else if (at.length === 1) {
-      setMeasure(null);
-      setActive(at[0]);
-    } else {
-      setMeasure(null);
-      setActive(null);
-    }
+    const g = touchGesture([...pointers.current.values()].map(indexAt));
+    setActive(g.active);
+    setMeasure(g.measure);
   }
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    // Only the main mouse button; a right-click opens the menu, not a drag.
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // Captured by the chart itself, for every kind of pointer: otherwise a
+    // touch is captured by the dot or crosshair it landed on, which is
+    // replaced as it moves, and a finger lifted off the chart would never
+    // report its pointerup and stay "down" for good.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // No active pointer to capture (a synthetic event): nothing to keep.
+    }
     if (e.pointerType === 'mouse') {
+      e.preventDefault(); // no text selection while dragging
       dragFrom.current = indexAt(e.clientX);
-      e.currentTarget.setPointerCapture?.(e.pointerId);
       setMeasure(null);
       setActive(dragFrom.current);
       return;
@@ -317,11 +335,13 @@ export default function NetWorthChart({
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     if (e.pointerType === 'mouse') {
       const i = indexAt(e.clientX);
+      // A drag begun before the points changed started on another chart.
+      if (dragFrom.current !== null && dragFrom.current > last) dragFrom.current = null;
       if (dragFrom.current !== null && e.buttons & 1) {
         // Dragging with the button held: measure from where it went down.
-        const m = pair(dragFrom.current, i);
-        setMeasure(m);
-        setActive(m ? null : i);
+        const g = touchGesture([dragFrom.current, i]);
+        setMeasure(g.measure);
+        setActive(g.active);
       } else {
         setActive(i);
       }
@@ -338,7 +358,7 @@ export default function NetWorthChart({
       setMeasure(null);
       return;
     }
-    pointers.current.delete(e.pointerId);
+    if (!pointers.current.delete(e.pointerId)) return; // already ended
     fromTouches();
   }
 
@@ -364,7 +384,7 @@ export default function NetWorthChart({
     readDate = `${day(active)}${points[active].estimated ? ' · estimated' : ''}`;
   } else {
     readValue = rangeChange.text;
-    readDate = rangeLabel(range, points[0].date);
+    readDate = rangeLabel(range, points[0].date, points[last].date);
   }
 
   return (
@@ -399,6 +419,7 @@ export default function NetWorthChart({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
         onPointerCancel={onPointerEnd}
+        onLostPointerCapture={onPointerEnd}
         onPointerLeave={onPointerLeave}
       >
         {/* recessive hairline gridlines with clean tick values */}
