@@ -556,6 +556,64 @@ button:disabled {
   font-size: 10px;
 }
 
+/* The info button at the end of the readout row: the explanations of the
+   lines are one tap away instead of under every chart. */
+.chart-info-btn {
+  width: auto;
+  margin-left: auto;
+  align-self: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  color: var(--muted);
+  line-height: 0;
+}
+
+.chart-info-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chart-info-btn[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.chart-info {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.chart-info p {
+  margin: 4px 0 0;
+}
+
+/* Time range buttons under a chart: a quiet segmented row, the chosen one in
+   the accent. Big enough to tap on a phone. */
+.chart-ranges {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.chart-range {
+  flex: 1;
+  width: auto;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart-range[aria-pressed="true"] {
+  background: rgba(91, 141, 239, 0.14);
+  color: var(--accent);
+}
+
 .chart-note {
   color: var(--muted);
   font-size: 11px;

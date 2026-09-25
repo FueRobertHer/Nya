@@ -10,7 +10,7 @@
 // renders first and the second line joins it when they arrive. They are the
 // same payload InvestmentActivity shows below, loaded once for both.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import { loadInvestmentActivity, type InvestmentActivityPayload } from './InvestmentActivity';
 import { contributionBaseline } from '@/lib/growth';
@@ -20,8 +20,14 @@ export default function AccountSparkline({
   itemId,
   currency,
   previewWith,
+  investment = false,
+  owed = false,
 }: {
   accountId: string;
+  /** An investment account: its chart offers ranges in years (YTD, 1Y, 3Y...). */
+  investment?: boolean;
+  /** A credit card or loan: its change shows no percentage. */
+  owed?: boolean;
   /** An earlier id to join onto this account's chart as a preview, before the
    *  user links it (lib/links.ts). Read-only. */
   previewWith?: string;
@@ -68,9 +74,12 @@ export default function AccountSparkline({
     };
   }, [accountId, itemId]);
 
-  const baseline = useMemo(
-    () => (points && activity ? contributionBaseline(points, activity.flows, activity.flows_from, activity.flows_to) : null),
-    [points, activity]
+  // Given the selected range's points, so money added and growth count from
+  // the start of the range.
+  const baselineFor = useCallback(
+    (shown: HistoryPoint[]) =>
+      activity ? contributionBaseline(shown, activity.flows, activity.flows_from, activity.flows_to) : null,
+    [activity]
   );
 
   if (failed) return <div className="error">Could not load account history.</div>;
@@ -84,5 +93,16 @@ export default function AccountSparkline({
       </p>
     );
   }
-  return <NetWorthChart points={points} label="Balance" baseline={baseline} currency={currency} />;
+  return (
+    <NetWorthChart
+      points={points}
+      label="Balance"
+      baselineFor={activity ? baselineFor : null}
+      currency={currency}
+      rangeSet={investment ? 'investment' : 'balance'}
+      // A preview is for checking the joined history, all of it.
+      initialRange={previewWith ? 'ALL' : undefined}
+      owed={owed}
+    />
+  );
 }
