@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import type { Ctx } from '@/lib/containers';
 import {
   directoryLabels,
   dismissAll,
@@ -11,7 +13,7 @@ import {
   suggestLinks,
   unlinkAccount,
 } from '@/lib/links';
-import { cacheCtx, clearCaches } from '@/lib/cache';
+import { clearCaches } from '@/lib/cache';
 
 // Linking an account's history across a reconnect (lib/links.ts).
 //
@@ -28,16 +30,17 @@ import { cacheCtx, clearCaches } from '@/lib/cache';
 const MAX_ID = 100;
 const id = (v: unknown) => (typeof v === 'string' && v.length > 0 && v.length <= MAX_ID ? v : null);
 
-async function offered() {
-  const inputs = await loadSuggestionInputs(await liveAccountIds());
+async function offered(ctx: Ctx) {
+  const inputs = await loadSuggestionInputs(ctx, await liveAccountIds(ctx));
   return { inputs, offer: suggestLinks(inputs) };
 }
 
 export async function GET() {
   try {
-    const { inputs, offer } = await offered();
+    const ctx = await dataCtx();
+    const { inputs, offer } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
-    const labels = await directoryLabels(ids);
+    const labels = await directoryLabels(ctx, ids);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
       to: l.to,
@@ -58,6 +61,8 @@ export async function GET() {
       broken: [...inputs.unreadableLinks],
     });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to load account links' }, { status: 500 });
   }
@@ -65,6 +70,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const body = await req.json().catch(() => null);
     const old = id(body?.old);
     const to = id(body?.to);
@@ -73,11 +79,11 @@ export async function POST(req: Request) {
     // "None of these": stop offering this earlier account at all.
     if (action === 'dismiss_all') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
-      const { offer } = await offered();
+      const { offer } = await offered(ctx);
       if (!isUnclaimed(old, offer)) {
         return NextResponse.json({ error: 'That account is not currently offered' }, { status: 409 });
       }
-      await dismissAll(old);
+      await dismissAll(ctx, old);
       return NextResponse.json({ dismissed: true });
     }
 
@@ -85,14 +91,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all", old, to }' }, { status: 400 });
     }
 
-    const { inputs, offer } = await offered();
+    const { inputs, offer } = await offered(ctx);
     if (!isOffered(old, to, offer)) {
       return NextResponse.json({ error: 'That pair is not currently offered' }, { status: 409 });
     }
 
     if (action === 'dismiss') {
       // Changes no view, so nothing to invalidate.
-      await dismissPair(old, to);
+      await dismissPair(ctx, old, to);
       return NextResponse.json({ dismissed: true });
     }
 
@@ -104,7 +110,7 @@ export async function POST(req: Request) {
     // from balances takes the target's kind: the user said it is the same
     // account, and the preview is where a wrong pairing would show.
     const old_type = inputs.directory[old]?.type ?? inputs.directory[to]?.type ?? null;
-    await linkAccounts(
+    await linkAccounts(ctx, 
       old,
       to,
       suggestion
@@ -112,9 +118,11 @@ export async function POST(req: Request) {
         : { basis: 'picked', old_type, old_first: unclaimed?.first, old_last: unclaimed?.last, old_last_balance: unclaimed?.last_balance }
     );
     // Cached payloads carry per-account history and hidden subtraction.
-    await clearCaches(await cacheCtx());
+    await clearCaches(ctx);
     return NextResponse.json({ linked: true });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to update account links' }, { status: 500 });
   }
@@ -122,13 +130,16 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
+    const ctx = await dataCtx();
     const body = await req.json().catch(() => null);
     const old = id(body?.old);
     if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
-    await unlinkAccount(old);
-    await clearCaches(await cacheCtx());
+    await unlinkAccount(ctx, old);
+    await clearCaches(ctx);
     return NextResponse.json({ unlinked: true });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to unlink' }, { status: 500 });
   }

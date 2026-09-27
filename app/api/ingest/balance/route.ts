@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
 import { rememberAccounts } from '@/lib/last-known';
 import { recordDirectory } from '@/lib/links';
 import { computeNetWorth, recordFetch } from '@/lib/networth';
-import { cacheCtx, clearCaches } from '@/lib/cache';
+import { clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
 
 // Machine-writable balance updates for manual accounts, so anything that can
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    const ctx = await dataCtx();
     // Read as text first so the size cap is enforced on the actual payload.
     // A Content-Length check alone is advisory: the header can be absent under
     // chunked encoding, or unparseable, and `NaN > limit` is false either way.
@@ -90,7 +92,7 @@ export async function POST(req: Request) {
       // escape the loop would turn a partial success into a bare 500 -- the
       // opposite of the per-id reporting contract below.
       try {
-        const existing = await getManualAccount(account_id);
+        const existing = await getManualAccount(ctx, account_id);
         if (!existing) {
           // Reported rather than silently ignored, so a script pointed at a
           // stale id fails visibly instead of looking healthy forever.
@@ -106,7 +108,7 @@ export async function POST(req: Request) {
           continue;
         }
 
-        await setManualBalance(account_id, balance);
+        await setManualBalance(ctx, account_id, balance);
         results.push({ account_id, status: 'updated' });
       } catch (err) {
         console.error(`Ingest failed for ${account_id}`, err);
@@ -117,7 +119,7 @@ export async function POST(req: Request) {
     const updated = results.filter((r) => r.status === 'updated').length;
 
     if (updated > 0) {
-      await clearCaches(await cacheCtx());
+      await clearCaches(ctx);
 
       // Record the snapshot here rather than waiting for the app to be opened
       // or for the 13:00 UTC cron. Without this a nightly script would write
@@ -125,7 +127,7 @@ export async function POST(req: Request) {
       // day behind forever. Same gating as /api/snapshot: only a clean,
       // non-empty read gets recorded.
       try {
-        const { institutions, netWorth } = await computeNetWorth();
+        const { institutions, netWorth } = await computeNetWorth(ctx);
         // `recorded` reflects whether the point actually landed, not just
         // whether we tried: recordSnapshot swallows its own errors, and a
         // script that trusts this field deserves the truth. recordFetch returns
@@ -135,13 +137,13 @@ export async function POST(req: Request) {
         // un-updated when the point is sitting in it. (A partly failed read
         // still records the accounts that answered, but that is not the chart
         // this field is about.)
-        const recorded = (await recordFetch(institutions, netWorth)) !== null;
+        const recorded = (await recordFetch(ctx, institutions, netWorth)) !== null;
         // Record how to draw these accounts, for the same reason /api/snapshot
         // does: this read may be the only clean one of the day, and an account
         // it learned about would otherwise sit in the snapshot with nothing to
         // render it from.
-        await rememberAccounts(institutions);
-        await recordDirectory(institutions);
+        await rememberAccounts(ctx, institutions);
+        await recordDirectory(ctx, institutions);
         return NextResponse.json({ updated, recorded, results });
       } catch (err) {
         // The balances did land; only the snapshot failed. Say so rather than
@@ -153,6 +155,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ updated, recorded: false, results });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Ingest failed' }, { status: 500 });
   }

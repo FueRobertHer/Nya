@@ -8,20 +8,13 @@
 // AES-256-GCM key as the Plaid access tokens (lib/crypto.ts) -- a
 // database-only leak exposes neither tokens nor balances.
 //
-// THE FIRST STORE INSIDE A CONTAINER (#53). Callers name a cache (CacheKey),
-// never a Redis key; the key is built here, with kc(), inside the container
-// the request resolved. Caches went first because they are disposable: a
-// mistake costs one cold load.
-//
-// A request that cannot resolve its container (CONTAINER_ID unset or wrong,
-// or the database failing) gets no cache, never a guessed key: every read
-// misses and every write is skipped, logged once per reason. Clears still
-// run where CONTAINER_ID points, since deleting cannot do harm. A cache is
-// never allowed to break the request that uses it.
+// Inside the request's container (#53), like all stored data. Callers name a
+// cache (CacheKey), never a Redis key; the key is built here, with kc(). A
+// cache is never allowed to break the request that uses it.
 
-import { redis, k, kc } from './storage';
+import { redis, kc, envPrefix } from './storage';
 import { encrypt, decrypt } from './crypto';
-import { CONTAINER_ENV, ContainerError, asContainerId, isContainerId, resolveCtx, type Ctx } from './containers';
+import type { Ctx } from './containers';
 
 const TTL_SECONDS = 15 * 60;
 
@@ -52,7 +45,7 @@ const INVESTMENT_ACTIVITY = 'cache:inv-activity:v4';
  * link or disconnect since should have cleared. Remove once no deployment
  * from before containers can come back.
  */
-const LEGACY_KEYS = () => [k('cache:net-worth'), k('cache:transactions'), k('cache:inv-activity:v4')];
+const LEGACY_KEYS = () => ['cache:net-worth', 'cache:transactions', 'cache:inv-activity:v4'].map((key) => envPrefix() + key);
 
 /** Every cache's key, spelled out, so the key-name check in
  *  test/reencrypt.test.ts can see each one. */
@@ -67,64 +60,7 @@ function keyOf(ctx: Ctx, which: CacheKey | typeof INVESTMENT_ACTIVITY): string {
   }
 }
 
-/**
- * How long a process reuses the container it resolved. Short, so a container
- * marked restoring or archived stops being cached into promptly; long enough
- * that a cache hit is one Redis round trip, not two.
- *
- * So for up to this long after a container is marked restoring, an instance
- * may still read and write its caches. Anything that restores into a live
- * container must clear its caches after its last write (or wait this long
- * after marking it, before deleting), or a payload computed from half-restored
- * data can be cached.
- */
-export const CTX_REUSE_MS = 30 * 1000;
-/** Distinct reasons remembered for "log once". Past this, the memory starts
- *  over, so a message that varies per request cannot grow it without bound. */
-const MAX_LOGGED_REASONS = 50;
-let _ctx: { env: string; ctx: Ctx; at: number } | null = null;
-const _logged = new Set<string>();
-
-/**
- * The container a request's caches live in, or null for "no cache this
- * request". Resolve it once per request and pass it to every call below.
- * A failure is logged once per distinct reason and never reused: the next
- * request tries again.
- */
-export async function cacheCtx(now: number = Date.now()): Promise<Ctx | null> {
-  const env = process.env[CONTAINER_ENV] ?? '';
-  if (_ctx && _ctx.env === env && now - _ctx.at >= 0 && now - _ctx.at < CTX_REUSE_MS) return _ctx.ctx;
-  try {
-    const ctx = await resolveCtx();
-    _ctx = { env, ctx, at: now };
-    return ctx;
-  } catch (err) {
-    // A ContainerError is written for the operator. Anything else is the
-    // database failing; Upstash appends the command it ran, which here holds
-    // only the registry key and a container id, but it is cut off anyway.
-    const why =
-      err instanceof ContainerError
-        ? err.message
-        : err instanceof Error
-          ? `${err.name}: ${err.message.replace(/, command was: [\s\S]*$/, '').slice(0, 200)}`
-          : 'error';
-    if (!_logged.has(why)) {
-      if (_logged.size >= MAX_LOGGED_REASONS) _logged.clear();
-      _logged.add(why);
-      console.error(`Caching is off: the container could not be resolved (${why}).`);
-    }
-    return null;
-  }
-}
-
-/** For tests. */
-export function forgetCacheCtx(): void {
-  _ctx = null;
-  _logged.clear();
-}
-
-export async function readCache<T>(ctx: Ctx | null, which: CacheKey): Promise<T | null> {
-  if (!ctx) return null;
+export async function readCache<T>(ctx: Ctx, which: CacheKey): Promise<T | null> {
   try {
     const blob = await redis().get<string>(keyOf(ctx, which));
     if (!blob) return null;
@@ -135,8 +71,7 @@ export async function readCache<T>(ctx: Ctx | null, which: CacheKey): Promise<T 
   }
 }
 
-export async function writeCache(ctx: Ctx | null, which: CacheKey, value: unknown): Promise<void> {
-  if (!ctx) return;
+export async function writeCache(ctx: Ctx, which: CacheKey, value: unknown): Promise<void> {
   try {
     await redis().set(keyOf(ctx, which), await encrypt(JSON.stringify(value)), { ex: TTL_SECONDS });
   } catch {
@@ -151,8 +86,7 @@ export async function writeCache(ctx: Ctx | null, which: CacheKey, value: unknow
  * so can be re-fetched on every tap -- this one makes live paginated Plaid
  * calls, so an uncached expand/collapse loop would hammer the API.
  */
-export async function readAccountCache<T>(ctx: Ctx | null, field: string): Promise<T | null> {
-  if (!ctx) return null;
+export async function readAccountCache<T>(ctx: Ctx, field: string): Promise<T | null> {
   try {
     const blob = await redis().hget<string>(keyOf(ctx, INVESTMENT_ACTIVITY), field);
     if (!blob) return null;
@@ -169,8 +103,7 @@ export async function readAccountCache<T>(ctx: Ctx | null, field: string): Promi
   }
 }
 
-export async function writeAccountCache(ctx: Ctx | null, field: string, value: unknown): Promise<void> {
-  if (!ctx) return;
+export async function writeAccountCache(ctx: Ctx, field: string, value: unknown): Promise<void> {
   const key = keyOf(ctx, INVESTMENT_ACTIVITY);
   try {
     await redis().hset(key, {
@@ -184,26 +117,15 @@ export async function writeAccountCache(ctx: Ctx | null, field: string, value: u
   }
 }
 
-/**
- * Where to clear when the container could not be resolved: the one
- * CONTAINER_ID names, unchecked. Deleting is harmless under a wrong id, and
- * skipping it would leave a payload a mutation should have dropped, to be
- * served again once resolving works. Only ever used to delete.
- */
-function clearTarget(ctx: Ctx | null): Ctx | null {
-  if (ctx) return ctx;
-  const raw = process.env[CONTAINER_ENV];
-  return isContainerId(raw) ? { container: asContainerId(raw) } : null;
-}
-
 /** Drop all cached payloads -- call after any mutation (link/disconnect). */
-export async function clearCaches(ctx: Ctx | null): Promise<void> {
+export async function clearCaches(ctx: Ctx): Promise<void> {
   try {
-    const target = clearTarget(ctx);
-    const keys = target
-      ? [keyOf(target, CacheKey.NetWorth), keyOf(target, CacheKey.Transactions), keyOf(target, INVESTMENT_ACTIVITY)]
-      : [];
-    await redis().del(...keys, ...LEGACY_KEYS());
+    await redis().del(
+      keyOf(ctx, CacheKey.NetWorth),
+      keyOf(ctx, CacheKey.Transactions),
+      keyOf(ctx, INVESTMENT_ACTIVITY),
+      ...LEGACY_KEYS()
+    );
   } catch {
     // Worst case the stale cache lives out its TTL.
   }
@@ -212,22 +134,18 @@ export async function clearCaches(ctx: Ctx | null): Promise<void> {
 /** Drop only the net-worth payload. Called when a live fetch comes back with a
  *  failed institution, so a healthy entry written before the failure can't keep
  *  being served alongside it for the rest of its TTL. */
-export async function clearNetWorthCache(ctx: Ctx | null): Promise<void> {
-  const target = clearTarget(ctx);
-  if (!target) return;
+export async function clearNetWorthCache(ctx: Ctx): Promise<void> {
   try {
-    await redis().del(keyOf(target, CacheKey.NetWorth));
+    await redis().del(keyOf(ctx, CacheKey.NetWorth));
   } catch {
     // Worst case the stale cache lives out its TTL.
   }
 }
 
 /** Drop only the transactions payload (e.g. after a recategorization). */
-export async function clearTransactionsCache(ctx: Ctx | null): Promise<void> {
-  const target = clearTarget(ctx);
-  if (!target) return;
+export async function clearTransactionsCache(ctx: Ctx): Promise<void> {
   try {
-    await redis().del(keyOf(target, CacheKey.Transactions));
+    await redis().del(keyOf(ctx, CacheKey.Transactions));
   } catch {
     // Worst case the stale cache lives out its TTL.
   }

@@ -51,12 +51,13 @@
 // series would jump by its balance while the reauth banner was up." Same
 // failure, same fix, wider scope.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { getLatestAccountSnapshot } from './history';
 import { getLinks, effectiveLinks, sameAccountIds, type Link } from './link-core';
 
-const ACCOUNT_META_HASH = k('accounts:meta');
+const ACCOUNT_META_HASH = (ctx: Ctx) => kc(ctx, 'accounts:meta');
 
 /**
  * How old the newest snapshot may be and still be presented as an account
@@ -108,7 +109,7 @@ type Fillable = {
  * Best-effort, and structurally unable to throw: this runs on the healthy path,
  * where a Redis hiccup must not cost the user their dashboard.
  */
-export async function rememberAccounts(institutions: Fillable[]): Promise<void> {
+export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Promise<void> {
   const fields: Record<string, string> = {};
 
   for (const inst of institutions) {
@@ -145,7 +146,7 @@ export async function rememberAccounts(institutions: Fillable[]): Promise<void> 
 
   if (Object.keys(fields).length === 0) return;
   try {
-    await redis().hset(ACCOUNT_META_HASH, fields);
+    await redis().hset(ACCOUNT_META_HASH(ctx), fields);
   } catch {
     // Worst case an institution that fails later shows the plain error card
     // instead of its balances. Only that institution: records are per Item.
@@ -158,10 +159,10 @@ export async function rememberAccounts(institutions: Fillable[]): Promise<void> 
  *  `strict` throws instead, on a failed read or any unreadable record, for a
  *  caller that writes on the strength of the answer (lib/links.ts
  *  liveAccountIds). */
-async function recallByItem(strict = false): Promise<Record<string, RememberedAccount[]>> {
+async function recallByItem(ctx: Ctx, strict = false): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
-    map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH);
+    map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH(ctx));
   } catch (err) {
     if (strict) throw err;
     return {};
@@ -199,7 +200,7 @@ async function recallByItem(strict = false): Promise<Record<string, RememberedAc
 
   if (legacy.length > 0) {
     try {
-      await redis().hdel(ACCOUNT_META_HASH, ...legacy);
+      await redis().hdel(ACCOUNT_META_HASH(ctx), ...legacy);
     } catch {
       // Best effort; they stay inert either way.
     }
@@ -216,10 +217,10 @@ async function recallByItem(strict = false): Promise<Record<string, RememberedAc
  * erroring, and the live fetch is the thing that failed -- so Hide on a
  * recovered row would 404 without this.
  */
-export async function findRememberedAccount(
+export async function findRememberedAccount(ctx: Ctx, 
   account_id: string
 ): Promise<{ item_id: string; account: RememberedAccount } | null> {
-  const byItem = await recallByItem();
+  const byItem = await recallByItem(ctx);
   for (const [item_id, accounts] of Object.entries(byItem)) {
     const account = accounts.find((a) => a.account_id === account_id);
     if (account) return { item_id, account };
@@ -235,9 +236,9 @@ export async function findRememberedAccount(
  * and unlike the net-worth cache it doesn't expire. Any Item that has ever
  * loaded successfully is covered.
  */
-export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
+export async function rememberedIdsForItem(ctx: Ctx, item_id: string): Promise<string[]> {
   try {
-    const blob = await redis().hget<string>(ACCOUNT_META_HASH, item_id);
+    const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), item_id);
     if (!blob) return [];
     const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
     if (!Array.isArray(parsed)) return [];
@@ -254,8 +255,8 @@ export async function rememberedIdsForItem(item_id: string): Promise<string[]> {
  * at once (lib/vanished.ts). Upstash is HTTP, so per-Item reads cost a round
  * trip each on the uncached dashboard path; this pays one for all of them.
  */
-export async function rememberedIdsByItem(strict = false): Promise<Record<string, string[]>> {
-  const byItem = await recallByItem(strict);
+export async function rememberedIdsByItem(ctx: Ctx, strict = false): Promise<Record<string, string[]>> {
+  const byItem = await recallByItem(ctx, strict);
   const out: Record<string, string[]> = {};
   for (const [item_id, accounts] of Object.entries(byItem)) {
     out[item_id] = accounts.map((a) => a.account_id);
@@ -265,15 +266,15 @@ export async function rememberedIdsByItem(strict = false): Promise<Record<string
 
 /** Drops one Item's record, on disconnect. Safe because attribution is per
  *  Item: removing this record can't affect any other institution's recovery. */
-export async function forgetItem(item_id: string): Promise<void> {
+export async function forgetItem(ctx: Ctx, item_id: string): Promise<void> {
   try {
-    await redis().hdel(ACCOUNT_META_HASH, item_id);
+    await redis().hdel(ACCOUNT_META_HASH(ctx), item_id);
   } catch {
     // Best effort; a stale record is inert once no Item carries that id.
   }
 }
 
-export async function fillFromLastKnown(institutions: Fillable[]): Promise<StaleFill[]> {
+export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Promise<StaleFill[]> {
   const broken = institutions.filter(
     (i) =>
       i.error &&
@@ -298,11 +299,11 @@ export async function fillFromLastKnown(institutions: Fillable[]): Promise<Stale
   // than a convenient one -- snapshots exist only for days when everything
   // answered, so there is exactly one newest such day for all of them.
   const [last, byItem, links] = await Promise.all([
-    getLatestAccountSnapshot(),
-    recallByItem(),
+    getLatestAccountSnapshot(ctx),
+    recallByItem(ctx),
     // Recovery is display-only, so links that can't be read just mean an
     // account known by an earlier id isn't found under it.
-    getLinks().catch(() => new Map<string, Link>()),
+    getLinks(ctx).catch(() => new Map<string, Link>()),
   ]);
   if (!last) return [];
   // A link whose old id is live again is paused (see effectiveLinks): following

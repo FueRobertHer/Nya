@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { CountryCode, Products } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
@@ -6,8 +7,9 @@ import { getItems } from '@/lib/storage';
 
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const { item_id, add_liabilities } = await req.json();
-    const items = await getItems();
+    const items = await getItems(ctx);
     const item = items.find((i) => i.item_id === item_id);
     if (!item) {
       return NextResponse.json({ error: 'Unknown item' }, { status: 404 });
@@ -35,6 +37,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json(response.data);
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     // In update mode the institution is already fixed, so asking for a product
     // it doesn't support fails here -- after the user has already tapped the

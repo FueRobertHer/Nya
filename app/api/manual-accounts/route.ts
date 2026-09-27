@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import type { Ctx } from '@/lib/containers';
 import {
   getManualAccounts,
   getManualAccount,
@@ -13,7 +15,7 @@ import {
   type ManualType,
 } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
-import { cacheCtx, clearCaches } from '@/lib/cache';
+import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { pruneHidden } from '@/lib/hidden';
 
@@ -76,20 +78,23 @@ function validate(body: DraftInput): { error: string } | { value: Validated } {
  *  reconstructed without this account, so it would sit short by its balance
  *  and put a visible step at the estimated/real seam. A rename doesn't change
  *  any total, and recomputing forces a full Plaid transaction re-pull. */
-async function invalidate(balanceChanged: boolean): Promise<void> {
+async function invalidate(ctx: Ctx, balanceChanged: boolean): Promise<void> {
   // Flag first, cache second. The other order leaves a window where a
   // /api/net-worth request reads the flag as still-set and re-caches
   // `backfill_stale: false`, pinning it for the TTL and silently dropping the
   // recompute this call just asked for. (/api/hidden-accounts already does it
   // in this order.)
-  if (balanceChanged) await clearBackfillDone();
-  await clearCaches(await cacheCtx());
+  if (balanceChanged) await clearBackfillDone(ctx);
+  await clearCaches(ctx);
 }
 
 export async function GET() {
   try {
-    return NextResponse.json({ accounts: await getManualAccounts() });
+    const ctx = await dataCtx();
+    return NextResponse.json({ accounts: await getManualAccounts(ctx) });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to load manual accounts' }, { status: 500 });
   }
@@ -99,12 +104,13 @@ export async function GET() {
  *  one that collides with an existing account's history. */
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const body = await req.json();
     const result = validate(body);
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
 
     // Throws (and 500s) rather than treating an unreadable hash as empty.
-    const existing = await getManualAccounts();
+    const existing = await getManualAccounts(ctx);
     if (existing.length >= MAX_ACCOUNTS) {
       return NextResponse.json(
         { error: `At most ${MAX_ACCOUNTS} manual accounts` },
@@ -117,10 +123,12 @@ export async function POST(req: Request) {
       account_id: newManualId(),
       updated_at: new Date().toISOString(),
     };
-    await saveManualAccount(account);
-    await invalidate(true);
+    await saveManualAccount(ctx, account);
+    await invalidate(ctx, true);
     return NextResponse.json({ account });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to add manual account' }, { status: 500 });
   }
@@ -129,6 +137,7 @@ export async function POST(req: Request) {
 /** Updates one existing account in place. Only the named account is written. */
 export async function PATCH(req: Request) {
   try {
+    const ctx = await dataCtx();
     const body = await req.json();
     const account_id = String(body?.account_id ?? '').slice(0, 80);
     if (!account_id || !isManualId(account_id)) {
@@ -137,7 +146,7 @@ export async function PATCH(req: Request) {
     const result = validate(body);
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
 
-    const existing = await getManualAccount(account_id);
+    const existing = await getManualAccount(ctx, account_id);
     if (!existing) {
       return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
     }
@@ -150,10 +159,12 @@ export async function PATCH(req: Request) {
       // ..." line reflects the last real balance change rather than a rename.
       updated_at: balanceChanged ? new Date().toISOString() : existing.updated_at,
     };
-    await saveManualAccount(account);
-    await invalidate(balanceChanged);
+    await saveManualAccount(ctx, account);
+    await invalidate(ctx, balanceChanged);
     return NextResponse.json({ account });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to update manual account' }, { status: 500 });
   }
@@ -165,17 +176,20 @@ export async function PATCH(req: Request) {
  *  account is gone. */
 export async function DELETE(req: Request) {
   try {
+    const ctx = await dataCtx();
     const body = await req.json();
     const account_id = String(body?.account_id ?? '').slice(0, 80);
     if (!account_id || !isManualId(account_id)) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
     }
-    await removeManualAccount(account_id);
+    await removeManualAccount(ctx, account_id);
     // The account is gone, so a hidden entry naming it would linger forever.
-    await pruneHidden([account_id]);
-    await invalidate(true);
+    await pruneHidden(ctx, [account_id]);
+    await invalidate(ctx, true);
     return NextResponse.json({ success: true });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to remove manual account' }, { status: 500 });
   }

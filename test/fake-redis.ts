@@ -22,6 +22,7 @@ export type FakeCommand =
   | 'hscan'
   | 'type'
   | 'strlen'
+  | 'rename'
   | 'ttl'
   | 'getrange'
   | 'eval';
@@ -155,8 +156,20 @@ export class FakeRedis {
 
   async hdel(key: string, ...fields: string[]): Promise<void> {
     this.gate('hdel');
+    this.hdelNow(key, fields);
+  }
+
+  /** HDEL without the gate, for the scripts (a script runs whole or not at
+   *  all, so an armed failure never lands halfway through one). */
+  private hdelNow(key: string, fields: string[]): void {
     const h = this.hashes.get(key);
-    if (h) for (const f of fields) h.delete(f);
+    if (!h) return;
+    for (const f of fields) h.delete(f);
+    // Like Redis: a hash with no fields left no longer exists.
+    if (h.size === 0) {
+      this.hashes.delete(key);
+      this.ttls.delete(key);
+    }
   }
 
   async hkeys(key: string): Promise<string[]> {
@@ -184,6 +197,28 @@ export class FakeRedis {
     this.gate('ttl');
     if (!this.strings.has(key) && !this.hashes.has(key)) return -2;
     return this.ttls.get(key) ?? -1;
+  }
+
+  /** Moves a key, replacing any at the destination, keeping its expiry. */
+  async rename(from: string, to: string): Promise<'OK'> {
+    this.gate('rename');
+    return this.renameNow(from, to);
+  }
+
+  /** RENAME without the gate, for the scripts. */
+  private renameNow(from: string, to: string): 'OK' {
+    if (!this.strings.has(from) && !this.hashes.has(from)) throw new Error('ERR no such key');
+    this.strings.delete(to);
+    this.hashes.delete(to);
+    this.ttls.delete(to);
+    if (this.strings.has(from)) this.strings.set(to, this.strings.get(from)!);
+    else this.hashes.set(to, this.hashes.get(from)!);
+    const ttl = this.ttls.get(from);
+    if (ttl !== undefined) this.ttls.set(to, ttl);
+    this.strings.delete(from);
+    this.hashes.delete(from);
+    this.ttls.delete(from);
+    return 'OK';
   }
 
   /** Length of a string value; 0 for a missing key, like Redis. */
@@ -289,6 +324,55 @@ export class FakeRedis {
       this.ttls.delete(keys[0]);
       return 1;
     }
+    // The same digest lib/move.ts computes (and DIGEST_LUA in Redis).
+    const digestOf = (key: string): string => {
+      if (this.strings.has(key)) return sha1('S' + this.strings.get(key)!);
+      const h = this.hashes.get(key);
+      if (!h || h.size === 0) return '';
+      return sha1('H' + [...h.entries()].map(([f, v]) => sha1(`${f}\0${v}`)).sort().join(''));
+    };
+    if (name === '-- nya:move-probe') return digestOf(keys[0]);
+    if (name === '-- nya:move-set') {
+      if (this.strings.get(keys[2]) !== args[5]) return -1;
+      const now = digestOf(keys[0]);
+      if (now === args[4] && this.hashes.get(keys[1])?.get(args[3]) === args[4]) return 1;
+      if (now !== args[0]) return 0;
+      this.hashes.delete(keys[0]);
+      this.strings.set(keys[0], args[1]);
+      if (Number(args[2]) > 0) this.ttls.set(keys[0], Number(args[2]));
+      else this.ttls.delete(keys[0]);
+      this.hash(keys[1]).set(args[3], args[4]);
+      return 1;
+    }
+    if (name === '-- nya:move-swap') {
+      if (this.strings.get(keys[3]) !== args[3]) return -1;
+      const now = digestOf(keys[0]);
+      if (now === args[2] && this.hashes.get(keys[1])?.get(args[1]) === args[2]) return 1;
+      if (now !== args[0]) return 0;
+      if (digestOf(keys[2]) !== args[2]) return -2;
+      this.renameNow(keys[2], keys[0]);
+      if (args[4] === '1') this.ttls.delete(keys[0]);
+      this.hash(keys[1]).set(args[1], args[2]);
+      return 1;
+    }
+    if (name === '-- nya:move-resolve') {
+      if (this.strings.get(keys[3]) !== args[3]) return -1;
+      if (digestOf(keys[0]) !== args[0] || digestOf(keys[1]) !== args[1]) return 0;
+      if (args[0] === '') this.hdelNow(keys[2], [args[2]]);
+      else this.hash(keys[2]).set(args[2], args[0]);
+      return 1;
+    }
+    if (name === '-- nya:move-delete') {
+      if (this.strings.get(keys[2]) !== args[2]) return -1;
+      const now = digestOf(keys[0]);
+      if (now === '' && !this.hashes.get(keys[1])?.has(args[1])) return 1;
+      if (now !== args[0]) return 0;
+      this.strings.delete(keys[0]);
+      this.hashes.delete(keys[0]);
+      this.ttls.delete(keys[0]);
+      this.hdelNow(keys[1], [args[1]]);
+      return 1;
+    }
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
@@ -319,6 +403,44 @@ export function testKey(key: string): string {
   return `test:${key}`;
 }
 
+/** The container tests keep their data in, unless a test needs another. A
+ *  valid v4 UUID, so it passes isContainerId. */
+export const TEST_CONTAINER = '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b';
+export const TEST_CTX = { container: TEST_CONTAINER } as { container: any };
+
+/** Registers TEST_CONTAINER as the one active container, so a route's
+ *  dataCtx() resolves to it. Pair with forgetEpochs() (lib/sessions.ts), which
+ *  drops the few seconds the deployment's container is reused for. */
+export async function registerTestContainer(fake: FakeRedis, status: 'active' | 'restoring' | 'archived' = 'active'): Promise<void> {
+  await fake.hset(testKey('containers'), {
+    [TEST_CONTAINER]: JSON.stringify({ status, primary: true, created_at: '2026-01-01T00:00:00.000Z' }),
+  });
+}
+
+/** Environment-wide stores (kEnv): the only keys allowed outside a container. */
+const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff'];
+
+/**
+ * Every key the fake holds that is stored data outside any container. After
+ * the move (#53) nothing may write one, so data tests assert this is empty
+ * after every test: a write that slipped back to an unscoped key fails loudly
+ * even where the test only reads its container's keys.
+ */
+export function unscopedDataKeys(fake: FakeRedis): string[] {
+  const all = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()] as string[];
+  return all.filter((key) => {
+    if (!key.startsWith('test:') || key.startsWith('test:c:')) return false;
+    const rel = key.slice('test:'.length);
+    return !ENV_WIDE.some((p) => rel === p || (p.endsWith(':') && rel.startsWith(p)));
+  });
+}
+
+/** A key inside a container, as the mocked kc() builds it (TEST_CTX's by
+ *  default). */
+export function ctxKey(key: string, ctx: { container: string } = TEST_CTX): string {
+  return testKey(`c:${ctx.container}:${key}`);
+}
+
 /**
  * The full shape of lib/storage, for `mock.module('@/lib/storage', ...)`.
  *
@@ -334,20 +456,20 @@ export function storageMock(fake: FakeRedis) {
     // The fake already stores and returns plain strings, which is exactly what
     // the raw client promises, so one instance serves both.
     rawRedis: () => fake,
-    k: testKey,
+    envPrefix: () => testKey(''),
     kEnv: testKey,
-    kc: (ctx: { container: string }, key: string) => testKey(`c:${ctx.container}:${key}`),
+    kc: (ctx: { container: string }, key: string) => ctxKey(key, ctx),
     // Backed by the fake, so code that filters by the stored Items sees the
-    // ones a test seeds (none unless it does).
-    getItems: async () =>
-      Object.values((await fake.hgetall<Record<string, unknown>>(testKey('plaid:items'))) ?? {}).map((v) =>
+    // ones a test seeds (none unless it does), in the container asked for.
+    getItems: async (ctx: { container: string }) =>
+      Object.values((await fake.hgetall<Record<string, unknown>>(ctxKey('plaid:items', ctx))) ?? {}).map((v) =>
         typeof v === 'string' ? JSON.parse(v) : v
       ),
-    saveItem: async (item: { item_id: string }) => {
-      await fake.hset(testKey('plaid:items'), { [item.item_id]: JSON.stringify(item) });
+    saveItem: async (ctx: { container: string }, item: { item_id: string }) => {
+      await fake.hset(ctxKey('plaid:items', ctx), { [item.item_id]: JSON.stringify(item) });
     },
-    removeItem: async (item_id: string) => {
-      await fake.hdel(testKey('plaid:items'), item_id);
+    removeItem: async (ctx: { container: string }, item_id: string) => {
+      await fake.hdel(ctxKey('plaid:items', ctx), item_id);
     },
   };
 }

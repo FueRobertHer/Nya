@@ -105,14 +105,13 @@ function validPrefix(prefix: string): string {
 }
 
 /**
- * A key in the environment, not yet in any container.
- *
- * @deprecated Every record is moving into a container (#53): use kc()
- * for anything that belongs to one, or kEnv() for the few environment-wide
- * stores. Kept until the move, after which it is removed.
+ * The environment's own prefix, "<env>:", for the few things that walk the
+ * whole environment (export, restore, the re-encryption pass, the data move).
+ * Never for building a key: stored data belongs to a container (kc()), and
+ * the few environment-wide stores go through kEnv().
  */
-export function k(key: string): string {
-  return `${ENV_PREFIX}:${key}`;
+export function envPrefix(): string {
+  return `${ENV_PREFIX}:`;
 }
 
 /**
@@ -128,9 +127,8 @@ export function kc(ctx: Ctx, key: string): string {
 /**
  * A key that belongs to the whole environment, never to one container.
  *
- * Identical to k() today, but it stays where it is when everything else moves
- * into containers (#53). Only these are environment-wide, and nothing else
- * should be:
+ * Everything else lives inside a container (#53). Only these are
+ * environment-wide, and nothing else should be:
  *   - the encryption key store (lib/crypto.ts): a data key id must mean the
  *     same key everywhere in an environment, or a value could not be
  *     decrypted without knowing which container's store to look in;
@@ -151,18 +149,18 @@ export type StoredItem = {
   encrypted_access_token: string;
 };
 
-const ITEMS_HASH = k('plaid:items');
+const ITEMS_HASH = (ctx: Ctx) => kc(ctx, 'plaid:items');
 
-export async function getItems(): Promise<StoredItem[]> {
-  const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH);
+export async function getItems(ctx: Ctx): Promise<StoredItem[]> {
+  const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH(ctx));
   if (!map) return [];
   return Object.values(map);
 }
 
-export async function saveItem(item: StoredItem): Promise<void> {
-  await redis().hset(ITEMS_HASH, { [item.item_id]: item });
+export async function saveItem(ctx: Ctx, item: StoredItem): Promise<void> {
+  await redis().hset(ITEMS_HASH(ctx), { [item.item_id]: item });
 }
 
-export async function removeItem(item_id: string): Promise<void> {
-  await redis().hdel(ITEMS_HASH, item_id);
+export async function removeItem(ctx: Ctx, item_id: string): Promise<void> {
+  await redis().hdel(ITEMS_HASH(ctx), item_id);
 }
