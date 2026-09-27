@@ -22,9 +22,10 @@
 // with the same AES-256-GCM key as everything else financial, so a
 // database-only leak doesn't expose your net-worth series either.
 
+import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt } from './crypto';
+import { encrypt, decrypt, MalformedCiphertextError, DecryptFailedError } from './crypto';
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
 
@@ -104,6 +105,10 @@ const ACCOUNTS_EST_FLAT_BY_DATE = (ctx: Ctx) => kc(ctx, 'history:accounts:est:fl
 // A different key name rather than a reshape, because the old one is a plain
 // string and the new one a hash -- Redis would reject the write.
 const ACCOUNTS_EST_FLAT_LEGACY = (ctx: Ctx) => kc(ctx, 'history:accounts:est:flat');
+// Which points a forget of a hidden account has already folded (see
+// foldHiddenAccount), under the forget's random tag: dates only, deleted when
+// the forget finishes. What lets a retry skip what is done.
+const FOLD_PROGRESS = (ctx: Ctx, tag: string) => kc(ctx, `history:forgetting:${tag}`);
 const BACKFILL_FLAG = (ctx: Ctx) => kc(ctx, 'history:backfill-done');
 // How many runs in a row have finished with an Item's investment data still
 // importing. Backfill withholds the done-flag in that state so the next load
@@ -138,6 +143,25 @@ export async function recordSnapshot(ctx: Ctx,
 ): Promise<string | null> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // The breakdown before the total it breaks down. A reader that meets the
+  // two between the writes sees the new breakdown beside the old total, never
+  // an old breakdown beside a new total: forgetting a hidden account
+  // (foldHiddenAccount) reads the breakdown to decide what to take out of the
+  // total, and must never take out an account the new total doesn't have.
+  let mapLanded = false;
+  if (accountBalances && Object.keys(accountBalances).length > 0) {
+    try {
+      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
+      mapLanded = true;
+    } catch {
+      // The total still goes in. What's lost is the ability to subtract a
+      // hidden account from THIS date later, which getHistory already handles
+      // by dropping the point it can't correct. Today's partial map, if any,
+      // is left alone below, so the per-account charts still have something
+      // measured for today.
+    }
+  }
+
   try {
     await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(String(netWorth)) });
   } catch {
@@ -145,17 +169,7 @@ export async function recordSnapshot(ctx: Ctx,
     return null;
   }
 
-  if (accountBalances && Object.keys(accountBalances).length > 0) {
-    try {
-      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
-    } catch {
-      // The total is in the chart either way. What's lost is the ability to
-      // subtract a hidden account from THIS date later, which getHistory
-      // already handles by dropping the point it can't correct. Today's
-      // partial map, if any, is left alone below, so the per-account charts
-      // still have something measured for today.
-      return today;
-    }
+  if (mapLanded) {
     // This map now supersedes any partial one written earlier today. Clearing
     // it is what lets getAccountHistory read a partial map that sits beside a
     // real one as the NEWER measurement: it can only have been written after
@@ -267,6 +281,7 @@ export async function replaceEstimated(ctx: Ctx, points: { date: string; value: 
   await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(String(p.value)));
 }
 
+
 /**
  * Replaces the flat (non-cash) balances backfill folded into `rest`, one map
  * per date and range-scoped like the layers it describes.
@@ -354,6 +369,83 @@ export async function getEstimatedFlat(ctx: Ctx): Promise<Record<string, number>
   }
 }
 
+/** Least recently used first out, within a budget of approximate bytes. */
+class ByteLru<V> {
+  private entries = new Map<string, { value: V; bytes: number }>();
+  private used = 0;
+  constructor(private budget: number) {}
+  get(key: string): V | undefined {
+    const hit = this.entries.get(key);
+    if (!hit) return undefined;
+    this.entries.delete(key); // re-inserted: most recently used last
+    this.entries.set(key, hit);
+    return hit.value;
+  }
+  set(key: string, value: V, bytes: number): void {
+    if (bytes > this.budget) return;
+    this.delete(key);
+    while (this.used + bytes > this.budget && this.entries.size > 0) {
+      const [oldest, entry] = this.entries.entries().next().value!;
+      this.entries.delete(oldest);
+      this.used -= entry.bytes;
+    }
+    this.entries.set(key, { value, bytes });
+    this.used += bytes;
+  }
+  delete(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.used -= entry.bytes;
+  }
+  has(key: string): boolean {
+    return this.entries.has(key);
+  }
+  reset(budget: number): void {
+    this.entries.clear();
+    this.used = 0;
+    this.budget = budget;
+  }
+}
+
+// Parsed JSON costs several times its text: counted as ~6 bytes a character.
+const COST_PER_CHAR = 6;
+const DEFAULT_BUDGET = 32 * 1024 * 1024;
+const DECRYPTED_MAPS = new ByteLru<Record<string, number>>(DEFAULT_BUDGET);
+/** For tests: a smaller budget, emptying the cache. */
+export function setDecryptedBudget(bytes: number): void {
+  DECRYPTED_MAPS.reset(bytes);
+}
+const digestOf = (blob: string) => createHash('sha256').update(blob).digest('base64');
+/**
+ * A per-date balance map, decrypted once per process. getHistory reads every
+ * per-account map on every load while anything is hidden, and a hidden
+ * account stays hidden for good (including past a disconnect, #46), so without
+ * this the same year of immutable maps is decrypted again on every dashboard
+ * load. Keyed by a digest of the ciphertext, so a rewritten map (a backfill,
+ * a re-encryption, a forgotten account) is a different key and never served
+ * stale, and one container's entries can't answer for another's. Least
+ * recently used entries go first, within a byte budget; forgetting an account
+ * evicts the maps it rewrote (evictDecrypted), so its balances don't stay in
+ * memory.
+ */
+async function decryptMap(blob: string): Promise<Record<string, number>> {
+  const key = digestOf(blob);
+  const hit = DECRYPTED_MAPS.get(key);
+  if (hit) return hit;
+  // Frozen: every caller shares it.
+  const map = Object.freeze(JSON.parse(await decrypt(blob))) as Record<string, number>;
+  DECRYPTED_MAPS.set(key, map, blob.length * COST_PER_CHAR);
+  return map;
+}
+function evictDecrypted(blob: string): void {
+  DECRYPTED_MAPS.delete(digestOf(blob));
+}
+/** For tests: the cache itself. */
+export const decryptMapForTest = (blob: string) => decryptMap(blob);
+/** For tests: whether a map is held decrypted. */
+export const isDecryptedCached = (blob: string) => DECRYPTED_MAPS.has(digestOf(blob));
+
 /**
  * The flat balances that applied on one specific date, preferring the per-date
  * record and falling back to the legacy single record for points written before
@@ -370,7 +462,7 @@ async function flatFor(
   const blob = byDate?.[date];
   if (!blob) return legacy;
   try {
-    return JSON.parse(await decrypt(blob)) as Record<string, number>;
+    return await decryptMap(blob);
   } catch {
     return null;
   }
@@ -653,11 +745,73 @@ export async function clearBackfillDone(ctx: Ctx): Promise<void> {
   }
 }
 
+/** Per-date balances for a layer, or null when that date has no map at all. */
+async function balancesFor(source: Record<string, string> | null, date: string): Promise<Record<string, number> | null> {
+  const blob = source?.[date];
+  if (!blob) return null;
+  try {
+    return await decryptMap(blob);
+  } catch {
+    return null;
+  }
+}
+
+/** What getHistory reads to subtract a hidden account from a point. */
+type HiddenSources = {
+  realAccounts: Record<string, string> | null;
+  estAccounts: Record<string, string> | null;
+  estFlatByDate: Record<string, string> | null;
+  legacyFlat: Record<string, number> | null;
+};
+
+/**
+ * What one hidden account contributed to one point, signed as it was added
+ * to the total; null when that can't be told, and the point must be dropped.
+ * The one rule for it, used to subtract a hidden account (getHistory) and to
+ * fold a forgotten hidden account out of the totals (foldHiddenAccount).
+ *
+ * REAL points: the per-account map recorded with the total. A real date with
+ * no per-account map can't be corrected. This is reachable: recordSnapshot
+ * writes the map and the total as two separate awaits, so the second can land
+ * and the second fail. Showing the point would put a single-day spike the
+ * size of the hidden account into the chart, so it is dropped instead and the
+ * line interpolates across one day.
+ *
+ * ESTIMATED points: the estimated layer splits every account across two
+ * sources, and exactly one of them applies: cash accounts have a per-date
+ * balance (the transaction walk), everything else has a constant flat balance
+ * (backfill's `rest` term). So a miss in one is only correct if the other is
+ * readable and genuinely doesn't list the account. Resolved per date: two
+ * runs can leave two eras of points in this layer, each with its own flat
+ * balances, and an account can be flat in one era and walked in the next.
+ * An unreadable flat record, or a missing per-date map for an account not in
+ * it, means nothing here can be trusted. Absent from a map that could be read
+ * means the account was never in these points (linked after the last
+ * backfill): nothing to remove.
+ */
+async function hiddenContribution(src: HiddenSources, date: string, estimated: boolean, id: string, type: string): Promise<number | null> {
+  if (!estimated) {
+    const balances = await balancesFor(src.realAccounts, date);
+    if (!balances) return null;
+    const b = balances[id];
+    return typeof b === 'number' ? signedContribution(type, b) : 0;
+  }
+  const estFlat = await flatFor(src.estFlatByDate, date, src.legacyFlat);
+  if (estFlat === null) return null;
+  const flatBalance = estFlat[id];
+  if (typeof flatBalance === 'number') return signedContribution(type, flatBalance);
+  const balances = await balancesFor(src.estAccounts, date);
+  if (!balances) return null;
+  const b = balances[id];
+  return typeof b === 'number' ? signedContribution(type, b) : 0;
+}
+
 /**
  * The net-worth series, with hidden accounts subtracted per date.
  *
- * Hiding is retroactive by construction: the stored totals always include every
- * account (see the store-true principle in lib/hidden.ts), and the per-account
+ * Hiding is retroactive by construction: the stored totals include every
+ * account (see the store-true principle in lib/hidden.ts; only a forgotten
+ * hidden account is folded out of them), and the per-account
  * balance map recorded alongside each date is what lets a hidden account's
  * contribution be removed from every point. Hiding a $40k 401k therefore
  * redraws the whole chart as if it was never counted, instead of putting a $40k
@@ -682,6 +836,7 @@ export async function getHistory(ctx: Ctx, hidden?: HiddenMap): Promise<HistoryP
     hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)) : null,
     hiding ? getEstimatedFlat(ctx) : null,
   ]);
+  const sources: HiddenSources = { realAccounts, estAccounts, estFlatByDate, legacyFlat };
 
   const entries: { date: string; blob: string; estimated: boolean }[] = [];
   for (const [date, blob] of Object.entries(realMap ?? {})) {
@@ -689,20 +844,6 @@ export async function getHistory(ctx: Ctx, hidden?: HiddenMap): Promise<HistoryP
   }
   for (const [date, blob] of Object.entries(estMap ?? {})) {
     if (!realMap?.[date]) entries.push({ date, blob, estimated: true });
-  }
-
-  /** Per-date balances for a layer, or null when that date has no map at all. */
-  async function balancesFor(
-    source: Record<string, string> | null,
-    date: string
-  ): Promise<Record<string, number> | null> {
-    const blob = source?.[date];
-    if (!blob) return null;
-    try {
-      return JSON.parse(await decrypt(blob)) as Record<string, number>;
-    } catch {
-      return null;
-    }
   }
 
   const points = await Promise.all(
@@ -716,55 +857,12 @@ export async function getHistory(ctx: Ctx, hidden?: HiddenMap): Promise<HistoryP
       if (!Number.isFinite(value)) return null;
 
       if (hiding) {
-        const balances = await balancesFor(estimated ? estAccounts : realAccounts, date);
-
-        if (!estimated) {
-          // A real date with no per-account map can't be corrected. This is
-          // reachable: recordSnapshot writes the total and the map as two
-          // separate awaits, so the first can land and the second fail. Showing
-          // the point would put a single-day spike the size of the hidden
-          // account into the chart, so drop it instead and let the line
-          // interpolate across one day.
-          if (!balances) return null;
-          for (const [id, { type }] of hidden!) {
-            const b = balances[id];
-            if (typeof b === 'number') value -= signedContribution(type, b);
-          }
-        } else {
-          // The estimated layer splits every account across two sources, and
-          // exactly one of them applies: cash accounts have a per-date balance
-          // (the transaction walk), everything else has a constant flat balance
-          // (backfill's `rest` term). So a miss in one is only correct if the
-          // other is readable and genuinely doesn't list the account.
-          //
-          // Resolved per date: two runs can leave two eras of points in this
-          // layer, each with its own flat balances, and an account can be flat
-          // in one era and walked in the next. Reading one global record would
-          // subtract the wrong era's number, and would double-count an account
-          // that appears in both sources across eras.
-          //
-          // A null result means the flat record for this date is unreadable, so
-          // nothing here can be trusted.
-          const estFlat = await flatFor(estFlatByDate, date, legacyFlat);
-          if (estFlat === null) return null;
-          for (const [id, { type }] of hidden!) {
-            const flatBalance = estFlat[id];
-            if (typeof flatBalance === 'number') {
-              value -= signedContribution(type, flatBalance);
-              continue;
-            }
-            // Not in the flat record, so if it's in the estimated layer at all
-            // it's a cash account with a per-date balance. A missing per-date
-            // map means we can't tell whether it was in this point, and
-            // subtracting nothing would leave a spike the size of the account.
-            // Drop the point instead, matching the real branch above.
-            if (!balances) return null;
-            const b = balances[id];
-            // Present and absent are both meaningful here: absent from a map we
-            // could read means the account was never in these points (linked
-            // after the last backfill), so there is nothing to remove.
-            if (typeof b === 'number') value -= signedContribution(type, b);
-          }
+        for (const [id, { type }] of hidden!) {
+          const c = await hiddenContribution(sources, date, estimated, id, type);
+          // Can't tell what this account contributed: dropped rather than
+          // showing a spike the size of the account (see hiddenContribution).
+          if (c === null) return null;
+          value -= c;
         }
       }
 
@@ -853,4 +951,362 @@ export function withTodayPoint(
   const rest = history.filter((p) => p.date !== today);
   rest.push({ date: today, value: visible });
   return bridgeInteriorEstimates(rest.sort((a, b) => (a.date < b.date ? -1 : 1)));
+}
+
+// ---------------------------------------------------------------------------
+// Forgetting an earlier account (#46)
+
+/** Rewrites one field only if it still holds what was read. */
+export const HISTORY_CAS_FIELD = `-- nya:history-cas-field
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+return 1`;
+/** Rewrites a plain value only if it still holds what was read. */
+export const HISTORY_CAS_VALUE = `-- nya:history-cas-value
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1`;
+
+
+/**
+ * Whether a value failed to decrypt for good (damaged, or not what this code
+ * can read) rather than for now (the key store unreachable, a key this
+ * deployment can't open yet). Forgetting treats the first as "holds nothing
+ * anyone can read" and stops on the second, to be retried.
+ */
+function unreadableForGood(err: unknown): boolean {
+  return err instanceof MalformedCiphertextError || err instanceof DecryptFailedError || err instanceof SyntaxError;
+}
+
+/**
+ * Removes one account's balances from every per-account layer, for a user
+ * forgetting an earlier account (lib/links.ts forgetEarlierAccount checks it
+ * may be forgotten, and for a hidden one has already folded it out of the
+ * totals, foldHiddenAccount). The net-worth TOTALS are not touched here: for
+ * an account that wasn't hidden they were the user's net worth on those
+ * dates. Also removes the zeros a fold left in its place.
+ *
+ * Each map is rewritten only if it still holds what was read (a backfill can
+ * rewrite estimated dates at any time), re-read and retried if not, several
+ * dates at a time; every version read is evicted from the decrypted cache. A
+ * map that can't be decrypted for good holds nothing anyone can read: it is
+ * left as it is, and its date reported. Any other failure stops it, to be run
+ * again. Safe to run again.
+ */
+export async function forgetAccountBalances(
+  ctx: Ctx,
+  account_id: string,
+  /** Only today's date, in the layers written today (a second pass). */
+  opts: { today?: boolean } = {}
+): Promise<{ changed: number; unreadableDates: string[] }> {
+  let changed = 0;
+  const unreadable = new Set<string>();
+  const hashes = [ACCOUNTS_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)];
+
+  // Decrypted once each (the pre-check below fills this; a map re-read after
+  // a lost compare-and-set is decrypted then). 'unreadable': for good.
+  const read = new Map<string, Record<string, number> | 'unreadable'>();
+  const decryptOnce = async (blob: string): Promise<Record<string, number> | 'unreadable'> => {
+    const known = read.get(blob);
+    if (known) return known;
+    let map: Record<string, number> | 'unreadable';
+    try {
+      map = JSON.parse(await decrypt(blob)) as Record<string, number>;
+    } catch (err) {
+      if (!unreadableForGood(err)) throw err;
+      map = 'unreadable';
+    }
+    read.set(blob, map);
+    return map;
+  };
+
+  // Without the account, or null when it isn't in the map.
+  const without = async (blob: string): Promise<string | null | 'unreadable'> => {
+    evictDecrypted(blob);
+    const map = await decryptOnce(blob);
+    if (map === 'unreadable') return 'unreadable';
+    if (!map || typeof map !== 'object' || !(account_id in map)) return null;
+    const { [account_id]: _gone, ...rest } = map;
+    return encrypt(JSON.stringify(rest));
+  };
+
+  const scrub = async (key: string, date: string, first: string) => {
+    let blob: string | null = first;
+    for (let attempt = 0; blob !== null; attempt++) {
+      const next = await without(blob);
+      if (next === 'unreadable') {
+        unreadable.add(date);
+        return;
+      }
+      if (next === null) return;
+      if (Number(await redis().eval(HISTORY_CAS_FIELD, [key], [date, blob, next])) === 1) {
+        changed++;
+        return;
+      }
+      if (attempt >= 3) throw new Error(`history: ${date} kept changing while an account was being forgotten`);
+      blob = await redis().hget<string>(key, date);
+    }
+  };
+
+  if (opts.today) {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const key of [ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx)]) {
+      const blob = await redis().hget<string>(key, today);
+      if (blob) await scrub(key, today, blob);
+    }
+    return { changed, unreadableDates: [...unreadable] };
+  }
+
+  const all = await Promise.all(hashes.map(async (key) => [key, Object.entries((await redis().hgetall<Record<string, string>>(key)) ?? {})] as const));
+  const legacyFirst = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+  // Every map decrypted before any is rewritten: one that can't be read for
+  // now stops it here, with nothing changed, rather than half way through.
+  for (const [, entries] of all) for (const [, blob] of entries) await decryptOnce(blob);
+  if (legacyFirst) await decryptOnce(legacyFirst);
+  for (const [key, entries] of all) {
+    for (let i = 0; i < entries.length; i += FORGET_BATCH) {
+      await Promise.all(entries.slice(i, i + FORGET_BATCH).map(([date, blob]) => scrub(key, date, blob)));
+    }
+  }
+
+  // The single pre-per-date flat record, if this environment still has one.
+  for (let attempt = 0; ; attempt++) {
+    const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+    if (!blob) break;
+    const next = await without(blob);
+    if (next === 'unreadable') {
+      unreadable.add('before per-date records');
+      break;
+    }
+    if (next === null) break;
+    if (Number(await redis().eval(HISTORY_CAS_VALUE, [ACCOUNTS_EST_FLAT_LEGACY(ctx)], [blob, next])) === 1) {
+      changed++;
+      break;
+    }
+    if (attempt >= 3) throw new Error('history: the flat record kept changing while an account was being forgotten');
+  }
+  return { changed, unreadableDates: [...unreadable].sort() };
+}
+
+/** How many dates are rewritten at once while forgetting an account. */
+const FORGET_BATCH = 16;
+
+/** Deletes a field only if it still holds what was read. */
+export const HISTORY_DELETE_IF = `-- nya:history-delete-if
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+return 1`;
+
+/** Writes a field only when it is absent. */
+export const HISTORY_SET_IF_ABSENT = `-- nya:history-set-if-absent
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return 1`;
+
+/**
+ * Folds one point, all at once: rewrites (or deletes) a total and rewrites
+ * the per-account maps it is read with, only if every one still holds what
+ * was read, and marks the point done. KEYS: total hash, progress key, then
+ * the map hashes. ARGV: date, progress field, expected total ('' = absent),
+ * new total ('' = keep, '-' = delete), then for each map its expected and new
+ * value. Answers 1 when done, 2 when the point was already folded (by an
+ * earlier attempt still finishing), 0 when anything changed since it was read.
+ */
+export const HISTORY_FOLD = `-- nya:history-fold
+local date = ARGV[1]
+if redis.call('HEXISTS', KEYS[2], ARGV[2]) == 1 then return 2 end
+if (redis.call('HGET', KEYS[1], date) or '') ~= ARGV[3] then return 0 end
+for i = 3, #KEYS do
+  if (redis.call('HGET', KEYS[i], date) or '') ~= ARGV[5 + (i - 3) * 2] then return 0 end
+end
+if ARGV[4] == '-' then redis.call('HDEL', KEYS[1], date)
+elseif ARGV[4] ~= '' then redis.call('HSET', KEYS[1], date, ARGV[4]) end
+for i = 3, #KEYS do
+  local old, new = ARGV[5 + (i - 3) * 2], ARGV[6 + (i - 3) * 2]
+  if new ~= old and new ~= '' then redis.call('HSET', KEYS[i], date, new) end
+end
+redis.call('HSET', KEYS[2], ARGV[2], '1')
+return 1`;
+
+/**
+ * Takes a HIDDEN account out of every past total for good, before it is
+ * forgotten (lib/links.ts forgetEarlierAccount): each point's stored total is
+ * lowered by what the account contributed to it, by the rule the chart uses
+ * to subtract it (hiddenContribution), and the account is removed from the
+ * per-account maps that point is read with set to 0, in ONE step per point
+ * (HISTORY_FOLD). So at every moment each point is either untouched (and the
+ * still-hidden account is subtracted by the chart as before) or folded (the
+ * account is there with nothing, so the chart subtracts nothing and drops
+ * nothing): never counted twice, never missing. Set to 0 rather than removed
+ * while it is still hidden: removed, a flat-only estimated point would read
+ * as "can't tell" and drop out of the chart until the forget finished, and a
+ * retry would no longer see the account in the maps that give its life. The
+ * caller removes the zeros once the hidden entry is gone
+ * (forgetAccountBalances).
+ *
+ * A point the chart drops while the account is hidden (what it contributed
+ * can't be told) is deleted if it falls within the account's known life, and
+ * left alone outside it, where the account can't be in it. A real point
+ * deleted takes that date's estimated total with it: the chart shows an
+ * estimate only where there is no real point, so it would appear in its place.
+ *
+ * Totals and breakdowns are written breakdown first everywhere else
+ * (recordSnapshot, the backfill), so a fold running beside one reads a new
+ * breakdown with an old total, takes nothing out, and the new total that
+ * follows never had the account; never the reverse.
+ *
+ * Before any point, the single pre-per-date flat record is copied to each
+ * estimated date that still relies on it (the same record, so every point
+ * reads exactly what it read before), so points can be folded one at a time.
+ *
+ * Progress is kept under `tag` (FOLD_PROGRESS), so a retry skips what is done;
+ * the caller deletes it when the forget finishes (dropFoldProgress). Stops,
+ * changing nothing more, on anything that can't be read for now.
+ */
+export async function foldHiddenAccount(
+  ctx: Ctx,
+  account_id: string,
+  type: string,
+  tag: string,
+  life: { first: string | null; last: string | null } = { first: null, last: null }
+): Promise<{ folded: number; deleted: number }> {
+  const progress = FOLD_PROGRESS(ctx, tag);
+  const strict = async (blob: string | null | undefined): Promise<Record<string, number> | null | 'unreadable'> => {
+    if (!blob) return null;
+    try {
+      return await decryptMap(blob);
+    } catch (err) {
+      if (unreadableForGood(err)) return 'unreadable';
+      throw err;
+    }
+  };
+
+  // 1. The legacy flat record, split per date where it is still what applies.
+  const [legacyBlob, estTotals0, flatd0] = await Promise.all([
+    redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx)),
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
+  ]);
+  const legacy = await strict(legacyBlob);
+  if (legacyBlob && legacy && legacy !== 'unreadable' && account_id in legacy) {
+    for (const date of Object.keys(estTotals0 ?? {})) {
+      if (flatd0?.[date]) continue;
+      await redis().eval(HISTORY_SET_IF_ABSENT, [ACCOUNTS_EST_FLAT_BY_DATE(ctx)], [date, legacyBlob]);
+    }
+  }
+
+  // 2. Its known life, from every layer that names it, and the directory's.
+  const layers = await Promise.all(
+    [ACCOUNTS_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)].map(
+      async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {}
+    )
+  );
+  let first = life.first;
+  let last = life.last;
+  for (const layer of layers) {
+    for (const [date, blob] of Object.entries(layer)) {
+      const map = await strict(blob);
+      if (!map || map === 'unreadable' || !(account_id in map)) continue;
+      if (!first || date < first) first = date;
+      if (!last || date > last) last = date;
+    }
+  }
+  const withinLife = (date: string) => !!first && !!last && date >= first && date <= last;
+
+  // 3. Every point, real and estimated, one step each.
+  const [realTotals, estTotals, done] = await Promise.all([
+    redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    redis().hkeys(progress),
+  ]);
+  const finished = new Set(done);
+  const points = [
+    ...Object.keys(realTotals ?? {}).map((date) => ({ date, estimated: false })),
+    ...Object.keys(estTotals ?? {}).map((date) => ({ date, estimated: true })),
+  ].filter((p) => !finished.has(`${p.estimated ? 'e' : 'r'}:${p.date}`));
+
+  let folded = 0;
+  let deleted = 0;
+  const foldOne = async ({ date, estimated }: { date: string; estimated: boolean }) => {
+    const totalKey = estimated ? ESTIMATED_HASH(ctx) : HISTORY_HASH(ctx);
+    const mapKeys = estimated ? [ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)] : [ACCOUNTS_HASH(ctx)];
+    for (let attempt = 0; ; attempt++) {
+      const [total, ...blobs] = await Promise.all([totalKey, ...mapKeys].map((k) => redis().hget<string>(k, date)));
+      const maps = await Promise.all(blobs.map(strict));
+
+      // What it contributed, as the chart works it out; null: can't tell.
+      let c: number | null;
+      if (!estimated) {
+        const m = maps[0];
+        c = !m || m === 'unreadable' ? null : typeof m[account_id] === 'number' ? signedContribution(type, m[account_id]) : 0;
+      } else {
+        const [est, flat] = maps;
+        const flatMap = flat === null ? (legacy === 'unreadable' ? 'unreadable' : legacy ?? {}) : flat;
+        if (flatMap === 'unreadable') c = null;
+        else if (typeof flatMap[account_id] === 'number') c = signedContribution(type, flatMap[account_id]);
+        else if (!est || est === 'unreadable') c = null;
+        else c = typeof est[account_id] === 'number' ? signedContribution(type, est[account_id]) : 0;
+      }
+
+      let newTotal = '';
+      if (total) {
+        if (c === null) {
+          if (withinLife(date)) newTotal = '-';
+        } else if (c !== 0) {
+          let value: number;
+          try {
+            value = Number(await decrypt(total));
+          } catch (err) {
+            if (!unreadableForGood(err)) throw err;
+            value = NaN; // unreadable for good: dropped from the chart anyway
+          }
+          if (Number.isFinite(value)) newTotal = await encrypt(String(value - c));
+        }
+      }
+      const pairs: string[] = [];
+      for (let i = 0; i < mapKeys.length; i++) {
+        const m = maps[i];
+        let next = blobs[i] ?? '';
+        if (m && m !== 'unreadable' && account_id in m && m[account_id] !== 0) {
+          next = await encrypt(JSON.stringify({ ...m, [account_id]: 0 }));
+        }
+        pairs.push(blobs[i] ?? '', next);
+      }
+      const answer = Number(
+        await redis().eval(HISTORY_FOLD, [totalKey, progress, ...mapKeys], [date, `${estimated ? 'e' : 'r'}:${date}`, total ?? '', newTotal, ...pairs])
+      );
+      if (answer === 2) return; // folded already, by an attempt still finishing
+      if (answer === 1) {
+        for (const b of blobs) if (b) evictDecrypted(b);
+        folded++;
+        if (newTotal === '-') {
+          deleted++;
+          if (!estimated) await deleteEstimateOn(date);
+        }
+        return;
+      }
+      if (attempt >= 3) throw new Error(`history: ${date} kept changing while an account was being forgotten`);
+    }
+  };
+  const deleteEstimateOn = async (date: string) => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const blob = await redis().hget<string>(ESTIMATED_HASH(ctx), date);
+      if (!blob) return;
+      if (Number(await redis().eval(HISTORY_DELETE_IF, [ESTIMATED_HASH(ctx)], [date, blob])) === 1) return;
+    }
+    throw new Error(`history: the estimate for ${date} kept changing while an account was being forgotten`);
+  };
+  for (let i = 0; i < points.length; i += FORGET_BATCH) {
+    // Every point of a batch settled before anything is reported: a failure
+    // must not return (and free the lock) while others are still writing.
+    const settled = await Promise.allSettled(points.slice(i, i + FORGET_BATCH).map(foldOne));
+    const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
+  return { folded, deleted };
+}
+
+/** Deletes a finished fold's progress record. */
+export async function dropFoldProgress(ctx: Ctx, tag: string): Promise<void> {
+  await redis().del(FOLD_PROGRESS(ctx, tag));
 }

@@ -5,13 +5,17 @@
 // or deleting, nothing is discarded -- the account is still fetched, still
 // stored, still snapshotted, and unhiding restores it complete.
 //
-// THE GOVERNING PRINCIPLE: storage never changes; hiding is applied on read.
-// recordSnapshot() keeps writing the true total and the full per-account
+// THE GOVERNING PRINCIPLE: hiding never changes storage; it is applied on
+// read. recordSnapshot() keeps writing the true total and the full per-account
 // balance map regardless of what's hidden (see lib/history.ts). Two things fall
 // out of that:
 //
 //   1. Unhiding is exactly symmetric, because nothing was ever removed. The
 //      history accumulated while an account was hidden is still there.
+//      (Forgetting a hidden account is the one exception, and it is the
+//      user's choice: it folds the account out of the stored totals, and
+//      unhiding is refused while that runs. See lib/links.ts
+//      forgetEarlierAccount.)
 //   2. A failed hidden read can only ever display a wrong number, never write
 //      one. Contrast lib/manual.ts, where a bad read *could* poison a permanent
 //      record, which is why that module's failure mode has to be louder.
@@ -42,6 +46,12 @@ const HIDDEN_HASH = (ctx: Ctx) => kc(ctx, 'hidden:accounts');
 export type HiddenAccount = {
   type: string;
   hidden_at: string; // ISO
+  /** Set while the account is being forgotten: the random tag the forget
+   *  keeps its progress under (lib/history.ts foldHiddenAccount). Kept here,
+   *  encrypted, only until the entry is dropped, so a retried forget reuses
+   *  it. While it is set the account can't be unhidden: part of its history
+   *  may already be folded out of the totals, and can't be put back. */
+  forget_tag?: string;
 };
 
 /** account_id -> what we need to subtract it from a total. */
@@ -69,6 +79,7 @@ export async function getHiddenAccounts(ctx: Ctx): Promise<HiddenMap> {
           type: parsed.type,
           hidden_at:
             typeof parsed.hidden_at === 'string' ? parsed.hidden_at : new Date(0).toISOString(),
+          ...(typeof parsed.forget_tag === 'string' ? { forget_tag: parsed.forget_tag } : {}),
         });
       } catch (err) {
         throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
@@ -89,13 +100,33 @@ export async function setAccountHidden(ctx: Ctx,
     await redis().hdel(HIDDEN_HASH(ctx), account_id);
     return;
   }
-  const value: HiddenAccount = { type, hidden_at: new Date().toISOString() };
+  // A forget part way through keeps its mark through a re-hide: without it
+  // the account could be unhidden with half its history folded away.
+  let forget_tag: string | undefined;
+  const existing = await redis().hget<string>(HIDDEN_HASH(ctx), account_id);
+  if (existing) {
+    try {
+      const parsed = JSON.parse(await decrypt(existing)) as Partial<HiddenAccount>;
+      if (typeof parsed.forget_tag === 'string') forget_tag = parsed.forget_tag;
+    } catch (err) {
+      throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
+    }
+  }
+  const value: HiddenAccount = { type, hidden_at: new Date().toISOString(), ...(forget_tag ? { forget_tag } : {}) };
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
+}
+
+/** Marks a hidden account as being forgotten, with the tag its progress is
+ *  kept under (see HiddenAccount.forget_tag). */
+export async function markForgetting(ctx: Ctx, account_id: string, entry: HiddenAccount, forget_tag: string): Promise<void> {
+  const value: HiddenAccount = { ...entry, forget_tag };
   await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
 }
 
 /**
- * Drops hidden entries for accounts that no longer exist (institution
- * disconnected, manual account deleted).
+ * Drops hidden entries for accounts that no longer exist (a manual account
+ * deleted; a disconnected institution's hidden accounts are kept, see
+ * lib/links.ts).
  *
  * Worth doing properly rather than leaving stale ids around: the historical
  * per-account maps still contain a deleted account's balances, so getHistory

@@ -285,7 +285,19 @@ export async function POST() {
       .map((p) => ({ date: p.date, value: p.walked + rest }));
     const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
 
-    await replaceEstimated(ctx, estimatedTotals);
+    // An institution disconnected while this ran (the Plaid pulls are slow)
+    // may have had an account forgotten since: writing its balances back
+    // would put a forgotten account into the chart. Not done, so the next
+    // load rebuilds from what is connected now.
+    const stillConnected = new Set((await getItems(ctx)).map((i) => i.item_id));
+    if (items.some((i) => !stillConnected.has(i.item_id))) {
+      return NextResponse.json({ skipped: true, reason: 'institutions changed' });
+    }
+
+    // The breakdowns before the totals (the same order recordSnapshot keeps,
+    // and for the same reason): a forget of a hidden account reading between
+    // the writes must see new breakdowns beside old totals, never the reverse.
+    //
     // Two layers, because the run speaks for these dates differently. Within
     // the cash horizon every account was walked and each date is the breakdown
     // of that date's estimated total, which is what the hidden-account
@@ -302,6 +314,7 @@ export async function POST() {
     // that's the whole point: a date retained from an earlier run keeps that
     // run's flat balances rather than being reinterpreted with these.
     await replaceEstimatedFlat(ctx, estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
+    await replaceEstimated(ctx, estimatedTotals);
     const waiting = await settleDoneFlag(ctx, invPending);
     await clearCaches(ctx); // cached payloads don't include the new history yet
 

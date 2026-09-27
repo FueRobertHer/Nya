@@ -2,16 +2,29 @@ import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
-import { getOverrides } from '@/lib/overrides';
+import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
-import { getEffectiveHidden } from '@/lib/links';
+import { getEffectiveHidden, type Link } from '@/lib/links';
 
 type TransactionsPayload = {
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   as_of: string;
 };
+
+/**
+ * Categories carried across a re-link (lib/overrides.ts), by the key of the
+ * row they apply to. Follows the ACTIVE links the hidden check already read,
+ * and reads only the linked earlier accounts' records. Carries nothing when
+ * the links or the live accounts couldn't be read: a paused link must not
+ * carry, and without the live set a paused link looks active. Best effort
+ * throughout: a failure shows Plaid's categories, never an error.
+ */
+async function carriedFor(ctx: Awaited<ReturnType<typeof dataCtx>>, links: Map<string, Link> | null, liveOk: boolean) {
+  if (!links || links.size === 0 || !liveOk) return new Map<string, string>();
+  return carriedCategories(await getCarried(ctx, [...links.keys()]), links);
+}
 
 export async function GET(req: Request) {
   try {
@@ -27,10 +40,12 @@ export async function GET(req: Request) {
     // inside the sync (the only place account_id still exists), so they're
     // never shipped to the client. A read failure throws to the catch below
     // rather than silently surfacing transactions the user hid.
-    const { hidden } = await getEffectiveHidden(ctx);
+    const { hidden, links, liveOk } = await getEffectiveHidden(ctx);
     const hiddenIds = new Set(hidden.keys());
+    // Read alongside the syncs: each one waits for it only once Plaid answered.
+    const carried = carriedFor(ctx, links, liveOk);
     const [results, overrides, renames] = await Promise.all([
-      Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds))),
+      Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds, carried))),
       getOverrides(ctx),
       getRenames(ctx),
     ]);
