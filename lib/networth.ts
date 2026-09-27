@@ -6,7 +6,9 @@
 
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
+import { withRateLimitRetry } from './rate-limit-retry';
 import { getItems, type StoredItem } from './storage';
+import type { Ctx } from './containers';
 import { getManualAccounts, toInstitutions, MANUAL_ITEM_PREFIX } from './manual';
 import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
@@ -116,7 +118,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   }
 
   try {
-    const balanceRes = await plaidClient.accountsBalanceGet({ access_token });
+    const balanceRes = await withRateLimitRetry(() => plaidClient.accountsBalanceGet({ access_token }));
     result.institution_id = balanceRes.data.item?.institution_id ?? null;
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
@@ -239,11 +241,11 @@ async function fetchLiabilities(access_token: string, result: InstitutionResult)
   }
 }
 
-export async function computeNetWorth(): Promise<{
+export async function computeNetWorth(ctx: Ctx): Promise<{
   institutions: InstitutionResult[];
   netWorth: number;
 }> {
-  const items = await getItems();
+  const items = await getItems(ctx);
 
   // Fetch every institution concurrently instead of one at a time --
   // with N linked accounts this used to take N sequential round trips.
@@ -251,7 +253,7 @@ export async function computeNetWorth(): Promise<{
   // so they are issued alongside the Plaid fan-out rather than after it. They
   // depend only on the Items, which are already in hand, and the fan-out takes
   // seconds. Same reasoning as the eager() read in app/api/net-worth/route.ts.
-  const vanishedReads = loadVanishedInputs();
+  const vanishedReads = loadVanishedInputs(ctx);
 
   const institutions = await Promise.all(items.map(fetchInstitution));
 
@@ -261,7 +263,7 @@ export async function computeNetWorth(): Promise<{
   // failed fetch returns no accounts at all, which lib/last-known.ts already
   // owns and which would otherwise look like every account vanishing at once.
   const healthy = institutions.filter((i) => !i.error);
-  const vanished = await applyVanished(healthy, await vanishedReads);
+  const vanished = await applyVanished(ctx, healthy, await vanishedReads);
   for (const inst of healthy) {
     const res = vanished[inst.item_id];
     if (!res) continue;
@@ -290,7 +292,7 @@ export async function computeNetWorth(): Promise<{
   // history too, since one gate covers the whole snapshot. Splitting it would
   // corrupt the total series, which is worse.)
   try {
-    institutions.push(...toInstitutions(await getManualAccounts()));
+    institutions.push(...toInstitutions(await getManualAccounts(ctx)));
   } catch (err) {
     console.error('Manual accounts read failed', err);
     institutions.push({
@@ -367,13 +369,14 @@ export function measuredBalanceMap(institutions: InstitutionResult[]): Record<st
  * must never be written anywhere as measured.
  */
 export async function recordFetch(
+  ctx: Ctx,
   institutions: InstitutionResult[],
   netWorth: number
 ): Promise<string | null> {
   const recorded =
     institutions.length > 0 && institutions.every(isRecordable)
-      ? await recordSnapshot(netWorth, accountBalanceMap(institutions))
+      ? await recordSnapshot(ctx, netWorth, accountBalanceMap(institutions))
       : null;
-  if (recorded === null) await recordPartialAccounts(measuredBalanceMap(institutions));
+  if (recorded === null) await recordPartialAccounts(ctx, measuredBalanceMap(institutions));
   return recorded;
 }

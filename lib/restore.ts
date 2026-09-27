@@ -26,10 +26,11 @@
 //    restore; anything else throws.
 
 import { createHash } from 'node:crypto';
-import { k } from './storage';
+import { envPrefix, kEnv } from './storage';
+import { splitScoped } from './containers';
 import {
   byCodePoint,
-  EXCLUDED_PREFIXES,
+  isExcluded,
   EXPORT_FORMAT_VERSION,
   SCHEMA_ERA,
   exportLines,
@@ -63,9 +64,19 @@ const HSET_CHUNK_CHARS = 512 * 1024;
  */
 const MIN_RESTORED_TTL = 60;
 
-/** Never deleted by an overwrite: a counter of failed logins belongs to the
- *  running environment, not to the data being restored. */
-const PRESERVED_PREFIX = 'ratelimit:';
+/** Never deleted by an overwrite: they belong to the running environment,
+ *  not to the data being restored. A counter of failed logins, and a
+ *  container's session epoch, which a restore must never lower or it would
+ *  bring back sessions revoked since, the snapshot cron's log and lock, and
+ *  the data move's record, lock and retirement (lib/move.ts: restoring over
+ *  them would let a later move run misjudge what it copied). Judged inside
+ *  containers too. */
+const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:', 'move:'];
+
+function isPreserved(relative: string): boolean {
+  const { key } = splitScoped(relative);
+  return PRESERVED_PREFIXES.some((p) => key.startsWith(p));
+}
 
 function refuse(message: string): never {
   throw new RestoreRefused(message);
@@ -88,7 +99,7 @@ function checkRecord(raw: unknown, n: number): ExportRecord {
   const { key, type, ttl, value } = raw;
 
   if (typeof key !== 'string' || key.length === 0) refuse(`Line ${n} has no key.`);
-  if (EXCLUDED_PREFIXES.some((p) => key.startsWith(p))) {
+  if (isExcluded(key)) {
     refuse(`Line ${n} holds ${key}, which exports never include.`);
   }
   if (ttl !== null && !(Number.isInteger(ttl) && (ttl as number) > 0)) {
@@ -136,7 +147,10 @@ export function verifyArchive(text: string): VerifiedArchive {
   // An archive from another key layout would restore keys nothing reads.
   if (header.schema_era !== SCHEMA_ERA) {
     refuse(
-      `Archive was taken under key layout ${JSON.stringify(header.schema_era)}; this code uses ${JSON.stringify(SCHEMA_ERA)}.`
+      `Archive was taken under key layout ${JSON.stringify(header.schema_era)}; this code uses ${JSON.stringify(SCHEMA_ERA)}.` +
+        (header.schema_era === 'unscoped'
+          ? ' Restore it with a release from before containers, then move the data into a container with `bun run move-data` (see "Moving the data into containers" in the README).'
+          : '')
     );
   }
 
@@ -167,7 +181,62 @@ export function verifyArchive(text: string): VerifiedArchive {
     refuse('The export could not carry some keys (see the footer), so restoring it would lose them.');
   }
 
+  // Every container the archive's keys live in must be in its own registry:
+  // otherwise it would restore data under a container that, once restored,
+  // does not exist.
+  const registry = archiveRegistry(records);
+  for (const record of records) {
+    const { container } = splitScoped(record.key);
+    if (container && !registry?.has(container)) {
+      refuse(`${record.key} is in container ${container}, which the archive's registry does not list.`);
+    }
+  }
+
   return { header: header as ExportHeader, records };
+}
+
+/** The key the container registry lives at, relative to the prefix (see
+ *  lib/containers.ts; environment-wide, so never inside a container). */
+const REGISTRY = 'containers';
+
+/** The container ids in an archive's registry, or null if it has none. */
+export function archiveRegistry(records: ExportRecord[]): Set<string> | null {
+  const r = records.find((x) => x.key === REGISTRY);
+  return r && r.type === 'hash' ? new Set(Object.keys(r.value)) : null;
+}
+
+/** The container ids in the target's registry, or null if it has none. */
+export async function targetRegistry(client: ExportClient): Promise<Set<string> | null> {
+  const ids = new Set<string>();
+  let cursor: string | number = 0;
+  do {
+    const [next, flat] = await client.hscan(kEnv('containers'), cursor, { count: 200 });
+    for (let i = 0; i + 1 < flat.length; i += 2) ids.add(String(flat[i]));
+    cursor = next;
+  } while (String(cursor) !== '0');
+  return ids.size > 0 ? ids : null;
+}
+
+/**
+ * A restore replaces the container registry along with everything else. That
+ * is only safe when the archive's registry lists the same containers as the
+ * target's: deployments name their container in CONTAINER_ID, and after a
+ * restore that dropped it (an archive from before containers existed, or from
+ * another environment) every one of them would name a container that no
+ * longer exists. Refused unless `replaceRegistry`, after which CONTAINER_ID
+ * must be set again to a container the restored registry lists (or a new one
+ * created).
+ */
+export function checkRegistry(archive: Set<string> | null, target: Set<string> | null, replaceRegistry: boolean): void {
+  if (!target || replaceRegistry) return;
+  const same = archive !== null && archive.size === target.size && [...target].every((id) => archive.has(id));
+  if (same) return;
+  const had = [...target].join(', ');
+  refuse(
+    archive
+      ? `The archive's containers (${[...archive].join(', ')}) are not the target's (${had}). Deployments name their container in CONTAINER_ID, which would then name one that does not exist. Pass --replace-registry to restore anyway, then set CONTAINER_ID to a container the archive lists.`
+      : `The archive has no container registry (it predates containers), so restoring it would remove the target's (${had}), and CONTAINER_ID would name a container that does not exist. Pass --replace-registry to restore anyway, then create a container again and set CONTAINER_ID.`
+  );
 }
 
 /** The storage commands a restore needs, on top of reading everything back. */
@@ -180,7 +249,7 @@ export type RestoreClient = ExportClient & {
 
 /** Every key under this process's prefix, found by scanning. */
 async function keysUnderPrefix(client: RestoreClient): Promise<string[]> {
-  const prefix = k('');
+  const prefix = envPrefix();
   const keys = new Set<string>();
   let cursor: string | number = 0;
   do {
@@ -195,12 +264,12 @@ async function keysUnderPrefix(client: RestoreClient): Promise<string[]> {
 }
 
 /**
- * Keys that make the target count as holding data. Rate-limit counters do not:
- * they appear the moment anyone tries to log in, and are not data.
+ * Keys that make the target count as holding data. Rate-limit counters and
+ * session epochs do not: they are not data, and a restore leaves them alone.
  */
 export async function targetKeys(client: RestoreClient): Promise<string[]> {
-  const prefix = k('');
-  return (await keysUnderPrefix(client)).filter((key) => !key.slice(prefix.length).startsWith(PRESERVED_PREFIX));
+  const prefix = envPrefix();
+  return (await keysUnderPrefix(client)).filter((key) => !isPreserved(key.slice(prefix.length)));
 }
 
 /**
@@ -212,7 +281,7 @@ export async function targetKeys(client: RestoreClient): Promise<string[]> {
  * a separate, explicit confirmation on top.
  */
 export function checkTarget(named: string | undefined, confirmProduction: boolean): string {
-  const actual = k('').replace(/:$/, '');
+  const actual = envPrefix().replace(/:$/, '');
   if (!named) refuse(`Name the target with --target. This process would write to "${actual}".`);
   if (named !== actual) {
     refuse(`--target is "${named}" but REDIS_PREFIX resolves to "${actual}". Nothing was written.`);
@@ -271,9 +340,9 @@ export type RestoreResult = { written: number; deleted: number };
 export async function restoreArchive(
   client: RestoreClient,
   archive: VerifiedArchive,
-  opts: { overwrite: boolean; backedUp?: string[] }
+  opts: { overwrite: boolean; backedUp?: string[]; replaceRegistry?: boolean }
 ): Promise<RestoreResult> {
-  const prefix = k('');
+  const prefix = envPrefix();
   const existing = await targetKeys(client);
   if (existing.length > 0 && !opts.overwrite) {
     refuse(`The target holds ${existing.length} keys. Pass --overwrite to replace them.`);
@@ -285,6 +354,8 @@ export async function restoreArchive(
       refuse('The target changed after it was backed up. Nothing was deleted; run the restore again.');
     }
   }
+
+  checkRegistry(archiveRegistry(archive.records), await targetRegistry(client), opts.replaceRegistry ?? false);
 
   // Delete first: replace, don't merge. Includes caches, which would otherwise
   // show numbers computed from the data being replaced.

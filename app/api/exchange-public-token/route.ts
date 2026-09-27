@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { plaidClient } from '@/lib/plaid';
 import { encrypt } from '@/lib/crypto';
 import { saveItem } from '@/lib/storage';
@@ -7,12 +8,13 @@ import { clearBackfillDone } from '@/lib/history';
 
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const { public_token, institution_name } = await req.json();
     const exchange = await plaidClient.itemPublicTokenExchange({ public_token });
 
     const encrypted_access_token = await encrypt(exchange.data.access_token);
 
-    await saveItem({
+    await saveItem(ctx, {
       item_id: exchange.data.item_id,
       institution_name: institution_name || 'Connected Account',
       encrypted_access_token,
@@ -20,11 +22,13 @@ export async function POST(req: Request) {
 
     // Cached payloads no longer reflect the linked institutions, and the
     // estimated history should be recomputed with the new accounts in it.
-    await clearCaches();
-    await clearBackfillDone();
+    await clearCaches(ctx);
+    await clearBackfillDone(ctx);
 
     return NextResponse.json({ success: true });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to exchange public token' }, { status: 500 });
   }

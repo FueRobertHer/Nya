@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getAccountHistory } from '@/lib/history';
 import { getLinks, effectiveLinks, liveAccountIds, previewLastSeen, sameAccountIds, type Link } from '@/lib/links';
 
@@ -13,6 +14,7 @@ import { getLinks, effectiveLinks, liveAccountIds, previewLastSeen, sameAccountI
 
 export async function GET(req: Request) {
   try {
+    const ctx = await dataCtx();
     const params = new URL(req.url).searchParams;
     const id = params.get('id');
     if (!id) {
@@ -24,7 +26,7 @@ export async function GET(req: Request) {
     // what it showed before links existed. Nothing is hidden or revealed by it.
     let links = new Map<string, Link>();
     try {
-      links = effectiveLinks(await getLinks(), await liveAccountIds());
+      links = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx));
     } catch {
       links = new Map();
     }
@@ -36,14 +38,16 @@ export async function GET(req: Request) {
       links.set(preview, {
         to: id,
         linked_at: new Date().toISOString(),
-        evidence: { old_last: await previewLastSeen(preview) },
+        evidence: { old_last: await previewLastSeen(ctx, preview) },
       });
     }
     const older = sameAccountIds(id, links).filter((x) => x !== id);
 
-    const points = await getAccountHistory(id, older);
+    const points = await getAccountHistory(ctx, id, older);
     return NextResponse.json({ points });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to fetch account history' }, { status: 500 });
   }

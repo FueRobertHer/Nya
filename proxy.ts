@@ -1,25 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { sessionCurrent } from '@/lib/sessions';
 
 // Everything is protected EXCEPT the login page, the login API, static PWA
 // assets (which must be publicly fetchable for install/offline to work), the
-// cron snapshot endpoint (which authenticates itself via CRON_SECRET -- see
-// app/api/snapshot/route.ts), and the manual-balance ingest endpoint (which
+// cron snapshot endpoints (which authenticate themselves via CRON_SECRET -- see
+// app/api/snapshot/route.ts; the catch-up is the same handler), and the manual-balance ingest endpoint (which
 // authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
-// and the ops routes, export, rotate-master and reencrypt (OPS_SECRET, and off entirely
+// and the ops routes, export, rotate-master, reencrypt and containers (OPS_SECRET, and off entirely
 // unless OPS_ENABLED=1 -- see lib/ops.ts).
 //
 // Note the `$` anchors on the API entries: they exclude exactly those paths.
 // A bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/snapshot$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/snapshot$|api/snapshot/catchup$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 
+// A session must be genuine, unexpired, issued under the current password
+// (lib/auth.ts) and not revoked (lib/sessions.ts). The last needs one Redis
+// read, reused for a few seconds per instance; this proxy runs on Node.
 export async function proxy(req: NextRequest) {
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const valid = await verifySessionToken(token);
+  const session = await verifySessionToken(token);
+  const valid = session !== null && (await sessionCurrent(session));
 
   if (!valid) {
     if (req.nextUrl.pathname.startsWith('/api/')) {

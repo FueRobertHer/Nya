@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
 import {
   contributedAmount,
@@ -29,6 +30,7 @@ const RECENT_LIMIT = 25;
 
 export async function GET(req: Request) {
   try {
+    const ctx = await dataCtx();
     const params = new URL(req.url).searchParams;
     const account_id = params.get('id');
     const item_id = params.get('item_id');
@@ -41,18 +43,18 @@ export async function GET(req: Request) {
     // item_id 404 on a cold cache and quietly succeed on a warm one. Costs one
     // Redis read on a cache hit and keeps the endpoint's behaviour the same
     // either way.
-    const item = (await getItems()).find((i) => i.item_id === item_id);
+    const item = (await getItems(ctx)).find((i) => i.item_id === item_id);
     if (!item) return NextResponse.json({ error: 'Unknown item' }, { status: 404 });
 
     // Keyed on the pair, not account_id alone, so a mismatched item_id can't
     // cache an empty answer under the real account's field.
-    // (INVESTMENT_ACTIVITY_CACHE_KEY carries a version, so payloads with an
-    // older meaning are not reachable.)
+    // (The cache key carries a version, so payloads with an older meaning are
+    // not reachable.)
     const cacheField = `${item_id}:${account_id}`;
-    const cached = await readAccountCache(cacheField);
+    const cached = await readAccountCache(ctx, cacheField);
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
 
-    const sync = await syncInvestments(item);
+    const sync = await syncInvestments(ctx, item);
     // Newest first, explicitly: the store has no order of its own.
     const mine = sync.rows
       .filter((t) => t.account_id === account_id)
@@ -118,10 +120,12 @@ export async function GET(req: Request) {
     // whatever was stored before it, which on a first link is nothing at all.
     // A storage-only problem IS cached: the rows were just fetched live, and
     // without it an unwritable store would re-run the full fetch every load.
-    if (!sync.note && !sync.busy) await writeAccountCache(cacheField, payload);
+    if (!sync.note && !sync.busy) await writeAccountCache(ctx, cacheField, payload);
 
     return NextResponse.json({ ...payload, from_cache: false });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to fetch investment activity' }, { status: 500 });
   }

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
@@ -151,6 +151,9 @@ type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 // on open (and still shows something useful offline) while fresh data loads
 // in the background. Cleared on logout.
 const LOCAL_CACHE_KEY = 'nya:dashboard';
+/** Set once this page has been sent to the login page because its session
+ *  ended: nothing may save the snapshot again after it was cleared. */
+let signedOut = false;
 
 // Currency-aware money, so a EUR/GBP account isn't rendered with a "$".
 // Delegates to the shared formatter (which falls back to $ for a null or
@@ -429,6 +432,9 @@ export default function Dashboard() {
       }
 
       try {
+        // A response still in flight when the session ended must not bring
+        // back the snapshot the redirect just cleared.
+        if (signedOut) return;
         localStorage.setItem(
           LOCAL_CACHE_KEY,
           JSON.stringify({
@@ -468,6 +474,40 @@ export default function Dashboard() {
     } finally {
       setTxnsLoading(false);
     }
+  }, []);
+
+  // A session ended elsewhere (signed out everywhere, or the password changed)
+  // makes every API call answer 401. Without this the dashboard would sit
+  // showing load errors; send it to the login page instead. A layout effect,
+  // so it is in place before any effect (this component's or a child's)
+  // makes the first requests.
+  useLayoutEffect(() => {
+    const original = window.fetch;
+    // Bound: a browser's fetch called without window as `this` throws.
+    const call = original.bind(window);
+    const watched = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const res = await call(input, init);
+      if (res.status === 401) {
+        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const url = new URL(raw, window.location.href);
+        if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
+          // The saved snapshot goes too: a device signed out elsewhere (a
+          // lost phone) must not keep painting balances, offline included.
+          signedOut = true;
+          try {
+            localStorage.removeItem(LOCAL_CACHE_KEY);
+          } catch {
+            // Best-effort.
+          }
+          window.location.href = '/login';
+        }
+      }
+      return res;
+    };
+    window.fetch = Object.assign(watched, original) as typeof window.fetch;
+    return () => {
+      window.fetch = original;
+    };
   }, []);
 
   useEffect(() => {
@@ -702,6 +742,7 @@ export default function Dashboard() {
   }, [manualDraft, mutateManual]);
 
   const logout = useCallback(async () => {
+    signedOut = true; // no load still in flight may save the snapshot again
     try {
       localStorage.removeItem(LOCAL_CACHE_KEY);
     } catch {
@@ -710,6 +751,31 @@ export default function Dashboard() {
     await fetch('/api/logout', { method: 'POST' });
     window.location.href = '/login';
   }, []);
+
+  // Ends every session for this data, on every device, this one included
+  // (lib/sessions.ts). The other devices are sent to the login page on their
+  // next request.
+  const signOutEverywhere = useCallback(async () => {
+    if (!window.confirm('Sign out on every device, including this one?')) return;
+    const res = await fetch('/api/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ everywhere: true }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const message = await res?.json().then((b) => b?.error).catch(() => null);
+      window.alert(message || 'Could not sign out other devices. Try again.');
+      return;
+    }
+    signedOut = true; // as in logout
+    try {
+      localStorage.removeItem(LOCAL_CACHE_KEY);
+    } catch {
+      // Best-effort.
+    }
+    window.location.href = '/login';
+  }, []);
+
 
   const onSuccess = useCallback(
     async (public_token: string, metadata: PlaidLinkOnSuccessMetadata) => {
@@ -1076,6 +1142,9 @@ export default function Dashboard() {
             )}
             <button className="secondary logout-btn" onClick={logout}>
               Log out
+            </button>
+            <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
+              Sign out everywhere
             </button>
           </div>
         </div>

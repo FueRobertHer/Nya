@@ -39,12 +39,13 @@
 // detect the disappearance exactly once and then forget it. This record holds
 // the account id itself, so detection survives.
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { rememberedIdsForItem, rememberedIdsByItem } from './last-known';
 import { getLinks, resolveId, type Link } from './link-core';
 
-const VANISHED_HASH = k('accounts:vanished');
+const VANISHED_HASH = (ctx: Ctx) => kc(ctx, 'accounts:vanished');
 
 /**
  * How long an account may be absent before absence is accepted as closure.
@@ -82,9 +83,9 @@ function parseRecord(plain: string): VanishRecord {
   }
 }
 
-async function readRecord(item_id: string): Promise<VanishRecord> {
+async function readRecord(ctx: Ctx, item_id: string): Promise<VanishRecord> {
   try {
-    const blob = await redis().hget<string>(VANISHED_HASH, item_id);
+    const blob = await redis().hget<string>(VANISHED_HASH(ctx), item_id);
     if (!blob) return {};
     return parseRecord(await decrypt(blob));
   } catch {
@@ -97,10 +98,10 @@ async function readRecord(item_id: string): Promise<VanishRecord> {
 
 /** Every Item's record in ONE read, for checkVanishedAll. Same tolerance as
  *  readRecord: one undecryptable field costs only that Item. */
-async function readAllRecords(): Promise<Record<string, VanishRecord>> {
+async function readAllRecords(ctx: Ctx): Promise<Record<string, VanishRecord>> {
   let map: Record<string, string> | null;
   try {
-    map = await redis().hgetall<Record<string, string>>(VANISHED_HASH);
+    map = await redis().hgetall<Record<string, string>>(VANISHED_HASH(ctx));
   } catch {
     return {};
   }
@@ -119,13 +120,13 @@ async function readAllRecords(): Promise<Record<string, VanishRecord>> {
   return out;
 }
 
-async function writeRecord(item_id: string, record: VanishRecord): Promise<void> {
+async function writeRecord(ctx: Ctx, item_id: string, record: VanishRecord): Promise<void> {
   try {
     if (Object.keys(record).length === 0) {
-      await redis().hdel(VANISHED_HASH, item_id);
+      await redis().hdel(VANISHED_HASH(ctx), item_id);
       return;
     }
-    await redis().hset(VANISHED_HASH, { [item_id]: await encrypt(JSON.stringify(record)) });
+    await redis().hset(VANISHED_HASH(ctx), { [item_id]: await encrypt(JSON.stringify(record)) });
   } catch {
     // Best effort. A lost write means the window restarts next run: later
     // acceptance, never a wrong measurement.
@@ -133,9 +134,9 @@ async function writeRecord(item_id: string, record: VanishRecord): Promise<void>
 }
 
 /** Drops an Item's record, on disconnect. */
-export async function forgetVanished(item_id: string): Promise<void> {
+export async function forgetVanished(ctx: Ctx, item_id: string): Promise<void> {
   try {
-    await redis().hdel(VANISHED_HASH, item_id);
+    await redis().hdel(VANISHED_HASH(ctx), item_id);
   } catch {
     // Best effort; a stale record is inert once no Item carries that id.
   }
@@ -153,7 +154,7 @@ export async function forgetVanished(item_id: string): Promise<void> {
  * several institutions pays one read for all of them instead of one each; see
  * checkVanishedAll.
  */
-async function checkOne(
+async function checkOne(ctx: Ctx, 
   item_id: string,
   freshIds: string[],
   remembered: string[],
@@ -173,7 +174,7 @@ async function checkOne(
   // before it can start.
   if (freshIds.length === 0) return empty();
 
-  const record = preloaded ?? (await readRecord(item_id));
+  const record = preloaded ?? (await readRecord(ctx, item_id));
 
   // Both sources, because neither alone is enough: `remembered` is refreshed
   // from the latest healthy fetch and so forgets a vanished account almost
@@ -202,7 +203,7 @@ async function checkOne(
   // existed. It trades a case that cannot be distinguished anyway for one that
   // happens routinely.
   if (remembered.length > 0 && !remembered.some((id) => fresh.has(id))) {
-    if (Object.keys(record).length > 0) await writeRecord(item_id, {});
+    if (Object.keys(record).length > 0) await writeRecord(ctx, item_id, {});
     return empty();
   }
 
@@ -252,17 +253,17 @@ async function checkOne(
     }
   }
 
-  if (changed) await writeRecord(item_id, record);
+  if (changed) await writeRecord(ctx, item_id, record);
   return { unconfirmed, accepted };
 }
 
 /** Single-institution check. Prefer checkVanishedAll when checking several. */
-export async function checkVanished(
+export async function checkVanished(ctx: Ctx, 
   item_id: string,
   freshIds: string[],
   now: number = Date.now()
 ): Promise<VanishedResult> {
-  return checkOne(item_id, freshIds, await rememberedIdsForItem(item_id), now);
+  return checkOne(ctx, item_id, freshIds, await rememberedIdsForItem(ctx, item_id), now);
 }
 
 /**
@@ -277,12 +278,12 @@ export async function checkVanished(
  * The per-institution `checkVanished` still exists for callers with one Item,
  * and pays two reads, which is the same thing at N=1.
  */
-export async function checkVanishedAll(
+export async function checkVanishedAll(ctx: Ctx, 
   institutions: { item_id: string; accounts: { account_id: string }[] }[],
   now: number = Date.now()
 ): Promise<Record<string, VanishedResult>> {
   if (institutions.length === 0) return {};
-  return applyVanished(institutions, await loadVanishedInputs(), now);
+  return applyVanished(ctx, institutions, await loadVanishedInputs(ctx), now);
 }
 
 /** Everything the comparison reads, so it can be fetched before the account
@@ -300,20 +301,20 @@ export type VanishedInputs = {
  * Plaid fetch, so a caller can start this and the fan-out together and pay for
  * whichever is slower rather than for both in series.
  */
-export async function loadVanishedInputs(): Promise<VanishedInputs> {
+export async function loadVanishedInputs(ctx: Ctx): Promise<VanishedInputs> {
   const [remembered, records, links] = await Promise.all([
-    rememberedIdsByItem(),
-    readAllRecords(),
+    rememberedIdsByItem(ctx),
+    readAllRecords(ctx),
     // Unreadable links mean a linked id reads as missing and pauses snapshots:
     // the safe direction, the same as before links existed.
-    getLinks().catch(() => new Map<string, Link>()),
+    getLinks(ctx).catch(() => new Map<string, Link>()),
   ]);
   return { remembered, records, links };
 }
 
 /** The comparison itself, against already-loaded inputs. Writes happen here:
  *  only an Item whose record actually changed costs a write. */
-export async function applyVanished(
+export async function applyVanished(ctx: Ctx, 
   institutions: { item_id: string; accounts: { account_id: string }[] }[],
   inputs: VanishedInputs,
   now: number = Date.now()
@@ -328,7 +329,7 @@ export async function applyVanished(
       const linkedHere = [...(inputs.links ?? new Map()).keys()].filter(
         (old) => !freshSet.has(old) && freshSet.has(resolveId(old, inputs.links!))
       );
-      const res = await checkOne(
+      const res = await checkOne(ctx, 
         inst.item_id,
         [...fresh, ...linkedHere],
         inputs.remembered[inst.item_id] ?? [],

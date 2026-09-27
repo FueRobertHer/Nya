@@ -10,6 +10,7 @@
 // blob) so that two concurrent link flows can't clobber each other's writes.
 
 import { Redis } from '@upstash/redis';
+import type { Ctx } from './containers';
 
 // The @upstash/redis client speaks HTTP, so it needs the *REST* URL
 // (https://<host>), not a rediss:// connection string. Vercel's Upstash
@@ -103,19 +104,40 @@ function validPrefix(prefix: string): string {
   return prefix;
 }
 
-export function k(key: string): string {
-  return `${ENV_PREFIX}:${key}`;
+/**
+ * The environment's own prefix, "<env>:", for the few things that walk the
+ * whole environment (export, restore, the re-encryption pass, the data move).
+ * Never for building a key: stored data belongs to a container (kc()), and
+ * the few environment-wide stores go through kEnv().
+ */
+export function envPrefix(): string {
+  return `${ENV_PREFIX}:`;
+}
+
+/**
+ * A key inside one container: "<env>:c:<container id>:<key>".
+ *
+ * The container segment comes from a Ctx, which only resolveCtx() (or a test)
+ * produces, so a key cannot be built for a container nobody resolved.
+ */
+export function kc(ctx: Ctx, key: string): string {
+  return `${ENV_PREFIX}:c:${ctx.container}:${key}`;
 }
 
 /**
  * A key that belongs to the whole environment, never to one container.
  *
- * Identical to k() today. It exists so that when k() starts requiring a
- * container id (#53), environment-wide stores keep their one location instead
- * of being split per container. The encryption key store (lib/crypto.ts) is the
- * reason: a data key id must mean the same key everywhere in an environment,
- * or a value could not be decrypted without knowing which container's store to
- * look in.
+ * Everything else lives inside a container (#53). Only these are
+ * environment-wide, and nothing else should be:
+ *   - the encryption key store (lib/crypto.ts): a data key id must mean the
+ *     same key everywhere in an environment, or a value could not be
+ *     decrypted without knowing which container's store to look in;
+ *   - the container registry (lib/containers.ts), which says what containers
+ *     exist, so cannot live inside one;
+ *   - the login rate limiter (app/api/login), which runs before anyone is
+ *     known;
+ *   - the cutoff for sessions from before sessions named a container
+ *     (lib/sessions.ts), which by definition belong to none.
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;
@@ -127,18 +149,18 @@ export type StoredItem = {
   encrypted_access_token: string;
 };
 
-const ITEMS_HASH = k('plaid:items');
+const ITEMS_HASH = (ctx: Ctx) => kc(ctx, 'plaid:items');
 
-export async function getItems(): Promise<StoredItem[]> {
-  const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH);
+export async function getItems(ctx: Ctx): Promise<StoredItem[]> {
+  const map = await redis().hgetall<Record<string, StoredItem>>(ITEMS_HASH(ctx));
   if (!map) return [];
   return Object.values(map);
 }
 
-export async function saveItem(item: StoredItem): Promise<void> {
-  await redis().hset(ITEMS_HASH, { [item.item_id]: item });
+export async function saveItem(ctx: Ctx, item: StoredItem): Promise<void> {
+  await redis().hset(ITEMS_HASH(ctx), { [item.item_id]: item });
 }
 
-export async function removeItem(item_id: string): Promise<void> {
-  await redis().hdel(ITEMS_HASH, item_id);
+export async function removeItem(ctx: Ctx, item_id: string): Promise<void> {
+  await redis().hdel(ITEMS_HASH(ctx), item_id);
 }

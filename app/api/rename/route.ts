@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { setRename, clearRename } from '@/lib/renames';
 import { clearTransactionsCache } from '@/lib/cache';
 
@@ -8,6 +9,7 @@ import { clearTransactionsCache } from '@/lib/cache';
 
 export async function POST(req: Request) {
   try {
+    const ctx = await dataCtx();
     const { vendor_key, name } = await req.json();
     if (typeof vendor_key !== 'string' || !vendor_key || vendor_key.length > 200) {
       return NextResponse.json({ error: 'Invalid vendor key' }, { status: 400 });
@@ -17,12 +19,14 @@ export async function POST(req: Request) {
     }
 
     const trimmed = name.trim();
-    if (trimmed) await setRename(vendor_key, trimmed);
-    else await clearRename(vendor_key);
-    await clearTransactionsCache(); // the cached payload has the old name
+    if (trimmed) await setRename(ctx, vendor_key, trimmed);
+    else await clearRename(ctx, vendor_key);
+    await clearTransactionsCache(ctx); // the cached payload has the old name
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to rename' }, { status: 500 });
   }

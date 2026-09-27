@@ -497,6 +497,11 @@ The command refuses, and writes nothing, when:
   overrides), or with one taken from a different environment
   (`--allow-different-source` overrides). Restoring into an **empty** target
   from anywhere, like production into `restore-test`, needs neither.
+- the target has containers (see **Containers**) and the archive's are not
+  the same, for example an archive from before containers existed: restoring
+  it would leave `CONTAINER_ID` naming a container that no longer exists.
+  `--replace-registry` overrides; afterwards set `CONTAINER_ID` again (or
+  create a container, if the archive has none). A dry run reports this too.
 
 With `--overwrite`, it prints how many keys it is about to replace, saves the
 target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file,
@@ -538,6 +543,26 @@ is now gated by `proxy.ts` (Next's renamed middleware convention), which
 checks a signed, expiring session cookie. Logging in at `/login` sets that
 cookie for 30 days.
 
+Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
+
+- **Sign out everywhere** (next to Log out) ends every session on every
+  device, this one included. Other devices are sent to the login page within
+  a few seconds.
+- **Changing `APP_PASSWORD`** (then redeploying) ends every session too.
+- A session belongs to the container (see **Containers**) and only works in
+  a deployment using that container. **Logging in needs a container to
+  exist:** create it before deploying this version to a new environment
+  (production already has one). Existing sessions keep working either way;
+  without a container, new logins are refused with a message saying how to
+  create one. For local development, run the app with `OPS_ENABLED=1` and an
+  `OPS_SECRET` once, create the container with the same `curl` against
+  `http://localhost:3000`, and set `CONTAINER_ID` in `.env.local`.
+- Sessions from before this change stay valid until they expire (at most 30
+  days) and do not end on a password change; Sign out everywhere does end them.
+- While the container cannot be worked out (a wrong `CONTAINER_ID`, or it is
+  being restored), no session is accepted. If the database itself is
+  unreachable, requests are let through, since every page needs it anyway.
+
 This is a single shared password, not per-user accounts — appropriate for
 one person's personal tracker, not for sharing with others. If you want
 real multi-user auth later, swap this for something like NextAuth/Auth.js
@@ -550,6 +575,15 @@ before being written to Redis — see `lib/crypto.ts`. That key lives only in
 your env vars, never in Redis itself, so a database-only leak doesn't expose
 usable tokens.
 
+Each institution's stored transaction and investment history is one
+compressed, encrypted blob, refused (never trimmed) past a size ceiling
+(`MAX_TXN_BLOB_CHARS`, 8,388,608 characters by default).
+`GET /api/storage-usage` measures every stored blob, per institution and in
+total, with the ceiling, the container they belong to, blobs left behind by a
+disconnected institution, and the size a blocked institution was refused at.
+A refusal's log line names the container too. Nothing enforces a quota yet;
+these are the numbers one would read. See `lib/blob-sizes.ts`.
+
 Balance and transaction responses are also cached in Redis for 15 minutes
 (so the dashboard doesn't wait on live Plaid calls every load — the Refresh
 button forces a live fetch), encrypted with the same key. See `lib/cache.ts`.
@@ -560,7 +594,19 @@ stored the same way: encrypted values, keyed by date. It has two layers:
   Vercel Cron (`vercel.json` → `/api/snapshot`, authenticated with
   `CRON_SECRET`), so the chart stays gapless even on days you don't open
   the app. Per-account balances are snapshotted alongside the total, which
-  is what feeds the tap-to-expand account charts.
+  is what feeds the tap-to-expand account charts. The cron runs each active
+  container on its own (`lib/snapshot-job.ts`) and answers 200 with one
+  result per container, even when some failed. It answers 500 when nothing
+  was snapshotted: the container registry cannot be read (after one retry),
+  holds no container, or no container was recorded (every one failed, came
+  back unclean, was deferred, or is not active). Nothing linked is not a
+  failure. A second entry two
+  hours later (`/api/snapshot/catchup`) is the catch-up: containers already
+  recorded that day are skipped, the rest (failed, unclean, not started in
+  time, or with nothing linked) are run again. Each container's outcomes are kept per date and
+  served, newest first, by `GET /api/snapshot-runs`; they describe this
+  environment's cron, so exports leave them out and a restore keeps them.
+  Each container's snapshot reads and writes only its own data.
 - **Estimated backfill** — on first use (and after linking a new
   institution) the app reconstructs up to a year of history from
   transaction data (`/api/backfill`), at three levels of fidelity:
@@ -672,6 +718,132 @@ unavailable, and if it is marked Sensitive in Vercel (so cannot be read back
 out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write)
 could never be read again.
 
+**Containers** (preparing for more than one user, #53). Every record
+belongs to a *container*, stored under `<prefix>:c:<container id>:`; today
+there is one. It is created once, by you, never automatically (two requests
+racing to create one would split your data between two):
+
+1. With `OPS_ENABLED=1`, create it:
+
+   ```bash
+   curl -sS -X POST https://your-app.vercel.app/api/ops/containers -H "Authorization: Bearer $OPS_SECRET" \
+     -H 'Content-Type: application/json' -d '{"create":true}'
+   ```
+
+   It answers with the new id. Asking again is refused.
+2. In Vercel, set `CONTAINER_ID` to that id (Production) and redeploy.
+3. Check: an empty POST to the same route lists the containers and should
+   say `"container_id_status": "ok"`.
+4. Remove `OPS_ENABLED` and redeploy.
+
+Preview has its own container (a separate prefix, a separate registry): do
+the same there if you use preview.
+
+Every request works in this deployment's container: the one `CONTAINER_ID`
+names, or with it unset, the only active one. Without a usable container
+(none, `CONTAINER_ID` wrong, the container being restored, or more than one
+active) data requests are refused with a 503 saying why; nothing is read or
+written anywhere else.
+
+**Moving the data into containers** (once, when upgrading from a release from
+before containers). The data was stored under `<prefix>:<name>` and is now
+read from `<prefix>:c:<id>:<name>`. `bun run move-data` copies it across:
+byte for byte, leaving the old keys exactly as they were. It only copies a
+fixed list of keys (never caches, sessions or the container's own keys) and
+never copies a copy. It records what it copied, so a later run can tell which
+side changed since:
+
+- only the old key: copied again. If it was deleted there, the container's
+  copy is deleted too, but only with `--propagate-deletes`, and never more
+  than five at once. More than that is refused and the keys are named: if
+  they really should go (say an institution with several stored keys was
+  disconnected), delete each one by hand in the Upstash console,
+  `DEL <prefix>:c:<id>:<name>` and then `HDEL <prefix>:c:<id>:move:copied <name>`,
+  and run again;
+- only the container key: kept (the new release wrote or deleted it);
+- both: a **conflict**. The run is refused, nothing written, and the report
+  names the key.
+
+Every write checks the container key still holds what the run expected, in
+one step with its record, so a write the new release makes during a run is
+never written over (the run stops instead). Without `--run` it only reports;
+any warning it prints means a run would be refused.
+
+**Merging the release is the deploy**, so everything up to step 5 happens
+before merging.
+
+1. Take an export (see **Backing up your data**) and check it restores into
+   `restore-test`, using a checkout of `main` from before this release (this
+   release refuses archives from before containers). Rehearse steps 3 to 8
+   there with this release.
+2. Pick a quiet time away from 13:00 and 15:00 UTC (the snapshot crons).
+   **From step 4 until step 8, keep the app closed everywhere** (close any
+   open tab or installed app too: a page already loaded keeps talking to the
+   release it came from) and pause anything that calls `/api/ingest/balance`.
+   Even viewing the app writes (today's snapshot, the transaction sync).
+3. See what it would do:
+
+   ```bash
+   vercel env pull .env.local
+   REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production
+   ```
+
+   It warns if the environment holds none of the keys every environment in
+   use has (usually the wrong `.env.local` or prefix); a run is then refused
+   unless you pass `--allow-empty`.
+4. Copy: the same with `--run`.
+5. Merge the release. While it builds, the old release is still live: run
+   step 4 again once the build has started.
+6. When the new release is live, and **still without opening the app**,
+   report again (step 3). Anything written to the old keys since step 5
+   shows as a copy or refresh: run step 4 again to bring it across.
+7. Report once more: it should show nothing to copy, refresh or delete, and
+   no conflicts. A conflict means both releases wrote the same key, and it
+   blocks every run until settled. Merge it by hand **into the container's
+   key** (for a date-keyed history hash, `HSET` the old key's missing dates
+   into `<prefix>:c:<id>:<name>`; never delete the container's own), then
+   settle it with `--resolve <name>` in place of `--run`. That records the
+   old key as seen, so the container's value is kept, and a later write to
+   the old key shows as a conflict again. Report again after.
+
+If a run is killed, its lock frees itself within the hour. When you are sure
+no run is going, delete `<prefix>:c:<id>:move:lock` by hand instead of
+waiting (any hash it was building expires on its own).
+8. Now open the app. Check the dashboard, the history chart's left edge, the
+   transaction counts, that no institution re-downloads its whole history,
+   and `GET /api/storage-usage`. Resume the ingest script.
+
+An export from before the move is refused by `bun run restore` from now on;
+restore it with the previous release, then move it.
+
+**Don't run the re-encryption pass** (`/api/ops/reencrypt`) from step 4 until
+the old keys are deleted: it rewrites both copies differently, and every key
+would read as a conflict.
+
+**Rolling back** is redeploying the previous release, which reads only the old
+keys: anything the new release wrote is not there. Rolling forward again, the
+move carries across what changed only on one side; keys both releases wrote
+are conflicts to merge by hand. The shorter the time rolled back, the fewer.
+If you roll back with Vercel's Instant Rollback, later merges are not
+deployed to production until you undo it in the dashboard.
+
+**Preview** merges `main` automatically (`sync-preview.yml`), so it gets this
+release as soon as it merges. Its data is sandbox data: before merging, create
+its container (as above, in the preview environment), then wipe its old keys
+and re-link sandbox institutions after the merge, rather than moving them.
+
+**Deleting the old keys** comes weeks later, separately, after a fresh verified
+export. First retire the move:
+
+```bash
+REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production --retire
+```
+
+It is refused unless a report shows nothing left to copy, refresh or delete
+and no conflicts (the proof nothing written to the old keys is left behind),
+and afterwards every run is refused, so a run can never take the missing old
+keys for deletions to carry into the container.
+
 **Rotating the master key** never touches your data, only the locks on the
 data keys, and never needs a second key in Vercel.
 
@@ -732,9 +904,9 @@ fails open if Redis is unreachable). This blunts brute-forcing of
 
 ### What's still not covered
 
-- **Single household password**, not per-device or per-person sessions —
-  anyone with the password gets full access, including the ability to
-  disconnect your accounts.
+- **Single household password**, not per-person accounts: anyone with the
+  password gets full access, including the ability to disconnect your
+  accounts. Sessions can be ended everywhere, but not one device at a time.
 - Rate limiting covers only the login endpoint, not the data routes (those
   already require a valid session).
 

@@ -1,9 +1,13 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, unscopedDataKeys } from './fake-redis';
+
+const ctx = TEST_CTX;
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const fake = new FakeRedis();
+// Nothing may be written outside a container (#53).
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
@@ -18,7 +22,7 @@ const { applyHidden } = await import('@/lib/hidden');
 const { accountBalanceMap } = await import('@/lib/networth');
 
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset(testKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
 }
 
 // Recovery only looks back a bounded number of DAYS, so every fixture has to
@@ -48,7 +52,7 @@ const acct = (
 /** Runs the healthy path once so the metadata store is populated, exactly as
  *  /api/net-worth does on every load before an institution later fails. */
 async function remember(item_id: string, accounts: any[]) {
-  await rememberAccounts([{ item_id, accounts, error: null } as any]);
+  await rememberAccounts(ctx, [{ item_id, accounts, error: null } as any]);
 }
 
 /** An institution as fetchInstitution returns it after a failed balance call.
@@ -87,15 +91,15 @@ describe('rememberAccounts', () => {
       acct('card', 'Venture', 'credit', { limit: 10_000 }),
       acct('checking', '360 Checking', 'depository'),
     ]);
-    expect((await rememberedIdsForItem('item_a')).sort()).toEqual(['card', 'checking']);
+    expect((await rememberedIdsForItem(ctx, 'item_a')).sort()).toEqual(['card', 'checking']);
   });
 
   // A record is only useful if it outlives the institution answering, so the
   // write path must never delete. This is what makes recovery possible at all.
   test('a later failed load leaves the existing record intact', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    await rememberAccounts([broken('item_a')]);
-    expect(await rememberedIdsForItem('item_a')).toEqual(['card']);
+    await rememberAccounts(ctx, [broken('item_a')]);
+    expect(await rememberedIdsForItem(ctx, 'item_a')).toEqual(['card']);
   });
 
   // Guards the recovery loop's own input: if a failed institution ever carried
@@ -103,20 +107,20 @@ describe('rememberAccounts', () => {
   // would overwrite good metadata with whatever the failure produced.
   test('skips an institution that reported an error, even if it has accounts', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    await rememberAccounts([
+    await rememberAccounts(ctx, [
       { item_id: 'item_b', accounts: [acct('other', 'Other', 'depository')], error: 'boom' } as any,
     ]);
-    expect(await rememberedIdsForItem('item_b')).toEqual([]);
+    expect(await rememberedIdsForItem(ctx, 'item_b')).toEqual([]);
   });
 
   test('skips manual institutions and untyped accounts', async () => {
-    await rememberAccounts([
+    await rememberAccounts(ctx, [
       { item_id: 'manual:ally', accounts: [acct('m1', 'HSA', 'investment')], error: null, manual: true } as any,
     ]);
     await remember('item_a', [acct('untyped', 'Mystery', null)]);
 
-    expect(await rememberedIdsForItem('manual:ally')).toEqual([]);
-    expect(await rememberedIdsForItem('item_a')).toEqual([]);
+    expect(await rememberedIdsForItem(ctx, 'manual:ally')).toEqual([]);
+    expect(await rememberedIdsForItem(ctx, 'item_a')).toEqual([]);
   });
 
   // Wholesale replacement, not merge. The first shape of this store was
@@ -128,7 +132,7 @@ describe('rememberAccounts', () => {
       acct('closed', 'Quicksilver', 'credit'),
     ]);
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    expect(await rememberedIdsForItem('item_a')).toEqual(['card']);
+    expect(await rememberedIdsForItem(ctx, 'item_a')).toEqual(['card']);
   });
 
   test('one Item replacing its record leaves other Items alone', async () => {
@@ -136,17 +140,17 @@ describe('rememberAccounts', () => {
     await remember('item_b', [acct('save', 'Savings', 'depository')]);
     await remember('item_a', [acct('card2', 'Venture 2', 'credit')]);
 
-    expect(await rememberedIdsForItem('item_a')).toEqual(['card2']);
-    expect(await rememberedIdsForItem('item_b')).toEqual(['save']);
+    expect(await rememberedIdsForItem(ctx, 'item_a')).toEqual(['card2']);
+    expect(await rememberedIdsForItem(ctx, 'item_b')).toEqual(['save']);
   });
 
   test('forgetItem drops one Item and nothing else', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await remember('item_b', [acct('save', 'Savings', 'depository')]);
-    await forgetItem('item_a');
+    await forgetItem(ctx, 'item_a');
 
-    expect(await rememberedIdsForItem('item_a')).toEqual([]);
-    expect(await rememberedIdsForItem('item_b')).toEqual(['save']);
+    expect(await rememberedIdsForItem(ctx, 'item_a')).toEqual([]);
+    expect(await rememberedIdsForItem(ctx, 'item_b')).toEqual(['save']);
   });
 
   // The store was reshaped from one field per account_id to one per item_id.
@@ -155,22 +159,22 @@ describe('rememberAccounts', () => {
   // findRememberedAccount could resolve a type out of one.
   test('clears records left over from the previous per-account shape', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    await fake.hset(testKey('accounts:meta'), {
+    await fake.hset(ctxKey('accounts:meta'), {
       old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
     });
 
-    expect(await findRememberedAccount('old_acct_id')).toBeNull();
-    expect(await fake.hkeys(testKey('accounts:meta'))).toEqual(['item_a']);
+    expect(await findRememberedAccount(ctx, 'old_acct_id')).toBeNull();
+    expect(await fake.hkeys(ctxKey('accounts:meta'))).toEqual(['item_a']);
   });
 
   // app/api/hidden-accounts needs an account's type to hide it, and for a
   // recovered row neither the cache nor a live fetch can supply one.
   test('findRememberedAccount resolves an account to its Item and type', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
-    const found = await findRememberedAccount('card');
+    const found = await findRememberedAccount(ctx, 'card');
     expect(found?.item_id).toBe('item_a');
     expect(found?.account.type).toBe('credit');
-    expect(await findRememberedAccount('nope')).toBeNull();
+    expect(await findRememberedAccount(ctx, 'nope')).toBeNull();
   });
 });
 
@@ -180,7 +184,7 @@ describe('recovering a failed institution', () => {
     await writeAccountSnapshot(RECENT, { card: 5544.35 });
 
     const inst = broken('item_a');
-    const filled = await fillFromLastKnown([inst]);
+    const filled = await fillFromLastKnown(ctx, [inst]);
 
     expect(filled).toEqual([{ item_id: 'item_a', as_of: RECENT, accounts: 1, missing: 0 }]);
     expect(inst.stale_as_of).toBe(RECENT);
@@ -207,7 +211,7 @@ describe('recovering a failed institution', () => {
     await writeAccountSnapshot(RECENT, { card: 5544.35 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
 
     expect(inst.accounts[0].stale).toBe(true);
     expect(accountBalanceMap([inst] as any)).toEqual({});
@@ -228,7 +232,7 @@ describe('recovering a failed institution', () => {
     await writeAccountSnapshot(RECENT, { card: 500 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
 
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
   });
@@ -244,7 +248,7 @@ describe('recovering a failed institution', () => {
     await writeAccountSnapshot(RECENT, { card: 5544.35 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
 
     expect(inst.error).toBe('Could not fetch balances');
     expect([inst].every((i) => !i.error)).toBe(false);
@@ -255,7 +259,7 @@ describe('recovering a failed institution', () => {
     await writeAccountSnapshot(RECENT, { card: 100 });
 
     const inst = { ...broken('item_a', 'This account needs to be reconnected'), needs_reauth: true };
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
 
     expect(inst.needs_reauth).toBe(true);
     expect(inst.accounts).toHaveLength(1);
@@ -269,7 +273,7 @@ describe('recovering a failed institution', () => {
     await writeAccountSnapshot(RECENT, { card: 500, checking: 1200 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
     expect(inst.accounts).toHaveLength(2);
   });
 });
@@ -279,7 +283,7 @@ describe('what it refuses to do', () => {
     const healthy = { ...broken('item_a'), error: null, accounts: [{ account_id: 'x' }] };
     fake.ops = 0;
 
-    expect(await fillFromLastKnown([healthy])).toEqual([]);
+    expect(await fillFromLastKnown(ctx, [healthy])).toEqual([]);
     expect(fake.ops).toBe(0);
     expect(healthy.stale_as_of).toBeUndefined();
   });
@@ -288,7 +292,7 @@ describe('what it refuses to do', () => {
   // live in that same store. Guessing would understate net worth silently,
   // which is the exact failure lib/manual.ts is written to make loud.
   test('manual institutions are never filled', async () => {
-    await rememberAccounts([
+    await rememberAccounts(ctx, [
       { item_id: 'manual:ally', accounts: [acct('m1', 'HSA', 'investment')], error: null } as any,
     ]);
     await writeAccountSnapshot(RECENT, { m1: 9000 });
@@ -297,7 +301,7 @@ describe('what it refuses to do', () => {
       ...broken('manual:ally', 'Could not load manually-tracked accounts'),
       manual: true,
     };
-    expect(await fillFromLastKnown([inst])).toEqual([]);
+    expect(await fillFromLastKnown(ctx, [inst])).toEqual([]);
     expect(inst.accounts).toHaveLength(0);
   });
 
@@ -306,7 +310,7 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 500 });
 
     const partial = { ...broken('item_a'), accounts: [{ account_id: 'live' }] };
-    expect(await fillFromLastKnown([partial])).toEqual([]);
+    expect(await fillFromLastKnown(ctx, [partial])).toEqual([]);
     expect(partial.accounts).toEqual([{ account_id: 'live' }]);
   });
 
@@ -317,7 +321,7 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 5000, checking: 100 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['checking']);
   });
 
@@ -329,14 +333,14 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 500, save: 2000 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
   });
 
   test('no fill when the institution was never recorded healthy', async () => {
     await writeAccountSnapshot(RECENT, { card: 500 });
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toEqual([]);
+    expect(await fillFromLastKnown(ctx, [inst])).toEqual([]);
     expect(inst.stale_as_of).toBeUndefined();
   });
 
@@ -345,7 +349,7 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { someone_else: 500 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toEqual([]);
+    expect(await fillFromLastKnown(ctx, [inst])).toEqual([]);
     expect(inst.accounts).toHaveLength(0);
   });
 
@@ -358,12 +362,12 @@ describe('what it refuses to do', () => {
   test('an unreadable record costs only its own Item', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await remember('item_b', [acct('save', 'Savings', 'depository')]);
-    await fake.hset(testKey('accounts:meta'), { item_a: 'not-ciphertext' });
+    await fake.hset(ctxKey('accounts:meta'), { item_a: 'not-ciphertext' });
     await writeAccountSnapshot(RECENT, { card: 500, save: 2000 });
 
     const a = broken('item_a');
     const b = broken('item_b');
-    expect(await fillFromLastKnown([a, b])).toHaveLength(1);
+    expect(await fillFromLastKnown(ctx, [a, b])).toHaveLength(1);
     expect(a.accounts).toHaveLength(0);
     expect(b.accounts.map((x) => x.account_id)).toEqual(['save']);
   });
@@ -375,7 +379,7 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 500, orphan: 9000, manual_1: 400 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toHaveLength(1);
+    expect(await fillFromLastKnown(ctx, [inst])).toHaveLength(1);
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
   });
 
@@ -393,7 +397,7 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 500 });
 
     const inst = broken('item_a');
-    const filled = await fillFromLastKnown([inst]);
+    const filled = await fillFromLastKnown(ctx, [inst]);
 
     expect(filled).toEqual([{ item_id: 'item_a', as_of: RECENT, accounts: 1, missing: 1 }]);
     expect(inst.accounts.map((a) => a.account_id)).toEqual(['card']);
@@ -405,7 +409,7 @@ describe('what it refuses to do', () => {
     await writeAccountSnapshot(RECENT, { card: 500 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
     expect(inst.stale_missing).toBeUndefined();
   });
 });
@@ -419,7 +423,7 @@ describe('the age limit', () => {
     await writeAccountSnapshot(daysAgo(40), { card: 500 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toEqual([]);
+    expect(await fillFromLastKnown(ctx, [inst])).toEqual([]);
     expect(inst.accounts).toHaveLength(0);
     expect(inst.stale_as_of).toBeUndefined();
     expect(inst.stale_too_old).toBe(daysAgo(40));
@@ -430,7 +434,7 @@ describe('the age limit', () => {
     await writeAccountSnapshot(daysAgo(34), { card: 500 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toHaveLength(1);
+    expect(await fillFromLastKnown(ctx, [inst])).toHaveLength(1);
     expect(inst.stale_as_of).toBe(daysAgo(34));
     expect(inst.stale_too_old).toBeUndefined();
   });
@@ -442,7 +446,7 @@ describe('the age limit', () => {
     await writeAccountSnapshot(daysAgo(35), { card: 500 });
 
     const inst = broken('item_a');
-    expect(await fillFromLastKnown([inst])).toHaveLength(1);
+    expect(await fillFromLastKnown(ctx, [inst])).toHaveLength(1);
     expect(inst.stale_too_old).toBeUndefined();
   });
 
@@ -457,7 +461,7 @@ describe('the age limit', () => {
     await writeAccountSnapshot(daysAgo(40), { someone_else: 500 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
     expect(inst.stale_too_old).toBeUndefined();
     expect(inst.stale_as_of).toBeUndefined();
   });
@@ -475,7 +479,7 @@ describe('the total it produces', () => {
     const inst = broken('item_a');
 
     expect(applyHidden([cash, inst as any], new Map())).toBe(10_000); // before: card missing
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
     expect(applyHidden([cash, inst as any], new Map())).toBeCloseTo(4455.65, 2);
   });
 
@@ -484,7 +488,7 @@ describe('the total it produces', () => {
     await writeAccountSnapshot(RECENT, { card: 5544.35 });
 
     const inst = broken('item_a');
-    await fillFromLastKnown([inst]);
+    await fillFromLastKnown(ctx, [inst]);
 
     const hidden = new Map([['card', { type: 'credit', hidden_at: '2026-01-01' }]]);
     expect(applyHidden([inst as any], hidden)).toBe(0);
@@ -502,7 +506,7 @@ describe('the total it produces', () => {
 
     const a = broken('item_a');
     const b = broken('item_b');
-    const filled = await fillFromLastKnown([a, b]);
+    const filled = await fillFromLastKnown(ctx, [a, b]);
 
     expect(filled).toHaveLength(2);
     expect(a.stale_as_of).toBe(RECENT);
@@ -520,7 +524,7 @@ describe('the total it produces', () => {
     await writeAccountSnapshot(RECENT, { card: 500, save: 2000, ira: 30_000 });
     fake.ops = 0;
 
-    const filled = await fillFromLastKnown([broken('item_a'), broken('item_b'), broken('item_c')]);
+    const filled = await fillFromLastKnown(ctx, [broken('item_a'), broken('item_b'), broken('item_c')]);
 
     expect(filled).toHaveLength(3);
     // hkeys + one hget for the winning snapshot date (never a full hgetall of

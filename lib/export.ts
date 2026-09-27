@@ -51,25 +51,30 @@
 // (a restore-test copy) without rewriting every line.
 
 import { createHash } from 'node:crypto';
-import { k } from './storage';
+import { envPrefix } from './storage';
+import { splitScoped } from './containers';
 
 export const EXPORT_FORMAT_VERSION = 1;
 
 /**
- * Which key layout the archive was taken under. The container-scoping work
- * (#53) moves every key; an archive from before that restored after it would
- * silently repopulate keys nothing reads any more. Restore compares this against
- * the running code and refuses a mismatch.
+ * Which key layout the archive was taken under. "containers": stored data is
+ * inside containers (#53). An archive from before that ("unscoped") restored
+ * now would repopulate keys nothing reads any more, so restore compares this
+ * against the running code and refuses a mismatch.
  */
-export const SCHEMA_ERA = 'unscoped';
+export const SCHEMA_ERA = 'containers';
 
 /**
- * Deliberately left out. All are disposable and would be wrong after a
+ * Deliberately left out. None is data, and each would be wrong after a
  * restore: a cache entry would show numbers from the moment of export as if
- * current, a rate-limit counter would lock out a login it was never about, and
- * a sync lock would block a sync that isn't running.
+ * current, a rate-limit counter would lock out a login it was never about, a
+ * sync lock would block a sync that isn't running, an old session epoch
+ * would bring back sessions revoked since (lib/sessions.ts), and the snapshot
+ * cron's log and lock describe the cron that wrote them (lib/snapshot-job.ts).
+ * The data move's record is left out too: restored, it would vouch for values
+ * it never copied, and a later move could overwrite them (lib/move.ts).
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:'] as const;
+export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:'] as const;
 
 /** Page size for SCAN and HSCAN. history:accounts gains a field every day, and
  *  one HGETALL of years of it would be one oversized response. */
@@ -110,8 +115,12 @@ export type ExportClient = {
   ttl(key: string): Promise<number>;
 };
 
-function isExcluded(relative: string): boolean {
-  return EXCLUDED_PREFIXES.some((p) => relative.startsWith(p));
+/** Whether a key (relative to the environment prefix) is left out, judged by
+ *  the key inside its container if it is in one: a container's cache is as
+ *  disposable as any other. Restore refuses the same keys. */
+export function isExcluded(relative: string): boolean {
+  const { key } = splitScoped(relative);
+  return EXCLUDED_PREFIXES.some((p) => key.startsWith(p));
 }
 
 /**
@@ -200,7 +209,7 @@ export async function* exportLines(
   client: ExportClient,
   now: Date = new Date()
 ): AsyncGenerator<string> {
-  const prefix = k('');
+  const prefix = envPrefix();
 
   const header: ExportHeader = {
     nya_export: EXPORT_FORMAT_VERSION,
@@ -208,7 +217,8 @@ export async function* exportLines(
     env_prefix: prefix.replace(/:$/, ''),
     container_id: null,
     taken_at: now.toISOString(),
-    excluded: EXCLUDED_PREFIXES.map((p) => `${p}*`),
+    // Inside a container too (isExcluded).
+    excluded: EXCLUDED_PREFIXES.flatMap((p) => [`${p}*`, `c:*:${p}*`]),
   };
   const hash = createHash('sha256');
   const headerLine = JSON.stringify(header) + '\n';

@@ -42,7 +42,8 @@
 // field names, counts and error types only.
 
 import { createHash } from 'node:crypto';
-import { rawRedis, k } from './storage';
+import { rawRedis, envPrefix } from './storage';
+import { splitScoped, isEnvWide } from './containers';
 import {
   activeKeyForReencryption,
   activeKeyName,
@@ -92,6 +93,8 @@ const EXACT: Record<string, Kind> = {
   'history:backfill-done': 'plain',
   'history:backfill-pending': 'plain',
   'account-links:dismissed': 'plain',
+
+  containers: 'plain', // the container registry
 };
 
 const PREFIXES: [string, Kind][] = [
@@ -100,6 +103,9 @@ const PREFIXES: [string, Kind][] = [
   ['txns-blocked:', 'plain'],
   ['invtxns-lock:', 'plain'],
   ['ratelimit:', 'plain'],
+  ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
+  ['move:', 'plain'], // the data move's record (lib/move.ts)
+  ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
 ];
@@ -107,6 +113,14 @@ const PREFIXES: [string, Kind][] = [
 /** How a key (without the environment prefix) is stored, or null if it is not
  *  on the list. */
 export function classify(key: string): Kind | null {
+  // A key inside a container is stored like the same key outside one, except
+  // that environment-wide stores never belong in one, and containers never
+  // nest: either means a key was built wrongly, so it is reported.
+  const scoped = splitScoped(key);
+  if (scoped.container) {
+    if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
+    return classify(scoped.key);
+  }
   if (Object.hasOwn(EXACT, key)) return EXACT[key];
   for (const [prefix, kind] of PREFIXES) if (key.startsWith(prefix)) return kind;
   return null;
@@ -354,7 +368,7 @@ export async function reencrypt(
     else report.changed_meanwhile++;
   };
 
-  const prefix = k('');
+  const prefix = envPrefix();
   const keys = await listKeys(client, prefix);
   for (const full of keys) {
     if (now() >= deadline) return finish(report);

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
-import { readCache, writeCache, TRANSACTIONS_CACHE_KEY } from '@/lib/cache';
+import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getOverrides } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
@@ -14,23 +15,24 @@ type TransactionsPayload = {
 
 export async function GET(req: Request) {
   try {
+    const ctx = await dataCtx();
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
     if (!refresh) {
-      const cached = await readCache<TransactionsPayload>(TRANSACTIONS_CACHE_KEY);
+      const cached = await readCache<TransactionsPayload>(ctx, CacheKey.Transactions);
       if (cached) return NextResponse.json({ ...cached, from_cache: true });
     }
 
-    const items = await getItems();
+    const items = await getItems(ctx);
     // Read the hidden set first: rows from hidden accounts are filtered out
     // inside the sync (the only place account_id still exists), so they're
     // never shipped to the client. A read failure throws to the catch below
     // rather than silently surfacing transactions the user hid.
-    const { hidden } = await getEffectiveHidden();
+    const { hidden } = await getEffectiveHidden(ctx);
     const hiddenIds = new Set(hidden.keys());
     const [results, overrides, renames] = await Promise.all([
-      Promise.all(items.map((item) => syncItemTransactions(item, hiddenIds))),
-      getOverrides(),
-      getRenames(),
+      Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds))),
+      getOverrides(ctx),
+      getRenames(ctx),
     ]);
 
     // Newest first. Within a day the posting `date` is equal, so fall back to
@@ -60,11 +62,13 @@ export async function GET(req: Request) {
     // institutions get re-checked on the next load instead of hiding for
     // the TTL.
     if (notes.length === 0) {
-      await writeCache(TRANSACTIONS_CACHE_KEY, payload);
+      await writeCache(ctx, CacheKey.Transactions, payload);
     }
 
     return NextResponse.json({ ...payload, from_cache: false });
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
   }

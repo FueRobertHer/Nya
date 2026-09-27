@@ -26,11 +26,24 @@ describe('the archive', () => {
 
     expect(header).toEqual({
       nya_export: 1,
-      schema_era: 'unscoped',
+      schema_era: 'containers',
       env_prefix: 'test',
       container_id: null,
       taken_at: NOW.toISOString(),
-      excluded: ['cache:*', 'ratelimit:*', 'invtxns-lock:*'],
+      excluded: [
+        'cache:*',
+        'c:*:cache:*',
+        'ratelimit:*',
+        'c:*:ratelimit:*',
+        'invtxns-lock:*',
+        'c:*:invtxns-lock:*',
+        'sessions:*',
+        'c:*:sessions:*',
+        'snapshot:*',
+        'c:*:snapshot:*',
+        'move:*',
+        'c:*:move:*',
+      ],
     });
   });
 

@@ -4,11 +4,12 @@
 // them. Its own module so lib/last-known.ts and lib/vanished.ts can follow
 // links without a circular import (lib/links.ts imports lib/last-known.ts).
 
-import { redis, k } from './storage';
+import { redis, kc } from './storage';
+import type { Ctx } from './containers';
 import { decrypt } from './crypto';
 
 // A lazy key, not a module constant: the container (#53) will be a parameter.
-export const linksKey = () => k('account-links');
+export const linksKey = (ctx: Ctx) => kc(ctx, 'account-links');
 
 export type Link = { to: string; linked_at: string; evidence: Record<string, unknown> };
 
@@ -17,8 +18,8 @@ export type Link = { to: string; linked_at: string; evidence: Record<string, unk
  * be read or parsed. For the Accounts tab card, which lists the unreadable
  * ones so the user can remove them. Throws only if the hash can't be read.
  */
-export async function readLinks(): Promise<{ links: Map<string, Link>; unreadable: Set<string> }> {
-  const raw = (await redis().hgetall<Record<string, string>>(linksKey())) ?? {};
+export async function readLinks(ctx: Ctx): Promise<{ links: Map<string, Link>; unreadable: Set<string> }> {
+  const raw = (await redis().hgetall<Record<string, string>>(linksKey(ctx))) ?? {};
   const links = new Map<string, Link>();
   const unreadable = new Set<string>();
   await Promise.all(
@@ -40,8 +41,8 @@ export async function readLinks(): Promise<{ links: Map<string, Link>; unreadabl
  * hidden accounts follow links, and treating "couldn't read" as "no links"
  * would put a hidden account back on screen.
  */
-export async function getLinks(): Promise<Map<string, Link>> {
-  const { links, unreadable } = await readLinks();
+export async function getLinks(ctx: Ctx): Promise<Map<string, Link>> {
+  const { links, unreadable } = await readLinks(ctx);
   if (unreadable.size > 0) throw new Error(`Account link ${[...unreadable][0]} is unreadable`);
   return links;
 }

@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { effectiveLinks, getLinks, liveAccountIds, resolveId, type Link } from '@/lib/links';
 import { StoredDataUnreadableError, describeUnreadable } from '@/lib/stored-json';
 import { getGoals, setGoals, type Goal } from '@/lib/goals';
 
 export async function GET() {
   try {
-    const goals = await getGoals();
+    const ctx = await dataCtx();
+    const goals = await getGoals(ctx);
     // A goal tracking an account that has since been linked to a new id
     // (lib/links.ts) follows it, so its progress keeps working after a
     // reconnect. The stored goal isn't touched here; the next save from the
@@ -13,7 +15,7 @@ export async function GET() {
     // Links that can't be read leave the ids as stored.
     let links = new Map<string, Link>();
     try {
-      links = effectiveLinks(await getLinks(), await liveAccountIds());
+      links = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx));
     } catch {
       links = new Map();
     }
@@ -21,6 +23,8 @@ export async function GET() {
       goals: goals.map((g) => (g.account_id ? { ...g, account_id: resolveId(g.account_id, links) } : g)),
     });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     // 409, not 500, and flagged: the client must not show "none" and let the
     // next save overwrite what is there.
     if (err instanceof StoredDataUnreadableError) {
@@ -35,6 +39,7 @@ export async function GET() {
 // Replaces the whole goal list (the client always sends the full set).
 export async function PUT(req: Request) {
   try {
+    const ctx = await dataCtx();
     const { goals } = await req.json();
     if (!Array.isArray(goals) || goals.length > 20) {
       return NextResponse.json({ error: 'Invalid goals' }, { status: 400 });
@@ -51,9 +56,11 @@ export async function PUT(req: Request) {
       }
       clean.push({ id, name, target, account_id });
     }
-    await setGoals(clean);
+    await setGoals(ctx, clean);
     return NextResponse.json({ goals: clean });
   } catch (err) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     if (err instanceof StoredDataUnreadableError) {
       console.error('Stored goals unreadable:', describeUnreadable(err));
       return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });

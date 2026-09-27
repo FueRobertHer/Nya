@@ -5,10 +5,11 @@
 // same reasoning as budgets (rare, single-user writes). An unreadable blob is
 // reported, never treated as "no goals" (see lib/stored-json.ts).
 
-import { k } from './storage';
+import { kc } from './storage';
+import type { Ctx } from './containers';
 import { readEncryptedJson, writeEncryptedJson } from './stored-json';
 
-const GOALS_KEY = k('goals');
+const GOALS_KEY = (ctx: Ctx) => kc(ctx, 'goals');
 
 export type Goal = {
   id: string;
@@ -20,11 +21,11 @@ export type Goal = {
 const isGoals = (v: unknown): v is Goal[] => Array.isArray(v);
 
 /** Throws StoredDataUnreadableError if goals were saved but cannot be read. */
-export async function getGoals(): Promise<Goal[]> {
-  return (await readEncryptedJson(GOALS_KEY, 'goals', isGoals)) ?? [];
+export async function getGoals(ctx: Ctx): Promise<Goal[]> {
+  return (await readEncryptedJson(GOALS_KEY(ctx), 'goals', isGoals)) ?? [];
 }
 
 /** Refuses (StoredDataUnreadableError) to replace goals it cannot read. */
-export async function setGoals(goals: Goal[]): Promise<void> {
-  await writeEncryptedJson(GOALS_KEY, 'goals', goals, isGoals);
+export async function setGoals(ctx: Ctx, goals: Goal[]): Promise<void> {
+  await writeEncryptedJson(GOALS_KEY(ctx), 'goals', goals, isGoals);
 }
