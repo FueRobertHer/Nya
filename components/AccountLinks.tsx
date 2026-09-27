@@ -122,6 +122,11 @@ export default function AccountLinks({
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setError(refusalText(body.action, j));
+        // A forget that stopped part way may have changed some things already.
+        if (body.action === 'forget' && res.status >= 500) {
+          await load();
+          onChanged();
+        }
         return;
       }
       if (body.action === 'forget') {

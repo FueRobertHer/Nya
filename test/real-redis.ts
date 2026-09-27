@@ -2,15 +2,21 @@
 //
 // Started on a random port and checked with PING; a port something else
 // already holds leaves the server unable to start, so it is retried on
-// another rather than letting every test after it time out.
+// another rather than letting every test after it time out. Each server gets
+// a random password, so a server someone else runs on that port (which would
+// answer a PING, and then be wiped by FLUSHALL) refuses the client instead.
 
 export type RealRedis = { client: InstanceType<typeof Bun.RedisClient>; stop: () => void };
 
 export async function startRedis(): Promise<RealRedis> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const port = 30000 + Math.floor(Math.random() * 20000);
-    const server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
-    const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
+    const password = crypto.randomUUID().replace(/-/g, '');
+    const server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no', '--requirepass', password], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    const client = new Bun.RedisClient(`redis://:${password}@127.0.0.1:${port}`);
     for (let i = 0; i < 40; i++) {
       if (server.exitCode !== null) break; // it couldn't start (port taken): try another
       try {

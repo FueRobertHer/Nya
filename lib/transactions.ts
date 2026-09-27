@@ -262,11 +262,19 @@ function blockedKey(ctx: Ctx, item_id: string): string {
   return kc(ctx, `txns-blocked:${item_id}`);
 }
 
+// Set when a write of the store failed for any other reason, and cleared by
+// the next write that lands: while it is set, rows on screen may not be
+// stored. Expires in a week, in case the Item is never synced again.
+function unsavedKey(ctx: Ctx, item_id: string): string {
+  return kc(ctx, `txns-unsaved:${item_id}`);
+}
+
 /** Whether an Item's store is behind what it shows: its last write was
- *  refused as too large, so rows on screen may not be stored. Throws on a
- *  failed read, for callers that delete on the answer. */
+ *  refused as too large, or failed, so rows on screen may not be stored.
+ *  Throws on a failed read, for callers that delete on the answer. */
 export async function storeIsBehind(ctx: Ctx, item_id: string): Promise<boolean> {
-  return (await redis().get(blockedKey(ctx, item_id))) !== null;
+  const [blocked, unsaved] = await Promise.all([redis().get(blockedKey(ctx, item_id)), redis().get(unsavedKey(ctx, item_id))]);
+  return blocked !== null || unsaved !== null;
 }
 
 /** What the marker records: when the write was refused, and how big the blob
@@ -491,6 +499,8 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
     }
 
     await redis().set(stateKey(ctx, item_id), encoded);
+    // Caught up: what is shown is stored again.
+    await redis().del(unsavedKey(ctx, item_id)).catch(() => {});
     return { persisted: true };
   } catch (err) {
     // Persist failures are non-fatal for the current request (the in-memory
@@ -502,6 +512,10 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
       `transactions: failed to persist sync state for ${item_id} (${Object.keys(state.txns).length} txns); will re-sync next call`,
       err
     );
+    // The rows about to be shown aren't stored: say so, for the one reader
+    // that must know (lib/overrides.ts pruneOrphanOverrides, which would
+    // otherwise take a category set on one of them for an orphan).
+    await redis().set(unsavedKey(ctx, item_id), new Date().toISOString(), { ex: 7 * 86_400 }).catch(() => {});
     return { persisted: false, reason: 'error' };
   }
 }
@@ -554,7 +568,7 @@ export async function storedAccountIds(ctx: Ctx, item_id: string): Promise<Set<s
  */
 export async function clearItemTransactions(ctx: Ctx, item_id: string): Promise<void> {
   try {
-    await redis().del(stateKey(ctx, item_id), blockedKey(ctx, item_id));
+    await redis().del(stateKey(ctx, item_id), blockedKey(ctx, item_id), unsavedKey(ctx, item_id));
   } catch {
     // Best effort; a stale key is harmless once the Item is gone.
   }

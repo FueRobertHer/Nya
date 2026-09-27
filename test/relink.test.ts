@@ -408,75 +408,75 @@ describe('forgetting an earlier account', () => {
     expect(await readMap('history:accounts', '2026-01-01')).toEqual({ acct_old: 100, acct_other: 5 });
   });
 
-  // Hidden: forgetting keeps it out of past totals without keeping anything
-  // that says which account it was.
-  test('a hidden account stays out of past totals, and nothing names it', async () => {
-    await setup();
+  // Hidden: forgetting folds it out of the stored totals, point by point,
+  // and nothing about it is left anywhere.
+  const series = async () => {
     const { getHistory } = await import('@/lib/history');
+    return getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden);
+  };
+  const withEstimated = async () => {
     await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
     await fake.hset(ctxKey('history:accounts:est'), { '2025-12-01': await enc({ acct_old: 40, acct_other: 10 }) });
     await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({}) });
+  };
+  const storedTotal = async (key: string, date: string) => {
+    const { decrypt } = await import('@/lib/crypto');
+    const blob = await fake.hget<string>(ctxKey(key), date);
+    return blob ? Number(await decrypt(blob)) : null;
+  };
+  const leftovers = async () => {
+    const keys = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()] as string[];
+    return keys.filter((k) => k.includes('history:forgotten') || k.includes('history:forgetting:'));
+  };
+
+  test('a hidden account is folded out of the stored totals, and nothing about it is left', async () => {
+    await setup();
+    await withEstimated();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
-    const before = await getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden);
+    const before = await series();
     expect((await route('account-links', 'GET')).body.earlier.map((e: any) => e.hidden)).toEqual([true]);
 
     expect((await forget('acct_old')).status).toBe(200);
     const { hidden } = await links.getEffectiveHidden(ctx);
     expect(hidden.size).toBe(0); // its hidden entry went with it
-    expect(await getHistory(ctx, hidden)).toEqual(before);
-    const adjust = (await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten')))!;
-    expect(Object.keys(adjust).every((f) => !f.includes('acct_old'))).toBe(true);
-    for (const v of Object.values(adjust)) expect(v).not.toContain('acct_old');
+    expect(await series()).toEqual(before);
+    expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(5);
+    expect(await storedTotal('history:net-worth:est', '2025-12-01')).toBe(10);
+    expect(await leftovers()).toEqual([]);
   });
 
-  // A point the chart couldn't correct while the account was hidden (no
-  // per-account map that day) stays out after it is forgotten.
-  test('a point that was dropped while hidden stays dropped', async () => {
+  // At every step the chart is what it was: a point is either untouched (and
+  // the still-hidden account is subtracted) or folded (and it is gone).
+  test('the chart is the same after every step of a forget', async () => {
     await setup();
-    const { getHistory } = await import('@/lib/history');
-    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt('999') }); // no per-account map
+    await withEstimated();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
-    const dates = (h: { date: string }[]) => h.map((p) => p.date);
-    expect(dates(await getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden))).not.toContain('2026-02-01');
-    await forget('acct_old');
-    expect(dates(await getHistory(ctx))).not.toContain('2026-02-01');
-  });
-
-  // Today's total recorded again after the forget no longer has the
-  // account in it: the morning's contribution must not come off it.
-  test('a re-recorded today is not subtracted twice', async () => {
-    await setup();
-    const { getHistory, recordSnapshot } = await import('@/lib/history');
-    const today = new Date().toISOString().slice(0, 10);
-    await fake.hset(ctxKey('history:net-worth'), { [today]: await encrypt('105') });
-    await fake.hset(ctxKey('history:accounts'), { [today]: await enc({ acct_old: 100, acct_other: 5 }) });
-    await setAccountHidden(ctx, 'acct_old', 'depository', true);
-    await forget('acct_old');
-    expect((await getHistory(ctx)).find((p) => p.date === today)!.value).toBe(5);
-    await recordSnapshot(ctx, 5, { acct_other: 5 });
-    expect((await getHistory(ctx)).find((p) => p.date === today)!.value).toBe(5);
-  });
-
-  // A flat-era estimated date: once its flat record is scrubbed, nothing can
-  // say what the account contributed any more, so a retry must not ask again.
-  const flatEra = async () => {
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
-    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({ acct_old: 40 }) });
-    await setAccountHidden(ctx, 'acct_old', 'depository', true);
-  };
-  const series = async () => {
-    const { getHistory } = await import('@/lib/history');
-    return getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden);
-  };
-
-  test('a forget that stops while deleting history finishes on a retry, with the same totals', async () => {
-    await setup();
-    await flatEra();
     const before = await series();
     const evalOrig = fake.eval.bind(fake);
-    let calls = 0;
+    const seen: unknown[] = [];
     fake.eval = (async (script: string, keys: string[], args: string[]) => {
-      if (script.startsWith('-- nya:history-cas-field') && ++calls === 3) throw new Error('down');
+      const out = await evalOrig(script, keys, args);
+      if (script.startsWith('-- nya:history-fold')) seen.push(await series());
+      return out;
+    }) as typeof fake.eval;
+    try {
+      await forget('acct_old');
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(seen.length).toBeGreaterThan(1);
+    for (const s of seen) expect(s).toEqual(before);
+  });
+
+  test('a forget that stops part way is right while stopped, can’t be unhidden, and folds once on a retry', async () => {
+    await setup();
+    await withEstimated();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const before = await series();
+    const evalOrig = fake.eval.bind(fake);
+    let folds = 0;
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:history-fold') && ++folds === 2) throw new Error('down');
       return evalOrig(script, keys, args);
     }) as typeof fake.eval;
     try {
@@ -485,119 +485,91 @@ describe('forgetting an earlier account', () => {
       fake.eval = evalOrig;
     }
     expect(await series()).toEqual(before);
+    const unhide = await route('hidden-accounts', 'POST', { account_id: 'acct_old', hidden: false });
+    expect(unhide.status).toBe(409);
+    expect(unhide.body.error).toContain('being forgotten');
     expect((await forget('acct_old')).status).toBe(200);
     expect(await series()).toEqual(before);
-    const adjust = (await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten')))!;
-    const { decrypt } = await import('@/lib/crypto');
-    expect(await Promise.all(Object.values(adjust).map((v) => decrypt(v)))).not.toContain('drop');
+    expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(5);
+    expect(await storedTotal('history:net-worth:est', '2025-12-01')).toBe(10);
+    expect(await leftovers()).toEqual([]);
   });
 
-  test('a forget that stops before dropping the hidden entry records nothing twice on a retry', async () => {
+  // A point already folded reads as "can't tell" afterwards (a flat-only
+  // estimate with its flat record scrubbed): a retry must skip it, not drop it.
+  test('a retry skips the points already folded', async () => {
     await setup();
-    await flatEra();
-    const before = await series();
-    const hdel = fake.hdel.bind(fake);
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-15': await encrypt('40') });
+    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-15': await enc({ acct_old: 40 }) });
+    await withEstimated();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const evalOrig = fake.eval.bind(fake);
     let failed = false;
-    fake.hdel = (async (key: string, ...fields: string[]) => {
-      if (!failed && key === ctxKey('hidden:accounts')) {
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (!failed && script.startsWith('-- nya:history-fold') && args[0] === '2025-12-01') {
         failed = true;
+        // Once the flat-only point beside it (same batch) has been folded.
+        const folded = () => [...(fake as any).hashes.entries()].some(([k, h]: [string, Map<string, string>]) => k.includes('history:forgetting:') && h.has('e:2025-12-15'));
+        for (let i = 0; i < 100 && !folded(); i++) await Bun.sleep(5);
         throw new Error('down');
       }
-      return hdel(key, ...fields);
-    }) as typeof fake.hdel;
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
     try {
       expect((await forget('acct_old')).status).toBe(500);
     } finally {
-      fake.hdel = hdel;
+      fake.eval = evalOrig;
     }
-    const fields = Object.keys((await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten')))!);
+    expect(await storedTotal('history:net-worth:est', '2025-12-15')).toBe(0);
     expect((await forget('acct_old')).status).toBe(200);
-    expect(Object.keys((await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten')))!)).toEqual(fields);
-    expect(await series()).toEqual(before);
+    expect(await storedTotal('history:net-worth:est', '2025-12-15')).toBe(0);
+    expect(await storedTotal('history:net-worth:est', '2025-12-01')).toBe(10);
   });
 
-  test('Unhide after a forget stopped part way counts the account again, fully', async () => {
-    await setup();
-    await flatEra();
-    const hdel = fake.hdel.bind(fake);
-    let failed = false;
-    fake.hdel = (async (key: string, ...fields: string[]) => {
-      if (!failed && key === ctxKey('hidden:accounts')) {
-        failed = true;
-        throw new Error('down');
-      }
-      return hdel(key, ...fields);
-    }) as typeof fake.hdel;
-    try {
-      await forget('acct_old');
-    } finally {
-      fake.hdel = hdel;
-    }
-    // Still hidden, with its contribution recorded: Unhide instead of retrying.
-    expect((await route('hidden-accounts', 'POST', { account_id: 'acct_old', hidden: false })).status).toBe(200);
-    expect(await fake.hgetall(ctxKey('history:forgotten'))).toBeNull();
-    // Counted again in full, as unhiding means: the stored totals as they are.
-    const values = Object.fromEntries((await series()).map((p) => [p.date, p.value]));
-    expect(values['2025-12-01']).toBe(50);
-    expect(values['2026-01-01']).toBe(105);
-  });
-
-  test('the tag is random, not derived from the account', async () => {
-    await setup();
-    await flatEra();
-    await forget('acct_old');
-    const { createHash } = await import('node:crypto');
-    const derived = createHash('sha256').update(`${ctx.container}:acct_old`).digest('hex').slice(0, 16);
-    const tags = Object.keys((await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten')))!).map((f) => f.split(':').pop());
-    expect(tags.length).toBeGreaterThan(0);
-    for (const t of tags) {
-      expect(t).not.toBe(derived);
-      expect(t).toMatch(/^[0-9a-f-]{36}$/);
-    }
-  });
-
-  // Can't be read right now is not can't be read ever: stop, change nothing.
-  test('a map that can’t be decrypted for now stops the forget, changing nothing', async () => {
-    await setup();
-    await fake.hset(ctxKey('history:accounts'), { '2025-12-30': 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }); // its key can't be opened here now
-    expect((await forget('acct_old')).status).toBe(500);
-    expect(await readMap('history:accounts', '2026-01-01')).toEqual({ acct_old: 100, acct_other: 5 });
-    expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).not.toBeNull();
-  });
-
-  test('the pre-check stops it before any layer is rewritten', async () => {
-    await setup();
-    // In the last layer read: without the check, earlier layers would be done.
-    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-30': 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
-    expect((await forget('acct_old')).status).toBe(500);
-    for (const key of ['history:accounts', 'history:accounts:est', 'history:accounts:est:ext', 'history:accounts:partial']) {
-      expect(await readMap(key, '2026-01-01')).toEqual({ acct_old: 100, acct_other: 5 });
-    }
-  });
-
-  test('a hidden account’s contribution isn’t recorded from a map that can’t be read for now', async () => {
-    await setup();
+  // Estimated points that read the single pre-per-date flat record: split
+  // per date first, so each can be folded on its own.
+  test('points that read the old single flat record are folded too', async () => {
+    await setup(); // the legacy record holds acct_old: 7
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-11-01': await encrypt('20') });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
-    await fake.hset(ctxKey('history:accounts'), { '2025-12-30': 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
-    await fake.hset(ctxKey('history:net-worth'), { '2025-12-30': await encrypt('7') });
-    expect((await forget('acct_old')).status).toBe(500);
-    expect(await fake.hgetall(ctxKey('history:forgotten'))).toBeNull();
+    const before = await series();
+    expect(before.find((p) => p.date === '2025-11-01')!.value).toBe(13);
+    await forget('acct_old');
+    expect(await series()).toEqual(before);
+    expect(await storedTotal('history:net-worth:est', '2025-11-01')).toBe(13);
+    expect(await readMap('history:accounts:est:flatd', '2025-11-01')).toEqual({ acct_other: 1 });
   });
 
-  test('recording never overwrites what a forget already recorded', async () => {
+  // A point the chart dropped while it was hidden (no breakdown that day):
+  // deleted within the account's life, kept outside it, where it can't be.
+  test('a point dropped while hidden is deleted within its life, and kept outside it', async () => {
     await setup();
-    const { recordForgottenContribution } = await import('@/lib/history');
-    await recordForgottenContribution(ctx, 'acct_old', 'depository', 'tag-1');
-    const first = await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten'));
-    // Its balances change (as a retried scrub would leave them): nothing moves.
-    await fake.hset(ctxKey('history:accounts'), { '2026-01-01': await enc({ acct_old: 60, acct_other: 5 }) });
-    await recordForgottenContribution(ctx, 'acct_old', 'depository', 'tag-1');
-    expect(await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten'))).toEqual(first!);
+    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt('999'), '2025-06-01': await encrypt('77') });
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const dates = (h: { date: string }[]) => h.map((p) => p.date);
+    expect(dates(await series())).not.toContain('2026-02-01');
+    await forget('acct_old');
+    expect(await fake.hget(ctxKey('history:net-worth'), '2026-02-01')).toBeNull();
+    expect(await storedTotal('history:net-worth', '2025-06-01')).toBe(77);
+    expect(dates(await series())).toContain('2025-06-01');
   });
 
-  test('two forgotten hidden accounts on one day are both kept out', async () => {
+  // Today's total recorded again after the forget doesn't have it either.
+  test('today recorded again after a forget is right', async () => {
     await setup();
-    const { getHistory } = await import('@/lib/history');
+    const today = new Date().toISOString().slice(0, 10);
+    await fake.hset(ctxKey('history:net-worth'), { [today]: await encrypt('105') });
+    await fake.hset(ctxKey('history:accounts'), { [today]: await enc({ acct_old: 100, acct_other: 5 }) });
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    await forget('acct_old');
+    expect((await series()).find((p) => p.date === today)!.value).toBe(5);
+    const { recordSnapshot } = await import('@/lib/history');
+    await recordSnapshot(ctx, 5, { acct_other: 5 });
+    expect((await series()).find((p) => p.date === today)!.value).toBe(5);
+  });
+
+  test('two forgotten hidden accounts on one day are both folded out', async () => {
+    await setup();
     await fake.hset(ctxKey('history:accounts'), { '2026-01-01': await enc({ acct_old: 100, acct_two: 30, acct_other: 5 }) });
     await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt('135') });
     await links.recordDirectory(ctx, [{ item_id: 'item_two', institution_name: 'Ally', institution_id: 'ins_9', error: null, accounts: [{ ...account('acct_two'), mask: '2222' }] } as any], Date.now() - DAY);
@@ -605,7 +577,23 @@ describe('forgetting an earlier account', () => {
     await setAccountHidden(ctx, 'acct_two', 'depository', true);
     expect((await forget('acct_old')).status).toBe(200);
     expect((await forget('acct_two')).status).toBe(200);
-    expect((await getHistory(ctx)).find((p) => p.date === '2026-01-01')!.value).toBe(5);
+    expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(5);
+  });
+
+  test('an old flat record that can’t be read for now stops a forget before any change', async () => {
+    await setup();
+    await fake.set(ctxKey('history:accounts:est:flat'), 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+    expect((await forget('acct_old')).status).toBe(500);
+    expect(await readMap('history:accounts', '2026-01-01')).toEqual({ acct_old: 100, acct_other: 5 });
+  });
+
+  test('a map that can’t be read for now stops the fold before any point changes', async () => {
+    await setup();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    await fake.hset(ctxKey('history:accounts'), { '2025-12-30': 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
+    await fake.hset(ctxKey('history:net-worth'), { '2025-12-30': await encrypt('7') });
+    expect((await forget('acct_old')).status).toBe(500);
+    expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(105);
   });
 
   test('hiding, unhiding and dismissing wait for a change in progress', async () => {
@@ -615,22 +603,6 @@ describe('forgetting an earlier account', () => {
     expect((await route('account-links', 'POST', { action: 'dismiss', old: 'acct_old', to: 'acct_other' })).status).toBe(409);
     expect((await route('account-links', 'DELETE', { old: 'acct_old' })).status).toBe(409);
     await fake.del(ctxKey('account-links:lock'));
-  });
-
-  // A backfill rebuilds estimated totals without the forgotten account, so
-  // its recorded contribution to those dates goes.
-  test('a rebuilt estimate drops what a forgotten hidden account contributed to it', async () => {
-    await setup();
-    const { getHistory, replaceEstimated } = await import('@/lib/history');
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
-    await fake.hset(ctxKey('history:accounts:est'), { '2025-12-01': await enc({ acct_old: 40, acct_other: 10 }) });
-    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({}) });
-    await setAccountHidden(ctx, 'acct_old', 'depository', true);
-    await forget('acct_old');
-    expect((await getHistory(ctx)).find((p) => p.date === '2025-12-01')!.value).toBe(10);
-    await replaceEstimated(ctx, [{ date: '2025-12-01', value: 10 }]); // rebuilt without it
-    expect((await getHistory(ctx)).find((p) => p.date === '2025-12-01')!.value).toBe(10);
-    expect((await getHistory(ctx)).find((p) => p.date === '2026-01-01')!.value).toBe(5); // real point still adjusted
   });
 
   test('a map rewritten meanwhile is re-read, never written over', async () => {
@@ -792,6 +764,55 @@ describe('overrides left behind', () => {
   });
 });
 
+describe('overrides on rows not yet stored', () => {
+  // A sync whose write failed still shows its rows; a category set on one
+  // must survive another institution's disconnect.
+  test('a store behind after a failed write keeps its categories through a prune', async () => {
+    await addItem('item_a', 'acct_a', [row('a1', 'acct_a')], Date.now() - DAY);
+    const set = fake.set.bind(fake);
+    let failing = true;
+    fake.set = (async (key: string, value: string, opts?: any) => {
+      if (failing && key === ctxKey('txns:item_a')) throw new Error('down');
+      return set(key, value, opts);
+    }) as typeof fake.set;
+    try {
+      expect(await categoryOf('a1')).toBe('food and drink'); // shown, not stored
+    } finally {
+      fake.set = set;
+      failing = false;
+    }
+    await route('recategorize', 'POST', { transaction_id: 'a1', category: 'treats' });
+    await addItem('item_b', 'acct_b', []);
+    await route('disconnect', 'POST', { item_id: 'item_b' });
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 'a1')).not.toBeNull();
+    // The next write lands and clears the mark.
+    await route('transactions', 'GET');
+    expect(await fake.get(ctxKey('txns-unsaved:item_a'))).toBeNull();
+  });
+
+  // A category set while the prune reads the stores is on a row the store
+  // it reads next will have: it must never be taken for an orphan.
+  test('a category set while a prune runs is kept', async () => {
+    await addItem('item_a', 'acct_a', [row('a1', 'acct_a')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    const get = fake.get.bind(fake);
+    let once = true;
+    fake.get = (async (key: string) => {
+      if (once && key === ctxKey('txns:item_a')) {
+        once = false;
+        await overrides.setOverride(ctx, 'just_now', 'treats');
+      }
+      return get(key);
+    }) as typeof fake.get;
+    try {
+      await overrides.pruneOrphanOverrides(ctx, ['item_a']);
+    } finally {
+      fake.get = get;
+    }
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 'just_now')).not.toBeNull();
+  });
+});
+
 describe('recording categories on disconnect', () => {
   const stored = (over: Record<string, unknown>) =>
     ({
@@ -898,6 +919,38 @@ describe.skipIf(!hasRedis && !process.env.CI)('the history compare-and-set scrip
   afterAll(() => {
     real?.stop();
     real = null;
+  });
+
+  test('the account-links lock is released only by the request holding it', async () => {
+    const { RELEASE_LOCK: script } = await import('@/lib/links');
+    await r.send('SET', ['lock', 'mine']);
+    expect(await evalScript(script, ['lock'], ['theirs'])).toBe(0);
+    expect(await r.send('GET', ['lock'])).toBe('mine');
+    expect(await evalScript(script, ['lock'], ['mine'])).toBe(1);
+    expect(await r.send('EXISTS', ['lock'])).toBe(0);
+  });
+
+  test('a point folds in one step, only while total and maps hold what was read', async () => {
+    const { HISTORY_FOLD, HISTORY_SET_IF_ABSENT } = await import('@/lib/history');
+    await r.send('HSET', ['tot', 'd', 't0']);
+    await r.send('HSET', ['m1', 'd', 'a0']);
+    const fold = (total: string, newTotal: string, m1: [string, string], m2: [string, string]) =>
+      evalScript(HISTORY_FOLD, ['tot', 'prog', 'm1', 'm2'], ['d', 'r:d', total, newTotal, ...m1, ...m2]);
+    expect(await fold('other', 't1', ['a0', 'a1'], ['', ''])).toBe(0);
+    expect(await fold('t0', 't1', ['a0', 'a1'], ['x', ''])).toBe(0); // m2 isn't there
+    expect(await r.send('HGET', ['tot', 'd'])).toBe('t0');
+    expect(await r.send('EXISTS', ['prog'])).toBe(0);
+    expect(await fold('t0', 't1', ['a0', 'a1'], ['', ''])).toBe(1);
+    expect(await r.send('HGET', ['tot', 'd'])).toBe('t1');
+    expect(await r.send('HGET', ['m1', 'd'])).toBe('a1');
+    expect(await r.send('HEXISTS', ['m2', 'd'])).toBe(0);
+    expect(await r.send('HGET', ['prog', 'r:d'])).toBe('1');
+    expect(await fold('t1', '-', ['a1', 'a1'], ['', ''])).toBe(1); // delete, maps as they are
+    expect(await r.send('HEXISTS', ['tot', 'd'])).toBe(0);
+    expect(await r.send('HGET', ['m1', 'd'])).toBe('a1');
+    expect(await evalScript(HISTORY_SET_IF_ABSENT, ['h'], ['f', 'v1'])).toBe(1);
+    expect(await evalScript(HISTORY_SET_IF_ABSENT, ['h'], ['f', 'v2'])).toBe(0);
+    expect(await r.send('HGET', ['h', 'f'])).toBe('v1');
   });
 
   test('a field or value is rewritten only while it still holds what was read', async () => {

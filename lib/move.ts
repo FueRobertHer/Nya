@@ -87,11 +87,12 @@ export const MOVED_PREFIXES = ['txns:', 'txns-blocked:', 'invtxns:'] as const;
 export const NOT_MOVED_PREFIXES = [
   'cache:', // 15-minute payloads; rebuilt on the next load
   'invtxns-lock:', // a sync's lock, seconds long
+  'txns-unsaved:', // new since the move (#46): a failed write's marker, a week at most
+  'history:forgetting:', // new since the move (#46): a forget's progress
   'sessions:', // the session epoch: new per container (lib/sessions.ts)
   'snapshot:', // the cron's own log and lock (lib/snapshot-job.ts)
   'move:', // this module's own record
   'txn-category-carry', // new since the move (#46): the old release never wrote it
-  'history:forgotten', // new since the move (#46)
   'account-links:lock', // a request's lock, seconds long
 ] as const;
 

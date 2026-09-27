@@ -222,9 +222,13 @@ and the categories you set, so a re-added account can pick them up, even
 months later. You decide how long: **Earlier accounts** (same card) lists the
 accounts of institutions you disconnected, and **Forget** deletes one's
 balance history, name and saved categories for good. Your past net-worth
-totals don't change (they were your net worth on those days); a hidden
-account stays out of them, through an adjustment that records only an amount
-per day, not which account it was. Unlink a linked account first. An account
+totals don't change (they were your net worth on those days). A hidden
+account stays out of them: forgetting it takes its amount out of each stored
+total, so the chart looks exactly as it did while it was hidden, and nothing
+about the account is kept. (A day the chart already left out because it
+couldn't tell what the account held that day is deleted, if the account
+existed then.) While that is under way the account can't be unhidden; if it
+stops part way, Forget again finishes it. Unlink a linked account first. An account
 of an institution that is still connected (a card you closed, say) is listed
 there once you disconnect the institution.
 

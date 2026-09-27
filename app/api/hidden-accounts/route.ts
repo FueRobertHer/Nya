@@ -3,9 +3,13 @@ import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getHiddenAccounts, setAccountHidden } from '@/lib/hidden';
 import { computeNetWorth } from '@/lib/networth';
 import { clearCaches, readCache, CacheKey } from '@/lib/cache';
-import { estimatedLayerCovers, clearBackfillDone, dropForgottenContribution } from '@/lib/history';
+import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
 import { findRememberedAccount } from '@/lib/last-known';
 import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock, ForgetRefused } from '@/lib/links';
+
+// Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
+// outlives the lock it holds. A literal, as route segment config requires.
+export const maxDuration = 120;
 
 // Hides or unhides ONE account per request.
 //
@@ -23,9 +27,7 @@ import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
-    // One change at a time with linking and forgetting (lib/links.ts): an
-    // Unhide landing inside a forget would otherwise be counted twice over.
-    return await withLinksLock(ctx, () => toggle(ctx, req));
+    return await toggle(ctx, req);
   } catch (err) {
     if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
     const unavailable = containerUnavailable(err);
@@ -96,53 +98,61 @@ async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
     }
   }
 
-  if (hidden) {
-    // Hiding writes the current id; the link expansion (lib/links.ts) hides
-    // the account's earlier ids with it.
-    await setAccountHidden(ctx, account_id, type ?? '', true);
-  } else {
-    // Unhiding clears EVERY id the account has had. An earlier id left hidden
-    // would keep hiding it through the link, and Unhide would do nothing.
-    // Unlinked, this is just the one id. A failed read of the links fails
-    // the request rather than leaving the account half-hidden.
-    // Through ACTIVE links only, the same ones the display follows: a
-    // paused link joins two live accounts that are each hidden on their own.
-    // Strict: an unreadable live set would make every paused link look
-    // active, and this write would unhide the other account for good.
-    const active = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true }));
-    const stored = await getHiddenAccounts(ctx);
-    for (const id of sameAccountIds(account_id, active)) {
-      // A forget that stopped part way recorded what the account contributed
-      // to past totals; unhiding means counting it again, so that goes first.
-      const tag = stored.get(id)?.forget_tag;
-      if (tag) await dropForgottenContribution(ctx, tag);
-      await setAccountHidden(ctx, id, '', false);
+  // The writes, one change at a time with linking and forgetting (lib/links.ts):
+  // an Unhide landing inside a forget would otherwise meet a half-folded
+  // account. The lookup above stays outside: it can take seconds.
+  return withLinksLock(ctx, async () => {
+    if (hidden) {
+      // Hiding writes the current id; the link expansion (lib/links.ts) hides
+      // the account's earlier ids with it.
+      await setAccountHidden(ctx, account_id, type ?? '', true);
+    } else {
+      // Unhiding clears EVERY id the account has had. An earlier id left hidden
+      // would keep hiding it through the link, and Unhide would do nothing.
+      // Unlinked, this is just the one id. A failed read of the links fails
+      // the request rather than leaving the account half-hidden.
+      // Through ACTIVE links only, the same ones the display follows: a
+      // paused link joins two live accounts that are each hidden on their own.
+      // Strict: an unreadable live set would make every paused link look
+      // active, and this write would unhide the other account for good.
+      const active = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true }));
+      const stored = await getHiddenAccounts(ctx);
+      const ids = sameAccountIds(account_id, active);
+      // A forget that stopped part way may already have taken it out of some
+      // past totals for good: it can't be counted again, only forgotten.
+      if (ids.some((id) => stored.get(id)?.forget_tag)) {
+        return NextResponse.json(
+          { error: 'This account is being forgotten. Finish forgetting it under Earlier accounts.' },
+          { status: 409 }
+        );
+      }
+      for (const id of ids) await setAccountHidden(ctx, id, '', false);
     }
-  }
 
-  // The estimated layer can only subtract an account it knows about, either
-  // via a per-date balance or via the flat term. If it knows neither -- the
-  // account was linked after the last backfill, or the layer predates the
-  // flat key existing -- force a recompute, or the estimated region would sit
-  // high by this account's balance and put a step at the estimated/real seam.
-  //
-  // Checked by membership, not by type: a MANUAL depository account looks
-  // like cash but is in the flat term, because backfill's cashType loop only
-  // covers Plaid accounts.
-  let recompute = false;
-  if (hidden && !(await estimatedLayerCovers(ctx, account_id))) {
-    await clearBackfillDone(ctx);
-    recompute = true;
-  }
+    // The estimated layer can only subtract an account it knows about, either
+    // via a per-date balance or via the flat term. If it knows neither -- the
+    // account was linked after the last backfill, or the layer predates the
+    // flat key existing -- force a recompute, or the estimated region would sit
+    // high by this account's balance and put a step at the estimated/real seam.
+    //
+    // Checked by membership, not by type: a MANUAL depository account looks
+    // like cash but is in the flat term, because backfill's cashType loop only
+    // covers Plaid accounts.
+    let recompute = false;
+    if (hidden && !(await estimatedLayerCovers(ctx, account_id))) {
+      await clearBackfillDone(ctx);
+      recompute = true;
+    }
 
-  // Both cached payloads embed the visibility decision (net worth excludes
-  // hidden accounts, transactions omit their rows), so both must go or the
-  // change wouldn't show for up to the 15-minute TTL.
-  await clearCaches(ctx);
+    // Both cached payloads embed the visibility decision (net worth excludes
+    // hidden accounts, transactions omit their rows), so both must go or the
+    // change wouldn't show for up to the 15-minute TTL.
+    await clearCaches(ctx);
 
-  // The caller has to act on this: clearing the flag only makes a recompute
-  // POSSIBLE, it doesn't trigger one. The client's automatic backfill fires
-  // only when history is "thin", which is never true for anyone who already
-  // has an estimated layer -- i.e. exactly the users this branch is for.
-  return NextResponse.json({ account_id, hidden, recompute });
+    // The caller has to act on this: clearing the flag only makes a recompute
+    // POSSIBLE, it doesn't trigger one. The client's automatic backfill fires
+    // only when history is "thin", which is never true for anyone who already
+    // has an estimated layer -- i.e. exactly the users this branch is for.
+    return NextResponse.json({ account_id, hidden, recompute });
+  });
 }

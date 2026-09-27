@@ -264,8 +264,6 @@ export async function rememberedIdsByItem(ctx: Ctx, strict = false): Promise<Rec
   return out;
 }
 
-/** Drops one Item's record, on disconnect. Safe because attribution is per
- *  Item: removing this record can't affect any other institution's recovery. */
 /**
  * Deletes the remembered records of Items no longer stored that name this
  * account, for a user forgetting it. A disconnect already deletes the Item's
@@ -281,6 +279,8 @@ export async function forgetStaleRecords(ctx: Ctx, account_id: string, storedIte
   if (stale.length > 0) await redis().hdel(ACCOUNT_META_HASH(ctx), ...stale);
 }
 
+/** Drops one Item's record, on disconnect. Safe because attribution is per
+ *  Item: removing this record can't affect any other institution's recovery. */
 export async function forgetItem(ctx: Ctx, item_id: string): Promise<void> {
   try {
     await redis().hdel(ACCOUNT_META_HASH(ctx), item_id);

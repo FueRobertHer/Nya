@@ -85,7 +85,6 @@ const EXACT: Record<string, Kind> = {
   'account-links': 'hash',
   'txn-category-overrides': 'hash',
   'txn-category-carry': 'hash',
-  'history:forgotten': 'hash',
   'account-links:lock': 'plain',
   'txn-vendor-renames': 'hash',
   'manual:accounts': 'hash',
@@ -105,6 +104,8 @@ const PREFIXES: [string, Kind][] = [
   ['invtxns:', 'string'],
   ['txns-blocked:', 'plain'],
   ['invtxns-lock:', 'plain'],
+  ['txns-unsaved:', 'plain'],
+  ['history:forgetting:', 'plain'],
   ['ratelimit:', 'plain'],
   ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
   ['move:', 'plain'], // the data move's record (lib/move.ts)

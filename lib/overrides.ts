@@ -192,6 +192,9 @@ export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carr
  * forgotten. Only when every store could be read; otherwise nothing.
  */
 export async function pruneOrphanOverrides(ctx: Ctx, item_ids: string[]): Promise<number> {
+  // The overrides first, then the stores: a category set on a row saved
+  // meanwhile is then always checked against a store read that has the row.
+  const ids = await redis().hkeys(OVERRIDES_HASH(ctx));
   const known = new Set<string>();
   try {
     for (const item_id of item_ids) {
@@ -203,7 +206,6 @@ export async function pruneOrphanOverrides(ctx: Ctx, item_ids: string[]): Promis
   } catch {
     return 0; // a store we couldn't read might hold them
   }
-  const ids = await redis().hkeys(OVERRIDES_HASH(ctx));
   const orphans = ids.filter((id) => !known.has(id));
   if (orphans.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...orphans);
   return orphans.length;

@@ -40,8 +40,8 @@ import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
-import { measuredAccountHistoryKeys, forgetAccountBalances, recordForgottenContribution } from './history';
-import { forgetCarried } from './overrides';
+import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
+import { forgetCarried, pruneOrphanOverrides } from './overrides';
 import { storedAccountIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType } from './balance';
@@ -527,12 +527,18 @@ export class ForgetRefused extends Error {}
 // made while an account is half forgotten would point at an account that is
 // about to lose its name and history.
 const linksLockKey = (ctx: Ctx) => kc(ctx, 'account-links:lock');
-const RELEASE_LOCK = `-- nya:release-lock
+export const RELEASE_LOCK = `-- nya:release-lock
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`;
+/** How long a request under the lock may run (the routes' maxDuration). The
+ *  lock outlives it, so a request can't outlive its lock; a request killed
+ *  holding it (the platform ending it) frees it this much later. */
+export const LINKS_LOCK_REQUEST_SECONDS = 120;
+const LINKS_LOCK_SECONDS = LINKS_LOCK_REQUEST_SECONDS + 30;
+
 export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<T> {
   const token = crypto.randomUUID();
-  if ((await redis().set(linksLockKey(ctx), token, { nx: true, ex: 300 })) === null) {
+  if ((await redis().set(linksLockKey(ctx), token, { nx: true, ex: LINKS_LOCK_SECONDS })) === null) {
     throw new ForgetRefused('Another change to your accounts is in progress. Try again in a moment.');
   }
   try {
@@ -584,17 +590,19 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
     }
   }
 
+  let tag: string | null = null;
   if (found.hidden) {
-    // In this order, so no failure part way can count it twice or not at all:
-    // a random tag, kept in its hidden entry for a retry; what it contributed
-    // to past totals, recorded under the tag (never overwritten); then the
-    // hidden entry dropped, after which the record alone keeps it out. A
-    // retry finds the tag and records nothing twice; once the entry is gone,
-    // a retry just carries on below.
+    // Taken out of every past total for good, point by point, each in one
+    // step (lib/history.ts foldHiddenAccount): while it runs, a point is
+    // either untouched (the chart still subtracts the hidden account) or
+    // folded (the account is gone from it). The random tag, kept in its
+    // hidden entry, is where progress is kept, so a retry skips what is done;
+    // only once every point is folded is the hidden entry dropped.
     const entry = hidden.get(id)!;
-    const tag = entry.forget_tag ?? crypto.randomUUID();
+    tag = entry.forget_tag ?? crypto.randomUUID();
     if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
-    await recordForgottenContribution(ctx, id, entry.type, tag);
+    const d = inputs.directory[id];
+    await foldHiddenAccount(ctx, id, entry.type, tag, { first: d?.first_seen ?? null, last: d?.last_seen ?? null });
     await setAccountHidden(ctx, id, '', false);
   }
   const result = await forgetAccountBalances(ctx, id);
@@ -611,6 +619,10 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.
   await redis().hdel(directoryKey(ctx), id);
+  if (tag) await dropFoldProgress(ctx, tag);
+  // Categories of its transactions that nothing can show any more (a failed
+  // disconnect-time cleanup would otherwise leave them for good).
+  await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
   return result;
 }
 

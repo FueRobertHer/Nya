@@ -323,6 +323,25 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
+    if (name === '-- nya:history-set-if-absent') {
+      if (this.hashes.get(keys[0])?.has(args[0])) return 0;
+      this.hash(keys[0]).set(args[0], args[1]);
+      return 1;
+    }
+    if (name === '-- nya:history-fold') {
+      const [date, field, expectedTotal, newTotal] = args;
+      const cur = (key: string) => this.hashes.get(key)?.get(date) ?? '';
+      if (cur(keys[0]) !== expectedTotal) return 0;
+      for (let i = 2; i < keys.length; i++) if (cur(keys[i]) !== args[4 + (i - 2) * 2]) return 0;
+      if (newTotal === '-') this.hdelNow(keys[0], [date]);
+      else if (newTotal !== '') this.hash(keys[0]).set(date, newTotal);
+      for (let i = 2; i < keys.length; i++) {
+        const [old, next] = [args[4 + (i - 2) * 2], args[5 + (i - 2) * 2]];
+        if (next !== old && next !== '') this.hash(keys[i]).set(date, next);
+      }
+      this.hash(keys[1]).set(field, '1');
+      return 1;
+    }
     if (name === '-- nya:history-cas-value') {
       if ((this.strings.get(keys[0]) ?? null) !== args[0]) return 0;
       this.strings.set(keys[0], args[1]);

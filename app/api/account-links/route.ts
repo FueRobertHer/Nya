@@ -29,6 +29,10 @@ import type { Link } from '@/lib/link-core';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 
+// Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
+// outlives the lock it holds. A literal, as route segment config requires.
+export const maxDuration = 120;
+
 // Linking an account's history across a reconnect (lib/links.ts).
 //
 // GET lists what to offer (suggestions with evidence, and balance-only history
