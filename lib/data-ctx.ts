@@ -17,8 +17,22 @@
 import { NextResponse } from 'next/server';
 import { ContainerError, type Ctx } from './containers';
 import { deploymentContainer } from './sessions';
+import { clerkEnabled } from './auth-mode';
+import { ownerContainer } from './owners';
 
+// With Clerk on (lib/auth-mode.ts), the container is the signed-in account's
+// (lib/owners.ts); the proxy has already checked the account is allowed.
 export async function dataCtx(now: number = Date.now()): Promise<Ctx> {
+  if (!clerkEnabled()) return deploymentCtx(now);
+  const { auth } = await import('@clerk/nextjs/server');
+  const { userId } = await auth();
+  if (!userId) throw new ContainerError('Not signed in.');
+  return { container: await ownerContainer(userId, now) };
+}
+
+/** This deployment's container, whoever asks. For routes that authenticate
+ *  themselves rather than through a session (the balance ingest). */
+export async function deploymentCtx(now: number = Date.now()): Promise<Ctx> {
   const dep = await deploymentContainer(now);
   if (dep.kind === 'container') return { container: dep.container };
   throw new ContainerError(dep.kind === 'none' ? 'No container exists yet.' : dep.reason);
