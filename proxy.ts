@@ -5,7 +5,8 @@ import { sessionCurrent } from '@/lib/sessions';
 // Everything is protected EXCEPT the login page, the login API, static PWA
 // assets (which must be publicly fetchable for install/offline to work), the
 // cron snapshot endpoints (which authenticate themselves via CRON_SECRET -- see
-// app/api/snapshot/route.ts; the catch-up is the same handler), and the manual-balance ingest endpoint (which
+// app/api/snapshot/route.ts; the catch-up is the same handler), the nightly backup (CRON_SECRET too,
+// app/api/backup/route.ts), and the manual-balance ingest endpoint (which
 // authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
 // and the ops routes, export, rotate-master, reencrypt and containers (OPS_SECRET, and off entirely
 // unless OPS_ENABLED=1 -- see lib/ops.ts).
@@ -14,7 +15,7 @@ import { sessionCurrent } from '@/lib/sessions';
 // A bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/snapshot$|api/snapshot/catchup$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 

@@ -147,6 +147,9 @@ bills with their estimated next charge dates:
      to keep that endpoint closed.
    - `OPS_SECRET` and `OPS_ENABLED` (optional), for taking a backup. See
      [Backing up your data](#backing-up-your-data).
+   - `BLOB_READ_WRITE_TOKEN`, set for you when a private Blob store is
+     connected; turns on the nightly backup. `BACKUP_KEEP_DAYS` (optional,
+     default 30). See [Nightly backups](#nightly-backups).
 
 ## 3. Local development
 
@@ -482,8 +485,41 @@ safe while the point above holds and preview has its own database.
 
 Some of what Nya stores exists nowhere else: banks stop serving old
 transactions after a while, and no bank serves daily balance history at all.
-Take a backup before any risky change, and keep it somewhere other than
-Upstash.
+A copy is taken every night (below); take one by hand before any risky
+change too.
+
+#### Nightly backups
+
+Every night at 16:00 UTC (after the daily snapshot and its catch-up), a cron
+(`/api/backup`) takes the same archive as the export below and saves it to
+Vercel Blob, under `backups/<environment>/`. It reads each copy back to check
+it before anything old is deleted. Copies older than 30 days are deleted,
+but the newest 7 are always kept.
+
+To turn it on:
+
+1. In Vercel, create a Blob store with **private** access (Storage, Create,
+   Blob) and connect it to the project. That sets `BLOB_READ_WRITE_TOKEN`.
+   It must be private: the archive is financial data.
+2. `CRON_SECRET` must be set (the snapshot cron needs it too).
+3. Optionally set `BACKUP_KEEP_DAYS` to keep more or fewer days (a whole
+   number, 1 or more).
+4. Redeploy. Crons run only on the production deployment.
+
+Check it worked the next day: the cron's log in Vercel says "Backup written",
+and the file is in the store's browser. A failed night shows as a failed cron
+run with the reason, and the older copies are left alone. Vercel doesn't send
+an alert for it, so the dashboard shows a note when the last backup failed or
+none has been saved for two days.
+
+To restore from one, download it from the store's browser in Vercel and follow
+"Restoring a backup" below with that file.
+
+The copies live in Vercel, like the database. They protect against losing or
+damaging the data, not against losing the Vercel account: download one now
+and then and keep it somewhere else too.
+
+#### Taking a backup by hand
 
 The export route is off by default. To take one:
 
