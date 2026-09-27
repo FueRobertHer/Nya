@@ -453,7 +453,7 @@ export async function registerTestContainer(fake: FakeRedis, status: 'active' | 
 }
 
 /** Environment-wide stores (kEnv): the only keys allowed outside a container. */
-const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff'];
+const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:'];
 
 /**
  * Every key the fake holds that is stored data outside any container. After

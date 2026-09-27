@@ -871,6 +871,14 @@ describe('forgetting an earlier account', () => {
     expect(await fake.hgetall(ctxKey('history:accounts:est'))).toBeNull();
   });
 
+  // Backups are environment-wide, but the dashboard is where anyone looks.
+  test('the dashboard payload says when the nightly backup failed', async () => {
+    const { recordOutcome } = await import('@/lib/backup');
+    expect((await route('net-worth', 'GET')).body.backup_problem).toBeNull();
+    await recordOutcome({ ok: false, reason: 'down' });
+    expect((await route('net-worth', 'GET')).body.backup_problem).toEqual({ last_ok: null, reason: 'down' });
+  });
+
   // The chart reads through a cache of decrypted maps: a forgotten account's
   // balances must not come back from it, or stay in memory.
   test('the chart never serves a map from before it was rewritten', async () => {

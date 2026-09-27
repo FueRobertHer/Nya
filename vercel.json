@@ -9,6 +9,10 @@
     {
       "path": "/api/snapshot/catchup",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/backup",
+      "schedule": "0 16 * * *"
     }
   ]
 }

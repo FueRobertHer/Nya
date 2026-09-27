@@ -318,6 +318,7 @@ export default function Dashboard() {
   const [netWorth, setNetWorth] = useState(0);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [asOf, setAsOf] = useState<string | null>(null);
+  const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -417,6 +418,7 @@ export default function Dashboard() {
       setHistory(data.history ?? []);
       setHiddenMeta(data.hidden ?? []);
       setAsOf(data.as_of ?? null);
+      setBackupProblem(data.backup_problem ?? null);
       setConnected(data.institutions.length > 0);
 
       // First open with a near-empty chart: backfill estimated history from
@@ -1246,6 +1248,13 @@ export default function Dashboard() {
                       History builds as you use the app — check back tomorrow for your first
                       trend line.
                     </p>
+                  )}
+                  {backupProblem && (
+                    <div className="stale-note">
+                      {backupProblem.reason ? 'The nightly backup failed' : 'The nightly backup hasn’t run'}
+                      {backupProblem.last_ok ? `; the last one saved was on ${fmtDay(backupProblem.last_ok.slice(0, 10))}.` : '; none has been saved yet.'}
+                      {backupProblem.reason ? ` (${backupProblem.reason})` : ''} Check the backup cron in Vercel.
+                    </div>
                   )}
                   {pausedSince && (
                     <div className="stale-note">
