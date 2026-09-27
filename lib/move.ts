@@ -91,6 +91,8 @@ export const NOT_MOVED_PREFIXES = [
   'snapshot:', // the cron's own log and lock (lib/snapshot-job.ts)
   'move:', // this module's own record
   'txn-category-carry', // new since the move (#46): the old release never wrote it
+  'history:forgotten', // new since the move (#46)
+  'account-links:lock', // a request's lock, seconds long
 ] as const;
 
 export function isMoved(key: string): boolean {

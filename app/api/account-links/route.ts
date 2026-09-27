@@ -10,6 +10,7 @@ import {
   effectiveLinks,
   forgetEarlierAccount,
   forgettableAccounts,
+  withLinksLock,
   isManualChoice,
   isUnclaimed,
   isOffered,
@@ -26,6 +27,7 @@ import { carriedCategories, carryCounts, getCarried, getOverrides } from '@/lib/
 import { rememberedIdsByItem } from '@/lib/last-known';
 import type { Link } from '@/lib/link-core';
 import { getHiddenAccounts } from '@/lib/hidden';
+import { getItems } from '@/lib/storage';
 
 // Linking an account's history across a reconnect (lib/links.ts).
 //
@@ -84,16 +86,29 @@ async function categoryCounts(ctx: Ctx, links: Map<string, Link>, liveIds: Set<s
   }
 }
 
+/**
+ * The earlier accounts to offer for forgetting. Empty when what decides it
+ * can't be read: with the live accounts unreadable every account would look
+ * like an earlier one.
+ */
+async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs']) {
+  try {
+    const [live, hidden, items] = await Promise.all([liveAccountIds(ctx, { strict: true }), getHiddenAccounts(ctx), getItems(ctx)]);
+    return forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
+  } catch {
+    return [];
+  }
+}
+
 export async function GET() {
   try {
     const ctx = await dataCtx();
     const { inputs, offer, manual } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
-    const [labels, counts, hidden] = await Promise.all([
+    const [labels, counts, forgettable] = await Promise.all([
       directoryLabels(ctx, ids),
       categoryCounts(ctx, inputs.links, inputs.liveIds),
-      // Unknown when it can't be read: then nothing is offered to forget.
-      getHiddenAccounts(ctx).catch(() => null),
+      earlierAccounts(ctx, inputs),
     ]);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
@@ -116,7 +131,7 @@ export async function GET() {
       unclaimed: offer.unclaimed,
       manual,
       // Earlier accounts the user can forget for good (hidden ones say so).
-      earlier: hidden ? forgettableAccounts(inputs, new Set(hidden.keys())) : [],
+      earlier: forgettable,
       links,
       broken: [...inputs.unreadableLinks],
     });
@@ -126,6 +141,48 @@ export async function GET() {
     console.error(err);
     return NextResponse.json({ error: 'Failed to load account links' }, { status: 500 });
   }
+}
+
+/** Links an offered (or by-hand) pair, recomputed from this container's own
+ *  data right now. Run inside withLinksLock. */
+async function linkPair(ctx: Ctx, old: string, to: string) {
+  const { inputs, offer, manual } = await offered(ctx);
+  const byHand = !isOffered(old, to, offer) && isManualChoice(old, to, manual);
+  if (!isOffered(old, to, offer) && !byHand) {
+    return NextResponse.json({ error: 'That pair is not currently offered' }, { status: 409 });
+  }
+
+  const suggestion = offer.suggestions.find((s) => s.old === old && s.to === to);
+  const unclaimed = offer.unclaimed.find((u) => u.old === old) ?? manual.find((m) => m.old === old);
+  // Recorded on the link: when the earlier id last reported (the order its
+  // history is joined in) and what kind of account it was, so a hidden
+  // account's earlier id is subtracted with its own sign. An id known only
+  // from balances takes the target's kind: the user said it is the same
+  // account, and the preview is where a wrong pairing would show.
+  const old_type = inputs.directory[old]?.type ?? inputs.directory[to]?.type ?? null;
+  // Which provider each side came from: one today, recorded so a link
+  // between two aggregators' ids needs no change to what is stored.
+  const providers = {
+    old_provider: inputs.directory[old]?.provider ?? PROVIDER,
+    to_provider: inputs.directory[to]?.provider ?? PROVIDER,
+  };
+  await linkAccounts(ctx, 
+    old,
+    to,
+    suggestion
+      ? { basis: 'suggested', old_type, ...providers, ...suggestion.evidence }
+      : {
+          basis: byHand ? 'by_hand' : 'picked',
+          old_type,
+          ...providers,
+          old_first: unclaimed?.first,
+          old_last: unclaimed?.last,
+          old_last_balance: unclaimed?.last_balance,
+        }
+  );
+  // Cached payloads carry per-account history and hidden subtraction.
+  await clearCaches(ctx);
+  return NextResponse.json({ linked: true });
 }
 
 export async function POST(req: Request) {
@@ -141,9 +198,10 @@ export async function POST(req: Request) {
     if (action === 'forget') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
       try {
-        const { unreadable } = await forgetEarlierAccount(ctx, old);
+        const { unreadable } = await withLinksLock(ctx, () => forgetEarlierAccount(ctx, old));
         await clearCaches(ctx);
-        return NextResponse.json({ forgotten: unreadable === 0, unreadable });
+        // `unreadable`: dates whose maps no one can decrypt, left as they are.
+        return NextResponse.json({ forgotten: true, unreadable });
       } catch (err) {
         if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
         throw err;
@@ -165,49 +223,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all" | "forget", old, to }' }, { status: 400 });
     }
 
-    const { inputs, offer, manual } = await offered(ctx);
-    const byHand = action === 'link' && !isOffered(old, to, offer) && isManualChoice(old, to, manual);
-    if (!isOffered(old, to, offer) && !byHand) {
+    if (action === 'link') {
+      try {
+        return await withLinksLock(ctx, () => linkPair(ctx, old, to));
+      } catch (err) {
+        if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
+        throw err;
+      }
+    }
+    // "Not the same" / "Not this one": only for a pair on offer.
+    const { offer } = await offered(ctx);
+    if (!isOffered(old, to, offer)) {
       return NextResponse.json({ error: 'That pair is not currently offered' }, { status: 409 });
     }
-
-    if (action === 'dismiss') {
-      // Changes no view, so nothing to invalidate.
-      await dismissPair(ctx, old, to);
-      return NextResponse.json({ dismissed: true });
-    }
-
-    const suggestion = offer.suggestions.find((s) => s.old === old && s.to === to);
-    const unclaimed = offer.unclaimed.find((u) => u.old === old) ?? manual.find((m) => m.old === old);
-    // Recorded on the link: when the earlier id last reported (the order its
-    // history is joined in) and what kind of account it was, so a hidden
-    // account's earlier id is subtracted with its own sign. An id known only
-    // from balances takes the target's kind: the user said it is the same
-    // account, and the preview is where a wrong pairing would show.
-    const old_type = inputs.directory[old]?.type ?? inputs.directory[to]?.type ?? null;
-    // Which provider each side came from: one today, recorded so a link
-    // between two aggregators' ids needs no change to what is stored.
-    const providers = {
-      old_provider: inputs.directory[old]?.provider ?? PROVIDER,
-      to_provider: inputs.directory[to]?.provider ?? PROVIDER,
-    };
-    await linkAccounts(ctx, 
-      old,
-      to,
-      suggestion
-        ? { basis: 'suggested', old_type, ...providers, ...suggestion.evidence }
-        : {
-            basis: byHand ? 'by_hand' : 'picked',
-            old_type,
-            ...providers,
-            old_first: unclaimed?.first,
-            old_last: unclaimed?.last,
-            old_last_balance: unclaimed?.last_balance,
-          }
-    );
-    // Cached payloads carry per-account history and hidden subtraction.
-    await clearCaches(ctx);
-    return NextResponse.json({ linked: true });
+    // Changes no view, so nothing to invalidate.
+    await dismissPair(ctx, old, to);
+    return NextResponse.json({ dismissed: true });
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

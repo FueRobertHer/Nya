@@ -266,6 +266,21 @@ export async function rememberedIdsByItem(ctx: Ctx, strict = false): Promise<Rec
 
 /** Drops one Item's record, on disconnect. Safe because attribution is per
  *  Item: removing this record can't affect any other institution's recovery. */
+/**
+ * Deletes the remembered records of Items no longer stored that name this
+ * account, for a user forgetting it. A disconnect already deletes the Item's
+ * record, but a load in flight can write it back after (see liveAccountIds in
+ * lib/links.ts), and it carries the account's name and mask. Throws on a
+ * failed read, so the caller doesn't report the account forgotten.
+ */
+export async function forgetStaleRecords(ctx: Ctx, account_id: string, storedItems: Set<string>): Promise<void> {
+  const byItem = await recallByItem(ctx, true);
+  const stale = Object.entries(byItem)
+    .filter(([item_id, accounts]) => !storedItems.has(item_id) && accounts.some((a) => a.account_id === account_id))
+    .map(([item_id]) => item_id);
+  if (stale.length > 0) await redis().hdel(ACCOUNT_META_HASH(ctx), ...stale);
+}
+
 export async function forgetItem(ctx: Ctx, item_id: string): Promise<void> {
   try {
     await redis().hdel(ACCOUNT_META_HASH(ctx), item_id);

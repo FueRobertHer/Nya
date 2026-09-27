@@ -51,7 +51,7 @@ type Linked = {
   conflict: boolean;
   /** Categories set on the earlier account's transactions, and how many now
    *  show on this account's (more arrive as it syncs). */
-  categories?: { total: number; carried: number };
+  categories?: { total: number; carried: number; ambiguous?: number };
 };
 export type AccountLinksPayload = {
   suggestions: Suggestion[];
@@ -66,6 +66,12 @@ export type AccountLinksPayload = {
   broken?: string[];
 };
 type Payload = AccountLinksPayload;
+
+/** What to say when the server refuses a change and gives no reason. */
+export function refusalText(action: string | undefined, body: { error?: unknown }): string {
+  if (typeof body.error === 'string' && body.error) return body.error;
+  return action === 'forget' ? 'Could not forget that account' : 'Could not update the link';
+}
 
 function fmtDay(iso: string | null): string {
   if (!iso) return 'unknown';
@@ -113,12 +119,14 @@ export default function AccountLinks({
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setError(j.error || 'Could not update the link');
+        setError(refusalText(body.action, j));
         return;
       }
       if (body.action === 'forget') {
         const j = await res.json().catch(() => ({}));
-        if (j.unreadable > 0) setError('Some of its history couldn’t be read, so it wasn’t all removed. Try again later.');
+        if (j.unreadable > 0) {
+          setError(`Forgotten. ${j.unreadable} day${j.unreadable === 1 ? '' : 's'} of history couldn't be decrypted by anyone and ${j.unreadable === 1 ? 'was' : 'were'} left as ${j.unreadable === 1 ? 'it was' : 'they were'}.`);
+        }
       }
       setPreview(null);
       // A pick may no longer be offered (Not this one removes it), so the
@@ -306,6 +314,9 @@ export function AccountLinksView({
                       l.categories.carried < l.categories.total ? ' so far' : ''
                     }`
                   : ''}
+                {l.categories && (l.categories.ambiguous ?? 0) > 0 && !l.conflict
+                  ? `. ${l.categories.ambiguous} matched more than one transaction, so weren't carried`
+                  : ''}
               </span>
               <button className="link-btn danger-link" disabled={busy} onClick={() => onAct('DELETE', { old: l.old })}>
                 Unlink
@@ -385,8 +396,8 @@ export function AccountLinksView({
           {earlierOpen && (
             <>
               <p className="chart-note">
-                Accounts you no longer have connected. Forget one to delete its balance history, its name and
-                the categories saved for it, for good. Past net-worth totals don&apos;t change.
+                Accounts of institutions you disconnected. Forget one to delete its balance history, its name
+                and the categories saved for it, for good. Past net-worth totals don&apos;t change.
               </p>
               {earlier.map((e) => {
                 const name = e.label ?? 'Balance history';
@@ -395,9 +406,9 @@ export function AccountLinksView({
                     <span>
                       {name}
                       {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
-                      {e.hidden ? '. Hidden: unhide it first to forget it' : ''}
+                      {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
                     </span>
-                    {!e.hidden && (
+                    {(
                       <button
                         className="link-btn danger-link"
                         disabled={busy}

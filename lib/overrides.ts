@@ -67,14 +67,25 @@ export type CarriedRows = Record<string, string | null>;
 export type Carried = Map<string, CarriedRows>;
 
 /**
- * Records the overridden rows of an Item being disconnected. Call before its
- * transaction store is cleared. Throws if something can't be read, so the
+ * Records the overridden rows of an Item being disconnected, then deletes
+ * those overrides. Call before its transaction store is cleared, once the
+ * Item is removed at Plaid (its transactions can't be shown again). Throws if something can't be read, so the
  * caller can say it couldn't (it must not stop the disconnect).
  */
 export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<number> {
   const raw = (await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx))) ?? {};
+  // The Item's own overrides are dead once it is gone (its transaction ids go
+  // with it), and the categories live on in the record written below: they are
+  // dropped at the end, so forgetting the account later leaves none behind.
+  const dead = txns.filter((t) => raw[t.transaction_id] !== undefined).map((t) => t.transaction_id);
+  const dropDead = async () => {
+    if (dead.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...dead);
+  };
   const posted = txns.filter((t) => !t.pending);
-  if (!posted.some((t) => raw[t.transaction_id] !== undefined)) return 0;
+  if (!posted.some((t) => raw[t.transaction_id] !== undefined)) {
+    await dropDead();
+    return 0;
+  }
 
   // Every posted row by key, overridden or not: an identical row the user left
   // alone means the category can't be attributed to "this" row on the other side.
@@ -103,7 +114,10 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
     rows[key] = agreed;
     byAccount.set(g.account_id, rows);
   }
-  if (byAccount.size === 0) return 0;
+  if (byAccount.size === 0) {
+    await dropDead();
+    return 0;
+  }
 
   // Merged with anything already recorded for the account (the same id seen
   // under an earlier Item): a key recorded both ways becomes ambiguous.
@@ -119,6 +133,7 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
     writes[account_id] = await encrypt(JSON.stringify(merged));
   }
   await redis().hset(CARRY_HASH(ctx), writes);
+  await dropDead();
   return n;
 }
 
@@ -206,27 +221,31 @@ export function carriedCategories(carried: Carried, links: Map<string, Link>): M
 }
 
 /**
- * For each linked earlier account: how many categorized rows it had, and how
- * many of them show on a row of the account now. `shown` holds the keys of the
- * rows that are displayed (inside the lookback, not superseded) and don't have
- * a category of their own. Reported on the Accounts tab so the carry-over is
- * honest about what didn't make it (rows older than the bank re-sends, or
- * ambiguous ones).
+ * For each linked earlier account: how many categorized rows it had that can
+ * carry, how many of them show on a row of the account now, and how many were
+ * ambiguous (so never carry). `shown` holds the keys of the rows that are
+ * displayed (inside the lookback, not superseded) and don't have a category
+ * of their own. Reported on the Accounts tab so the carry-over is honest
+ * about what didn't make it (rows older than the bank re-sends, ambiguous).
  */
 export function carryCounts(
   carried: Carried,
   links: Map<string, Link>,
   shown: Set<string>
-): Record<string, { total: number; carried: number }> {
+): Record<string, { total: number; carried: number; ambiguous: number }> {
   const categories = carriedCategories(carried, links);
-  const out: Record<string, { total: number; carried: number }> = {};
+  const out: Record<string, { total: number; carried: number; ambiguous: number }> = {};
   for (const [account_id, rows] of carried) {
-    for (const key of Object.keys(rows)) {
+    for (const [key, category] of Object.entries(rows)) {
       const k = currentKey(key, account_id, links);
       if (!k) continue;
-      const n = (out[account_id] ??= { total: 0, carried: 0 });
+      const n = (out[account_id] ??= { total: 0, carried: 0, ambiguous: 0 });
+      if (category === null || !categories.has(k)) {
+        n.ambiguous++;
+        continue;
+      }
       n.total++;
-      if (categories.has(k) && shown.has(k)) n.carried++;
+      if (shown.has(k)) n.carried++;
     }
   }
   return out;

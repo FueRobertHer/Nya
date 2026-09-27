@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AccountLinksView, type AccountLinksPayload } from '@/components/AccountLinks';
+import { AccountLinksView, refusalText, type AccountLinksPayload } from '@/components/AccountLinks';
 
 const noop = () => {};
 const view = (data: AccountLinksPayload | null, picked: Record<string, string> = {}) =>
@@ -70,13 +70,13 @@ describe('AccountLinksView', () => {
       manual: [{ old: 'A7', old_label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', last_balance: 10, candidates: [{ id: 'A19', label: 'Chase Checking ••4821' }] }],
       links: [
         { old: 'A11', to: 'A15', linked_at: 'x', old_label: 'Old', to_label: 'New', conflict: false, categories: { total: 431, carried: 412 } },
-        { old: 'A12', to: 'A16', linked_at: 'x', old_label: 'Old2', to_label: 'New2', conflict: false, categories: { total: 1, carried: 1 } },
+        { old: 'A12', to: 'A16', linked_at: 'x', old_label: 'Old2', to_label: 'New2', conflict: false, categories: { total: 1, carried: 1, ambiguous: 2 } },
       ],
     });
     expect(html).toContain('Link an earlier account by hand');
     expect(html).not.toContain('Same account as');
     expect(html).toContain('412 of 431 categorized transactions carried over so far');
-    expect(html).toContain('1 of 1 categorized transaction carried over<');
+    expect(html).toContain('1 of 1 categorized transaction carried over. 2 matched more than one transaction');
   });
 
   test('shows the card for linking by hand alone', () => {
@@ -121,10 +121,16 @@ describe('AccountLinksView', () => {
         onAct={noop}
       />
     );
-    expect(html.match(/>Forget</g)?.length).toBe(1);
-    expect(html).toContain('Hidden: unhide it first to forget it');
+    expect(html.match(/>Forget</g)?.length).toBe(2);
+    expect(html).toContain('Hidden: forgetting it keeps it out of past totals');
     expect(html).toContain('Past net-worth totals don&#x27;t change');
     expect(html).toContain('Same account as');
+  });
+
+  test('says what was refused, in the server’s words when it gave some', () => {
+    expect(refusalText('forget', {})).toBe('Could not forget that account');
+    expect(refusalText('link', {})).toBe('Could not update the link');
+    expect(refusalText('forget', { error: 'Unlink it first.' })).toBe('Unlink it first.');
   });
 
   test('lists unreadable links with Remove', () => {

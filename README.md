@@ -183,6 +183,12 @@ button on that card), that means the bank's credentials or MFA changed on
 their end — click it and log back in through Plaid to fix it, no need to
 disconnect and relink from scratch.
 
+In `sandbox` mode, Plaid Link shows fake test institutions. Search for any
+name (e.g. "Chase") and log in with:
+
+- username: `user_good`
+- password: `pass_good`
+
 ### Removing an institution and adding it back
 
 Sometimes a connection has to be removed and added again (it broke badly, the
@@ -199,29 +205,33 @@ evidence and a chart preview. Nothing is linked until you say so. Once linked:
   account stays hidden after you disconnect it, listed as disconnected in the
   Hidden card, where you can still unhide it);
 - **categories you set** on the old account's transactions show on the same
-  transactions under the new account (matched by date, amount and merchant),
-  and the link says how many carried over. A category you set on a new
-  transaction wins.
+  transactions under the new account (matched by date, amount and the bank's
+  own description of the transaction), and the link says how many carried
+  over. A category you set on a new transaction wins. Two identical
+  transactions on the same day that you categorized differently (or only one
+  of) can't be told apart, so they carry nothing.
 
 Anything not offered can be linked with **Link an earlier account by hand**:
 there is no time limit, and it works even after you said an offer was not the
 same account. **Unlink** undoes a link completely; nothing stored is changed
 by linking.
 
-**What is kept, and forgetting it.** After a disconnect, Nya keeps each
-account's balance history, its name, mask and institution, and the categories
-you set, so a re-added account can pick them up, even months later. You decide
-how long: **Earlier accounts** (same card) lists every account you no longer
-have connected, and **Forget** deletes one's balance history, name and saved
-categories for good. Your past net-worth totals don't change (they were your
-net worth on those days). A hidden or linked account can't be forgotten until
-you unhide or unlink it: its balances are what keep it out of those totals.
+**What is kept, and forgetting it.** After you disconnect an institution,
+Nya keeps each of its accounts' balance history, name, mask and institution,
+and the categories you set, so a re-added account can pick them up, even
+months later. You decide how long: **Earlier accounts** (same card) lists the
+accounts of institutions you disconnected, and **Forget** deletes one's
+balance history, name and saved categories for good. Your past net-worth
+totals don't change (they were your net worth on those days); a hidden
+account stays out of them, through an adjustment that records only an amount
+per day, not which account it was. Unlink a linked account first. An account
+of an institution that is still connected (a card you closed, say) is listed
+there once you disconnect the institution.
 
-In `sandbox` mode, Plaid Link shows fake test institutions. Search for any
-name (e.g. "Chase") and log in with:
-
-- username: `user_good`
-- password: `pass_good`
+Forget can't reach copies made before it: a backup you downloaded
+(**Backing up your data**) still has the account, and restoring that backup
+brings it back. A goal that pointed at the account keeps pointing at it (as
+an account id only) until you change the goal.
 
 ### Payment details
 

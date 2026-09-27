@@ -125,7 +125,7 @@ describe('a re-link, end to end', () => {
     expect(await categoryOf('n_a')).toBe('treats');
     expect(await categoryOf('n_b')).toBe('food and drink'); // never recategorized
     const listed = (await route('account-links', 'GET')).body.links;
-    expect(listed.map((l: any) => l.categories)).toEqual([{ total: 1, carried: 1 }]);
+    expect(listed.map((l: any) => l.categories)).toEqual([{ total: 1, carried: 1, ambiguous: 0 }]);
 
     await route('account-links', 'DELETE', { old: 'acct_old' });
     expect(await categoryOf('n_a')).toBe('food and drink');
@@ -140,9 +140,9 @@ describe('a re-link, end to end', () => {
     await addItem('item_new', 'acct_new', [row('n_a', 'acct_new')]); // t_b's twin not re-sent
     await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
     // Counted from the stored rows, so nothing is carried before the first sync.
-    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 2, carried: 0 });
+    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 2, carried: 0, ambiguous: 0 });
     await route('transactions', 'GET');
-    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 2, carried: 1 });
+    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 2, carried: 1, ambiguous: 0 });
   });
 
   test('a hidden account of a connected institution that stopped reporting is not called disconnected', async () => {
@@ -174,7 +174,7 @@ describe('a re-link, end to end', () => {
     await addItem('item_new', 'acct_new', [row('n_a', 'acct_new')]);
     await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
     expect(await categoryOf('n_a')).toBe('food and drink');
-    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 1, carried: 0 });
+    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 0, carried: 0, ambiguous: 1 });
   });
 
   test('a hidden account stays hidden through the disconnect, is named on the Hidden card, and its re-added self is hidden once linked', async () => {
@@ -271,7 +271,7 @@ describe('carry-over edge cases', () => {
     await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
     await route('recategorize', 'POST', { transaction_id: 'n_own', category: 'work' });
     await route('transactions', 'GET');
-    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 3, carried: 1 });
+    expect((await route('account-links', 'GET')).body.links[0].categories).toEqual({ total: 3, carried: 1, ambiguous: 0 });
   });
 
   test('the Accounts tab reads no transaction store when no link carries anything', async () => {
@@ -333,9 +333,10 @@ describe('forgetting an earlier account', () => {
     const { decrypt } = await import('@/lib/crypto');
     return JSON.parse(await decrypt((await fake.hget<string>(ctxKey(key), date))!));
   };
+  const forget = (old: string) => route('account-links', 'POST', { action: 'forget', old });
 
   // An institution disconnected, with history in every layer, a name, a
-  // carried category and a declined offer; and another account alongside.
+  // carried category and a declined offer; and a connected account alongside.
   const setup = async () => {
     await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
     await route('transactions', 'GET');
@@ -348,37 +349,112 @@ describe('forgetting an earlier account', () => {
     await links.dismissPair(ctx, 'acct_old', 'acct_other');
   };
 
-  test('deletes its balances, name, carried categories and dismissals, and leaves the totals', async () => {
+  test('deletes its balances, name, carried categories, dismissals and stale records, and leaves the totals', async () => {
     await setup();
+    // A load that raced the disconnect wrote the old Item's record back.
+    await rememberAccounts(ctx, [{ item_id: 'item_old', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_old'), balance: 1 }] } as any]);
     const listed = (await route('account-links', 'GET')).body.earlier;
     expect(listed.map((e: any) => [e.id, e.label, e.hidden])).toEqual([['acct_old', 'Chase Checking ••4821', false]]);
     const totalBefore = await fake.hget<string>(ctxKey('history:net-worth'), '2026-01-01');
 
-    expect((await route('account-links', 'POST', { action: 'forget', old: 'acct_old' })).body).toEqual({ forgotten: true, unreadable: 0 });
+    expect((await forget('acct_old')).body).toEqual({ forgotten: true, unreadable: 0 });
     for (const key of layers) expect(await readMap(key, '2026-01-01')).toEqual({ acct_other: 5 });
     const { decrypt } = await import('@/lib/crypto');
     expect(JSON.parse(await decrypt((await fake.get<string>(ctxKey('history:accounts:est:flat')))!))).toEqual({ acct_other: 1 });
     expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).toBeNull();
     expect(await fake.hget(ctxKey('txn-category-carry'), 'acct_old')).toBeNull();
     expect(await fake.hgetall(ctxKey('account-links:dismissed'))).toBeNull();
+    expect(await fake.hget(ctxKey('accounts:meta'), 'item_old')).toBeNull();
+    expect(await fake.hget(ctxKey('accounts:meta'), 'item_new')).not.toBeNull();
     expect(await fake.hget<string>(ctxKey('history:net-worth'), '2026-01-01')).toBe(totalBefore!);
+    expect(await fake.get(ctxKey('account-links:lock'))).toBeNull(); // released
     expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
   });
 
-  test('refuses a current, linked, hidden or unknown account', async () => {
+  // The bank stopped returning a card, but the institution is still
+  // connected: its transactions are still stored there.
+  test('not an account of an institution that is still connected', async () => {
     await setup();
-    const forget = async (old: string) => route('account-links', 'POST', { action: 'forget', old });
+    await links.recordDirectory(ctx, [{ item_id: 'item_new', institution_name: 'Chase', institution_id: 'ins_3', error: null, accounts: [{ ...account('acct_closed'), mask: '0001' }] } as any]);
+    await rememberAccounts(ctx, [{ item_id: 'item_new', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_other'), balance: 1 }] } as any]);
+    expect((await route('account-links', 'GET')).body.earlier.map((e: any) => e.id)).toEqual(['acct_old']);
+    expect((await forget('acct_closed')).status).toBe(409);
+  });
+
+  test('an account known only from balances is checked against the connected stores', async () => {
+    await setup();
+    await fake.hset(ctxKey('history:accounts'), { '2025-01-01': await enc({ ancient: 3 }) });
+    // Still in a connected Item's transaction store: refused.
+    const { readStoredTxns } = await import('@/lib/transactions');
+    await addItem('item_keeps', 'ancient_live', [row('k1', 'ancient')]);
+    await route('transactions', 'GET');
+    expect((await readStoredTxns(ctx, 'item_keeps')).map((t) => t.account_id)).toContain('ancient');
+    const refused = await forget('ancient');
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toContain('still connected');
+    // An unreadable store is not an absent one.
+    await fake.set(ctxKey('txns:item_keeps'), 'garbage');
+    expect((await forget('ancient')).status).toBe(500);
+    expect(await readMap('history:accounts', '2025-01-01')).toEqual({ ancient: 3 });
+  });
+
+  test('refuses a current, linked or unknown account', async () => {
+    await setup();
     expect((await forget('acct_other')).status).toBe(409); // live
     expect((await forget('made-up')).status).toBe(409);
-    await setAccountHidden(ctx, 'acct_old', 'depository', true);
-    const hidden = await forget('acct_old');
-    expect(hidden.status).toBe(409);
-    expect(hidden.body.error).toContain('Unhide it first');
-    expect((await route('account-links', 'GET')).body.earlier.map((e: any) => e.hidden)).toEqual([true]);
-    await setAccountHidden(ctx, 'acct_old', '', false);
     await links.linkAccounts(ctx, 'acct_old', 'acct_other', {});
     expect((await forget('acct_old')).status).toBe(409); // linked
     expect(await readMap('history:accounts', '2026-01-01')).toEqual({ acct_old: 100, acct_other: 5 });
+  });
+
+  // Hidden: forgetting keeps it out of past totals without keeping anything
+  // that says which account it was.
+  test('a hidden account stays out of past totals, and nothing names it', async () => {
+    await setup();
+    const { getHistory } = await import('@/lib/history');
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
+    await fake.hset(ctxKey('history:accounts:est'), { '2025-12-01': await enc({ acct_old: 40, acct_other: 10 }) });
+    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({}) });
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const before = await getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden);
+    expect((await route('account-links', 'GET')).body.earlier.map((e: any) => e.hidden)).toEqual([true]);
+
+    expect((await forget('acct_old')).status).toBe(200);
+    const { hidden } = await links.getEffectiveHidden(ctx);
+    expect(hidden.size).toBe(0); // its hidden entry went with it
+    expect(await getHistory(ctx, hidden)).toEqual(before);
+    const adjust = (await fake.hgetall<Record<string, string>>(ctxKey('history:forgotten')))!;
+    expect(Object.keys(adjust).every((f) => !f.includes('acct_old'))).toBe(true);
+    for (const v of Object.values(adjust)) expect(v).not.toContain('acct_old');
+  });
+
+  // A point the chart couldn't correct while the account was hidden (no
+  // per-account map that day) stays out after it is forgotten.
+  test('a point that was dropped while hidden stays dropped', async () => {
+    await setup();
+    const { getHistory } = await import('@/lib/history');
+    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt('999') }); // no per-account map
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const dates = (h: { date: string }[]) => h.map((p) => p.date);
+    expect(dates(await getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden))).not.toContain('2026-02-01');
+    await forget('acct_old');
+    expect(dates(await getHistory(ctx))).not.toContain('2026-02-01');
+  });
+
+  // A backfill rebuilds estimated totals without the forgotten account, so
+  // its recorded contribution to those dates goes.
+  test('a rebuilt estimate drops what a forgotten hidden account contributed to it', async () => {
+    await setup();
+    const { getHistory, replaceEstimated } = await import('@/lib/history');
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
+    await fake.hset(ctxKey('history:accounts:est'), { '2025-12-01': await enc({ acct_old: 40, acct_other: 10 }) });
+    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({}) });
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    await forget('acct_old');
+    expect((await getHistory(ctx)).find((p) => p.date === '2025-12-01')!.value).toBe(10);
+    await replaceEstimated(ctx, [{ date: '2025-12-01', value: 10 }]); // rebuilt without it
+    expect((await getHistory(ctx)).find((p) => p.date === '2025-12-01')!.value).toBe(10);
+    expect((await getHistory(ctx)).find((p) => p.date === '2026-01-01')!.value).toBe(5); // real point still adjusted
   });
 
   test('a map rewritten meanwhile is re-read, never written over', async () => {
@@ -393,29 +469,132 @@ describe('forgetting an earlier account', () => {
       return evalOrig(script, keys, args);
     }) as typeof fake.eval;
     try {
-      await route('account-links', 'POST', { action: 'forget', old: 'acct_old' });
+      await forget('acct_old');
     } finally {
       fake.eval = evalOrig;
     }
     expect(await readMap('history:accounts:est', '2026-01-01')).toEqual({ acct_other: 6 });
   });
 
-  test('a map it can’t read keeps the account listed, to try again', async () => {
+  // Written back by a same-day partial record while the forget ran.
+  test('today is scrubbed again at the end', async () => {
     await setup();
-    await fake.hset(ctxKey('history:accounts'), { '2025-12-31': 'garbage' });
-    expect((await route('account-links', 'POST', { action: 'forget', old: 'acct_old' })).body).toEqual({ forgotten: false, unreadable: 1 });
-    expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).not.toBeNull();
-    expect((await route('account-links', 'GET')).body.earlier.map((e: any) => e.id)).toEqual(['acct_old']);
+    const today = new Date().toISOString().slice(0, 10);
+    const hdel = fake.hdel.bind(fake);
+    fake.hdel = (async (key: string, ...fields: string[]) => {
+      if (key === ctxKey('txn-category-carry')) await fake.hset(ctxKey('history:accounts:partial'), { [today]: await enc({ acct_old: 1, acct_other: 2 }) });
+      return hdel(key, ...fields);
+    }) as typeof fake.hdel;
+    try {
+      await forget('acct_old');
+    } finally {
+      fake.hdel = hdel;
+    }
+    expect(await readMap('history:accounts:partial', today)).toEqual({ acct_other: 2 });
   });
 
-  // The chart reads through a cache of decrypted maps: a forgotten account
-  // must not come back from it.
+  // No one can decrypt it, so nothing in it can be read: it doesn't hold the
+  // rest back.
+  test('a map no one can decrypt is left as it is, and the rest is forgotten', async () => {
+    await setup();
+    await fake.hset(ctxKey('history:accounts'), { '2025-12-31': 'garbage' });
+    expect((await forget('acct_old')).body).toEqual({ forgotten: true, unreadable: 1 });
+    expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).toBeNull();
+    expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
+  });
+
+  test('one change at a time: a link during a forget is refused, and the lock is released after', async () => {
+    await setup();
+    await fake.set(ctxKey('account-links:lock'), 'another request', { nx: true, ex: 300 });
+    const refused = await forget('acct_old');
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toContain('in progress');
+    expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_other' })).status).toBe(409);
+    await fake.del(ctxKey('account-links:lock'));
+    expect((await forget('acct_old')).status).toBe(200);
+  });
+
+  test('lists nothing to forget when the live accounts can’t be read', async () => {
+    await setup();
+    const hgetall = fake.hgetall.bind(fake);
+    fake.hgetall = (async (key: string) => {
+      if (key === ctxKey('accounts:meta')) throw new Error('down');
+      return hgetall(key);
+    }) as typeof fake.hgetall;
+    try {
+      expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
+    } finally {
+      fake.hgetall = hgetall;
+    }
+  });
+
+  // The chart reads through a cache of decrypted maps: a forgotten account's
+  // balances must not come back from it, or stay in memory.
   test('the chart never serves a map from before it was rewritten', async () => {
     await setup();
+    const { getHistory, isDecryptedCached } = await import('@/lib/history');
+    await setAccountHidden(ctx, 'acct_other', 'depository', true); // reads the maps through the cache
+    const oldBlob = (await fake.hget<string>(ctxKey('history:accounts'), '2026-01-01'))!;
+    const hiddenOther = (await links.getEffectiveHidden(ctx)).hidden;
+    expect((await getHistory(ctx, hiddenOther)).find((p) => p.date === '2026-01-01')!.value).toBe(100);
+    expect(isDecryptedCached(oldBlob)).toBe(true);
+    await forget('acct_old');
+    expect(isDecryptedCached(oldBlob)).toBe(false);
+    expect((await getHistory(ctx, hiddenOther)).find((p) => p.date === '2026-01-01')!.value).toBe(100);
     const { getAccountHistory } = await import('@/lib/history');
-    expect((await getAccountHistory(ctx, 'acct_old', [])).length).toBeGreaterThan(0);
-    await route('account-links', 'POST', { action: 'forget', old: 'acct_old' });
     expect(await getAccountHistory(ctx, 'acct_old', [])).toEqual([]);
+  });
+});
+
+describe('the decrypted-map cache', () => {
+  test('keeps what was used most recently within its byte budget', async () => {
+    const { getHistory, isDecryptedCached, setDecryptedBudget } = await import('@/lib/history');
+    const enc = async (m: unknown) => encrypt(JSON.stringify(m));
+    for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
+      await fake.hset(ctxKey('history:net-worth'), { [d]: await encrypt('10') });
+      await fake.hset(ctxKey('history:accounts'), { [d]: await enc({ a: 1, [d]: 1 }) });
+    }
+    const blob = async (d: string) => (await fake.hget<string>(ctxKey('history:accounts'), d))!;
+    const one = (await blob('2026-01-01')).length * 2;
+    setDecryptedBudget(one * 2 + 10); // room for two
+    try {
+      const hidden = new Map([['a', { type: 'depository', hidden_at: 'x' }]]);
+      await getHistory(ctx, hidden);
+      const cached = await Promise.all(['2026-01-01', '2026-01-02', '2026-01-03'].map(async (d) => isDecryptedCached(await blob(d))));
+      expect(cached.filter(Boolean).length).toBe(2);
+    } finally {
+      setDecryptedBudget(16 * 1024 * 1024);
+    }
+  });
+});
+
+describe('the decrypted-map cache order', () => {
+  test('a map used again is kept over one used longer ago', async () => {
+    const { decryptMapForTest, isDecryptedCached, setDecryptedBudget } = await import('@/lib/history');
+    const [a, b, c] = await Promise.all([1, 2, 3].map((n) => encrypt(JSON.stringify({ x: n }))));
+    setDecryptedBudget(a.length * 2 * 2 + 10); // room for two
+    try {
+      await decryptMapForTest(a);
+      await decryptMapForTest(b);
+      await decryptMapForTest(a); // used again
+      await decryptMapForTest(c);
+      expect([isDecryptedCached(a), isDecryptedCached(b), isDecryptedCached(c)]).toEqual([true, false, true]);
+    } finally {
+      setDecryptedBudget(16 * 1024 * 1024);
+    }
+  });
+});
+
+describe('a user with nothing connected', () => {
+  // Coming back after a lapse: every institution was disconnected, and the
+  // hidden accounts still need their names on the Hidden card.
+  test('sees hidden disconnected accounts by name', async () => {
+    await addItem('item_old', 'acct_old', [], Date.now() - DAY);
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    await route('disconnect', 'POST', { item_id: 'item_old' });
+    const { forClient, liveOk } = await links.getEffectiveHidden(ctx, { describe: true });
+    expect(liveOk).toBe(true);
+    expect(forClient).toEqual([{ account_id: 'acct_old', type: 'depository', label: 'Chase Checking ••4821', disconnected: true }]);
   });
 });
 
@@ -445,6 +624,9 @@ describe('recording categories on disconnect', () => {
     ]);
     expect(n).toBe(1);
     expect([...(await overrides.getCarried(ctx))]).toEqual([['acct_old', { [KEY]: 'treats' }]]);
+    // The Item's own overrides go: their categories live on in the record.
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't1')).toBeNull();
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't_pending')).toBeNull();
     // Filed under the account id: no date, amount or merchant in the clear.
     const raw = (await fake.hgetall<Record<string, string>>(ctxKey('txn-category-carry')))!;
     expect(Object.keys(raw)).toEqual(['acct_old']);

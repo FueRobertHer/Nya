@@ -226,11 +226,14 @@ export async function clearInvestmentStore(ctx: Ctx, item_id: string): Promise<v
   }
 }
 
-/** Account ids the store knows for an Item, for disconnect's hidden-set cleanup. */
-export async function storedInvestmentAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
+/** Account ids the store knows for an Item. Empty when it can't be read,
+ *  unless `strict`, when that throws: a caller that deletes on the answer
+ *  (forgetting an earlier account) must not take "unreadable" for "absent". */
+export async function storedInvestmentAccountIds(ctx: Ctx, item_id: string, strict = false): Promise<string[]> {
   try {
     return Object.keys((await readInvStore(ctx, item_id)).accounts);
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return [];
   }
 }

@@ -528,6 +528,17 @@ export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<stri
 }
 
 /**
+ * Every account id an Item's store mentions: its account map and every
+ * stored row's account. Strict (throws when it can't be read), for a caller
+ * that deletes on the answer: forgetting an earlier account must not take an
+ * unreadable store for one that doesn't have it.
+ */
+export async function storedAccountIds(ctx: Ctx, item_id: string): Promise<Set<string>> {
+  const state = await readState(ctx, item_id);
+  return new Set([...Object.keys(state.accounts), ...Object.values(state.txns).map((t) => t.account_id)]);
+}
+
+/**
  * Delete an Item's stored transactions. Call when the Item is disconnected.
  *
  * Clears the oversize marker too: reconnecting is what the note on that
@@ -797,10 +808,11 @@ export async function syncItemTransactions(ctx: Ctx,
   /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
    *  Applied here because this is the last place account_id exists; a
    *  category set on the row itself still wins, in /api/transactions. */
-  carried?: Map<string, string>
+  carriedIn?: Map<string, string> | Promise<Map<string, string>>
 ): Promise<{ txns: Txn[]; note: string | null }> {
   const { state, note } = await syncItem(ctx, item);
   if (!state) return { txns: [], note };
+  const carried = await carriedIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name — the display behavior recurring
