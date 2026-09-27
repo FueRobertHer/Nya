@@ -84,6 +84,7 @@ const EXACT: Record<string, Kind> = {
   'accounts:directory': 'hash',
   'account-links': 'hash',
   'txn-category-overrides': 'hash',
+  'txn-category-carry': 'hash',
   'txn-vendor-renames': 'hash',
   'manual:accounts': 'hash',
   'hidden:accounts': 'hash',

@@ -61,6 +61,29 @@ describe('AccountLinksView', () => {
     expect(html).toContain('<option value="A19" selected="">');
   });
 
+  // Collapsed until asked for: it lists every earlier account, so it must not
+  // nag the way an offer does.
+  test('offers linking by hand, collapsed, and shows what a link carried over', () => {
+    const html = view({
+      suggestions: [],
+      unclaimed: [],
+      manual: [{ old: 'A7', old_label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', last_balance: 10, candidates: [{ id: 'A19', label: 'Chase Checking ••4821' }] }],
+      links: [
+        { old: 'A11', to: 'A15', linked_at: 'x', old_label: 'Old', to_label: 'New', conflict: false, categories: { total: 431, carried: 412 } },
+        { old: 'A12', to: 'A16', linked_at: 'x', old_label: 'Old2', to_label: 'New2', conflict: false, categories: { total: 1, carried: 1 } },
+      ],
+    });
+    expect(html).toContain('Link an earlier account by hand');
+    expect(html).not.toContain('Same account as');
+    expect(html).toContain('412 of 431 categorized transactions carried over so far');
+    expect(html).toContain('1 of 1 categorized transaction carried over<');
+  });
+
+  test('shows the card for linking by hand alone', () => {
+    expect(view({ suggestions: [], unclaimed: [], links: [], manual: [] })).toBe('');
+    expect(view({ suggestions: [], unclaimed: [], links: [], manual: [{ old: 'A7', old_label: null, first: 'x', last: 'y', last_balance: null, candidates: [{ id: 'A19', label: 'C' }] }] })).toContain('Reconnected accounts');
+  });
+
   test('lists unreadable links with Remove', () => {
     const html = view({ suggestions: [], unclaimed: [], links: [], broken: ['A7'] });
     expect(html).toContain('can&#x27;t be read');

@@ -90,6 +90,7 @@ export const NOT_MOVED_PREFIXES = [
   'sessions:', // the session epoch: new per container (lib/sessions.ts)
   'snapshot:', // the cron's own log and lock (lib/snapshot-job.ts)
   'move:', // this module's own record
+  'txn-category-carry', // new since the move (#46): the old release never wrote it
 ] as const;
 
 export function isMoved(key: string): boolean {

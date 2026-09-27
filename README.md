@@ -183,6 +183,31 @@ button on that card), that means the bank's credentials or MFA changed on
 their end — click it and log back in through Plaid to fix it, no need to
 disconnect and relink from scratch.
 
+### Removing an institution and adding it back
+
+Sometimes a connection has to be removed and added again (it broke badly, the
+bank moved platforms, or you are coming back after a while). Plaid then gives
+every account a new id, so on its own the re-added account would start a new,
+empty history beside the old one.
+
+Instead, the Accounts tab (under **Manage accounts**, in **Reconnected
+accounts**) offers to link each new account to the one it replaces, with the
+evidence and a chart preview. Nothing is linked until you say so. Once linked:
+
+- its **balance history** continues from the old account's;
+- if you had **hidden** the old account, the new one is hidden too (a hidden
+  account stays hidden after you disconnect it, listed as disconnected in the
+  Hidden card, where you can still unhide it);
+- **categories you set** on the old account's transactions show on the same
+  transactions under the new account (matched by date, amount and merchant),
+  and the link says how many carried over. A category you set on a new
+  transaction wins.
+
+Anything not offered can be linked with **Link an earlier account by hand**:
+there is no time limit, and it works even after you said an offer was not the
+same account. **Unlink** undoes a link completely; nothing stored is changed
+by linking.
+
 In `sandbox` mode, Plaid Link shows fake test institutions. Search for any
 name (e.g. "Chase") and log in with:
 
@@ -230,7 +255,8 @@ brings back the full history including the period while it was hidden.
 
 Hiding is not a security feature: the data is still fetched and stored, it just
 isn't shown or counted. To actually remove an account, disconnect it (Plaid) or
-delete it (manual).
+delete it (manual). A disconnected account that was hidden stays hidden (its
+history is kept, so unhiding it would change past totals) until you unhide it.
 
 ### When an institution can't be reached
 

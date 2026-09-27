@@ -3,12 +3,12 @@ import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems, removeItem } from '@/lib/storage';
-import { clearCaches, readCache, CacheKey } from '@/lib/cache';
-import { clearItemTransactions, getItemAccountIds } from '@/lib/transactions';
-import { clearInvestmentStore, storedInvestmentAccountIds } from '@/lib/invstore';
+import { clearCaches } from '@/lib/cache';
+import { clearItemTransactions, readStoredTxns } from '@/lib/transactions';
+import { clearInvestmentStore } from '@/lib/invstore';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
-import { pruneHidden } from '@/lib/hidden';
-import { rememberedIdsForItem, forgetItem } from '@/lib/last-known';
+import { retireOverrides } from '@/lib/overrides';
+import { forgetItem } from '@/lib/last-known';
 import { forgetVanished } from '@/lib/vanished';
 
 export async function POST(req: Request) {
@@ -41,28 +41,14 @@ export async function POST(req: Request) {
       }
     }
 
-    // Collect the Item's account ids BEFORE its state is dropped, so any
-    // hidden-account entries pointing at them can be cleaned up. A stale hidden
-    // id is NOT harmless here: the historical per-account maps still contain
-    // that account, so getHistory would go on subtracting it from every past
-    // point forever, and with the account gone from the live list there'd be no
-    // Unhide button to stop it.
-    //
-    // Four sources, unioned, because no one of them is complete. The
-    // transaction store misses an investments-only Item, or one linked but
-    // never synced. The net-worth cache is null whenever it expired or any
-    // institution errored. accounts:meta (lib/last-known.ts) covers any Item
-    // that has ever loaded successfully and never expires, so it's the broadest
-    // of the three, but it misses one linked and disconnected without a single
-    // successful load in between. The investment store fills the transaction
-    // store's gap for investments-only Items.
-    const accountIds = new Set(await getItemAccountIds(ctx, item_id));
-    for (const id of await storedInvestmentAccountIds(ctx, item_id)) accountIds.add(id);
-    for (const id of await rememberedIdsForItem(ctx, item_id)) accountIds.add(id);
-    const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
-    for (const inst of cached?.institutions ?? []) {
-      if (inst.item_id !== item_id) continue;
-      for (const a of inst.accounts ?? []) accountIds.add(a.account_id);
+    // Its categorized transactions are recorded under a key that survives a
+    // re-link, BEFORE its store is deleted, so linking the re-added account
+    // later carries the categories across (lib/overrides.ts). Best effort: a
+    // failure costs that convenience, never the disconnect.
+    try {
+      await retireOverrides(ctx, await readStoredTxns(ctx, item_id));
+    } catch (err) {
+      console.error('disconnect: could not record categories to carry across a re-link', err instanceof Error ? err.message : err);
     }
 
     await removeItem(ctx, item_id);
@@ -71,15 +57,18 @@ export async function POST(req: Request) {
     // And its stored investment transactions. A sync still running writes, then
     // sees the Item gone and deletes what it wrote (lib/invstore.ts).
     await clearInvestmentStore(ctx, item_id);
-    await pruneHidden(ctx, [...accountIds]);
+    // Hidden accounts STAY hidden (#46). Their history is kept, so dropping the
+    // entry would put the account back into every past total the moment it
+    // was disconnected, and re-linking it would bring it back unhidden. The
+    // Hidden card lists it as disconnected, with Unhide, and linking the
+    // re-added account carries the hidden state across (lib/links.ts).
     await forgetItem(ctx, item_id);
     // Its vanished-account record goes with it: the Item is gone, so nothing
     // can confirm or clear those entries, and a relink starts clean.
     await forgetVanished(ctx, item_id);
-    // Its accounts stay in the account directory for a while, so that if the
-    // same institution is added back they can be matched to the new ones
-    // (lib/links.ts). Unlinked ones are pruned once the Item is gone and they
-    // haven't been seen for the window: nothing to do here.
+    // Its accounts stay in the account directory, so that if the same
+    // institution is added back, even months later, they can be matched to
+    // the new ones (lib/links.ts): nothing to do here.
 
     // Cached payloads no longer reflect the linked institutions.
     await clearCaches(ctx);

@@ -175,6 +175,21 @@ export function vendorKey(t: {
   return `nm:${t.institution_name.toLowerCase().trim()}::${nm}`;
 }
 
+/**
+ * What identifies one real-world transaction across a re-link, when its
+ * transaction_id doesn't survive: the account (as it is known now, following
+ * links), the posting date, the amount in cents and the merchant (vendorKey).
+ * Two genuinely identical rows (same merchant, amount and day) share a key;
+ * lib/overrides.ts treats a key whose rows were categorized differently as
+ * ambiguous and carries nothing for it.
+ */
+export function contentKey(
+  account_id: string,
+  t: { date: string; amount: number; merchant_entity_id: string | null; merchant_name: string | null; name: string; institution_name: string }
+): string {
+  return `${account_id}|${t.date}|${Math.round(t.amount * 100)}|${vendorKey(t)}`;
+}
+
 // PFC `detailed` humanized and stripped of its `primary` prefix, so
 // "FOOD_AND_DRINK_COFFEE" surfaces as just "coffee" alongside the primary
 // category rather than repeating it.
@@ -492,6 +507,15 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
  * must treat this as a partial answer and union it with another source. See
  * app/api/disconnect/route.ts.
  */
+/**
+ * An Item's stored transactions, read without syncing (no Plaid call), for
+ * the paths that must not reach Plaid: a disconnect (the Item is already
+ * removed there) and the Accounts tab. Throws when the store can't be read.
+ */
+export async function readStoredTxns(ctx: Ctx, item_id: string): Promise<StoredTxn[]> {
+  return Object.values((await readState(ctx, item_id)).txns);
+}
+
 export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
   try {
     return Object.keys((await readState(ctx, item_id)).accounts);
@@ -766,7 +790,11 @@ async function syncItem(ctx: Ctx,
  */
 export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
-  hiddenAccountIds?: Set<string>
+  hiddenAccountIds?: Set<string>,
+  /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
+   *  Applied here because this is the last place account_id exists; a
+   *  category set on the row itself still wins, in /api/transactions. */
+  carried?: Map<string, string>
 ): Promise<{ txns: Txn[]; note: string | null }> {
   const { state, note } = await syncItem(ctx, item);
   if (!state) return { txns: [], note };
@@ -789,7 +817,7 @@ export async function syncItemTransactions(ctx: Ctx,
       pending: t.pending,
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       institution_name: t.institution_name,
-      category: t.category,
+      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
       iso_currency_code: t.iso_currency_code,
       vendor_key: vendorKey(t),
       logo_url: t.logo_url,

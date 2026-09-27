@@ -66,9 +66,9 @@ export async function POST(req: Request) {
       // answer for accounts that no longer exist: a card closed at the bank, or
       // an Item disconnected on another device, whose row is still on screen
       // because the Dashboard paints from localStorage before the network load
-      // lands. Hiding one of those writes a permanent entry that getHistory
-      // subtracts from every past date, with no live row to ever offer Unhide.
-      // That is the exact harm pruneHidden exists to prevent.
+      // lands. Hiding one of those would write an entry that getHistory
+      // subtracts from every past date, for an account the user never saw
+      // hidden while it was live.
       if (!type) {
         const remembered = await findRememberedAccount(ctx, account_id);
         const owner = remembered && live.find((i) => i.item_id === remembered.item_id);

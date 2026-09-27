@@ -2,16 +2,33 @@ import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
-import { getOverrides } from '@/lib/overrides';
+import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
-import { getEffectiveHidden } from '@/lib/links';
+import { getEffectiveHidden, effectiveLinks, liveAccountIds } from '@/lib/links';
+import { readLinks } from '@/lib/link-core';
 
 type TransactionsPayload = {
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   as_of: string;
 };
+
+/**
+ * Categories carried across a re-link (lib/overrides.ts), by the key of the
+ * row they apply to. Follows the ACTIVE links only, like every other reader.
+ * Best effort: a failed read shows Plaid's categories, never an error.
+ */
+async function carriedFor(ctx: Awaited<ReturnType<typeof dataCtx>>): Promise<Map<string, string>> {
+  const carried = await getCarried(ctx);
+  if (carried.size === 0) return new Map();
+  try {
+    const [{ links }, live] = await Promise.all([readLinks(ctx), liveAccountIds(ctx)]);
+    return carriedCategories(carried, effectiveLinks(links, live));
+  } catch {
+    return new Map();
+  }
+}
 
 export async function GET(req: Request) {
   try {
@@ -29,8 +46,9 @@ export async function GET(req: Request) {
     // rather than silently surfacing transactions the user hid.
     const { hidden } = await getEffectiveHidden(ctx);
     const hiddenIds = new Set(hidden.keys());
+    const carried = await carriedFor(ctx);
     const [results, overrides, renames] = await Promise.all([
-      Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds))),
+      Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds, carried))),
       getOverrides(ctx),
       getRenames(ctx),
     ]);

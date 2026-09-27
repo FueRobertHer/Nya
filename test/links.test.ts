@@ -225,15 +225,20 @@ describe('recordDirectory', () => {
     expect(fake.ops).toBe(1); // the read, no write
   });
 
-  // Decided from the stored Items, not a mark written on disconnect, so a
-  // load that raced the disconnect can't keep an entry forever.
-  test('prunes an unlinked entry of a removed Item after the window, but not a linked one', async () => {
+  // Kept for good, so someone coming back months later (a lapsed
+  // subscription, a new owner re-linking) sees what each earlier account was.
+  test('keeps the entries of a removed Item, linked or not, long after it was last seen', async () => {
     await links.recordDirectory(ctx, [inst([{ account_id: 'gone' }, { account_id: 'kept' }], { item_id: 'old' })], NOW);
     await links.linkAccounts(ctx, 'kept', 'new', {});
-    await links.recordDirectory(ctx, [inst([{ account_id: 'new' }])], NOW + 91 * DAY);
+    await links.recordDirectory(ctx, [inst([{ account_id: 'new' }])], NOW + 400 * DAY);
     const dir = await read();
-    expect(dir.gone).toBeUndefined();
+    expect(dir.gone).toBeDefined();
     expect(dir.kept).toBeDefined();
+  });
+
+  test('records the provider', async () => {
+    await links.recordDirectory(ctx, [inst([{ account_id: 'ira', type: 'investment' }])], NOW);
+    expect((await read()).ira.provider).toBe('plaid');
   });
 
   test('keeps an entry of a stored Item, and one inside the window', async () => {
@@ -308,6 +313,83 @@ describe('/api/account-links', () => {
     await setup();
     await call('POST', { action: 'dismiss', old: 'A7', to: 'new' });
     expect((await call('GET')).body.unclaimed).toEqual([]);
+  });
+});
+
+describe('linking by hand', () => {
+  const hand = (over: Partial<Parameters<typeof links.manualChoices>[0]> = {}) =>
+    links.manualChoices({
+      directory: {
+        old: entry({ item_id: 'item_old', first_seen: '2025-01-01', last_seen: '2025-06-30' }),
+        new: entry({ first_seen: '2026-09-01' }),
+      },
+      spans: {},
+      liveIds: new Set(['new']),
+      links: new Map(),
+      ...over,
+    });
+
+  // A lapsed subscription: back more than a year later.
+  test('has no time limit', () => {
+    expect(hand().map((c) => [c.old, c.candidates.map((x) => x.id)])).toEqual([['old', ['new']]]);
+    // The card itself stops offering it after the window.
+    const far = { old: entry({ item_id: 'item_old', last_seen: '2025-06-30' }), new: entry({ first_seen: '2026-09-01' }) };
+    expect(suggest({ directory: far }).unclaimed).toEqual([]);
+  });
+
+  // A declined or missed match must stay fixable.
+  test('still lists an account after "Not the same" and "None of these"', () => {
+    const d = new Set(['old>new', links.dismissAllKey('old')]);
+    expect(suggest({ dismissed: d }).suggestions).toEqual([]);
+    expect(hand().map((c) => c.old)).toEqual(['old']); // dismissals don't apply
+  });
+
+  test('keeps the rules that protect a series: kind, overlap, live, linked and manual accounts', () => {
+    // Debt to asset: never.
+    expect(hand({ directory: { old: entry({ item_id: 'item_old', last_seen: '2025-06-30' }), new: entry({ type: 'depository', subtype: 'checking', first_seen: '2026-09-01' }) } })).toEqual([]);
+    // The target's history starts before the earlier one stopped: never.
+    expect(hand({ directory: { old: entry({ item_id: 'item_old', last_seen: '2026-09-10' }), new: entry({ first_seen: '2026-09-01' }) } })).toEqual([]);
+    // A live earlier account, one already linked, a manual one: never listed.
+    expect(hand({ liveIds: new Set(['new', 'old']) })).toEqual([]);
+    expect(hand({ links: new Map([['old', { to: 'other', linked_at: '2026-01-01', evidence: {} }]]) })).toEqual([]);
+    expect(hand({ directory: { manual_x: entry({ last_seen: '2025-06-30' }), new: entry({ first_seen: '2026-09-01' }) } })).toEqual([]);
+    // Nor as a target: a manual account, or one linked to something else.
+    expect(hand({ liveIds: new Set(['manual_y']) })).toEqual([]);
+    expect(hand({ links: new Map([['new', { to: 'other', linked_at: '2026-01-01', evidence: {} }]]) }).flatMap((c) => c.candidates)).toEqual([]);
+  });
+
+  test('lists the most recently stopped first', () => {
+    const got = hand({
+      directory: {
+        older: entry({ item_id: 'a', last_seen: '2024-01-01' }),
+        newer: entry({ item_id: 'b', mask: '9', last_seen: '2025-06-30' }),
+        new: entry({ first_seen: '2026-09-01' }),
+      },
+    });
+    expect(got.map((c) => c.old)).toEqual(['newer', 'older']);
+  });
+
+  test('the route links a pair listed by hand, and still refuses anything else', async () => {
+    await rememberAccounts(ctx, [{ item_id: 'item_new', institution_name: 'Capital One', error: null, accounts: [{ account_id: 'new', name: 'Quicksilver', mask: '1234', type: 'credit', subtype: 'credit card' }] } as any]);
+    await fake.hset(ctxKey('accounts:directory'), {
+      new: await encrypt(JSON.stringify(entry({ first_seen: '2026-09-01' }))),
+      old: await encrypt(JSON.stringify(entry({ item_id: 'item_old', last_seen: '2025-06-30' }))),
+    });
+    await links.dismissAll(ctx, 'old');
+    const route = await import('@/app/api/account-links/route');
+    const call = async (method: string, body?: unknown) => {
+      const res = await (route as any)[method](new Request('http://x/api/account-links', { method, body: body ? JSON.stringify(body) : undefined }));
+      return { status: res.status, body: await res.json() };
+    };
+    const listed = await call('GET');
+    expect(listed.body.unclaimed).toEqual([]);
+    expect(listed.body.manual.map((m: any) => m.old)).toEqual(['old']);
+    expect((await call('POST', { action: 'dismiss', old: 'old', to: 'new' })).status).toBe(409); // by hand is link only
+    expect((await call('POST', { action: 'link', old: 'old', to: 'made-up' })).status).toBe(409);
+    expect((await call('POST', { action: 'link', old: 'old', to: 'new' })).status).toBe(200);
+    const saved = (await links.getLinks(ctx)).get('old')!;
+    expect(saved.to).toBe('new');
+    expect(saved.evidence).toMatchObject({ basis: 'by_hand', old_provider: 'plaid', to_provider: 'plaid', old_last: '2025-06-30' });
   });
 });
 
