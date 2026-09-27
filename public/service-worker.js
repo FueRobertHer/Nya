@@ -26,7 +26,8 @@ self.addEventListener('fetch', (event) => {
 
   // Other sites (the sign-in provider's API among them) are left to the
   // browser: a cached copy of someone's session must never be served back.
-  if (url.origin !== self.location.origin) return;
+  // So is Clerk's same-origin path, which it uses on some production domains.
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/__clerk/')) return;
 
   // API calls and non-GET requests always go straight to the network,
   // uncached -- cache.put() throws on non-GET anyway.

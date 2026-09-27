@@ -1,6 +1,7 @@
 'use client';
 
 import ClerkAccount from './ClerkAccount';
+import { watchSignOut } from './sign-out-watch';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
@@ -490,30 +491,25 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
     const original = window.fetch;
     // Bound: a browser's fetch called without window as `this` throws.
     const call = original.bind(window);
-    const watched = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const res = await call(input, init);
-      if (res.status === 401) {
-        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        const url = new URL(raw, window.location.href);
-        if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
-          // The saved snapshot goes too: a device signed out elsewhere (a
-          // lost phone) must not keep painting balances, offline included.
-          signedOut = true;
-          try {
-            localStorage.removeItem(LOCAL_CACHE_KEY);
-          } catch {
-            // Best-effort.
-          }
-          window.location.href = '/login';
+    const watched = watchSignOut(call, {
+      clerk,
+      onSignedOut: () => {
+        // The saved snapshot goes too: a device signed out elsewhere (a
+        // lost phone) must not keep painting balances, offline included.
+        signedOut = true;
+        try {
+          localStorage.removeItem(LOCAL_CACHE_KEY);
+        } catch {
+          // Best-effort.
         }
-      }
-      return res;
-    };
+        window.location.href = clerk ? '/sign-in' : '/login';
+      },
+    });
     window.fetch = Object.assign(watched, original) as typeof window.fetch;
     return () => {
       window.fetch = original;
     };
-  }, []);
+  }, [clerk]);
 
   useEffect(() => {
     // Paint immediately from the last-known snapshot, then revalidate.
