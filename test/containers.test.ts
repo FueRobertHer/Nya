@@ -186,6 +186,9 @@ describe('the route', () => {
     const created = await (await post('{"create":true}')).json();
     expect(isContainerId(created.created)).toBe(true);
     expect(created.next_step).toContain(`CONTAINER_ID=${created.created}`);
+    // Names the environment it went to, never a fixed one.
+    expect(created.environment).toBe('test');
+    expect(created.next_step).not.toContain('Production');
 
     const again = await post('{"create":true}');
     expect(again.status).toBe(409);

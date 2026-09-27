@@ -1,5 +1,7 @@
 'use client';
 
+import ClerkAccount from './ClerkAccount';
+import { watchSignOut } from './sign-out-watch';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
@@ -309,7 +311,7 @@ const TAB_LABELS: Record<Tab, string> = {
   budgets: 'Budgets',
 };
 
-export default function Dashboard() {
+export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<'new' | 'update'>('new');
@@ -408,7 +410,10 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/net-worth${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
-        setError('Failed to load accounts.');
+        // The server's reason when it gives one (no usable container, say),
+        // so the cause shows on screen rather than only in the logs.
+        const reason = await res.json().then((b) => b?.error).catch(() => null);
+        setError(reason && res.status === 503 ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
         return;
       }
       const data = await res.json();
@@ -489,30 +494,25 @@ export default function Dashboard() {
     const original = window.fetch;
     // Bound: a browser's fetch called without window as `this` throws.
     const call = original.bind(window);
-    const watched = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const res = await call(input, init);
-      if (res.status === 401) {
-        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        const url = new URL(raw, window.location.href);
-        if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== '/api/login') {
-          // The saved snapshot goes too: a device signed out elsewhere (a
-          // lost phone) must not keep painting balances, offline included.
-          signedOut = true;
-          try {
-            localStorage.removeItem(LOCAL_CACHE_KEY);
-          } catch {
-            // Best-effort.
-          }
-          window.location.href = '/login';
+    const watched = watchSignOut(call, {
+      clerk,
+      onSignedOut: () => {
+        // The saved snapshot goes too: a device signed out elsewhere (a
+        // lost phone) must not keep painting balances, offline included.
+        signedOut = true;
+        try {
+          localStorage.removeItem(LOCAL_CACHE_KEY);
+        } catch {
+          // Best-effort.
         }
-      }
-      return res;
-    };
+        window.location.href = clerk ? '/sign-in' : '/login';
+      },
+    });
     window.fetch = Object.assign(watched, original) as typeof window.fetch;
     return () => {
       window.fetch = original;
     };
-  }, []);
+  }, [clerk]);
 
   useEffect(() => {
     // Paint immediately from the last-known snapshot, then revalidate.
@@ -744,6 +744,16 @@ export default function Dashboard() {
       mutateManual('POST', payload);
     }
   }, [manualDraft, mutateManual]);
+
+  // What a sign-out through Clerk clears first (components/ClerkAccount.tsx).
+  const clearDevice = useCallback(() => {
+    signedOut = true; // no load still in flight may save the snapshot again
+    try {
+      localStorage.removeItem(LOCAL_CACHE_KEY);
+    } catch {
+      // Best-effort; the snapshot only lives on this device anyway.
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     signedOut = true; // no load still in flight may save the snapshot again
@@ -1146,12 +1156,18 @@ export default function Dashboard() {
                 </svg>
               </button>
             )}
-            <button className="secondary logout-btn" onClick={logout}>
-              Log out
-            </button>
-            <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
-              Sign out everywhere
-            </button>
+            {clerk ? (
+              <ClerkAccount beforeSignOut={clearDevice} />
+            ) : (
+              <>
+                <button className="secondary logout-btn" onClick={logout}>
+                  Log out
+                </button>
+                <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
+                  Sign out everywhere
+                </button>
+              </>
+            )}
           </div>
         </div>
 

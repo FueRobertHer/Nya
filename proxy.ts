@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, type NextFetchEvent, type NextMiddleware } from 'next/server';
+import { clerkMiddleware } from '@clerk/nextjs/server';
+import { clerkEnabled, clerkUserAllowed } from '@/lib/auth-mode';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 import { sessionCurrent } from '@/lib/sessions';
 
@@ -19,10 +21,39 @@ export const config = {
   ],
 };
 
+// With Clerk keys set (lib/auth-mode.ts), sign-in is Clerk's: the request needs
+// a Clerk session whose user is on the allowlist. /sign-in and /not-allowed
+// stay reachable, so someone can sign in, or see why they were turned away.
+// Built on first use, so a deployment without Clerk never sets it up.
+let clerkProxy: NextMiddleware | null = null;
+const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) => {
+  const path = req.nextUrl.pathname;
+  if (path.startsWith('/sign-in') || path === '/not-allowed') return NextResponse.next();
+  const { userId } = await auth();
+  if (!userId) {
+    if (path.startsWith('/api/')) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.redirect(new URL('/sign-in', req.url));
+  }
+  if (!clerkUserAllowed(userId)) {
+    if (path.startsWith('/api/')) return NextResponse.json({ error: 'This account is not allowed here yet.' }, { status: 403 });
+    return NextResponse.redirect(new URL('/not-allowed', req.url));
+  }
+  return NextResponse.next();
+});
+
+// Next always passes the event; tests of the password path need not.
+export async function proxy(req: NextRequest, event?: NextFetchEvent) {
+  if (clerkEnabled()) {
+    const res = await (clerkProxy ??= makeClerkProxy())(req, event as NextFetchEvent);
+    return res ?? NextResponse.next();
+  }
+  return passwordProxy(req);
+}
+
 // A session must be genuine, unexpired, issued under the current password
 // (lib/auth.ts) and not revoked (lib/sessions.ts). The last needs one Redis
 // read, reused for a few seconds per instance; this proxy runs on Node.
-export async function proxy(req: NextRequest) {
+async function passwordProxy(req: NextRequest) {
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token);
   const valid = session !== null && (await sessionCurrent(session));
