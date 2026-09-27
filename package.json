@@ -12,6 +12,7 @@
     "move-data": "bun scripts/move-data.ts"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.9.7",
     "@upstash/redis": "^1.38.0",
     "@vercel/blob": "^2.8.0",
     "next": "16.3.0-canary.83",

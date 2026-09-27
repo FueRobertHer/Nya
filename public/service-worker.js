@@ -6,7 +6,7 @@
 // - The page shell is network-first with a cache fallback, so the app still
 //   opens (showing the last-seen state) if the phone is offline
 
-const CACHE_NAME = 'nya-v2';
+const CACHE_NAME = 'nya-v3';
 const PRECACHE = ['/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -23,6 +23,11 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // Other sites (the sign-in provider's API among them) are left to the
+  // browser: a cached copy of someone's session must never be served back.
+  // So is Clerk's same-origin path, which it uses on some production domains.
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/__clerk/')) return;
 
   // API calls and non-GET requests always go straight to the network,
   // uncached -- cache.put() throws on non-GET anyway.

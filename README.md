@@ -620,6 +620,31 @@ writes meanwhile can never be read.
 
 ## Security notes
 
+### Signing in with Clerk (trial)
+
+Accounts for more than one person (#44) start with Clerk handling sign-in.
+It is off until its keys are set; without them the shared password below
+works exactly as before.
+
+1. Create a Clerk application (clerk.com) and turn on the sign-in methods you
+   want. Invite-only fits for now: turn off public sign-ups and invite people
+   from Clerk's dashboard.
+2. In Vercel, on the environment to try it on (Preview first), set
+   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` from Clerk's API
+   keys page, and redeploy. The publishable key is public by design (it is
+   sent to every browser), so Vercel won't mark it Sensitive; add it as a
+   plain variable. Mark `CLERK_SECRET_KEY` Sensitive.
+3. Sign in at `/sign-in`. You land on "Not allowed yet" with your Clerk user
+   id: set `CLERK_ALLOWED_USER_IDS` to it (comma-separated for more people)
+   and redeploy.
+
+Only people on that list get in; an empty list lets nobody in. For now
+everyone on it reaches this deployment's data, so list only the people it
+belongs to. Their own containers come with onboarding.
+
+To turn it off, remove the two keys and redeploy: the password sign-in is
+back.
+
 ### Password gate
 
 Deploying to Vercel gives the app a public HTTPS URL — anyone who found it
