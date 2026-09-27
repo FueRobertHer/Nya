@@ -1,3 +1,4 @@
+import { envPrefix } from '@/lib/storage';
 import { NextResponse } from 'next/server';
 import { opsGuard, notPost } from '@/lib/ops';
 import {
@@ -60,7 +61,8 @@ export async function POST(req: Request) {
       const id = await createFirstContainer();
       return NextResponse.json({
         created: id,
-        next_step: `Set ${CONTAINER_ENV}=${id} in Vercel (Production) and redeploy. Nothing uses it yet; it must be in place before data moves into it.`,
+        environment: envPrefix().replace(/:$/, ''),
+        next_step: `Created in this deployment's environment (${envPrefix().replace(/:$/, '')}). With one container, the app uses it without ${CONTAINER_ENV}; set ${CONTAINER_ENV}=${id} only to pin it. Remove OPS_ENABLED and redeploy.`,
       });
     }
     const raw = process.env[CONTAINER_ENV];
