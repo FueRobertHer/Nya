@@ -178,16 +178,20 @@ export function vendorKey(t: {
 /**
  * What identifies one real-world transaction across a re-link, when its
  * transaction_id doesn't survive: the account (as it is known now, following
- * links), the posting date, the amount in cents and the merchant (vendorKey).
- * Two genuinely identical rows (same merchant, amount and day) share a key;
- * lib/overrides.ts treats a key whose rows were categorized differently as
+ * links), the posting date, the amount in cents and the bank's own descriptor
+ * (Plaid's raw `name`), normalized. The raw descriptor rather than the merchant
+ * Plaid enriched it to: a fresh pull under a new Item re-runs the enrichment,
+ * which can name the merchant differently or not at all, while the bank's text
+ * for a posted transaction doesn't change. The account already scopes it, so
+ * the institution isn't part of it.
+ *
+ * Two genuinely identical rows (same descriptor, amount and day) share a key;
+ * lib/overrides.ts treats a key it can't attribute to one category as
  * ambiguous and carries nothing for it.
  */
-export function contentKey(
-  account_id: string,
-  t: { date: string; amount: number; merchant_entity_id: string | null; merchant_name: string | null; name: string; institution_name: string }
-): string {
-  return `${account_id}|${t.date}|${Math.round(t.amount * 100)}|${vendorKey(t)}`;
+export function contentKey(account_id: string, t: { date: string; amount: number; name: string }): string {
+  const descriptor = t.name.toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${account_id}|${t.date}|${Math.round(t.amount * 100)}|${descriptor}`;
 }
 
 // PFC `detailed` humanized and stripped of its `primary` prefix, so
@@ -496,26 +500,25 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
 }
 
 /**
- * The account ids this Item is known to own, straight from the persisted state
- * (no Plaid call). Used when disconnecting, to garbage-collect the Item's
- * entries from the hidden-accounts set before its state is dropped.
- *
- * Reads the store rather than fetching, deliberately: an Item is often
- * disconnected precisely because it's broken, and a fetch would fail exactly
- * then. But the store can legitimately be empty -- an investments-only Item, or
- * one linked and never synced, never persists transaction state -- so callers
- * must treat this as a partial answer and union it with another source. See
- * app/api/disconnect/route.ts.
- */
-/**
  * An Item's stored transactions, read without syncing (no Plaid call), for
  * the paths that must not reach Plaid: a disconnect (the Item is already
  * removed there) and the Accounts tab. Throws when the store can't be read.
  */
-export async function readStoredTxns(ctx: Ctx, item_id: string): Promise<StoredTxn[]> {
-  return Object.values((await readState(ctx, item_id)).txns);
+export async function readStoredTxns(ctx: Ctx, item_id: string, opts: { shown?: boolean } = {}): Promise<StoredTxn[]> {
+  const txns = (await readState(ctx, item_id)).txns;
+  if (!opts.shown) return Object.values(txns);
+  // Only what /api/transactions would display: inside the lookback, and not a
+  // pending row its posted row has replaced.
+  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const superseded = supersededPendingIds(txns);
+  return Object.values(txns).filter((t) => t.date >= cutoff && !superseded.has(t.transaction_id));
 }
 
+/**
+ * The account ids this Item is known to own, straight from the persisted state
+ * (no Plaid call). A partial answer: an investments-only Item, or one linked
+ * and never synced, persists no transaction state, so this is empty for it.
+ */
 export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
   try {
     return Object.keys((await readState(ctx, item_id)).accounts);

@@ -86,7 +86,7 @@ export async function GET(req: Request) {
     // sitting idle on the network the whole time.
     // Hidden accounts follow account links (lib/links.ts): every id an account
     // has had is hidden with it, and the client sees one current id each.
-    const hiddenPromise = eager(getEffectiveHidden(ctx));
+    const hiddenPromise = eager(getEffectiveHidden(ctx, { describe: true }));
     const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
 
     const { institutions, netWorth } = await computeNetWorth(ctx);

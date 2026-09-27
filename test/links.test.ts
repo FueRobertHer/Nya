@@ -358,6 +358,19 @@ describe('linking by hand', () => {
     expect(hand({ links: new Map([['new', { to: 'other', linked_at: '2026-01-01', evidence: {} }]]) }).flatMap((c) => c.candidates)).toEqual([]);
   });
 
+  // Something already linked onto the target starts its history earlier.
+  test('not to an account whose linked history already overlaps', () => {
+    const got = hand({
+      directory: {
+        old: entry({ item_id: 'item_old', last_seen: '2025-06-30' }),
+        joined: entry({ item_id: 'item_j', mask: '7', first_seen: '2025-01-01', last_seen: '2026-08-31' }),
+        new: entry({ first_seen: '2026-09-01' }),
+      },
+      links: new Map([['joined', { to: 'new', linked_at: '2026-09-01', evidence: {} }]]),
+    });
+    expect(got).toEqual([]);
+  });
+
   test('lists the most recently stopped first', () => {
     const got = hand({
       directory: {

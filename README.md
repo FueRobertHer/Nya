@@ -208,6 +208,15 @@ there is no time limit, and it works even after you said an offer was not the
 same account. **Unlink** undoes a link completely; nothing stored is changed
 by linking.
 
+**What is kept, and forgetting it.** After a disconnect, Nya keeps each
+account's balance history, its name, mask and institution, and the categories
+you set, so a re-added account can pick them up, even months later. You decide
+how long: **Earlier accounts** (same card) lists every account you no longer
+have connected, and **Forget** deletes one's balance history, name and saved
+categories for good. Your past net-worth totals don't change (they were your
+net worth on those days). A hidden or linked account can't be forgotten until
+you unhide or unlink it: its balances are what keep it out of those totals.
+
 In `sandbox` mode, Plaid Link shows fake test institutions. Search for any
 name (e.g. "Chase") and log in with:
 

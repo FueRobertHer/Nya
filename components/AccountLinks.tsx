@@ -11,7 +11,9 @@
 //   - the links already made, each with Unlink and how many categories it
 //     carried across;
 //   - collapsed, linking any earlier account by hand: no time limit, and
-//     still possible after "Not the same", so a missed match stays fixable.
+//     still possible after "Not the same", so a missed match stays fixable;
+//   - collapsed, every earlier account, each with Forget: the user decides
+//     what is kept about accounts they no longer have.
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
@@ -56,6 +58,8 @@ export type AccountLinksPayload = {
   unclaimed: Unclaimed[];
   /** Every earlier account that can be linked by hand, and to what. */
   manual?: Unclaimed[];
+  /** Earlier accounts the user can forget for good. */
+  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean }[];
   links: Linked[];
   /** Saved links that can't be read. While one exists and an account is
    *  hidden, the dashboard can't load, so each gets a Remove button. */
@@ -112,6 +116,10 @@ export default function AccountLinks({
         setError(j.error || 'Could not update the link');
         return;
       }
+      if (body.action === 'forget') {
+        const j = await res.json().catch(() => ({}));
+        if (j.unreadable > 0) setError('Some of its history couldn’t be read, so it wasn’t all removed. Try again later.');
+      }
       setPreview(null);
       // A pick may no longer be offered (Not this one removes it), so the
       // dropdown starts again from what the reload offers.
@@ -160,7 +168,10 @@ export function AccountLinksView({
   onPreview,
   onPick,
   onAct,
+  open,
 }: {
+  /** Sections to start expanded (for tests and previews). */
+  open?: { byHand?: boolean; earlier?: boolean };
   data: Payload | null;
   busy: boolean;
   error: string;
@@ -172,7 +183,9 @@ export function AccountLinksView({
 }) {
   const broken = data?.broken ?? [];
   const manual = useMemo(() => data?.manual ?? [], [data]);
-  const [byHandOpen, setByHandOpen] = useState(false);
+  const earlier = useMemo(() => data?.earlier ?? [], [data]);
+  const [earlierOpen, setEarlierOpen] = useState(open?.earlier ?? false);
+  const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
   const [byHandOld, setByHandOld] = useState('');
   const [byHandTo, setByHandTo] = useState('');
   if (
@@ -180,6 +193,7 @@ export function AccountLinksView({
     (data.suggestions.length === 0 &&
       data.unclaimed.length === 0 &&
       manual.length === 0 &&
+      earlier.length === 0 &&
       data.links.length === 0 &&
       broken.length === 0)
   ) {
@@ -358,6 +372,50 @@ export function AccountLinksView({
                 </button>
               </div>
               {isPreviewing(handOld.old, handTo) && <AccountSparkline accountId={handTo} previewWith={handOld.old} />}
+            </>
+          )}
+        </div>
+      )}
+
+      {earlier.length > 0 && (
+        <div className="account-link-row">
+          <button className="link-btn" onClick={() => setEarlierOpen(!earlierOpen)} aria-expanded={earlierOpen}>
+            {earlierOpen ? 'Hide earlier accounts' : `Earlier accounts (${earlier.length})`}
+          </button>
+          {earlierOpen && (
+            <>
+              <p className="chart-note">
+                Accounts you no longer have connected. Forget one to delete its balance history, its name and
+                the categories saved for it, for good. Past net-worth totals don&apos;t change.
+              </p>
+              {earlier.map((e) => {
+                const name = e.label ?? 'Balance history';
+                return (
+                  <div key={e.id} className="account-link-linked">
+                    <span>
+                      {name}
+                      {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
+                      {e.hidden ? '. Hidden: unhide it first to forget it' : ''}
+                    </span>
+                    {!e.hidden && (
+                      <button
+                        className="link-btn danger-link"
+                        disabled={busy}
+                        onClick={() => {
+                          const sure =
+                            typeof window === 'undefined' ||
+                            window.confirm(
+                              `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
+                            );
+                          if (sure) onAct('POST', { action: 'forget', old: e.id });
+                        }}
+                      >
+                        Forget
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </>
           )}
         </div>

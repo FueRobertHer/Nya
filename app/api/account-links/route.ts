@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import {
+  ForgetRefused,
   PROVIDER,
   directoryLabels,
   dismissAll,
   dismissPair,
   effectiveLinks,
+  forgetEarlierAccount,
+  forgettableAccounts,
   isManualChoice,
   isUnclaimed,
   isOffered,
@@ -18,9 +21,11 @@ import {
   unlinkAccount,
 } from '@/lib/links';
 import { clearCaches } from '@/lib/cache';
-import { getItems } from '@/lib/storage';
 import { contentKey, readStoredTxns } from '@/lib/transactions';
-import { carryCounts, getCarried } from '@/lib/overrides';
+import { carriedCategories, carryCounts, getCarried, getOverrides } from '@/lib/overrides';
+import { rememberedIdsByItem } from '@/lib/last-known';
+import type { Link } from '@/lib/link-core';
+import { getHiddenAccounts } from '@/lib/hidden';
 
 // Linking an account's history across a reconnect (lib/links.ts).
 //
@@ -47,23 +52,33 @@ async function offered(ctx: Ctx) {
 
 /**
  * Per linked earlier account, how many categorized rows it had and how many
- * are carried onto the account now (lib/overrides.ts). Reads the stored rows
- * only when some link has something to carry; empty when that can't be read.
+ * show on the account now (lib/overrides.ts). Reads nothing more unless an
+ * active link actually carries something, and then only the stores of the
+ * Items that own the accounts it lands on. Empty when that can't be read.
  */
-async function categoryCounts(ctx: Ctx, links: Map<string, import('@/lib/links').Link>, liveIds: Set<string>) {
+async function categoryCounts(ctx: Ctx, links: Map<string, Link>, liveIds: Set<string>) {
   try {
-    const carried = await getCarried(ctx);
-    if (carried.size === 0 || links.size === 0) return {};
     const active = effectiveLinks(links, liveIds);
-    const present = new Set<string>();
-    for (const item of await getItems(ctx)) {
+    if (active.size === 0) return {};
+    const carried = await getCarried(ctx, [...active.keys()]);
+    const categories = carriedCategories(carried, active);
+    if (categories.size === 0) return carryCounts(carried, active, new Set());
+    const targets = new Set([...categories.keys()].map((k) => k.slice(0, k.indexOf('|'))));
+    const byItem = await rememberedIdsByItem(ctx);
+    const items = Object.entries(byItem).filter(([, ids]) => ids.some((id) => targets.has(id))).map(([item_id]) => item_id);
+    const own = await getOverrides(ctx);
+    const shown = new Set<string>();
+    for (const item_id of items) {
       try {
-        for (const t of await readStoredTxns(ctx, item.item_id)) present.add(contentKey(t.account_id, t));
+        for (const t of await readStoredTxns(ctx, item_id, { shown: true })) {
+          // A row with a category of its own shows that one, not the carried one.
+          if (own[t.transaction_id] === undefined) shown.add(contentKey(t.account_id, t));
+        }
       } catch {
         // an unreadable store counts as nothing carried yet
       }
     }
-    return carryCounts(carried, active, present);
+    return carryCounts(carried, active, shown);
   } catch {
     return {};
   }
@@ -74,7 +89,12 @@ export async function GET() {
     const ctx = await dataCtx();
     const { inputs, offer, manual } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
-    const [labels, counts] = await Promise.all([directoryLabels(ctx, ids), categoryCounts(ctx, inputs.links, inputs.liveIds)]);
+    const [labels, counts, hidden] = await Promise.all([
+      directoryLabels(ctx, ids),
+      categoryCounts(ctx, inputs.links, inputs.liveIds),
+      // Unknown when it can't be read: then nothing is offered to forget.
+      getHiddenAccounts(ctx).catch(() => null),
+    ]);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
       to: l.to,
@@ -95,6 +115,8 @@ export async function GET() {
       suggestions: offer.suggestions,
       unclaimed: offer.unclaimed,
       manual,
+      // Earlier accounts the user can forget for good (hidden ones say so).
+      earlier: hidden ? forgettableAccounts(inputs, new Set(hidden.keys())) : [],
       links,
       broken: [...inputs.unreadableLinks],
     });
@@ -114,6 +136,20 @@ export async function POST(req: Request) {
     const to = id(body?.to);
     const action = body?.action;
 
+    // Forget an earlier account for good: its balances, name and carried
+    // categories (lib/links.ts forgetEarlierAccount re-checks it may).
+    if (action === 'forget') {
+      if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
+      try {
+        const { unreadable } = await forgetEarlierAccount(ctx, old);
+        await clearCaches(ctx);
+        return NextResponse.json({ forgotten: unreadable === 0, unreadable });
+      } catch (err) {
+        if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
+        throw err;
+      }
+    }
+
     // "None of these": stop offering this earlier account at all.
     if (action === 'dismiss_all') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
@@ -126,7 +162,7 @@ export async function POST(req: Request) {
     }
 
     if (!old || !to || (action !== 'link' && action !== 'dismiss')) {
-      return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all", old, to }' }, { status: 400 });
+      return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all" | "forget", old, to }' }, { status: 400 });
     }
 
     const { inputs, offer, manual } = await offered(ctx);

@@ -40,7 +40,8 @@ import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
-import { measuredAccountHistoryKeys } from './history';
+import { measuredAccountHistoryKeys, forgetAccountBalances } from './history';
+import { forgetCarried } from './overrides';
 import { isOwedType } from './balance';
 import { getHiddenAccounts, type HiddenMap } from './hidden';
 import { rememberedIdsByItem } from './last-known';
@@ -431,15 +432,17 @@ export function manualChoices(input: {
   const { directory, spans, liveIds, links } = input;
   const linkedAway = new Set([...links.keys(), ...(input.unreadableLinks ?? [])]);
   const live = [...liveIds].filter((id) => !isManualId(id) && !linkedAway.has(id));
-  const startsAt = (n: string) => {
-    let first = directory[n]?.first_seen ?? spans[n]?.first ?? null;
-    for (const old of links.keys()) {
-      if (resolveId(old, links) !== n) continue;
-      const f = spans[old]?.first ?? directory[old]?.first_seen ?? null;
-      if (f && (!first || f < first)) first = f;
-    }
-    return first;
-  };
+  // Where each live account's history starts, with what is already linked to
+  // it: worked out once, not per pair, since the directory only grows.
+  const starts = new Map<string, string | null>(live.map((n) => [n, directory[n]?.first_seen ?? spans[n]?.first ?? null]));
+  for (const old of links.keys()) {
+    const n = resolveId(old, links);
+    if (!starts.has(n)) continue;
+    const f = spans[old]?.first ?? directory[old]?.first_seen ?? null;
+    const first = starts.get(n);
+    if (f && (!first || f < first)) starts.set(n, f);
+  }
+  const startsAt = (n: string) => starts.get(n) ?? null;
   const earlier = [...new Set([...Object.keys(directory), ...Object.keys(spans)])].filter(
     (id) => !liveIds.has(id) && !linkedAway.has(id) && !isManualId(id)
   );
@@ -474,6 +477,76 @@ export function manualChoices(input: {
 /** Whether the user may link `old` to `to` by hand right now. */
 export function isManualChoice(old: string, to: string, choices: Unclaimed[]): boolean {
   return choices.some((c) => c.old === old && c.candidates.some((x) => x.id === to));
+}
+
+/** An earlier account the user can forget: what it was, and its span. */
+export type Earlier = { id: string; label: string | null; first: string | null; last: string | null };
+
+/**
+ * The earlier accounts the user can FORGET (forgetEarlierAccount): not live,
+ * not manual, and not part of any link, either end (unlink first: a linked
+ * id's history is part of an account on screen). Hidden ones are listed with
+ * `hidden`, since forgetting one would put it back into every past total:
+ * unhide it first. Pure. Most recently seen first.
+ */
+export function forgettableAccounts(
+  input: {
+    directory: Record<string, DirectoryEntry>;
+    spans: Record<string, Span>;
+    liveIds: Set<string>;
+    links: Map<string, Link>;
+    unreadableLinks?: Set<string>;
+  },
+  hidden: Set<string>
+): (Earlier & { hidden: boolean })[] {
+  const { directory, spans, liveIds, links } = input;
+  const linked = new Set([...links.keys(), ...[...links.values()].map((l) => l.to), ...(input.unreadableLinks ?? [])]);
+  return [...new Set([...Object.keys(directory), ...Object.keys(spans)])]
+    .filter((id) => !liveIds.has(id) && !isManualId(id) && !linked.has(id))
+    .map((id) => ({
+      id,
+      label: directory[id] ? label(directory[id], id) : null,
+      first: spans[id]?.first ?? directory[id]?.first_seen ?? null,
+      last: lastSeenOf(id, directory, spans),
+      hidden: hidden.has(id),
+    }))
+    .sort((a, b) => ((a.last ?? '') < (b.last ?? '') ? 1 : (a.last ?? '') > (b.last ?? '') ? -1 : a.id < b.id ? -1 : 1));
+}
+
+/**
+ * Forgets an earlier account for good, at the user's request: its balances in
+ * every per-account layer, its directory entry (name, mask, institution), the
+ * categories recorded to carry across a re-link, and any dismissed offers
+ * that name it. The past net-worth totals stay as they were (they were the
+ * user's net worth on those dates).
+ *
+ * Refused (MoveRefused-style: an Error with a reason for the user) unless the
+ * account is forgettable right now, re-checked here from fresh, strict reads:
+ * not live, not linked either way, not manual, not hidden. Balances go first,
+ * so a failure part way leaves the account listed, and running it again
+ * finishes the job.
+ */
+export class ForgetRefused extends Error {}
+export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadable: number }> {
+  const [inputs, hidden] = await Promise.all([
+    liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
+    getHiddenAccounts(ctx),
+  ]);
+  if (inputs.unreadableLinks.size > 0) throw new ForgetRefused('A saved link can\'t be read. Remove it first.');
+  const found = forgettableAccounts(inputs, new Set(hidden.keys())).find((e) => e.id === id);
+  if (!found) throw new ForgetRefused('That account can\'t be forgotten: it is current, linked, or unknown.');
+  if (found.hidden) throw new ForgetRefused('That account is hidden. Unhide it first: forgetting it would put it back into every past total.');
+
+  const result = await forgetAccountBalances(ctx, id);
+  const dismissed = Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey(ctx))) ?? {}).filter(
+    (k) => k.startsWith(`${id}>`) || k.endsWith(`>${id}`)
+  );
+  if (dismissed.length > 0) await redis().hdel(dismissedKey(ctx), ...dismissed);
+  await forgetCarried(ctx, id);
+  // Last: while any balance is left the account is still listed, so a retry
+  // is offered; once the entry goes, nothing names it.
+  if (result.unreadable === 0) await redis().hdel(directoryKey(ctx), id);
+  return result;
 }
 
 /** Whether "None of these" is offered for an earlier account right now. */
@@ -579,11 +652,20 @@ export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean } = {}):
  * liveAccountIds): a paused link then counts as active, which can only hide
  * more, never reveal.
  */
-export async function getEffectiveHidden(ctx: Ctx): Promise<{
+export async function getEffectiveHidden(
+  ctx: Ctx,
+  opts: { describe?: boolean } = {}
+): Promise<{
   /** Every id of every hidden account: what totals and filters subtract. */
   hidden: HiddenMap;
-  /** One current id per hidden account: what the Hidden card lists. */
+  /** One current id per hidden account: what the Hidden card lists. With
+   *  `describe`, a hidden account that isn't live is named from the directory. */
   forClient: HiddenForClient[];
+  /** The active links, for other readers on the same request (carried
+   *  categories); null when they couldn't be read. */
+  links: Map<string, Link> | null;
+  /** The live ids read for it: empty when they couldn't be read. */
+  live: Set<string>;
 }> {
   const [hidden, links, live] = await Promise.all([
     getHiddenAccounts(ctx),
@@ -593,10 +675,16 @@ export async function getEffectiveHidden(ctx: Ctx): Promise<{
     ),
     liveAccountIds(ctx),
   ]);
-  if (hidden.size === 0) return { hidden, forClient: [] };
-  if (!links.ok) throw links.err;
-  const effective = effectiveLinks(links.l, live);
-  return { hidden: expandHidden(hidden, effective), forClient: await describeGone(ctx, hiddenForClient(hidden, effective), live) };
+  const effective = links.ok ? effectiveLinks(links.l, live) : null;
+  if (hidden.size === 0) return { hidden, forClient: [], links: effective, live };
+  if (!effective) throw (links as { err: unknown }).err;
+  const forClient = hiddenForClient(hidden, effective);
+  return {
+    hidden: expandHidden(hidden, effective),
+    forClient: opts.describe ? await describeGone(ctx, forClient, live) : forClient,
+    links: effective,
+    live,
+  };
 }
 
 /**
@@ -610,7 +698,7 @@ async function describeGone(ctx: Ctx, list: HiddenForClient[], live: Set<string>
   const gone = list.filter((h) => !live.has(h.account_id));
   if (gone.length === 0 || live.size === 0) return list; // an empty live set is a failed read
   try {
-    const [{ entries }, items] = await Promise.all([readDirectory(ctx), getItems(ctx)]);
+    const [entries, items] = await Promise.all([directoryEntries(ctx, gone.map((h) => h.account_id)), getItems(ctx)]);
     const stored = new Set(items.map((i) => i.item_id));
     return list.map((h) => {
       const e = live.has(h.account_id) ? undefined : entries[h.account_id];
@@ -619,6 +707,24 @@ async function describeGone(ctx: Ctx, list: HiddenForClient[], live: Set<string>
   } catch {
     return list;
   }
+}
+
+/** Just these ids' directory entries (one read each, not the whole directory);
+ *  an unreadable or missing one is left out. */
+async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<string, DirectoryEntry>> {
+  const blobs = await Promise.all(ids.map((id) => redis().hget<string>(directoryKey(ctx), id)));
+  const out: Record<string, DirectoryEntry> = {};
+  await Promise.all(
+    ids.map(async (id, i) => {
+      if (!blobs[i]) return;
+      try {
+        out[id] = JSON.parse(await decrypt(blobs[i]!)) as DirectoryEntry;
+      } catch {
+        // unlabelled, like an account the directory never knew
+      }
+    })
+  );
+  return out;
 }
 
 export function expandHidden(hidden: HiddenMap, links: Map<string, Link>): HiddenMap {

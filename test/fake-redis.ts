@@ -318,6 +318,16 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
+    if (name === '-- nya:history-cas-field') {
+      if ((this.hashes.get(keys[0])?.get(args[0]) ?? null) !== args[1]) return 0;
+      this.hash(keys[0]).set(args[0], args[2]);
+      return 1;
+    }
+    if (name === '-- nya:history-cas-value') {
+      if ((this.strings.get(keys[0]) ?? null) !== args[0]) return 0;
+      this.strings.set(keys[0], args[1]);
+      return 1;
+    }
     if (name === '-- nya:release-lock') {
       if (this.strings.get(keys[0]) !== args[0]) return 0;
       this.strings.delete(keys[0]);

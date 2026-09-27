@@ -5,8 +5,7 @@ import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
-import { getEffectiveHidden, effectiveLinks, liveAccountIds } from '@/lib/links';
-import { readLinks } from '@/lib/link-core';
+import { getEffectiveHidden, type Link } from '@/lib/links';
 
 type TransactionsPayload = {
   transactions: Txn[];
@@ -16,18 +15,15 @@ type TransactionsPayload = {
 
 /**
  * Categories carried across a re-link (lib/overrides.ts), by the key of the
- * row they apply to. Follows the ACTIVE links only, like every other reader.
- * Best effort: a failed read shows Plaid's categories, never an error.
+ * row they apply to. Follows the ACTIVE links the hidden check already read,
+ * and reads only the linked earlier accounts' records. Carries nothing when
+ * the links or the live accounts couldn't be read: a paused link must not
+ * carry, and without the live set a paused link looks active. Best effort
+ * throughout: a failure shows Plaid's categories, never an error.
  */
-async function carriedFor(ctx: Awaited<ReturnType<typeof dataCtx>>): Promise<Map<string, string>> {
-  const carried = await getCarried(ctx);
-  if (carried.size === 0) return new Map();
-  try {
-    const [{ links }, live] = await Promise.all([readLinks(ctx), liveAccountIds(ctx)]);
-    return carriedCategories(carried, effectiveLinks(links, live));
-  } catch {
-    return new Map();
-  }
+async function carriedFor(ctx: Awaited<ReturnType<typeof dataCtx>>, links: Map<string, Link> | null, live: Set<string>) {
+  if (!links || links.size === 0 || live.size === 0) return new Map<string, string>();
+  return carriedCategories(await getCarried(ctx, [...links.keys()]), links);
 }
 
 export async function GET(req: Request) {
@@ -44,9 +40,9 @@ export async function GET(req: Request) {
     // inside the sync (the only place account_id still exists), so they're
     // never shipped to the client. A read failure throws to the catch below
     // rather than silently surfacing transactions the user hid.
-    const { hidden } = await getEffectiveHidden(ctx);
+    const { hidden, links, live } = await getEffectiveHidden(ctx);
     const hiddenIds = new Set(hidden.keys());
-    const carried = await carriedFor(ctx);
+    const carried = await carriedFor(ctx, links, live);
     const [results, overrides, renames] = await Promise.all([
       Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds, carried))),
       getOverrides(ctx),

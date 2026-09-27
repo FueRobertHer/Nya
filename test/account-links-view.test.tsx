@@ -84,6 +84,49 @@ describe('AccountLinksView', () => {
     expect(view({ suggestions: [], unclaimed: [], links: [], manual: [{ old: 'A7', old_label: null, first: 'x', last: 'y', last_balance: null, candidates: [{ id: 'A19', label: 'C' }] }] })).toContain('Reconnected accounts');
   });
 
+  test('lists earlier accounts to forget, collapsed, and asks to unhide a hidden one first', () => {
+    const html = view({
+      suggestions: [],
+      unclaimed: [],
+      links: [],
+      earlier: [
+        { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+        { id: 'A8', label: null, first: null, last: null, hidden: true },
+      ],
+    });
+    expect(html).toContain('Earlier accounts (2)');
+    expect(html).not.toContain('Forget');
+  });
+
+  test('expanded, each earlier account has Forget, except a hidden one', () => {
+    const html = renderToStaticMarkup(
+      <AccountLinksView
+        open={{ earlier: true, byHand: true }}
+        data={{
+          suggestions: [],
+          unclaimed: [],
+          links: [],
+          manual: [{ old: 'A7', old_label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', last_balance: 1, candidates: [{ id: 'A19', label: 'Chase Checking ••4821' }] }],
+          earlier: [
+            { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+            { id: 'A8', label: null, first: null, last: null, hidden: true },
+          ],
+        }}
+        busy={false}
+        error=""
+        preview={null}
+        picked={{}}
+        onPreview={noop}
+        onPick={noop}
+        onAct={noop}
+      />
+    );
+    expect(html.match(/>Forget</g)?.length).toBe(1);
+    expect(html).toContain('Hidden: unhide it first to forget it');
+    expect(html).toContain('Past net-worth totals don&#x27;t change');
+    expect(html).toContain('Same account as');
+  });
+
   test('lists unreadable links with Remove', () => {
     const html = view({ suggestions: [], unclaimed: [], links: [], broken: ['A7'] });
     expect(html).toContain('can&#x27;t be read');
