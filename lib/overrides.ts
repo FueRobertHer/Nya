@@ -9,7 +9,7 @@
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
-import { contentKey, type StoredTxn } from './transactions';
+import { contentKey, readStoredTxns, storeIsBehind, type StoredTxn } from './transactions';
 import { resolveId, type Link } from './link-core';
 
 const OVERRIDES_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-overrides');
@@ -182,6 +182,31 @@ export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carr
     console.warn('overrides: could not read carried categories', err instanceof Error ? err.message : err);
     return new Map();
   }
+}
+
+/**
+ * Deletes overrides whose transaction no longer exists in any stored Item
+ * (rows the bank removed, pending rows replaced by their posted ones, or rows
+ * of an Item disconnected before categories were carried): they can never be
+ * shown again, and are a transaction id and a category the user may have
+ * forgotten. Only when every store could be read; otherwise nothing.
+ */
+export async function pruneOrphanOverrides(ctx: Ctx, item_ids: string[]): Promise<number> {
+  const known = new Set<string>();
+  try {
+    for (const item_id of item_ids) {
+      // Rows shown from a store too large to save aren't in it: their
+      // overrides are live, so nothing is pruned while any Item is like that.
+      if (await storeIsBehind(ctx, item_id)) return 0;
+      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
+    }
+  } catch {
+    return 0; // a store we couldn't read might hold them
+  }
+  const ids = await redis().hkeys(OVERRIDES_HASH(ctx));
+  const orphans = ids.filter((id) => !known.has(id));
+  if (orphans.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...orphans);
+  return orphans.length;
 }
 
 /** Deletes one earlier account's carried categories (forgetting it). */

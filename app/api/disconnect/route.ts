@@ -7,7 +7,7 @@ import { clearCaches } from '@/lib/cache';
 import { clearItemTransactions, readStoredTxns } from '@/lib/transactions';
 import { clearInvestmentStore } from '@/lib/invstore';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
-import { retireOverrides } from '@/lib/overrides';
+import { retireOverrides, pruneOrphanOverrides } from '@/lib/overrides';
 import { forgetItem } from '@/lib/last-known';
 import { forgetVanished } from '@/lib/vanished';
 
@@ -57,6 +57,13 @@ export async function POST(req: Request) {
     // And its stored investment transactions. A sync still running writes, then
     // sees the Item gone and deletes what it wrote (lib/invstore.ts).
     await clearInvestmentStore(ctx, item_id);
+    // And any override left behind for a transaction no stored Item has any
+    // more (best effort: a user's categories are theirs to be rid of too).
+    try {
+      await pruneOrphanOverrides(ctx, (await getItems(ctx)).map((i) => i.item_id));
+    } catch (err) {
+      console.error('disconnect: could not prune old category overrides', err instanceof Error ? err.message : err);
+    }
     // Hidden accounts STAY hidden (#46). Their history is kept, so dropping the
     // entry would put the account back into every past total the moment it
     // was disconnected, and re-linking it would bring it back unhidden. The

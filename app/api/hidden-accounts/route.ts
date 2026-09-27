@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import { setAccountHidden } from '@/lib/hidden';
+import { getHiddenAccounts, setAccountHidden } from '@/lib/hidden';
 import { computeNetWorth } from '@/lib/networth';
 import { clearCaches, readCache, CacheKey } from '@/lib/cache';
-import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
+import { estimatedLayerCovers, clearBackfillDone, dropForgottenContribution } from '@/lib/history';
 import { findRememberedAccount } from '@/lib/last-known';
-import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds } from '@/lib/links';
+import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock, ForgetRefused } from '@/lib/links';
 
 // Hides or unhides ONE account per request.
 //
@@ -23,114 +23,126 @@ import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds } from '@/lib/
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
-    const body = await req.json();
-    const account_id = String(body?.account_id ?? '').slice(0, 100);
-    const hidden = body?.hidden === true;
-    if (!account_id) {
-      return NextResponse.json({ error: 'Missing account id' }, { status: 400 });
-    }
-
-    // The account's type is stored alongside the id so that subtracting it from
-    // past totals never depends on a live Plaid fetch succeeding. Look it up
-    // once, here, while the account is definitely present.
-    let type: string | null = null;
-    if (hidden) {
-      const findType = (institutions: any[]): string | null => {
-        for (const inst of institutions ?? []) {
-          const match = inst.accounts?.find((a: any) => a.account_id === account_id);
-          if (match) return match.type;
-        }
-        return null;
-      };
-
-      // Try the cached payload first, since this is a lookup of one string and
-      // a live computeNetWorth() fans out to every institution's balance
-      // endpoint. But fall through to the live call when the account ISN'T
-      // there: the cache lives for 15 minutes, so an account linked or created
-      // in that window is missing from it, and treating that as "no such
-      // account" would make a freshly added account impossible to hide.
-      const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
-      type = findType(cached?.institutions ?? []);
-
-      const live = (await computeNetWorth(ctx)).institutions;
-      if (!type) type = findType(live);
-
-      // Last resort: an account whose institution is currently FAILING. The
-      // Accounts tab now renders those rows from recovered balances
-      // (lib/last-known.ts), so Hide is reachable on them, but neither source
-      // above can answer -- the cache isn't written while anything is erroring
-      // and the live fetch is the call that just failed.
-      //
-      // Gated on the owning Item still being linked AND currently erroring,
-      // which is narrower than it looks. Without the gate this would also
-      // answer for accounts that no longer exist: a card closed at the bank, or
-      // an Item disconnected on another device, whose row is still on screen
-      // because the Dashboard paints from localStorage before the network load
-      // lands. Hiding one of those would write an entry that getHistory
-      // subtracts from every past date, for an account the user never saw
-      // hidden while it was live.
-      if (!type) {
-        const remembered = await findRememberedAccount(ctx, account_id);
-        const owner = remembered && live.find((i) => i.item_id === remembered.item_id);
-        if (owner?.error) type = remembered!.account.type;
-      }
-
-      if (!type) {
-        return NextResponse.json(
-          { error: 'That account is not currently available to hide' },
-          { status: 404 }
-        );
-      }
-    }
-
-    if (hidden) {
-      // Hiding writes the current id; the link expansion (lib/links.ts) hides
-      // the account's earlier ids with it.
-      await setAccountHidden(ctx, account_id, type ?? '', true);
-    } else {
-      // Unhiding clears EVERY id the account has had. An earlier id left hidden
-      // would keep hiding it through the link, and Unhide would do nothing.
-      // Unlinked, this is just the one id. A failed read of the links fails
-      // the request rather than leaving the account half-hidden.
-      // Through ACTIVE links only, the same ones the display follows: a
-      // paused link joins two live accounts that are each hidden on their own.
-      // Strict: an unreadable live set would make every paused link look
-      // active, and this write would unhide the other account for good.
-      const active = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true }));
-      for (const id of sameAccountIds(account_id, active)) {
-        await setAccountHidden(ctx, id, '', false);
-      }
-    }
-
-    // The estimated layer can only subtract an account it knows about, either
-    // via a per-date balance or via the flat term. If it knows neither -- the
-    // account was linked after the last backfill, or the layer predates the
-    // flat key existing -- force a recompute, or the estimated region would sit
-    // high by this account's balance and put a step at the estimated/real seam.
-    //
-    // Checked by membership, not by type: a MANUAL depository account looks
-    // like cash but is in the flat term, because backfill's cashType loop only
-    // covers Plaid accounts.
-    let recompute = false;
-    if (hidden && !(await estimatedLayerCovers(ctx, account_id))) {
-      await clearBackfillDone(ctx);
-      recompute = true;
-    }
-
-    // Both cached payloads embed the visibility decision (net worth excludes
-    // hidden accounts, transactions omit their rows), so both must go or the
-    // change wouldn't show for up to the 15-minute TTL.
-    await clearCaches(ctx);
-
-    // The caller has to act on this: clearing the flag only makes a recompute
-    // POSSIBLE, it doesn't trigger one. The client's automatic backfill fires
-    // only when history is "thin", which is never true for anyone who already
-    // has an estimated layer -- i.e. exactly the users this branch is for.
-    return NextResponse.json({ account_id, hidden, recompute });
+    // One change at a time with linking and forgetting (lib/links.ts): an
+    // Unhide landing inside a forget would otherwise be counted twice over.
+    return await withLinksLock(ctx, () => toggle(ctx, req));
   } catch (err) {
+    if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
     console.error(err);
     return NextResponse.json({ error: 'Failed to update hidden accounts' }, { status: 500 });
   }
+}
+
+async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
+  const body = await req.json();
+  const account_id = String(body?.account_id ?? '').slice(0, 100);
+  const hidden = body?.hidden === true;
+  if (!account_id) {
+    return NextResponse.json({ error: 'Missing account id' }, { status: 400 });
+  }
+
+  // The account's type is stored alongside the id so that subtracting it from
+  // past totals never depends on a live Plaid fetch succeeding. Look it up
+  // once, here, while the account is definitely present.
+  let type: string | null = null;
+  if (hidden) {
+    const findType = (institutions: any[]): string | null => {
+      for (const inst of institutions ?? []) {
+        const match = inst.accounts?.find((a: any) => a.account_id === account_id);
+        if (match) return match.type;
+      }
+      return null;
+    };
+
+    // Try the cached payload first, since this is a lookup of one string and
+    // a live computeNetWorth() fans out to every institution's balance
+    // endpoint. But fall through to the live call when the account ISN'T
+    // there: the cache lives for 15 minutes, so an account linked or created
+    // in that window is missing from it, and treating that as "no such
+    // account" would make a freshly added account impossible to hide.
+    const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
+    type = findType(cached?.institutions ?? []);
+
+    const live = (await computeNetWorth(ctx)).institutions;
+    if (!type) type = findType(live);
+
+    // Last resort: an account whose institution is currently FAILING. The
+    // Accounts tab now renders those rows from recovered balances
+    // (lib/last-known.ts), so Hide is reachable on them, but neither source
+    // above can answer -- the cache isn't written while anything is erroring
+    // and the live fetch is the call that just failed.
+    //
+    // Gated on the owning Item still being linked AND currently erroring,
+    // which is narrower than it looks. Without the gate this would also
+    // answer for accounts that no longer exist: a card closed at the bank, or
+    // an Item disconnected on another device, whose row is still on screen
+    // because the Dashboard paints from localStorage before the network load
+    // lands. Hiding one of those would write an entry that getHistory
+    // subtracts from every past date, for an account the user never saw
+    // hidden while it was live.
+    if (!type) {
+      const remembered = await findRememberedAccount(ctx, account_id);
+      const owner = remembered && live.find((i) => i.item_id === remembered.item_id);
+      if (owner?.error) type = remembered!.account.type;
+    }
+
+    if (!type) {
+      return NextResponse.json(
+        { error: 'That account is not currently available to hide' },
+        { status: 404 }
+      );
+    }
+  }
+
+  if (hidden) {
+    // Hiding writes the current id; the link expansion (lib/links.ts) hides
+    // the account's earlier ids with it.
+    await setAccountHidden(ctx, account_id, type ?? '', true);
+  } else {
+    // Unhiding clears EVERY id the account has had. An earlier id left hidden
+    // would keep hiding it through the link, and Unhide would do nothing.
+    // Unlinked, this is just the one id. A failed read of the links fails
+    // the request rather than leaving the account half-hidden.
+    // Through ACTIVE links only, the same ones the display follows: a
+    // paused link joins two live accounts that are each hidden on their own.
+    // Strict: an unreadable live set would make every paused link look
+    // active, and this write would unhide the other account for good.
+    const active = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true }));
+    const stored = await getHiddenAccounts(ctx);
+    for (const id of sameAccountIds(account_id, active)) {
+      // A forget that stopped part way recorded what the account contributed
+      // to past totals; unhiding means counting it again, so that goes first.
+      const tag = stored.get(id)?.forget_tag;
+      if (tag) await dropForgottenContribution(ctx, tag);
+      await setAccountHidden(ctx, id, '', false);
+    }
+  }
+
+  // The estimated layer can only subtract an account it knows about, either
+  // via a per-date balance or via the flat term. If it knows neither -- the
+  // account was linked after the last backfill, or the layer predates the
+  // flat key existing -- force a recompute, or the estimated region would sit
+  // high by this account's balance and put a step at the estimated/real seam.
+  //
+  // Checked by membership, not by type: a MANUAL depository account looks
+  // like cash but is in the flat term, because backfill's cashType loop only
+  // covers Plaid accounts.
+  let recompute = false;
+  if (hidden && !(await estimatedLayerCovers(ctx, account_id))) {
+    await clearBackfillDone(ctx);
+    recompute = true;
+  }
+
+  // Both cached payloads embed the visibility decision (net worth excludes
+  // hidden accounts, transactions omit their rows), so both must go or the
+  // change wouldn't show for up to the 15-minute TTL.
+  await clearCaches(ctx);
+
+  // The caller has to act on this: clearing the flag only makes a recompute
+  // POSSIBLE, it doesn't trigger one. The client's automatic backfill fires
+  // only when history is "thin", which is never true for anyone who already
+  // has an estimated layer -- i.e. exactly the users this branch is for.
+  return NextResponse.json({ account_id, hidden, recompute });
 }

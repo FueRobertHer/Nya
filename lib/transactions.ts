@@ -262,6 +262,13 @@ function blockedKey(ctx: Ctx, item_id: string): string {
   return kc(ctx, `txns-blocked:${item_id}`);
 }
 
+/** Whether an Item's store is behind what it shows: its last write was
+ *  refused as too large, so rows on screen may not be stored. Throws on a
+ *  failed read, for callers that delete on the answer. */
+export async function storeIsBehind(ctx: Ctx, item_id: string): Promise<boolean> {
+  return (await redis().get(blockedKey(ctx, item_id))) !== null;
+}
+
 /** What the marker records: when the write was refused, and how big the blob
  *  was. The size is what lets a raised ceiling actually unblock the Item. */
 type BlockedMarker = { at: string; chars: number };

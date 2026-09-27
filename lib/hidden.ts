@@ -42,6 +42,11 @@ const HIDDEN_HASH = (ctx: Ctx) => kc(ctx, 'hidden:accounts');
 export type HiddenAccount = {
   type: string;
   hidden_at: string; // ISO
+  /** Set while the account is being forgotten: the random tag its recorded
+   *  contribution to past totals is filed under (lib/history.ts). Kept here,
+   *  encrypted, only until the entry is dropped, so a retried forget reuses
+   *  it and an Unhide can take the contribution back. */
+  forget_tag?: string;
 };
 
 /** account_id -> what we need to subtract it from a total. */
@@ -69,6 +74,7 @@ export async function getHiddenAccounts(ctx: Ctx): Promise<HiddenMap> {
           type: parsed.type,
           hidden_at:
             typeof parsed.hidden_at === 'string' ? parsed.hidden_at : new Date(0).toISOString(),
+          ...(typeof parsed.forget_tag === 'string' ? { forget_tag: parsed.forget_tag } : {}),
         });
       } catch (err) {
         throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
@@ -90,6 +96,13 @@ export async function setAccountHidden(ctx: Ctx,
     return;
   }
   const value: HiddenAccount = { type, hidden_at: new Date().toISOString() };
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
+}
+
+/** Marks a hidden account as being forgotten, with the tag for its recorded
+ *  contribution (see HiddenAccount.forget_tag). */
+export async function markForgetting(ctx: Ctx, account_id: string, entry: HiddenAccount, forget_tag: string): Promise<void> {
+  const value: HiddenAccount = { ...entry, forget_tag };
   await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
 }
 

@@ -43,6 +43,8 @@ describe('the archive', () => {
         'c:*:snapshot:*',
         'move:*',
         'c:*:move:*',
+        'account-links:lock*',
+        'c:*:account-links:lock*',
       ],
     });
   });

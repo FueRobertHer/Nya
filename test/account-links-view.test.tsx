@@ -133,6 +133,14 @@ describe('AccountLinksView', () => {
     expect(refusalText('forget', { error: 'Unlink it first.' })).toBe('Unlink it first.');
   });
 
+  test('shows a note after a change that worked, not as an error', () => {
+    const html = renderToStaticMarkup(
+      <AccountLinksView data={{ suggestions: [], unclaimed: [], links: [], broken: ['A7'] }} busy={false} error="" notice="Forgotten. 2 days of history are damaged" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} />
+    );
+    expect(html).toContain('<p class="chart-note">Forgotten. 2 days of history are damaged</p>');
+    expect(html).not.toContain('class="error"');
+  });
+
   test('lists unreadable links with Remove', () => {
     const html = view({ suggestions: [], unclaimed: [], links: [], broken: ['A7'] });
     expect(html).toContain('can&#x27;t be read');

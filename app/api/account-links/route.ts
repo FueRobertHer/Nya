@@ -143,6 +143,17 @@ export async function GET() {
   }
 }
 
+/** Runs a change under the per-container lock (lib/links.ts withLinksLock);
+ *  a change already in progress is a 409 the user can retry. */
+async function locked(ctx: Ctx, fn: () => Promise<Response>): Promise<Response> {
+  try {
+    return await withLinksLock(ctx, fn);
+  } catch (err) {
+    if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
+    throw err;
+  }
+}
+
 /** Links an offered (or by-hand) pair, recomputed from this container's own
  *  data right now. Run inside withLinksLock. */
 async function linkPair(ctx: Ctx, old: string, to: string) {
@@ -197,48 +208,42 @@ export async function POST(req: Request) {
     // categories (lib/links.ts forgetEarlierAccount re-checks it may).
     if (action === 'forget') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
-      try {
-        const { unreadable } = await withLinksLock(ctx, () => forgetEarlierAccount(ctx, old));
+      return await locked(ctx, async () => {
+        const { unreadableDates } = await forgetEarlierAccount(ctx, old);
         await clearCaches(ctx);
-        // `unreadable`: dates whose maps no one can decrypt, left as they are.
-        return NextResponse.json({ forgotten: true, unreadable });
-      } catch (err) {
-        if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
-        throw err;
-      }
+        // Days whose records are damaged beyond reading, left as they are.
+        return NextResponse.json({ forgotten: true, unreadable_days: unreadableDates.length });
+      });
     }
 
     // "None of these": stop offering this earlier account at all.
     if (action === 'dismiss_all') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
-      const { offer } = await offered(ctx);
-      if (!isUnclaimed(old, offer)) {
-        return NextResponse.json({ error: 'That account is not currently offered' }, { status: 409 });
-      }
-      await dismissAll(ctx, old);
-      return NextResponse.json({ dismissed: true });
+      return await locked(ctx, async () => {
+        const { offer } = await offered(ctx);
+        if (!isUnclaimed(old, offer)) {
+          return NextResponse.json({ error: 'That account is not currently offered' }, { status: 409 });
+        }
+        await dismissAll(ctx, old);
+        return NextResponse.json({ dismissed: true });
+      });
     }
 
     if (!old || !to || (action !== 'link' && action !== 'dismiss')) {
       return NextResponse.json({ error: 'Expected { action: "link" | "dismiss" | "dismiss_all" | "forget", old, to }' }, { status: 400 });
     }
 
-    if (action === 'link') {
-      try {
-        return await withLinksLock(ctx, () => linkPair(ctx, old, to));
-      } catch (err) {
-        if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
-        throw err;
-      }
-    }
+    if (action === 'link') return await locked(ctx, () => linkPair(ctx, old, to));
     // "Not the same" / "Not this one": only for a pair on offer.
-    const { offer } = await offered(ctx);
-    if (!isOffered(old, to, offer)) {
-      return NextResponse.json({ error: 'That pair is not currently offered' }, { status: 409 });
-    }
-    // Changes no view, so nothing to invalidate.
-    await dismissPair(ctx, old, to);
-    return NextResponse.json({ dismissed: true });
+    return await locked(ctx, async () => {
+      const { offer } = await offered(ctx);
+      if (!isOffered(old, to, offer)) {
+        return NextResponse.json({ error: 'That pair is not currently offered' }, { status: 409 });
+      }
+      // Changes no view, so nothing to invalidate.
+      await dismissPair(ctx, old, to);
+      return NextResponse.json({ dismissed: true });
+    });
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
@@ -253,9 +258,11 @@ export async function DELETE(req: Request) {
     const body = await req.json().catch(() => null);
     const old = id(body?.old);
     if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
-    await unlinkAccount(ctx, old);
-    await clearCaches(ctx);
-    return NextResponse.json({ unlinked: true });
+    return await locked(ctx, async () => {
+      await unlinkAccount(ctx, old);
+      await clearCaches(ctx);
+      return NextResponse.json({ unlinked: true });
+    });
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

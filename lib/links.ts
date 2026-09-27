@@ -40,12 +40,12 @@ import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
-import { measuredAccountHistoryKeys, forgetAccountBalances } from './history';
+import { measuredAccountHistoryKeys, forgetAccountBalances, recordForgottenContribution } from './history';
 import { forgetCarried } from './overrides';
 import { storedAccountIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType } from './balance';
-import { getHiddenAccounts, setAccountHidden, type HiddenMap } from './hidden';
+import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
 import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 
@@ -554,10 +554,16 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * Refused (ForgetRefused) unless it is forgettable right now, re-checked here
  * from fresh, strict reads; an account known only from balances is also
  * checked against every stored Item's transaction and investment stores.
- * Balances go first, so a failure part way leaves it listed, and running it
- * again finishes. Call inside withLinksLock.
+ * Balances go before the name, so a failure part way leaves it listed, and
+ * running it again finishes. Call inside withLinksLock.
+ *
+ * Not covered by the lock: a backfill that fetched before the institution
+ * was disconnected and finishes after this can rebuild estimated points that
+ * still include the account. It is as narrow as it sounds (a backfill runs
+ * for seconds, and a forget needs the disconnect first); a later backfill
+ * rebuilds them without it.
  */
-export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadable: number }> {
+export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadableDates: string[] }> {
   const [inputs, hidden, items] = await Promise.all([
     liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
     getHiddenAccounts(ctx),
@@ -578,8 +584,20 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
     }
   }
 
-  const result = await forgetAccountBalances(ctx, id, found.hidden ? hidden.get(id)!.type : undefined);
-  if (found.hidden) await setAccountHidden(ctx, id, '', false);
+  if (found.hidden) {
+    // In this order, so no failure part way can count it twice or not at all:
+    // a random tag, kept in its hidden entry for a retry; what it contributed
+    // to past totals, recorded under the tag (never overwritten); then the
+    // hidden entry dropped, after which the record alone keeps it out. A
+    // retry finds the tag and records nothing twice; once the entry is gone,
+    // a retry just carries on below.
+    const entry = hidden.get(id)!;
+    const tag = entry.forget_tag ?? crypto.randomUUID();
+    if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
+    await recordForgottenContribution(ctx, id, entry.type, tag);
+    await setAccountHidden(ctx, id, '', false);
+  }
+  const result = await forgetAccountBalances(ctx, id);
   const dismissed = Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey(ctx))) ?? {}).filter(
     (k) => k.startsWith(`${id}>`) || k.endsWith(`>${id}`)
   );
@@ -588,7 +606,7 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
   // read before the pass above could have written the account back.
-  await forgetAccountBalances(ctx, id, undefined, { today: true });
+  await forgetAccountBalances(ctx, id, { today: true });
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.

@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { startRedis, type RealRedis } from './real-redis';
 import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, TEST_CONTAINER, registerTestContainer } from './fake-redis';
 
 // Moving the stored data into a container at the cutover (lib/move.ts).
@@ -650,30 +651,21 @@ describe('the command', () => {
 
 const hasRedis = Bun.which('redis-server') !== null;
 describe.skipIf(!hasRedis && !process.env.CI)('the compare-and-set scripts, on a real Redis', () => {
-  const port = 30000 + Math.floor(Math.random() * 20000);
-  let server: ReturnType<typeof Bun.spawn> | null = null;
+  let real: RealRedis | null = null;
   let r: InstanceType<typeof Bun.RedisClient>;
   const evalScript = (script: string, keys: string[], args: string[]) => r.send('EVAL', [script, String(keys.length), ...keys, ...args]);
 
   beforeEach(async () => {
-    if (!server) {
-      server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
-      r = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
-      for (let i = 0; i < 50; i++) {
-        try {
-          await r.send('PING', []);
-          break;
-        } catch {
-          await Bun.sleep(50);
-        }
-      }
+    if (!real) {
+      real = await startRedis();
+      r = real.client;
     }
     await r.send('FLUSHALL', []);
     await r.send('SET', ['lock', 'tok']);
   });
   afterAll(() => {
-    server?.kill();
-    server = null;
+    real?.stop();
+    real = null;
   });
   // Field names and values of the kinds stored: dates, ids, ciphertext, and
   // non-ASCII text, in an order Redis will not keep.

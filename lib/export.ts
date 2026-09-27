@@ -73,8 +73,10 @@ export const SCHEMA_ERA = 'containers';
  * cron's log and lock describe the cron that wrote them (lib/snapshot-job.ts).
  * The data move's record is left out too: restored, it would vouch for values
  * it never copied, and a later move could overwrite them (lib/move.ts).
+ * So is the lock on account-link changes: restored, it would block linking
+ * and forgetting for minutes, for a change that isn't running.
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:'] as const;
+export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock'] as const;
 
 /** Page size for SCAN and HSCAN. history:accounts gains a field every day, and
  *  one HGETALL of years of it would be one oversized response. */

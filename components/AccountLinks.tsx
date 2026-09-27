@@ -90,6 +90,7 @@ export default function AccountLinks({
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState<{ old: string; to: string } | null>(null);
   const [picked, setPicked] = useState<Record<string, string>>({});
 
@@ -111,6 +112,7 @@ export default function AccountLinks({
   const act = async (method: 'POST' | 'DELETE', body: Record<string, string>) => {
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       const res = await fetch('/api/account-links', {
         method,
@@ -124,8 +126,13 @@ export default function AccountLinks({
       }
       if (body.action === 'forget') {
         const j = await res.json().catch(() => ({}));
-        if (j.unreadable > 0) {
-          setError(`Forgotten. ${j.unreadable} day${j.unreadable === 1 ? '' : 's'} of history couldn't be decrypted by anyone and ${j.unreadable === 1 ? 'was' : 'were'} left as ${j.unreadable === 1 ? 'it was' : 'they were'}.`);
+        const n = Number(j.unreadable_days) || 0;
+        if (n > 0) {
+          setNotice(
+            `Forgotten. ${n} day${n === 1 ? '' : 's'} of history ${n === 1 ? 'is' : 'are'} damaged and can't be read, so ${
+              n === 1 ? 'it was' : 'they were'
+            } left as ${n === 1 ? 'it was' : 'they were'}.`
+          );
         }
       }
       setPreview(null);
@@ -153,6 +160,7 @@ export default function AccountLinks({
       data={data}
       busy={busy}
       error={error}
+      notice={notice}
       preview={preview}
       picked={picked}
       onPreview={setPreview}
@@ -171,6 +179,7 @@ export function AccountLinksView({
   data,
   busy,
   error,
+  notice,
   preview,
   picked,
   onPreview,
@@ -183,6 +192,8 @@ export function AccountLinksView({
   data: Payload | null;
   busy: boolean;
   error: string;
+  /** Something the user should know after a change that worked. */
+  notice?: string;
   preview: { old: string; to: string } | null;
   picked: Record<string, string>;
   onPreview: (p: { old: string; to: string } | null) => void;
@@ -408,22 +419,20 @@ export function AccountLinksView({
                       {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
                       {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
                     </span>
-                    {(
-                      <button
-                        className="link-btn danger-link"
-                        disabled={busy}
-                        onClick={() => {
-                          const sure =
-                            typeof window === 'undefined' ||
-                            window.confirm(
-                              `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
-                            );
-                          if (sure) onAct('POST', { action: 'forget', old: e.id });
-                        }}
-                      >
-                        Forget
-                      </button>
-                    )}
+                    <button
+                      className="link-btn danger-link"
+                      disabled={busy}
+                      onClick={() => {
+                        const sure =
+                          typeof window === 'undefined' ||
+                          window.confirm(
+                            `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
+                          );
+                        if (sure) onAct('POST', { action: 'forget', old: e.id });
+                      }}
+                    >
+                      Forget
+                    </button>
                   </div>
                 );
               })}
@@ -451,6 +460,7 @@ export function AccountLinksView({
       )}
 
       {error && <div className="error">{error}</div>}
+      {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
         Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to
         matching transactions. Nothing stored is changed, and Unlink puts it back as it was.
