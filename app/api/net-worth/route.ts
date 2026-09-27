@@ -10,7 +10,7 @@ import {
   type HistoryPoint,
 } from '@/lib/history';
 import { applyHidden } from '@/lib/hidden';
-import { getEffectiveHidden, recordDirectory } from '@/lib/links';
+import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 
 type NetWorthPayload = {
@@ -21,7 +21,7 @@ type NetWorthPayload = {
   // institution that's erroring returns no accounts, so without this its
   // hidden accounts would vanish from the Hidden card and there'd be no way
   // to unhide them. `hidden_at` is stored but not shipped -- nothing renders it.
-  hidden: { account_id: string; type: string }[];
+  hidden: HiddenForClient[];
   as_of: string;
 };
 
@@ -86,7 +86,7 @@ export async function GET(req: Request) {
     // sitting idle on the network the whole time.
     // Hidden accounts follow account links (lib/links.ts): every id an account
     // has had is hidden with it, and the client sees one current id each.
-    const hiddenPromise = eager(getEffectiveHidden(ctx));
+    const hiddenPromise = eager(getEffectiveHidden(ctx, { describe: true }));
     const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
 
     const { institutions, netWorth } = await computeNetWorth(ctx);

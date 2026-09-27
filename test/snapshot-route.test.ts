@@ -126,11 +126,14 @@ describe('the cron reports what it recorded, per container', () => {
   test('failed when the clean snapshot fails to write, and tried again', async () => {
     await register();
     await withAccount();
-    // The first hset is the run's "running" mark; the second, the total.
+    // The total's write fails (the run's marks and the breakdown land).
     const hset = fake.hset.bind(fake);
-    let n = 0;
+    let failed = false;
     fake.hset = (async (...a: Parameters<typeof hset>) => {
-      if (++n === 2) throw new Error('down');
+      if (!failed && String(a[0]).endsWith(':history:net-worth')) {
+        failed = true;
+        throw new Error('down');
+      }
       return hset(...a);
     }) as typeof hset;
     const res = await cron();

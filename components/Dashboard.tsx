@@ -380,7 +380,9 @@ export default function Dashboard() {
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   // The stored hidden set, straight from the server, so hidden accounts stay
   // listed (and unhideable) even when their institution fails to load.
-  const [hiddenMeta, setHiddenMeta] = useState<{ account_id: string; type: string }[]>([]);
+  const [hiddenMeta, setHiddenMeta] = useState<
+    { account_id: string; type: string; label?: string; disconnected?: boolean }[]
+  >([]);
   const [togglingHidden, setTogglingHidden] = useState<string | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
@@ -1018,22 +1020,24 @@ export default function Dashboard() {
       )
     );
     return hiddenMeta
-      .map(({ account_id, type }) => {
+      .map(({ account_id, type, label, disconnected }) => {
         const resolved = live.get(account_id);
         if (resolved) return { ...resolved, resolved: true };
-        // Hidden, but its institution didn't answer this load. Render what we
-        // stored so it can still be unhidden.
+        // Hidden, but not in this load: its institution didn't answer, or was
+        // disconnected (a hidden account stays hidden past a disconnect, so
+        // re-linking it doesn't bring it back). Render what we stored so it
+        // can still be unhidden.
         return {
           account: {
             account_id,
-            name: 'Unavailable account',
+            name: label ?? 'Unavailable account',
             type,
             subtype: null,
             balance: null,
             currency: null,
             hidden: true,
           } as Account,
-          institution_name: 'Not loaded',
+          institution_name: disconnected ? 'Disconnected' : 'Not loaded',
           resolved: false,
         };
       })

@@ -175,6 +175,25 @@ export function vendorKey(t: {
   return `nm:${t.institution_name.toLowerCase().trim()}::${nm}`;
 }
 
+/**
+ * What identifies one real-world transaction across a re-link, when its
+ * transaction_id doesn't survive: the account (as it is known now, following
+ * links), the posting date, the amount in cents and the bank's own descriptor
+ * (Plaid's raw `name`), normalized. The raw descriptor rather than the merchant
+ * Plaid enriched it to: a fresh pull under a new Item re-runs the enrichment,
+ * which can name the merchant differently or not at all, while the bank's text
+ * for a posted transaction doesn't change. The account already scopes it, so
+ * the institution isn't part of it.
+ *
+ * Two genuinely identical rows (same descriptor, amount and day) share a key;
+ * lib/overrides.ts treats a key it can't attribute to one category as
+ * ambiguous and carries nothing for it.
+ */
+export function contentKey(account_id: string, t: { date: string; amount: number; name: string }): string {
+  const descriptor = t.name.toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${account_id}|${t.date}|${Math.round(t.amount * 100)}|${descriptor}`;
+}
+
 // PFC `detailed` humanized and stripped of its `primary` prefix, so
 // "FOOD_AND_DRINK_COFFEE" surfaces as just "coffee" alongside the primary
 // category rather than repeating it.
@@ -241,6 +260,21 @@ function stateKey(ctx: Ctx, item_id: string): string {
 // a blob rather than a blob. `txns:*` does not match it; a looser `txns*` would.
 function blockedKey(ctx: Ctx, item_id: string): string {
   return kc(ctx, `txns-blocked:${item_id}`);
+}
+
+// Set when a write of the store failed for any other reason, and cleared by
+// the next write that lands: while it is set, rows on screen may not be
+// stored. Expires in a week, in case the Item is never synced again.
+function unsavedKey(ctx: Ctx, item_id: string): string {
+  return kc(ctx, `txns-unsaved:${item_id}`);
+}
+
+/** Whether an Item's store is behind what it shows: its last write was
+ *  refused as too large, or failed, so rows on screen may not be stored.
+ *  Throws on a failed read, for callers that delete on the answer. */
+export async function storeIsBehind(ctx: Ctx, item_id: string): Promise<boolean> {
+  const [blocked, unsaved] = await Promise.all([redis().get(blockedKey(ctx, item_id)), redis().get(unsavedKey(ctx, item_id))]);
+  return blocked !== null || unsaved !== null;
 }
 
 /** What the marker records: when the write was refused, and how big the blob
@@ -465,6 +499,8 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
     }
 
     await redis().set(stateKey(ctx, item_id), encoded);
+    // Caught up: what is shown is stored again.
+    await redis().del(unsavedKey(ctx, item_id)).catch(() => {});
     return { persisted: true };
   } catch (err) {
     // Persist failures are non-fatal for the current request (the in-memory
@@ -476,21 +512,33 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
       `transactions: failed to persist sync state for ${item_id} (${Object.keys(state.txns).length} txns); will re-sync next call`,
       err
     );
+    // The rows about to be shown aren't stored: say so, for the one reader
+    // that must know (lib/overrides.ts pruneOrphanOverrides, which would
+    // otherwise take a category set on one of them for an orphan).
+    await redis().set(unsavedKey(ctx, item_id), new Date().toISOString(), { ex: 7 * 86_400 }).catch(() => {});
     return { persisted: false, reason: 'error' };
   }
 }
 
 /**
+ * An Item's stored transactions, read without syncing (no Plaid call), for
+ * the paths that must not reach Plaid: a disconnect (the Item is already
+ * removed there) and the Accounts tab. Throws when the store can't be read.
+ */
+export async function readStoredTxns(ctx: Ctx, item_id: string, opts: { shown?: boolean } = {}): Promise<StoredTxn[]> {
+  const txns = (await readState(ctx, item_id)).txns;
+  if (!opts.shown) return Object.values(txns);
+  // Only what /api/transactions would display: inside the lookback, and not a
+  // pending row its posted row has replaced.
+  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const superseded = supersededPendingIds(txns);
+  return Object.values(txns).filter((t) => t.date >= cutoff && !superseded.has(t.transaction_id));
+}
+
+/**
  * The account ids this Item is known to own, straight from the persisted state
- * (no Plaid call). Used when disconnecting, to garbage-collect the Item's
- * entries from the hidden-accounts set before its state is dropped.
- *
- * Reads the store rather than fetching, deliberately: an Item is often
- * disconnected precisely because it's broken, and a fetch would fail exactly
- * then. But the store can legitimately be empty -- an investments-only Item, or
- * one linked and never synced, never persists transaction state -- so callers
- * must treat this as a partial answer and union it with another source. See
- * app/api/disconnect/route.ts.
+ * (no Plaid call). A partial answer: an investments-only Item, or one linked
+ * and never synced, persists no transaction state, so this is empty for it.
  */
 export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
   try {
@@ -498,6 +546,17 @@ export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<stri
   } catch {
     return [];
   }
+}
+
+/**
+ * Every account id an Item's store mentions: its account map and every
+ * stored row's account. Strict (throws when it can't be read), for a caller
+ * that deletes on the answer: forgetting an earlier account must not take an
+ * unreadable store for one that doesn't have it.
+ */
+export async function storedAccountIds(ctx: Ctx, item_id: string): Promise<Set<string>> {
+  const state = await readState(ctx, item_id);
+  return new Set([...Object.keys(state.accounts), ...Object.values(state.txns).map((t) => t.account_id)]);
 }
 
 /**
@@ -509,7 +568,7 @@ export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<stri
  */
 export async function clearItemTransactions(ctx: Ctx, item_id: string): Promise<void> {
   try {
-    await redis().del(stateKey(ctx, item_id), blockedKey(ctx, item_id));
+    await redis().del(stateKey(ctx, item_id), blockedKey(ctx, item_id), unsavedKey(ctx, item_id));
   } catch {
     // Best effort; a stale key is harmless once the Item is gone.
   }
@@ -766,10 +825,15 @@ async function syncItem(ctx: Ctx,
  */
 export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
-  hiddenAccountIds?: Set<string>
+  hiddenAccountIds?: Set<string>,
+  /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
+   *  Applied here because this is the last place account_id exists; a
+   *  category set on the row itself still wins, in /api/transactions. */
+  carriedIn?: Map<string, string> | Promise<Map<string, string>>
 ): Promise<{ txns: Txn[]; note: string | null }> {
   const { state, note } = await syncItem(ctx, item);
   if (!state) return { txns: [], note };
+  const carried = await carriedIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name — the display behavior recurring
@@ -789,7 +853,7 @@ export async function syncItemTransactions(ctx: Ctx,
       pending: t.pending,
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       institution_name: t.institution_name,
-      category: t.category,
+      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
       iso_currency_code: t.iso_currency_code,
       vendor_key: vendorKey(t),
       logo_url: t.logo_url,

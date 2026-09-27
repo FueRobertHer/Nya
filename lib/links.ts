@@ -25,19 +25,28 @@
 //    inherit a deleted one's series (lib/manual.ts says so).
 //
 // The DIRECTORY is what makes a re-added institution matchable: a record of
-// every Plaid account seen, with its institution id, name, mask and type, kept
-// past a disconnect (accounts:meta and the stores are deleted then). Entries of
-// a removed Item that nothing links to are pruned PRUNE_AFTER_DAYS after they
-// were last seen, so removing an institution still removes its names.
+// every account seen, with its provider, institution id, name, mask and type,
+// kept past a disconnect (accounts:meta and the stores are deleted then). It is
+// kept for as long as the account's balance history is, which is for good:
+// someone who comes back months later (a lapsed subscription, a new owner
+// re-linking) should see "Chase Checking ••4821", not an anonymous series.
+//
+// Two ways to link: the card OFFERS pairs and recent history (suggestLinks),
+// and the user can link any earlier account BY HAND (manualChoices), with no
+// time limit and even after declining an offer, since a declined or missed
+// match must stay fixable.
 
 import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
-import { measuredAccountHistoryKeys } from './history';
+import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
+import { forgetCarried, pruneOrphanOverrides } from './overrides';
+import { storedAccountIds } from './transactions';
+import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType } from './balance';
-import { getHiddenAccounts, type HiddenMap } from './hidden';
-import { rememberedIdsByItem } from './last-known';
+import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
+import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 
 // Lazy keys, not module constants: the container (#53) will be a parameter.
@@ -56,7 +65,13 @@ const daysBetween = (a: string, b: string) =>
 // ---------------------------------------------------------------------------
 // Directory
 
+/** Where an account's data comes from. One provider today; recorded so a
+ *  second aggregator needs no change to what is stored. */
+export const PROVIDER = 'plaid';
+
 export type DirectoryEntry = {
+  /** Absent on entries written before it was recorded: those are Plaid's. */
+  provider?: string;
   item_id: string;
   institution_id: string | null;
   institution_name: string;
@@ -178,6 +193,7 @@ export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[],
       if (unreadable.has(a.account_id) || isManualId(a.account_id)) continue;
       const prev = entries[a.account_id];
       const next: DirectoryEntry = {
+        provider: PROVIDER,
         item_id: inst.item_id,
         institution_id: inst.institution_id ?? prev?.institution_id ?? null,
         institution_name: inst.institution_name,
@@ -194,38 +210,9 @@ export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[],
       writes[a.account_id] = await encrypt(JSON.stringify(next));
     }
     if (Object.keys(writes).length > 0) await redis().hset(directoryKey(ctx), writes);
-
-    await pruneDirectory(ctx, entries, now);
   } catch (err) {
     console.warn('links: could not record the account directory', err instanceof Error ? err.message : err);
   }
-}
-
-/**
- * Drops unlinked entries of removed Items not seen for PRUNE_AFTER_DAYS.
- *
- * Decided from the stored Items at prune time rather than a mark written on
- * disconnect: a load that fetched just before the disconnect would write the
- * entry back without the mark, and it would never be pruned. An entry is only
- * written for an Item a load just fetched, so one whose Item is no longer
- * stored has been disconnected.
- */
-async function pruneDirectory(ctx: Ctx, entries: Record<string, DirectoryEntry>, now: number): Promise<void> {
-  const cutoff = today(now - PRUNE_AFTER_DAYS * DAY);
-  const old = Object.entries(entries).filter(([, e]) => e.last_seen < cutoff);
-  if (old.length === 0) return;
-  let links: Map<string, Link>;
-  let stored: Set<string>;
-  try {
-    [links, stored] = await Promise.all([getLinks(ctx), getItems(ctx).then((items) => new Set(items.map((i) => i.item_id)))]);
-  } catch {
-    return; // can't tell what is linked or stored: prune nothing
-  }
-  const stale = old.filter(([, e]) => !stored.has(e.item_id));
-  if (stale.length === 0) return;
-  const involved = new Set([...links.keys(), ...[...links.values()].map((l) => l.to)]);
-  const doomed = stale.map(([id]) => id).filter((id) => !involved.has(id));
-  if (doomed.length > 0) await redis().hdel(directoryKey(ctx), ...doomed);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,14 +252,11 @@ export type Unclaimed = {
   candidates: { id: string; label: string }[];
 };
 
-/** How long after an earlier account stopped a new one can be offered for it
- *  by hand. Reconnects happen close in time; a closed account's history is not
- *  offered to every account opened in the years after it. */
+/** How long after an earlier account stopped the card still OFFERS it for a
+ *  new one. Reconnects happen close in time; a closed account's history is not
+ *  pushed at every account opened in the years after it. Linking by hand
+ *  (manualChoices) has no such limit. */
 export const ASSIGN_WINDOW_DAYS = 90;
-/** Unlinked directory entries of a removed Item are dropped this long after
- *  they were last seen. No shorter than ASSIGN_WINDOW_DAYS: an earlier account
- *  offered by hand still needs its entry for its name and its kind. */
-const PRUNE_AFTER_DAYS = ASSIGN_WINDOW_DAYS;
 
 /** When an account was last seen: the later of its directory stamp and its
  *  last recorded balance. Recorded on a link as old_last, which orders earlier
@@ -426,6 +410,222 @@ export function isOffered(old: string, to: string, offered: ReturnType<typeof su
   return offered.unclaimed.some((u) => u.old === old && u.candidates.some((c) => c.id === to));
 }
 
+/**
+ * Every earlier account the user may link BY HAND, with what each may be
+ * linked to. Pure: callers load the inputs.
+ *
+ * Wider than what suggestLinks offers, on purpose: no time window (someone
+ * returning after months must still be able to join their history back up),
+ * and dismissals don't apply (a declined or missed match must stay fixable).
+ * The rules that keep a link from corrupting a series still do:
+ *   - the earlier account is not live, not already linked, and not manual;
+ *   - the target is live, not manual, and not itself linked to something;
+ *   - the target's history (with whatever is already linked to it) starts on
+ *     or after the earlier account's last day, so the two never overlap;
+ *   - the same kind of account (debt or asset) when both kinds are known.
+ */
+export function manualChoices(input: {
+  directory: Record<string, DirectoryEntry>;
+  spans: Record<string, Span>;
+  liveIds: Set<string>;
+  links: Map<string, Link>;
+  unreadableLinks?: Set<string>;
+}): Unclaimed[] {
+  const { directory, spans, liveIds, links } = input;
+  const linkedAway = new Set([...links.keys(), ...(input.unreadableLinks ?? [])]);
+  const live = [...liveIds].filter((id) => !isManualId(id) && !linkedAway.has(id));
+  // Where each live account's history starts, with what is already linked to
+  // it: worked out once, not per pair, since the directory only grows.
+  const starts = new Map<string, string | null>(live.map((n) => [n, directory[n]?.first_seen ?? spans[n]?.first ?? null]));
+  for (const old of links.keys()) {
+    const n = resolveId(old, links);
+    if (!starts.has(n)) continue;
+    const f = spans[old]?.first ?? directory[old]?.first_seen ?? null;
+    const first = starts.get(n);
+    if (f && (!first || f < first)) starts.set(n, f);
+  }
+  const startsAt = (n: string) => starts.get(n) ?? null;
+  const earlier = [...new Set([...Object.keys(directory), ...Object.keys(spans)])].filter(
+    (id) => !liveIds.has(id) && !linkedAway.has(id) && !isManualId(id)
+  );
+  const out: Unclaimed[] = [];
+  for (const o of earlier) {
+    const last = lastSeenOf(o, directory, spans);
+    const first = spans[o]?.first ?? directory[o]?.first_seen ?? null;
+    if (!last || !first) continue;
+    const oldClass = owedClass(directory[o]?.type);
+    const candidates = live
+      .filter((n) => {
+        const start = startsAt(n);
+        if (!start || daysBetween(last, start) < 0) return false;
+        const newClass = owedClass(directory[n]?.type);
+        return oldClass === null || newClass === null || newClass === oldClass;
+      })
+      .map((n) => ({ id: n, label: label(directory[n], n) }));
+    if (candidates.length === 0) continue;
+    out.push({
+      old: o,
+      old_label: directory[o] ? label(directory[o], o) : null,
+      first,
+      last,
+      last_balance: spans[o]?.lastBalance ?? null,
+      candidates,
+    });
+  }
+  // Most recently stopped first: the likeliest to be what the user is after.
+  return out.sort((x, y) => (x.last < y.last ? 1 : x.last > y.last ? -1 : x.old < y.old ? -1 : 1));
+}
+
+/** Whether the user may link `old` to `to` by hand right now. */
+export function isManualChoice(old: string, to: string, choices: Unclaimed[]): boolean {
+  return choices.some((c) => c.old === old && c.candidates.some((x) => x.id === to));
+}
+
+/** An earlier account the user can forget: what it was, and its span. */
+export type Earlier = { id: string; label: string | null; first: string | null; last: string | null };
+
+/**
+ * The earlier accounts the user can FORGET (forgetEarlierAccount): accounts
+ * of an institution that is no longer connected. Not live, not manual, not
+ * part of any link either end (unlink first: a linked id's history is part of
+ * an account on screen), and not an account of an Item still stored: one the
+ * bank stopped returning (closed, or left out for a day) still has its
+ * transactions stored there, so forgetting it would be neither complete nor
+ * safe; it goes when the institution is disconnected. `hidden` says it is
+ * hidden, which forgetting keeps out of past totals. Pure. Most recent first.
+ */
+export function forgettableAccounts(
+  input: {
+    directory: Record<string, DirectoryEntry>;
+    spans: Record<string, Span>;
+    liveIds: Set<string>;
+    links: Map<string, Link>;
+    unreadableLinks?: Set<string>;
+  },
+  hidden: Set<string>,
+  storedItems: Set<string>
+): (Earlier & { hidden: boolean })[] {
+  const { directory, spans, liveIds, links } = input;
+  const linked = new Set([...links.keys(), ...[...links.values()].map((l) => l.to), ...(input.unreadableLinks ?? [])]);
+  return [...new Set([...Object.keys(directory), ...Object.keys(spans)])]
+    .filter((id) => !liveIds.has(id) && !isManualId(id) && !linked.has(id))
+    .filter((id) => !directory[id] || !storedItems.has(directory[id].item_id))
+    .map((id) => ({
+      id,
+      label: directory[id] ? label(directory[id], id) : null,
+      first: spans[id]?.first ?? directory[id]?.first_seen ?? null,
+      last: lastSeenOf(id, directory, spans),
+      hidden: hidden.has(id),
+    }))
+    .sort((a, b) => ((a.last ?? '') < (b.last ?? '') ? 1 : (a.last ?? '') > (b.last ?? '') ? -1 : a.id < b.id ? -1 : 1));
+}
+
+/** A refusal to show the user: nothing was changed. */
+export class ForgetRefused extends Error {}
+
+// One change to links or earlier accounts at a time, per container: a link
+// made while an account is half forgotten would point at an account that is
+// about to lose its name and history.
+const linksLockKey = (ctx: Ctx) => kc(ctx, 'account-links:lock');
+export const RELEASE_LOCK = `-- nya:release-lock
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
+/** How long a request under the lock may run (the routes' maxDuration). The
+ *  lock outlives it, so a request can't outlive its lock; a request killed
+ *  holding it (the platform ending it) frees it this much later. */
+export const LINKS_LOCK_REQUEST_SECONDS = 120;
+const LINKS_LOCK_SECONDS = LINKS_LOCK_REQUEST_SECONDS + 30;
+
+export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<T> {
+  const token = crypto.randomUUID();
+  if ((await redis().set(linksLockKey(ctx), token, { nx: true, ex: LINKS_LOCK_SECONDS })) === null) {
+    throw new ForgetRefused('Another change to your accounts is in progress. Try again in a moment.');
+  }
+  try {
+    return await fn();
+  } finally {
+    await redis().eval(RELEASE_LOCK, [linksLockKey(ctx)], [token]).catch(() => {});
+  }
+}
+
+/**
+ * Forgets an earlier account for good, at the user's request: its balances
+ * in every per-account layer, its directory entry (name, mask, institution),
+ * the categories recorded to carry across a re-link, dismissed offers that
+ * name it, leftover remembered records naming it, and its hidden entry. The
+ * past net-worth totals stay as they were (they were the user's net worth on
+ * those dates); a hidden account is folded out of them first, so the chart
+ * shows them as it did while it was hidden (lib/history.ts foldHiddenAccount).
+ *
+ * Refused (ForgetRefused) unless it is forgettable right now, re-checked here
+ * from fresh, strict reads; an account known only from balances is also
+ * checked against every stored Item's transaction and investment stores.
+ * Balances go before the name, so a failure part way leaves it listed, and
+ * running it again finishes. Call inside withLinksLock.
+ *
+ * A backfill or snapshot running beside it isn't locked out: both write each
+ * breakdown before its total, which is the order a fold is safe against
+ * (foldHiddenAccount). A backfill that fetched before the institution was
+ * disconnected sees it gone before writing, and writes nothing.
+ */
+export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadableDates: string[] }> {
+  const [inputs, hidden, items] = await Promise.all([
+    liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
+    getHiddenAccounts(ctx),
+    getItems(ctx),
+  ]);
+  if (inputs.unreadableLinks.size > 0) throw new ForgetRefused('A saved link can\'t be read. Remove it first.');
+  const storedItems = new Set(items.map((i) => i.item_id));
+  const found = forgettableAccounts(inputs, new Set(hidden.keys()), storedItems).find((e) => e.id === id);
+  if (!found) throw new ForgetRefused('That account can\'t be forgotten: its institution is still connected, it is linked, or it is unknown.');
+  if (!inputs.directory[id]) {
+    // Known only from balances: make sure no connected institution still
+    // stores it. Strict: an unreadable store is not an absent one.
+    for (const item of items) {
+      const [txnIds, invIds] = await Promise.all([storedAccountIds(ctx, item.item_id), storedInvestmentAccountIds(ctx, item.item_id, true)]);
+      if (txnIds.has(id) || invIds.includes(id)) {
+        throw new ForgetRefused('That account belongs to an institution that is still connected. Disconnect it first.');
+      }
+    }
+  }
+
+  if (found.hidden) {
+    // Taken out of every past total for good, point by point, each in one
+    // step (lib/history.ts foldHiddenAccount): while it runs, a point is
+    // either untouched (the chart still subtracts the hidden account) or
+    // folded (the account is gone from it). The random tag, kept in its
+    // hidden entry, is where progress is kept, so a retry skips what is done;
+    // only once every point is folded is the hidden entry dropped.
+    const entry = hidden.get(id)!;
+    const tag = entry.forget_tag ?? crypto.randomUUID();
+    if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
+    const d = inputs.directory[id];
+    await foldHiddenAccount(ctx, id, entry.type, tag, { first: d?.first_seen ?? null, last: d?.last_seen ?? null });
+    // Every point is folded: the progress goes first, while the hidden entry
+    // still holds the tag that names it, so nothing can leave it behind.
+    await dropFoldProgress(ctx, tag);
+    await setAccountHidden(ctx, id, '', false);
+  }
+  const result = await forgetAccountBalances(ctx, id);
+  const dismissed = Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey(ctx))) ?? {}).filter(
+    (k) => k.startsWith(`${id}>`) || k.endsWith(`>${id}`)
+  );
+  if (dismissed.length > 0) await redis().hdel(dismissedKey(ctx), ...dismissed);
+  await forgetCarried(ctx, id);
+  await forgetStaleRecords(ctx, id, storedItems);
+  // Once more for today, after everything else: a same-day partial record
+  // read before the pass above could have written the account back.
+  await forgetAccountBalances(ctx, id, { today: true });
+  // Last: while the entry exists the account is still listed, so a retry is
+  // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
+  // be read by anyone.
+  await redis().hdel(directoryKey(ctx), id);
+  // Categories of its transactions that nothing can show any more (a failed
+  // disconnect-time cleanup would otherwise leave them for good).
+  await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
+  return result;
+}
+
 /** Whether "None of these" is offered for an earlier account right now. */
 export function isUnclaimed(old: string, offered: ReturnType<typeof suggestLinks>): boolean {
   return offered.unclaimed.some((u) => u.old === old);
@@ -529,24 +729,89 @@ export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean } = {}):
  * liveAccountIds): a paused link then counts as active, which can only hide
  * more, never reveal.
  */
-export async function getEffectiveHidden(ctx: Ctx): Promise<{
+export async function getEffectiveHidden(
+  ctx: Ctx,
+  opts: { describe?: boolean } = {}
+): Promise<{
   /** Every id of every hidden account: what totals and filters subtract. */
   hidden: HiddenMap;
-  /** One current id per hidden account: what the Hidden card lists. */
-  forClient: { account_id: string; type: string }[];
+  /** One current id per hidden account: what the Hidden card lists. With
+   *  `describe`, a hidden account that isn't live is named from the directory. */
+  forClient: HiddenForClient[];
+  /** The active links, for other readers on the same request (carried
+   *  categories); null when they couldn't be read. */
+  links: Map<string, Link> | null;
+  /** The live ids read for it: empty when they couldn't be read. */
+  live: Set<string>;
+  /** Whether the live ids were read (an empty set may just mean none). */
+  liveOk: boolean;
 }> {
-  const [hidden, links, live] = await Promise.all([
+  const [hidden, links, liveRead] = await Promise.all([
     getHiddenAccounts(ctx),
     getLinks(ctx).then(
       (l) => ({ ok: true as const, l }),
       (err) => ({ ok: false as const, err })
     ),
-    liveAccountIds(ctx),
+    // Unreadable counts as empty here (see liveAccountIds), but callers are
+    // told, since an empty set can also be a user with nothing connected.
+    liveAccountIds(ctx, { strict: true }).then(
+      (ids) => ({ ok: true, ids }),
+      () => ({ ok: false, ids: new Set<string>() })
+    ),
   ]);
-  if (hidden.size === 0) return { hidden, forClient: [] };
-  if (!links.ok) throw links.err;
-  const effective = effectiveLinks(links.l, live);
-  return { hidden: expandHidden(hidden, effective), forClient: hiddenForClient(hidden, effective) };
+  const live = liveRead.ids;
+  const liveOk = liveRead.ok;
+  const effective = links.ok ? effectiveLinks(links.l, live) : null;
+  if (hidden.size === 0) return { hidden, forClient: [], links: effective, live, liveOk };
+  if (!effective) throw (links as { err: unknown }).err;
+  const forClient = hiddenForClient(hidden, effective);
+  return {
+    hidden: expandHidden(hidden, effective),
+    forClient: opts.describe && liveOk ? await describeGone(ctx, forClient, live) : forClient,
+    links: effective,
+    live,
+    liveOk,
+  };
+}
+
+/**
+ * Names the hidden accounts that aren't live, so the Hidden card can say what
+ * each was, and whether its institution was disconnected (it stays hidden
+ * until the user unhides it or links it to the re-added account) or is only
+ * failing to load. Reads anything only when such an account exists, and
+ * leaves the list as it was if those reads fail: it is only a label.
+ */
+async function describeGone(ctx: Ctx, list: HiddenForClient[], live: Set<string>): Promise<HiddenForClient[]> {
+  const gone = list.filter((h) => !live.has(h.account_id));
+  if (gone.length === 0) return list;
+  try {
+    const [entries, items] = await Promise.all([directoryEntries(ctx, gone.map((h) => h.account_id)), getItems(ctx)]);
+    const stored = new Set(items.map((i) => i.item_id));
+    return list.map((h) => {
+      const e = live.has(h.account_id) ? undefined : entries[h.account_id];
+      return e ? { ...h, label: label(e, h.account_id), disconnected: !stored.has(e.item_id) } : h;
+    });
+  } catch {
+    return list;
+  }
+}
+
+/** Just these ids' directory entries (one read each, not the whole directory);
+ *  an unreadable or missing one is left out. */
+async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<string, DirectoryEntry>> {
+  const blobs = await Promise.all(ids.map((id) => redis().hget<string>(directoryKey(ctx), id)));
+  const out: Record<string, DirectoryEntry> = {};
+  await Promise.all(
+    ids.map(async (id, i) => {
+      if (!blobs[i]) return;
+      try {
+        out[id] = JSON.parse(await decrypt(blobs[i]!)) as DirectoryEntry;
+      } catch {
+        // unlabelled, like an account the directory never knew
+      }
+    })
+  );
+  return out;
 }
 
 export function expandHidden(hidden: HiddenMap, links: Map<string, Link>): HiddenMap {
@@ -564,8 +829,17 @@ export function expandHidden(hidden: HiddenMap, links: Map<string, Link>): Hidde
   return out;
 }
 
+export type HiddenForClient = {
+  account_id: string;
+  type: string;
+  /** For an account that isn't live: what it was, from the directory. */
+  label?: string;
+  /** Its institution was disconnected (not merely failing to load). */
+  disconnected?: boolean;
+};
+
 /** The hidden set as the client should see it: one current id per account. */
-export function hiddenForClient(hidden: HiddenMap, links: Map<string, Link>): { account_id: string; type: string }[] {
+export function hiddenForClient(hidden: HiddenMap, links: Map<string, Link>): HiddenForClient[] {
   const seen = new Map<string, string>();
   for (const [id, { type }] of hidden) {
     const current = resolveId(id, links);

@@ -8,11 +8,16 @@
 //     like the same account, with the evidence, to Link or mark Not the same;
 //   - history known only from balances (older than the account directory), to
 //     assign to one of the accounts that appeared after it;
-//   - the links already made, each with Unlink.
+//   - the links already made, each with Unlink and how many categories it
+//     carried across;
+//   - collapsed, linking any earlier account by hand: no time limit, and
+//     still possible after "Not the same", so a missed match stays fixable;
+//   - collapsed, every earlier account, each with Forget: the user decides
+//     what is kept about accounts they no longer have.
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
 import { formatMoney } from '@/lib/format';
 
@@ -37,16 +42,36 @@ type Unclaimed = {
   last_balance: number | null;
   candidates: { id: string; label: string }[];
 };
-type Linked = { old: string; to: string; linked_at: string; old_label: string; to_label: string; conflict: boolean };
+type Linked = {
+  old: string;
+  to: string;
+  linked_at: string;
+  old_label: string;
+  to_label: string;
+  conflict: boolean;
+  /** Categories set on the earlier account's transactions, and how many now
+   *  show on this account's (more arrive as it syncs). */
+  categories?: { total: number; carried: number; ambiguous?: number };
+};
 export type AccountLinksPayload = {
   suggestions: Suggestion[];
   unclaimed: Unclaimed[];
+  /** Every earlier account that can be linked by hand, and to what. */
+  manual?: Unclaimed[];
+  /** Earlier accounts the user can forget for good. */
+  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean }[];
   links: Linked[];
   /** Saved links that can't be read. While one exists and an account is
    *  hidden, the dashboard can't load, so each gets a Remove button. */
   broken?: string[];
 };
 type Payload = AccountLinksPayload;
+
+/** What to say when the server refuses a change and gives no reason. */
+export function refusalText(action: string | undefined, body: { error?: unknown }): string {
+  if (typeof body.error === 'string' && body.error) return body.error;
+  return action === 'forget' ? 'Could not forget that account' : 'Could not update the link';
+}
 
 function fmtDay(iso: string | null): string {
   if (!iso) return 'unknown';
@@ -65,6 +90,7 @@ export default function AccountLinks({
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState<{ old: string; to: string } | null>(null);
   const [picked, setPicked] = useState<Record<string, string>>({});
 
@@ -86,6 +112,7 @@ export default function AccountLinks({
   const act = async (method: 'POST' | 'DELETE', body: Record<string, string>) => {
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       const res = await fetch('/api/account-links', {
         method,
@@ -94,8 +121,24 @@ export default function AccountLinks({
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setError(j.error || 'Could not update the link');
+        setError(refusalText(body.action, j));
+        // A forget that stopped part way may have changed some things already.
+        if (body.action === 'forget' && res.status >= 500) {
+          await load();
+          onChanged();
+        }
         return;
+      }
+      if (body.action === 'forget') {
+        const j = await res.json().catch(() => ({}));
+        const n = Number(j.unreadable_days) || 0;
+        if (n > 0) {
+          setNotice(
+            `Forgotten. ${n} day${n === 1 ? '' : 's'} of history ${n === 1 ? 'is' : 'are'} damaged and can't be read, so ${
+              n === 1 ? 'it was' : 'they were'
+            } left as ${n === 1 ? 'it was' : 'they were'}.`
+          );
+        }
       }
       setPreview(null);
       // A pick may no longer be offered (Not this one removes it), so the
@@ -122,6 +165,7 @@ export default function AccountLinks({
       data={data}
       busy={busy}
       error={error}
+      notice={notice}
       preview={preview}
       picked={picked}
       onPreview={setPreview}
@@ -140,15 +184,21 @@ export function AccountLinksView({
   data,
   busy,
   error,
+  notice,
   preview,
   picked,
   onPreview,
   onPick,
   onAct,
+  open,
 }: {
+  /** Sections to start expanded (for tests and previews). */
+  open?: { byHand?: boolean; earlier?: boolean };
   data: Payload | null;
   busy: boolean;
   error: string;
+  /** Something the user should know after a change that worked. */
+  notice?: string;
   preview: { old: string; to: string } | null;
   picked: Record<string, string>;
   onPreview: (p: { old: string; to: string } | null) => void;
@@ -156,12 +206,27 @@ export function AccountLinksView({
   onAct: (method: 'POST' | 'DELETE', body: Record<string, string>) => void;
 }) {
   const broken = data?.broken ?? [];
+  const manual = useMemo(() => data?.manual ?? [], [data]);
+  const earlier = useMemo(() => data?.earlier ?? [], [data]);
+  const [earlierOpen, setEarlierOpen] = useState(open?.earlier ?? false);
+  const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
+  const [byHandOld, setByHandOld] = useState('');
+  const [byHandTo, setByHandTo] = useState('');
   if (
     !data ||
-    (data.suggestions.length === 0 && data.unclaimed.length === 0 && data.links.length === 0 && broken.length === 0)
+    (data.suggestions.length === 0 &&
+      data.unclaimed.length === 0 &&
+      manual.length === 0 &&
+      earlier.length === 0 &&
+      data.links.length === 0 &&
+      broken.length === 0)
   ) {
     return null;
   }
+  // Only a choice still listed: anything else would act on an account the
+  // dropdowns aren't showing.
+  const handOld = manual.find((m) => m.old === byHandOld) ?? manual[0];
+  const handTo = handOld?.candidates.some((c) => c.id === byHandTo) ? byHandTo : handOld?.candidates[0]?.id ?? '';
 
   const isPreviewing = (old: string, to: string) => preview?.old === old && preview?.to === to;
   const previewButton = (old: string, to: string) => (
@@ -260,12 +325,124 @@ export function AccountLinksView({
               <span>
                 {l.old_label} → {l.to_label}
                 {l.conflict ? ' (the earlier account is reporting again, so this link is paused)' : ''}
+                {l.categories && l.categories.total > 0 && !l.conflict
+                  ? `. ${l.categories.carried} of ${l.categories.total} categorized transaction${l.categories.total === 1 ? '' : 's'} carried over${
+                      l.categories.carried < l.categories.total ? ' so far' : ''
+                    }`
+                  : ''}
+                {l.categories && (l.categories.ambiguous ?? 0) > 0 && !l.conflict
+                  ? `. ${l.categories.ambiguous} matched more than one transaction, so weren't carried`
+                  : ''}
               </span>
               <button className="link-btn danger-link" disabled={busy} onClick={() => onAct('DELETE', { old: l.old })}>
                 Unlink
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {manual.length > 0 && handOld && (
+        <div className="account-link-row">
+          <button className="link-btn" onClick={() => setByHandOpen(!byHandOpen)} aria-expanded={byHandOpen}>
+            {byHandOpen ? 'Hide linking by hand' : 'Link an earlier account by hand'}
+          </button>
+          {byHandOpen && (
+            <>
+              <p className="chart-note">
+                For an account you re-added that wasn&apos;t matched, or one you said wasn&apos;t the same. Only
+                accounts of the same kind, whose history starts after the earlier one stopped, are listed.
+              </p>
+              <label className="type-tag">
+                Earlier account{' '}
+                <select
+                  value={handOld.old}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setByHandOld(e.target.value);
+                    setByHandTo('');
+                    onPreview(null);
+                  }}
+                >
+                  {manual.map((m) => (
+                    <option key={m.old} value={m.old}>
+                      {(m.old_label ?? 'Balance history') + ` (${fmtDay(m.first)} to ${fmtDay(m.last)})`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="type-tag">
+                Same account as{' '}
+                <select
+                  value={handTo}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setByHandTo(e.target.value);
+                    onPreview(null);
+                  }}
+                >
+                  {handOld.candidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="manual-row-actions">
+                {previewButton(handOld.old, handTo)}
+                <button
+                  className="link-btn"
+                  disabled={busy || !handTo}
+                  onClick={() => onAct('POST', { action: 'link', old: handOld.old, to: handTo })}
+                >
+                  Link history
+                </button>
+              </div>
+              {isPreviewing(handOld.old, handTo) && <AccountSparkline accountId={handTo} previewWith={handOld.old} />}
+            </>
+          )}
+        </div>
+      )}
+
+      {earlier.length > 0 && (
+        <div className="account-link-row">
+          <button className="link-btn" onClick={() => setEarlierOpen(!earlierOpen)} aria-expanded={earlierOpen}>
+            {earlierOpen ? 'Hide earlier accounts' : `Earlier accounts (${earlier.length})`}
+          </button>
+          {earlierOpen && (
+            <>
+              <p className="chart-note">
+                Accounts of institutions you disconnected. Forget one to delete its balance history, its name
+                and the categories saved for it, for good. Past net-worth totals don&apos;t change.
+              </p>
+              {earlier.map((e) => {
+                const name = e.label ?? 'Balance history';
+                return (
+                  <div key={e.id} className="account-link-linked">
+                    <span>
+                      {name}
+                      {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
+                      {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
+                    </span>
+                    <button
+                      className="link-btn danger-link"
+                      disabled={busy}
+                      onClick={() => {
+                        const sure =
+                          typeof window === 'undefined' ||
+                          window.confirm(
+                            `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
+                          );
+                        if (sure) onAct('POST', { action: 'forget', old: e.id });
+                      }}
+                    >
+                      Forget
+                    </button>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       )}
 
@@ -288,8 +465,10 @@ export function AccountLinksView({
       )}
 
       {error && <div className="error">{error}</div>}
+      {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
-        Linking joins balance history only; nothing stored is changed, and Unlink puts it back as it was.
+        Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to
+        matching transactions. Nothing stored is changed, and Unlink puts it back as it was.
       </p>
     </div>
   );

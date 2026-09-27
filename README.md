@@ -189,6 +189,55 @@ name (e.g. "Chase") and log in with:
 - username: `user_good`
 - password: `pass_good`
 
+### Removing an institution and adding it back
+
+Sometimes a connection has to be removed and added again (it broke badly, the
+bank moved platforms, or you are coming back after a while). Plaid then gives
+every account a new id, so on its own the re-added account would start a new,
+empty history beside the old one.
+
+Instead, the Accounts tab (under **Manage accounts**, in **Reconnected
+accounts**) offers to link each new account to the one it replaces, with the
+evidence and a chart preview. Nothing is linked until you say so. Once linked:
+
+- its **balance history** continues from the old account's;
+- if you had **hidden** the old account, the new one is hidden too (a hidden
+  account stays hidden after you disconnect it, listed as disconnected in the
+  Hidden card, where you can still unhide it);
+- **categories you set** on the old account's transactions show on the same
+  transactions under the new account (matched by date, amount and the bank's
+  own description of the transaction), and the link says how many carried
+  over. A category you set on a new transaction wins. Two identical
+  transactions on the same day that you categorized differently (or only one
+  of) can't be told apart, so they carry nothing.
+
+Anything not offered can be linked with **Link an earlier account by hand**:
+there is no time limit, and it works even after you said an offer was not the
+same account. **Unlink** undoes a link completely; nothing stored is changed
+by linking.
+
+**What is kept, and forgetting it.** After you disconnect an institution,
+Nya keeps each of its accounts' balance history, name, mask and institution,
+and the categories you set, so a re-added account can pick them up, even
+months later. You decide how long: **Earlier accounts** (same card) lists the
+accounts of institutions you disconnected, and **Forget** deletes one's
+balance history, name and saved categories for good. Your past net-worth
+totals don't change (they were your net worth on those days). A hidden
+account stays out of them: forgetting it takes its amount out of each stored
+total, so the chart looks as it did while it was hidden, and nothing about
+the account is kept. Two differences: a day the chart left out because it
+couldn't tell what the account held that day is deleted, if the account
+existed then; and a day it left out from before the account existed or after
+it was last seen comes back, since the account had no part in it. While that is under way the account can't be unhidden; if it
+stops part way, Forget again finishes it. Unlink a linked account first. An account
+of an institution that is still connected (a card you closed, say) is listed
+there once you disconnect the institution.
+
+Forget can't reach copies made before it: a backup you downloaded
+(**Backing up your data**) still has the account, and restoring that backup
+brings it back. A goal that pointed at the account keeps pointing at it (as
+an account id only) until you change the goal.
+
 ### Payment details
 
 Credit cards and loans show what they actually cost: purchase APR, minimum
@@ -230,7 +279,8 @@ brings back the full history including the period while it was hidden.
 
 Hiding is not a security feature: the data is still fetched and stored, it just
 isn't shown or counted. To actually remove an account, disconnect it (Plaid) or
-delete it (manual).
+delete it (manual). A disconnected account that was hidden stays hidden (its
+history is kept, so unhiding it would change past totals) until you unhide it.
 
 ### When an institution can't be reached
 

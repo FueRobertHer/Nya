@@ -167,8 +167,16 @@ describe('recordFetch', () => {
   // The total didn't land, so without the fallback the accounts would get nothing.
   test('falls back to the partial map when the snapshot write fails', async () => {
     fake.reset();
-    fake.failNext('hset');
-    expect(await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBeNull();
+    const hset = fake.hset.bind(fake);
+    fake.hset = (async (key: string, fields: Record<string, string>) => {
+      if (key === ctxKey('history:net-worth')) throw new Error('down');
+      return hset(key, fields);
+    }) as typeof fake.hset;
+    try {
+      expect(await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBeNull();
+    } finally {
+      fake.hset = hset;
+    }
     expect(await getAccountHistory(ctx, 'a')).toEqual([{ date: today(), value: 10 }]);
   });
 });

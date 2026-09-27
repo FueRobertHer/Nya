@@ -615,9 +615,8 @@ describe('recordSnapshot return value', () => {
     fake.reset();
     const today = new Date().toISOString().slice(0, 10);
     const hset = fake.hset.bind(fake);
-    let calls = 0;
     fake.hset = async (key: string, fields: Record<string, string>) => {
-      if (++calls === 2) throw new Error('upstash down');
+      if (key === ctxKey('history:accounts')) throw new Error('upstash down');
       return hset(key, fields);
     };
     try {
