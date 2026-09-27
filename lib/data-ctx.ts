@@ -1,9 +1,14 @@
 // lib/data-ctx.ts
 //
-// The container a request's data lives in (#53): this deployment's, by the
-// same rule sessions are checked by (lib/sessions.ts, deploymentContainer).
-// The proxy has already refused any session naming another container, so this
-// is also the container of the session making the request.
+// The container a request's data lives in (#53). With Clerk on
+// (lib/auth-mode.ts), the one the signed-in account owns (lib/owners.ts);
+// with the shared password, this deployment's, by the same rule sessions are
+// checked by (lib/sessions.ts, deploymentContainer), and the proxy has already
+// refused any session naming another container.
+//
+// dataCtx() is for routes behind the proxy: with Clerk on it asks Clerk who is
+// signed in, which only works where the proxy ran. A route that authenticates
+// itself (a cron, the balance ingest) uses deploymentCtx().
 //
 // Resolve it once per request, at the route, and pass it down: every function
 // that reads or writes stored data takes the Ctx, so a key cannot be built for

@@ -647,6 +647,11 @@ needed with Clerk. Sign in yourself before adding anyone else: another
 account on the list reaches no data ("This account has no data here yet")
 until accounts get containers of their own. Which account owns which
 container is kept environment-wide under `owners`, and is in the backups.
+To hand the data to another account (a recreated Clerk user, say), delete
+the `owners` key for that environment and sign in with the new account. Do
+the same after restoring an archive into a namespace you'll open with a
+different Clerk instance (`restore-test:owners`): the archive's owner is
+your account in the instance it came from.
 
 Turning it on in production: create a production instance in Clerk (it asks
 for a domain you own), set its keys on Production, sign in once to get your
@@ -863,7 +868,8 @@ Preview has its own container (a separate prefix, a separate registry): do
 the same there if you use preview.
 
 Every request works in this deployment's container: the one `CONTAINER_ID`
-names, or with it unset, the only active one. Without a usable container
+names, or with it unset, the only active one. (With Clerk on, the container
+the signed-in account owns instead; see "Signing in with Clerk".) Without a usable container
 (none, `CONTAINER_ID` wrong, the container being restored, or more than one
 active) data requests are refused with a 503 saying why; nothing is read or
 written anywhere else.
