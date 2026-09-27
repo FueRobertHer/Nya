@@ -45,6 +45,8 @@ describe('the archive', () => {
         'c:*:move:*',
         'account-links:lock*',
         'c:*:account-links:lock*',
+        'history:forgetting:*',
+        'c:*:history:forgetting:*',
       ],
     });
   });
@@ -82,6 +84,8 @@ describe('the archive', () => {
   test('leaves out caches and rate-limit counters', async () => {
     await fake.set(testKey('cache:net-worth'), 'stale');
     await fake.set(testKey('ratelimit:login:1.2.3.4'), '3');
+    // A forget's progress names points of a fold a restore wouldn't match.
+    await fake.hset(testKey('c:00000000-0000-4000-8000-000000000000:history:forgetting:t1'), { 'r:2026-01-01': '1' });
     await fake.set(testKey('goals'), 'kept');
 
     const keys = parse(await collect()).slice(1, -1).map((r) => r.key);

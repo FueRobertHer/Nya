@@ -328,8 +328,14 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[1]);
       return 1;
     }
+    if (name === '-- nya:history-delete-if') {
+      if ((this.hashes.get(keys[0])?.get(args[0]) ?? null) !== args[1]) return 0;
+      this.hdelNow(keys[0], [args[0]]);
+      return 1;
+    }
     if (name === '-- nya:history-fold') {
       const [date, field, expectedTotal, newTotal] = args;
+      if (this.hashes.get(keys[1])?.has(field)) return 2;
       const cur = (key: string) => this.hashes.get(key)?.get(date) ?? '';
       if (cur(keys[0]) !== expectedTotal) return 0;
       for (let i = 2; i < keys.length; i++) if (cur(keys[i]) !== args[4 + (i - 2) * 2]) return 0;

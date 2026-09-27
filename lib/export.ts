@@ -74,9 +74,11 @@ export const SCHEMA_ERA = 'containers';
  * The data move's record is left out too: restored, it would vouch for values
  * it never copied, and a later move could overwrite them (lib/move.ts).
  * So is the lock on account-link changes: restored, it would block linking
- * and forgetting for minutes, for a change that isn't running.
+ * and forgetting for minutes, for a change that isn't running. And a forget's
+ * progress: an export isn't taken in one step, so it could hold progress for
+ * a point whose total it caught from before; restored, a retry would skip it.
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock'] as const;
+export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:'] as const;
 
 /** Page size for SCAN and HSCAN. history:accounts gains a field every day, and
  *  one HGETALL of years of it would be one oversized response. */

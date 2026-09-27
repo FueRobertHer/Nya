@@ -161,6 +161,12 @@ async function locked(ctx: Ctx, fn: () => Promise<Response>): Promise<Response> 
 /** Links an offered (or by-hand) pair, recomputed from this container's own
  *  data right now. Run inside withLinksLock. */
 async function linkPair(ctx: Ctx, old: string, to: string) {
+  // An account part way through being forgotten can only be forgotten: a link
+  // would carry a half-folded history onto an account on screen.
+  const hidden = await getHiddenAccounts(ctx);
+  if (hidden.get(old)?.forget_tag || hidden.get(to)?.forget_tag) {
+    return NextResponse.json({ error: 'That account is being forgotten. Finish forgetting it first.' }, { status: 409 });
+  }
   const { inputs, offer, manual } = await offered(ctx);
   const byHand = !isOffered(old, to, offer) && isManualChoice(old, to, manual);
   if (!isOffered(old, to, offer) && !byHand) {
@@ -213,10 +219,15 @@ export async function POST(req: Request) {
     if (action === 'forget') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
       return await locked(ctx, async () => {
-        const { unreadableDates } = await forgetEarlierAccount(ctx, old);
-        await clearCaches(ctx);
-        // Days whose records are damaged beyond reading, left as they are.
-        return NextResponse.json({ forgotten: true, unreadable_days: unreadableDates.length });
+        try {
+          const { unreadableDates } = await forgetEarlierAccount(ctx, old);
+          // Days whose records are damaged beyond reading, left as they are.
+          return NextResponse.json({ forgotten: true, unreadable_days: unreadableDates.length });
+        } finally {
+          // Even a forget that stopped part way changed totals: a payload
+          // cached before it (or while it ran) must not outlive it.
+          await clearCaches(ctx).catch(() => {});
+        }
       });
     }
 

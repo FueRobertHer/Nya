@@ -554,8 +554,8 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * the categories recorded to carry across a re-link, dismissed offers that
  * name it, leftover remembered records naming it, and its hidden entry. The
  * past net-worth totals stay as they were (they were the user's net worth on
- * those dates); a hidden account stays out of them, through an anonymous
- * adjustment recorded first (lib/history.ts forgetAccountBalances).
+ * those dates); a hidden account is folded out of them first, so the chart
+ * shows them as it did while it was hidden (lib/history.ts foldHiddenAccount).
  *
  * Refused (ForgetRefused) unless it is forgettable right now, re-checked here
  * from fresh, strict reads; an account known only from balances is also
@@ -563,11 +563,10 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * Balances go before the name, so a failure part way leaves it listed, and
  * running it again finishes. Call inside withLinksLock.
  *
- * Not covered by the lock: a backfill that fetched before the institution
- * was disconnected and finishes after this can rebuild estimated points that
- * still include the account. It is as narrow as it sounds (a backfill runs
- * for seconds, and a forget needs the disconnect first); a later backfill
- * rebuilds them without it.
+ * A backfill or snapshot running beside it isn't locked out: both write each
+ * breakdown before its total, which is the order a fold is safe against
+ * (foldHiddenAccount). A backfill that fetched before the institution was
+ * disconnected rebuilds with the account in it, as it would have anyway.
  */
 export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadableDates: string[] }> {
   const [inputs, hidden, items] = await Promise.all([
@@ -590,7 +589,6 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
     }
   }
 
-  let tag: string | null = null;
   if (found.hidden) {
     // Taken out of every past total for good, point by point, each in one
     // step (lib/history.ts foldHiddenAccount): while it runs, a point is
@@ -599,10 +597,13 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
     // hidden entry, is where progress is kept, so a retry skips what is done;
     // only once every point is folded is the hidden entry dropped.
     const entry = hidden.get(id)!;
-    tag = entry.forget_tag ?? crypto.randomUUID();
+    const tag = entry.forget_tag ?? crypto.randomUUID();
     if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
     const d = inputs.directory[id];
     await foldHiddenAccount(ctx, id, entry.type, tag, { first: d?.first_seen ?? null, last: d?.last_seen ?? null });
+    // Every point is folded: the progress goes first, while the hidden entry
+    // still holds the tag that names it, so nothing can leave it behind.
+    await dropFoldProgress(ctx, tag);
     await setAccountHidden(ctx, id, '', false);
   }
   const result = await forgetAccountBalances(ctx, id);
@@ -619,7 +620,6 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.
   await redis().hdel(directoryKey(ctx), id);
-  if (tag) await dropFoldProgress(ctx, tag);
   // Categories of its transactions that nothing can show any more (a failed
   // disconnect-time cleanup would otherwise leave them for good).
   await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);

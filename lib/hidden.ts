@@ -96,7 +96,19 @@ export async function setAccountHidden(ctx: Ctx,
     await redis().hdel(HIDDEN_HASH(ctx), account_id);
     return;
   }
-  const value: HiddenAccount = { type, hidden_at: new Date().toISOString() };
+  // A forget part way through keeps its mark through a re-hide: without it
+  // the account could be unhidden with half its history folded away.
+  let forget_tag: string | undefined;
+  const existing = await redis().hget<string>(HIDDEN_HASH(ctx), account_id);
+  if (existing) {
+    try {
+      const parsed = JSON.parse(await decrypt(existing)) as Partial<HiddenAccount>;
+      if (typeof parsed.forget_tag === 'string') forget_tag = parsed.forget_tag;
+    } catch (err) {
+      throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
+    }
+  }
+  const value: HiddenAccount = { type, hidden_at: new Date().toISOString(), ...(forget_tag ? { forget_tag } : {}) };
   await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
 }
 

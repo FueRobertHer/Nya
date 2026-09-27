@@ -30,6 +30,7 @@ mock.module('@/lib/plaid', () => ({
         transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
       },
     }),
+    accountsBalanceGet: async (req: any) => ({ data: { accounts: plaidAccounts[req.access_token] ?? [] } }),
     itemRemove: async (req: any) => {
       removed.push(req.access_token);
       return { data: {} };
@@ -503,6 +504,8 @@ describe('forgetting an earlier account', () => {
     await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-15': await enc({ acct_old: 40 }) });
     await withEstimated();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const before = await series();
+    expect(before.find((p) => p.date === '2025-12-15')!.value).toBe(0);
     const evalOrig = fake.eval.bind(fake);
     let failed = false;
     fake.eval = (async (script: string, keys: string[], args: string[]) => {
@@ -521,6 +524,9 @@ describe('forgetting an earlier account', () => {
       fake.eval = evalOrig;
     }
     expect(await storedTotal('history:net-worth:est', '2025-12-15')).toBe(0);
+    // Still a point while stopped: its breakdown names the account, at 0.
+    expect(await readMap('history:accounts:est:flatd', '2025-12-15')).toEqual({ acct_old: 0 });
+    expect(await series()).toEqual(before);
     expect((await forget('acct_old')).status).toBe(200);
     expect(await storedTotal('history:net-worth:est', '2025-12-15')).toBe(0);
     expect(await storedTotal('history:net-worth:est', '2025-12-01')).toBe(10);
@@ -545,11 +551,16 @@ describe('forgetting an earlier account', () => {
   test('a point dropped while hidden is deleted within its life, and kept outside it', async () => {
     await setup();
     await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt('999'), '2025-06-01': await encrypt('77') });
+    // An estimate the real point hid: it can't show once the real one goes.
+    await fake.hset(ctxKey('history:net-worth:est'), { '2026-02-01': await encrypt('888') });
+    await fake.hset(ctxKey('history:accounts:est'), { '2026-02-01': await enc({ acct_other: 888 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const dates = (h: { date: string }[]) => h.map((p) => p.date);
     expect(dates(await series())).not.toContain('2026-02-01');
     await forget('acct_old');
     expect(await fake.hget(ctxKey('history:net-worth'), '2026-02-01')).toBeNull();
+    expect(await fake.hget(ctxKey('history:net-worth:est'), '2026-02-01')).toBeNull();
+    expect(dates(await series())).not.toContain('2026-02-01');
     expect(await storedTotal('history:net-worth', '2025-06-01')).toBe(77);
     expect(dates(await series())).toContain('2025-06-01');
   });
@@ -673,6 +684,159 @@ describe('forgetting an earlier account', () => {
       expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
     } finally {
       fake.hgetall = hgetall;
+    }
+  });
+
+  // A retry works out the account's life again: a point folded before the
+  // stop must still count toward it, or a day inside it reads as outside.
+  test('a retry sees the same life, so a day it can’t tell inside it is still deleted', async () => {
+    await setup();
+    await fake.hset(ctxKey('history:net-worth'), { '2025-10-01': await encrypt('11'), '2025-10-15': await encrypt('99') });
+    await fake.hset(ctxKey('history:accounts'), { '2025-10-01': await enc({ acct_old: 10, acct_other: 1 }) });
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const evalOrig = fake.eval.bind(fake);
+    let failed = false;
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (!failed && script.startsWith('-- nya:history-fold') && args[0] === '2025-10-15') {
+        failed = true;
+        const folded = () => [...(fake as any).hashes.entries()].some(([k, h]: [string, Map<string, string>]) => k.includes('history:forgetting:') && h.has('r:2025-10-01'));
+        for (let i = 0; i < 100 && !folded(); i++) await Bun.sleep(5);
+        throw new Error('down');
+      }
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      expect((await forget('acct_old')).status).toBe(500);
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(await storedTotal('history:net-worth', '2025-10-15')).toBe(99);
+    expect((await forget('acct_old')).status).toBe(200);
+    expect(await fake.hget(ctxKey('history:net-worth'), '2025-10-15')).toBeNull();
+    expect(await storedTotal('history:net-worth', '2025-10-01')).toBe(1);
+  });
+
+  // A failed point must not end the request (and free the lock) while the
+  // rest of its batch is still writing.
+  test('a failure is reported only once every point of its batch has settled', async () => {
+    await setup();
+    await withEstimated();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const evalOrig = fake.eval.bind(fake);
+    let running = 0;
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (!script.startsWith('-- nya:history-fold')) return evalOrig(script, keys, args);
+      if (args[0] === '2026-01-01') {
+        for (let i = 0; i < 100 && running === 0; i++) await Bun.sleep(1); // another point is writing
+        throw new Error('down');
+      }
+      running++;
+      try {
+        await Bun.sleep(50);
+        return await evalOrig(script, keys, args);
+      } finally {
+        running--;
+      }
+    }) as typeof fake.eval;
+    try {
+      expect((await forget('acct_old')).status).toBe(500);
+      expect(running).toBe(0);
+    } finally {
+      fake.eval = evalOrig;
+    }
+  });
+
+  // Every point folded, then the last step fails: the progress is already
+  // gone, and a retry changes no total a second time.
+  test('a forget that fails after the fold leaves no progress behind and folds nothing twice', async () => {
+    await setup();
+    await withEstimated();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const hdel = fake.hdel.bind(fake);
+    let failed = false;
+    fake.hdel = (async (key: string, ...fields: string[]) => {
+      if (!failed && key === ctxKey('hidden:accounts')) {
+        failed = true;
+        throw new Error('down');
+      }
+      return hdel(key, ...fields);
+    }) as typeof fake.hdel;
+    try {
+      expect((await forget('acct_old')).status).toBe(500);
+    } finally {
+      fake.hdel = hdel;
+    }
+    expect(failed).toBe(true);
+    expect(await leftovers()).toEqual([]);
+    expect((await forget('acct_old')).status).toBe(200);
+    expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(5);
+    expect(await storedTotal('history:net-worth:est', '2025-12-01')).toBe(10);
+  });
+
+  test('an account being forgotten can’t be linked, and keeps its mark through a re-hide', async () => {
+    await setup();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const { getHiddenAccounts, markForgetting } = await import('@/lib/hidden');
+    await markForgetting(ctx, 'acct_old', (await getHiddenAccounts(ctx)).get('acct_old')!, 'tag-1');
+    const link = await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_other' });
+    expect(link.status).toBe(409);
+    expect(await fake.hgetall(ctxKey('account-links'))).toBeNull();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    expect((await getHiddenAccounts(ctx)).get('acct_old')!.forget_tag).toBe('tag-1');
+    // The other side of a link, too.
+    await setAccountHidden(ctx, 'acct_other', 'depository', true);
+    await markForgetting(ctx, 'acct_other', (await getHiddenAccounts(ctx)).get('acct_other')!, 'tag-2');
+    await fake.hset(ctxKey('hidden:accounts'), { acct_old: await encrypt(JSON.stringify({ type: 'depository', hidden_at: 'x' })) });
+    expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_other' })).status).toBe(409);
+  });
+
+  test('a forget that fails still clears the cached payloads', async () => {
+    await setup();
+    await setAccountHidden(ctx, 'acct_old', 'depository', true);
+    const { writeCache, readCache, CacheKey } = await import('@/lib/cache');
+    await writeCache(ctx, CacheKey.NetWorth, { stale: true });
+    const evalOrig = fake.eval.bind(fake);
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:history-fold')) throw new Error('down');
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      expect((await forget('acct_old')).status).toBe(500);
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(await readCache(ctx, CacheKey.NetWorth)).toBeNull();
+  });
+
+  // A backfill and a snapshot write each date's breakdown before its total:
+  // a fold reading between them sees a new breakdown beside an old total,
+  // which its compare-and-set refuses, never an old breakdown it would trust.
+  test('backfill and snapshots write the breakdowns before the totals', async () => {
+    await addItem('item_a', 'acct_a', [row('a1', 'acct_a', { date: daysAgo(20) })]);
+    await route('transactions', 'GET');
+    const order: string[] = [];
+    const note = (key: string) => {
+      const name = key.slice(key.indexOf(':history:') + 1);
+      if (name.startsWith('history:') && order.at(-1) !== name) order.push(name);
+    };
+    const hset = fake.hset.bind(fake);
+    const set = fake.set.bind(fake);
+    fake.hset = (async (key: string, fields: any) => (note(key), hset(key, fields))) as typeof fake.hset;
+    fake.set = (async (key: string, ...a: any[]) => (note(key), (set as any)(key, ...a))) as typeof fake.set;
+    try {
+      const res = await route('backfill', 'POST');
+      expect(res.body.backfilled).toBeGreaterThan(0);
+      const at = (name: string) => order.indexOf(name);
+      expect(at('history:net-worth:est')).toBeGreaterThan(at('history:accounts:est'));
+      expect(at('history:net-worth:est')).toBeGreaterThan(at('history:accounts:est:flatd'));
+      order.length = 0;
+      const { recordSnapshot } = await import('@/lib/history');
+      await recordSnapshot(ctx, 100, { acct_a: 100 });
+      expect(order.indexOf('history:net-worth')).toBeGreaterThan(order.indexOf('history:accounts'));
+      expect(order.indexOf('history:accounts')).toBeGreaterThanOrEqual(0);
+    } finally {
+      fake.hset = hset;
+      fake.set = set;
     }
   });
 
@@ -945,7 +1109,11 @@ describe.skipIf(!hasRedis && !process.env.CI)('the history compare-and-set scrip
     expect(await r.send('HGET', ['m1', 'd'])).toBe('a1');
     expect(await r.send('HEXISTS', ['m2', 'd'])).toBe(0);
     expect(await r.send('HGET', ['prog', 'r:d'])).toBe('1');
-    expect(await fold('t1', '-', ['a1', 'a1'], ['', ''])).toBe(1); // delete, maps as they are
+    expect(await fold('t1', '-', ['a1', 'a1'], ['', ''])).toBe(2); // folded already: nothing
+    expect(await r.send('HGET', ['tot', 'd'])).toBe('t1');
+    const foldAgain = (field: string, total: string, newTotal: string, m1: [string, string]) =>
+      evalScript(HISTORY_FOLD, ['tot', 'prog', 'm1', 'm2'], ['d', field, total, newTotal, ...m1, '', '']);
+    expect(await foldAgain('e:d', 't1', '-', ['a1', 'a1'])).toBe(1); // delete, maps as they are
     expect(await r.send('HEXISTS', ['tot', 'd'])).toBe(0);
     expect(await r.send('HGET', ['m1', 'd'])).toBe('a1');
     expect(await evalScript(HISTORY_SET_IF_ABSENT, ['h'], ['f', 'v1'])).toBe(1);

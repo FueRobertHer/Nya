@@ -143,6 +143,25 @@ export async function recordSnapshot(ctx: Ctx,
 ): Promise<string | null> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // The breakdown before the total it breaks down. A reader that meets the
+  // two between the writes sees the new breakdown beside the old total, never
+  // an old breakdown beside a new total: forgetting a hidden account
+  // (foldHiddenAccount) reads the breakdown to decide what to take out of the
+  // total, and must never take out an account the new total doesn't have.
+  let mapLanded = false;
+  if (accountBalances && Object.keys(accountBalances).length > 0) {
+    try {
+      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
+      mapLanded = true;
+    } catch {
+      // The total still goes in. What's lost is the ability to subtract a
+      // hidden account from THIS date later, which getHistory already handles
+      // by dropping the point it can't correct. Today's partial map, if any,
+      // is left alone below, so the per-account charts still have something
+      // measured for today.
+    }
+  }
+
   try {
     await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(String(netWorth)) });
   } catch {
@@ -150,17 +169,7 @@ export async function recordSnapshot(ctx: Ctx,
     return null;
   }
 
-  if (accountBalances && Object.keys(accountBalances).length > 0) {
-    try {
-      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
-    } catch {
-      // The total is in the chart either way. What's lost is the ability to
-      // subtract a hidden account from THIS date later, which getHistory
-      // already handles by dropping the point it can't correct. Today's
-      // partial map, if any, is left alone below, so the per-account charts
-      // still have something measured for today.
-      return today;
-    }
+  if (mapLanded) {
     // This map now supersedes any partial one written earlier today. Clearing
     // it is what lets getAccountHistory read a partial map that sits beside a
     // real one as the NEWER measurement: it can only have been written after
@@ -759,11 +768,11 @@ type HiddenSources = {
  * What one hidden account contributed to one point, signed as it was added
  * to the total; null when that can't be told, and the point must be dropped.
  * The one rule for it, used to subtract a hidden account (getHistory) and to
- * record what a forgotten hidden account contributed (forgetAccountBalances).
+ * fold a forgotten hidden account out of the totals (foldHiddenAccount).
  *
  * REAL points: the per-account map recorded with the total. A real date with
  * no per-account map can't be corrected. This is reachable: recordSnapshot
- * writes the total and the map as two separate awaits, so the first can land
+ * writes the map and the total as two separate awaits, so the second can land
  * and the second fail. Showing the point would put a single-day spike the
  * size of the hidden account into the chart, so it is dropped instead and the
  * line interpolates across one day.
@@ -971,9 +980,10 @@ function unreadableForGood(err: unknown): boolean {
 /**
  * Removes one account's balances from every per-account layer, for a user
  * forgetting an earlier account (lib/links.ts forgetEarlierAccount checks it
- * may be forgotten, and for a hidden one records its contribution first,
- * foldHiddenAccount). The net-worth TOTALS are left exactly as they
- * are: they were the user's net worth on those dates.
+ * may be forgotten, and for a hidden one has already folded it out of the
+ * totals, foldHiddenAccount). The net-worth TOTALS are not touched here: for
+ * an account that wasn't hidden they were the user's net worth on those
+ * dates. Also removes the zeros a fold left in its place.
  *
  * Each map is rewritten only if it still holds what was read (a backfill can
  * rewrite estimated dates at any time), re-read and retried if not, several
@@ -1080,6 +1090,12 @@ export async function forgetAccountBalances(
 /** How many dates are rewritten at once while forgetting an account. */
 const FORGET_BATCH = 16;
 
+/** Deletes a field only if it still holds what was read. */
+export const HISTORY_DELETE_IF = `-- nya:history-delete-if
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+return 1`;
+
 /** Writes a field only when it is absent. */
 export const HISTORY_SET_IF_ABSENT = `-- nya:history-set-if-absent
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 then return 0 end
@@ -1092,10 +1108,12 @@ return 1`;
  * was read, and marks the point done. KEYS: total hash, progress key, then
  * the map hashes. ARGV: date, progress field, expected total ('' = absent),
  * new total ('' = keep, '-' = delete), then for each map its expected and new
- * value. Answers 1 when done, 0 when anything changed since it was read.
+ * value. Answers 1 when done, 2 when the point was already folded (by an
+ * earlier attempt still finishing), 0 when anything changed since it was read.
  */
 export const HISTORY_FOLD = `-- nya:history-fold
 local date = ARGV[1]
+if redis.call('HEXISTS', KEYS[2], ARGV[2]) == 1 then return 2 end
 if (redis.call('HGET', KEYS[1], date) or '') ~= ARGV[3] then return 0 end
 for i = 3, #KEYS do
   if (redis.call('HGET', KEYS[i], date) or '') ~= ARGV[5 + (i - 3) * 2] then return 0 end
@@ -1114,14 +1132,27 @@ return 1`;
  * forgotten (lib/links.ts forgetEarlierAccount): each point's stored total is
  * lowered by what the account contributed to it, by the rule the chart uses
  * to subtract it (hiddenContribution), and the account is removed from the
- * per-account maps that point is read with, in ONE step per point
+ * per-account maps that point is read with set to 0, in ONE step per point
  * (HISTORY_FOLD). So at every moment each point is either untouched (and the
- * still-hidden account is subtracted by the chart as before) or folded (and
- * the account is simply not there): never counted twice, never missing.
+ * still-hidden account is subtracted by the chart as before) or folded (the
+ * account is there with nothing, so the chart subtracts nothing and drops
+ * nothing): never counted twice, never missing. Set to 0 rather than removed
+ * while it is still hidden: removed, a flat-only estimated point would read
+ * as "can't tell" and drop out of the chart until the forget finished, and a
+ * retry would no longer see the account in the maps that give its life. The
+ * caller removes the zeros once the hidden entry is gone
+ * (forgetAccountBalances).
  *
  * A point the chart drops while the account is hidden (what it contributed
  * can't be told) is deleted if it falls within the account's known life, and
- * left alone outside it, where the account can't be in it.
+ * left alone outside it, where the account can't be in it. A real point
+ * deleted takes that date's estimated total with it: the chart shows an
+ * estimate only where there is no real point, so it would appear in its place.
+ *
+ * Totals and breakdowns are written breakdown first everywhere else
+ * (recordSnapshot, the backfill), so a fold running beside one reads a new
+ * breakdown with an old total, takes nothing out, and the new total that
+ * follows never had the account; never the reverse.
  *
  * Before any point, the single pre-per-date flat record is copied to each
  * estimated date that still relies on it (the same record, so every point
@@ -1235,26 +1266,41 @@ export async function foldHiddenAccount(
       for (let i = 0; i < mapKeys.length; i++) {
         const m = maps[i];
         let next = blobs[i] ?? '';
-        if (m && m !== 'unreadable' && account_id in m) {
-          const { [account_id]: _gone, ...rest } = m;
-          next = await encrypt(JSON.stringify(rest));
+        if (m && m !== 'unreadable' && account_id in m && m[account_id] !== 0) {
+          next = await encrypt(JSON.stringify({ ...m, [account_id]: 0 }));
         }
         pairs.push(blobs[i] ?? '', next);
       }
       const answer = Number(
         await redis().eval(HISTORY_FOLD, [totalKey, progress, ...mapKeys], [date, `${estimated ? 'e' : 'r'}:${date}`, total ?? '', newTotal, ...pairs])
       );
+      if (answer === 2) return; // folded already, by an attempt still finishing
       if (answer === 1) {
         for (const b of blobs) if (b) evictDecrypted(b);
         folded++;
-        if (newTotal === '-') deleted++;
+        if (newTotal === '-') {
+          deleted++;
+          if (!estimated) await deleteEstimateOn(date);
+        }
         return;
       }
       if (attempt >= 3) throw new Error(`history: ${date} kept changing while an account was being forgotten`);
     }
   };
+  const deleteEstimateOn = async (date: string) => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const blob = await redis().hget<string>(ESTIMATED_HASH(ctx), date);
+      if (!blob) return;
+      if (Number(await redis().eval(HISTORY_DELETE_IF, [ESTIMATED_HASH(ctx)], [date, blob])) === 1) return;
+    }
+    throw new Error(`history: the estimate for ${date} kept changing while an account was being forgotten`);
+  };
   for (let i = 0; i < points.length; i += FORGET_BATCH) {
-    await Promise.all(points.slice(i, i + FORGET_BATCH).map(foldOne));
+    // Every point of a batch settled before anything is reported: a failure
+    // must not return (and free the lock) while others are still writing.
+    const settled = await Promise.allSettled(points.slice(i, i + FORGET_BATCH).map(foldOne));
+    const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed) throw failed.reason;
   }
   return { folded, deleted };
 }
