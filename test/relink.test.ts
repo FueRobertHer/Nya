@@ -496,8 +496,8 @@ describe('forgetting an earlier account', () => {
     expect(await leftovers()).toEqual([]);
   });
 
-  // A point already folded reads as "can't tell" afterwards (a flat-only
-  // estimate with its flat record scrubbed): a retry must skip it, not drop it.
+  // A retry works only on the points not yet folded: a flat-only estimate
+  // folded before the stop keeps its place on the chart, and isn't redone.
   test('a retry skips the points already folded', async () => {
     await setup();
     await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-15': await encrypt('40') });
@@ -527,7 +527,18 @@ describe('forgetting an earlier account', () => {
     // Still a point while stopped: its breakdown names the account, at 0.
     expect(await readMap('history:accounts:est:flatd', '2025-12-15')).toEqual({ acct_old: 0 });
     expect(await series()).toEqual(before);
-    expect((await forget('acct_old')).status).toBe(200);
+    const refolded: string[] = [];
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:history-fold')) refolded.push(args[1]);
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      expect((await forget('acct_old')).status).toBe(200);
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(refolded).not.toContain('e:2025-12-15');
+    expect(refolded).toContain('e:2025-12-01');
     expect(await storedTotal('history:net-worth:est', '2025-12-15')).toBe(0);
     expect(await storedTotal('history:net-worth:est', '2025-12-01')).toBe(10);
   });
@@ -838,6 +849,26 @@ describe('forgetting an earlier account', () => {
       fake.hset = hset;
       fake.set = set;
     }
+  });
+
+  // A backfill that fetched from an institution disconnected (and maybe an
+  // account of it forgotten) while it ran writes nothing.
+  test('a backfill whose institution was disconnected meanwhile writes nothing', async () => {
+    await addItem('item_a', 'acct_a', [row('a1', 'acct_a', { date: daysAgo(20) })]);
+    await route('transactions', 'GET');
+    const plaid: any = (await import('@/lib/plaid')).plaidClient;
+    const balances = plaid.accountsBalanceGet;
+    plaid.accountsBalanceGet = async (req: any) => {
+      await route('disconnect', 'POST', { item_id: 'item_a' });
+      return balances(req);
+    };
+    try {
+      expect((await route('backfill', 'POST')).body).toEqual({ skipped: true, reason: 'institutions changed' });
+    } finally {
+      plaid.accountsBalanceGet = balances;
+    }
+    expect(await fake.hgetall(ctxKey('history:net-worth:est'))).toBeNull();
+    expect(await fake.hgetall(ctxKey('history:accounts:est'))).toBeNull();
   });
 
   // The chart reads through a cache of decrypted maps: a forgotten account's

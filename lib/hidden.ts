@@ -5,13 +5,17 @@
 // or deleting, nothing is discarded -- the account is still fetched, still
 // stored, still snapshotted, and unhiding restores it complete.
 //
-// THE GOVERNING PRINCIPLE: storage never changes; hiding is applied on read.
-// recordSnapshot() keeps writing the true total and the full per-account
+// THE GOVERNING PRINCIPLE: hiding never changes storage; it is applied on
+// read. recordSnapshot() keeps writing the true total and the full per-account
 // balance map regardless of what's hidden (see lib/history.ts). Two things fall
 // out of that:
 //
 //   1. Unhiding is exactly symmetric, because nothing was ever removed. The
 //      history accumulated while an account was hidden is still there.
+//      (Forgetting a hidden account is the one exception, and it is the
+//      user's choice: it folds the account out of the stored totals, and
+//      unhiding is refused while that runs. See lib/links.ts
+//      forgetEarlierAccount.)
 //   2. A failed hidden read can only ever display a wrong number, never write
 //      one. Contrast lib/manual.ts, where a bad read *could* poison a permanent
 //      record, which is why that module's failure mode has to be louder.
@@ -120,8 +124,9 @@ export async function markForgetting(ctx: Ctx, account_id: string, entry: Hidden
 }
 
 /**
- * Drops hidden entries for accounts that no longer exist (institution
- * disconnected, manual account deleted).
+ * Drops hidden entries for accounts that no longer exist (a manual account
+ * deleted; a disconnected institution's hidden accounts are kept, see
+ * lib/links.ts).
  *
  * Worth doing properly rather than leaving stale ids around: the historical
  * per-account maps still contain a deleted account's balances, so getHistory

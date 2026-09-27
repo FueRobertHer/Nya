@@ -566,7 +566,7 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * A backfill or snapshot running beside it isn't locked out: both write each
  * breakdown before its total, which is the order a fold is safe against
  * (foldHiddenAccount). A backfill that fetched before the institution was
- * disconnected rebuilds with the account in it, as it would have anyway.
+ * disconnected sees it gone before writing, and writes nothing.
  */
 export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadableDates: string[] }> {
   const [inputs, hidden, items] = await Promise.all([

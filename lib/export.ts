@@ -75,8 +75,9 @@ export const SCHEMA_ERA = 'containers';
  * it never copied, and a later move could overwrite them (lib/move.ts).
  * So is the lock on account-link changes: restored, it would block linking
  * and forgetting for minutes, for a change that isn't running. And a forget's
- * progress: an export isn't taken in one step, so it could hold progress for
- * a point whose total it caught from before; restored, a retry would skip it.
+ * progress: it names points of a fold the restored data may not match, and a
+ * retry works from the breakdowns without it (lib/history.ts
+ * foldHiddenAccount).
  */
 export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:'] as const;
 

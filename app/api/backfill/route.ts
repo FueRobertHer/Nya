@@ -285,6 +285,15 @@ export async function POST() {
       .map((p) => ({ date: p.date, value: p.walked + rest }));
     const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
 
+    // An institution disconnected while this ran (the Plaid pulls are slow)
+    // may have had an account forgotten since: writing its balances back
+    // would put a forgotten account into the chart. Not done, so the next
+    // load rebuilds from what is connected now.
+    const stillConnected = new Set((await getItems(ctx)).map((i) => i.item_id));
+    if (items.some((i) => !stillConnected.has(i.item_id))) {
+      return NextResponse.json({ skipped: true, reason: 'institutions changed' });
+    }
+
     // The breakdowns before the totals (the same order recordSnapshot keeps,
     // and for the same reason): a forget of a hidden account reading between
     // the writes must see new breakdowns beside old totals, never the reverse.

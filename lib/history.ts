@@ -809,8 +809,9 @@ async function hiddenContribution(src: HiddenSources, date: string, estimated: b
 /**
  * The net-worth series, with hidden accounts subtracted per date.
  *
- * Hiding is retroactive by construction: the stored totals always include every
- * account (see the store-true principle in lib/hidden.ts), and the per-account
+ * Hiding is retroactive by construction: the stored totals include every
+ * account (see the store-true principle in lib/hidden.ts; only a forgotten
+ * hidden account is folded out of them), and the per-account
  * balance map recorded alongside each date is what lets a hidden account's
  * contribution be removed from every point. Hiding a $40k 401k therefore
  * redraws the whole chart as if it was never counted, instead of putting a $40k
