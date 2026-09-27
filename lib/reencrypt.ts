@@ -112,6 +112,7 @@ const PREFIXES: [string, Kind][] = [
   ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
+  ['backups:', 'plain'], // the nightly backup's last outcome (lib/backup.ts)
 ];
 
 /** How a key (without the environment prefix) is stored, or null if it is not

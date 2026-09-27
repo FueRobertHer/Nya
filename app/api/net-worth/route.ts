@@ -1,3 +1,4 @@
+import { backupProblem, type BackupProblem } from '@/lib/backup';
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
@@ -34,8 +35,12 @@ type NetWorthPayload = {
 // 15-minute cache. Cached true would re-POST /api/backfill on every load for
 // the rest of the TTL; cached false would swallow a recompute that a
 // clearBackfillDone() elsewhere had just asked for.
-async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean }> {
-  return { backfill_stale: !(await isBackfillDone(ctx)) };
+//
+// The backups' state rides along for the same reason: a notice frozen for 15
+// minutes would outlive a backup that just recovered (lib/backup.ts).
+async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null }> {
+  const [done, backup_problem] = await Promise.all([isBackfillDone(ctx), backupProblem()]);
+  return { backfill_stale: !done, backup_problem };
 }
 
 /**

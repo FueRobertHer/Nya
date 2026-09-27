@@ -37,7 +37,7 @@ mock.module('@vercel/blob', () => ({
   },
 }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { GET } = await import('@/app/api/backup/route');
 
@@ -204,5 +204,61 @@ describe('the backup cron', () => {
     const hour = (path: string) => Number(crons.find((c) => c.path === path)!.schedule.split(' ')[1]);
     expect(hour('/api/backup')).toBeGreaterThan(hour('/api/snapshot/catchup'));
     expect(hour('/api/backup')).toBeGreaterThan(hour('/api/snapshot'));
+  });
+});
+
+describe('saying when backups have stopped', () => {
+  const quiet = async <T>(fn: () => Promise<T>) => {
+    const [log, error] = [console.log, console.error];
+    console.log = console.error = () => {};
+    try {
+      return await fn();
+    } finally {
+      [console.log, console.error] = [log, error];
+    }
+  };
+  const at = (iso: string) => new Date(iso);
+
+  test('nothing to say before any backup has run, or after one just did', async () => {
+    expect(await backupProblem()).toBeNull();
+    expect((await quiet(() => cron())).status).toBe(200);
+    expect(await backupProblem()).toBeNull();
+  });
+
+  test('a failed night is reported with its reason and the last good copy, until one succeeds', async () => {
+    await recordOutcome({ ok: true }, at('2026-06-14T16:00:00Z'));
+    corruptReads = true;
+    await quiet(() => cron());
+    const problem = await backupProblem();
+    expect(problem!.last_ok).toBe('2026-06-14T16:00:00.000Z');
+    expect(problem!.reason).toContain('did not read back');
+    corruptReads = false;
+    await quiet(() => cron());
+    expect(await backupProblem()).toBeNull();
+  });
+
+  test('no store connected is reported too', async () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    await quiet(() => cron());
+    expect((await backupProblem())!.reason).toContain('No blob store');
+  });
+
+  test('no success for more than two days is reported, even with no failure recorded', async () => {
+    await recordOutcome({ ok: true }, at('2026-06-10T16:00:00Z'));
+    expect(await backupProblem(at('2026-06-12T15:00:00Z'))).toBeNull();
+    expect(await backupProblem(at('2026-06-12T17:00:00Z'))).toEqual({ last_ok: '2026-06-10T16:00:00.000Z', reason: null });
+  });
+
+  test('a status that can’t be read is no notice, and a failed record never fails the backup', async () => {
+    fake.failNext('get');
+    expect(await backupProblem()).toBeNull();
+    fake.failNext('set');
+    expect((await quiet(() => cron())).status).toBe(200);
+  });
+
+  test('the status is kept out of the backup itself', async () => {
+    await recordOutcome({ ok: true }, at('2026-06-14T16:00:00Z'));
+    const { pathname } = await runBackup(fake as any, await store(), clock);
+    expect(verifyArchive(blobs.get(pathname)!.body).records.map((r) => r.key)).not.toContain('backups:status');
   });
 });

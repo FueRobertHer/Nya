@@ -508,7 +508,9 @@ To turn it on:
 
 Check it worked the next day: the cron's log in Vercel says "Backup written",
 and the file is in the store's browser. A failed night shows as a failed cron
-run with the reason; the older copies are left alone.
+run with the reason, and the older copies are left alone. Vercel doesn't send
+an alert for it, so the dashboard shows a note when the last backup failed or
+none has been saved for two days.
 
 To restore from one, download it from the store's browser in Vercel and follow
 "Restoring a backup" below with that file.

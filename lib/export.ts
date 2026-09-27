@@ -77,9 +77,10 @@ export const SCHEMA_ERA = 'containers';
  * and forgetting for minutes, for a change that isn't running. And a forget's
  * progress: it names points of a fold the restored data may not match, and a
  * retry works from the breakdowns without it (lib/history.ts
- * foldHiddenAccount).
+ * foldHiddenAccount). And the nightly backup's last outcome (lib/backup.ts):
+ * restored, it would describe backups of another moment.
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:'] as const;
+export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:', 'backups:'] as const;
 
 /** Page size for SCAN and HSCAN. history:accounts gains a field every day, and
  *  one HGETALL of years of it would be one oversized response. */

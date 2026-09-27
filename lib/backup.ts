@@ -14,13 +14,18 @@
 // replaces the environment; see lib/restore.ts). Named by the time it was
 // taken, so names sort by age and never collide.
 //
+// Each run records its outcome (backups:status, environment-wide), and the
+// dashboard says so when the last run failed or none has succeeded for two
+// days (backupProblem): Vercel doesn't send an alert for a failed cron, and a
+// stalled snapshot once went unnoticed for three weeks.
+//
 // Nothing is pruned unless this run's copy was read back intact, and the
 // newest MIN_KEPT copies are always kept, whatever their age: a clock or
 // retention mistake can never leave the store empty.
 
 import { verifyArchive } from './restore';
 import { exportLines, type ExportClient } from './export';
-import { envPrefix } from './storage';
+import { envPrefix, kEnv, redis } from './storage';
 
 /** What a backup needs from object storage. Vercel Blob in production
  *  (vercelBlobStore); tests pass one kept in memory. */
@@ -115,4 +120,49 @@ export async function vercelBlobStore(): Promise<BackupStore | null> {
       if (pathnames.length > 0) await blob.del(pathnames);
     },
   };
+}
+
+const STATUS = () => kEnv('backups:status');
+
+type Status = { last_ok: string | null; last_failed: string | null; reason: string | null };
+
+async function readStatus(): Promise<Status | null> {
+  const raw = await redis().get<unknown>(STATUS());
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return parsed && typeof parsed === 'object' ? (parsed as Status) : null;
+}
+
+/** Records a run's outcome. Best effort: never what fails a backup. */
+export async function recordOutcome(outcome: { ok: true } | { ok: false; reason: string }, now: Date = new Date()): Promise<void> {
+  try {
+    const prev = await readStatus();
+    const next: Status = outcome.ok
+      ? { last_ok: now.toISOString(), last_failed: null, reason: null }
+      : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200) };
+    await redis().set(STATUS(), JSON.stringify(next));
+  } catch (err) {
+    console.error('Backup outcome not recorded', err instanceof Error ? err.message : err);
+  }
+}
+
+export type BackupProblem = { last_ok: string | null; reason: string | null };
+
+/** Something the dashboard should say about backups, or null. Null too when
+ *  none has ever run (they aren't set up) and when the status can't be read:
+ *  this is a notice, never a reason to fail a page. */
+export async function backupProblem(now: Date = new Date()): Promise<BackupProblem | null> {
+  let status: Status | null;
+  try {
+    status = await readStatus();
+  } catch {
+    return null;
+  }
+  if (!status) return null;
+  if (status.last_failed) return { last_ok: status.last_ok, reason: status.reason };
+  // Two days: the cron runs at 16:00 UTC, so yesterday's copy being the
+  // newest is normal for most of the day.
+  if (status.last_ok && now.getTime() - Date.parse(status.last_ok) > 2 * 86_400_000) {
+    return { last_ok: status.last_ok, reason: null };
+  }
+  return null;
 }

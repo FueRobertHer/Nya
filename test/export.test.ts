@@ -47,6 +47,8 @@ describe('the archive', () => {
         'c:*:account-links:lock*',
         'history:forgetting:*',
         'c:*:history:forgetting:*',
+        'backups:*',
+        'c:*:backups:*',
       ],
     });
   });
