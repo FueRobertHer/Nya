@@ -410,7 +410,10 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
     try {
       const res = await fetch(`/api/net-worth${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
-        setError('Failed to load accounts.');
+        // The server's reason when it gives one (no usable container, say),
+        // so the cause shows on screen rather than only in the logs.
+        const reason = await res.json().then((b) => b?.error).catch(() => null);
+        setError(reason && res.status === 503 ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
         return;
       }
       const data = await res.json();
