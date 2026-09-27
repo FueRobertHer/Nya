@@ -631,7 +631,9 @@ works exactly as before.
    from Clerk's dashboard.
 2. In Vercel, on the environment to try it on (Preview first), set
    `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` from Clerk's API
-   keys page, and redeploy.
+   keys page, and redeploy. The publishable key is public by design (it is
+   sent to every browser), so Vercel won't mark it Sensitive; add it as a
+   plain variable. Mark `CLERK_SECRET_KEY` Sensitive.
 3. Sign in at `/sign-in`. You land on "Not allowed yet" with your Clerk user
    id: set `CLERK_ALLOWED_USER_IDS` to it (comma-separated for more people)
    and redeploy.
