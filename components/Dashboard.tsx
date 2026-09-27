@@ -1,5 +1,6 @@
 'use client';
 
+import ClerkAccount from './ClerkAccount';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
@@ -309,7 +310,7 @@ const TAB_LABELS: Record<Tab, string> = {
   budgets: 'Budgets',
 };
 
-export default function Dashboard() {
+export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<'new' | 'update'>('new');
@@ -745,6 +746,16 @@ export default function Dashboard() {
     }
   }, [manualDraft, mutateManual]);
 
+  // What a sign-out through Clerk clears first (components/ClerkAccount.tsx).
+  const clearDevice = useCallback(() => {
+    signedOut = true; // no load still in flight may save the snapshot again
+    try {
+      localStorage.removeItem(LOCAL_CACHE_KEY);
+    } catch {
+      // Best-effort; the snapshot only lives on this device anyway.
+    }
+  }, []);
+
   const logout = useCallback(async () => {
     signedOut = true; // no load still in flight may save the snapshot again
     try {
@@ -1146,12 +1157,18 @@ export default function Dashboard() {
                 </svg>
               </button>
             )}
-            <button className="secondary logout-btn" onClick={logout}>
-              Log out
-            </button>
-            <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
-              Sign out everywhere
-            </button>
+            {clerk ? (
+              <ClerkAccount beforeSignOut={clearDevice} />
+            ) : (
+              <>
+                <button className="secondary logout-btn" onClick={logout}>
+                  Log out
+                </button>
+                <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
+                  Sign out everywhere
+                </button>
+              </>
+            )}
           </div>
         </div>
 
