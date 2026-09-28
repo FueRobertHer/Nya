@@ -152,6 +152,16 @@ export function pickDeployment(all: (ContainerRecord & { id: ContainerId })[], e
     if (named.status !== 'active') return { kind: 'unusable', reason: `${CONTAINER_ENV} names a container that is ${named.status}.` };
     return { kind: 'container', container: named.id };
   }
+  // With several containers (one per account, lib/owners.ts), the primary
+  // one: the first ever created, marked at creation and never moved, so this
+  // is a rule, not a guess. It must be active; another active container is
+  // someone else's data and never stands in for it.
+  const primaries = all.filter((c) => c.primary);
+  if (primaries.length > 1) return { kind: 'unusable', reason: 'More than one container is marked primary.' };
+  if (primaries.length === 1) {
+    const p = primaries[0];
+    return p.status === 'active' ? { kind: 'container', container: p.id } : { kind: 'unusable', reason: `The primary container is ${p.status}.` };
+  }
   if (active.length === 1) return { kind: 'container', container: active[0].id };
   if (all.length === 0) return { kind: 'none' };
   return { kind: 'unusable', reason: active.length === 0 ? 'No container is active.' : 'More than one container is active.' };

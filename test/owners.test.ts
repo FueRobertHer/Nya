@@ -41,18 +41,34 @@ describe('which container a Clerk account reaches', () => {
     expect(String((await dataCtx()).container)).toBe(TEST_CONTAINER);
   });
 
-  test('anyone after that reaches nothing', async () => {
+  test('anyone after that gets a new, empty container of their own, never the first one', async () => {
     signedIn = 'user_owner';
     await dataCtx();
-    signedIn = 'user_other';
-    await expect(dataCtx()).rejects.toThrow('no data here yet');
-    expect(Object.keys(await owners())).toEqual(['user_owner']);
+    signedIn = 'user_partner';
+    const theirs = String((await dataCtx()).container);
+    expect(theirs).not.toBe(TEST_CONTAINER);
+    expect(String((await dataCtx()).container)).toBe(theirs); // and keeps it
+    const record = JSON.parse((await fake.hget<string>(registryKey(), theirs))!);
+    expect(record).toMatchObject({ status: 'active', primary: false });
+    expect(await owners()).toEqual({ user_owner: TEST_CONTAINER, user_partner: theirs });
+    // The deployment's container is still the first one: jobs without a session use it.
+    forgetEpochs();
+    expect(String((await deploymentCtx()).container)).toBe(TEST_CONTAINER);
   });
 
-  test('two first sign-ins at once: one owner, and the other reaches nothing', async () => {
-    const results = await Promise.allSettled([ownerContainer('user_a'), ownerContainer('user_b')]);
-    expect(results.filter((r) => r.status === 'fulfilled').length).toBe(1);
-    expect(Object.keys(await owners()).length).toBe(1);
+  test('two first sign-ins at once: one claims the data, the other gets its own', async () => {
+    const [a, b] = await Promise.all([ownerContainer('user_a'), ownerContainer('user_b')]);
+    expect(new Set([String(a), String(b)]).size).toBe(2);
+    expect([String(a), String(b)]).toContain(TEST_CONTAINER);
+    expect(Object.keys(await owners()).length).toBe(2);
+  });
+
+  test('a new account signing in from two tabs at once gets one container', async () => {
+    await ownerContainer('user_owner');
+    const [a, b] = await Promise.all([ownerContainer('user_partner'), ownerContainer('user_partner')]);
+    expect(String(a)).toBe(String(b));
+    const registry = (await fake.hgetall<Record<string, string>>(registryKey())) ?? {};
+    expect(Object.keys(registry).length).toBe(2);
   });
 
   test('the owner in two tabs at once gets the same container both times', async () => {
@@ -78,6 +94,7 @@ describe('which container a Clerk account reaches', () => {
     forgetEpochs();
     await expect(ownerContainer('user_owner')).rejects.toThrow('No container exists yet');
     expect(await owners()).toEqual({});
+    expect(await fake.hgetall(registryKey())).toBeNull(); // nothing made up either
   });
 
   test('signed out reaches nothing', async () => {
@@ -124,14 +141,21 @@ describe.skipIf(!hasRedis && !process.env.CI)('the owner claim, on a real Redis'
   let real: RealRedis | null = null;
   afterAll(() => real?.stop());
 
-  test('claims only while nobody owns anything', async () => {
+  test('claims the data once, then gives each new account its own container', async () => {
     real = await startRedis();
     const r = real.client;
-    const { CLAIM_FIRST } = await import('@/lib/owners');
-    const claim = (user: string, container: string) => r.send('EVAL', [CLAIM_FIRST, '1', 'owners', user, container]);
-    expect(await claim('user_a', 'c1')).toBe(1);
-    expect(await claim('user_b', 'c2')).toBe(0);
-    expect(await claim('user_a', 'c2')).toBe(0);
-    expect(await r.send('HGETALL', ['owners'])).toEqual({ user_a: 'c1' });
+    const { CLAIM_OR_CREATE } = await import('@/lib/owners');
+    const run = (user: string, existing: string, fresh: string) =>
+      r.send('EVAL', [CLAIM_OR_CREATE, '2', 'owners', 'registry', user, existing, fresh, '{"new":true}']);
+    expect(await run('user_a', '', 'x0')).toBe(''); // nothing to claim: nothing written
+    expect(await r.send('EXISTS', ['owners'])).toBe(0);
+    expect(await run('user_a', 'c1', 'x1')).toBe('c1'); // claims
+    expect(await r.send('HEXISTS', ['registry', 'x1'])).toBe(0);
+    expect(await run('user_a', 'c1', 'x2')).toBe('c1'); // already mapped
+    expect(await run('user_b', 'c1', 'c2')).toBe('c2'); // a new one
+    expect(await r.send('HGET', ['registry', 'c2'])).toBe('{"new":true}');
+    expect(await run('user_b', 'c1', 'c3')).toBe('c2');
+    await expect(run('user_c', 'c1', 'c2')).rejects.toThrow('already registered'); // never two accounts in one
+    expect(await r.send('HGETALL', ['owners'])).toEqual({ user_a: 'c1', user_b: 'c2' });
   });
 });
