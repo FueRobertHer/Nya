@@ -137,7 +137,11 @@ export function kc(ctx: Ctx, key: string): string {
  *   - the login rate limiter (app/api/login), which runs before anyone is
  *     known;
  *   - the cutoff for sessions from before sessions named a container
- *     (lib/sessions.ts), which by definition belong to none.
+ *     (lib/sessions.ts), which by definition belong to none;
+ *   - the nightly backup's last outcome (lib/backup.ts), about the whole
+ *     environment;
+ *   - which signed-in account owns which container (lib/owners.ts), which
+ *     decides the container, so cannot live inside one.
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;

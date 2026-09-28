@@ -7,9 +7,8 @@
 //
 // Only people on CLERK_ALLOWED_USER_IDS (comma-separated Clerk user ids) get
 // in. Unset or empty lets nobody in: a signed-in stranger must never reach
-// the data. Until onboarding gives each account its own container, everyone
-// allowed reaches this deployment's container (lib/data-ctx.ts), so list only
-// the people that data belongs to.
+// the data. Which data an allowed account reaches is lib/owners.ts: the
+// first to sign in owns what is already here, and others reach nothing yet.
 
 export function clerkEnabled(): boolean {
   return !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;

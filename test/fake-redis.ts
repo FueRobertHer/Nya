@@ -408,6 +408,11 @@ export class FakeRedis {
       this.hdelNow(keys[1], [args[1]]);
       return 1;
     }
+    if (name === '-- nya:owner-claim-first') {
+      if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
+      this.hash(keys[0]).set(args[0], args[1]);
+      return 1;
+    }
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
@@ -453,7 +458,7 @@ export async function registerTestContainer(fake: FakeRedis, status: 'active' | 
 }
 
 /** Environment-wide stores (kEnv): the only keys allowed outside a container. */
-const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:'];
+const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:', 'owners'];
 
 /**
  * Every key the fake holds that is stored data outside any container. After

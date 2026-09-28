@@ -638,9 +638,26 @@ works exactly as before.
    id: set `CLERK_ALLOWED_USER_IDS` to it (comma-separated for more people)
    and redeploy.
 
-Only people on that list get in; an empty list lets nobody in. For now
-everyone on it reaches this deployment's data, so list only the people it
-belongs to. Their own containers come with onboarding.
+Only people on that list get in; an empty list lets nobody in.
+
+The first account on the list to sign in becomes the owner of the data
+already in this environment (its container), once; after that, each request
+reaches the container its signed-in account owns, so `CONTAINER_ID` isn't
+needed with Clerk. Sign in yourself before adding anyone else: another
+account on the list reaches no data ("This account has no data here yet")
+until accounts get containers of their own. Which account owns which
+container is kept environment-wide under `owners`, and is in the backups.
+To hand the data to another account (a recreated Clerk user, say), delete
+the `owners` key for that environment and sign in with the new account. Do
+the same after restoring an archive into a namespace you'll open with a
+different Clerk instance (`restore-test:owners`): the archive's owner is
+your account in the instance it came from.
+
+Turning it on in production: create a production instance in Clerk (it asks
+for a domain you own), set its keys on Production, sign in once to get your
+production user id (it differs from the development one), add it to
+`CLERK_ALLOWED_USER_IDS` there, and redeploy. Your existing data is claimed
+on that first sign-in.
 
 To turn it off, remove the two keys and redeploy: the password sign-in is
 back.
@@ -851,7 +868,8 @@ Preview has its own container (a separate prefix, a separate registry): do
 the same there if you use preview.
 
 Every request works in this deployment's container: the one `CONTAINER_ID`
-names, or with it unset, the only active one. Without a usable container
+names, or with it unset, the only active one. (With Clerk on, the container
+the signed-in account owns instead; see "Signing in with Clerk".) Without a usable container
 (none, `CONTAINER_ID` wrong, the container being restored, or more than one
 active) data requests are refused with a 503 saying why; nothing is read or
 written anywhere else.
