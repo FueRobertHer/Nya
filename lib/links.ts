@@ -678,6 +678,12 @@ export async function previewLastSeen(ctx: Ctx, id: string): Promise<string | nu
 
 /** Directory labels for a set of ids, for the "Linked accounts" list; null
  *  for an id the directory doesn't know (balance history only). */
+/** Each account's type as the directory recorded it (depository, credit…). */
+export async function directoryTypes(ctx: Ctx, ids: string[]): Promise<Record<string, string | null>> {
+  const { entries } = await readDirectory(ctx);
+  return Object.fromEntries(ids.map((id) => [id, entries[id]?.type ?? null]));
+}
+
 export async function directoryLabels(ctx: Ctx, ids: string[]): Promise<Record<string, string | null>> {
   const { entries } = await readDirectory(ctx);
   return Object.fromEntries(ids.map((id) => [id, entries[id] ? label(entries[id], id) : null]));

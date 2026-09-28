@@ -652,7 +652,16 @@ once to see their id on "Not allowed yet", add it to
 empty container of their own: they link their own banks and see only their
 own data. Background jobs without a signed-in account (the balance ingest,
 the password fallback) keep using the first container, the one marked
-primary. The nightly snapshot runs every account's container. Which account owns which
+primary. The nightly snapshot runs every account's container.
+
+Sharing: under Manage accounts, Sharing lists the other people in the app
+and your accounts. For each account choose Not shared, Balance, or Balance
+and transactions (the last 30 days), and Save. They see it read-only on
+their Accounts tab under "Shared by <you>"; they can never change it.
+Nothing is shared until you choose it, hidden accounts are never shared,
+and setting an account back to Not shared stops it at once. Balances are
+the ones your own loads and the nightly snapshot recorded: sharing never
+calls your bank on the other person's behalf. Which account owns which
 container is kept environment-wide under `owners`, and is in the backups.
 To hand a container to another account (a recreated Clerk user, say), move
 that one entry, in the Upstash console: `HSET <env>:owners <new user id>

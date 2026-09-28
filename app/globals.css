@@ -1219,3 +1219,13 @@ button:disabled {
   padding: 4px 0;
   font-size: 13px;
 }
+
+/* Sharing (components/Sharing.tsx): one account per row, its choice or
+   balance on the right. */
+.share-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
