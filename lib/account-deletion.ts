@@ -6,12 +6,17 @@
 //
 //   1. its container is marked archived: from then on nothing reaches it (its
 //      own requests, the snapshot cron, anyone it shared with);
-//   2. every sharing grant to or from the account is dropped;
-//   3. each of its banks is disconnected at Plaid (a failure there is logged
-//      and the rest goes on: Plaid ends a connection nobody uses anyway);
-//   4. every key in the container is deleted;
-//   5. the container leaves the registry and the account leaves the owners map;
-//   6. the Clerk user is deleted (best effort; the data is already gone).
+//   2. each of its banks is disconnected at Plaid (a failure there is logged
+//      and the rest goes on, as with /api/disconnect; the connection is then
+//      left at Plaid, which ends it only once its token stops being used);
+//   3. every key in the container is deleted;
+//   4. the container leaves the registry and the account leaves the owners map;
+//   5. every sharing grant to or from the account is dropped (after 4, so a
+//      partner saving sharing meanwhile can't put one back);
+//   6. the Clerk user is deleted; if that fails the deletion reports it, and
+//      running it again retries just this;
+//   7. the container is swept once more, for anything a request already in
+//      flight wrote after step 3.
 //
 // The primary container (the first, the owner's) is never deleted from here:
 // background jobs without a signed-in account use it, and with it gone they
@@ -38,6 +43,13 @@ async function keysIn(ctx: Ctx): Promise<string[]> {
     cursor = next;
   } while (String(cursor) !== '0');
   return [...found];
+}
+
+async function sweep(ctx: Ctx): Promise<number> {
+  const keys = await keysIn(ctx);
+  let deleted = 0;
+  for (let i = 0; i < keys.length; i += PAGE) deleted += Number(await redis().del(...keys.slice(i, i + PAGE)));
+  return deleted;
 }
 
 /** What deleting this account would remove, or why it can't be deleted. */
@@ -70,9 +82,7 @@ export async function deleteAccount(
       const archived: ContainerRecord = { ...rec, status: 'archived' };
       await redis().hset(registryKey(), { [container]: JSON.stringify(archived) });
     }
-    // 2. Sharing, both ways.
-    await dropGrantsOf(userId);
-    // 3. Its banks.
+    // 2. Its banks.
     for (const item of await getItems(ctx)) {
       try {
         await opts.removeItem(await decrypt(item.encrypted_access_token));
@@ -81,26 +91,24 @@ export async function deleteAccount(
         console.error('Account deletion: a bank could not be disconnected at Plaid', err instanceof Error ? err.name : err);
       }
     }
-    // 4. Everything it stored.
-    const keys = await keysIn(ctx);
-    for (let i = 0; i < keys.length; i += PAGE) {
-      const batch = keys.slice(i, i + PAGE);
-      if (batch.length > 0) deletedKeys += Number(await redis().del(...batch));
-    }
-    // 5. The container itself.
+    // 3. Everything it stored.
+    deletedKeys += await sweep(ctx);
+    // 4. The container itself.
     await redis().hdel(registryKey(), container);
-  } else {
-    await dropGrantsOf(userId);
   }
   await redis().hdel(ownersKey(), userId);
+  // 5. Sharing, both ways.
+  await dropGrantsOf(userId);
 
-  // 6. The sign-in. Best effort: everything it could reach is gone already.
-  if (opts.deleteUser) {
-    try {
-      await opts.deleteUser(userId);
-    } catch (err) {
-      console.error('Account deletion: the Clerk user could not be deleted', err instanceof Error ? err.name : err);
-    }
+  // 6. The sign-in.
+  let signInError: unknown = null;
+  try {
+    await opts.deleteUser?.(userId);
+  } catch (err) {
+    signInError = err;
   }
+  // 7. Late writes.
+  if (container) deletedKeys += await sweep({ container });
+  if (signInError) throw signInError;
   return { disconnected, deletedKeys };
 }

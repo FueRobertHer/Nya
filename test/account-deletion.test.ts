@@ -20,7 +20,17 @@ const deletedUsers: string[] = [];
 mock.module('@clerk/nextjs/server', () => ({
   auth: async () => ({ userId: signedIn }),
   clerkMiddleware: (handler: any) => (req: any, event: any) => handler(async () => ({ userId: signedIn }), req, event),
-  clerkClient: async () => ({ users: { deleteUser: async (id: string) => void deletedUsers.push(id) } }),
+}));
+// Deleting the Clerk user, mocked at our own module: another file's mock of
+// Clerk may be the one loaded, and its shape is not this file's to rely on.
+let deleteUserFails = false;
+let duringDeleteUser: () => Promise<void> = async () => {};
+mock.module('@/lib/clerk-users', () => ({
+  deleteClerkUser: async (id: string) => {
+    await duringDeleteUser();
+    if (deleteUserFails) throw new Error('clerk down');
+    deletedUsers.push(id);
+  },
 }));
 mock.module('@/lib/people', () => ({ displayNames: async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, id])) }));
 
@@ -53,6 +63,8 @@ beforeEach(async () => {
   removed.length = 0;
   deletedUsers.length = 0;
   removeFails = false;
+  deleteUserFails = false;
+  duringDeleteUser = async () => {};
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
@@ -139,6 +151,29 @@ describe('deleting my account', () => {
     expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
     expect(keysOf(partner.container)).toEqual([]);
     expect(await fake.hget(registryKey(), partner.container)).toBeNull();
+  });
+
+  test('a sign-in Clerk won’t delete is reported, and running it again deletes it', async () => {
+    deleteUserFails = true;
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(500);
+    } finally {
+      console.error = errors;
+    }
+    expect(keysOf(partner.container)).toEqual([]);
+    expect(deletedUsers).toEqual([]);
+    deleteUserFails = false;
+    expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+    expect(deletedUsers).toEqual(['user_partner']);
+    expect(await fake.hget(ownersKey(), 'user_partner')).toBeNull();
+  });
+
+  test('a write that lands after the first sweep is swept too', async () => {
+    duringDeleteUser = async () => void (await fake.set(`test:c:${partner.container}:budgets`, 'late'));
+    expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+    expect(keysOf(partner.container)).toEqual([]);
   });
 
   test('with the shared password there are no accounts to delete', async () => {

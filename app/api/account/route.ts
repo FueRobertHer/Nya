@@ -33,10 +33,7 @@ export async function DELETE(req: Request) {
       removeItem: async (access_token) => {
         await plaidClient.itemRemove({ access_token });
       },
-      deleteUser: async (id) => {
-        const { clerkClient } = await import('@clerk/nextjs/server');
-        await (await clerkClient()).users.deleteUser(id);
-      },
+      deleteUser: async (id) => (await import('@/lib/clerk-users')).deleteClerkUser(id),
     });
     return NextResponse.json({ deleted: true, ...result });
   } catch (err) {
