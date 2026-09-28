@@ -408,46 +408,6 @@ button.danger {
   border-radius: 8px;
 }
 
-/* --- disconnect confirmation modal --- */
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-
-.modal {
-  background: var(--card);
-  border: 1px solid #262a33;
-  border-radius: 14px;
-  padding: 20px;
-  width: 100%;
-  max-width: 400px;
-}
-
-.modal-title {
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.modal-body {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.5;
-  margin: 8px 0 14px;
-}
-
-.modal-body strong {
-  color: var(--text);
-}
-
 .text-input {
   width: 100%;
   padding: 12px 14px;
@@ -1542,6 +1502,10 @@ button:disabled {
   margin: 0 0 10px;
 }
 
+.panel-note strong {
+  color: var(--text);
+}
+
 .panel-note {
   color: var(--muted);
   font-size: 13px;
@@ -1857,4 +1821,14 @@ button.danger-outline {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* A form inside a drawer (components/Sheet.tsx). */
+.sheet-form {
+  margin-top: 12px;
+}
+
+.sheet-form select {
+  width: 100%;
+  font-size: 15px;
 }
