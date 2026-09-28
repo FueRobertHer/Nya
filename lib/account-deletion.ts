@@ -28,6 +28,7 @@ import { redis, containerPrefix, getItems } from './storage';
 import { getContainer, isContainerId, registryKey, type ContainerId, type ContainerRecord, type Ctx } from './containers';
 import { ownersKey } from './owners';
 import { dropConnectionsOf } from './sharing';
+import { isDemoUser } from './demo';
 import { decrypt } from './crypto';
 
 export class DeletionRefused extends Error {}
@@ -54,6 +55,7 @@ async function sweep(ctx: Ctx): Promise<number> {
 
 /** What deleting this account would remove, or why it can't be deleted. */
 export async function deletionCheck(userId: string): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  if (isDemoUser(userId)) return { allowed: false, reason: 'This is a demo account, shared by everyone who tries the app. It can’t be deleted.' };
   const id = await redis().hget<string>(ownersKey(), userId);
   if (typeof id === 'string' && isContainerId(id)) {
     const rec = await getContainer(id as ContainerId);

@@ -1,18 +1,22 @@
 'use client';
 
-// Accounts tab: read-only sharing between connected people (#45,
-// lib/sharing.ts). Two parts:
-//   - under Manage accounts, Sharing: an invite link to connect with someone,
-//     and for each connection what I call them and what they see of mine,
-//     per account (not shared, that it exists, balance, or balance and recent
-//     transactions), plus remove and block;
-//   - "Shared by ...", always on the tab when a connection shares something:
-//     their accounts, read-only.
+// Read-only sharing between connected people (#45, lib/sharing.ts). Two parts:
+//   - the Sharing drawer (components/Sheet.tsx), opened from the Accounts tab
+//     or the account menu: an invite link to connect with someone, the people
+//     I'm connected with, and for each what I call them and what they see of
+//     mine, per account (not shared, that it exists, balance, or balance and
+//     recent transactions), plus remove and block;
+//   - "Shared by ...", on the Accounts tab whenever a connection shares
+//     something: their accounts, read-only.
 // Only with Clerk on; with the shared password there's nobody to connect
 // with, and both parts render nothing.
+//
+// Class names avoid "share": ad blockers' social-share filters hide such
+// elements (Fanboy's list has ##.share-row).
 
 import { useCallback, useEffect, useState } from 'react';
 import { formatMoney } from '@/lib/format';
+import { Sheet } from './Sheet';
 
 type Level = 'exists' | 'balance' | 'transactions';
 export type Choice = Level | 'none';
@@ -52,9 +56,54 @@ async function send(method: string, path: string, body: unknown): Promise<{ ok: 
   return { ok: !!res?.ok, body: await res?.json().catch(() => null) };
 }
 
-export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
+const initial = (label: string) => (label.trim()[0] ?? '?').toUpperCase();
+
+/** "Sep 28", with the year only when it isn't this one. */
+export function shortDate(iso: string, now: Date = new Date()): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+function Chevron() {
+  return (
+    <svg className="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+/** A phone's own share menu (Messages and the like). Only on touch screens:
+ *  desktop browsers have one too, but there copying is what people expect. */
+function touchShare(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.share === 'function' && typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+}
+
+/** Hands the link on: the share menu on a phone, else the clipboard, else
+ *  selects it for copying by hand. True when it went somewhere. */
+async function sendLink(url: string, field: HTMLInputElement | null): Promise<boolean> {
+  try {
+    if (touchShare()) {
+      await navigator.share({ url, title: 'Connect with me on Nya' });
+      return true;
+    }
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+  } catch {
+    // Dismissed, or the clipboard refused.
+  }
+  field?.focus();
+  field?.select();
+  return false;
+}
+
+/** The Sharing drawer. Loads each time it opens. */
+export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [data, setData] = useState<SharingPayload | null>(null);
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, Choice>>({});
   const [labelDraft, setLabelDraft] = useState('');
   const [invite, setInvite] = useState<Invite>(null);
@@ -65,28 +114,39 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
   const load = useCallback(async () => {
     const res = await fetch('/api/connections').catch(() => null);
     if (!res?.ok) return setError('Could not load sharing.');
+    setError('');
     const body: SharingPayload = await res.json();
     setData(body);
-    setSelected((s) => (body.connections?.some((c) => c.id === s) ? s : body.connections?.[0]?.id ?? ''));
+    setSelected((s) => (s && body.connections?.some((c) => c.id === s) ? s : null));
   }, []);
   useEffect(() => {
-    load();
-  }, [load, refreshKey]);
+    if (open) {
+      load();
+      return;
+    }
+    // Next time it opens at the top, with nothing half-done showing.
+    setSelected(null);
+    setInvite(null);
+    setNotice('');
+    setError('');
+  }, [open, load]);
 
-  // The saved choices for this connection, as a starting draft: set when the
-  // connection changes or after a save, never by a background reload, so
-  // choices not yet saved survive a refresh of the dashboard.
-  const [draftFor, setDraftFor] = useState<string | null>(null);
-  useEffect(() => {
-    const c = data?.connections?.find((c) => c.id === selected);
-    if (!c || draftFor === selected) return;
-    setDraft(Object.fromEntries((data?.accounts ?? []).map((a) => [a.id, c.sharing[a.id] ?? 'none'])));
-    setLabelDraft(c.label);
-    setDraftFor(selected);
-  }, [data, selected, draftFor]);
+  // Opening a connection starts its draft from what is saved.
+  const openConnection = useCallback(
+    (id: string) => {
+      const c = data?.connections?.find((c) => c.id === id);
+      if (!c) return;
+      setDraft(Object.fromEntries((data?.accounts ?? []).map((a) => [a.id, c.sharing[a.id] ?? 'none'])));
+      setLabelDraft(c.label);
+      setNotice('');
+      setError('');
+      setSelected(id);
+    },
+    [data]
+  );
 
   const act = useCallback(
-    async (method: string, path: string, body: unknown, done: string, resetDraft = true) => {
+    async (method: string, path: string, body: unknown, done: string) => {
       setBusy(true);
       setError('');
       setNotice('');
@@ -97,50 +157,57 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
         return null;
       }
       setNotice(done);
-      if (resetDraft) setDraftFor(null); // start again from what was saved
       await load();
       return res.body;
     },
     [load]
   );
 
+  const current = data?.connections?.find((c) => c.id === selected) ?? null;
   return (
-    <SharingSettingsView
-      data={data}
-      selected={selected}
-      draft={draft}
-      labelDraft={labelDraft}
-      invite={invite}
-      busy={busy}
-      error={error}
-      notice={notice}
-      onSelect={setSelected}
-      onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
-      onLabel={setLabelDraft}
-      onInvite={async (fromName, theirLabel) => {
-        const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '', false);
-        if (body) setInvite(body);
-      }}
-      onSave={() => act('PUT', '/api/connections', { id: selected, label: labelDraft, accounts: draft }, 'Saved.')}
-      onRemove={(id, block) => {
-        const what = block ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.' : 'Remove them? Everything shared both ways ends.';
-        if (block !== null && !window.confirm(what)) return;
-        act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
-      }}
-    />
+    <Sheet open={open} title={current ? current.label : 'Sharing'} onClose={onClose} onBack={current ? () => setSelected(null) : undefined}>
+      <SharingPanelView
+        data={data}
+        current={current}
+        draft={draft}
+        labelDraft={labelDraft}
+        invite={invite}
+        busy={busy}
+        error={error}
+        notice={notice}
+        onOpen={openConnection}
+        onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
+        onLabel={setLabelDraft}
+        onInvite={async (fromName, theirLabel) => {
+          const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
+          if (body) setInvite(body);
+        }}
+        onSave={() => {
+          if (current) act('PUT', '/api/connections', { id: current.id, label: labelDraft, accounts: draft }, 'Saved.');
+        }}
+        onRemove={async (id, block) => {
+          const what = block
+            ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.'
+            : 'Remove them? Everything shared both ways ends.';
+          if (block !== null && !window.confirm(what)) return;
+          const done = await act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
+          if (done) setSelected(null);
+        }}
+      />
+    </Sheet>
   );
 }
 
-export function SharingSettingsView({
+export function SharingPanelView({
   data,
-  selected,
+  current,
   draft,
   labelDraft,
   invite,
   busy,
   error,
   notice,
-  onSelect,
+  onOpen,
   onChoose,
   onLabel,
   onInvite,
@@ -148,14 +215,15 @@ export function SharingSettingsView({
   onRemove,
 }: {
   data: SharingPayload | null;
-  selected: string;
+  /** The connection being looked at, or null for the list. */
+  current: Connection | null;
   draft: Record<string, Choice>;
   labelDraft: string;
   invite: Invite;
   busy: boolean;
   error: string;
   notice: string;
-  onSelect: (id: string) => void;
+  onOpen: (id: string) => void;
   onChoose: (id: string, c: Choice) => void;
   onLabel: (label: string) => void;
   onInvite: (fromName: string, theirLabel: string) => void;
@@ -165,109 +233,162 @@ export function SharingSettingsView({
 }) {
   const [fromName, setFromName] = useState('');
   const [theirLabel, setTheirLabel] = useState('');
-  if (!data) return error ? <div className="card error">{error}</div> : null;
-  if (!data.enabled) return null;
-  const connections = data.connections ?? [];
+  const [sent, setSent] = useState(false);
+  if (!data) return error ? <div className="error">{error}</div> : <div className="spinner" role="status" aria-label="Loading" />;
+  if (!data.enabled) return <p className="panel-note">Sharing needs accounts; this app signs in with a shared password.</p>;
   const accounts = data.accounts ?? [];
-  const current = connections.find((c) => c.id === selected);
-  // What they can see now: a share on an account I've since hidden is paused.
-  const seen = current ? accounts.filter((a) => current.sharing[a.id]).length : 0;
-  return (
-    <div className="card">
-      <h3>Sharing</h3>
-      <p className="sub">
-        Connect with someone by sending them an invite link. They see only the accounts you choose, read-only, and
-        nobody else in the app can find you.
-      </p>
+  const status = (
+    <>
+      {error && <div className="error">{error}</div>}
+      {notice && <div className="status-note">{notice}</div>}
+    </>
+  );
 
-      <div className="peer-invite">
-        <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Your name, as they’ll see it" aria-label="Your name, as they’ll see it" maxLength={40} />
-        <input value={theirLabel} onChange={(e) => setTheirLabel(e.target.value)} placeholder="What you call them" aria-label="What you call them" maxLength={40} />
-        <button onClick={() => onInvite(fromName, theirLabel)} disabled={busy}>
-          Make an invite link
-        </button>
-      </div>
-      {invite && (
-        <div className="peer-invite">
-          <input readOnly value={invite.url} aria-label="Invite link" onFocus={(e) => e.target.select()} />
-          <button className="secondary" onClick={() => navigator.clipboard?.writeText(invite.url)}>
-            Copy
+  if (current) {
+    // What they can see now: a share on an account I've since hidden is paused.
+    const seen = accounts.filter((a) => current.sharing[a.id]).length;
+    return (
+      <>
+        <section className="panel-section">
+          <label className="field">
+            What you call them
+            <input value={labelDraft} onChange={(e) => onLabel(e.target.value)} maxLength={40} />
+          </label>
+          <p className="panel-note">
+            {current.introduced_as ? `They introduced themselves as “${current.introduced_as}”. ` : 'They didn’t give a name. '}
+            Connected {shortDate(current.since)}. Not who you meant to invite? Remove them.
+          </p>
+        </section>
+        <section className="panel-section">
+          <p className="section-label">What they can see</p>
+          <p className="panel-note" style={{ margin: '0 0 6px' }}>
+            {seen === 0
+              ? `${current.label} can’t see any of your accounts.`
+              : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, read-only.`}
+          </p>
+          {accounts.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
+          <div>
+            {accounts.map((a) => (
+              <div key={a.id} className="peer-row">
+                <span>{a.label}</span>
+                <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
+                  {(Object.keys(LEVEL_LABEL) as Choice[]).map((c) => (
+                    <option key={c} value={c}>
+                      {LEVEL_LABEL[c]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+          <button onClick={onSave} disabled={busy} style={{ marginTop: 12 }}>
+            {busy ? 'Saving…' : 'Save'}
           </button>
-          <p className="sub">Send it to them yourself. It works once, until {new Date(invite.expires_at).toLocaleString()}.</p>
-        </div>
-      )}
+          {status}
+        </section>
+        <section className="panel-section">
+          <p className="section-label">Connection</p>
+          <div className="button-pair">
+            <button className="danger-outline" onClick={() => onRemove(current.id, false)} disabled={busy}>
+              Remove
+            </button>
+            <button className="danger-outline" onClick={() => onRemove(current.id, true)} disabled={busy}>
+              Block
+            </button>
+          </div>
+          <p className="panel-note">Either ends everything shared, both ways. Blocking also stops them connecting with you again.</p>
+        </section>
+      </>
+    );
+  }
 
-      {connections.length === 0 ? (
-        <p className="sub">No connections yet.</p>
-      ) : (
-        <>
-          {connections.length > 1 && (
-            <select value={selected} onChange={(e) => onSelect(e.target.value)} aria-label="Connection">
-              {connections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          )}
-          {current && (
-            <>
-              <label className="peer-row">
-                <span>What you call them</span>
-                <input value={labelDraft} onChange={(e) => onLabel(e.target.value)} maxLength={40} />
-              </label>
-              <p className="sub">
-                {current.introduced_as ? `They introduced themselves as “${current.introduced_as}”. ` : 'They didn’t give a name. '}
-                Connected {current.since}. Not who you meant to invite? Remove them.
-              </p>
-              <p>
-                {seen === 0
-                  ? `${current.label} can’t see any of your accounts.`
-                  : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, as set below.`}
-              </p>
-              {accounts.length === 0 && <p className="sub">You have no accounts to share yet.</p>}
-              {accounts.map((a) => (
-                <div key={a.id} className="peer-row">
-                  <span>{a.label}</span>
-                  <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
-                    {(Object.keys(LEVEL_LABEL) as Choice[]).map((c) => (
-                      <option key={c} value={c}>
-                        {LEVEL_LABEL[c]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-              <button onClick={onSave} disabled={busy}>
-                {busy ? 'Saving…' : 'Save'}
-              </button>{' '}
-              <button className="secondary" onClick={() => onRemove(current.id, false)} disabled={busy}>
-                Remove
-              </button>{' '}
-              <button className="secondary" onClick={() => onRemove(current.id, true)} disabled={busy}>
-                Block
-              </button>
-            </>
-          )}
-        </>
-      )}
-
-      {(data.blocked ?? []).length > 0 && (
-        <>
-          <p className="sub">Blocked</p>
-          {data.blocked!.map((b) => (
-            <div key={b.id} className="peer-row">
-              <span>{b.label}</span>
-              <button className="secondary" onClick={() => onRemove(b.id, null)} disabled={busy}>
-                Unblock
+  const connections = data.connections ?? [];
+  const blocked = data.blocked ?? [];
+  return (
+    <>
+      <section className="panel-section">
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          They see only the accounts you choose, read-only. Nobody else in the app can find you.
+        </p>
+      </section>
+      <section className="panel-section">
+        <p className="section-label">Invite someone</p>
+        <label className="field">
+          Your name, as they’ll see it
+          <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Optional" maxLength={40} />
+        </label>
+        <label className="field">
+          What you call them
+          <input value={theirLabel} onChange={(e) => setTheirLabel(e.target.value)} placeholder="Optional" maxLength={40} />
+        </label>
+        <button onClick={() => onInvite(fromName, theirLabel)} disabled={busy}>
+          Create invite link
+        </button>
+        {invite && (
+          <>
+            <div className="invite-link">
+              <input readOnly value={invite.url} aria-label="Invite link" onFocus={(e) => e.target.select()} />
+              <button
+                className="secondary"
+                onClick={async (e) => {
+                  const field = e.currentTarget.previousElementSibling as HTMLInputElement | null;
+                  const ok = await sendLink(invite.url, field);
+                  if (!ok) return;
+                  setSent(true);
+                  setTimeout(() => setSent(false), 2000);
+                }}
+              >
+                {sent ? (touchShare() ? 'Sent' : 'Copied') : touchShare() ? 'Send' : 'Copy'}
               </button>
             </div>
-          ))}
-        </>
+            <p className="panel-note">Send it to them yourself. It works once, until {new Date(invite.expires_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>
+          </>
+        )}
+        {status}
+      </section>
+      <section className="panel-section">
+        <p className="section-label">People</p>
+        {connections.length === 0 ? (
+          <p className="panel-note">No one yet. Create an invite link and send it to them.</p>
+        ) : (
+          <div className="peer-list">
+            {connections.map((c) => {
+              const seen = accounts.filter((a) => c.sharing[a.id]).length;
+              return (
+                <button key={c.id} className="peer-item" onClick={() => onOpen(c.id)}>
+                  <span className="avatar">{initial(c.label)}</span>
+                  <span className="peer-item-text">
+                    <span className="peer-item-name">{c.label}</span>
+                    <span className="peer-item-meta">
+                      {seen === 0 ? 'Sees none of your accounts' : `Sees ${seen} of your accounts`} · since {shortDate(c.since)}
+                    </span>
+                  </span>
+                  <Chevron />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      {blocked.length > 0 && (
+        <section className="panel-section">
+          <p className="section-label">Blocked</p>
+          <div className="peer-list">
+            {blocked.map((b) => (
+              <div key={b.id} className="peer-item">
+                <span className="avatar small">{initial(b.label)}</span>
+                <span className="peer-item-text">
+                  <span className="peer-item-name">{b.label}</span>
+                </span>
+                <button className="secondary peer-item-action" onClick={() => onRemove(b.id, null)} disabled={busy}>
+                  Unblock
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
-      {error && <div className="error">{error}</div>}
-      {notice && <div className="sub">{notice}</div>}
-    </div>
+    </>
   );
 }
 
@@ -295,25 +416,28 @@ export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
     <>
       {data.shared.map((s) => (
         <div key={s.connection} className="card">
-          <h3>Shared by {s.label}</h3>
-          <p className="sub">Read-only.</p>
+          <div className="incoming-head">
+            <span className="avatar small">{initial(s.label)}</span>
+            <h3>Shared by {s.label}</h3>
+            <span className="pill">Read-only</span>
+          </div>
           {s.accounts.map((a) => (
-            <div key={a.id}>
+            <div key={a.id} className="incoming-account">
               <div className="peer-row">
                 <span>
-                  {a.label}
-                  {a.as_of && <span className="sub"> · as of {a.as_of}</span>}
+                  <span className="incoming-account-name">{a.label}</span>
+                  {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
                 </span>
-                <span>{shownBalance(a)}</span>
+                <span className="incoming-account-value">{shownBalance(a)}</span>
               </div>
               {a.transactions && (
-                <button className="secondary" onClick={() => setOpen(open === a.id ? null : a.id)}>
+                <button className="link-btn" onClick={() => setOpen(open === a.id ? null : a.id)}>
                   {open === a.id ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
                 </button>
               )}
               {open === a.id &&
                 a.transactions?.map((t, i) => (
-                  <div key={i} className="peer-row sub">
+                  <div key={i} className="incoming-txn">
                     <span>
                       {t.date} {t.name}
                       {t.pending ? ' (pending)' : ''}
