@@ -28,7 +28,6 @@ mock.module('@/lib/clerk-users', () => ({
     deletedUsers.push(id);
   },
 }));
-mock.module('@/lib/people', () => ({ displayNames: async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, id])) }));
 
 const fake = new FakeRedis();
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
@@ -38,7 +37,7 @@ const { encrypt } = await import('@/lib/crypto');
 const { ownerContainer, ownersKey } = await import('@/lib/owners');
 const { saveManualAccount } = await import('@/lib/manual');
 const { registryKey } = await import('@/lib/containers');
-const { outgoing } = await import('@/lib/sharing');
+const { myConnections } = await import('@/lib/sharing');
 
 const route = async (path: string, method: string, body?: unknown) => {
   const mod: any = await import(`@/app/api/${path}/route`);
@@ -74,8 +73,11 @@ beforeEach(async () => {
   await fake.hset(`test:c:${partner.container}:plaid:items`, {
     item_p: JSON.stringify({ item_id: 'item_p', institution_name: 'Ally', encrypted_access_token: await encrypt('token-partner') }),
   });
-  await as('user_owner', () => route('sharing', 'PUT', { to: 'user_partner', accounts: { manual_owner: 'balance' } }));
-  await as('user_partner', () => route('sharing', 'PUT', { to: 'user_owner', accounts: { manual_partner: 'balance' } }));
+  const link = await as('user_owner', () => route('connections/invite', 'POST', {}));
+  const { id } = (await as('user_partner', () => route('connections/accept', 'POST', { token: link.body.url.split('/connect/')[1] }))).body;
+  await as('user_owner', () => route('connections', 'PUT', { id, accounts: { manual_owner: 'balance' } }));
+  await as('user_partner', () => route('connections', 'PUT', { id, accounts: { manual_partner: 'balance' } }));
+  expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toHaveLength(1);
 });
 afterEach(() => {
   process.env = { ...saved };
@@ -96,8 +98,8 @@ describe('deleting my account', () => {
     expect(keysOf(partner.container)).toEqual([]);
     expect(await fake.hget(registryKey(), partner.container)).toBeNull();
     expect(await fake.hget(ownersKey(), 'user_partner')).toBeNull();
-    expect(await outgoing('user_owner')).toEqual({});
-    expect(await outgoing('user_partner')).toEqual({});
+    expect(await myConnections('user_owner')).toEqual({ connections: [], blocked: [] });
+    expect(await myConnections('user_partner')).toEqual({ connections: [], blocked: [] });
     expect(deletedUsers).toEqual(['user_partner']);
     // The owner's data and container are as they were.
     expect(keysOf(TEST_CONTAINER).sort()).toEqual(ownerKeysBefore);
