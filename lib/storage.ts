@@ -141,7 +141,9 @@ export function kc(ctx: Ctx, key: string): string {
  *   - the nightly backup's last outcome (lib/backup.ts), about the whole
  *     environment;
  *   - which signed-in account owns which container (lib/owners.ts), which
- *     decides the container, so cannot live inside one.
+ *     decides the container, so cannot live inside one;
+ *   - who shares which accounts with whom (lib/sharing.ts), which is
+ *     between containers.
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;

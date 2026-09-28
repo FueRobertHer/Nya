@@ -8,6 +8,7 @@ import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
+import { SharingSettings, SharedWithMe } from './Sharing';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -1334,6 +1335,11 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
                     or a link to undo. A change reloads live, since links alter
                     hidden accounts and per-account history. */}
                 {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
+                {/* Sharing needs people, so accounts (Clerk). What I share sits
+                    with the other account upkeep; what others share with me
+                    shows whenever there is some. */}
+                {clerk && manageMode && <SharingSettings refreshKey={asOf} />}
+                {clerk && <SharedWithMe refreshKey={asOf} />}
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and

@@ -35,6 +35,16 @@ export async function dataCtx(now: number = Date.now()): Promise<Ctx> {
   return { container: await ownerContainer(userId, now) };
 }
 
+/** The signed-in Clerk account and its container, for routes that act as a
+ *  person (sharing). Null in password mode, which has no people. */
+export async function signedInCtx(now: number = Date.now()): Promise<{ userId: string; ctx: Ctx } | null> {
+  if (!clerkEnabled()) return null;
+  const { auth } = await import('@clerk/nextjs/server');
+  const { userId } = await auth();
+  if (!userId) throw new ContainerError('Not signed in.');
+  return { userId, ctx: { container: await ownerContainer(userId, now) } };
+}
+
 /** This deployment's container, whoever asks. For routes that authenticate
  *  themselves rather than through a session (the balance ingest). */
 export async function deploymentCtx(now: number = Date.now()): Promise<Ctx> {
