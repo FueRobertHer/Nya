@@ -654,6 +654,14 @@ own data. Background jobs without a signed-in account (the balance ingest,
 the password fallback) keep using the first container, the one marked
 primary. The nightly snapshot runs every account's container.
 
+Deleting an account: under Manage accounts, "Delete my account" (type
+DELETE to confirm) disconnects that person's banks at Plaid, deletes
+everything stored for them, ends all sharing to and from them, and deletes
+their Clerk sign-in. If it stops part way, their data is already out of
+reach, and running it again finishes. The primary account (the first, the
+owner's) can't be deleted from the app. Nightly backups keep a copy for up
+to 30 days; take them off `CLERK_ALLOWED_USER_IDS` too.
+
 Sharing: under Manage accounts, Sharing lists the other people in the app
 and your accounts. For each account choose Not shared, Balance, or Balance
 and transactions (the last 30 days), and Save. They see it read-only on
