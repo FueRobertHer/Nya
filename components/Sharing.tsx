@@ -74,6 +74,32 @@ function Chevron() {
   );
 }
 
+/** A phone's own share menu (Messages and the like). Only on touch screens:
+ *  desktop browsers have one too, but there copying is what people expect. */
+function touchShare(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.share === 'function' && typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+}
+
+/** Hands the link on: the share menu on a phone, else the clipboard, else
+ *  selects it for copying by hand. True when it went somewhere. */
+async function sendLink(url: string, field: HTMLInputElement | null): Promise<boolean> {
+  try {
+    if (touchShare()) {
+      await navigator.share({ url, title: 'Connect with me on Nya' });
+      return true;
+    }
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+  } catch {
+    // Dismissed, or the clipboard refused.
+  }
+  field?.focus();
+  field?.select();
+  return false;
+}
+
 /** The Sharing drawer. Loads each time it opens. */
 export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [data, setData] = useState<SharingPayload | null>(null);
@@ -301,24 +327,18 @@ export function SharingPanelView({
         {invite && (
           <>
             <div className="invite-link">
-              <code>{invite.url}</code>
+              <input readOnly value={invite.url} aria-label="Invite link" onFocus={(e) => e.target.select()} />
               <button
                 className="secondary"
-                onClick={async () => {
-                  // The phone's own share menu where there is one (a text
-                  // message is the usual way), else the clipboard.
-                  const nav = navigator as Navigator & { share?: (d: { url: string; title: string }) => Promise<void> };
-                  try {
-                    if (nav.share) await nav.share({ url: invite.url, title: 'Connect with me on Nya' });
-                    else await navigator.clipboard?.writeText(invite.url);
-                    setSent(true);
-                    setTimeout(() => setSent(false), 2000);
-                  } catch {
-                    // Dismissed, or no clipboard: the link is still there to copy by hand.
-                  }
+                onClick={async (e) => {
+                  const field = e.currentTarget.previousElementSibling as HTMLInputElement | null;
+                  const ok = await sendLink(invite.url, field);
+                  if (!ok) return;
+                  setSent(true);
+                  setTimeout(() => setSent(false), 2000);
                 }}
               >
-                {sent ? 'Done' : 'Send'}
+                {sent ? (touchShare() ? 'Sent' : 'Copied') : touchShare() ? 'Send' : 'Copy'}
               </button>
             </div>
             <p className="panel-note">Send it to them yourself. It works once, until {new Date(invite.expires_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>

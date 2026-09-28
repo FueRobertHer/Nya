@@ -55,7 +55,7 @@ describe('the sharing drawer', () => {
     const html = panel({ enabled: true, connections: [], accounts: [] }, { invite: { url: 'https://nya.test/connect/abc', expires_at: '2026-10-01T00:00:00Z' } });
     expect(html).toContain('https://nya.test/connect/abc');
     expect(html).toContain('It works once, until');
-    expect(html).toContain('>Send<');
+    expect(html).toContain('>Copy<'); // no touch share menu here
   });
 
   test('the list: each person, what they see of mine (paused shares not counted), and the blocked', () => {

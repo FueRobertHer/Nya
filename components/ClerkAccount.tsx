@@ -22,13 +22,18 @@ const SHIELD = 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z';
 
 export default function ClerkAccount({ clearDevice, onOpenSharing }: { clearDevice: () => void; onOpenSharing: () => void }) {
   const clerk = useClerk();
-  useEffect(
-    () =>
-      clerk.addListener(({ session }) => {
-        if (session === null) clearDevice();
-      }),
-    [clerk, clearDevice]
-  );
+  useEffect(() => {
+    // Only a session that was there and went: not the first report, nor a
+    // moment without one before Clerk has loaded.
+    let hadSession = false;
+    return clerk.addListener(({ session }) => {
+      if (session) hadSession = true;
+      else if (session === null && hadSession) {
+        hadSession = false;
+        clearDevice();
+      }
+    });
+  }, [clerk, clearDevice]);
   return (
     <div className="user-button-slot">
       <UserButton appearance={{ elements: { avatarBox: { width: 34, height: 34 } } }}>

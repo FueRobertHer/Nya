@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useClerk } from '@clerk/nextjs';
 
-type Status = { enabled: boolean; can_delete?: boolean; reason?: string };
+type Status = { enabled: boolean; can_delete?: boolean; reason?: string } | 'failed';
 
 export default function DeleteAccount({ beforeSignOut }: { beforeSignOut: () => void }) {
   const { signOut } = useClerk();
@@ -19,9 +19,9 @@ export default function DeleteAccount({ beforeSignOut }: { beforeSignOut: () => 
 
   useEffect(() => {
     fetch('/api/account')
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => (res.ok ? res.json() : 'failed'))
       .then(setStatus)
-      .catch(() => setStatus(null));
+      .catch(() => setStatus('failed'));
   }, []);
 
   const onDelete = async () => {
@@ -61,7 +61,10 @@ export function DeleteAccountView({
   onType: (s: string) => void;
   onDelete: () => void;
 }) {
-  if (!status?.enabled) return null;
+  // This is the whole of its page in Clerk's account window: never blank.
+  if (status === null) return <div className="spinner" role="status" aria-label="Loading" />;
+  if (status === 'failed') return <p className="error">Could not check this account. Close this window and try again.</p>;
+  if (!status.enabled) return null;
   return (
     <div className="privacy-panel">
       <h3>Delete my account</h3>

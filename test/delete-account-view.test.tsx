@@ -9,8 +9,12 @@ const view = (status: any, typed = '') =>
 
 describe('deleting my account, on screen', () => {
   test('nothing with the shared password', () => {
-    expect(view(null)).toBe('');
     expect(view({ enabled: false })).toBe('');
+  });
+
+  test('never a blank page: loading, then the reason it could not check', () => {
+    expect(view(null)).toContain('role="status"');
+    expect(view('failed')).toContain('Could not check this account.');
   });
 
   test('the primary account is told why, with no button', () => {

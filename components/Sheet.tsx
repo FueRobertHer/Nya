@@ -1,9 +1,10 @@
 'use client';
 
 // A drawer: a sheet up from the bottom on phones, a panel from the right on
-// wider screens (styles in app/globals.css). Closes on the backdrop, the
-// close button or Escape. While open the page behind it doesn't scroll, and
-// focus moves into it and back to where it was when it closes.
+// wider screens (styles in app/globals.css). Closes on the backdrop or the
+// close button; Escape goes back a level if there is one, else closes. While
+// open the page behind it doesn't scroll, and focus moves into it and back to
+// where it was when it closes (if that is still on the page).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -39,23 +40,37 @@ export function Sheet({
     return () => clearTimeout(timer);
   }, [open]);
 
+  // Escape, read through a ref so the listener isn't re-added each render.
+  const escape = useRef(onClose);
+  escape.current = onBack ?? onClose;
+
+  // Once it is on the page: lock the page behind, take focus, listen for Escape.
+  const active = open && mounted;
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     const before = document.activeElement as HTMLElement | null;
     const root = document.documentElement;
     const overflow = root.style.overflow;
     root.style.overflow = 'hidden';
     panel.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') escape.current();
     };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
       root.style.overflow = overflow;
-      before?.focus?.({ preventScroll: true });
+      // Opened from a menu that has since closed: nothing to go back to.
+      if (before?.isConnected) before.focus({ preventScroll: true });
     };
-  }, [open, onClose]);
+  }, [active]);
+
+  // A new level (back or forward) starts with focus on the panel, not lost
+  // with the button that went away.
+  const level = onBack ? 'inner' : 'top';
+  useEffect(() => {
+    if (active) panel.current?.focus({ preventScroll: true });
+  }, [level, active]);
 
   if (!mounted) return null;
   return (

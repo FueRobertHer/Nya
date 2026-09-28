@@ -119,8 +119,9 @@ button.secondary {
 }
 
 /* Hover only where there is a pointer: on touch screens it sticks after a tap. */
+/* Clerk's own controls (classes cl-...) keep their own hover and press. */
 @media (hover: hover) {
-  button:hover:not(:disabled) {
+  button:hover:not(:disabled):not([class*="cl-"]) {
     opacity: 0.9;
   }
   button.secondary:hover:not(:disabled) {
@@ -129,7 +130,7 @@ button.secondary {
   }
 }
 
-button:active:not(:disabled) {
+button:active:not(:disabled):not([class*="cl-"]) {
   transform: scale(0.98);
 }
 
@@ -140,7 +141,7 @@ button:active:not(:disabled) {
 
 /* Form controls without a class of their own: dark, rounded, and legible.
    :where keeps these below any class's styling. */
-:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea) {
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [class*="cl-"]), select:not([class*="cl-"]), textarea:not([class*="cl-"])) {
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -155,13 +156,13 @@ button:active:not(:disabled) {
   opacity: 1;
 }
 
-:where(input, select, textarea):focus {
+:where(input, select, textarea):not([class*="cl-"]):focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
 /* One chevron for every select, instead of each browser's own. */
-:where(select) {
+:where(select:not([class*="cl-"])) {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 32px;
@@ -249,6 +250,14 @@ th.num {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-size: 14px;
+}
+
+.type-tag select {
+  font-size: 12px;
+  text-transform: none;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  margin-left: 4px;
 }
 
 .type-tag {
@@ -1397,6 +1406,12 @@ button:disabled {
   opacity: 1;
 }
 
+/* Sliding out: the page is usable again at once. */
+.sheet-backdrop[data-open="false"],
+.sheet[data-open="false"] {
+  pointer-events: none;
+}
+
 /* A sheet from the bottom on phones... */
 .sheet {
   position: fixed;
@@ -1404,6 +1419,7 @@ button:disabled {
   left: 0;
   right: 0;
   bottom: 0;
+  max-height: 92vh;
   max-height: 92dvh;
   display: flex;
   flex-direction: column;
@@ -1479,6 +1495,7 @@ button:disabled {
     top: 0;
     width: 440px;
     max-height: none;
+    height: 100vh;
     height: 100dvh;
     border-radius: 20px 0 0 20px;
     border: 1px solid var(--line);
@@ -1557,14 +1574,20 @@ button:disabled {
   background: var(--bg);
 }
 
-.invite-link code {
+.invite-link input {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border: none;
+  background: transparent;
+  padding: 6px 0;
   font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
+  text-overflow: ellipsis;
+}
+
+.invite-link input:focus {
+  outline: none;
 }
 
 .invite-link button {
