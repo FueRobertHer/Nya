@@ -4,7 +4,7 @@ import { SignOutButton } from '@clerk/nextjs';
 import { clerkEnabled } from '@/lib/auth-mode';
 
 // A signed-in Clerk account that isn't on CLERK_ALLOWED_USER_IDS. Its own id
-// is shown so the owner can add it; nothing else is.
+// is shown so the owner can add it (or its email); nothing else is.
 export default async function NotAllowedPage() {
   if (!clerkEnabled()) redirect('/login');
   const { userId } = await auth();
@@ -13,7 +13,7 @@ export default async function NotAllowedPage() {
     <main className="wrap">
       <div className="card">
         <h1>Not allowed yet</h1>
-        <p>You're signed in, but this account can't open Nya yet. Its id is:</p>
+        <p>You're signed in, but this account can't open Nya yet. Ask to be added by your email, or by this account's id:</p>
         <p>
           <code>{userId}</code>
         </p>
