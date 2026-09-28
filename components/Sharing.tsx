@@ -180,7 +180,7 @@ export function SharingSettingsView({
         nobody else in the app can find you.
       </p>
 
-      <div className="share-invite">
+      <div className="peer-invite">
         <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Your name, as they’ll see it" aria-label="Your name, as they’ll see it" maxLength={40} />
         <input value={theirLabel} onChange={(e) => setTheirLabel(e.target.value)} placeholder="What you call them" aria-label="What you call them" maxLength={40} />
         <button onClick={() => onInvite(fromName, theirLabel)} disabled={busy}>
@@ -188,7 +188,7 @@ export function SharingSettingsView({
         </button>
       </div>
       {invite && (
-        <div className="share-invite">
+        <div className="peer-invite">
           <input readOnly value={invite.url} aria-label="Invite link" onFocus={(e) => e.target.select()} />
           <button className="secondary" onClick={() => navigator.clipboard?.writeText(invite.url)}>
             Copy
@@ -212,7 +212,7 @@ export function SharingSettingsView({
           )}
           {current && (
             <>
-              <label className="share-row">
+              <label className="peer-row">
                 <span>What you call them</span>
                 <input value={labelDraft} onChange={(e) => onLabel(e.target.value)} maxLength={40} />
               </label>
@@ -227,9 +227,9 @@ export function SharingSettingsView({
               </p>
               {accounts.length === 0 && <p className="sub">You have no accounts to share yet.</p>}
               {accounts.map((a) => (
-                <div key={a.id} className="share-row">
+                <div key={a.id} className="peer-row">
                   <span>{a.label}</span>
-                  <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`Share ${a.label}`}>
+                  <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
                     {(Object.keys(LEVEL_LABEL) as Choice[]).map((c) => (
                       <option key={c} value={c}>
                         {LEVEL_LABEL[c]}
@@ -256,7 +256,7 @@ export function SharingSettingsView({
         <>
           <p className="sub">Blocked</p>
           {data.blocked!.map((b) => (
-            <div key={b.id} className="share-row">
+            <div key={b.id} className="peer-row">
               <span>{b.label}</span>
               <button className="secondary" onClick={() => onRemove(b.id, null)} disabled={busy}>
                 Unblock
@@ -299,7 +299,7 @@ export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
           <p className="sub">Read-only.</p>
           {s.accounts.map((a) => (
             <div key={a.id}>
-              <div className="share-row">
+              <div className="peer-row">
                 <span>
                   {a.label}
                   {a.as_of && <span className="sub"> · as of {a.as_of}</span>}
@@ -313,7 +313,7 @@ export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
               )}
               {open === a.id &&
                 a.transactions?.map((t, i) => (
-                  <div key={i} className="share-row sub">
+                  <div key={i} className="peer-row sub">
                     <span>
                       {t.date} {t.name}
                       {t.pending ? ' (pending)' : ''}

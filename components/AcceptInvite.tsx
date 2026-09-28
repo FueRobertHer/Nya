@@ -33,11 +33,11 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
         {fromName ? `${fromName} invited you to connect.` : 'Someone invited you to connect.'} Connecting shares nothing by
         itself: each of you chooses which accounts the other can see, read-only.
       </p>
-      <label className="share-row">
+      <label className="peer-row">
         <span>What you call them</span>
         <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} />
       </label>
-      <label className="share-row">
+      <label className="peer-row">
         <span>Your name, as they’ll see it</span>
         <input value={myName} onChange={(e) => setMyName(e.target.value)} maxLength={40} placeholder="So they know it’s you" />
       </label>
