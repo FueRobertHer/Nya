@@ -508,6 +508,7 @@ export function storageMock(fake: FakeRedis) {
     envPrefix: () => testKey(''),
     kEnv: testKey,
     kc: (ctx: { container: string }, key: string) => ctxKey(key, ctx),
+    containerPrefix: (ctx: { container: string }) => ctxKey('', ctx),
     // Backed by the fake, so code that filters by the stored Items sees the
     // ones a test seeds (none unless it does), in the container asked for.
     getItems: async (ctx: { container: string }) =>

@@ -9,6 +9,7 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import { SharingSettings, SharedWithMe } from './Sharing';
+import DeleteAccount from './DeleteAccount';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -1339,6 +1340,7 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
                     with the other account upkeep; what others share with me
                     shows whenever there is some. */}
                 {clerk && manageMode && <SharingSettings refreshKey={asOf} />}
+                {clerk && manageMode && <DeleteAccount beforeSignOut={clearDevice} />}
                 {clerk && <SharedWithMe refreshKey={asOf} />}
 
                 {sortedInstitutions.map((inst) => {
