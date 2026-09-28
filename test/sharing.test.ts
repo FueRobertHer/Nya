@@ -246,6 +246,12 @@ describe('sharing accounts on a connection', () => {
     expect(await sharedWithPartner()).toEqual([]);
     const settings = await connectionsOf('user_owner');
     expect(settings.accounts.map((a: any) => a.id).sort()).toEqual(['acct_joint', 'acct_mine', 'manual_house']);
+    // By institution, then name, each with its parts for the grouped list.
+    expect(settings.accounts.map((a: any) => [a.institution, a.name, a.label])).toEqual([
+      ['Chase', 'Checking ••1111', 'Chase Checking ••1111'],
+      ['Chase', 'Checking ••2222', 'Chase Checking ••2222'],
+      ['Manual', 'House', 'Manual House'],
+    ]);
     expect(settings.connections[0].sharing).toEqual({});
   });
 
