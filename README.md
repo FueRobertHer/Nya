@@ -654,11 +654,15 @@ own data. Background jobs without a signed-in account (the balance ingest,
 the password fallback) keep using the first container, the one marked
 primary. The nightly snapshot runs every account's container. Which account owns which
 container is kept environment-wide under `owners`, and is in the backups.
-To hand the data to another account (a recreated Clerk user, say), delete
-the `owners` key for that environment and sign in with the new account. Do
-the same after restoring an archive into a namespace you'll open with a
-different Clerk instance (`restore-test:owners`): the archive's owner is
-your account in the instance it came from.
+To hand a container to another account (a recreated Clerk user, say), move
+that one entry, in the Upstash console: `HSET <env>:owners <new user id>
+<container id>`, then `HDEL <env>:owners <old user id>`. Never delete the
+whole `owners` key once there is more than one container: with nothing
+mapped the app refuses every account rather than let whoever signs in first
+take the first container. (With a single container, deleting it is fine:
+the next sign-in claims it.) After restoring an archive into a namespace
+you'll open with a different Clerk instance, map your account there the
+same way: the archive's owners are accounts of the instance it came from.
 
 Turning it on in production: create a production instance in Clerk (it asks
 for a domain you own), set its keys on Production, sign in once to get your

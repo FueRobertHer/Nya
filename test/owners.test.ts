@@ -63,6 +63,19 @@ describe('which container a Clerk account reaches', () => {
     expect(Object.keys(await owners()).length).toBe(2);
   });
 
+  // Someone cleared the whole map by hand: whoever signs in next must not take
+  // the first container, with its owner's banks.
+  test('with nothing mapped but several containers, nobody claims anything', async () => {
+    await ownerContainer('user_owner');
+    const theirs = await ownerContainer('user_partner');
+    await fake.del(ownersKey());
+    await expect(ownerContainer('user_partner')).rejects.toThrow('several containers exist');
+    await expect(ownerContainer('user_owner')).rejects.toThrow('several containers exist');
+    expect(await owners()).toEqual({});
+    const registry = (await fake.hgetall<Record<string, string>>(registryKey())) ?? {};
+    expect(Object.keys(registry).sort()).toEqual([TEST_CONTAINER, String(theirs)].sort());
+  });
+
   test('a new account signing in from two tabs at once gets one container', async () => {
     await ownerContainer('user_owner');
     const [a, b] = await Promise.all([ownerContainer('user_partner'), ownerContainer('user_partner')]);
@@ -157,5 +170,9 @@ describe.skipIf(!hasRedis && !process.env.CI)('the owner claim, on a real Redis'
     expect(await run('user_b', 'c1', 'c3')).toBe('c2');
     await expect(run('user_c', 'c1', 'c2')).rejects.toThrow('already registered'); // never two accounts in one
     expect(await r.send('HGETALL', ['owners'])).toEqual({ user_a: 'c1', user_b: 'c2' });
+    await r.send('DEL', ['owners']);
+    await r.send('HSET', ['registry', 'c1', '{}']);
+    await expect(run('user_b', 'c1', 'c9')).rejects.toThrow('NOCLAIM'); // cleared with several: no claim
+    expect(await r.send('EXISTS', ['owners'])).toBe(0);
   });
 });

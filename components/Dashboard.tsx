@@ -2,6 +2,7 @@
 
 import ClerkAccount from './ClerkAccount';
 import { watchSignOut } from './sign-out-watch';
+import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
@@ -151,8 +152,7 @@ type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 
 // Last-known dashboard snapshot, kept on-device so the app paints instantly
 // on open (and still shows something useful offline) while fresh data loads
-// in the background. Cleared on logout.
-const LOCAL_CACHE_KEY = 'nya:dashboard';
+// in the background. Cleared on logout; keyed per account (device-cache.ts).
 /** Set once this page has been sent to the login page because its session
  *  ended: nothing may save the snapshot again after it was cleared. */
 let signedOut = false;
@@ -311,7 +311,8 @@ const TAB_LABELS: Record<Tab, string> = {
   budgets: 'Budgets',
 };
 
-export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
+export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; viewer?: string }) {
+  const cacheKey = cacheKeyFor(viewer);
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<'new' | 'update'>('new');
@@ -445,7 +446,7 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
         // back the snapshot the redirect just cleared.
         if (signedOut) return;
         localStorage.setItem(
-          LOCAL_CACHE_KEY,
+          cacheKey,
           JSON.stringify({
             institutions: data.institutions,
             netWorth: data.netWorth,
@@ -501,7 +502,7 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
         // lost phone) must not keep painting balances, offline included.
         signedOut = true;
         try {
-          localStorage.removeItem(LOCAL_CACHE_KEY);
+          localStorage.removeItem(cacheKey);
         } catch {
           // Best-effort.
         }
@@ -517,7 +518,9 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
   useEffect(() => {
     // Paint immediately from the last-known snapshot, then revalidate.
     try {
-      const raw = localStorage.getItem(LOCAL_CACHE_KEY);
+      // The shared password's unkeyed snapshot belongs to no one account.
+      if (viewer) localStorage.removeItem(LOCAL_CACHE_KEY);
+      const raw = localStorage.getItem(cacheKey);
       if (raw) {
         const snap = JSON.parse(raw);
         if (Array.isArray(snap.institutions)) {
@@ -749,7 +752,7 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
   const clearDevice = useCallback(() => {
     signedOut = true; // no load still in flight may save the snapshot again
     try {
-      localStorage.removeItem(LOCAL_CACHE_KEY);
+      localStorage.removeItem(cacheKey);
     } catch {
       // Best-effort; the snapshot only lives on this device anyway.
     }
@@ -758,7 +761,7 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
   const logout = useCallback(async () => {
     signedOut = true; // no load still in flight may save the snapshot again
     try {
-      localStorage.removeItem(LOCAL_CACHE_KEY);
+      localStorage.removeItem(cacheKey);
     } catch {
       // Best-effort; the snapshot only lives on this device anyway.
     }
@@ -783,7 +786,7 @@ export default function Dashboard({ clerk = false }: { clerk?: boolean }) {
     }
     signedOut = true; // as in logout
     try {
-      localStorage.removeItem(LOCAL_CACHE_KEY);
+      localStorage.removeItem(cacheKey);
     } catch {
       // Best-effort.
     }

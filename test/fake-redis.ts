@@ -412,6 +412,7 @@ export class FakeRedis {
       const have = this.hashes.get(keys[0])?.get(args[0]);
       if (have !== undefined) return have;
       if ((this.hashes.get(keys[0])?.size ?? 0) === 0) {
+        if ((this.hashes.get(keys[1])?.size ?? 0) > 1) throw new Error('NOCLAIM nobody owns anything, but several containers exist');
         if (args[1] === '') return '';
         this.hash(keys[0]).set(args[0], args[1]);
         return args[1];

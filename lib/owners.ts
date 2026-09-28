@@ -29,7 +29,9 @@ export const ownersKey = () => kEnv('owners');
 /**
  * The account's container, set up on its first sign-in, in one step:
  * already mapped, that; nobody mapped yet, claim ARGV[2] (the existing data,
- * '' when there is none to claim); otherwise register ARGV[3] as a new
+ * '' when there is none to claim), but only while it is the one container:
+ * with several, an empty map means it was cleared by hand, and a claim would
+ * hand someone's data to whoever signed in first; otherwise register ARGV[3] as a new
  * container (record ARGV[4]) and map the account to it. Returns the id, or ''
  * when there was nothing to claim. The first line names the script for the
  * test double.
@@ -38,6 +40,7 @@ export const CLAIM_OR_CREATE = `-- nya:owner-claim-or-create
 local have = redis.call('HGET', KEYS[1], ARGV[1])
 if have then return have end
 if redis.call('HLEN', KEYS[1]) == 0 then
+  if redis.call('HLEN', KEYS[2]) > 1 then return redis.error_reply('NOCLAIM nobody owns anything, but several containers exist') end
   if ARGV[2] == '' then return '' end
   redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
   return ARGV[2]
@@ -46,6 +49,17 @@ if redis.call('HEXISTS', KEYS[2], ARGV[3]) == 1 then return redis.error_reply('c
 redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 return ARGV[3]`;
+
+async function setUp(args: string[]): Promise<unknown> {
+  try {
+    return await redis().eval(CLAIM_OR_CREATE, [ownersKey(), registryKey()], args);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('NOCLAIM')) {
+      throw new ContainerError('No account owns any data, but several containers exist: map accounts to them by hand (see README).');
+    }
+    throw err;
+  }
+}
 
 async function owned(userId: string): Promise<ContainerId | null> {
   const id = await redis().hget<string>(ownersKey(), userId);
@@ -62,7 +76,7 @@ export async function ownerContainer(userId: string, now: number = Date.now()): 
     const dep = await deploymentContainer(now);
     const fresh = asContainerId(crypto.randomUUID());
     const record: ContainerRecord = { status: 'active', primary: false, created_at: new Date(now).toISOString() };
-    const got = await redis().eval(CLAIM_OR_CREATE, [ownersKey(), registryKey()], [
+    const got = await setUp([
       userId,
       dep.kind === 'container' ? dep.container : '',
       fresh,

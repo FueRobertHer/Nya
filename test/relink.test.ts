@@ -31,6 +31,7 @@ mock.module('@/lib/plaid', () => ({
       },
     }),
     accountsBalanceGet: async (req: any) => ({ data: { accounts: plaidAccounts[req.access_token] ?? [] } }),
+    linkTokenCreate: async (req: any) => ({ data: { link_token: 'link', user: req.user } }),
     itemRemove: async (req: any) => {
       removed.push(req.access_token);
       return { data: {} };
@@ -933,6 +934,14 @@ describe('the decrypted-map cache order', () => {
     } finally {
       setDecryptedBudget(16 * 1024 * 1024);
     }
+  });
+});
+
+describe('linking a bank', () => {
+  // Plaid expects one id per end user; the container's says nothing about who.
+  test('names the account’s container to Plaid, never a shared id', async () => {
+    const { TEST_CONTAINER } = await import('./fake-redis');
+    expect((await route('create-link-token', 'POST')).body.user).toEqual({ client_user_id: TEST_CONTAINER });
   });
 });
 

@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { Products, CountryCode } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
+import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 
 export async function POST() {
   try {
+    const ctx = await dataCtx();
     const response = await plaidClient.linkTokenCreate({
-      user: { client_user_id: 'local-user' },
+      // One id per person, as Plaid expects: their container's, which says
+      // nothing about who they are.
+      user: { client_user_id: ctx.container },
       client_name: 'Nya',
       products: [Products.Transactions],
       // Optional, not required: an institution that can't serve investments or
@@ -22,6 +26,8 @@ export async function POST() {
     });
     return NextResponse.json(response.data);
   } catch (err: any) {
+    const unavailable = containerUnavailable(err);
+    if (unavailable) return unavailable;
     console.error(err?.response?.data || err);
     return NextResponse.json({ error: 'Failed to create link token' }, { status: 500 });
   }
