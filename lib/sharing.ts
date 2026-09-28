@@ -18,14 +18,20 @@
 // since hidden, or no longer has, is left out at read time.
 //
 // Balances and transactions are what the owner's own loads and the nightly
-// snapshot stored; this never calls Plaid on the owner's behalf.
+// snapshot stored; this never calls Plaid on the owner's behalf. Each
+// account's balance is its newest measured one (a day's full snapshot, or the
+// partial record kept while another bank is failing), with its own date.
+//
+// Hiding an account pauses its sharing: the grant stays, and is honoured again
+// if the account is unhidden.
 
 import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
-import { liveAccountIds, directoryLabels, getEffectiveHidden } from './links';
+import { liveAccountIds, directoryLabels, directoryTypes, getEffectiveHidden } from './links';
 import { getManualAccounts } from './manual';
-import { getLatestAccountSnapshot } from './history';
+import { getAccountHistory } from './history';
+import { clerkUserAllowed } from './auth-mode';
 import { readStoredTxns } from './transactions';
 
 export type Level = 'balance' | 'transactions';
@@ -58,10 +64,13 @@ async function allGrants(): Promise<{ owner: string; grantee: string; grant: Gra
   return out;
 }
 
-/** The other people in the app: every account that owns a container. */
+/** The other people in the app: every account that owns a container and is
+ *  still allowed in. */
 export async function people(me: string): Promise<string[]> {
   const owners = ((await redis().hgetall<Record<string, string>>(ownersKey())) ?? {}) as Record<string, string>;
-  return Object.keys(owners).filter((id) => id !== me).sort();
+  return Object.keys(owners)
+    .filter((id) => id !== me && clerkUserAllowed(id))
+    .sort();
 }
 
 /** A person's container, read-only use: only for reading what they granted. */
@@ -114,8 +123,20 @@ export async function setGrant(ctx: Ctx, me: string, to: string, accounts: Recor
 }
 
 export type SharedTxn = { date: string; name: string; amount: number; pending: boolean };
-export type SharedAccount = { id: string; label: string; level: Level; balance: number | null; transactions?: SharedTxn[] };
-export type SharedFrom = { from: string; as_of: string | null; accounts: SharedAccount[] };
+export type SharedAccount = {
+  id: string;
+  label: string;
+  level: Level;
+  balance: number | null;
+  /** The day that balance was measured. */
+  as_of: string | null;
+  /** Money owed (a card, a loan) rather than held. */
+  debt: boolean;
+  transactions?: SharedTxn[];
+};
+export type SharedFrom = { from: string; accounts: SharedAccount[] };
+
+const DEBT_TYPES = new Set(['credit', 'loan']);
 
 /** Everything shared with me, filtered to what each owner granted and still
  *  has. Read only; never touches Plaid. */
@@ -123,45 +144,69 @@ export async function sharedWithMe(me: string, now: number = Date.now()): Promis
   const out: SharedFrom[] = [];
   for (const { owner, grantee, grant } of await allGrants()) {
     if (grantee !== me) continue;
-    const theirs = await theirCtx(owner);
-    if (!theirs) continue;
-    // Re-checked against what they can share now: hidden or gone since is out.
-    const still = new Map((await shareableAccounts(theirs)).map((a) => [a.id, a.label]));
-    const granted = Object.entries(grant.accounts).filter(([id]) => still.has(id));
-    if (granted.length === 0) continue;
-
-    const [snapshot, manual] = await Promise.all([getLatestAccountSnapshot(theirs), getManualAccounts(theirs)]);
-    const manualBalance = new Map(manual.map((m) => [m.account_id, m.balance]));
-
-    const withTxns = new Set(granted.filter(([, level]) => level === 'transactions').map(([id]) => id));
-    const txns = new Map<string, SharedTxn[]>();
-    if (withTxns.size > 0) {
-      const since = new Date(now - SHARED_TXN_DAYS * 86_400_000).toISOString().slice(0, 10);
-      for (const item of await getItems(theirs)) {
-        for (const t of await readStoredTxns(theirs, item.item_id, { shown: true })) {
-          if (!withTxns.has(t.account_id) || t.date < since) continue;
-          const list = txns.get(t.account_id) ?? [];
-          list.push({ date: t.date, name: t.merchant_name ?? t.name, amount: t.amount, pending: t.pending });
-          txns.set(t.account_id, list);
-        }
-      }
+    try {
+      const shared = await fromOwner(owner, grant, now);
+      if (shared) out.push(shared);
+    } catch (err) {
+      // One person's unreadable data must not hide what everyone else shares.
+      console.error('Shared data could not be read for one sharer', err instanceof Error ? err.name : err);
     }
-
-    out.push({
-      from: owner,
-      as_of: snapshot?.date ?? null,
-      accounts: granted.map(([id, level]) => ({
-        id,
-        label: still.get(id)!,
-        level,
-        balance: manualBalance.get(id) ?? snapshot?.balances[id] ?? null,
-        ...(level === 'transactions'
-          ? { transactions: (txns.get(id) ?? []).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) }
-          : {}),
-      })),
-    });
   }
   return out;
+}
+
+async function fromOwner(owner: string, grant: Grant, now: number): Promise<SharedFrom | null> {
+  if (!clerkUserAllowed(owner)) return null;
+  const theirs = await theirCtx(owner);
+  if (!theirs) return null;
+  // Re-checked against what they can share now: hidden or gone since is out.
+  const still = new Map((await shareableAccounts(theirs)).map((a) => [a.id, a.label]));
+  const granted = Object.entries(grant.accounts).filter(([id]) => still.has(id));
+  if (granted.length === 0) return null;
+
+  const manual = new Map((await getManualAccounts(theirs)).map((m) => [m.account_id, m]));
+  const types = await directoryTypes(theirs, granted.map(([id]) => id).filter((id) => !manual.has(id)));
+
+  const withTxns = new Set(granted.filter(([, level]) => level === 'transactions').map(([id]) => id));
+  const txns = new Map<string, SharedTxn[]>();
+  if (withTxns.size > 0) {
+    const since = new Date(now - SHARED_TXN_DAYS * 86_400_000).toISOString().slice(0, 10);
+    for (const item of await getItems(theirs)) {
+      for (const t of await readStoredTxns(theirs, item.item_id, { shown: true })) {
+        if (!withTxns.has(t.account_id) || t.date < since) continue;
+        const list = txns.get(t.account_id) ?? [];
+        list.push({ date: t.date, name: t.merchant_name ?? t.name, amount: t.amount, pending: t.pending });
+        txns.set(t.account_id, list);
+      }
+    }
+  }
+
+  const accounts: SharedAccount[] = [];
+  for (const [id, level] of granted) {
+    const m = manual.get(id);
+    let balance: number | null = null;
+    let as_of: string | null = null;
+    if (m) {
+      balance = m.balance;
+      as_of = m.updated_at.slice(0, 10);
+    } else {
+      const measured = (await getAccountHistory(theirs, id)).filter((p) => !p.estimated);
+      const last = measured[measured.length - 1];
+      if (last) ({ value: balance, date: as_of } = last);
+    }
+    accounts.push({
+      id,
+      label: still.get(id)!,
+      level,
+      balance,
+      as_of,
+      debt: DEBT_TYPES.has((m ? m.type : types[id]) ?? ''),
+      ...(level === 'transactions'
+        ? { transactions: (txns.get(id) ?? []).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) }
+        : {}),
+    });
+  }
+  return { from: owner, accounts };
 }
 
 /** Removes every grant to or from someone (their account is going away). */

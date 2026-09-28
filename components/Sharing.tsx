@@ -24,12 +24,13 @@ export type SharedPayload = {
   shared: {
     from: string;
     name: string;
-    as_of: string | null;
     accounts: {
       id: string;
       label: string;
       level: Level;
       balance: number | null;
+      as_of: string | null;
+      debt: boolean;
       transactions?: { date: string; name: string; amount: number; pending: boolean }[];
     }[];
   }[];
@@ -56,10 +57,16 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
     load();
   }, [load, refreshKey]);
 
+  // The saved choices for this person, as a starting draft: set when the
+  // person changes or after a save, never by a background reload, so choices
+  // not yet saved survive a refresh of the dashboard.
+  const [draftFor, setDraftFor] = useState<string | null>(null);
   useEffect(() => {
-    const current = (person && data?.sharing?.[person]) || {};
-    setDraft(Object.fromEntries((data?.accounts ?? []).map((a) => [a.id, current[a.id] ?? 'none'])));
-  }, [data, person]);
+    if (!data || !person || draftFor === person) return;
+    const current = data.sharing?.[person] ?? {};
+    setDraft(Object.fromEntries((data.accounts ?? []).map((a) => [a.id, current[a.id] ?? 'none'])));
+    setDraftFor(person);
+  }, [data, person, draftFor]);
 
   const save = useCallback(async () => {
     setBusy(true);
@@ -76,6 +83,7 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
       return setError(body?.error ?? 'Could not save.');
     }
     setNotice('Saved.');
+    setDraftFor(null); // start again from what was saved
     load();
   }, [person, draft, load]);
 
@@ -115,7 +123,8 @@ export function SharingSettingsView({
   onChoose: (id: string, c: Choice) => void;
   onSave: () => void;
 }) {
-  if (!data?.enabled) return null;
+  if (!data) return error ? <div className="card error">{error}</div> : null;
+  if (!data.enabled) return null;
   const people = data.people ?? [];
   const accounts = data.accounts ?? [];
   return (
@@ -125,7 +134,10 @@ export function SharingSettingsView({
         <p className="sub">Nobody else uses the app yet. Once someone signs in, you can share accounts with them here.</p>
       ) : (
         <>
-          <p className="sub">Read-only: they can see, never change. Nothing is shared until you choose it.</p>
+          <p className="sub">
+            Read-only: they can see, never change. Nothing is shared until you choose it. Hiding an account pauses its
+            sharing until you unhide it.
+          </p>
           {people.length > 1 && (
             <select value={person} onChange={(e) => onPerson(e.target.value)} aria-label="Person">
               {people.map((p) => (
@@ -181,12 +193,15 @@ export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
       {data.shared.map((s) => (
         <div key={s.from} className="card">
           <h3>Shared by {s.name}</h3>
-          {s.as_of && <p className="sub">Balances as of {s.as_of}. Read-only.</p>}
+          <p className="sub">Read-only.</p>
           {s.accounts.map((a) => (
             <div key={a.id}>
               <div className="share-row">
-                <span>{a.label}</span>
-                <span>{a.balance === null ? 'No balance yet' : formatMoney(a.balance)}</span>
+                <span>
+                  {a.label}
+                  {a.as_of && <span className="sub"> · as of {a.as_of}</span>}
+                </span>
+                <span>{a.balance === null ? 'No balance yet' : `${formatMoney(a.balance)}${a.debt ? ' owed' : ''}`}</span>
               </div>
               {a.transactions && (
                 <button className="secondary" onClick={() => setOpen(open === a.id ? null : a.id)}>

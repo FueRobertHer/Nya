@@ -9,6 +9,13 @@ const settings = (data: any, draft: Record<string, any> = {}) =>
   );
 
 describe('the sharing settings', () => {
+  test('show a load error rather than nothing', () => {
+    const html = renderToStaticMarkup(
+      <SharingSettingsView data={null} person="" draft={{}} busy={false} error="Could not load sharing." notice="" onPerson={noop} onChoose={noop} onSave={noop} />
+    );
+    expect(html).toContain('Could not load sharing.');
+  });
+
   test('render nothing with the shared password', () => {
     expect(settings(null)).toBe('');
     expect(settings({ enabled: false })).toBe('');
@@ -42,10 +49,10 @@ describe('what others share with me', () => {
             {
               from: 'user_owner',
               name: 'Olive',
-              as_of: '2026-09-27',
               accounts: [
-                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false }] },
-                { id: 'b', label: 'House', level: 'balance', balance: null },
+                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false }] },
+                { id: 'b', label: 'House', level: 'balance', balance: null, as_of: null, debt: false },
+                { id: 'c', label: 'Visa ••9999', level: 'balance', balance: 250, as_of: '2026-09-26', debt: true },
               ],
             },
           ],
@@ -57,5 +64,8 @@ describe('what others share with me', () => {
     expect(html).toContain('No balance yet');
     expect(html).toContain('Recent transactions (1)');
     expect(html).not.toContain('Blue Bottle');
+    expect(html).toContain('as of 2026-09-27');
+    expect(html).toMatch(/250\.00 owed/);
+    expect(html).not.toMatch(/500\.00 owed/);
   });
 });

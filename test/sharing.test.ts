@@ -127,6 +127,7 @@ beforeEach(async () => {
   await registerTestContainer(fake);
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
   process.env.CLERK_SECRET_KEY = 'sk_test_x';
+  process.env.CLERK_ALLOWED_USER_IDS = 'user_owner,user_partner,user_third';
   await ownerBank();
   await as('user_owner', () => route('transactions', 'GET')); // the owner claims the data; rows stored
   await as('user_partner', () => route('shared', 'GET')); // the partner gets a container
@@ -150,7 +151,9 @@ describe('sharing accounts with someone', () => {
     const shared = await sharedWithPartner();
     expect(shared).toHaveLength(1);
     expect(shared[0]).toMatchObject({ from: 'user_owner', name: 'Olive Owner' });
-    expect(shared[0].accounts).toEqual([{ id: 'acct_joint', label: expect.stringContaining('1111'), level: 'balance', balance: 500 }]);
+    expect(shared[0].accounts).toEqual([
+      { id: 'acct_joint', label: expect.stringContaining('1111'), level: 'balance', balance: 500, as_of: new Date().toISOString().slice(0, 10), debt: false },
+    ]);
   });
 
   test('with transactions: the last 30 days of that account only', async () => {
@@ -160,7 +163,7 @@ describe('sharing accounts with someone', () => {
     expect(joint.transactions.map((t: any) => t.amount)).toEqual([12]); // not the 60-day-old one
     expect(JSON.stringify(from)).not.toContain('t_private');
     expect(JSON.stringify(from)).not.toContain('acct_mine');
-    expect(from.accounts.find((a: any) => a.id === 'manual_house')).toEqual({ id: 'manual_house', label: 'Manual House', level: 'balance', balance: 300000 });
+    expect(from.accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ id: 'manual_house', label: 'Manual House', level: 'balance', balance: 300000, debt: false });
   });
 
   test('revoking takes effect at once', async () => {
@@ -209,5 +212,56 @@ describe('sharing accounts with someone', () => {
     await dropGrantsOf('user_partner');
     expect(await outgoing('user_owner')).toEqual({});
     expect(await sharedWithPartner()).toEqual([]);
+  });
+
+  // One bank erroring for weeks keeps the full snapshot from being written;
+  // the partial record still measures the healthy accounts every day.
+  test('each balance is the account’s newest measured one, with its own date', async () => {
+    const { recordPartialAccounts } = await import('@/lib/history');
+    // An older full snapshot too: the newest measurement must win, not the first.
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(20)]: await encrypt(JSON.stringify({ acct_joint: 111 })) });
+    await recordPartialAccounts(TEST_CTX, { acct_joint: 640 });
+    await share('user_partner', { acct_joint: 'balance' });
+    const [from] = await sharedWithPartner();
+    expect(from.accounts[0]).toMatchObject({ balance: 640, as_of: new Date().toISOString().slice(0, 10) });
+  });
+
+  test('one sharer’s unreadable data hides only theirs', async () => {
+    await share('user_partner', { acct_joint: 'balance' });
+    // A third person shares a manual account with the partner too.
+    await as('user_third', () => route('shared', 'GET'));
+    const { ownerContainer } = await import('@/lib/owners');
+    const thirdCtx = { container: await ownerContainer('user_third') };
+    await saveManualAccount(thirdCtx as any, {
+      account_id: 'manual_car',
+      name: 'Car',
+      institution_name: 'Manual',
+      type: 'loan',
+      subtype: null,
+      balance: 9000,
+      updated_at: new Date().toISOString(),
+    } as any);
+    expect((await as('user_third', () => route('sharing', 'PUT', { to: 'user_partner', accounts: { manual_car: 'balance' } }))).status).toBe(200);
+    // The owner's data breaks.
+    await fake.set(ctxKey('txns:item_a'), 'garbage');
+    await share('user_partner', { acct_joint: 'transactions' });
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      const shared = await sharedWithPartner();
+      expect(shared.map((s: any) => s.from)).toEqual(['user_third']);
+      expect(shared[0].accounts[0]).toMatchObject({ id: 'manual_car', balance: 9000, debt: true });
+    } finally {
+      console.error = errors;
+    }
+  });
+
+  test('someone taken off the allowlist is no longer offered, and what they shared stops', async () => {
+    await as('user_partner', () => route('sharing', 'PUT', { to: 'user_owner', accounts: {} }));
+    await share('user_partner', { acct_joint: 'balance' });
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_partner';
+    const { people, sharedWithMe } = await import('@/lib/sharing');
+    expect(await people('user_partner')).toEqual([]);
+    expect(await sharedWithMe('user_partner')).toEqual([]);
   });
 });
