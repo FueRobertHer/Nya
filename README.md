@@ -673,14 +673,24 @@ reach, and running it again finishes. The primary account (the first, the
 owner's) can't be deleted from the app. Nightly backups keep a copy for up
 to 30 days; take them off `CLERK_ALLOWED_USER_IDS` too.
 
-Sharing: under Manage accounts, Sharing lists the other people in the app
-and your accounts. For each account choose Not shared, Balance, or Balance
-and transactions (the last 30 days), and Save. They see it read-only on
-their Accounts tab under "Shared by <you>"; they can never change it.
+Sharing is between connected people only; nobody can find or list anyone
+else in the app. To connect: under Manage accounts, Sharing, make an invite
+link (optionally with your name as they'll see it, and what you call them)
+and send it to them yourself. It works once, for 72 hours; opening it and
+choosing Connect connects you. Each of you names the other; the app never
+shows anyone's real name or email. Then, per connection, choose for each of
+your accounts: Not shared, That it exists, Balance, or Balance and
+transactions (the last 30 days), and Save. They see it read-only on their
+Accounts tab under "Shared by <what they call you>"; they can never change
+it. The Sharing card always says what each connection can see of yours.
 Nothing is shared until you choose it, hidden accounts are never shared,
-and setting an account back to Not shared stops it at once. Balances are
-the ones your own loads and the nightly snapshot recorded: sharing never
-calls your bank on the other person's behalf. Which account owns which
+and a change takes effect at once. Remove ends everything shared both ways;
+Block does too and stops any new link between you from working (only you
+can unblock). Balances are the ones your own loads and the nightly snapshot
+recorded: sharing never calls your bank on the other person's behalf.
+Connections are kept environment-wide under `connections` (in the backups),
+unused invite links under `invites:` (not in the backups). The `grants` key
+from the first version of sharing is no longer read and can be deleted. Which account owns which
 container is kept environment-wide under `owners`, and is in the backups.
 To hand a container to another account (a recreated Clerk user, say), move
 that one entry, in the Upstash console: `HSET <env>:owners <new user id>

@@ -98,7 +98,8 @@ const EXACT: Record<string, Kind> = {
 
   containers: 'plain', // the container registry
   owners: 'plain', // which Clerk account owns which container (lib/owners.ts)
-  grants: 'plain', // who shares which accounts with whom (lib/sharing.ts)
+  grants: 'plain', // sharing's first version (#88), no longer read or written
+  connections: 'plain', // who is connected, and what each shares (lib/sharing.ts)
 };
 
 const PREFIXES: [string, Kind][] = [
@@ -115,6 +116,7 @@ const PREFIXES: [string, Kind][] = [
   ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
   ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
   ['backups:', 'plain'], // the nightly backup's last outcome (lib/backup.ts)
+  ['invites:', 'plain'], // unused invite links, hashed (lib/sharing.ts)
 ];
 
 /** How a key (without the environment prefix) is stored, or null if it is not

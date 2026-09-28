@@ -1222,6 +1222,17 @@ button:disabled {
 
 /* Sharing (components/Sharing.tsx): one account per row, its choice or
    balance on the right. */
+.share-invite {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.share-invite input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
 .share-row {
   display: flex;
   justify-content: space-between;

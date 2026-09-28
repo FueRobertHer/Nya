@@ -11,8 +11,8 @@
 //      left at Plaid, which ends it only once its token stops being used);
 //   3. every key in the container is deleted;
 //   4. the container leaves the registry and the account leaves the owners map;
-//   5. every sharing grant to or from the account is dropped (after 4, so a
-//      partner saving sharing meanwhile can't put one back);
+//   5. every connection it is in is removed, and with it all sharing both
+//      ways (after 4, so nothing can reach the account meanwhile);
 //   6. the Clerk user is deleted; if that fails the deletion reports it, and
 //      running it again retries just this;
 //   7. the container is swept once more, for anything a request already in
@@ -27,7 +27,7 @@
 import { redis, containerPrefix, getItems } from './storage';
 import { getContainer, isContainerId, registryKey, type ContainerId, type ContainerRecord, type Ctx } from './containers';
 import { ownersKey } from './owners';
-import { dropGrantsOf } from './sharing';
+import { dropConnectionsOf } from './sharing';
 import { decrypt } from './crypto';
 
 export class DeletionRefused extends Error {}
@@ -98,7 +98,7 @@ export async function deleteAccount(
   }
   await redis().hdel(ownersKey(), userId);
   // 5. Sharing, both ways.
-  await dropGrantsOf(userId);
+  await dropConnectionsOf(userId);
 
   // 6. The sign-in.
   let signInError: unknown = null;

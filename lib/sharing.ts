@@ -1,30 +1,47 @@
 // lib/sharing.ts
 //
-// Read-only sharing between accounts (#45). A grant is one person letting
-// another see some of their accounts: per account, either its balance or its
-// balance and recent transactions. Nothing is shared unless chosen; only the
-// owner changes a grant; revoking takes effect on the next request.
+// Read-only sharing between people who chose to connect (#45).
 //
-// Stored environment-wide (grants live between containers, so in none):
-//   <env>:grants  field "<owner user id>><grantee user id>"
-//                 value {"accounts": {"<account id>": "balance" | "transactions"}, "updated_at": ISO}
+// CONNECTIONS. Nobody can find anyone: there is no list of users, no search,
+// no "does this email have an account". Two people connect only through an
+// invite link one of them sends the other: a random single-use token, good
+// for INVITE_HOURS, stored hashed. Accepting it creates the connection. Each
+// side names the other (a per-side label); the app never shows anyone's real
+// name, email or id to the other side.
+//
+// SHARES hang off the connection. Within one, each person shares any of their
+// own accounts, freely and one by one, at a level on a ladder: exists (that
+// it's there), balance, or balance and recent transactions. There is no
+// accept step per share; the viewer only ever reads.
+//
+// Stored environment-wide (connections live between containers, so in none):
+//   <env>:connections  field "<id>"              {users: [a, b], status, blocked_by?, created_at}
+//                      field "<id>|label|<user>" what <user> calls the other
+//                      field "<id>|share|<user>" {accounts: {"<account id>": level}, updated_at}
+//   <env>:invites:<sha256 of the token>          {from, from_name, their_label, created_at}, with an expiry
+// Every field of a connection is in one hash, so removing one (the breakup
+// case) is a single HDEL: every share both ways ends at once, none missed.
+// Blocking keeps the connection's record, marked blocked, which is what stops
+// a new invite between the two from connecting them again. A connection's id
+// is derived from the pair, so there is only ever one per pair.
 //
 // THE BOUNDARY. This module is the only place that reads another person's
 // container. It builds that person's Ctx itself, from the owners map, and
-// passes it only to read functions; nothing it returns carries the Ctx, and
-// no route ever gets one to write with. Everything is filtered to the granted
-// accounts here, on the server, before it leaves: the browser never receives
-// an account it wasn't granted, not even to hide it. An account the owner has
-// since hidden, or no longer has, is left out at read time.
+// passes it only to read functions; nothing it returns carries the Ctx or the
+// other person's user id, and no route ever gets one to write with.
+// Everything is filtered to the shared accounts here, on the server, before it
+// leaves: the browser never receives an account it wasn't shared, not even to
+// hide it. An account the owner has since hidden, or no longer has, is left
+// out at read time.
 //
 // Balances and transactions are what the owner's own loads and the nightly
 // snapshot stored; this never calls Plaid on the owner's behalf. Each
-// account's balance is its newest measured one (a day's full snapshot, or the
-// partial record kept while another bank is failing), with its own date.
+// account's balance is its newest measured one, with its own date.
 //
-// Hiding an account pauses its sharing: the grant stays, and is honoured again
+// Hiding an account pauses its sharing: the share stays, and is honoured again
 // if the account is unhidden.
 
+import { createHash, randomBytes } from 'node:crypto';
 import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
@@ -34,46 +51,220 @@ import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredTxns } from './transactions';
 
-export type Level = 'balance' | 'transactions';
-export type Grant = { accounts: Record<string, Level>; updated_at: string };
+export type Level = 'exists' | 'balance' | 'transactions';
+export type Share = { accounts: Record<string, Level>; updated_at: string };
 
-export const grantsKey = () => kEnv('grants');
-const field = (owner: string, grantee: string) => `${owner}>${grantee}`;
-const LEVELS = new Set<Level>(['balance', 'transactions']);
+export const connectionsKey = () => kEnv('connections');
+const inviteKey = (token: string) => kEnv(`invites:${createHash('sha256').update(token).digest('hex')}`);
+const LEVELS = new Set<Level>(['exists', 'balance', 'transactions']);
 /** How far back shared transactions go. */
 export const SHARED_TXN_DAYS = 30;
+/** How long an invite link works. */
+export const INVITE_HOURS = 72;
+const LABEL_MAX = 40;
 
 export class SharingRefused extends Error {}
 
-function parseGrant(raw: unknown): Grant | null {
-  const g = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  if (!g || typeof g !== 'object' || typeof (g as Grant).accounts !== 'object' || (g as Grant).accounts === null) return null;
-  const accounts: Record<string, Level> = {};
-  for (const [id, level] of Object.entries((g as Grant).accounts)) if (LEVELS.has(level)) accounts[id] = level;
-  return { accounts, updated_at: String((g as Grant).updated_at ?? '') };
+type Meta = { users: [string, string]; status: 'active' | 'blocked'; blocked_by?: string; created_at: string };
+
+/** The one id a pair of people ever has. */
+export function connectionId(a: string, b: string): string {
+  return createHash('sha256').update([a, b].sort().join('\n')).digest('hex').slice(0, 24);
+}
+const labelField = (id: string, user: string) => `${id}|label|${user}`;
+const shareField = (id: string, user: string) => `${id}|share|${user}`;
+
+function cleanLabel(raw: unknown, fallback: string): string {
+  const s = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX) : '';
+  return s || fallback;
 }
 
-async function allGrants(): Promise<{ owner: string; grantee: string; grant: Grant }[]> {
-  const raw = ((await redis().hgetall<Record<string, unknown>>(grantsKey())) ?? {}) as Record<string, unknown>;
-  const out: { owner: string; grantee: string; grant: Grant }[] = [];
-  for (const [key, value] of Object.entries(raw)) {
-    const [owner, grantee] = key.split('>');
-    const grant = parseGrant(value);
-    if (owner && grantee && grant) out.push({ owner, grantee, grant });
+function parse<T>(raw: unknown): T | null {
+  try {
+    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as T;
+  } catch {
+    return null;
   }
-  return out;
 }
 
-/** The other people in the app: every account that owns a container and is
- *  still allowed in. */
-export async function people(me: string): Promise<string[]> {
-  const owners = ((await redis().hgetall<Record<string, string>>(ownersKey())) ?? {}) as Record<string, string>;
-  const others = Object.keys(owners).filter((id) => id !== me);
-  const allowed = await Promise.all(others.map((id) => clerkUserAllowed(id)));
-  return others.filter((_, i) => allowed[i]).sort();
+function parseShare(raw: unknown): Share | null {
+  const g = parse<Share>(raw);
+  if (!g || typeof g !== 'object' || typeof g.accounts !== 'object' || g.accounts === null) return null;
+  const accounts: Record<string, Level> = {};
+  for (const [id, level] of Object.entries(g.accounts)) if (LEVELS.has(level)) accounts[id] = level;
+  return { accounts, updated_at: String(g.updated_at ?? '') };
 }
 
-/** A person's container, read-only use: only for reading what they granted. */
+type Conn = { id: string; meta: Meta; labels: Record<string, string>; shares: Record<string, Share> };
+
+async function allConnections(): Promise<Conn[]> {
+  const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
+  const byId = new Map<string, Conn>();
+  const get = (id: string) => {
+    let c = byId.get(id);
+    if (!c) byId.set(id, (c = { id, meta: null as unknown as Meta, labels: {}, shares: {} }));
+    return c;
+  };
+  for (const [field, value] of Object.entries(raw)) {
+    const [id, kind, user] = field.split('|');
+    if (!kind) {
+      const meta = parse<Meta>(value);
+      if (meta && Array.isArray(meta.users) && meta.users.length === 2) get(id).meta = meta;
+    } else if (kind === 'label' && user) get(id).labels[user] = String(value);
+    else if (kind === 'share' && user) {
+      const share = parseShare(value);
+      if (share) get(id).shares[user] = share;
+    }
+  }
+  // Fields without a record (left by a removal that stopped part way) count for nothing.
+  return [...byId.values()].filter((c) => c.meta);
+}
+
+async function connectionOf(me: string, id: string): Promise<Conn> {
+  const c = (await allConnections()).find((c) => c.id === id && c.meta.users.includes(me));
+  if (!c) throw new SharingRefused('No such connection.');
+  return c;
+}
+
+const other = (c: Conn, me: string) => (c.meta.users[0] === me ? c.meta.users[1] : c.meta.users[0]);
+
+// ---- Invites ----
+
+/** A new invite link's token. `fromName` is how I'd like them to see me (they
+ *  can change it); `theirLabel` is what I'll call them. */
+export async function createInvite(me: string, opts: { fromName?: unknown; theirLabel?: unknown }, now: number = Date.now()): Promise<{ token: string; expires_at: string }> {
+  const token = randomBytes(24).toString('base64url');
+  const invite = {
+    from: me,
+    from_name: cleanLabel(opts.fromName, ''),
+    their_label: cleanLabel(opts.theirLabel, ''),
+    created_at: new Date(now).toISOString(),
+  };
+  await redis().set(inviteKey(token), JSON.stringify(invite), { ex: INVITE_HOURS * 3600 });
+  return { token, expires_at: new Date(now + INVITE_HOURS * 3_600_000).toISOString() };
+}
+
+type Invite = { from: string; from_name: string; their_label: string; created_at: string };
+
+async function readInvite(token: string): Promise<Invite | null> {
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{16,64}$/.test(token)) return null;
+  const inv = parse<Invite>(await redis().get<unknown>(inviteKey(token)));
+  return inv && typeof inv.from === 'string' ? inv : null;
+}
+
+/** What an invite says, for its page: how its sender would like to be seen,
+ *  or null for any link that can't be used. Doesn't use it up. */
+export async function describeInvite(me: string, token: string): Promise<{ from_name: string; own: boolean } | null> {
+  const inv = await readInvite(token);
+  if (!inv) return null;
+  return { from_name: inv.from_name, own: inv.from === me };
+}
+
+const UNUSABLE = 'This invite link can’t be used. Ask for a new one.';
+
+/** Uses the invite and connects the two people; `label` is what I call them. */
+export async function acceptInvite(me: string, token: string, label: unknown, now: number = Date.now()): Promise<{ id: string }> {
+  const peek = await readInvite(token);
+  if (!peek) throw new SharingRefused(UNUSABLE);
+  if (peek.from === me) throw new SharingRefused('This is your own invite link. Send it to the person you want to connect with.');
+  // Single use: whoever takes it first has it.
+  const inv = parse<Invite>(await redis().getdel<unknown>(inviteKey(token)));
+  if (!inv || inv.from !== peek.from) throw new SharingRefused(UNUSABLE);
+  // The sender may since have been removed from the app or deleted.
+  if (!(await clerkUserAllowed(inv.from)) || !(await theirCtx(inv.from))) throw new SharingRefused(UNUSABLE);
+  const id = connectionId(me, inv.from);
+  const existing = (await allConnections()).find((c) => c.id === id);
+  // Blocked either way: the same answer as any dead link, so a blocked
+  // person can't tell.
+  if (existing?.meta.status === 'blocked') throw new SharingRefused(UNUSABLE);
+  if (existing) throw new SharingRefused('You’re already connected.');
+  const meta: Meta = { users: [me, inv.from].sort() as [string, string], status: 'active', created_at: new Date(now).toISOString() };
+  await redis().hset(connectionsKey(), {
+    [id]: JSON.stringify(meta),
+    [labelField(id, me)]: cleanLabel(label, cleanLabel(inv.from_name, 'Someone')),
+    [labelField(id, inv.from)]: cleanLabel(inv.their_label, 'Someone'),
+  });
+  return { id };
+}
+
+// ---- Managing my connections ----
+
+export type MyConnection = { id: string; label: string; sharing: Record<string, Level> };
+
+/** My active connections (what I call each, and what I share with each: all
+ *  they can see about me), and the people I blocked. */
+export async function myConnections(me: string): Promise<{ connections: MyConnection[]; blocked: { id: string; label: string }[] }> {
+  const mine = (await allConnections()).filter((c) => c.meta.users.includes(me));
+  const byLabel = <T extends { label: string }>(a: T, b: T) => a.label.localeCompare(b.label);
+  return {
+    connections: mine
+      .filter((c) => c.meta.status === 'active')
+      .map((c) => ({ id: c.id, label: c.labels[me] ?? 'Someone', sharing: c.shares[me]?.accounts ?? {} }))
+      .sort(byLabel),
+    // Only the one who blocked sees it: to the other it's simply gone.
+    blocked: mine
+      .filter((c) => c.meta.status === 'blocked' && c.meta.blocked_by === me)
+      .map((c) => ({ id: c.id, label: c.labels[me] ?? 'Someone' }))
+      .sort(byLabel),
+  };
+}
+
+export async function renameConnection(me: string, id: string, label: unknown): Promise<void> {
+  const c = await connectionOf(me, id);
+  if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
+  await redis().hset(connectionsKey(), { [labelField(id, me)]: cleanLabel(label, 'Someone') });
+}
+
+/** Sets what I share on one connection; an empty set shares nothing. Every
+ *  account must be one I can share now. */
+export async function setShare(ctx: Ctx, me: string, id: string, accounts: Record<string, unknown>, now: number = Date.now()): Promise<void> {
+  const c = await connectionOf(me, id);
+  if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
+  const allowed = new Set((await shareableAccounts(ctx)).map((a) => a.id));
+  const clean: Record<string, Level> = {};
+  for (const [acct, level] of Object.entries(accounts ?? {})) {
+    if (level === null || level === 'none') continue;
+    if (!LEVELS.has(level as Level)) throw new SharingRefused(`Unknown level for ${acct}.`);
+    if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
+    clean[acct] = level as Level;
+  }
+  if (Object.keys(clean).length === 0) {
+    await redis().hdel(connectionsKey(), shareField(id, me));
+    return;
+  }
+  const share: Share = { accounts: clean, updated_at: new Date(now).toISOString() };
+  await redis().hset(connectionsKey(), { [shareField(id, me)]: JSON.stringify(share) });
+}
+
+/** Removes a connection: every share both ways ends in one write. With
+ *  `block`, the record stays, marked blocked, so neither can invite the other
+ *  back; only the one who blocked can lift it (by removing it). */
+export async function removeConnection(me: string, id: string, opts: { block?: boolean } = {}): Promise<void> {
+  const c = await connectionOf(me, id);
+  if (c.meta.status === 'blocked' && c.meta.blocked_by !== me) throw new SharingRefused('No such connection.');
+  const [a, b] = c.meta.users;
+  const everything = [id, labelField(id, a), labelField(id, b), shareField(id, a), shareField(id, b)];
+  if (!opts.block) {
+    await redis().hdel(connectionsKey(), ...everything);
+    return;
+  }
+  // Blocked first, so nothing is read in between; then the rest, keeping
+  // only my name for them (my blocked list shows it).
+  const meta: Meta = { ...c.meta, status: 'blocked', blocked_by: me };
+  await redis().hset(connectionsKey(), { [id]: JSON.stringify(meta) });
+  await redis().hdel(connectionsKey(), labelField(id, other(c, me)), shareField(id, a), shareField(id, b));
+}
+
+/** Removes every connection someone is in, blocked ones too (their account
+ *  is going away). */
+export async function dropConnectionsOf(userId: string): Promise<void> {
+  const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
+  const ids = new Set((await allConnections()).filter((c) => c.meta.users.includes(userId)).map((c) => c.id));
+  const fields = Object.keys(raw).filter((f) => ids.has(f.split('|')[0]));
+  if (fields.length > 0) await redis().hdel(connectionsKey(), ...fields);
+}
+
+/** A person's container, read-only use: only for reading what they shared. */
 async function theirCtx(userId: string): Promise<Ctx | null> {
   const id = await redis().hget<string>(ownersKey(), userId);
   if (typeof id !== 'string' || !isContainerId(id)) return null;
@@ -94,39 +285,12 @@ export async function shareableAccounts(ctx: Ctx): Promise<Shareable[]> {
   ].sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
 }
 
-/** What I share with each person. */
-export async function outgoing(me: string): Promise<Record<string, Record<string, Level>>> {
-  const out: Record<string, Record<string, Level>> = {};
-  for (const g of await allGrants()) if (g.owner === me) out[g.grantee] = g.grant.accounts;
-  return out;
-}
-
-/** Sets what I share with one person; an empty set removes the grant. Every
- *  account must be one I can share now, and the person someone in the app. */
-export async function setGrant(ctx: Ctx, me: string, to: string, accounts: Record<string, unknown>, now: number = Date.now()): Promise<void> {
-  if (to === me) throw new SharingRefused('You can’t share with yourself.');
-  if (!(await people(me)).includes(to)) throw new SharingRefused('That person isn’t in the app.');
-  const allowed = new Set((await shareableAccounts(ctx)).map((a) => a.id));
-  const clean: Record<string, Level> = {};
-  for (const [id, level] of Object.entries(accounts ?? {})) {
-    if (level === null || level === 'none') continue;
-    if (!LEVELS.has(level as Level)) throw new SharingRefused(`Unknown level for ${id}.`);
-    if (!allowed.has(id)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
-    clean[id] = level as Level;
-  }
-  if (Object.keys(clean).length === 0) {
-    await redis().hdel(grantsKey(), field(me, to));
-    return;
-  }
-  const grant: Grant = { accounts: clean, updated_at: new Date(now).toISOString() };
-  await redis().hset(grantsKey(), { [field(me, to)]: JSON.stringify(grant) });
-}
-
 export type SharedTxn = { date: string; name: string; amount: number; pending: boolean };
 export type SharedAccount = {
   id: string;
   label: string;
   level: Level;
+  /** Null at the exists level, or before any balance was measured. */
   balance: number | null;
   /** The day that balance was measured. */
   as_of: string | null;
@@ -134,34 +298,38 @@ export type SharedAccount = {
   debt: boolean;
   transactions?: SharedTxn[];
 };
-export type SharedFrom = { from: string; accounts: SharedAccount[] };
+/** One connection's shares with me: `label` is what I call them. */
+export type SharedFrom = { connection: string; label: string; accounts: SharedAccount[] };
 
 const DEBT_TYPES = new Set(['credit', 'loan']);
 
-/** Everything shared with me, filtered to what each owner granted and still
+/** Everything shared with me, filtered to what each person shares and still
  *  has. Read only; never touches Plaid. */
 export async function sharedWithMe(me: string, now: number = Date.now()): Promise<SharedFrom[]> {
   const out: SharedFrom[] = [];
-  for (const { owner, grantee, grant } of await allGrants()) {
-    if (grantee !== me) continue;
+  for (const c of await allConnections()) {
+    if (c.meta.status !== 'active' || !c.meta.users.includes(me)) continue;
+    const owner = other(c, me);
+    const share = c.shares[owner];
+    if (!share) continue;
     try {
-      const shared = await fromOwner(owner, grant, now);
-      if (shared) out.push(shared);
+      const accounts = await fromOwner(owner, share, now);
+      if (accounts) out.push({ connection: c.id, label: c.labels[me] ?? 'Someone', accounts });
     } catch (err) {
       // One person's unreadable data must not hide what everyone else shares.
-      console.error('Shared data could not be read for one sharer', err instanceof Error ? err.name : err);
+      console.error('Shared data could not be read for one connection', err instanceof Error ? err.name : err);
     }
   }
-  return out;
+  return out.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-async function fromOwner(owner: string, grant: Grant, now: number): Promise<SharedFrom | null> {
+async function fromOwner(owner: string, share: Share, now: number): Promise<SharedAccount[] | null> {
   if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
   // Re-checked against what they can share now: hidden or gone since is out.
   const still = new Map((await shareableAccounts(theirs)).map((a) => [a.id, a.label]));
-  const granted = Object.entries(grant.accounts).filter(([id]) => still.has(id));
+  const granted = Object.entries(share.accounts).filter(([id]) => still.has(id));
   if (granted.length === 0) return null;
 
   const manual = new Map((await getManualAccounts(theirs)).map((m) => [m.account_id, m]));
@@ -186,7 +354,9 @@ async function fromOwner(owner: string, grant: Grant, now: number): Promise<Shar
     const m = manual.get(id);
     let balance: number | null = null;
     let as_of: string | null = null;
-    if (m) {
+    if (level === 'exists') {
+      // That it's there, and nothing about how much.
+    } else if (m) {
       balance = m.balance;
       as_of = m.updated_at.slice(0, 10);
     } else {
@@ -206,12 +376,5 @@ async function fromOwner(owner: string, grant: Grant, now: number): Promise<Shar
         : {}),
     });
   }
-  return { from: owner, accounts };
+  return accounts;
 }
-
-/** Removes every grant to or from someone (their account is going away). */
-export async function dropGrantsOf(userId: string): Promise<void> {
-  const fields = (await allGrants()).filter((g) => g.owner === userId || g.grantee === userId).map((g) => field(g.owner, g.grantee));
-  if (fields.length > 0) await redis().hdel(grantsKey(), ...fields);
-}
-

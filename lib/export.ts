@@ -78,9 +78,10 @@ export const SCHEMA_ERA = 'containers';
  * progress: it names points of a fold the restored data may not match, and a
  * retry works from the breakdowns without it (lib/history.ts
  * foldHiddenAccount). And the nightly backup's last outcome (lib/backup.ts):
- * restored, it would describe backups of another moment.
+ * restored, it would describe backups of another moment. And unused invite
+ * links (lib/sharing.ts): they last hours, and a restored one would work again.
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:', 'backups:'] as const;
+export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:', 'backups:', 'invites:'] as const;
 
 /** Page size for SCAN and HSCAN. history:accounts gains a field every day, and
  *  one HGETALL of years of it would be one oversized response. */
