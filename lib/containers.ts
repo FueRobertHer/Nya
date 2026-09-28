@@ -70,7 +70,7 @@ export function splitScoped(key: string): { container: ContainerId | null; key: 
 
 /** Stores that belong to the whole environment (see kEnv in lib/storage.ts),
  *  so never appear inside a container. */
-export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants'] as const;
+export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:'] as const;
 
 export function isEnvWide(key: string): boolean {
   return ENV_WIDE_PREFIXES.some((p) => key === p || (p.endsWith(':') && key.startsWith(p)));

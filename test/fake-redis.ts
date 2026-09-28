@@ -9,6 +9,7 @@ type Hash = Map<string, string>;
 /** The commands a test can arm to fail via `failNext`. */
 export type FakeCommand =
   | 'get'
+  | 'getdel'
   | 'set'
   | 'incr'
   | 'del'
@@ -125,6 +126,14 @@ export class FakeRedis {
     else if (opts?.px !== undefined) this.ttls.set(key, Math.ceil(opts.px / 1000));
     else this.ttls.delete(key);
     return 'OK';
+  }
+
+  async getdel<T>(key: string): Promise<T | null> {
+    this.gate('getdel');
+    const value = this.strings.get(key);
+    this.strings.delete(key);
+    this.ttls.delete(key);
+    return this.out(value) as T | null;
   }
 
   async incr(key: string): Promise<number> {
@@ -467,7 +476,7 @@ export async function registerTestContainer(fake: FakeRedis, status: 'active' | 
 }
 
 /** Environment-wide stores (kEnv): the only keys allowed outside a container. */
-const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:', 'owners', 'grants'];
+const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:', 'owners', 'grants', 'connections', 'invites:'];
 
 /**
  * Every key the fake holds that is stored data outside any container. After

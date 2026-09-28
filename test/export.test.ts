@@ -49,6 +49,8 @@ describe('the archive', () => {
         'c:*:history:forgetting:*',
         'backups:*',
         'c:*:backups:*',
+        'invites:*',
+        'c:*:invites:*',
       ],
     });
   });

@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
-import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys, testKey } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -24,14 +24,6 @@ mock.module('@/lib/plaid', () => ({
       },
     }),
   },
-}));
-
-// Clerk: who is signed in, and their names.
-// Names, mocked at our own module: another file's mock of Clerk may be the
-// one loaded, and its shape is not this file's to rely on.
-mock.module('@/lib/people', () => ({
-  displayNames: async (ids: string[]) =>
-    Object.fromEntries(ids.map((id) => [id, ({ user_owner: 'Olive Owner', user_partner: 'Pat' } as Record<string, string>)[id] ?? 'Someone'])),
 }));
 
 const fake = new FakeRedis();
@@ -113,7 +105,21 @@ const as = async <T>(user: string, fn: () => Promise<T>) => {
   clerk.signedIn = user;
   return fn();
 };
-const share = (to: string, accounts: Record<string, string>) => as('user_owner', () => route('sharing', 'PUT', { to, accounts }));
+const invite = async (from: string, body: object = {}) => {
+  const res = await as(from, () => route('connections/invite', 'POST', body));
+  expect(res.status).toBe(200);
+  return res.body.url.split('/connect/')[1] as string;
+};
+const accept = (who: string, token: string, label = '') => as(who, () => route('connections/accept', 'POST', { token, label }));
+/** Connects two people the only way there is: an invite link, accepted. */
+const connect = async (a: string, b: string) => {
+  const res = await accept(b, await invite(a));
+  expect(res.status).toBe(200);
+  return res.body.id as string;
+};
+const connectionsOf = async (who: string) => (await as(who, () => route('connections', 'GET'))).body;
+let pair = '';
+const share = (accounts: Record<string, string>, id = pair) => as('user_owner', () => route('connections', 'PUT', { id, accounts }));
 const sharedWithPartner = async () => (await as('user_partner', () => route('shared', 'GET'))).body.shared;
 
 const saved = { ...process.env };
@@ -127,33 +133,140 @@ beforeEach(async () => {
   await ownerBank();
   await as('user_owner', () => route('transactions', 'GET')); // the owner claims the data; rows stored
   await as('user_partner', () => route('shared', 'GET')); // the partner gets a container
+  await as('user_third', () => route('shared', 'GET')); // and so does a third person
+  pair = await connect('user_owner', 'user_partner');
 });
 afterEach(() => {
   process.env = { ...saved };
 });
 
-describe('sharing accounts with someone', () => {
+describe('finding people: nobody can', () => {
+  test('with no connection, nobody else in the app is listed or named anywhere', async () => {
+    const third = await connectionsOf('user_third');
+    expect(third).toMatchObject({ enabled: true, connections: [], blocked: [] });
+    expect(JSON.stringify(third)).not.toMatch(/user_(owner|partner)/);
+  });
+
+  test('a connection shows only what I call them, never their id or name from Clerk', async () => {
+    const mine = await connectionsOf('user_partner');
+    expect(mine.connections).toEqual([{ id: pair, label: 'Someone', introduced_as: null, since: new Date().toISOString().slice(0, 10), sharing: {} }]);
+    expect(JSON.stringify(mine)).not.toContain('user_owner');
+    await share({ acct_joint: 'balance' });
+    expect(JSON.stringify(await sharedWithPartner())).not.toContain('user_owner');
+  });
+});
+
+describe('connecting by invite link', () => {
+  test('each side names the other: the sender suggests a name, the one accepting can change it', async () => {
+    const token = await invite('user_owner', { from_name: 'Olive', their_label: 'Pat' });
+    const { describeInvite } = await import('@/lib/sharing');
+    expect(await describeInvite('user_third', token)).toEqual({ from_name: 'Olive', own: false });
+    expect(await describeInvite('user_owner', token)).toEqual({ from_name: 'Olive', own: true });
+    expect((await accept('user_third', token, '')).status).toBe(200);
+    const theirs = (await connectionsOf('user_third')).connections;
+    expect(theirs.map((c: any) => c.label)).toEqual(['Olive']);
+    const mine = (await connectionsOf('user_owner')).connections.map((c: any) => c.label).sort();
+    expect(mine).toEqual(['Pat', 'Someone']);
+    const id = theirs[0].id;
+    expect((await as('user_third', () => route('connections', 'PUT', { id, label: '  Aunt   Olive ' }))).status).toBe(200);
+    expect((await connectionsOf('user_third')).connections[0].label).toBe('Aunt Olive');
+  });
+
+  test('each sees how the other introduced themselves, and when they connected', async () => {
+    const token = await invite('user_owner', { from_name: 'Olive' });
+    expect((await as('user_third', () => route('connections/accept', 'POST', { token, label: 'Mom', my_name: 'Rob' }))).status).toBe(200);
+    const theirs = (await connectionsOf('user_third')).connections[0];
+    expect(theirs).toMatchObject({ label: 'Mom', introduced_as: 'Olive', since: new Date().toISOString().slice(0, 10) });
+    // I left what I call them empty: their own introduction stands in.
+    const mine = (await connectionsOf('user_owner')).connections.find((c: any) => c.id === theirs.id);
+    expect(mine).toMatchObject({ label: 'Rob', introduced_as: 'Rob' });
+  });
+
+  test('a name that looks like data is kept as typed', async () => {
+    for (const label of ['{"a":1}', '42', 'true', 'null']) {
+      expect((await as('user_partner', () => route('connections', 'PUT', { id: pair, label }))).status).toBe(200);
+      expect((await connectionsOf('user_partner')).connections[0].label).toBe(label);
+    }
+    // Typed when accepting, too.
+    expect((await accept('user_third', await invite('user_owner'), '{"a":1}')).status).toBe(200);
+    expect((await connectionsOf('user_third')).connections[0].label).toBe('{"a":1}');
+  });
+
+  test('a link works once, and only until it expires', async () => {
+    const token = await invite('user_owner');
+    const stored = [...(fake as any).strings.keys()].find((k: string) => k.includes(':invites:'));
+    expect(await fake.ttl(stored)).toBe(72 * 3600);
+    expect(stored).not.toContain(token); // kept hashed
+    expect((await accept('user_third', token)).status).toBe(200);
+    const again = await accept('user_partner', token);
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe('This invite link can’t be used. Ask for a new one.');
+    // Expired looks just the same: the key is simply gone.
+    const token2 = await invite('user_partner');
+    await fake.del(...[...(fake as any).strings.keys()].filter((k: string) => k.includes(':invites:')));
+    expect((await accept('user_third', token2)).body.error).toBe(again.body.error);
+    expect((await accept('user_third', 'not a token!')).body.error).toBe(again.body.error);
+  });
+
+  test('my own link does nothing, and stays usable for them', async () => {
+    const token = await invite('user_owner');
+    expect((await accept('user_owner', token)).status).toBe(409);
+    expect((await accept('user_third', token)).status).toBe(200);
+  });
+
+  test('connecting twice is refused without using up the link, and there is only ever one connection per pair', async () => {
+    const token = await invite('user_partner');
+    expect((await accept('user_owner', token)).status).toBe(409);
+    expect((await connectionsOf('user_owner')).connections).toHaveLength(1);
+    expect((await accept('user_third', token)).status).toBe(200);
+  });
+
+  test('a new connection shares nothing, whatever an earlier one between the two left behind', async () => {
+    // A save that landed just after a removal leaves a share with no connection.
+    await share({ acct_joint: 'balance' });
+    const { hgetall, hset } = { hgetall: fake.hgetall.bind(fake), hset: fake.hset.bind(fake) };
+    const left = Object.entries((await hgetall<Record<string, string>>(testKey('connections')))!).filter(([f]) => f.includes('|share|'));
+    await as('user_owner', () => route('connections', 'DELETE', { id: pair }));
+    await hset(testKey('connections'), Object.fromEntries(left));
+    expect(await sharedWithPartner()).toEqual([]);
+    await connect('user_partner', 'user_owner');
+    expect(await sharedWithPartner()).toEqual([]);
+    expect((await connectionsOf('user_owner')).connections[0].sharing).toEqual({});
+  });
+
+  test('a link from someone no longer in the app can’t be used', async () => {
+    const token = await invite('user_third');
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_owner,user_partner';
+    expect((await accept('user_partner', token)).status).toBe(409);
+  });
+});
+
+describe('sharing accounts on a connection', () => {
   test('nothing is shared until chosen, and the choice lists only my own shareable accounts', async () => {
     expect(await sharedWithPartner()).toEqual([]);
-    const settings = (await as('user_owner', () => route('sharing', 'GET'))).body;
-    expect(settings.enabled).toBe(true);
-    expect(settings.people).toEqual([{ id: 'user_partner', name: 'Pat' }]);
+    const settings = await connectionsOf('user_owner');
     expect(settings.accounts.map((a: any) => a.id).sort()).toEqual(['acct_joint', 'acct_mine', 'manual_house']);
-    expect(settings.sharing).toEqual({});
+    expect(settings.connections[0].sharing).toEqual({});
+  });
+
+  test('that it exists: the account and nothing about its money', async () => {
+    await share({ acct_joint: 'exists' });
+    const [from] = await sharedWithPartner();
+    expect(from.accounts).toEqual([{ id: 'acct_joint', label: expect.stringContaining('1111'), level: 'exists', balance: null, as_of: null, debt: false }]);
   });
 
   test('balance only: the account and its balance, no transactions, and nothing else', async () => {
-    expect((await share('user_partner', { acct_joint: 'balance' })).status).toBe(200);
+    expect((await share({ acct_joint: 'balance' })).status).toBe(200);
     const shared = await sharedWithPartner();
     expect(shared).toHaveLength(1);
-    expect(shared[0]).toMatchObject({ from: 'user_owner', name: 'Olive Owner' });
+    expect(shared[0]).toMatchObject({ connection: pair, label: 'Someone' });
     expect(shared[0].accounts).toEqual([
       { id: 'acct_joint', label: expect.stringContaining('1111'), level: 'balance', balance: 500, as_of: new Date().toISOString().slice(0, 10), debt: false },
     ]);
   });
 
   test('with transactions: the last 30 days of that account only', async () => {
-    await share('user_partner', { acct_joint: 'transactions', manual_house: 'balance' });
+    await share({ acct_joint: 'transactions', manual_house: 'balance' });
     const [from] = await sharedWithPartner();
     const joint = from.accounts.find((a: any) => a.id === 'acct_joint');
     expect(joint.transactions.map((t: any) => t.amount)).toEqual([12]); // not the 60-day-old one
@@ -162,52 +275,54 @@ describe('sharing accounts with someone', () => {
     expect(from.accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ id: 'manual_house', label: 'Manual House', level: 'balance', balance: 300000, debt: false });
   });
 
+  test('each connection gets its own choice', async () => {
+    const other = await connect('user_owner', 'user_third');
+    await share({ acct_joint: 'balance' });
+    await share({ manual_house: 'exists' }, other);
+    expect((await sharedWithPartner())[0].accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+    const third = (await as('user_third', () => route('shared', 'GET'))).body.shared;
+    expect(third[0].accounts.map((a: any) => a.id)).toEqual(['manual_house']);
+  });
+
   test('revoking takes effect at once', async () => {
-    await share('user_partner', { acct_joint: 'transactions' });
+    await share({ acct_joint: 'transactions' });
     expect(await sharedWithPartner()).toHaveLength(1);
-    await share('user_partner', { acct_joint: 'none' });
+    await share({ acct_joint: 'none' });
     expect(await sharedWithPartner()).toEqual([]);
   });
 
-  test('an account hidden after it was shared stops being shared', async () => {
-    await share('user_partner', { acct_joint: 'balance', acct_mine: 'balance' });
+  test('an account hidden after it was shared is paused: a save meanwhile keeps it, unhiding resumes it', async () => {
+    await share({ acct_joint: 'balance', acct_mine: 'balance' });
     await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true);
     const [from] = await sharedWithPartner();
     expect(from.accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+    // The settings don't offer a hidden account, so a save leaves it out.
+    const settings = await connectionsOf('user_owner');
+    expect(settings.accounts.map((a: any) => a.id)).not.toContain('acct_mine');
+    expect((await share({ acct_joint: 'transactions' })).status).toBe(200);
+    await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', false);
+    const [after] = await sharedWithPartner();
+    expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([['acct_joint', 'transactions'], ['acct_mine', 'balance']]);
   });
 
   test('a hidden account can’t be shared at all', async () => {
     await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true);
-    expect((await share('user_partner', { acct_mine: 'balance' })).status).toBe(409);
+    expect((await share({ acct_mine: 'balance' })).status).toBe(409);
   });
 
-  test('refuses: someone else’s account, sharing with yourself, a stranger, a bad level', async () => {
+  test('refuses: someone else’s account, someone else’s connection, a bad level', async () => {
     // The partner tries to share the owner's account: not theirs.
-    expect((await as('user_partner', () => route('sharing', 'PUT', { to: 'user_owner', accounts: { acct_joint: 'balance' } }))).status).toBe(409);
-    expect((await share('user_owner', { acct_joint: 'balance' })).status).toBe(409);
-    expect((await share('user_stranger', { acct_joint: 'balance' })).status).toBe(409);
-    expect((await share('user_partner', { acct_joint: 'everything' })).status).toBe(409);
+    expect((await as('user_partner', () => route('connections', 'PUT', { id: pair, accounts: { acct_joint: 'balance' } }))).status).toBe(409);
+    // A third person tries to use the owner and partner's connection.
+    expect((await as('user_third', () => route('connections', 'PUT', { id: pair, accounts: {} }))).status).toBe(409);
+    expect((await as('user_third', () => route('connections', 'DELETE', { id: pair }))).status).toBe(409);
+    expect((await share({ acct_joint: 'everything' })).status).toBe(409);
     expect(await sharedWithPartner()).toEqual([]);
   });
 
   test('sharing goes one way: what I share doesn’t show me theirs', async () => {
-    await share('user_partner', { acct_joint: 'balance' });
+    await share({ acct_joint: 'balance' });
     expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toEqual([]);
-  });
-
-  test('with the shared password there is nobody to share with', async () => {
-    delete process.env.CLERK_SECRET_KEY;
-    expect((await route('sharing', 'GET')).body).toEqual({ enabled: false });
-    expect((await route('shared', 'GET')).body).toEqual({ shared: [] });
-    expect((await route('sharing', 'PUT', { to: 'user_partner', accounts: {} })).status).toBe(400);
-  });
-
-  test('every grant to or from someone can be dropped at once', async () => {
-    const { dropGrantsOf, outgoing } = await import('@/lib/sharing');
-    await share('user_partner', { acct_joint: 'balance' });
-    await dropGrantsOf('user_partner');
-    expect(await outgoing('user_owner')).toEqual({});
-    expect(await sharedWithPartner()).toEqual([]);
   });
 
   // One bank erroring for weeks keeps the full snapshot from being written;
@@ -217,15 +332,15 @@ describe('sharing accounts with someone', () => {
     // An older full snapshot too: the newest measurement must win, not the first.
     await fake.hset(ctxKey('history:accounts'), { [daysAgo(20)]: await encrypt(JSON.stringify({ acct_joint: 111 })) });
     await recordPartialAccounts(TEST_CTX, { acct_joint: 640 });
-    await share('user_partner', { acct_joint: 'balance' });
+    await share({ acct_joint: 'balance' });
     const [from] = await sharedWithPartner();
     expect(from.accounts[0]).toMatchObject({ balance: 640, as_of: new Date().toISOString().slice(0, 10) });
   });
 
   test('one sharer’s unreadable data hides only theirs', async () => {
-    await share('user_partner', { acct_joint: 'balance' });
+    await share({ acct_joint: 'balance' });
     // A third person shares a manual account with the partner too.
-    await as('user_third', () => route('shared', 'GET'));
+    const third = await connect('user_third', 'user_partner');
     const { ownerContainer } = await import('@/lib/owners');
     const thirdCtx = { container: await ownerContainer('user_third') };
     await saveManualAccount(thirdCtx as any, {
@@ -237,27 +352,96 @@ describe('sharing accounts with someone', () => {
       balance: 9000,
       updated_at: new Date().toISOString(),
     } as any);
-    expect((await as('user_third', () => route('sharing', 'PUT', { to: 'user_partner', accounts: { manual_car: 'balance' } }))).status).toBe(200);
+    expect((await as('user_third', () => route('connections', 'PUT', { id: third, accounts: { manual_car: 'balance' } }))).status).toBe(200);
     // The owner's data breaks.
     await fake.set(ctxKey('txns:item_a'), 'garbage');
-    await share('user_partner', { acct_joint: 'transactions' });
+    await share({ acct_joint: 'transactions' });
     const errors = console.error;
     console.error = () => {};
     try {
       const shared = await sharedWithPartner();
-      expect(shared.map((s: any) => s.from)).toEqual(['user_third']);
+      expect(shared.map((s: any) => s.connection)).toEqual([third]);
       expect(shared[0].accounts[0]).toMatchObject({ id: 'manual_car', balance: 9000, debt: true });
     } finally {
       console.error = errors;
     }
   });
 
-  test('someone taken off the allowlist is no longer offered, and what they shared stops', async () => {
-    await as('user_partner', () => route('sharing', 'PUT', { to: 'user_owner', accounts: {} }));
-    await share('user_partner', { acct_joint: 'balance' });
+  test('someone taken off the allowlist stops being shown what they shared', async () => {
+    await share({ acct_joint: 'balance' });
     process.env.CLERK_ALLOWED_USER_IDS = 'user_partner';
-    const { people, sharedWithMe } = await import('@/lib/sharing');
-    expect(await people('user_partner')).toEqual([]);
-    expect(await sharedWithMe('user_partner')).toEqual([]);
+    expect(await sharedWithPartner()).toEqual([]);
+  });
+
+  test('with the shared password there is nobody to connect with', async () => {
+    delete process.env.CLERK_SECRET_KEY;
+    expect((await route('connections', 'GET')).body).toEqual({ enabled: false });
+    expect((await route('shared', 'GET')).body).toEqual({ shared: [] });
+    expect((await route('connections', 'PUT', { id: pair, accounts: {} })).status).toBe(400);
+    expect((await route('connections/invite', 'POST', {})).status).toBe(400);
+  });
+});
+
+describe('ending a connection', () => {
+  const connectionFields = async () => Object.keys((await fake.hgetall(testKey('connections'))) ?? {});
+
+  test('either side removes it, and every share both ways ends in one write', async () => {
+    await share({ acct_joint: 'balance' });
+    const back = await as('user_partner', () => route('connections', 'PUT', { id: pair, accounts: {} }));
+    expect(back.status).toBe(200);
+    expect((await as('user_partner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+    expect(await sharedWithPartner()).toEqual([]);
+    expect((await connectionsOf('user_owner')).connections).toEqual([]);
+    expect(await connectionFields()).toEqual([]);
+    // And they can connect again with a new link.
+    await connect('user_partner', 'user_owner');
+  });
+
+  test('blocking: gone for both, and no link between them connects them again', async () => {
+    await share({ acct_joint: 'balance' });
+    expect((await as('user_partner', () => route('connections', 'DELETE', { id: pair, block: true }))).status).toBe(200);
+    expect(await sharedWithPartner()).toEqual([]);
+    // The one blocked sees it simply gone, the same as a removal.
+    expect(await connectionsOf('user_owner')).toMatchObject({ connections: [], blocked: [] });
+    expect((await connectionsOf('user_partner')).blocked).toEqual([{ id: pair, label: 'Someone' }]);
+    // A new link either way can't be used, with the same words as a dead link,
+    // and isn't used up: to its sender it looks like one nobody answered.
+    const { describeInvite } = await import('@/lib/sharing');
+    for (const [from, to] of [['user_owner', 'user_partner'], ['user_partner', 'user_owner']]) {
+      const token = await invite(from);
+      const res = await accept(to, token);
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('This invite link can’t be used. Ask for a new one.');
+      expect(await describeInvite(from, token)).toMatchObject({ own: true });
+    }
+    // Only the one who blocked can lift it; then a new link works.
+    expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(409);
+    expect((await as('user_partner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+    await connect('user_owner', 'user_partner');
+  });
+
+  test('a block that stops part way has already ended the sharing', async () => {
+    await share({ acct_joint: 'balance' });
+    fake.failNext('hdel');
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      expect((await as('user_partner', () => route('connections', 'DELETE', { id: pair, block: true }))).status).toBe(500);
+    } finally {
+      console.error = errors;
+    }
+    expect(await sharedWithPartner()).toEqual([]);
+    expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toEqual([]);
+  });
+
+  test('every connection someone is in can be dropped at once (their account is going away)', async () => {
+    const { dropConnectionsOf } = await import('@/lib/sharing');
+    await connect('user_third', 'user_partner');
+    await connect('user_third', 'user_owner');
+    await share({ acct_joint: 'balance' });
+    await dropConnectionsOf('user_partner');
+    expect(await sharedWithPartner()).toEqual([]);
+    expect((await connectionsOf('user_owner')).connections.map((c: any) => c.label)).toEqual(['Someone']);
+    expect((await connectionsOf('user_third')).connections).toHaveLength(1);
   });
 });
