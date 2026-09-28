@@ -1843,3 +1843,18 @@ button.danger-outline {
 .demo-panel form button {
   width: 100%;
 }
+
+/* Accounts in the Sharing drawer, grouped by institution. */
+.institution-group {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px 12px;
+}
+
+.institution-name {
+  margin: 8px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}

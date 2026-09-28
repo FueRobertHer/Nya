@@ -78,6 +78,17 @@ describe('the sharing drawer', () => {
     expect(html).not.toContain('Create invite link');
   });
 
+  test('a connection’s accounts are grouped by institution, each by its own name', () => {
+    const grouped = [
+      { id: 'a', label: 'Chase Checking ••1111', institution: 'Chase', name: 'Checking ••1111' },
+      { id: 'b', label: 'Chase Card ••2222', institution: 'Chase', name: 'Card ••2222' },
+      { id: 'c', label: 'Manual House', institution: 'Manual', name: 'House' },
+    ];
+    const html = panel({ enabled: true, connections: [pat], accounts: grouped }, { current: pat });
+    expect(html.match(/class="institution-name"/g)).toHaveLength(2);
+    expect(html).toMatch(/Chase<\/p>.*Checking ••1111.*Card ••2222.*Manual<\/p>.*House/s);
+  });
+
   test('says when a connection sees nothing of mine', () => {
     const none = { ...pat, sharing: {} };
     expect(panel({ enabled: true, connections: [none], accounts: [] }, { current: none })).toContain('Pat can’t see any of your accounts.');

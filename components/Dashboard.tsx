@@ -1364,9 +1364,6 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
                     or a link to undo. A change reloads live, since links alter
                     hidden accounts and per-account history. */}
                 {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
-                {/* What others share with me shows whenever there is some;
-                    what I share is in the Sharing drawer. */}
-                {clerk && <SharedWithMe refreshKey={asOf} />}
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and
@@ -1854,6 +1851,11 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
                     )}
                   </div>
                 )}
+
+                {/* What others share with me, whenever there is some; last,
+                    so my own accounts don't move when it arrives. What I
+                    share is in the Sharing drawer. */}
+                {clerk && <SharedWithMe refreshKey={asOf} />}
               </>
             )}
 
@@ -1909,7 +1911,12 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
               key={t}
               className={tab === t ? 'active' : ''}
               aria-current={tab === t ? 'page' : undefined}
-              onClick={() => setTab(t)}
+              onClick={() => {
+                // Each tab starts at its top: the page scroll would otherwise
+                // carry over from one tab to the next.
+                if (t !== tab) window.scrollTo(0, 0);
+                setTab(t);
+              }}
             >
               {TAB_ICONS[t]}
               {TAB_LABELS[t]}

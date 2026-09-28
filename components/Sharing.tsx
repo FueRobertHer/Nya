@@ -25,8 +25,20 @@ export type SharingPayload = {
   enabled: boolean;
   connections?: Connection[];
   blocked?: { id: string; label: string }[];
-  accounts?: { id: string; label: string }[];
+  accounts?: { id: string; label: string; institution?: string; name?: string }[];
 };
+
+type ShareableAccount = NonNullable<SharingPayload['accounts']>[number];
+
+/** Accounts by institution, in the order given (the server sorts them). */
+function byInstitution(accounts: ShareableAccount[]): [string, ShareableAccount[]][] {
+  const groups = new Map<string, ShareableAccount[]>();
+  for (const a of accounts) {
+    const key = a.institution ?? 'Accounts';
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+  return [...groups.entries()];
+}
 export type SharedPayload = {
   shared: {
     connection: string;
@@ -267,20 +279,23 @@ export function SharingPanelView({
               : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, read-only.`}
           </p>
           {accounts.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
-          <div>
-            {accounts.map((a) => (
-              <div key={a.id} className="peer-row">
-                <span>{a.label}</span>
-                <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
-                  {(Object.keys(LEVEL_LABEL) as Choice[]).map((c) => (
-                    <option key={c} value={c}>
-                      {LEVEL_LABEL[c]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
+          {byInstitution(accounts).map(([institution, list]) => (
+            <div key={institution} className="institution-group">
+              <p className="institution-name">{institution}</p>
+              {list.map((a) => (
+                <div key={a.id} className="peer-row">
+                  <span>{a.name ?? a.label}</span>
+                  <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
+                    {(Object.keys(LEVEL_LABEL) as Choice[]).map((c) => (
+                      <option key={c} value={c}>
+                        {LEVEL_LABEL[c]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          ))}
           <button onClick={onSave} disabled={busy} style={{ marginTop: 12 }}>
             {busy ? 'Saving…' : 'Save'}
           </button>

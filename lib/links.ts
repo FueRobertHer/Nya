@@ -676,17 +676,29 @@ export async function previewLastSeen(ctx: Ctx, id: string): Promise<string | nu
   return lastSeenOf(id, entries, spans);
 }
 
-/** Directory labels for a set of ids, for the "Linked accounts" list; null
- *  for an id the directory doesn't know (balance history only). */
 /** Each account's type as the directory recorded it (depository, credit…). */
 export async function directoryTypes(ctx: Ctx, ids: string[]): Promise<Record<string, string | null>> {
   const { entries } = await readDirectory(ctx);
   return Object.fromEntries(ids.map((id) => [id, entries[id]?.type ?? null]));
 }
 
+/** Directory labels for a set of ids, for the "Linked accounts" list; null
+ *  for an id the directory doesn't know (balance history only). */
 export async function directoryLabels(ctx: Ctx, ids: string[]): Promise<Record<string, string | null>> {
   const { entries } = await readDirectory(ctx);
   return Object.fromEntries(ids.map((id) => [id, entries[id] ? label(entries[id], id) : null]));
+}
+
+/** The same, in parts: the institution, and the account within it
+ *  ("Checking ••1111"), for lists grouped by institution. */
+export async function directoryParts(ctx: Ctx, ids: string[]): Promise<Record<string, { institution: string; name: string } | null>> {
+  const { entries } = await readDirectory(ctx);
+  return Object.fromEntries(
+    ids.map((id) => {
+      const e = entries[id];
+      return [id, e ? { institution: e.institution_name, name: `${e.name ?? 'Account'}${e.mask ? ` ••${e.mask}` : ''}` } : null];
+    })
+  );
 }
 
 

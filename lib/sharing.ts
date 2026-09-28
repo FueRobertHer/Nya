@@ -49,7 +49,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
-import { liveAccountIds, directoryLabels, directoryTypes, getEffectiveHidden } from './links';
+import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
 import { getManualAccounts } from './manual';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
@@ -319,17 +319,32 @@ async function theirCtx(userId: string): Promise<Ctx | null> {
   return rec?.status === 'active' ? { container: id as ContainerId } : null;
 }
 
-export type Shareable = { id: string; label: string };
+export type Shareable = {
+  id: string;
+  /** In full, as the other side sees it ("Chase Checking ••1111"). */
+  label: string;
+  /** For grouping my own list: the institution, and the account within it. */
+  institution: string;
+  name: string;
+};
 
-/** The accounts I could share: my live and manual accounts, minus hidden ones. */
+/** The accounts I could share: my live and manual accounts, minus hidden ones,
+ *  by institution and then name. */
 export async function shareableAccounts(ctx: Ctx): Promise<Shareable[]> {
   const [live, manual, { hidden }] = await Promise.all([liveAccountIds(ctx, { strict: true }), getManualAccounts(ctx), getEffectiveHidden(ctx)]);
   const plaidIds = [...live].filter((id) => !hidden.has(id));
-  const labels = await directoryLabels(ctx, plaidIds);
-  return [
-    ...plaidIds.map((id) => ({ id, label: labels[id] ?? 'Account' })),
-    ...manual.filter((m) => !hidden.has(m.account_id)).map((m) => ({ id: m.account_id, label: `${m.institution_name} ${m.name}` })),
-  ].sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+  const parts = await directoryParts(ctx, plaidIds);
+  const out: Shareable[] = [
+    ...plaidIds.map((id) => {
+      const p = parts[id] ?? { institution: 'Other', name: 'Account' };
+      return { id, label: `${p.institution} ${p.name}`, ...p };
+    }),
+    ...manual
+      .filter((m) => !hidden.has(m.account_id))
+      .map((m) => ({ id: m.account_id, label: `${m.institution_name} ${m.name}`, institution: m.institution_name, name: m.name })),
+  ];
+  const byText = (a: string, b: string) => a.localeCompare(b);
+  return out.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
 }
 
 export type SharedTxn = { date: string; name: string; amount: number; pending: boolean };
