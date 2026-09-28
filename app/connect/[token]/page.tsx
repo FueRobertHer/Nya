@@ -10,9 +10,9 @@ import { AcceptInvite } from '@/components/AcceptInvite';
 // nothing about who sent it or whether they still use the app.
 export default async function ConnectPage({ params }: { params: Promise<{ token: string }> }) {
   if (!clerkEnabled()) redirect('/login');
-  const { userId } = await auth();
-  if (!userId) redirect('/sign-in');
   const { token } = await params;
+  const { userId } = await auth();
+  if (!userId) redirect(`/sign-in?redirect_url=${encodeURIComponent(`/connect/${token}`)}`);
   const invite = await describeInvite(userId, token).catch(() => null);
   return (
     <main className="wrap">

@@ -149,7 +149,7 @@ describe('finding people: nobody can', () => {
 
   test('a connection shows only what I call them, never their id or name from Clerk', async () => {
     const mine = await connectionsOf('user_partner');
-    expect(mine.connections).toEqual([{ id: pair, label: 'Someone', sharing: {} }]);
+    expect(mine.connections).toEqual([{ id: pair, label: 'Someone', introduced_as: null, since: new Date().toISOString().slice(0, 10), sharing: {} }]);
     expect(JSON.stringify(mine)).not.toContain('user_owner');
     await share({ acct_joint: 'balance' });
     expect(JSON.stringify(await sharedWithPartner())).not.toContain('user_owner');
@@ -170,6 +170,26 @@ describe('connecting by invite link', () => {
     const id = theirs[0].id;
     expect((await as('user_third', () => route('connections', 'PUT', { id, label: '  Aunt   Olive ' }))).status).toBe(200);
     expect((await connectionsOf('user_third')).connections[0].label).toBe('Aunt Olive');
+  });
+
+  test('each sees how the other introduced themselves, and when they connected', async () => {
+    const token = await invite('user_owner', { from_name: 'Olive' });
+    expect((await as('user_third', () => route('connections/accept', 'POST', { token, label: 'Mom', my_name: 'Rob' }))).status).toBe(200);
+    const theirs = (await connectionsOf('user_third')).connections[0];
+    expect(theirs).toMatchObject({ label: 'Mom', introduced_as: 'Olive', since: new Date().toISOString().slice(0, 10) });
+    // I left what I call them empty: their own introduction stands in.
+    const mine = (await connectionsOf('user_owner')).connections.find((c: any) => c.id === theirs.id);
+    expect(mine).toMatchObject({ label: 'Rob', introduced_as: 'Rob' });
+  });
+
+  test('a name that looks like data is kept as typed', async () => {
+    for (const label of ['{"a":1}', '42', 'true', 'null']) {
+      expect((await as('user_partner', () => route('connections', 'PUT', { id: pair, label }))).status).toBe(200);
+      expect((await connectionsOf('user_partner')).connections[0].label).toBe(label);
+    }
+    // Typed when accepting, too.
+    expect((await accept('user_third', await invite('user_owner'), '{"a":1}')).status).toBe(200);
+    expect((await connectionsOf('user_third')).connections[0].label).toBe('{"a":1}');
   });
 
   test('a link works once, and only until it expires', async () => {
@@ -194,10 +214,24 @@ describe('connecting by invite link', () => {
     expect((await accept('user_third', token)).status).toBe(200);
   });
 
-  test('connecting twice is refused, and there is only ever one connection per pair', async () => {
-    const res = await accept('user_owner', await invite('user_partner'));
-    expect(res.status).toBe(409);
+  test('connecting twice is refused without using up the link, and there is only ever one connection per pair', async () => {
+    const token = await invite('user_partner');
+    expect((await accept('user_owner', token)).status).toBe(409);
     expect((await connectionsOf('user_owner')).connections).toHaveLength(1);
+    expect((await accept('user_third', token)).status).toBe(200);
+  });
+
+  test('a new connection shares nothing, whatever an earlier one between the two left behind', async () => {
+    // A save that landed just after a removal leaves a share with no connection.
+    await share({ acct_joint: 'balance' });
+    const { hgetall, hset } = { hgetall: fake.hgetall.bind(fake), hset: fake.hset.bind(fake) };
+    const left = Object.entries((await hgetall<Record<string, string>>(testKey('connections')))!).filter(([f]) => f.includes('|share|'));
+    await as('user_owner', () => route('connections', 'DELETE', { id: pair }));
+    await hset(testKey('connections'), Object.fromEntries(left));
+    expect(await sharedWithPartner()).toEqual([]);
+    await connect('user_partner', 'user_owner');
+    expect(await sharedWithPartner()).toEqual([]);
+    expect((await connectionsOf('user_owner')).connections[0].sharing).toEqual({});
   });
 
   test('a link from someone no longer in the app can’t be used', async () => {
@@ -257,11 +291,18 @@ describe('sharing accounts on a connection', () => {
     expect(await sharedWithPartner()).toEqual([]);
   });
 
-  test('an account hidden after it was shared stops being shared', async () => {
+  test('an account hidden after it was shared is paused: a save meanwhile keeps it, unhiding resumes it', async () => {
     await share({ acct_joint: 'balance', acct_mine: 'balance' });
     await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true);
     const [from] = await sharedWithPartner();
     expect(from.accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+    // The settings don't offer a hidden account, so a save leaves it out.
+    const settings = await connectionsOf('user_owner');
+    expect(settings.accounts.map((a: any) => a.id)).not.toContain('acct_mine');
+    expect((await share({ acct_joint: 'transactions' })).status).toBe(200);
+    await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', false);
+    const [after] = await sharedWithPartner();
+    expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([['acct_joint', 'transactions'], ['acct_mine', 'balance']]);
   });
 
   test('a hidden account can’t be shared at all', async () => {
@@ -363,11 +404,15 @@ describe('ending a connection', () => {
     // The one blocked sees it simply gone, the same as a removal.
     expect(await connectionsOf('user_owner')).toMatchObject({ connections: [], blocked: [] });
     expect((await connectionsOf('user_partner')).blocked).toEqual([{ id: pair, label: 'Someone' }]);
-    // A new link either way can't be used, with the same words as a dead link.
-    const either = [await accept('user_partner', await invite('user_owner')), await accept('user_owner', await invite('user_partner'))];
-    for (const res of either) {
+    // A new link either way can't be used, with the same words as a dead link,
+    // and isn't used up: to its sender it looks like one nobody answered.
+    const { describeInvite } = await import('@/lib/sharing');
+    for (const [from, to] of [['user_owner', 'user_partner'], ['user_partner', 'user_owner']]) {
+      const token = await invite(from);
+      const res = await accept(to, token);
       expect(res.status).toBe(409);
       expect(res.body.error).toBe('This invite link can’t be used. Ask for a new one.');
+      expect(await describeInvite(from, token)).toMatchObject({ own: true });
     }
     // Only the one who blocked can lift it; then a new link works.
     expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(409);

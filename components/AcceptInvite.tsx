@@ -7,6 +7,7 @@ import { useState } from 'react';
 
 export function AcceptInvite({ token, fromName }: { token: string; fromName: string }) {
   const [label, setLabel] = useState(fromName);
+  const [myName, setMyName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
@@ -17,7 +18,7 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
     const res = await fetch('/api/connections/accept', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, label }),
+      body: JSON.stringify({ token, label, my_name: myName }),
     }).catch(() => null);
     setBusy(false);
     if (res?.ok) return setDone(true);
@@ -35,6 +36,10 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
       <label className="share-row">
         <span>What you call them</span>
         <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} />
+      </label>
+      <label className="share-row">
+        <span>Your name, as they’ll see it</span>
+        <input value={myName} onChange={(e) => setMyName(e.target.value)} maxLength={40} placeholder="So they know it’s you" />
       </label>
       <button onClick={accept} disabled={busy}>
         {busy ? 'Connecting…' : 'Connect'}

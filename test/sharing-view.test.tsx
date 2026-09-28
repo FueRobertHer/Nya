@@ -48,10 +48,11 @@ describe('the sharing settings', () => {
 
   test('a connection: what they see about me, each account with its level, remove and block', () => {
     const html = settings(
-      { enabled: true, connections: [{ id: 'c1', label: 'Pat', sharing: { a: 'exists' } }], blocked: [{ id: 'c9', label: 'Ex' }], accounts: [{ id: 'a', label: 'Chase Checking ••1111' }] },
+      { enabled: true, connections: [{ id: 'c1', label: 'Pat', introduced_as: 'Patricia', since: '2026-09-28', sharing: { a: 'exists', hidden_one: 'balance' } }], blocked: [{ id: 'c9', label: 'Ex' }], accounts: [{ id: 'a', label: 'Chase Checking ••1111' }] },
       { a: 'exists' }
     );
-    expect(html).toContain('Pat can see 1 of your accounts');
+    expect(html).toContain('Pat can see 1 of your accounts'); // a paused share on a hidden account isn't counted
+    expect(html).toContain('They introduced themselves as “Patricia”. Connected 2026-09-28.');
     expect(html).toContain('Chase Checking ••1111');
     expect(html).toContain('<option value="exists" selected="">That it exists</option>');
     expect(html).toContain('>Remove<');
@@ -61,7 +62,7 @@ describe('the sharing settings', () => {
   });
 
   test('says when a connection sees nothing of mine', () => {
-    const html = settings({ enabled: true, connections: [{ id: 'c1', label: 'Pat', sharing: {} }], accounts: [] });
+    const html = settings({ enabled: true, connections: [{ id: 'c1', label: 'Pat', introduced_as: null, since: '2026-09-28', sharing: {} }], accounts: [] });
     expect(html).toContain('Pat can’t see any of your accounts.');
   });
 });

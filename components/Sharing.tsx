@@ -16,7 +16,7 @@ import { formatMoney } from '@/lib/format';
 
 type Level = 'exists' | 'balance' | 'transactions';
 export type Choice = Level | 'none';
-export type Connection = { id: string; label: string; sharing: Record<string, Level> };
+export type Connection = { id: string; label: string; introduced_as: string | null; since: string; sharing: Record<string, Level> };
 export type SharingPayload = {
   enabled: boolean;
   connections?: Connection[];
@@ -86,7 +86,7 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
   }, [data, selected, draftFor]);
 
   const act = useCallback(
-    async (method: string, path: string, body: unknown, done: string) => {
+    async (method: string, path: string, body: unknown, done: string, resetDraft = true) => {
       setBusy(true);
       setError('');
       setNotice('');
@@ -97,7 +97,7 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
         return null;
       }
       setNotice(done);
-      setDraftFor(null); // start again from what was saved
+      if (resetDraft) setDraftFor(null); // start again from what was saved
       await load();
       return res.body;
     },
@@ -118,14 +118,14 @@ export function SharingSettings({ refreshKey }: { refreshKey?: unknown }) {
       onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
       onLabel={setLabelDraft}
       onInvite={async (fromName, theirLabel) => {
-        const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
+        const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '', false);
         if (body) setInvite(body);
       }}
       onSave={() => act('PUT', '/api/connections', { id: selected, label: labelDraft, accounts: draft }, 'Saved.')}
       onRemove={(id, block) => {
         const what = block ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.' : 'Remove them? Everything shared both ways ends.';
         if (block !== null && !window.confirm(what)) return;
-        act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : 'Removed.');
+        act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
       }}
     />
   );
@@ -170,7 +170,8 @@ export function SharingSettingsView({
   const connections = data.connections ?? [];
   const accounts = data.accounts ?? [];
   const current = connections.find((c) => c.id === selected);
-  const seen = current ? Object.keys(current.sharing).length : 0;
+  // What they can see now: a share on an account I've since hidden is paused.
+  const seen = current ? accounts.filter((a) => current.sharing[a.id]).length : 0;
   return (
     <div className="card">
       <h3>Sharing</h3>
@@ -215,6 +216,10 @@ export function SharingSettingsView({
                 <span>What you call them</span>
                 <input value={labelDraft} onChange={(e) => onLabel(e.target.value)} maxLength={40} />
               </label>
+              <p className="sub">
+                {current.introduced_as ? `They introduced themselves as “${current.introduced_as}”. ` : 'They didn’t give a name. '}
+                Connected {current.since}. Not who you meant to invite? Remove them.
+              </p>
               <p>
                 {seen === 0
                   ? `${current.label} can’t see any of your accounts.`

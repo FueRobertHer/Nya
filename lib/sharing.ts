@@ -7,7 +7,10 @@
 // invite link one of them sends the other: a random single-use token, good
 // for INVITE_HOURS, stored hashed. Accepting it creates the connection. Each
 // side names the other (a per-side label); the app never shows anyone's real
-// name, email or id to the other side.
+// name, email or id to the other side. Each can also introduce themselves (the
+// sender on the link, the other when accepting), and each side sees the
+// other's introduction and the day they connected: a link that reached the
+// wrong person shows up as a stranger before anything is shared with them.
 //
 // SHARES hang off the connection. Within one, each person shares any of their
 // own accounts, freely and one by one, at a level on a ladder: exists (that
@@ -17,6 +20,7 @@
 // Stored environment-wide (connections live between containers, so in none):
 //   <env>:connections  field "<id>"              {users: [a, b], status, blocked_by?, created_at}
 //                      field "<id>|label|<user>" what <user> calls the other
+//                      field "<id>|intro|<user>" the name <user> gave when connecting
 //                      field "<id>|share|<user>" {accounts: {"<account id>": level}, updated_at}
 //   <env>:invites:<sha256 of the token>          {from, from_name, their_label, created_at}, with an expiry
 // Every field of a connection is in one hash, so removing one (the breakup
@@ -73,6 +77,17 @@ export function connectionId(a: string, b: string): string {
 }
 const labelField = (id: string, user: string) => `${id}|label|${user}`;
 const shareField = (id: string, user: string) => `${id}|share|${user}`;
+const introField = (id: string, user: string) => `${id}|intro|${user}`;
+/** Every field a connection can have. */
+const fieldsOf = (id: string, [a, b]: [string, string]) => [
+  id,
+  labelField(id, a),
+  labelField(id, b),
+  introField(id, a),
+  introField(id, b),
+  shareField(id, a),
+  shareField(id, b),
+];
 
 function cleanLabel(raw: unknown, fallback: string): string {
   const s = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX) : '';
@@ -95,14 +110,19 @@ function parseShare(raw: unknown): Share | null {
   return { accounts, updated_at: String(g.updated_at ?? '') };
 }
 
-type Conn = { id: string; meta: Meta; labels: Record<string, string>; shares: Record<string, Share> };
+type Conn = { id: string; meta: Meta; labels: Record<string, string>; intros: Record<string, string>; shares: Record<string, Share> };
+
+/** Labels are stored JSON-encoded: the client parses anything that looks like
+ *  JSON on the way out, and a label is whatever someone typed. */
+const encodeText = (s: string) => JSON.stringify(s);
+const decodeText = (raw: unknown) => (typeof raw === 'string' ? (parse<string>(raw) ?? raw) : typeof raw === 'object' && raw !== null ? JSON.stringify(raw) : String(raw));
 
 async function allConnections(): Promise<Conn[]> {
   const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
   const byId = new Map<string, Conn>();
   const get = (id: string) => {
     let c = byId.get(id);
-    if (!c) byId.set(id, (c = { id, meta: null as unknown as Meta, labels: {}, shares: {} }));
+    if (!c) byId.set(id, (c = { id, meta: null as unknown as Meta, labels: {}, intros: {}, shares: {} }));
     return c;
   };
   for (const [field, value] of Object.entries(raw)) {
@@ -110,7 +130,8 @@ async function allConnections(): Promise<Conn[]> {
     if (!kind) {
       const meta = parse<Meta>(value);
       if (meta && Array.isArray(meta.users) && meta.users.length === 2) get(id).meta = meta;
-    } else if (kind === 'label' && user) get(id).labels[user] = String(value);
+    } else if (kind === 'label' && user) get(id).labels[user] = String(decodeText(value));
+    else if (kind === 'intro' && user) get(id).intros[user] = String(decodeText(value));
     else if (kind === 'share' && user) {
       const share = parseShare(value);
       if (share) get(id).shares[user] = share;
@@ -162,34 +183,51 @@ export async function describeInvite(me: string, token: string): Promise<{ from_
 
 const UNUSABLE = 'This invite link can’t be used. Ask for a new one.';
 
-/** Uses the invite and connects the two people; `label` is what I call them. */
-export async function acceptInvite(me: string, token: string, label: unknown, now: number = Date.now()): Promise<{ id: string }> {
+/** Uses the invite and connects the two people; `label` is what I call
+ *  them, `myName` how I introduce myself to them. */
+export async function acceptInvite(me: string, token: string, label: unknown, myName?: unknown, now: number = Date.now()): Promise<{ id: string }> {
   const peek = await readInvite(token);
   if (!peek) throw new SharingRefused(UNUSABLE);
   if (peek.from === me) throw new SharingRefused('This is your own invite link. Send it to the person you want to connect with.');
+  const id = connectionId(me, peek.from);
+  const existing = (await allConnections()).find((c) => c.id === id);
+  // Checked before the link is used up, and a blocked pair gets the same
+  // answer as any dead link: the link stays exactly as if it were ignored,
+  // so its sender can't tell a block from someone not answering.
+  if (existing?.meta.status === 'blocked') throw new SharingRefused(UNUSABLE);
+  if (existing) throw new SharingRefused('You’re already connected.');
   // Single use: whoever takes it first has it.
   const inv = parse<Invite>(await redis().getdel<unknown>(inviteKey(token)));
   if (!inv || inv.from !== peek.from) throw new SharingRefused(UNUSABLE);
   // The sender may since have been removed from the app or deleted.
   if (!(await clerkUserAllowed(inv.from)) || !(await theirCtx(inv.from))) throw new SharingRefused(UNUSABLE);
-  const id = connectionId(me, inv.from);
-  const existing = (await allConnections()).find((c) => c.id === id);
-  // Blocked either way: the same answer as any dead link, so a blocked
-  // person can't tell.
-  if (existing?.meta.status === 'blocked') throw new SharingRefused(UNUSABLE);
-  if (existing) throw new SharingRefused('You’re already connected.');
-  const meta: Meta = { users: [me, inv.from].sort() as [string, string], status: 'active', created_at: new Date(now).toISOString() };
+  // Anything left from an earlier connection between the two (a save that
+  // landed just after a removal) goes first: a new connection shares nothing.
+  const pair = [me, inv.from].sort() as [string, string];
+  await redis().hdel(connectionsKey(), ...fieldsOf(id, pair).slice(1));
+  const intro = cleanLabel(myName, '');
+  const meta: Meta = { users: pair, status: 'active', created_at: new Date(now).toISOString() };
   await redis().hset(connectionsKey(), {
+    [labelField(id, me)]: encodeText(cleanLabel(label, cleanLabel(inv.from_name, 'Someone'))),
+    [labelField(id, inv.from)]: encodeText(cleanLabel(inv.their_label, intro || 'Someone')),
+    ...(inv.from_name ? { [introField(id, inv.from)]: encodeText(inv.from_name) } : {}),
+    ...(intro ? { [introField(id, me)]: encodeText(intro) } : {}),
     [id]: JSON.stringify(meta),
-    [labelField(id, me)]: cleanLabel(label, cleanLabel(inv.from_name, 'Someone')),
-    [labelField(id, inv.from)]: cleanLabel(inv.their_label, 'Someone'),
   });
   return { id };
 }
 
 // ---- Managing my connections ----
 
-export type MyConnection = { id: string; label: string; sharing: Record<string, Level> };
+export type MyConnection = {
+  id: string;
+  label: string;
+  /** The name they gave when connecting, if any. */
+  introduced_as: string | null;
+  /** The day we connected. */
+  since: string;
+  sharing: Record<string, Level>;
+};
 
 /** My active connections (what I call each, and what I share with each: all
  *  they can see about me), and the people I blocked. */
@@ -199,7 +237,13 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
   return {
     connections: mine
       .filter((c) => c.meta.status === 'active')
-      .map((c) => ({ id: c.id, label: c.labels[me] ?? 'Someone', sharing: c.shares[me]?.accounts ?? {} }))
+      .map((c) => ({
+        id: c.id,
+        label: c.labels[me] ?? 'Someone',
+        introduced_as: c.intros[other(c, me)] ?? null,
+        since: c.meta.created_at.slice(0, 10),
+        sharing: c.shares[me]?.accounts ?? {},
+      }))
       .sort(byLabel),
     // Only the one who blocked sees it: to the other it's simply gone.
     blocked: mine
@@ -212,19 +256,23 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
 export async function renameConnection(me: string, id: string, label: unknown): Promise<void> {
   const c = await connectionOf(me, id);
   if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
-  await redis().hset(connectionsKey(), { [labelField(id, me)]: cleanLabel(label, 'Someone') });
+  await redis().hset(connectionsKey(), { [labelField(id, me)]: encodeText(cleanLabel(label, 'Someone')) });
 }
 
 /** Sets what I share on one connection; an empty set shares nothing. Every
- *  account must be one I can share now. */
+ *  account must be one I can share now. A share on an account I've hidden
+ *  stays as it was (paused, not ended): the settings don't show it. */
 export async function setShare(ctx: Ctx, me: string, id: string, accounts: Record<string, unknown>, now: number = Date.now()): Promise<void> {
   const c = await connectionOf(me, id);
   if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
-  const allowed = new Set((await shareableAccounts(ctx)).map((a) => a.id));
+  const [shareable, { hidden }] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx)]);
+  const allowed = new Set(shareable.map((a) => a.id));
   const clean: Record<string, Level> = {};
+  for (const [acct, level] of Object.entries(c.shares[me]?.accounts ?? {})) if (hidden.has(acct)) clean[acct] = level;
   for (const [acct, level] of Object.entries(accounts ?? {})) {
     if (level === null || level === 'none') continue;
     if (!LEVELS.has(level as Level)) throw new SharingRefused(`Unknown level for ${acct}.`);
+    if (hidden.has(acct) && acct in clean) continue; // paused: kept as it was
     if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
     clean[acct] = level as Level;
   }
@@ -243,16 +291,15 @@ export async function removeConnection(me: string, id: string, opts: { block?: b
   const c = await connectionOf(me, id);
   if (c.meta.status === 'blocked' && c.meta.blocked_by !== me) throw new SharingRefused('No such connection.');
   const [a, b] = c.meta.users;
-  const everything = [id, labelField(id, a), labelField(id, b), shareField(id, a), shareField(id, b)];
   if (!opts.block) {
-    await redis().hdel(connectionsKey(), ...everything);
+    await redis().hdel(connectionsKey(), ...fieldsOf(id, c.meta.users));
     return;
   }
   // Blocked first, so nothing is read in between; then the rest, keeping
   // only my name for them (my blocked list shows it).
   const meta: Meta = { ...c.meta, status: 'blocked', blocked_by: me };
   await redis().hset(connectionsKey(), { [id]: JSON.stringify(meta) });
-  await redis().hdel(connectionsKey(), labelField(id, other(c, me)), shareField(id, a), shareField(id, b));
+  await redis().hdel(connectionsKey(), labelField(id, other(c, me)), introField(id, a), introField(id, b), shareField(id, a), shareField(id, b));
 }
 
 /** Removes every connection someone is in, blocked ones too (their account

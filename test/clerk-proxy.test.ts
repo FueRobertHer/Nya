@@ -60,6 +60,8 @@ describe('which sign-in is used', () => {
 describe('with Clerk on', () => {
   test('signed out: pages go to sign-in, the API answers 401', async () => {
     expect((await call('/')).headers.get('location')).toBe('https://nya.test/sign-in');
+    // Anywhere else, they come back there once signed in (an invite link).
+    expect((await call('/connect/abc')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fconnect%2Fabc');
     expect((await call('/api/net-worth')).status).toBe(401);
   });
 
