@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     // /investments/transactions/get), so an Item never initialized with the
     // product genuinely cannot serve it until the user re-consents here.
     const response = await plaidClient.linkTokenCreate({
-      user: { client_user_id: 'local-user' },
+      user: { client_user_id: ctx.container }, // as in create-link-token
       client_name: 'Nya',
       access_token,
       ...(add_liabilities ? { products: [Products.Liabilities] } : {}),
