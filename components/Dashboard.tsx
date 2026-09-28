@@ -8,8 +8,7 @@ import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
-import { SharingSettings, SharedWithMe } from './Sharing';
-import DeleteAccount from './DeleteAccount';
+import { SharingDrawer, SharedWithMe } from './Sharing';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -162,6 +161,15 @@ let signedOut = false;
 // Currency-aware money, so a EUR/GBP account isn't rendered with a "$".
 // Delegates to the shared formatter (which falls back to $ for a null or
 // unrecognized code); "--" for a missing value.
+/** A 20px line icon for the account actions. */
+function ActionIcon({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
 function fmt(n: number | null | undefined, currency?: string | null): string {
   if (n == null) return '--';
   return formatMoney(n, currency);
@@ -368,6 +376,9 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
   // type-to-confirm modal.
   const [manageMode, setManageMode] = useState(false);
+  // The Sharing drawer, opened from the Accounts tab or the account menu.
+  const [sharingOpen, setSharingOpen] = useState(false);
+  const closeSharing = useCallback(() => setSharingOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
   const [disconnectInput, setDisconnectInput] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
@@ -1135,7 +1146,11 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
       <main className="wrap">
         <div className="top-row">
           <div>
-            <h1>Nya</h1>
+            <div className="brand">
+              {/* eslint-disable-next-line @next/next/no-img-element -- the app icon, already a static SVG */}
+              <img className="brand-logo" src="/icon.svg" alt="" width={34} height={34} />
+              <h1>Nya</h1>
+            </div>
             <p className="sub">{subtitle}</p>
           </div>
           <div className="top-actions">
@@ -1162,7 +1177,7 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
               </button>
             )}
             {clerk ? (
-              <ClerkAccount beforeSignOut={clearDevice} />
+              <ClerkAccount clearDevice={clearDevice} onOpenSharing={() => setSharingOpen(true)} />
             ) : (
               <>
                 <button className="secondary logout-btn" onClick={logout}>
@@ -1181,26 +1196,35 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
             <div className="spinner" role="status" aria-label="Loading" />
           </div>
         ) : !connected ? (
-          <div className="card">
-            <button onClick={startConnect} disabled={connecting}>
-              {connecting ? 'Starting…' : 'Connect an Account'}
-            </button>
-            {/* Also offered here, not just on the Accounts tab: with nothing
-                connected the tab bar is hidden, so this is the only reachable
-                entry point for someone whose bank Plaid doesn't support at all. */}
-            <button
-              className="secondary manage-toggle"
-              onClick={startAddManual}
-              disabled={savingManual}
-            >
-              Add a manual account
-            </button>
-            <p className="empty-note">
-              Manual accounts are for institutions Plaid can&apos;t reach. You type the balance and
-              update it whenever you like; it counts toward net worth and builds its own history.
-            </p>
-            {error && <div className="error">{error}</div>}
-          </div>
+          <>
+            <div className="card">
+              <button onClick={startConnect} disabled={connecting}>
+                {connecting ? 'Starting…' : 'Connect an account'}
+              </button>
+              {/* Also offered here, not just on the Accounts tab: with nothing
+                  connected the tab bar is hidden, so this is the only reachable
+                  entry point for someone whose bank Plaid doesn't support at all. */}
+              <div className="action-row">
+                <button className="secondary" onClick={startAddManual} disabled={savingManual}>
+                  <ActionIcon d="M12 5v14M5 12h14" />
+                  Add manual
+                </button>
+                {clerk && (
+                  <button className="secondary" onClick={() => setSharingOpen(true)}>
+                    <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                    Sharing
+                  </button>
+                )}
+              </div>
+              <p className="empty-note">
+                Manual accounts are for institutions Plaid can&apos;t reach. You type the balance and
+                update it whenever you like; it counts toward net worth and builds its own history.
+              </p>
+              {error && <div className="error">{error}</div>}
+            </div>
+            {/* Someone who only follows what others share needs no bank of their own. */}
+            {clerk && <SharedWithMe refreshKey={asOf} />}
+          </>
         ) : (
           <>
             {tab === 'home' && (
@@ -1310,22 +1334,26 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
               <>
                 <div className="card">
                   <button onClick={startConnect} disabled={connecting}>
-                    {connecting ? 'Starting…' : 'Connect an Account'}
+                    {connecting ? 'Starting…' : 'Connect an account'}
                   </button>
-                  <button
-                    className="secondary manage-toggle"
-                    onClick={startAddManual}
-                    disabled={savingManual}
-                  >
-                    Add a manual account
-                  </button>
-                  <button
-                    className="secondary manage-toggle"
-                    onClick={() => setManageMode((m) => !m)}
-                    aria-pressed={manageMode}
-                  >
-                    {manageMode ? 'Done' : 'Manage accounts'}
-                  </button>
+                  {/* Equal widths, icon over label, so Manage and Done take
+                      the same space and nothing shifts when it toggles. */}
+                  <div className="action-row">
+                    <button className="secondary" onClick={startAddManual} disabled={savingManual}>
+                      <ActionIcon d="M12 5v14M5 12h14" />
+                      Add manual
+                    </button>
+                    {clerk && (
+                      <button className="secondary" onClick={() => setSharingOpen(true)}>
+                        <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                        Sharing
+                      </button>
+                    )}
+                    <button className="secondary" onClick={() => setManageMode((m) => !m)} aria-pressed={manageMode}>
+                      <ActionIcon d={manageMode ? 'M20 6 9 17l-5-5' : 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'} />
+                      {manageMode ? 'Done' : 'Manage'}
+                    </button>
+                  </div>
                   {error && <div className="error">{error}</div>}
                 </div>
 
@@ -1336,11 +1364,8 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
                     or a link to undo. A change reloads live, since links alter
                     hidden accounts and per-account history. */}
                 {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
-                {/* Sharing needs people, so accounts (Clerk). What I share sits
-                    with the other account upkeep; what others share with me
-                    shows whenever there is some. */}
-                {clerk && manageMode && <SharingSettings refreshKey={asOf} />}
-                {clerk && manageMode && <DeleteAccount beforeSignOut={clearDevice} />}
+                {/* What others share with me shows whenever there is some;
+                    what I share is in the Sharing drawer. */}
                 {clerk && <SharedWithMe refreshKey={asOf} />}
 
                 {sortedInstitutions.map((inst) => {
@@ -1875,6 +1900,7 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
           </>
         )}
       </main>
+      {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">

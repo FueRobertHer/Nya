@@ -22,6 +22,29 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
+// Clerk's sign-in, menu and account window in the app's own dark palette
+// (the tokens in app/globals.css).
+const CLERK_APPEARANCE = {
+  variables: {
+    colorPrimary: '#5b8def',
+    colorPrimaryForeground: '#ffffff',
+    colorBackground: '#171a21',
+    colorForeground: '#e8e9ec',
+    colorMutedForeground: '#8b8f98',
+    colorMuted: '#1e222b',
+    colorNeutral: '#e8e9ec',
+    colorInput: '#0f1115',
+    colorInputForeground: '#e8e9ec',
+    colorBorder: '#2a2f3a',
+    colorDanger: '#ef5b5b',
+    colorSuccess: '#3ecf8e',
+    colorWarning: '#e0a83c',
+    colorModalBackdrop: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: '10px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+};
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Clerk only when its keys are set (lib/auth-mode.ts): without them its
   // provider would fail, and the app signs in with the shared password.
@@ -46,5 +69,5 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </body>
     </html>
   );
-  return clerkEnabled() ? <ClerkProvider>{page}</ClerkProvider> : page;
+  return clerkEnabled() ? <ClerkProvider appearance={CLERK_APPEARANCE}>{page}</ClerkProvider> : page;
 }

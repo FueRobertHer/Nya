@@ -11,13 +11,14 @@ import { sessionCurrent } from '@/lib/sessions';
 // app/api/backup/route.ts), and the manual-balance ingest endpoint (which
 // authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
 // and the ops routes, export, rotate-master, reencrypt and containers (OPS_SECRET, and off entirely
-// unless OPS_ENABLED=1 -- see lib/ops.ts).
+// unless OPS_ENABLED=1 -- see lib/ops.ts), and the demo sign-in (Preview only, and only
+// ever as a listed demo account -- see lib/demo.ts).
 //
 // Note the `$` anchors on the API entries: they exclude exactly those paths.
 // A bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 

@@ -1,13 +1,14 @@
 'use client';
 
-// Accounts tab, under Manage accounts: deleting my account and all its data
-// (lib/account-deletion.ts). Only with Clerk on. Asks for DELETE typed out;
+// Deleting my account and all its data (lib/account-deletion.ts), on the
+// "Data & privacy" page of Clerk's account window (components/ClerkAccount.tsx).
+// Only with Clerk on. Asks for DELETE typed out;
 // the primary account is told why it can't be deleted here.
 
 import { useEffect, useState } from 'react';
 import { useClerk } from '@clerk/nextjs';
 
-type Status = { enabled: boolean; can_delete?: boolean; reason?: string };
+type Status = { enabled: boolean; can_delete?: boolean; reason?: string } | 'failed';
 
 export default function DeleteAccount({ beforeSignOut }: { beforeSignOut: () => void }) {
   const { signOut } = useClerk();
@@ -18,9 +19,9 @@ export default function DeleteAccount({ beforeSignOut }: { beforeSignOut: () => 
 
   useEffect(() => {
     fetch('/api/account')
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => (res.ok ? res.json() : 'failed'))
       .then(setStatus)
-      .catch(() => setStatus(null));
+      .catch(() => setStatus('failed'));
   }, []);
 
   const onDelete = async () => {
@@ -60,9 +61,12 @@ export function DeleteAccountView({
   onType: (s: string) => void;
   onDelete: () => void;
 }) {
-  if (!status?.enabled) return null;
+  // This is the whole of its page in Clerk's account window: never blank.
+  if (status === null) return <div className="spinner" role="status" aria-label="Loading" />;
+  if (status === 'failed') return <p className="error">Could not check this account. Close this window and try again.</p>;
+  if (!status.enabled) return null;
   return (
-    <div className="card">
+    <div className="privacy-panel">
       <h3>Delete my account</h3>
       {status.can_delete === false ? (
         <p className="sub">{status.reason}</p>
@@ -80,7 +84,7 @@ export function DeleteAccountView({
             placeholder="Type DELETE"
             aria-label="Type DELETE to confirm"
           />
-          <button className="secondary" onClick={onDelete} disabled={busy || typed !== 'DELETE'}>
+          <button className="danger-outline" onClick={onDelete} disabled={busy || typed !== 'DELETE'}>
             {busy ? 'Deleting…' : 'Delete my account'}
           </button>
           {error && <div className="error">{error}</div>}
