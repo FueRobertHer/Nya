@@ -34,7 +34,7 @@ const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) =
     if (path.startsWith('/api/')) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     return NextResponse.redirect(new URL('/sign-in', req.url));
   }
-  if (!clerkUserAllowed(userId)) {
+  if (!(await clerkUserAllowed(userId))) {
     if (path.startsWith('/api/')) return NextResponse.json({ error: 'This account is not allowed here yet.' }, { status: 403 });
     return NextResponse.redirect(new URL('/not-allowed', req.url));
   }

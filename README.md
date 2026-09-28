@@ -638,7 +638,15 @@ works exactly as before.
    id: set `CLERK_ALLOWED_USER_IDS` to it (comma-separated for more people)
    and redeploy.
 
-Only people on that list get in; an empty list lets nobody in.
+Only people on that list get in; an empty list lets nobody in. An entry is
+either a Clerk user id (`user_...`) or an email address, mixed freely:
+`user_2abc..., partner@example.com`. An email lets in whichever account has
+it as a verified address (any case), so you can list someone before they
+have signed up. If one person matches two entries (their id and their
+email), they are simply allowed; to turn them away, remove both. The proxy
+asks Clerk for an account's emails only when its id isn't listed, and reuses
+the answer for a minute, so removing an address from an account takes up to
+a minute to count.
 
 The first account on the list to sign in becomes the owner of the data
 already in this environment (its container), once; after that, each request
@@ -646,9 +654,9 @@ reaches the container its signed-in account owns, so `CONTAINER_ID` isn't
 needed with Clerk. Sign in yourself before adding anyone else: the first
 account to sign in takes the existing data.
 
-To add someone (a partner, say): invite them in Clerk, have them sign in
-once to see their id on "Not allowed yet", add it to
-`CLERK_ALLOWED_USER_IDS` and redeploy. On their next sign-in they get a new,
+To add someone (a partner, say): add their email to
+`CLERK_ALLOWED_USER_IDS`, redeploy, and invite them in Clerk (or have them
+sign in once and add the id "Not allowed yet" shows them). On their next sign-in they get a new,
 empty container of their own: they link their own banks and see only their
 own data. Background jobs without a signed-in account (the balance ingest,
 the password fallback) keep using the first container, the one marked

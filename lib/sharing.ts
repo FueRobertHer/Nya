@@ -68,9 +68,9 @@ async function allGrants(): Promise<{ owner: string; grantee: string; grant: Gra
  *  still allowed in. */
 export async function people(me: string): Promise<string[]> {
   const owners = ((await redis().hgetall<Record<string, string>>(ownersKey())) ?? {}) as Record<string, string>;
-  return Object.keys(owners)
-    .filter((id) => id !== me && clerkUserAllowed(id))
-    .sort();
+  const others = Object.keys(owners).filter((id) => id !== me);
+  const allowed = await Promise.all(others.map((id) => clerkUserAllowed(id)));
+  return others.filter((_, i) => allowed[i]).sort();
 }
 
 /** A person's container, read-only use: only for reading what they granted. */
@@ -156,7 +156,7 @@ export async function sharedWithMe(me: string, now: number = Date.now()): Promis
 }
 
 async function fromOwner(owner: string, grant: Grant, now: number): Promise<SharedFrom | null> {
-  if (!clerkUserAllowed(owner)) return null;
+  if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
   // Re-checked against what they can share now: hidden or gone since is out.

@@ -8,12 +8,33 @@ mock.module('@clerk/nextjs/server', () => ({
   clerkMiddleware: (handler: any) => (req: any, event: any) => handler(async () => ({ userId: signedIn }), req, event),
 }));
 
+// An account's verified emails, mocked at our own module, not Clerk's.
+const emailsOf: Record<string, string[]> = {};
+const unverifiedOf: Record<string, string[]> = {};
+let lookups = 0;
+let lookupFails = false;
+mock.module('@/lib/clerk-emails', () => ({
+  emailAddresses: async (id: string) => {
+    lookups++;
+    if (lookupFails) throw new Error('clerk down');
+    return [
+      ...(emailsOf[id] ?? []).map((address) => ({ address, verified: true })),
+      ...(unverifiedOf[id] ?? []).map((address) => ({ address, verified: false })),
+    ];
+  },
+}));
+
 const { proxy } = await import('@/proxy');
-const { clerkEnabled, clerkUserAllowed } = await import('@/lib/auth-mode');
+const { clerkEnabled, clerkUserAllowed, forgetEmails, EMAILS_REUSE_MS } = await import('@/lib/auth-mode');
 
 const saved = { ...process.env };
 beforeEach(() => {
   signedIn = null;
+  for (const k of Object.keys(emailsOf)) delete emailsOf[k];
+  for (const k of Object.keys(unverifiedOf)) delete unverifiedOf[k];
+  lookups = 0;
+  lookupFails = false;
+  forgetEmails();
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
   process.env.CLERK_SECRET_KEY = 'sk_test_x';
   process.env.CLERK_ALLOWED_USER_IDS = 'user_owner, user_partner';
@@ -73,12 +94,77 @@ describe('with Clerk on', () => {
     signedIn = 'user_owner';
     expect((await call('/api/net-worth')).status).toBe(403);
     process.env.CLERK_ALLOWED_USER_IDS = ' , ';
-    expect(clerkUserAllowed('')).toBe(false);
+    expect(await clerkUserAllowed('')).toBe(false);
     expect((await call('/api/net-worth')).status).toBe(403);
   });
 
-  test('a lookalike id is not a match', () => {
-    expect(clerkUserAllowed('user_own')).toBe(false);
-    expect(clerkUserAllowed('user_owner,user_partner')).toBe(false);
+  test('a lookalike id is not a match', async () => {
+    expect(await clerkUserAllowed('user_own')).toBe(false);
+    expect(await clerkUserAllowed('user_owner,user_partner')).toBe(false);
+  });
+});
+
+describe('emails on the allowlist', () => {
+  beforeEach(() => {
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_owner, Partner@Example.com';
+  });
+
+  test('an account with that verified email gets in, in any case', async () => {
+    emailsOf.user_partner = ['partner@example.COM'];
+    signedIn = 'user_partner';
+    expect((await call('/')).status).toBe(200);
+    expect((await call('/api/net-worth')).status).toBe(200);
+  });
+
+  test('an unverified address is not enough', async () => {
+    unverifiedOf.user_stranger = ['partner@example.com'];
+    signedIn = 'user_stranger';
+    expect((await call('/api/net-worth')).status).toBe(403);
+  });
+
+  test('an account without it is turned away', async () => {
+    emailsOf.user_stranger = ['stranger@example.com', 'partner@example.com.evil'];
+    signedIn = 'user_stranger';
+    expect((await call('/api/net-worth')).status).toBe(403);
+  });
+
+  test('a listed id needs no lookup, and matching both an id and an email is fine', async () => {
+    emailsOf.user_owner = ['partner@example.com'];
+    expect(await clerkUserAllowed('user_owner')).toBe(true);
+    expect(lookups).toBe(0);
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_partner, partner@example.com';
+    emailsOf.user_partner = ['partner@example.com'];
+    expect(await clerkUserAllowed('user_partner')).toBe(true);
+  });
+
+  test('without email entries, nobody is looked up', async () => {
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_owner';
+    expect(await clerkUserAllowed('user_stranger')).toBe(false);
+    expect(lookups).toBe(0);
+  });
+
+  test('a lookup is reused for a minute, then asked again', async () => {
+    emailsOf.user_partner = ['partner@example.com'];
+    expect(await clerkUserAllowed('user_partner', 1_000)).toBe(true);
+    expect(await clerkUserAllowed('user_partner', 1_000 + EMAILS_REUSE_MS - 1)).toBe(true);
+    expect(lookups).toBe(1);
+    // The email is removed from the account: gone once the minute is up.
+    emailsOf.user_partner = [];
+    expect(await clerkUserAllowed('user_partner', 1_000 + EMAILS_REUSE_MS)).toBe(false);
+    expect(lookups).toBe(2);
+  });
+
+  test('a failed lookup turns them away, and is not remembered', async () => {
+    emailsOf.user_partner = ['partner@example.com'];
+    lookupFails = true;
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      expect(await clerkUserAllowed('user_partner')).toBe(false);
+    } finally {
+      console.error = errors;
+    }
+    lookupFails = false;
+    expect(await clerkUserAllowed('user_partner')).toBe(true);
   });
 });
