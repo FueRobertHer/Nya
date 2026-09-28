@@ -1,4 +1,9 @@
 :root {
+  /* Native controls, scrollbars and form autofill in the dark palette. */
+  color-scheme: dark;
+  --border: #2a2f3a;
+  --line: #262a33;
+  --raised: #1e222b;
   --bg: #0f1115;
   --card: #171a21;
   --text: #e8e9ec;
@@ -19,11 +24,23 @@ body {
   margin: 0;
 }
 
+html {
+  /* iOS Safari: keep text at the size set here after rotating. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  background: var(--bg);
+}
+
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* No grey flash on tap in mobile Safari; buttons show their own press. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .wrap {
@@ -85,16 +102,86 @@ button {
   font-weight: 600;
   cursor: pointer;
   width: 100%;
+  font-family: inherit;
+  /* No double-tap zoom delay on buttons. */
+  touch-action: manipulation;
+  transition:
+    opacity 0.15s,
+    transform 0.1s,
+    background-color 0.15s,
+    border-color 0.15s;
 }
 
 button.secondary {
   background: transparent;
-  border: 1px solid #2a2f3a;
+  border: 1px solid var(--border);
   color: var(--text);
 }
 
-button:hover {
-  opacity: 0.9;
+/* Hover only where there is a pointer: on touch screens it sticks after a tap. */
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+  button.secondary:hover:not(:disabled) {
+    background: var(--raised);
+    opacity: 1;
+  }
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Form controls without a class of their own: dark, rounded, and legible.
+   :where keeps these below any class's styling. */
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea) {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+:where(input, select, textarea)::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+:where(input, select, textarea):focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* One chevron for every select, instead of each browser's own. */
+:where(select) {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8f98' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+/* Room for the chevron, whatever padding a select's own class sets. */
+select[class] {
+  padding-right: 32px;
+}
+
+/* iOS Safari zooms the page into any field under 16px when it is focused. */
+@supports (-webkit-touch-callout: none) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 table {
@@ -357,7 +444,8 @@ button.danger {
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid #2a2f3a;
-  background: var(--bg);
+  /* The colour only: a select keeps its chevron (background-image). */
+  background-color: var(--bg);
   color: var(--text);
   font-size: 15px;
   margin-bottom: 12px;
@@ -1222,16 +1310,347 @@ button:disabled {
 
 /* Sharing (components/Sharing.tsx): one account per row, its choice or
    balance on the right. */
-/* Not "share-...": ad blockers' social-share filters hide such classes. */
-.peer-invite {
+/* --- header --- */
+
+.brand {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 8px 0;
+  align-items: center;
+  gap: 10px;
 }
-.peer-invite input {
-  flex: 1 1 180px;
+
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: block;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+
+.top-row .sub {
+  margin: 6px 0 24px;
+}
+
+.top-actions {
+  align-items: center;
+}
+
+.user-button-slot {
+  display: flex;
+  align-items: center;
+  min-width: 34px;
+  min-height: 34px;
+}
+
+/* --- account actions (Accounts tab) --- */
+
+/* Equal widths however many there are. */
+.action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.action-row > button {
+  flex: 1 1 0;
   min-width: 0;
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.action-row svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.action-row > button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- drawer (components/Sheet.tsx) --- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.sheet-backdrop[data-open="true"] {
+  opacity: 1;
+}
+
+/* A sheet from the bottom on phones... */
+.sheet {
+  position: fixed;
+  z-index: 41;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 92dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  transform: translateY(100%);
+  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+  padding-bottom: env(safe-area-inset-bottom);
+  outline: none;
+}
+
+.sheet[data-open="true"] {
+  transform: translateY(0);
+}
+
+.sheet-handle {
+  width: 36px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  margin: 8px auto 0;
+  flex-shrink: 0;
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 20px;
+  flex-shrink: 0;
+}
+
+.sheet-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text);
+}
+
+.sheet-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 20px 24px;
+}
+
+/* ...and a panel from the right on wider screens. */
+@media (min-width: 720px) {
+  .sheet {
+    left: auto;
+    top: 0;
+    width: 440px;
+    max-height: none;
+    height: 100dvh;
+    border-radius: 20px 0 0 20px;
+    border: 1px solid var(--line);
+    border-right: none;
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+    transform: translateX(100%);
+    padding-top: env(safe-area-inset-top);
+  }
+  .sheet[data-open="true"] {
+    transform: translateX(0);
+  }
+  .sheet-handle {
+    display: none;
+  }
+  .sheet-header {
+    padding-top: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .sheet-backdrop {
+    transition: none;
+  }
+}
+
+/* --- sharing (components/Sharing.tsx). Class names avoid "share": ad
+   blockers' social-share filters hide such elements (##.share-row). --- */
+
+.panel-section {
+  margin-top: 20px;
+}
+
+.panel-section:first-child {
+  margin-top: 4px;
+}
+
+.section-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 10px;
+}
+
+.panel-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field input {
+  width: 100%;
+  font-size: 15px;
+}
+
+.invite-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.invite-link code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.invite-link button {
+  width: auto;
+  padding: 8px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.peer-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.peer-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-weight: 500;
+}
+
+.peer-item + .peer-item {
+  border-top: 1px solid var(--line);
+}
+
+.peer-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.peer-item-name {
+  display: block;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-item-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+.peer-item .chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.peer-item-action {
+  width: auto;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(91, 141, 239, 0.16);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.avatar.small {
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
 }
 
 .peer-row {
@@ -1239,5 +1658,140 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 6px 0;
+  padding: 10px 0;
+}
+
+.peer-row + .peer-row {
+  border-top: 1px solid var(--line);
+}
+
+.peer-row > span:first-child {
+  min-width: 0;
+  font-size: 14px;
+}
+
+.peer-row select {
+  flex-shrink: 0;
+  font-size: 14px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  max-width: 55%;
+}
+
+.button-pair {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.button-pair > button {
+  flex: 1 1 0;
+  width: auto;
+}
+
+button.danger-outline {
+  background: transparent;
+  border: 1px solid rgba(239, 91, 91, 0.35);
+  color: var(--down);
+}
+
+.status-note {
+  font-size: 13px;
+  color: var(--up);
+  margin-top: 10px;
+}
+
+/* "Shared by ..." cards on the Accounts tab. */
+.incoming-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.incoming-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+}
+
+.pill {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.incoming-account {
+  padding: 10px 0;
+}
+
+.incoming-account + .incoming-account {
+  border-top: 1px solid var(--line);
+}
+
+.incoming-account .peer-row {
+  padding: 0;
+}
+
+.incoming-account-name {
+  font-size: 14px;
+}
+
+.incoming-account-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.incoming-account-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.incoming-account .link-btn {
+  margin-top: 6px;
+}
+
+.incoming-txn {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 0 0;
+}
+
+/* --- inside Clerk's account window (Data & privacy page) --- */
+
+.privacy-panel h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.privacy-panel p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.privacy-panel .text-input {
+  margin-top: 4px;
+}
+
+/* --- sign-in and invite pages --- */
+
+.auth-wrap {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+.auth-wrap .brand h1 {
+  font-size: 24px;
 }

@@ -1,7 +1,8 @@
 'use client';
 
-// Accounts tab, under Manage accounts: deleting my account and all its data
-// (lib/account-deletion.ts). Only with Clerk on. Asks for DELETE typed out;
+// Deleting my account and all its data (lib/account-deletion.ts), on the
+// "Data & privacy" page of Clerk's account window (components/ClerkAccount.tsx).
+// Only with Clerk on. Asks for DELETE typed out;
 // the primary account is told why it can't be deleted here.
 
 import { useEffect, useState } from 'react';
@@ -62,7 +63,7 @@ export function DeleteAccountView({
 }) {
   if (!status?.enabled) return null;
   return (
-    <div className="card">
+    <div className="privacy-panel">
       <h3>Delete my account</h3>
       {status.can_delete === false ? (
         <p className="sub">{status.reason}</p>
@@ -80,7 +81,7 @@ export function DeleteAccountView({
             placeholder="Type DELETE"
             aria-label="Type DELETE to confirm"
           />
-          <button className="secondary" onClick={onDelete} disabled={busy || typed !== 'DELETE'}>
+          <button className="danger-outline" onClick={onDelete} disabled={busy || typed !== 'DELETE'}>
             {busy ? 'Deleting…' : 'Delete my account'}
           </button>
           {error && <div className="error">{error}</div>}

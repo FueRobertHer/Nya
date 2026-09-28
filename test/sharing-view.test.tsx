@@ -1,20 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SharingSettingsView, SharedWithMeView } from '@/components/Sharing';
+import { SharingPanelView, SharedWithMeView, shortDate } from '@/components/Sharing';
 
 const noop = () => {};
-const settings = (data: any, draft: Record<string, any> = {}, invite: any = null, error = '') =>
+const panel = (data: any, opts: { current?: any; draft?: Record<string, any>; invite?: any; error?: string } = {}) =>
   renderToStaticMarkup(
-    <SharingSettingsView
+    <SharingPanelView
       data={data}
-      selected="c1"
-      draft={draft}
-      labelDraft="Pat"
-      invite={invite}
+      current={opts.current ?? null}
+      draft={opts.draft ?? {}}
+      labelDraft={opts.current?.label ?? ''}
+      invite={opts.invite ?? null}
       busy={false}
-      error={error}
+      error={opts.error ?? ''}
       notice=""
-      onSelect={noop}
+      onOpen={noop}
       onChoose={noop}
       onLabel={noop}
       onInvite={noop}
@@ -22,48 +22,70 @@ const settings = (data: any, draft: Record<string, any> = {}, invite: any = null
       onRemove={noop}
     />
   );
+const pat = { id: 'c1', label: 'Pat', introduced_as: 'Patricia', since: '2026-09-28', sharing: { a: 'exists', hidden_one: 'balance' } };
+const accounts = [{ id: 'a', label: 'Chase Checking ••1111' }];
 
-describe('the sharing settings', () => {
-  test('show a load error rather than nothing', () => {
-    expect(settings(null, {}, null, 'Could not load sharing.')).toContain('Could not load sharing.');
+describe('dates', () => {
+  test('month and day, with the year only when it is not this one', () => {
+    const now = new Date('2026-09-28T12:00:00');
+    expect(shortDate('2026-09-28', now)).toBe('Sep 28');
+    expect(shortDate('2025-12-31', now)).toBe('Dec 31, 2025');
+    expect(shortDate('not a date', now)).toBe('not a date');
+  });
+});
+
+describe('the sharing drawer', () => {
+  test('shows a load error rather than nothing, and a spinner while loading', () => {
+    expect(panel(null, { error: 'Could not load sharing.' })).toContain('Could not load sharing.');
+    expect(panel(null)).toContain('role="status"');
   });
 
-  test('render nothing with the shared password', () => {
-    expect(settings(null)).toBe('');
-    expect(settings({ enabled: false })).toBe('');
+  test('says sharing needs accounts with the shared password', () => {
+    expect(panel({ enabled: false })).toContain('Sharing needs accounts');
   });
 
-  test('with no connections: only the way to invite someone, and nobody listed', () => {
-    const html = settings({ enabled: true, connections: [], blocked: [], accounts: [{ id: 'a', label: 'Checking' }] });
-    expect(html).toContain('Make an invite link');
-    expect(html).toContain('No connections yet.');
-    expect(html).not.toContain('Checking');
+  test('with no connections: the way to invite someone, and nobody listed', () => {
+    const html = panel({ enabled: true, connections: [], blocked: [], accounts });
+    expect(html).toContain('Create invite link');
+    expect(html).toContain('No one yet.');
+    expect(html).not.toContain('Chase Checking');
   });
 
   test('a new link, to send yourself, with when it stops working', () => {
-    const html = settings({ enabled: true, connections: [], accounts: [] }, {}, { url: 'https://nya.test/connect/abc', expires_at: '2026-10-01T00:00:00Z' });
-    expect(html).toContain('value="https://nya.test/connect/abc"');
+    const html = panel({ enabled: true, connections: [], accounts: [] }, { invite: { url: 'https://nya.test/connect/abc', expires_at: '2026-10-01T00:00:00Z' } });
+    expect(html).toContain('https://nya.test/connect/abc');
     expect(html).toContain('It works once, until');
+    expect(html).toContain('>Send<');
   });
 
-  test('a connection: what they see about me, each account with its level, remove and block', () => {
-    const html = settings(
-      { enabled: true, connections: [{ id: 'c1', label: 'Pat', introduced_as: 'Patricia', since: '2026-09-28', sharing: { a: 'exists', hidden_one: 'balance' } }], blocked: [{ id: 'c9', label: 'Ex' }], accounts: [{ id: 'a', label: 'Chase Checking ••1111' }] },
-      { a: 'exists' }
-    );
-    expect(html).toContain('Pat can see 1 of your accounts'); // a paused share on a hidden account isn't counted
-    expect(html).toContain('They introduced themselves as “Patricia”. Connected 2026-09-28.');
+  test('the list: each person, what they see of mine (paused shares not counted), and the blocked', () => {
+    const html = panel({ enabled: true, connections: [pat], blocked: [{ id: 'c9', label: 'Ex' }], accounts });
+    expect(html).toContain('Pat');
+    expect(html).toContain(`Sees 1 of your accounts · since ${shortDate('2026-09-28')}`);
+    expect(html).toContain('Ex');
+    expect(html).toContain('>Unblock<');
+    expect(html).not.toContain('Chase Checking'); // the choices are one level in
+  });
+
+  test('a connection: their introduction, each account with its level, remove and block', () => {
+    const html = panel({ enabled: true, connections: [pat], accounts }, { current: pat, draft: { a: 'exists' } });
+    expect(html).toContain(`They introduced themselves as “Patricia”. Connected ${shortDate('2026-09-28')}.`);
+    expect(html).toContain('Pat can see 1 of your accounts');
     expect(html).toContain('Chase Checking ••1111');
     expect(html).toContain('<option value="exists" selected="">That it exists</option>');
     expect(html).toContain('>Remove<');
     expect(html).toContain('>Block<');
-    expect(html).toContain('Ex');
-    expect(html).toContain('>Unblock<');
+    expect(html).not.toContain('Create invite link');
   });
 
   test('says when a connection sees nothing of mine', () => {
-    const html = settings({ enabled: true, connections: [{ id: 'c1', label: 'Pat', introduced_as: null, since: '2026-09-28', sharing: {} }], accounts: [] });
-    expect(html).toContain('Pat can’t see any of your accounts.');
+    const none = { ...pat, sharing: {} };
+    expect(panel({ enabled: true, connections: [none], accounts: [] }, { current: none })).toContain('Pat can’t see any of your accounts.');
+  });
+
+  test('uses no class an ad blocker hides', () => {
+    const html = panel({ enabled: true, connections: [pat], blocked: [{ id: 'c9', label: 'Ex' }], accounts }, { current: pat }) + panel({ enabled: true, connections: [pat], accounts });
+    expect(html).not.toMatch(/class="[^"]*\bshare/);
   });
 });
 
@@ -95,8 +117,9 @@ describe('what others share with me', () => {
     expect(html).toContain('Joint ••1111');
     expect(html).toContain('No balance yet');
     expect(html).toContain('Recent transactions (1)');
+    expect(html).not.toMatch(/class="[^"]*\bshare/);
     expect(html).not.toContain('Blue Bottle');
-    expect(html).toContain('as of 2026-09-27');
+    expect(html).toContain(shortDate('2026-09-27'));
     expect(html).toMatch(/250\.00 owed/);
     expect(html).toContain('Balance not shared');
     expect(html).not.toMatch(/500\.00 owed/);

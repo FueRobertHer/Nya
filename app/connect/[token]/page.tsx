@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { clerkEnabled } from '@/lib/auth-mode';
 import { describeInvite } from '@/lib/sharing';
 import { AcceptInvite } from '@/components/AcceptInvite';
+import { Brand } from '@/components/Brand';
 
 // Where an invite link lands (lib/sharing.ts). Signed-in and allowed people
 // only (proxy.ts). Opening it uses nothing up: accepting does. A link that
@@ -15,9 +16,10 @@ export default async function ConnectPage({ params }: { params: Promise<{ token:
   if (!userId) redirect(`/sign-in?redirect_url=${encodeURIComponent(`/connect/${token}`)}`);
   const invite = await describeInvite(userId, token).catch(() => null);
   return (
-    <main className="wrap">
-      <div className="card">
-        <h1>Connect on Nya</h1>
+    <main className="auth-wrap">
+      <Brand />
+      <div className="card" style={{ width: '100%', maxWidth: 440 }}>
+        <h2 style={{ marginTop: 0 }}>Connect</h2>
         {!invite ? (
           <p>This invite link can’t be used. Ask for a new one.</p>
         ) : invite.own ? (
