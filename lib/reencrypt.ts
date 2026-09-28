@@ -98,6 +98,7 @@ const EXACT: Record<string, Kind> = {
 
   containers: 'plain', // the container registry
   owners: 'plain', // which Clerk account owns which container (lib/owners.ts)
+  grants: 'plain', // who shares which accounts with whom (lib/sharing.ts)
 };
 
 const PREFIXES: [string, Kind][] = [
