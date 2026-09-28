@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { deploymentCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getManualAccount, setManualBalance, MAX_BALANCE } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
 import { rememberAccounts } from '@/lib/last-known';
@@ -48,7 +48,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const ctx = await dataCtx();
+    // Its own secret, not a session: the deployment's container.
+    const ctx = await deploymentCtx();
     // Read as text first so the size cap is enforced on the actual payload.
     // A Content-Length check alone is advisory: the header can be absent under
     // chunked encoding, or unparseable, and `NaN > limit` is false either way.

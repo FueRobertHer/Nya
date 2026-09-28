@@ -97,6 +97,7 @@ const EXACT: Record<string, Kind> = {
   'account-links:dismissed': 'plain',
 
   containers: 'plain', // the container registry
+  owners: 'plain', // which Clerk account owns which container (lib/owners.ts)
 };
 
 const PREFIXES: [string, Kind][] = [
