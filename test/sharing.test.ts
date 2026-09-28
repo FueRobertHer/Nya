@@ -30,15 +30,12 @@ let signedIn: string | null = null;
 mock.module('@clerk/nextjs/server', () => ({
   auth: async () => ({ userId: signedIn }),
   clerkMiddleware: (handler: any) => (req: any, event: any) => handler(async () => ({ userId: signedIn }), req, event),
-  clerkClient: async () => ({
-    users: {
-      getUser: async (id: string) => {
-        if (id === 'user_owner') return { firstName: 'Olive', lastName: 'Owner' };
-        if (id === 'user_partner') return { firstName: 'Pat', lastName: null };
-        throw new Error('not found');
-      },
-    },
-  }),
+}));
+// Names, mocked at our own module: another file's mock of Clerk may be the
+// one loaded, and its shape is not this file's to rely on.
+mock.module('@/lib/people', () => ({
+  displayNames: async (ids: string[]) =>
+    Object.fromEntries(ids.map((id) => [id, ({ user_owner: 'Olive Owner', user_partner: 'Pat' } as Record<string, string>)[id] ?? 'Someone'])),
 }));
 
 const fake = new FakeRedis();
