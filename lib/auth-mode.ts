@@ -24,6 +24,8 @@
 // outage doesn't lock anyone out; with none, the person is turned away. List
 // the owner by id: ids never depend on Clerk answering.
 
+import { isDemoUser } from './demo';
+
 export function clerkEnabled(): boolean {
   return !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
 }
@@ -80,6 +82,8 @@ export async function clerkUserAllowed(userId: string, now: number = Date.now())
   if (!userId) return false;
   const { ids, emails } = allowlist();
   if (ids.has(userId)) return true;
+  // Preview's demo accounts (lib/demo.ts), wherever demos are on.
+  if (isDemoUser(userId)) return true;
   if (emails.size === 0) return false;
   try {
     return (await emailsOf(userId, now)).some((e) => emails.has(e));

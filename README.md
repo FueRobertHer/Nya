@@ -707,6 +707,22 @@ the next sign-in claims it.) After restoring an archive into a namespace
 you'll open with a different Clerk instance, map your account there the
 same way: the archive's owners are accounts of the instance it came from.
 
+Demo accounts (Preview only): one-click buttons on the sign-in page that
+sign anyone in as a shared demo account, on Plaid's sandbox. To set them up:
+in the Clerk instance Preview uses (the development one), create two users
+(Users, Create user; a `+clerk_test` address such as
+`alex+clerk_test@example.com` needs no real inbox) and copy their ids. On
+Vercel's Preview environment set `DEMO_USER_IDS` to them, each with a label:
+`user_abc:Alex, user_def:Sam`, and redeploy. The sign-in page then shows
+"Try the demo" with a button each. They work only on Preview
+(`VERCEL_ENV=preview`) or a local `next dev`: set on Production, the variable
+does nothing. Demo accounts don't need to be on `CLERK_ALLOWED_USER_IDS`,
+can link sandbox banks (username `user_good`, password `pass_good`), connect
+and share like anyone, but can't be deleted; everyone who tries them shares
+them. Before making Preview public (turning off Vercel's protection for it),
+give Preview its own database and `MASTER_KEY`: today it shares
+production's.
+
 Turning it on in production: create a production instance in Clerk (it asks
 for a domain you own), set its keys on Production, sign in once to get your
 production user id (it differs from the development one), add it to

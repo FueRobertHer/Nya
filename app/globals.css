@@ -1818,3 +1818,28 @@ button.danger-outline {
 .auth-wrap .brand h1 {
   font-size: 24px;
 }
+
+/* --- demo accounts on the sign-in page (Preview only, lib/demo.ts) --- */
+
+.demo-panel {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+}
+
+.demo-panel h2 {
+  margin: 0 0 6px;
+}
+
+.demo-panel .action-row {
+  margin-top: 14px;
+}
+
+.demo-panel form {
+  flex: 1 1 0;
+  display: flex;
+}
+
+.demo-panel form button {
+  width: 100%;
+}
