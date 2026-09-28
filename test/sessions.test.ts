@@ -322,9 +322,29 @@ describe('login', () => {
     expect(res.status).toBe(200);
     expect(await verifySessionToken(decodeURIComponent(cookieOf(res)!))).toMatchObject({ container: second });
 
-    delete process.env.CONTAINER_ID; // then there is no way to choose
+    // Unset, the primary one: the first container, marked at creation.
+    delete process.env.CONTAINER_ID;
+    forgetEpochs();
+    const primary = await login();
+    expect(primary.status).toBe(200);
+    expect(await verifySessionToken(decodeURIComponent(cookieOf(primary)!))).toMatchObject({ container });
+
+    // Two marked primary: no rule picks one, so none is picked.
+    await fake.hset(testKey('containers'), { [second]: JSON.stringify({ status: 'active', primary: true, created_at: 'x' }) });
     forgetEpochs();
     expect((await quiet(() => login())).status).toBe(503);
+    expect(await deploymentContainer()).toEqual({ kind: 'unusable', reason: 'More than one container is marked primary.' });
+  });
+
+  test('a primary container that is not active is never replaced by another', async () => {
+    const second = asContainerId(crypto.randomUUID());
+    await fake.hset(testKey('containers'), {
+      [second]: JSON.stringify({ status: 'active', primary: false, created_at: 'x' }),
+      [container]: JSON.stringify({ status: 'restoring', primary: true, created_at: 'x' }),
+    });
+    delete process.env.CONTAINER_ID;
+    forgetEpochs();
+    expect(await deploymentContainer()).toEqual({ kind: 'unusable', reason: 'The primary container is restoring.' });
   });
 
   test('a wrong password is still a 401', async () => {

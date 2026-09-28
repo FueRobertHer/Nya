@@ -408,10 +408,19 @@ export class FakeRedis {
       this.hdelNow(keys[1], [args[1]]);
       return 1;
     }
-    if (name === '-- nya:owner-claim-first') {
-      if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
-      this.hash(keys[0]).set(args[0], args[1]);
-      return 1;
+    if (name === '-- nya:owner-claim-or-create') {
+      const have = this.hashes.get(keys[0])?.get(args[0]);
+      if (have !== undefined) return have;
+      if ((this.hashes.get(keys[0])?.size ?? 0) === 0) {
+        if ((this.hashes.get(keys[1])?.size ?? 0) > 1) throw new Error('NOCLAIM nobody owns anything, but several containers exist');
+        if (args[1] === '') return '';
+        this.hash(keys[0]).set(args[0], args[1]);
+        return args[1];
+      }
+      if (this.hashes.get(keys[1])?.has(args[2])) throw new Error('container id already registered');
+      this.hash(keys[1]).set(args[2], args[3]);
+      this.hash(keys[0]).set(args[0], args[2]);
+      return args[2];
     }
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
