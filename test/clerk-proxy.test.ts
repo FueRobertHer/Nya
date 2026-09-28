@@ -1,12 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { clerk } from './clerk-mock';
 import { NextRequest } from 'next/server';
-
-// Clerk's middleware, reduced to what the proxy uses: it hands the callback an
-// auth() that says who is signed in.
-let signedIn: string | null = null;
-mock.module('@clerk/nextjs/server', () => ({
-  clerkMiddleware: (handler: any) => (req: any, event: any) => handler(async () => ({ userId: signedIn }), req, event),
-}));
 
 // An account's verified emails, mocked at our own module, not Clerk's.
 const emailsOf: Record<string, string[]> = {};
@@ -29,7 +23,7 @@ const { clerkEnabled, clerkUserAllowed, forgetEmails, EMAILS_REUSE_MS } = await 
 
 const saved = { ...process.env };
 beforeEach(() => {
-  signedIn = null;
+  clerk.signedIn = null;
   for (const k of Object.keys(emailsOf)) delete emailsOf[k];
   for (const k of Object.keys(unverifiedOf)) delete unverifiedOf[k];
   lookups = 0;
@@ -57,7 +51,7 @@ describe('which sign-in is used', () => {
 
   test('without Clerk keys, the shared password still guards everything', async () => {
     delete process.env.CLERK_SECRET_KEY;
-    signedIn = 'user_owner'; // a Clerk session means nothing then
+    clerk.signedIn = 'user_owner'; // a Clerk session means nothing then
     expect((await call('/api/net-worth')).status).toBe(401);
     expect((await call('/')).headers.get('location')).toBe('https://nya.test/login');
   });
@@ -78,20 +72,20 @@ describe('with Clerk on', () => {
   });
 
   test('an allowed account gets in', async () => {
-    signedIn = 'user_partner';
+    clerk.signedIn = 'user_partner';
     expect((await call('/')).status).toBe(200);
     expect((await call('/api/net-worth')).status).toBe(200);
   });
 
   test('a signed-in account not on the list is turned away', async () => {
-    signedIn = 'user_stranger';
+    clerk.signedIn = 'user_stranger';
     expect((await call('/')).headers.get('location')).toBe('https://nya.test/not-allowed');
     expect((await call('/api/net-worth')).status).toBe(403);
   });
 
   test('no allowlist lets nobody in', async () => {
     delete process.env.CLERK_ALLOWED_USER_IDS;
-    signedIn = 'user_owner';
+    clerk.signedIn = 'user_owner';
     expect((await call('/api/net-worth')).status).toBe(403);
     process.env.CLERK_ALLOWED_USER_IDS = ' , ';
     expect(await clerkUserAllowed('')).toBe(false);
@@ -111,20 +105,20 @@ describe('emails on the allowlist', () => {
 
   test('an account with that verified email gets in, in any case', async () => {
     emailsOf.user_partner = ['partner@example.COM'];
-    signedIn = 'user_partner';
+    clerk.signedIn = 'user_partner';
     expect((await call('/')).status).toBe(200);
     expect((await call('/api/net-worth')).status).toBe(200);
   });
 
   test('an unverified address is not enough', async () => {
     unverifiedOf.user_stranger = ['partner@example.com'];
-    signedIn = 'user_stranger';
+    clerk.signedIn = 'user_stranger';
     expect((await call('/api/net-worth')).status).toBe(403);
   });
 
   test('an account without it is turned away', async () => {
     emailsOf.user_stranger = ['stranger@example.com', 'partner@example.com.evil'];
-    signedIn = 'user_stranger';
+    clerk.signedIn = 'user_stranger';
     expect((await call('/api/net-worth')).status).toBe(403);
   });
 

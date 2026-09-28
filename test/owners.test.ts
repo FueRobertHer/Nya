@@ -1,13 +1,9 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
+import { clerk } from './clerk-mock';
 import { startRedis, type RealRedis } from './real-redis';
 import { FakeRedis, storageMock, registerTestContainer, TEST_CONTAINER, testKey } from './fake-redis';
 
 // Clerk's auth(), reduced to who is signed in.
-let signedIn: string | null = null;
-mock.module('@clerk/nextjs/server', () => ({
-  auth: async () => ({ userId: signedIn }),
-  clerkMiddleware: (handler: any) => (req: any, event: any) => handler(async () => ({ userId: signedIn }), req, event),
-}));
 
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
@@ -22,7 +18,7 @@ const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
   forgetEpochs();
-  signedIn = null;
+  clerk.signedIn = null;
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
   process.env.CLERK_SECRET_KEY = 'sk_test_x';
   await registerTestContainer(fake);
@@ -35,16 +31,16 @@ const owners = async () => (await fake.hgetall<Record<string, string>>(ownersKey
 
 describe('which container a Clerk account reaches', () => {
   test('the first sign-in claims the data already here, and keeps it', async () => {
-    signedIn = 'user_owner';
+    clerk.signedIn = 'user_owner';
     expect(String((await dataCtx()).container)).toBe(TEST_CONTAINER);
     expect(await owners()).toEqual({ user_owner: TEST_CONTAINER });
     expect(String((await dataCtx()).container)).toBe(TEST_CONTAINER);
   });
 
   test('anyone after that gets a new, empty container of their own, never the first one', async () => {
-    signedIn = 'user_owner';
+    clerk.signedIn = 'user_owner';
     await dataCtx();
-    signedIn = 'user_partner';
+    clerk.signedIn = 'user_partner';
     const theirs = String((await dataCtx()).container);
     expect(theirs).not.toBe(TEST_CONTAINER);
     expect(String((await dataCtx()).container)).toBe(theirs); // and keeps it
@@ -118,7 +114,7 @@ describe('which container a Clerk account reaches', () => {
 describe('what stays as it was', () => {
   test('password mode uses the deployment container and never records an owner', async () => {
     delete process.env.CLERK_SECRET_KEY;
-    signedIn = 'user_owner';
+    clerk.signedIn = 'user_owner';
     expect(String((await dataCtx()).container)).toBe(TEST_CONTAINER);
     expect(await owners()).toEqual({});
   });
