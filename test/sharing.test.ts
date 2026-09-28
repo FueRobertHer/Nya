@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -26,11 +27,6 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 // Clerk: who is signed in, and their names.
-let signedIn: string | null = null;
-mock.module('@clerk/nextjs/server', () => ({
-  auth: async () => ({ userId: signedIn }),
-  clerkMiddleware: (handler: any) => (req: any, event: any) => handler(async () => ({ userId: signedIn }), req, event),
-}));
 // Names, mocked at our own module: another file's mock of Clerk may be the
 // one loaded, and its shape is not this file's to rely on.
 mock.module('@/lib/people', () => ({
@@ -114,7 +110,7 @@ const route = async (path: string, method: string, body?: unknown) => {
   return { status: res.status, body: await res.json() };
 };
 const as = async <T>(user: string, fn: () => Promise<T>) => {
-  signedIn = user;
+  clerk.signedIn = user;
   return fn();
 };
 const share = (to: string, accounts: Record<string, string>) => as('user_owner', () => route('sharing', 'PUT', { to, accounts }));
