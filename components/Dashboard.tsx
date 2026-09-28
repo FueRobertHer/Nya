@@ -9,6 +9,7 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import { SharingDrawer, SharedWithMe } from './Sharing';
+import { Sheet } from './Sheet';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -130,7 +131,7 @@ type ManualAccount = {
   balance: number;
 };
 
-// The modal's working copy. `balance` is a STRING here, matching how
+// The form's working copy. `balance` is a STRING here, matching how
 // BudgetsTab and GoalsCard hold numeric inputs: an <input type="number">
 // reports '' for a partially-typed value like "-", and Number('') is 0, so
 // storing a number would erase the minus sign as you type it and make the
@@ -161,6 +162,14 @@ let signedOut = false;
 // Currency-aware money, so a EUR/GBP account isn't rendered with a "$".
 // Delegates to the shared formatter (which falls back to $ for a null or
 // unrecognized code); "--" for a missing value.
+/** The value, or the last one that wasn't null: what a closing drawer keeps
+ *  showing while it slides out. */
+function useLast<T>(value: T | null): T | null {
+  const last = useRef<T | null>(value);
+  if (value !== null) last.current = value;
+  return last.current;
+}
+
 /** A 20px line icon for the account actions. */
 function ActionIcon({ d }: { d: string }) {
   return (
@@ -374,24 +383,29 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
-  // type-to-confirm modal.
+  // type-to-confirm drawer.
   const [manageMode, setManageMode] = useState(false);
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
+  const shownDisconnectTarget = useLast(disconnectTarget);
   const [disconnectInput, setDisconnectInput] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
-  // Manual accounts: `manualDraft` drives the add/edit modal, and
+  // Manual accounts: `manualDraft` drives the add/edit drawer, and
   // `editingManual` flips the same form between adding and editing.
   // `manualError` is deliberately separate from the page-level `error` so a
-  // failed save can't linger on the Accounts card after the modal closes, and
+  // failed save can't linger on the Accounts card after the drawer closes, and
   // a background refresh failure can't appear to be a save failure.
   const [manualDraft, setManualDraft] = useState<ManualDraft | null>(null);
   const [editingManual, setEditingManual] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError] = useState('');
   const [manualDeleteTarget, setManualDeleteTarget] = useState<ManualAccount | null>(null);
+  // What each drawer shows: the current value, or the last one while it slides out.
+  const shownManualDraft = useLast(manualDraft);
+  const editingManualShown = useLast(manualDraft ? editingManual : null) ?? false;
+  const shownDeleteTarget = useLast(manualDeleteTarget);
   // The Hidden card starts collapsed: it exists so hidden accounts are
   // findable, not so they take up room on the balance sheet you decluttered.
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
@@ -1925,197 +1939,178 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
         </nav>
       )}
 
-      {manualDraft && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label={editingManual ? 'Update manual account' : 'Add a manual account'}
-          onClick={() => !savingManual && setManualDraft(null)}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">
-              {editingManual ? 'Update account' : 'Add a manual account'}
-            </div>
-            <p className="modal-body">
+      {/* Forms and confirmations open in the same drawer as Sharing
+          (components/Sheet.tsx). Each keeps its last content while it slides
+          out, so it doesn't empty mid-animation. */}
+      <Sheet
+        open={!!manualDraft}
+        title={shownManualDraft && editingManualShown ? 'Update account' : 'Add a manual account'}
+        onClose={() => !savingManual && setManualDraft(null)}
+      >
+        {shownManualDraft && (
+          <>
+            <p className="panel-note" style={{ marginTop: 0 }}>
               For institutions Plaid can&apos;t reach. The balance you type counts toward net worth
               and is recorded on the timeline each time you update it.
             </p>
-
-            <input
-              className="text-input"
-              value={manualDraft.name}
-              onChange={(e) => setManualDraft({ ...manualDraft, name: e.target.value })}
-              placeholder="Account name (e.g. Credit Union Checking)"
-              aria-label="Account name"
-              maxLength={60}
-              autoFocus={!editingManual}
-              disabled={savingManual}
-            />
-            <input
-              className="text-input"
-              value={manualDraft.institution_name}
-              onChange={(e) =>
-                setManualDraft({ ...manualDraft, institution_name: e.target.value })
-              }
-              placeholder="Institution (groups accounts into one card)"
-              aria-label="Institution"
-              maxLength={60}
-              disabled={savingManual}
-            />
-            <select
-              className="text-input budget-select"
-              value={manualDraft.type}
-              onChange={(e) => setManualDraft({ ...manualDraft, type: e.target.value })}
-              aria-label="Account type"
-              disabled={savingManual}
-            >
-              {MANUAL_TYPE_LABELS.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-            <input
-              className="text-input"
-              // Held as a string (see ManualDraft) so a leading "-" survives
-              // being typed. Credit and loan balances are amounts owed, which
-              // subtract from net worth, so a negative there would
-              // double-negate into a positive.
-              type="number"
-              step="0.01"
-              min={isOwedType(manualDraft.type) ? 0 : undefined}
-              value={manualDraft.balance}
-              onChange={(e) => setManualDraft({ ...manualDraft, balance: e.target.value })}
-              placeholder={isOwedType(manualDraft.type) ? 'Amount owed' : 'Current balance'}
-              aria-label={isOwedType(manualDraft.type) ? 'Amount owed' : 'Current balance'}
-              autoFocus={editingManual}
-              disabled={savingManual}
-            />
-            <p className="empty-note">
-              {isOwedType(manualDraft.type)
+            <div className="sheet-form">
+              <label className="field">
+                Account name
+                <input
+                  value={shownManualDraft.name}
+                  onChange={(e) => setManualDraft({ ...shownManualDraft, name: e.target.value })}
+                  placeholder="e.g. Credit Union Checking"
+                  maxLength={60}
+                  disabled={savingManual}
+                />
+              </label>
+              <label className="field">
+                Institution
+                <input
+                  value={shownManualDraft.institution_name}
+                  onChange={(e) => setManualDraft({ ...shownManualDraft, institution_name: e.target.value })}
+                  placeholder="Groups accounts into one card"
+                  maxLength={60}
+                  disabled={savingManual}
+                />
+              </label>
+              <label className="field">
+                Type
+                <select
+                  value={shownManualDraft.type}
+                  onChange={(e) => setManualDraft({ ...shownManualDraft, type: e.target.value })}
+                  disabled={savingManual}
+                >
+                  {MANUAL_TYPE_LABELS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                {isOwedType(shownManualDraft.type) ? 'Amount owed' : 'Current balance'}
+                <input
+                  // Held as a string (see ManualDraft) so a leading "-" survives
+                  // being typed. Credit and loan balances are amounts owed, which
+                  // subtract from net worth, so a negative there would
+                  // double-negate into a positive.
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={isOwedType(shownManualDraft.type) ? 0 : undefined}
+                  value={shownManualDraft.balance}
+                  onChange={(e) => setManualDraft({ ...shownManualDraft, balance: e.target.value })}
+                  placeholder="0.00"
+                  disabled={savingManual}
+                />
+              </label>
+            </div>
+            <p className="panel-note">
+              {isOwedType(shownManualDraft.type)
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'
                 : 'Negative balances are allowed (e.g. an overdrawn account).'}
             </p>
 
-            {editingManual && manualDraft.account_id && (
-              <p className="empty-note manual-id">
-                Account ID for scripted updates: <code>{manualDraft.account_id}</code>
+            {editingManualShown && shownManualDraft.account_id && (
+              <p className="panel-note manual-id">
+                Account ID for scripted updates: <code>{shownManualDraft.account_id}</code>
               </p>
             )}
 
             {manualError && <div className="error">{manualError}</div>}
 
-            <div className="card-actions">
-              <button
-                className="secondary"
-                onClick={() => setManualDraft(null)}
-                disabled={savingManual}
-              >
+            <div className="button-pair" style={{ marginTop: 16 }}>
+              <button className="secondary" onClick={() => setManualDraft(null)} disabled={savingManual}>
                 Cancel
               </button>
               <button
                 disabled={
                   savingManual ||
-                  !manualDraft.name.trim() ||
-                  !manualDraft.institution_name.trim() ||
-                  manualDraft.balance.trim() === '' ||
-                  !Number.isFinite(Number(manualDraft.balance)) ||
-                  (isOwedType(manualDraft.type) && Number(manualDraft.balance) < 0)
+                  !shownManualDraft.name.trim() ||
+                  !shownManualDraft.institution_name.trim() ||
+                  shownManualDraft.balance.trim() === '' ||
+                  !Number.isFinite(Number(shownManualDraft.balance)) ||
+                  (isOwedType(shownManualDraft.type) && Number(shownManualDraft.balance) < 0)
                 }
                 onClick={submitManualDraft}
               >
-                {savingManual ? 'Saving…' : editingManual ? 'Save' : 'Add account'}
+                {savingManual ? 'Saving…' : editingManualShown ? 'Save' : 'Add account'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Sheet>
 
-      {manualDeleteTarget && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Delete ${manualDeleteTarget.name}`}
-          onClick={() => !savingManual && setManualDeleteTarget(null)}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">Delete {manualDeleteTarget.name}?</div>
-            <p className="modal-body">
+      <Sheet
+        open={!!manualDeleteTarget}
+        title={shownDeleteTarget ? `Delete ${shownDeleteTarget.name}?` : 'Delete'}
+        onClose={() => !savingManual && setManualDeleteTarget(null)}
+      >
+        {shownDeleteTarget && (
+          <>
+            <p className="panel-note" style={{ marginTop: 0 }}>
               This account&apos;s balance history is <strong>not recoverable</strong>. Re-adding it
               creates a new account with an empty history.
             </p>
             {manualError && <div className="error">{manualError}</div>}
-            <div className="card-actions">
-              <button
-                className="secondary"
-                onClick={() => setManualDeleteTarget(null)}
-                disabled={savingManual}
-              >
+            <div className="button-pair" style={{ marginTop: 16 }}>
+              <button className="secondary" onClick={() => setManualDeleteTarget(null)} disabled={savingManual}>
                 Cancel
               </button>
               <button
                 className="danger"
                 disabled={savingManual}
-                onClick={() =>
-                  mutateManual('DELETE', { account_id: manualDeleteTarget.account_id })
-                }
+                onClick={() => mutateManual('DELETE', { account_id: shownDeleteTarget.account_id })}
               >
                 {savingManual ? 'Deleting…' : 'Delete'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Sheet>
 
-      {disconnectTarget && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Disconnect ${disconnectTarget.institution_name}`}
-          onClick={() => !disconnecting && setDisconnectTarget(null)}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">Disconnect {disconnectTarget.institution_name}?</div>
-            <p className="modal-body">
-              This removes {disconnectTarget.institution_name} and its accounts from Nya. You can
-              reconnect it later. Type <strong>{disconnectTarget.institution_name}</strong> below to
+      <Sheet
+        open={!!disconnectTarget}
+        title={shownDisconnectTarget ? `Disconnect ${shownDisconnectTarget.institution_name}?` : 'Disconnect'}
+        onClose={() => !disconnecting && setDisconnectTarget(null)}
+      >
+        {shownDisconnectTarget && (
+          <>
+            <p className="panel-note" style={{ marginTop: 0 }}>
+              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya. You can
+              reconnect it later. Type <strong>{shownDisconnectTarget.institution_name}</strong> below to
               confirm.
             </p>
-            <input
-              className="text-input"
-              value={disconnectInput}
-              onChange={(e) => setDisconnectInput(e.target.value)}
-              placeholder={disconnectTarget.institution_name}
-              aria-label="Type the institution name to confirm"
-              autoFocus
-              disabled={disconnecting}
-            />
-            <div className="card-actions">
-              <button
-                className="secondary"
-                onClick={() => setDisconnectTarget(null)}
+            <label className="field" style={{ marginTop: 12 }}>
+              Institution name
+              <input
+                value={disconnectInput}
+                onChange={(e) => setDisconnectInput(e.target.value)}
+                placeholder={shownDisconnectTarget.institution_name}
                 disabled={disconnecting}
-              >
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+            </label>
+            <div className="button-pair" style={{ marginTop: 16 }}>
+              <button className="secondary" onClick={() => setDisconnectTarget(null)} disabled={disconnecting}>
                 Cancel
               </button>
               <button
                 className="danger"
                 disabled={
                   disconnecting ||
-                  disconnectInput.trim().toLowerCase() !==
-                    disconnectTarget.institution_name.trim().toLowerCase()
+                  disconnectInput.trim().toLowerCase() !== shownDisconnectTarget.institution_name.trim().toLowerCase()
                 }
-                onClick={() => performDisconnect(disconnectTarget.item_id)}
+                onClick={() => performDisconnect(shownDisconnectTarget.item_id)}
               >
                 {disconnecting ? 'Disconnecting…' : 'Disconnect'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Sheet>
     </>
   );
 }
