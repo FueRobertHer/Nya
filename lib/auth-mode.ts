@@ -19,7 +19,10 @@
 // Ids are checked first and need nothing else. Emails need the account's
 // addresses from Clerk: looked up only when an email entry exists and the id
 // isn't listed, reused for a minute per instance (the proxy asks on every
-// request), and never on a failed lookup, which turns the person away.
+// request), and shared by requests that ask at the same time. If Clerk can't
+// answer, an answer up to ten minutes old is used instead, so a short Clerk
+// outage doesn't lock anyone out; with none, the person is turned away. List
+// the owner by id: ids never depend on Clerk answering.
 
 export function clerkEnabled(): boolean {
   return !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
@@ -38,20 +41,39 @@ function allowlist(): { ids: Set<string>; emails: Set<string> } {
 }
 
 export const EMAILS_REUSE_MS = 60_000;
+export const EMAILS_STALE_MS = 10 * 60_000;
+const MAX_CACHED = 1000;
 const emailCache = new Map<string, { emails: string[]; at: number }>();
+const inFlight = new Map<string, Promise<string[]>>();
+
+async function lookup(userId: string, now: number): Promise<string[]> {
+  const { emailAddresses } = await import('./clerk-emails');
+  const emails = (await emailAddresses(userId)).filter((e) => e.verified).map((e) => e.address.toLowerCase());
+  if (emailCache.size >= MAX_CACHED) emailCache.clear(); // strangers signing in can't grow it forever
+  emailCache.set(userId, { emails, at: now });
+  return emails;
+}
 
 async function emailsOf(userId: string, now: number): Promise<string[]> {
   const hit = emailCache.get(userId);
   if (hit && now - hit.at < EMAILS_REUSE_MS) return hit.emails;
-  const { emailAddresses } = await import('./clerk-emails');
-  const emails = (await emailAddresses(userId)).filter((e) => e.verified).map((e) => e.address.toLowerCase());
-  emailCache.set(userId, { emails, at: now });
-  return emails;
+  let pending = inFlight.get(userId);
+  if (!pending) {
+    pending = lookup(userId, now).finally(() => inFlight.delete(userId));
+    inFlight.set(userId, pending);
+  }
+  try {
+    return await pending;
+  } catch (err) {
+    if (hit && now - hit.at < EMAILS_STALE_MS) return hit.emails;
+    throw err;
+  }
 }
 
 /** For tests. */
 export function forgetEmails(): void {
   emailCache.clear();
+  inFlight.clear();
 }
 
 export async function clerkUserAllowed(userId: string, now: number = Date.now()): Promise<boolean> {

@@ -646,7 +646,10 @@ have signed up. If one person matches two entries (their id and their
 email), they are simply allowed; to turn them away, remove both. The proxy
 asks Clerk for an account's emails only when its id isn't listed, and reuses
 the answer for a minute, so removing an address from an account takes up to
-a minute to count.
+a minute to count. Keep yourself listed by id: an email needs Clerk to
+answer (an answer up to ten minutes old covers a short outage), an id never
+does. "Verified" is Clerk's: with a social or SSO connection turned on, it
+trusts that provider's word for the address.
 
 The first account on the list to sign in becomes the owner of the data
 already in this environment (its container), once; after that, each request

@@ -19,7 +19,7 @@ mock.module('@/lib/clerk-emails', () => ({
 }));
 
 const { proxy } = await import('@/proxy');
-const { clerkEnabled, clerkUserAllowed, forgetEmails, EMAILS_REUSE_MS } = await import('@/lib/auth-mode');
+const { clerkEnabled, clerkUserAllowed, forgetEmails, EMAILS_REUSE_MS, EMAILS_STALE_MS } = await import('@/lib/auth-mode');
 
 const saved = { ...process.env };
 beforeEach(() => {
@@ -146,6 +146,27 @@ describe('emails on the allowlist', () => {
     emailsOf.user_partner = [];
     expect(await clerkUserAllowed('user_partner', 1_000 + EMAILS_REUSE_MS)).toBe(false);
     expect(lookups).toBe(2);
+  });
+
+  test('requests asking at once share one lookup', async () => {
+    emailsOf.user_partner = ['partner@example.com'];
+    const answers = await Promise.all([1, 2, 3].map(() => clerkUserAllowed('user_partner', 1_000)));
+    expect(answers).toEqual([true, true, true]);
+    expect(lookups).toBe(1);
+  });
+
+  test('while Clerk is down, an answer up to ten minutes old still counts', async () => {
+    emailsOf.user_partner = ['partner@example.com'];
+    expect(await clerkUserAllowed('user_partner', 1_000)).toBe(true);
+    lookupFails = true;
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      expect(await clerkUserAllowed('user_partner', 1_000 + EMAILS_STALE_MS - 1)).toBe(true);
+      expect(await clerkUserAllowed('user_partner', 1_000 + EMAILS_STALE_MS)).toBe(false);
+    } finally {
+      console.error = errors;
+    }
   });
 
   test('a failed lookup turns them away, and is not remembered', async () => {
