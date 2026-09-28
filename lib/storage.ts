@@ -124,6 +124,12 @@ export function kc(ctx: Ctx, key: string): string {
   return `${ENV_PREFIX}:c:${ctx.container}:${key}`;
 }
 
+/** The prefix every key of one container starts with, for the one thing that
+ *  walks a whole container (deleting an account, lib/account-deletion.ts). */
+export function containerPrefix(ctx: Ctx): string {
+  return `${ENV_PREFIX}:c:${ctx.container}:`;
+}
+
 /**
  * A key that belongs to the whole environment, never to one container.
  *
