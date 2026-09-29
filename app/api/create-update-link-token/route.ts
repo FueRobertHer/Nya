@@ -50,7 +50,10 @@ export async function POST(req: Request) {
       ...(webhookUrlFor(ctx) ? { webhook: webhookUrlFor(ctx) } : {}),
     });
 
-    return NextResponse.json(response.data);
+    // When the picker opened, by the server's clock, handed back to
+    // /api/item-accounts-updated: only an account first seen missing after this
+    // was removed in the picker. One missing from before went on its own.
+    return NextResponse.json(select_accounts ? { ...response.data, opened_at: new Date().toISOString() } : response.data);
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

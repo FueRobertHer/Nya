@@ -72,6 +72,12 @@ const route = async (path: string, method: string, body?: unknown) => {
   return { status: res.status, body: await res.json() };
 };
 
+/** Opens the picker on an Item and returns what the client hands back after. */
+const openPicker = async (item_id: string) => {
+  const res = await route('create-update-link-token', 'POST', { item_id, select_accounts: true });
+  return { item_id, opened_at: res.body.opened_at as string };
+};
+
 const missingOn = async (item_id: string) =>
   (await computeNetWorth(ctx)).institutions.find((i) => i.item_id === item_id)?.unconfirmed_missing ?? 0;
 
@@ -92,6 +98,7 @@ describe('opening the account picker', () => {
     expect(linkRequests[0].access_token).toBe('token-item_1');
     expect(linkRequests[0].update).toEqual({ account_selection_enabled: true });
     expect(linkRequests[0].products).toBeUndefined();
+    expect(Number.isFinite(Date.parse(res.body.opened_at))).toBe(true);
   });
 
   test('a plain reconnect does not show the picker', async () => {
@@ -112,10 +119,11 @@ describe('after the picker', () => {
   test('a removed account never pauses snapshots, and an added one is remembered', async () => {
     await addItem('item_1', ['acct_0001', 'acct_0002']);
     await markBackfillDone(ctx);
+    const picker = await openPicker('item_1');
     // The user kept 0001, dropped 0002, added 0003.
     plaidAccounts['token-item_1'] = [account('acct_0001'), account('acct_0003')];
 
-    const res = await route('item-accounts-updated', 'POST', { item_id: 'item_1' });
+    const res = await route('item-accounts-updated', 'POST', picker);
     expect(res.body).toEqual({ added: 1, removed: 1 });
     expect((await rememberedIdsForItem(ctx, 'item_1')).sort()).toEqual(['acct_0001', 'acct_0003']);
     expect(await missingOn('item_1')).toBe(0);
@@ -125,6 +133,7 @@ describe('after the picker', () => {
 
   test('catches a removal a load already recorded as missing', async () => {
     await addItem('item_1', ['acct_0001', 'acct_0002']);
+    const picker = await openPicker('item_1');
     plaidAccounts['token-item_1'] = [account('acct_0001')];
     // A load between Link closing and the route: 0002 goes into the vanished
     // record, and the remembered list is rewritten without it.
@@ -133,32 +142,61 @@ describe('after the picker', () => {
     await rememberAccounts(ctx, institutions);
     expect(await rememberedIdsForItem(ctx, 'item_1')).toEqual(['acct_0001']);
 
-    const res = await route('item-accounts-updated', 'POST', { item_id: 'item_1' });
+    const res = await route('item-accounts-updated', 'POST', picker);
     expect(res.body).toEqual({ added: 0, removed: 1 });
     expect(await missingOn('item_1')).toBe(0);
+  });
+
+  test('an account already missing before the picker opened keeps its grace window', async () => {
+    await addItem('item_1', ['acct_0001', 'acct_0002']);
+    // 0002 dropped out of Plaid's answers on its own, a day ago.
+    await fake.hset(ctxKey('accounts:vanished'), {
+      item_1: await encrypt(JSON.stringify({ acct_0002: new Date(Date.now() - 86_400_000).toISOString() })),
+    });
+    plaidAccounts['token-item_1'] = [account('acct_0001')];
+    await rememberAccounts(ctx, (await computeNetWorth(ctx)).institutions);
+
+    const picker = await openPicker('item_1');
+    plaidAccounts['token-item_1'] = [account('acct_0001'), account('acct_0003')];
+    const res = await route('item-accounts-updated', 'POST', picker);
+    expect(res.body).toEqual({ added: 1, removed: 0 });
+    // Still held as missing: the picker didn't remove it, so history stays paused.
+    expect(await missingOn('item_1')).toBe(1);
+  });
+
+  test('without the picker time only remembered accounts count as removed', async () => {
+    await addItem('item_1', ['acct_0001', 'acct_0002']);
+    plaidAccounts['token-item_1'] = [account('acct_0001')];
+    const res = await route('item-accounts-updated', 'POST', { item_id: 'item_1' });
+    expect(res.body).toEqual({ added: 0, removed: 1 });
   });
 
   test('a removal alone leaves the estimated history as it is', async () => {
     await addItem('item_1', ['acct_0001', 'acct_0002']);
     await markBackfillDone(ctx);
+    const picker = await openPicker('item_1');
     plaidAccounts['token-item_1'] = [account('acct_0001')];
-    await route('item-accounts-updated', 'POST', { item_id: 'item_1' });
+    await route('item-accounts-updated', 'POST', picker);
     expect(await isBackfillDone(ctx)).toBe(true);
   });
 
   test('clears the new-accounts prompt', async () => {
     await addItem('item_1', ['acct_0001']);
     await markNewAccounts(ctx, 'item_1');
-    await route('item-accounts-updated', 'POST', { item_id: 'item_1' });
+    await route('item-accounts-updated', 'POST', await openPicker('item_1'));
     expect((await itemsWithNewAccounts(ctx)).size).toBe(0);
   });
 
-  test('changes nothing it cannot measure when the Item fails to answer', async () => {
+  test('says so, and changes nothing, when the Item fails to answer', async () => {
     await addItem('item_1', ['acct_0001', 'acct_0002']);
+    await markNewAccounts(ctx, 'item_1');
+    const picker = await openPicker('item_1');
     failing.add('token-item_1');
-    const res = await route('item-accounts-updated', 'POST', { item_id: 'item_1' });
-    expect(res.body).toEqual({ added: 0, removed: 0 });
+    const res = await route('item-accounts-updated', 'POST', picker);
+    expect(res.status).toBe(502);
     expect((await rememberedIdsForItem(ctx, 'item_1')).sort()).toEqual(['acct_0001', 'acct_0002']);
+    // The prompt stays, so the user can run the picker again.
+    expect([...(await itemsWithNewAccounts(ctx))]).toEqual(['item_1']);
   });
 
   test('an unknown Item is a 404', async () => {
@@ -198,6 +236,18 @@ describe('new accounts at an Item', () => {
     expect([...(await itemsWithNewAccounts(ctx))]).toEqual(['item_1']);
     await route('disconnect', 'POST', { item_id: 'item_1' });
     expect((await itemsWithNewAccounts(ctx)).size).toBe(0);
+  });
+
+  test('the dashboard shows it on every load, never frozen into the cache', async () => {
+    await addItem('item_1', ['acct_0001']);
+    const flagged = async () => (await route('net-worth', 'GET')).body.institutions.find((i: any) => i.item_id === 'item_1')?.new_accounts_available;
+    expect(await flagged()).toBeUndefined(); // writes the cache
+    await markNewAccounts(ctx, 'item_1'); // with no cache clear: served from the cache
+    expect((await route('net-worth', 'GET')).body.from_cache).toBe(true);
+    expect(await flagged()).toBe(true);
+    const { clearNewAccounts } = await import('@/lib/new-accounts');
+    await clearNewAccounts(ctx, 'item_1');
+    expect(await flagged()).toBeUndefined();
   });
 
   test('other webhooks leave it alone', async () => {

@@ -371,8 +371,12 @@ export default function Dashboard({
   const bypassDuplicateRef = useRef(false);
   const redirectingRef = useRef(false);
   const exitLinkRef = useRef<(opts?: { force?: boolean }) => void>(() => {});
-  // The Item the account picker is open on.
-  const updatingItemRef = useRef<string | null>(null);
+  // The Item the account picker is open on, and when it opened by the server's
+  // clock (see app/api/item-accounts-updated).
+  const updatingItemRef = useRef<{ item_id: string; opened_at: string } | null>(null);
+  // Whether Link is on screen: a late SELECT_INSTITUTION must not redirect a
+  // Link that already closed.
+  const linkOpenRef = useRef(false);
   // Set when a new connection was stopped at an institution already connected.
   const [redirect, setRedirect] = useState<{ name: string; items: Institution[] } | null>(null);
   const shownRedirect = useLast(redirect);
@@ -687,7 +691,7 @@ export default function Dashboard({
     setError('');
     setConnecting(true);
     redirectingRef.current = false;
-    updatingItemRef.current = item_id;
+    updatingItemRef.current = null;
     const res = await fetch('/api/create-update-link-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -696,6 +700,7 @@ export default function Dashboard({
     const data = await res.json().catch(() => ({}));
     setConnecting(false);
     if (data.link_token) {
+      updatingItemRef.current = { item_id, opened_at: data.opened_at ?? '' };
       setLinkMode('accounts');
       setLinkToken(data.link_token);
     } else {
@@ -706,6 +711,7 @@ export default function Dashboard({
   const startReconnect = useCallback(async (item_id: string) => {
     setError('');
     setConnecting(true);
+    redirectingRef.current = false;
     const res = await fetch('/api/create-update-link-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -727,6 +733,7 @@ export default function Dashboard({
   const startEnableLiabilities = useCallback(async (item_id: string) => {
     setError('');
     setConnecting(true);
+    redirectingRef.current = false;
     const res = await fetch('/api/create-update-link-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -891,6 +898,7 @@ export default function Dashboard({
 
   const onSuccess = useCallback(
     async (public_token: string, metadata: PlaidLinkOnSuccessMetadata) => {
+      linkOpenRef.current = false;
       if (linkMode === 'update') {
         // Update mode re-authenticates the existing Item -- no new Item is
         // created and the access token doesn't change, so there's nothing
@@ -905,15 +913,18 @@ export default function Dashboard({
         // is unchanged; the server reconciles what it remembers about the Item
         // (app/api/item-accounts-updated) before the reload reads it.
         setLinkToken(null);
-        const item_id = updatingItemRef.current;
-        const res = item_id
+        const picker = updatingItemRef.current;
+        const res = picker
           ? await fetch('/api/item-accounts-updated', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ item_id }),
+              body: JSON.stringify(picker),
             }).catch(() => null)
           : null;
-        const summary = await res?.json().catch(() => null);
+        const summary = res?.ok ? await res.json().catch(() => null) : null;
+        // Unreconciled, a removed account would pause history at the next load
+        // as if it had vanished. Running the picker again finishes the job.
+        if (!res?.ok) setError('Could not update the account list. Open "Add or remove accounts" again to finish.');
         loadNetWorth(true);
         if (txns !== null) loadTransactions(true);
         // Only an addition cleared the backfill flag (a removal must not rebuild
@@ -969,6 +980,7 @@ export default function Dashboard({
   const onEvent = useCallback(
     (eventName: string, metadata: PlaidLinkOnEventMetadata) => {
       if (eventName !== 'SELECT_INSTITUTION' || linkMode !== 'new' || bypassDuplicateRef.current) return;
+      if (!linkOpenRef.current) return;
       const items = existingItemsAt(institutions, {
         institution_id: metadata.institution_id,
         name: metadata.institution_name,
@@ -986,6 +998,7 @@ export default function Dashboard({
     onSuccess,
     onEvent,
     onExit: (err) => {
+      linkOpenRef.current = false;
       // Closed by onEvent above: not a cancellation, and the redirect sheet
       // says what happens next.
       if (redirectingRef.current) {
@@ -1002,7 +1015,10 @@ export default function Dashboard({
 
   // Open Link automatically as soon as a fresh token is ready
   useEffect(() => {
-    if (linkToken && ready) open();
+    if (linkToken && ready) {
+      linkOpenRef.current = true;
+      open();
+    }
   }, [linkToken, ready, open]);
 
   const toggleAccount = useCallback((account_id: string) => {
@@ -1928,7 +1944,8 @@ export default function Dashboard({
                           )}
                           {/* Adds accounts to THIS Item rather than connecting
                               the institution again (a second, separately
-                              billed Item). Same gate as Disconnect. */}
+                              billed Item). In manage mode, like Disconnect, or
+                              whenever Plaid has found new accounts. */}
                           {!inst.manual && (manageMode || inst.new_accounts_available) && (
                             <button
                               className="secondary"

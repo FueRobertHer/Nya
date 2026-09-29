@@ -121,9 +121,20 @@ async function writeRecord(ctx: Ctx, item_id: string, record: VanishRecord): Pro
   }
 }
 
-/** The ids an Item's record currently holds as missing. */
-export async function vanishedIdsForItem(ctx: Ctx, item_id: string): Promise<string[]> {
-  return Object.keys(await readRecord(ctx, item_id));
+/**
+ * The ids an Item's record first saw missing at or after `since` (an ISO time).
+ * An id missing from before then went missing on its own, not through whatever
+ * the caller is accounting for, and keeps its grace window. An unparseable
+ * `since`, or entry, matches nothing.
+ */
+export async function vanishedSince(ctx: Ctx, item_id: string, since: string): Promise<string[]> {
+  const from = Date.parse(since);
+  if (!Number.isFinite(from)) return [];
+  const record = await readRecord(ctx, item_id);
+  return Object.keys(record).filter((id) => {
+    const at = Date.parse(record[id]);
+    return Number.isFinite(at) && at >= from;
+  });
 }
 
 /**
