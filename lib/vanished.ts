@@ -121,6 +121,30 @@ async function writeRecord(ctx: Ctx, item_id: string, record: VanishRecord): Pro
   }
 }
 
+/** The ids an Item's record currently holds as missing. */
+export async function vanishedIdsForItem(ctx: Ctx, item_id: string): Promise<string[]> {
+  return Object.keys(await readRecord(ctx, item_id));
+}
+
+/**
+ * Drops just these ids from an Item's record: accounts the user removed from the
+ * Item themselves (Link's account selection), whose absence is a known choice
+ * rather than something to wait out. Without this a removal would pause every
+ * snapshot for CONFIRM_AFTER_DAYS.
+ */
+export async function forgetVanishedIds(ctx: Ctx, item_id: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const record = await readRecord(ctx, item_id);
+  let changed = false;
+  for (const id of ids) {
+    if (id in record) {
+      delete record[id];
+      changed = true;
+    }
+  }
+  if (changed) await writeRecord(ctx, item_id, record);
+}
+
 /** Drops an Item's record, on disconnect. */
 export async function forgetVanished(ctx: Ctx, item_id: string): Promise<void> {
   try {

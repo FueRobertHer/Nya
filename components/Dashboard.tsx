@@ -4,7 +4,8 @@ import ClerkAccount from './ClerkAccount';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link';
+import { usePlaidLink, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
+import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
@@ -83,6 +84,11 @@ type Holding = {
 type Institution = {
   institution_name: string;
   item_id: string;
+  // Plaid's institution id, for recognizing a second connection to the same
+  // institution (lib/existing-items.ts). Absent on older cached payloads.
+  institution_id?: string | null;
+  // Plaid found accounts at this Item the user hasn't added (lib/new-accounts.ts).
+  new_accounts_available?: boolean;
   accounts: Account[];
   holdings: Holding[];
   error: string | null;
@@ -356,7 +362,20 @@ export default function Dashboard({
   const cacheKey = cacheKeyFor(viewer);
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
-  const [linkMode, setLinkMode] = useState<'new' | 'update'>('new');
+  // 'update' re-authenticates or adds a product; 'accounts' is the account
+  // picker on an existing Item. Neither creates an Item.
+  const [linkMode, setLinkMode] = useState<'new' | 'update' | 'accounts'>('new');
+  // Refs, not state: react-plaid-link builds its handler once per token and
+  // keeps the callbacks it was given then, so state read inside them would be
+  // stale. See onEvent.
+  const bypassDuplicateRef = useRef(false);
+  const redirectingRef = useRef(false);
+  const exitLinkRef = useRef<(opts?: { force?: boolean }) => void>(() => {});
+  // The Item the account picker is open on.
+  const updatingItemRef = useRef<string | null>(null);
+  // Set when a new connection was stopped at an institution already connected.
+  const [redirect, setRedirect] = useState<{ name: string; items: Institution[] } | null>(null);
+  const shownRedirect = useLast(redirect);
   const [connected, setConnected] = useState(false);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [netWorth, setNetWorth] = useState(0);
@@ -641,9 +660,13 @@ export default function Dashboard({
     [loadTransactions]
   );
 
-  const startConnect = useCallback(async () => {
+  // `bypass` skips both duplicate checks for this run: the user has said the
+  // institution they already have is a different login.
+  const beginConnect = useCallback(async (bypass: boolean) => {
     setError('');
     setConnecting(true);
+    bypassDuplicateRef.current = bypass;
+    redirectingRef.current = false;
     const res = await fetch('/api/create-link-token', { method: 'POST' });
     const data = await res.json();
     setConnecting(false);
@@ -652,6 +675,31 @@ export default function Dashboard({
       setLinkToken(data.link_token);
     } else {
       setError('Could not start connection.');
+    }
+  }, []);
+  // A wrapper, not beginConnect itself, since onClick would pass its event as
+  // `bypass`.
+  const startConnect = useCallback(() => beginConnect(false), [beginConnect]);
+
+  // Link's account picker on an existing Item, to add (or remove) accounts at an
+  // institution already connected without creating a second Item.
+  const startManageAccounts = useCallback(async (item_id: string) => {
+    setError('');
+    setConnecting(true);
+    redirectingRef.current = false;
+    updatingItemRef.current = item_id;
+    const res = await fetch('/api/create-update-link-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id, select_accounts: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setConnecting(false);
+    if (data.link_token) {
+      setLinkMode('accounts');
+      setLinkToken(data.link_token);
+    } else {
+      setError(data.error || 'Could not open account selection.');
     }
   }, []);
 
@@ -852,8 +900,36 @@ export default function Dashboard({
         return;
       }
 
+      if (linkMode === 'accounts') {
+        // The account picker changed which accounts the Item shares. The token
+        // is unchanged; the server reconciles what it remembers about the Item
+        // (app/api/item-accounts-updated) before the reload reads it.
+        setLinkToken(null);
+        const item_id = updatingItemRef.current;
+        const res = item_id
+          ? await fetch('/api/item-accounts-updated', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ item_id }),
+            }).catch(() => null)
+          : null;
+        const summary = await res?.json().catch(() => null);
+        loadNetWorth(true);
+        if (txns !== null) loadTransactions(true);
+        // Only an addition cleared the backfill flag (a removal must not rebuild
+        // past estimates), so only then is there anything to recompute.
+        if (summary?.added > 0) requestBackfill(() => loadNetWorth());
+        return;
+      }
+
       const institutionName = metadata.institution?.name || 'Connected Account';
-      const isDuplicate = institutions.some((i) => i.institution_name === institutionName);
+      // Skipped when the user already said this is a different login.
+      const isDuplicate =
+        !bypassDuplicateRef.current &&
+        existingItemsAt(institutions, {
+          institution_id: metadata.institution?.institution_id,
+          name: metadata.institution?.name,
+        }).length > 0;
       if (isDuplicate) {
         const proceed = window.confirm(
           `You already have an account connected to ${institutionName}. Link another one anyway?`
@@ -882,14 +958,47 @@ export default function Dashboard({
     [linkMode, institutions, loadNetWorth, loadTransactions, requestBackfill, txns]
   );
 
-  const { open, ready } = usePlaidLink({
+  // Stops a new connection at an institution already connected, before the user
+  // enters credentials, and offers to add accounts to the existing Item instead.
+  // A second Item for the same login is billed separately and would duplicate
+  // every account.
+  //
+  // The handler keeps the callbacks from the render that made it, and the `exit`
+  // that render saw belongs to the previous handler, so exit goes through a ref
+  // kept current below.
+  const onEvent = useCallback(
+    (eventName: string, metadata: PlaidLinkOnEventMetadata) => {
+      if (eventName !== 'SELECT_INSTITUTION' || linkMode !== 'new' || bypassDuplicateRef.current) return;
+      const items = existingItemsAt(institutions, {
+        institution_id: metadata.institution_id,
+        name: metadata.institution_name,
+      });
+      if (items.length === 0) return;
+      redirectingRef.current = true;
+      setRedirect({ name: metadata.institution_name || items[0].institution_name, items });
+      exitLinkRef.current({ force: true });
+    },
+    [linkMode, institutions]
+  );
+
+  const { open, ready, exit } = usePlaidLink({
     token: linkToken,
     onSuccess,
+    onEvent,
     onExit: (err) => {
-      if (err) setError('Connection cancelled or failed.');
+      // Closed by onEvent above: not a cancellation, and the redirect sheet
+      // says what happens next.
+      if (redirectingRef.current) {
+        redirectingRef.current = false;
+      } else if (err) {
+        setError('Connection cancelled or failed.');
+      }
       setLinkToken(null);
     },
   });
+  useLayoutEffect(() => {
+    exitLinkRef.current = exit as (opts?: { force?: boolean }) => void;
+  }, [exit]);
 
   // Open Link automatically as soon as a fresh token is ready
   useEffect(() => {
@@ -1790,10 +1899,18 @@ export default function Dashboard({
                         </p>
                       )}
 
-                      {/* One container, two independent actions. Enable must
-                          NOT sit inside a needs_reauth gate: a healthy
-                          institution is exactly the case it exists for. */}
-                      {(inst.needs_reauth || canEnableLiabilities(inst)) && (
+                      {inst.new_accounts_available && !inst.manual && (
+                        <p className="empty-note">
+                          {inst.institution_name} has accounts you haven&apos;t added yet.
+                        </p>
+                      )}
+
+                      {/* One container, independent actions. Enable must NOT
+                          sit inside a needs_reauth gate: a healthy institution
+                          is exactly the case it exists for. */}
+                      {(inst.needs_reauth ||
+                        canEnableLiabilities(inst) ||
+                        (!inst.manual && (manageMode || inst.new_accounts_available))) && (
                         <div className="card-actions">
                           {inst.needs_reauth && (
                             <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
@@ -1807,6 +1924,18 @@ export default function Dashboard({
                               disabled={connecting}
                             >
                               Enable payment details
+                            </button>
+                          )}
+                          {/* Adds accounts to THIS Item rather than connecting
+                              the institution again (a second, separately
+                              billed Item). Same gate as Disconnect. */}
+                          {!inst.manual && (manageMode || inst.new_accounts_available) && (
+                            <button
+                              className="secondary"
+                              onClick={() => startManageAccounts(inst.item_id)}
+                              disabled={connecting}
+                            >
+                              {inst.new_accounts_available && !manageMode ? 'Review accounts' : 'Add or remove accounts'}
                             </button>
                           )}
                         </div>
@@ -2078,6 +2207,48 @@ export default function Dashboard({
                 onClick={() => mutateManual('DELETE', { account_id: shownDeleteTarget.account_id })}
               >
                 {savingManual ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </>
+        )}
+      </Sheet>
+
+      <Sheet
+        open={!!redirect}
+        title={shownRedirect ? `${shownRedirect.name} is already connected` : 'Already connected'}
+        onClose={() => setRedirect(null)}
+      >
+        {shownRedirect && (
+          <>
+            <p className="panel-note" style={{ marginTop: 0 }}>
+              To add more {shownRedirect.name} accounts, add them to the connection you already have.
+              Connecting it again would create a duplicate connection with the same accounts. If it&apos;s a
+              different login (a joint or business login, say), connect it separately.
+            </p>
+            <div className="button-stack" style={{ marginTop: 16 }}>
+              {shownRedirect.items.map((inst) => (
+                <button
+                  key={inst.item_id}
+                  disabled={connecting}
+                  onClick={() => {
+                    setRedirect(null);
+                    startManageAccounts(inst.item_id);
+                  }}
+                >
+                  {shownRedirect.items.length > 1
+                    ? `Add to ${inst.institution_name} (${inst.accounts.length} account${inst.accounts.length === 1 ? '' : 's'})`
+                    : 'Add accounts to existing connection'}
+                </button>
+              ))}
+              <button
+                className="secondary"
+                disabled={connecting}
+                onClick={() => {
+                  setRedirect(null);
+                  beginConnect(true);
+                }}
+              >
+                It&apos;s a different login
               </button>
             </div>
           </>

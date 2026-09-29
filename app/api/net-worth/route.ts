@@ -13,6 +13,7 @@ import {
 import { applyHidden } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
+import { itemsWithNewAccounts } from '@/lib/new-accounts';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -87,6 +88,8 @@ export async function GET(req: Request) {
     // has had is hidden with it, and the client sees one current id each.
     const hiddenPromise = eager(getEffectiveHidden(ctx, { describe: true }));
     const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
+    // Never throws (a failed read is "none").
+    const newAccountsPromise = itemsWithNewAccounts(ctx);
 
     const { institutions, netWorth } = await computeNetWorth(ctx);
 
@@ -141,6 +144,10 @@ export async function GET(req: Request) {
     // (lib/links.ts); it has no business in the payload, the cache or the
     // browser's localStorage.
     for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
+    // Safe to freeze into the cache: both the webhook that sets it and the
+    // route that clears it drop the cache.
+    const withNewAccounts = await newAccountsPromise;
+    for (const inst of institutions) if (withNewAccounts.has(inst.item_id)) inst.new_accounts_available = true;
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.

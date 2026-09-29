@@ -145,6 +145,10 @@ export type StoredItem = {
   item_id: string;
   institution_name: string;
   encrypted_access_token: string;
+  /** Plaid's institution id, stored at link time so a new connection to an
+   *  institution already linked can be recognized even while this Item can't be
+   *  read. Absent on Items linked before it was stored. */
+  institution_id?: string | null;
 };
 
 const ITEMS_HASH = (ctx: Ctx) => kc(ctx, 'plaid:items');

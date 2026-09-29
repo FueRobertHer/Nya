@@ -92,6 +92,7 @@ const EXACT: Record<string, Kind> = {
   'history:backfill-done': 'plain',
   'history:backfill-pending': 'plain',
   'account-links:dismissed': 'plain',
+  'plaid:new-accounts': 'plain', // item id -> when Plaid reported new accounts (lib/new-accounts.ts)
 
   containers: 'plain', // the container registry
   owners: 'plain', // which Clerk account owns which container (lib/owners.ts)

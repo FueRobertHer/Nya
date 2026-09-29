@@ -17,6 +17,7 @@
 import { createHash, createPublicKey, timingSafeEqual, verify } from 'node:crypto';
 import { plaidClient } from './plaid';
 import { clearCaches } from './cache';
+import { markNewAccounts } from './new-accounts';
 import type { Ctx } from './containers';
 
 /** A webhook older than this is refused (Plaid's own guidance is 5 minutes). */
@@ -155,9 +156,20 @@ export function invalidates(body: { webhook_type?: unknown; webhook_code?: unkno
   }
 }
 
-/** Applies a verified webhook to a container. Returns whether it changed anything. */
-export async function applyWebhook(ctx: Ctx, body: { webhook_type?: unknown; webhook_code?: unknown }): Promise<boolean> {
+/**
+ * Applies a verified webhook to a container. Returns whether it changed anything.
+ * The caller has already checked `item_id` is one of this container's Items.
+ */
+export async function applyWebhook(
+  ctx: Ctx,
+  body: { webhook_type?: unknown; webhook_code?: unknown; item_id?: unknown }
+): Promise<boolean> {
   if (!invalidates(body)) return false;
+  // Remembered so the card can offer to add them to this Item, rather than the
+  // user connecting the institution a second time to get at them.
+  if (body.webhook_type === 'ITEM' && body.webhook_code === 'NEW_ACCOUNTS_AVAILABLE' && typeof body.item_id === 'string') {
+    await markNewAccounts(ctx, body.item_id);
+  }
   await clearCaches(ctx);
   return true;
 }
