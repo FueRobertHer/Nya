@@ -566,23 +566,32 @@ button:disabled {
 
 /* --- net worth chart --- */
 
+/* One line, always the same height: the text changes as a day is scrubbed (a
+   balance, a change with a percentage, a date range, "estimated"), and letting
+   it wrap would move the chart under the finger. */
 .chart-readout {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin: 6px 0 8px;
-  min-height: 20px;
+  height: 20px;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .chart-readout-value {
   font-weight: 600;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
+  flex: none;
 }
 
 .chart-readout-date {
   color: var(--muted);
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Money added vs growth, under the readout on an investment account's chart.
@@ -592,6 +601,23 @@ button:disabled {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   margin: -4px 0 8px;
+  /* one line, whatever it says (or nothing): see the readout above */
+  height: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Holds a chart's place while its history loads, about as tall as the chart
+   (readout, plot and range buttons), so the chart arriving moves nothing. */
+.chart-loading {
+  min-height: 230px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chart-loading .spinner {
+  margin: 0;
 }
 
 .chart-svg {

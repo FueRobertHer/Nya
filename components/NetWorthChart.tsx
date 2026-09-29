@@ -96,6 +96,7 @@ export default function NetWorthChart({
   rangeSet = 'balance',
   initialRange: forcedRange,
   owed = false,
+  reserveSplit = false,
 }: {
   points: HistoryPoint[];
   label?: string;
@@ -114,6 +115,10 @@ export default function NetWorthChart({
    *  Nor does an investment's: its change includes money added, and the
    *  added and growth line says how much of it is growth. */
   owed?: boolean;
+  /** Keep the added-and-growth line's space even while it has nothing to say
+   *  (the account's transactions are still loading): it appears in the same
+   *  place instead of pushing the chart down when they arrive. */
+  reserveSplit?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [activeState, setActive] = useState<number | null>(null);
@@ -407,7 +412,12 @@ export default function NetWorthChart({
           </svg>
         </button>
       </div>
-      {splitText && <div className="chart-readout-split">{splitText}</div>}
+      {/* The line keeps its height whenever the chart can show it at all, so
+          scrubbing to a day without a split (or the data arriving late) moves
+          nothing below it. */}
+      {(splitText || reserveSplit || baselineFor) && (
+        <div className="chart-readout-split">{splitText || <>&nbsp;</>}</div>
+      )}
 
       <svg
         ref={svgRef}

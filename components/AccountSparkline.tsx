@@ -39,6 +39,10 @@ export default function AccountSparkline({
   const [points, setPoints] = useState<HistoryPoint[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [activity, setActivity] = useState<InvestmentActivityPayload | null>(null);
+  // Whether the investment transactions have answered, either way. Until they
+  // have, the chart holds room for the added-and-growth line so it doesn't push
+  // everything below it down when it appears.
+  const [activityAnswered, setActivityAnswered] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +72,9 @@ export default function AccountSparkline({
       })
       .catch(() => {
         // The balance chart stands on its own; InvestmentActivity reports the failure.
+      })
+      .finally(() => {
+        if (!cancelled) setActivityAnswered(true);
       });
     return () => {
       cancelled = true;
@@ -84,7 +91,12 @@ export default function AccountSparkline({
 
   if (failed) return <div className="error">Could not load account history.</div>;
   if (points === null) {
-    return <div className="spinner" role="status" aria-label="Loading account history" />;
+    // Roughly the chart's own height, so the chart replacing it moves nothing.
+    return (
+      <div className="chart-loading">
+        <div className="spinner" role="status" aria-label="Loading account history" />
+      </div>
+    );
   }
   if (points.length < 2) {
     return (
@@ -103,6 +115,7 @@ export default function AccountSparkline({
       // A preview is for checking the joined history, all of it.
       initialRange={previewWith ? 'ALL' : undefined}
       owed={owed}
+      reserveSplit={!!itemId && !activityAnswered}
     />
   );
 }
