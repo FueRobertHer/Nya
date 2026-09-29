@@ -99,7 +99,8 @@ describe('the list of keys', () => {
         /'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
         (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m)
       );
-      const where = (i: number) => `${file.slice(root.length + 1)}: ${src.slice(i, i + 40).split('\n')[0]}`;
+      // Forward slashes, so the lib/move.ts allowance below matches on Windows too.
+      const where = (i: number) => `${file.slice(root.length + 1).replaceAll('\\', '/')}: ${src.slice(i, i + 40).split('\n')[0]}`;
       const read = new Set<number>(); // where each call this could read starts
 
       // kc(ctx, 'name'): the name is the second argument.

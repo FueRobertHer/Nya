@@ -290,6 +290,56 @@ export class FakeRedis {
     return [next, page];
   }
 
+  /**
+   * Queues commands and runs them in order on exec, like Upstash's pipeline:
+   * every command runs, then the first failure (if any) is thrown. Commands
+   * are called through `this`, so a test that overrides one on
+   * Object.create(fake) sees it called from a pipeline too, and each still
+   * passes the gate, so failNext works the same. Empty exec throws, as
+   * Upstash's does.
+   */
+  pipeline(): any {
+    const queued: [string, unknown[]][] = [];
+    const self = this as any;
+    const p: any = new Proxy(
+      {},
+      {
+        get: (_, name: string) => {
+          if (name === 'exec') {
+            return async () => {
+              if (queued.length === 0) throw new Error('Pipeline is empty');
+              this.pipelines++;
+              this.pipelined += queued.length;
+              const results: unknown[] = [];
+              let failure: unknown;
+              for (const [command, args] of queued) {
+                try {
+                  results.push(await self[command](...args));
+                } catch (err) {
+                  failure ??= err;
+                  results.push(undefined);
+                }
+              }
+              if (failure) throw failure;
+              return results;
+            };
+          }
+          return (...args: unknown[]) => {
+            queued.push([name, args]);
+            return p;
+          };
+        },
+      }
+    );
+    return p;
+  }
+
+  /** Pipelines executed since the last reset: one request each, however many
+   *  commands they carry. `pipelined` counts the commands inside them, so
+   *  `ops - pipelined` is the commands sent on their own. */
+  pipelines = 0;
+  pipelined = 0;
+
   /** Byte offsets, like Redis. */
   async getrange(key: string, start: number, end: number): Promise<string> {
     this.gate('getrange');
@@ -445,6 +495,8 @@ export class FakeRedis {
     this.ttls.clear();
     this.failing.clear();
     this.ops = 0;
+    this.pipelines = 0;
+    this.pipelined = 0;
   }
 }
 
