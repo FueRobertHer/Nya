@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { Products, CountryCode } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { webhookUrlFor } from '@/lib/webhook-url';
 
 export async function POST() {
   try {
@@ -23,6 +24,9 @@ export async function POST() {
       transactions: { days_requested: 730 },
       country_codes: [CountryCode.Us],
       language: 'en',
+      // Plaid tells us when new data is ready (app/api/plaid/webhook), so the
+      // app can serve from its own storage in between. Omitted when unset.
+      ...(webhookUrlFor(ctx) ? { webhook: webhookUrlFor(ctx) } : {}),
     });
     return NextResponse.json(response.data);
   } catch (err: any) {

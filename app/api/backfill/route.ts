@@ -104,7 +104,8 @@ export async function POST() {
     const perItem = await Promise.all(
       items.map(async (item) => {
         const access_token = await decrypt(item.encrypted_access_token);
-        const bal = await plaidClient.accountsBalanceGet({ access_token });
+        // Stored balances, not the billed live balance call: see lib/networth.ts.
+        const bal = await plaidClient.accountsGet({ access_token });
         const { txns, note } = await readItemTransactions(ctx, item, LOOKBACK_DAYS);
 
         // Investment activity, but only where there's an investment account to

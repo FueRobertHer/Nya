@@ -16,7 +16,19 @@ import { redis, kc, envPrefix } from './storage';
 import { encrypt, decrypt } from './crypto';
 import type { Ctx } from './containers';
 
-const TTL_SECONDS = 15 * 60;
+import { webhooksEnabled } from './webhook-url';
+
+/**
+ * How long a cached payload is served. Short by default, because nothing tells
+ * the app when its data changed. With webhooks on (lib/webhook-url.ts) Plaid
+ * says so, and the webhook route drops the caches (clearCaches) the moment new
+ * data arrives, so a payload can safely stand for hours: dashboard loads then
+ * come from our own storage, and only Refresh, a webhook or the daily snapshot
+ * goes to Plaid. Read per call, not at import, so it follows the environment.
+ */
+const SHORT_TTL_SECONDS = 15 * 60;
+const WEBHOOK_TTL_SECONDS = 6 * 60 * 60;
+const ttlSeconds = () => (webhooksEnabled() ? WEBHOOK_TTL_SECONDS : SHORT_TTL_SECONDS);
 
 /** The caches a caller can name. The value is the key inside the container. */
 export const CacheKey = {
@@ -73,7 +85,7 @@ export async function readCache<T>(ctx: Ctx, which: CacheKey): Promise<T | null>
 
 export async function writeCache(ctx: Ctx, which: CacheKey, value: unknown): Promise<void> {
   try {
-    await redis().set(keyOf(ctx, which), await encrypt(JSON.stringify(value)), { ex: TTL_SECONDS });
+    await redis().set(keyOf(ctx, which), await encrypt(JSON.stringify(value)), { ex: ttlSeconds() });
   } catch {
     // A cache write failure must never break the request that produced the data.
   }
@@ -96,7 +108,7 @@ export async function readAccountCache<T>(ctx: Ctx, field: string): Promise<T | 
     // expand/collapse loop a field written 40 minutes ago would keep being
     // renewed by writes to other accounts and never expire. The key's own TTL
     // stays on purely as cleanup for a hash nobody touches again.
-    if (typeof at !== 'number' || Date.now() - at > TTL_SECONDS * 1000) return null;
+    if (typeof at !== 'number' || Date.now() - at > ttlSeconds() * 1000) return null;
     return value;
   } catch {
     return null;
@@ -111,7 +123,7 @@ export async function writeAccountCache(ctx: Ctx, field: string, value: unknown)
     });
     // Best-effort cleanup only; if this fails the stamp above still expires
     // every field on read, so a hash with no TTL can serve stale data to nobody.
-    await redis().expire(key, TTL_SECONDS * 4);
+    await redis().expire(key, ttlSeconds() * 4);
   } catch {
     // A cache write failure must never break the request that produced the data.
   }

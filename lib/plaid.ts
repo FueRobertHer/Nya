@@ -22,7 +22,8 @@ if (!PLAID_CLIENT_ID || !PLAID_SECRET) {
  *
  * Deliberately generous rather than tight, and the number is taken from Plaid
  * rather than picked. Their own documentation for /accounts/balance/get -- the
- * call on the critical path here -- says latency is "typically less than 10
+ * slowest balance call, and the one the app used to make on its critical path
+ * (it reads /accounts/get now, so this is a wide margin) -- says latency is "typically less than 10
  * seconds, but occasionally up to 30 seconds or more", and advises adjusting
  * the timeout accordingly. So 30s would sit exactly ON the documented range and
  * cut off institutions that were going to answer. That matters more than it

@@ -118,7 +118,18 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   }
 
   try {
-    const balanceRes = await withRateLimitRetry(() => plaidClient.accountsBalanceGet({ access_token }));
+    // /accounts/get, not /accounts/balance/get: it answers from the balances
+    // Plaid already holds for the Item (about once a day for a healthy one, per
+    // Plaid's docs) and carries no per-request charge, where the live balance
+    // call is billed on every use. The cost is that the Refresh button can no
+    // longer pull a live balance, and a snapshot can be up to a day behind the
+    // bank.
+    const balanceRes = await withRateLimitRetry(() => plaidClient.accountsGet({ access_token }));
+    // Served from what Plaid holds, a broken Item may answer 200 with the problem
+    // attached to the Item instead of failing. Treat that as the failure it is,
+    // or the reconnect prompt would never appear.
+    const itemError = balanceRes.data.item?.error?.error_code;
+    if (itemError === 'ITEM_LOGIN_REQUIRED') throw { response: { data: { error_code: itemError } } };
     result.institution_id = balanceRes.data.item?.institution_id ?? null;
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,

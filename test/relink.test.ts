@@ -30,7 +30,7 @@ mock.module('@/lib/plaid', () => ({
         transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
       },
     }),
-    accountsBalanceGet: async (req: any) => ({ data: { accounts: plaidAccounts[req.access_token] ?? [] } }),
+    accountsGet: async (req: any) => ({ data: { accounts: plaidAccounts[req.access_token] ?? [] } }),
     linkTokenCreate: async (req: any) => ({ data: { link_token: 'link', user: req.user } }),
     itemRemove: async (req: any) => {
       removed.push(req.access_token);
@@ -858,15 +858,15 @@ describe('forgetting an earlier account', () => {
     await addItem('item_a', 'acct_a', [row('a1', 'acct_a', { date: daysAgo(20) })]);
     await route('transactions', 'GET');
     const plaid: any = (await import('@/lib/plaid')).plaidClient;
-    const balances = plaid.accountsBalanceGet;
-    plaid.accountsBalanceGet = async (req: any) => {
+    const balances = plaid.accountsGet;
+    plaid.accountsGet = async (req: any) => {
       await route('disconnect', 'POST', { item_id: 'item_a' });
       return balances(req);
     };
     try {
       expect((await route('backfill', 'POST')).body).toEqual({ skipped: true, reason: 'institutions changed' });
     } finally {
-      plaid.accountsBalanceGet = balances;
+      plaid.accountsGet = balances;
     }
     expect(await fake.hgetall(ctxKey('history:net-worth:est'))).toBeNull();
     expect(await fake.hgetall(ctxKey('history:accounts:est'))).toBeNull();
