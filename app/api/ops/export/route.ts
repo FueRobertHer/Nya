@@ -15,8 +15,9 @@ import { exportLines } from '@/lib/export';
 //   curl -X POST https://<host>/api/ops/export \
 //     -H "Authorization: Bearer $OPS_SECRET" -o nya-export.ndjson
 
-// The walk is sequential and one transaction blob can be 8 MiB; the default
-// limit is too tight for a database that has been accumulating for years.
+// The walk scans the whole shared database and one transaction blob can be
+// 8 MiB; the default limit is too tight for a database that has been
+// accumulating for years.
 export const maxDuration = 300;
 
 export async function POST(req: Request) {

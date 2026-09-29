@@ -116,11 +116,82 @@ describe('the archive', () => {
   });
 
   test('pages through more keys than one scan page', async () => {
-    for (let i = 0; i < 450; i++) await fake.set(testKey(`k${String(i).padStart(3, '0')}`), `v${i}`);
+    for (let i = 0; i < 1050; i++) await fake.set(testKey(`k${String(i).padStart(4, '0')}`), `v${i}`);
+
+    const lines = parse(await collect());
+    expect(lines.at(-1).keys).toBe(1050);
+    expect(lines.slice(1, -1).map((r) => r.key)).toHaveLength(1050);
+  });
+
+  test('reads in pipelines, not a request per key', async () => {
+    // Every command used to be its own request to Upstash (three or more per
+    // key), and the nightly backup ran out of time. 450 keys were ~1,400
+    // requests; batched, each 100 keys cost a handful of pipelines.
+    for (let i = 0; i < 400; i++) await fake.set(testKey(`s${String(i).padStart(3, '0')}`), `v${i}`);
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 450; i++) fields[`f${i}`] = `v${i}`;
+    // Each hash distinct too, so a page landing on the wrong hash would show.
+    for (let i = 0; i < 50; i++) await fake.hset(testKey(`h${String(i).padStart(2, '0')}`), { ...fields, which: `h${i}` });
+    fake.ops = 0;
+    fake.pipelines = 0;
+    fake.pipelined = 0;
 
     const lines = parse(await collect());
     expect(lines.at(-1).keys).toBe(450);
-    expect(lines.slice(1, -1).map((r) => r.key)).toHaveLength(450);
+    for (const r of lines.slice(1, -1)) {
+      if (r.type === 'hash') expect(r.value).toEqual({ ...fields, which: `h${Number(r.key.slice(1))}` });
+      else expect(r.value).toBe(`v${Number(r.key.slice(1))}`);
+    }
+
+    const direct = fake.ops - fake.pipelined;
+    expect(direct).toBe(1); // the one SCAN
+    expect(fake.pipelines).toBeLessThan(30);
+  });
+
+  test('strings and hashes across several batches keep their own order, values and TTLs', async () => {
+    // Mixed types and some TTLs, so a value or TTL attached to its neighbour
+    // (an index slip between the per-type pipelines) would show.
+    for (let i = 0; i < 250; i++) {
+      const key = testKey(`k${String(i).padStart(3, '0')}`);
+      if (i % 2) await fake.set(key, `v${i}`, i % 3 ? undefined : { ex: 1000 + i });
+      else await fake.hset(key, { f: `v${i}` });
+    }
+
+    const records = parse(await collect()).slice(1, -1);
+    expect(records.map((r) => r.key)).toEqual(Array.from({ length: 250 }, (_, i) => `k${String(i).padStart(3, '0')}`));
+    records.forEach((r, i) => {
+      if (i % 2) expect(r).toEqual({ key: r.key, type: 'string', ttl: i % 3 ? null : 1000 + i, value: `v${i}` });
+      else expect(r).toEqual({ key: r.key, type: 'hash', ttl: null, value: { f: `v${i}` } });
+    });
+  });
+
+  test('large strings are fetched a few at a time, not all in one pipeline', async () => {
+    // Five 3 MiB values: at most two fit under the 8 MiB a pipeline may ask
+    // for, so the GETs are split, and every value still arrives whole.
+    const big = (c: string) => c.repeat(3 * 1024 * 1024);
+    for (const c of 'abcde') await fake.set(testKey(`txns:${c}`), big(c));
+    await fake.set(testKey('small'), 'x');
+    const gets: number[] = [];
+    const counting = Object.assign(Object.create(fake), {
+      pipeline() {
+        const p = fake.pipeline.call(this);
+        let n = 0;
+        return new Proxy(p, {
+          get: (target, name) => {
+            if (name === 'get') return (...a: unknown[]) => (n++, target.get(...a));
+            if (name === 'exec') return () => (n && gets.push(n), target.exec());
+            return target[name];
+          },
+        });
+      },
+    });
+
+    const records = parse(await collect(counting)).slice(1, -1);
+    expect(records.map((r) => r.key)).toEqual(['small', 'txns:a', 'txns:b', 'txns:c', 'txns:d', 'txns:e']);
+    // Compared whole, not by length: a value on the wrong key must fail.
+    records.slice(1).forEach((r, i) => expect(r.value === big('abcde'[i])).toBe(true));
+    expect(Math.max(...gets)).toBeLessThanOrEqual(3);
+    expect(gets.reduce((a, b) => a + b, 0)).toBe(6);
   });
 
   test('keeps a hash field named __proto__', async () => {
@@ -184,7 +255,7 @@ describe('the footer proves completeness', () => {
   // would yield a complete-looking archive with keys missing: a caught scan
   // gives zero keys and a valid footer, a caught type or hscan drops keys one
   // at a time.
-  for (const command of ['scan', 'type', 'get', 'hscan', 'ttl'] as const) {
+  for (const command of ['scan', 'type', 'strlen', 'get', 'hscan', 'ttl'] as const) {
     test(`a failed ${command} ends the stream with NO footer`, async () => {
       await fake.set(testKey('a'), '1');
       await fake.hset(testKey('b'), { f: 'v' });
