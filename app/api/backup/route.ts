@@ -29,14 +29,17 @@ export async function GET(req: Request) {
     await recordOutcome({ ok: false, reason: 'No blob store is connected.' });
     return NextResponse.json({ error: 'No blob store is connected (BLOB_READ_WRITE_TOKEN is not set).' }, { status: 500 });
   }
-  // Timed so the headroom under maxDuration shows in the log: a run killed at
-  // the limit never reaches recordOutcome, so nothing else would say it was close.
+  // Timed so the headroom under maxDuration shows in the log, step by step as
+  // each finishes: when one fails, the lines before it show where time went.
   const started = Date.now();
+  const onStep = (step: string, ms: number) => console.log(`Backup ${step} took ${(ms / 1000).toFixed(1)}s`);
   try {
-    const result = await runBackup(rawRedis(), store);
-    await recordOutcome({ ok: true });
+    const result = await runBackup(rawRedis(), store, new Date(), { onStep });
+    // Logged before the outcome is recorded, so the line survives even if that
+    // write is what stalls.
     const seconds = ((Date.now() - started) / 1000).toFixed(1);
     console.log('Backup written', result.pathname, `${result.bytes} bytes`, `${result.keys} keys`, `${result.pruned.length} pruned`, `${seconds}s`);
+    await recordOutcome({ ok: true });
     return NextResponse.json(result);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
