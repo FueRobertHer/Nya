@@ -54,7 +54,7 @@
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
-import { getLatestAccountSnapshot } from './history';
+import { getLatestAccountSnapshot, snapshotTakenAt } from './history';
 import { getLinks, effectiveLinks, sameAccountIds, type Link } from './link-core';
 
 const ACCOUNT_META_HASH = (ctx: Ctx) => kc(ctx, 'accounts:meta');
@@ -92,7 +92,9 @@ type Fillable = {
   error: string | null;
   manual?: boolean;
   stale_as_of?: string;
+  stale_as_of_at?: string;
   stale_too_old?: string;
+  stale_too_old_at?: string;
   stale_missing?: number;
 };
 
@@ -332,6 +334,12 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     .toISOString()
     .slice(0, 10);
   const tooOld = last.date < cutoff;
+  // The instant behind that date, so the card can name the viewer's own day
+  // (the date is a UTC day). Absent for an older snapshot: the date shows.
+  const taken = await snapshotTakenAt(ctx, last.date);
+  // Only an instant inside that UTC day is this snapshot's: a restore keeps this
+  // environment's own record, which can outlive different restored balances.
+  const takenAt = taken && taken.slice(0, 10) === last.date ? taken : null;
 
   const filled: StaleFill[] = [];
 
@@ -401,11 +409,13 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
       // reverting to a bare $0.00 card, which would look identical to never
       // having had them.
       inst.stale_too_old = last.date;
+      if (takenAt) inst.stale_too_old_at = takenAt;
       continue;
     }
 
     inst.accounts = accounts;
     inst.stale_as_of = last.date;
+    if (takenAt) inst.stale_as_of_at = takenAt;
     if (missing > 0) inst.stale_missing = missing;
     filled.push({ item_id: inst.item_id, as_of: last.date, accounts: accounts.length, missing });
   }

@@ -7,6 +7,7 @@
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
+import { localMonth } from '@/lib/local-date';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 
 /**
@@ -79,7 +80,7 @@ export default function Insights({
   const insights = useMemo<Insight[]>(() => {
     const out: Insight[] = [];
     const now = new Date();
-    const thisMonthKey = now.toISOString().slice(0, 7);
+    const thisMonthKey = localMonth(now);
     // One display currency for summed/budget figures (budgets carry no currency
     // of their own). Per-item amounts below use their own currency where known.
     const displayCurrency = dominantCurrency(txns ?? []);
@@ -212,7 +213,7 @@ export default function Insights({
     }
 
     if (txns && txns.length > 0) {
-      const thisMonth = now.toISOString().slice(0, 7);
+      const thisMonth = localMonth(now);
       const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const lastMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
 

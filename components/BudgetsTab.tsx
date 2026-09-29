@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { detectRecurring } from '@/lib/recurring';
+import { localMonth } from '@/lib/local-date';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 
@@ -71,7 +72,7 @@ export default function BudgetsTab({
   const [newCategory, setNewCategory] = useState('');
   const [newAmount, setNewAmount] = useState('');
 
-  const thisMonth = new Date().toISOString().slice(0, 7);
+  const thisMonth = localMonth();
   const monthName = new Date().toLocaleDateString(undefined, { month: 'long' });
 
   // Current-month spending per category.

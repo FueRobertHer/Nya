@@ -84,7 +84,14 @@ export default function AccountSparkline({
 
   if (failed) return <div className="error">Could not load account history.</div>;
   if (points === null) {
-    return <div className="spinner" role="status" aria-label="Loading account history" />;
+    // Roughly the chart's own height, so the chart replacing it moves nothing.
+    return (
+      <div className="chart-loading">
+        <div className="chart-loading-box">
+          <div className="spinner" role="status" aria-label="Loading account history" />
+        </div>
+      </div>
+    );
   }
   if (points.length < 2) {
     return (
@@ -103,6 +110,11 @@ export default function AccountSparkline({
       // A preview is for checking the joined history, all of it.
       initialRange={previewWith ? 'ALL' : undefined}
       owed={owed}
+      // An investment account keeps the line's row from the start and whatever
+      // its transactions turn out to say (they may fail, or have no split for the
+      // range): a row that came and went would shift the page, and one blank line
+      // is cheaper than that.
+      reserveSplit={!!itemId}
     />
   );
 }

@@ -70,9 +70,12 @@ async function send(method: string, path: string, body: unknown): Promise<{ ok: 
 
 const initial = (label: string) => (label.trim()[0] ?? '?').toUpperCase();
 
-/** "Sep 28", with the year only when it isn't this one. */
+/** "Sep 28", with the year only when it isn't this one. Takes a YYYY-MM-DD
+ *  (a calendar day, shown as it is) or a full ISO time (an instant, shown as the
+ *  day it was in the viewer's own time zone, not its UTC day). */
 export function shortDate(iso: string, now: Date = new Date()): string {
-  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  const isInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:/.test(iso);
+  const d = isInstant ? new Date(iso) : new Date(`${iso.slice(0, 10)}T12:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
   const sameYear = d.getFullYear() === now.getFullYear();
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
