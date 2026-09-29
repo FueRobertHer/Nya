@@ -9,19 +9,24 @@ type Stored = { body: string; uploadedAt: Date; options: any };
 const blobs = new Map<string, Stored>();
 let clock = new Date('2026-06-15T16:00:00.000Z');
 let corruptReads = false;
+/** The abortSignal each call was last given. */
+const signals: Record<string, AbortSignal | undefined> = {};
 mock.module('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
+    signals.put = options.abortSignal;
     if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
     blobs.set(pathname, { body, uploadedAt: clock, options });
     return { pathname, url: `https://blob/${pathname}` };
   },
   get: async (pathname: string, options: any) => {
+    signals.get = options.abortSignal;
     const b = blobs.get(pathname);
     if (!b || options.access !== 'private') return null;
     const text = corruptReads ? b.body.slice(0, -2) + '\n' : b.body;
     return { statusCode: 200, stream: new Response(text).body, headers: new Headers(), blob: {} };
   },
-  list: async ({ prefix, cursor }: { prefix: string; cursor?: string }) => {
+  list: async ({ prefix, cursor, abortSignal }: { prefix: string; cursor?: string; abortSignal?: AbortSignal }) => {
+    signals.list = abortSignal;
     // Two per page, so paging is exercised.
     const all = [...blobs.entries()].filter(([p]) => p.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1));
     const start = cursor ? Number(cursor) : 0;
@@ -32,7 +37,8 @@ mock.module('@vercel/blob', () => ({
       cursor: String(start + 2),
     };
   },
-  del: async (pathnames: string[]) => {
+  del: async (pathnames: string[], options?: { abortSignal?: AbortSignal }) => {
+    signals.del = options?.abortSignal;
     for (const p of pathnames) blobs.delete(p);
   },
 }));
@@ -151,6 +157,112 @@ describe('the nightly backup', () => {
   });
 });
 
+// Neither Vercel Blob nor Upstash times a request out, and Vercel ends the
+// function at maxDuration without running anything after. A read-back that
+// never answered left the copy uploaded, nothing pruned, and no outcome.
+describe('a step that never answers', () => {
+  const never = () => new Promise<never>(() => {});
+
+  /** The real store, with one method replaced by one that hangs, recording
+   *  the signal it was given. */
+  async function hanging(method: 'put' | 'get' | 'list' | 'del') {
+    const real = await store();
+    const seen: { signal?: AbortSignal } = {};
+    const s = {
+      ...real,
+      [method]: (...args: any[]) => {
+        seen.signal = args.at(-1);
+        return never();
+      },
+    };
+    return { s, seen };
+  }
+
+  const limits = { export: 1000, upload: 20, 'read-back': 20, list: 20, prune: 20, discard: 20 };
+
+  test('fails the run with the step it was on, and cancels the request', async () => {
+    const { s, seen } = await hanging('get');
+    await expect(runBackup(fake as any, s, clock, { limits })).rejects.toThrow("backup's read-back step took longer than 0.02s");
+    expect(seen.signal?.aborted).toBe(true);
+    // The default reason: Vercel Blob stops only on an AbortError, and retries
+    // anything else (for many minutes) after the step has already failed.
+    expect((seen.signal?.reason as Error).name).toBe('AbortError');
+  });
+
+  test('a step that finished is never failed by its report', async () => {
+    const onStep = () => {
+      throw new Error('logging broke');
+    };
+    const result = await runBackup(fake as any, await store(), clock, { onStep });
+    expect(blobs.has(result.pathname)).toBe(true);
+  });
+
+  test('recording the outcome gives up rather than running into maxDuration', async () => {
+    const [get, error] = [fake.get, console.error];
+    const errors: string[] = [];
+    fake.get = () => new Promise<never>(() => {});
+    console.error = (...args: unknown[]) => errors.push(args.join(' '));
+    try {
+      await recordOutcome({ ok: true }, clock, 20);
+      expect(errors).toEqual(['Backup outcome not recorded took longer than 0.02s']);
+    } finally {
+      fake.get = get;
+      console.error = error;
+    }
+  });
+
+  test('a read-back that runs out of time leaves the copy and prunes nothing', async () => {
+    process.env.BACKUP_KEEP_DAYS = '1';
+    const start = clock.getTime();
+    for (let d = 0; d < 10; d++) await runBackup(fake as any, await store(), new Date(start + d * DAY));
+    const { s } = await hanging('get');
+    await expect(runBackup(fake as any, s, new Date(start + 40 * DAY), { limits })).rejects.toThrow('read-back');
+    // The newest few from before plus the unverified copy: had it been
+    // trusted, the oldest of those would have been pruned.
+    expect(blobs.size).toBe(MIN_KEPT + 1);
+  });
+
+  for (const [method, name] of [
+    ['put', 'upload'],
+    ['list', 'list'],
+  ] as const) {
+    test(`a ${name} that hangs fails as the ${name} step`, async () => {
+      const { s } = await hanging(method);
+      await expect(runBackup(fake as any, s, clock, { limits })).rejects.toThrow(`backup's ${name} step`);
+    });
+  }
+
+  test('a prune that hangs fails as the prune step', async () => {
+    process.env.BACKUP_KEEP_DAYS = '1';
+    const start = clock.getTime();
+    for (let d = 0; d < MIN_KEPT; d++) await runBackup(fake as any, await store(), new Date(start + d * DAY));
+    const { s } = await hanging('del');
+    await expect(runBackup(fake as any, s, new Date(start + 40 * DAY), { limits })).rejects.toThrow("backup's prune step");
+  });
+
+  test('a discard that hangs still reports the bad read-back', async () => {
+    corruptReads = true;
+    const { s } = await hanging('del');
+    await expect(runBackup(fake as any, s, clock, { limits })).rejects.toThrow('did not read back');
+  });
+
+  test('each finished step reports how long it took', async () => {
+    const steps: string[] = [];
+    await runBackup(fake as any, await store(), clock, { onStep: (step, ms) => (expect(ms).toBeGreaterThanOrEqual(0), steps.push(step)) });
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'list']); // nothing old enough to prune
+  });
+
+  test('the Vercel Blob store hands each call its signal', async () => {
+    const s = await store();
+    const signal = new AbortController().signal;
+    await s.put('backups/test/x.ndjson', 'body', signal);
+    await s.get('backups/test/x.ndjson', signal);
+    await s.list('backups/test/', signal);
+    await s.del(['backups/test/x.ndjson'], signal);
+    expect(signals).toEqual({ put: signal, get: signal, list: signal, del: signal });
+  });
+});
+
 describe('the backup cron', () => {
   test('refuses without the cron secret', async () => {
     expect((await cron('Bearer nope')).status).toBe(401);
@@ -172,15 +284,20 @@ describe('the backup cron', () => {
     }
   });
 
-  test('writes a backup and says what it wrote', async () => {
+  test('writes a backup and says what it wrote, step by step', async () => {
     const log = console.log;
-    console.log = () => {};
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
     try {
       const res = await cron();
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.keys).toBe(2);
       expect(blobs.has(body.pathname)).toBe(true);
+      for (const step of ['export', 'upload', 'read-back', 'list']) {
+        expect(lines.some((l) => new RegExp(`^Backup ${step} took \\d+\\.\\ds$`).test(l))).toBe(true);
+      }
+      expect(lines.at(-1)).toStartWith('Backup written');
     } finally {
       console.log = log;
     }
@@ -188,13 +305,14 @@ describe('the backup cron', () => {
 
   test('a failure is a 500 with the reason', async () => {
     corruptReads = true;
-    const errors = console.error;
-    console.error = () => {};
+    const [log, errors] = [console.log, console.error];
+    console.log = console.error = () => {};
     try {
       const res = await cron();
       expect(res.status).toBe(500);
       expect((await res.json()).error).toContain('did not read back');
     } finally {
+      console.log = log;
       console.error = errors;
     }
   });
