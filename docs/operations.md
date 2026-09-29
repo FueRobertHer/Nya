@@ -25,7 +25,7 @@ To turn it on:
 3. Optionally set `BACKUP_KEEP_DAYS` to keep more or fewer days (a whole number, 1 or more).
 4. Redeploy. Crons run only on the production deployment.
 
-Check it worked the next day: the cron's log in Vercel says "Backup written", and the file is in the store's browser. A failed night shows as a failed cron run with the reason, and the older copies are left alone. Vercel doesn't send an alert for it, so the dashboard shows a note when the last backup failed or none has been saved for two days.
+Check it worked the next day: the cron's log in Vercel says "Backup written", and the file is in the store's browser. Before that line, it logs how long each step took (export, upload, read-back, list, prune). A failed night shows as a failed cron run with the reason, and the older copies are left alone. Each step has a time limit, so a storage call that doesn't finish in time fails the run naming that step (for example "The backup's read-back step took longer than 45s") instead of running into Vercel's 300-second limit with no reason given. "Took longer" can mean the call never answered or that Vercel Blob kept retrying it (it retries server and network errors up to 10 times); to tell which, set `DEBUG=blob` on Production for a night, and the log shows each retry. A copy whose upload or read-back ran out of time may still be in the store, unchecked. Vercel doesn't send an alert for it, so the dashboard shows a note when the last backup failed or none has been saved for two days.
 
 To restore from one, download it from the store's browser in Vercel and follow [Restoring a backup](#restoring-a-backup).
 

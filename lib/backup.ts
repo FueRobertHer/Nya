@@ -22,23 +22,92 @@
 // Nothing is pruned unless this run's copy was read back intact, and the
 // newest MIN_KEPT copies are always kept, whatever their age: a clock or
 // retention mistake can never leave the store empty.
+//
+// Every step has a time limit (STEP_LIMITS_MS). Neither Vercel Blob nor Upstash
+// times out a request on its own, and Vercel ends the function at maxDuration
+// without running anything after, so one call that never answered used to
+// leave a copy uploaded, nothing pruned, no outcome recorded, and only "Task
+// timed out" in the log. A step over its limit is now an ordinary failure that
+// names the step.
 
 import { verifyArchive } from './restore';
 import { exportLines, type ExportClient } from './export';
 import { envPrefix, kEnv, redis } from './storage';
 
 /** What a backup needs from object storage. Vercel Blob in production
- *  (vercelBlobStore); tests pass one kept in memory. */
+ *  (vercelBlobStore); tests pass one kept in memory. Each call is given a
+ *  signal that aborts when its step runs out of time. */
 export type BackupStore = {
-  put(pathname: string, body: string): Promise<void>;
+  put(pathname: string, body: string, signal?: AbortSignal): Promise<void>;
   /** The blob's text, or null if it isn't there. */
-  get(pathname: string): Promise<string | null>;
-  list(prefix: string): Promise<{ pathname: string; uploadedAt: Date }[]>;
-  del(pathnames: string[]): Promise<void>;
+  get(pathname: string, signal?: AbortSignal): Promise<string | null>;
+  list(prefix: string, signal?: AbortSignal): Promise<{ pathname: string; uploadedAt: Date }[]>;
+  del(pathnames: string[], signal?: AbortSignal): Promise<void>;
 };
 
 export const DEFAULT_KEEP_DAYS = 30;
 export const MIN_KEPT = 7;
+
+/**
+ * How long each step may take, in milliseconds. The longest path (export,
+ * upload, read-back, list, prune) adds up to 240s, a minute under the route's
+ * maxDuration of 300s, so a failure is still recorded before Vercel ends the
+ * function. `discard` takes the place of list and prune when the read-back is
+ * wrong. A 1 MB archive takes seconds; these are for a call that never answers.
+ */
+export const STEP_LIMITS_MS = {
+  export: 90_000,
+  upload: 45_000,
+  'read-back': 45_000,
+  list: 30_000,
+  prune: 30_000,
+  discard: 30_000,
+} as const;
+
+export type BackupStep = keyof typeof STEP_LIMITS_MS;
+
+export type BackupOptions = {
+  /** Told how long each step took as it finishes, so the log shows where the
+   *  time went even when a later step fails. */
+  onStep?: (step: BackupStep, ms: number) => void;
+  /** Tests shorten these. */
+  limits?: Partial<Record<BackupStep, number>>;
+};
+
+/**
+ * Runs one step against its time limit. Over the limit, the step's signal is
+ * aborted (cancelling the request where the client honours it) and the step
+ * fails at once, whether or not the call ever settles. "Took longer" covers
+ * both a call that never answered and one the SDK kept retrying: Vercel Blob
+ * retries 5xx and network errors up to 10 times with a doubling backoff.
+ */
+async function step<T>(name: BackupStep, opts: BackupOptions, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const limit = opts.limits?.[name] ?? STEP_LIMITS_MS[name];
+  const started = Date.now();
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Aborted with no reason on purpose: Vercel Blob stops only on the
+      // default AbortError, and retries any other error (a reason passed here
+      // is what the fetch rejects with), carrying on for many minutes.
+      controller.abort();
+      reject(new Error(`The backup's ${name} step took longer than ${limit / 1000}s`));
+    }, limit);
+  });
+  let result: T;
+  try {
+    result = await Promise.race([run(controller.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+  try {
+    opts.onStep?.(name, Date.now() - started);
+  } catch {
+    // Only reporting: a step that finished must not fail because of it.
+  }
+  return result;
+}
 
 /** BACKUP_KEEP_DAYS, validated: a typo must not prune everything. */
 export function keepDays(): number {
@@ -56,31 +125,41 @@ export function backupFolder(): string {
 
 export type BackupResult = { pathname: string; bytes: number; keys: number; pruned: string[] };
 
-export async function runBackup(client: ExportClient, store: BackupStore, now: Date = new Date()): Promise<BackupResult> {
+export async function runBackup(
+  client: ExportClient,
+  store: BackupStore,
+  now: Date = new Date(),
+  opts: BackupOptions = {}
+): Promise<BackupResult> {
   const days = keepDays(); // before anything is written: a bad setting fails loudly first
-  const parts: string[] = [];
-  for await (const line of exportLines(client, now)) parts.push(line);
-  const body = parts.join('');
-  // Checked before upload too: an archive restore would refuse is not a backup.
-  const { records } = verifyArchive(body);
+  const { body, records } = await step('export', opts, async () => {
+    const parts: string[] = [];
+    for await (const line of exportLines(client, now)) parts.push(line);
+    const body = parts.join('');
+    // Checked before upload too: an archive restore would refuse is not a backup.
+    return { body, records: verifyArchive(body).records };
+  });
 
   const pathname = `${backupFolder()}nya-${now.toISOString().replace(/[:.]/g, '-')}.ndjson`;
-  await store.put(pathname, body);
+  await step('upload', opts, (signal) => store.put(pathname, body, signal));
 
-  // Read back: what counts is what the store will hand over on the bad day.
-  const stored = await store.get(pathname);
+  // Read back: what counts is what the store will hand over on the bad day. A
+  // read-back that runs out of time leaves the copy in place, unverified: it is
+  // most likely fine, and nothing is pruned on the strength of it.
+  const stored = await step('read-back', opts, (signal) => store.get(pathname, signal));
   if (stored !== body) {
-    await store.del([pathname]).catch(() => {});
+    await step('discard', opts, (signal) => store.del([pathname], signal)).catch(() => {});
     throw new Error(`The backup ${pathname} did not read back as written`);
   }
 
   const cutoff = now.getTime() - days * 86_400_000;
-  const existing = (await store.list(backupFolder())).sort((a, b) => (a.pathname < b.pathname ? 1 : -1)); // newest first
+  const existing = await step('list', opts, (signal) => store.list(backupFolder(), signal));
+  existing.sort((a, b) => (a.pathname < b.pathname ? 1 : -1)); // newest first
   const pruned = existing
     .slice(MIN_KEPT)
     .filter((b) => b.pathname !== pathname && b.uploadedAt.getTime() < cutoff)
     .map((b) => b.pathname);
-  if (pruned.length > 0) await store.del(pruned);
+  if (pruned.length > 0) await step('prune', opts, (signal) => store.del(pruned, signal));
 
   return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned };
 }
@@ -91,8 +170,9 @@ export async function vercelBlobStore(): Promise<BackupStore | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
   const blob = await import('@vercel/blob');
   return {
-    async put(pathname, body) {
+    async put(pathname, body, signal) {
       await blob.put(pathname, body, {
+        abortSignal: signal,
         access: 'private',
         contentType: 'application/x-ndjson',
         addRandomSuffix: false,
@@ -101,23 +181,24 @@ export async function vercelBlobStore(): Promise<BackupStore | null> {
         multipart: body.length > 8 * 1024 * 1024,
       });
     },
-    async get(pathname) {
-      const res = await blob.get(pathname, { access: 'private', useCache: false });
+    async get(pathname, signal) {
+      // The signal reaches the fetch, so it cancels reading the body too.
+      const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: signal });
       if (!res || res.statusCode !== 200) return null;
       return new Response(res.stream).text();
     },
-    async list(prefix) {
+    async list(prefix, signal) {
       const out: { pathname: string; uploadedAt: Date }[] = [];
       let cursor: string | undefined;
       do {
-        const page = await blob.list({ prefix, cursor });
+        const page = await blob.list({ prefix, cursor, abortSignal: signal });
         for (const b of page.blobs) out.push({ pathname: b.pathname, uploadedAt: new Date(b.uploadedAt) });
         cursor = page.hasMore ? page.cursor : undefined;
       } while (cursor);
       return out;
     },
-    async del(pathnames) {
-      if (pathnames.length > 0) await blob.del(pathnames);
+    async del(pathnames, signal) {
+      if (pathnames.length > 0) await blob.del(pathnames, { abortSignal: signal });
     },
   };
 }
@@ -132,16 +213,34 @@ async function readStatus(): Promise<Status | null> {
   return parsed && typeof parsed === 'object' ? (parsed as Status) : null;
 }
 
-/** Records a run's outcome. Best effort: never what fails a backup. */
-export async function recordOutcome(outcome: { ok: true } | { ok: false; reason: string }, now: Date = new Date()): Promise<void> {
+/** How long recording an outcome may take. Upstash sets no timeout, and this
+ *  runs in the minute the step limits leave before maxDuration. */
+export const RECORD_LIMIT_MS = 15_000;
+
+/** Records a run's outcome. Best effort: never what fails a backup, and given
+ *  up on after `limitMs` rather than left to run into maxDuration. */
+export async function recordOutcome(
+  outcome: { ok: true } | { ok: false; reason: string },
+  now: Date = new Date(),
+  limitMs: number = RECORD_LIMIT_MS
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const prev = await readStatus();
-    const next: Status = outcome.ok
-      ? { last_ok: now.toISOString(), last_failed: null, reason: null }
-      : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200) };
-    await redis().set(STATUS(), JSON.stringify(next));
+    const write = async () => {
+      const prev = await readStatus();
+      const next: Status = outcome.ok
+        ? { last_ok: now.toISOString(), last_failed: null, reason: null }
+        : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200) };
+      await redis().set(STATUS(), JSON.stringify(next));
+    };
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`took longer than ${limitMs / 1000}s`)), limitMs);
+    });
+    await Promise.race([write(), timeout]);
   } catch (err) {
     console.error('Backup outcome not recorded', err instanceof Error ? err.message : err);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
