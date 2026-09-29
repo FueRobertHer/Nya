@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { localDate, localMonth } from '@/lib/local-date';
+import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { upcomingBills, type RecurringBill } from '@/lib/recurring';
 
 // "Today" and "this month" are the viewer's, not UTC's. Every Date below is built
@@ -18,6 +18,27 @@ describe('the viewer\'s own day and month', () => {
 
   test('pads single digits', () => {
     expect(localDate(new Date(2026, 0, 5, 12))).toBe('2026-01-05');
+  });
+});
+
+describe('the local day of an instant', () => {
+  const at = '2026-09-29T03:19:00.000Z';
+
+  test('is the day it was where the viewer is, not the UTC day', () => {
+    // 03:19 UTC on the 29th is still the evening of the 28th in California...
+    expect(instantDay(at, 'America/Los_Angeles')).toBe('Sep 28');
+    expect(instantDay(at, 'Pacific/Pago_Pago')).toBe('Sep 28');
+    // ...already the 29th in London and Auckland.
+    expect(instantDay(at, 'Europe/London')).toBe('Sep 29');
+    expect(instantDay(at, 'Pacific/Auckland')).toBe('Sep 29');
+  });
+
+  test('with no zone given, follows the machine it runs on', () => {
+    expect(instantDay(at)).toBe(new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+  });
+
+  test('is null for something that is not a time', () => {
+    expect(instantDay('not a date')).toBeNull();
   });
 });
 

@@ -394,7 +394,7 @@ export default function NetWorthChart({
 
   return (
     <div>
-      <div className="chart-readout">
+      <div className="chart-readout chart-readout-stable">
         <span className="chart-readout-value">{readValue}</span>
         <span className="chart-readout-date">{readDate}</span>
         <button

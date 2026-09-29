@@ -336,7 +336,10 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
   const tooOld = last.date < cutoff;
   // The instant behind that date, so the card can name the viewer's own day
   // (the date is a UTC day). Absent for an older snapshot: the date shows.
-  const takenAt = await snapshotTakenAt(ctx, last.date);
+  const taken = await snapshotTakenAt(ctx, last.date);
+  // Only an instant inside that UTC day is this snapshot's: a restore keeps this
+  // environment's own record, which can outlive different restored balances.
+  const takenAt = taken && taken.slice(0, 10) === last.date ? taken : null;
 
   const filled: StaleFill[] = [];
 

@@ -656,6 +656,23 @@ describe('when a snapshot was taken', () => {
     expect(Date.parse((await snapshotTakenAt(ctx, date!))!)).toBeGreaterThan(Date.parse('2001-01-01'));
   });
 
+  test('is not written when the total fails to land', async () => {
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    fake.hset = (async (...args: Parameters<typeof hset>) => {
+      if (++calls === 2) throw new Error('upstash down'); // the total, after the breakdown
+      return hset(...args);
+    }) as typeof fake.hset;
+    let date: string | null;
+    try {
+      date = await recordSnapshot(ctx, 900, { ira: 900 });
+    } finally {
+      fake.hset = hset;
+    }
+    expect(date).toBeNull();
+    expect(await snapshotTakenAt(ctx, new Date().toISOString().slice(0, 10))).toBeNull();
+  });
+
   test('is absent for a day nothing was recorded, and for one recorded without a breakdown', async () => {
     expect(await snapshotTakenAt(ctx, '2020-01-01')).toBeNull();
     const date = await recordSnapshot(ctx, 900);

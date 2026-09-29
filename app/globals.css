@@ -566,32 +566,44 @@ button:disabled {
 
 /* --- net worth chart --- */
 
-/* One line, always the same height: the text changes as a day is scrubbed (a
-   balance, a change with a percentage, a date range, "estimated"), and letting
-   it wrap would move the chart under the finger. */
 .chart-readout {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin: 6px 0 8px;
-  height: 20px;
-  overflow: hidden;
-  white-space: nowrap;
+  min-height: 20px;
 }
 
 .chart-readout-value {
   font-weight: 600;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
-  flex: none;
 }
 
 .chart-readout-date {
   color: var(--muted);
   font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* The net-worth and account chart's readout: the figure and the info button on
+   one line, the date (or range, or "estimated") on a line of its own, always
+   both. The text changes as a day is scrubbed, and side by side a long figure
+   and a long date would either be cut off or wrap onto a second line and push
+   the chart down under the finger. Nothing is clipped (so the button's focus
+   ring shows), and the date line keeps its height even when it is short. */
+.chart-readout-stable {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.chart-readout-stable .chart-readout-value {
+  white-space: nowrap;
+}
+
+.chart-readout-stable .chart-readout-date {
+  order: 3;
+  flex: 0 0 100%;
+  min-height: 16px;
 }
 
 /* Money added vs growth, under the readout on an investment account's chart.
@@ -601,22 +613,25 @@ button:disabled {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   margin: -4px 0 8px;
-  /* one line, whatever it says (or nothing): see the readout above */
-  height: 16px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  /* Keeps a line's height when it is empty (see the readout above). Never cuts
+     the figures off: on a narrow screen a long one wraps. */
+  min-height: 16px;
 }
 
-/* Holds a chart's place while its history loads, about as tall as the chart
-   (readout, plot and range buttons), so the chart arriving moves nothing. */
+/* Holds a chart's place while its history loads, about as tall as the chart:
+   the readout, the split line and the range buttons (about 110px) plus the plot,
+   which is 150/340 of the width. Sized from the box's own width so it fits a
+   phone and a desktop card alike, and the chart arriving moves nothing. */
 .chart-loading {
-  min-height: 230px;
+  container-type: inline-size;
+}
+.chart-loading-box {
+  min-height: calc(110px + 44.1cqw);
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.chart-loading .spinner {
+.chart-loading-box .spinner {
   margin: 0;
 }
 

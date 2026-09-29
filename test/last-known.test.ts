@@ -194,6 +194,17 @@ describe('recovering a failed institution', () => {
     expect((inst as any).stale_as_of_at).toBe(taken);
   });
 
+  test('ignores a recorded instant that belongs to another day', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(RECENT, { card: 5544.35 });
+    // e.g. a restore replaced the balances but kept this environment's own record
+    await fake.hset(ctxKey('snapshot:taken'), { [RECENT]: `${daysAgo(9)}T03:19:00.000Z` });
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    expect(inst.stale_as_of).toBe(RECENT);
+    expect((inst as any).stale_as_of_at).toBeUndefined();
+  });
+
   test('says nothing more than the date for a snapshot with no recorded instant', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await writeAccountSnapshot(RECENT, { card: 5544.35 });

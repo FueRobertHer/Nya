@@ -19,6 +19,15 @@ export function localDate(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** "Sep 28": the local day of an instant (an ISO time), or null if it isn't one.
+ *  Not its UTC day, which is the next one from a US evening on. */
+export function instantDay(iso: string, timeZone?: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // `timeZone` is for tests; the app leaves it out and gets the viewer's own.
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(timeZone ? { timeZone } : {}) });
+}
+
 /** YYYY-MM on the local calendar. */
 export function localMonth(d: Date = new Date()): string {
   return localDate(d).slice(0, 7);

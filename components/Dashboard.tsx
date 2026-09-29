@@ -9,6 +9,7 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
+import { instantDay } from '@/lib/local-date';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import { historyPausedSince } from '@/lib/history-status';
@@ -215,9 +216,7 @@ function fmtDay(iso: string): string {
 
 // The local day of an instant (an ISO time), not its UTC day.
 function fmtInstantDay(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return fmtDay(iso.slice(0, 10));
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return instantDay(iso) ?? fmtDay(iso.slice(0, 10));
 }
 
 // The day a stored snapshot was taken, in the viewer's own time. The snapshot's
@@ -225,10 +224,10 @@ function fmtInstantDay(iso: string): string {
 // one they were in; when the server knows the instant it was taken, that instant
 // is shown as the local day instead. Otherwise the date is all there is.
 function fmtStaleDay(date: string, at?: string): string {
-  if (at && !Number.isNaN(Date.parse(at))) {
-    return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-  return fmtDay(date);
+  // The instant must belong to that date's UTC day; a mismatch (a restore keeps
+  // this environment's own record of instants) means it isn't this snapshot's.
+  const local = at && at.slice(0, 10) === date ? instantDay(at) : null;
+  return local ?? fmtDay(date);
 }
 
 // The one-line summary under a credit or loan row: rate, minimum, due date.

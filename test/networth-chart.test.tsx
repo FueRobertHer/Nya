@@ -31,6 +31,12 @@ describe('NetWorthChart layout stability', () => {
     expect(html).toContain('chart-readout-split');
   });
 
+  test('puts the date on its own line under the figure, so a long one cannot push the chart', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} />);
+    expect(html).toContain('chart-readout chart-readout-stable');
+    expect(html).toContain('chart-readout-date');
+  });
+
   test('adds no row to a chart that can never show a split', () => {
     expect(renderToStaticMarkup(<NetWorthChart points={pts} />)).not.toContain('chart-readout-split');
   });
