@@ -1,26 +1,20 @@
 // lib/history.ts
 //
-// Net-worth history for the over-time chart, in two layers:
+// Net-worth history for the over-time chart. Every layer is a Redis hash keyed
+// by UTC date (YYYY-MM-DD) with encrypted values.
 //
-// 1. REAL snapshots (`history:net-worth`) -- recorded whenever a clean live
-//    fetch happens (each upserts today's point) and daily by the snapshot
-//    cron, so history accumulates going forward.
-// 2. ESTIMATED backfill (`history:net-worth:est`) -- reconstructed once from
-//    transaction history (see /api/backfill): cash and credit accounts are
-//    walked backward from their current balances, everything else is held
-//    flat. Real points always win over estimated ones for the same date.
+// 1. REAL snapshots (`history:net-worth`): recorded on every clean live fetch
+//    and daily by the snapshot cron. Real points win over estimated ones.
+// 2. ESTIMATED backfill (`history:net-worth:est`): reconstructed from
+//    transaction history (see /api/backfill). Cash and credit accounts are
+//    walked backward from current balances, everything else is held flat.
 //
-// Per-account balances are kept alongside both, which is what lets a single
-// account be charted and a hidden one be subtracted from past totals. Those
-// have a third layer of their own (`history:accounts:est:ext`, see below): an
-// investment account can be walked back further than any total can honestly be
-// stated, and that span belongs to the chart only. And a fourth
-// (`history:accounts:partial`): balances measured on a day one institution
-// failed, so no total could be recorded but every other account still was.
-//
-// Every layer is a Redis hash keyed by UTC date (YYYY-MM-DD), values encrypted
-// with the same AES-256-GCM key as everything else financial, so a
-// database-only leak doesn't expose your net-worth series either.
+// Per-account balances are kept alongside both, which is what lets one account
+// be charted and a hidden one be subtracted from past totals. Two more
+// per-account layers feed the chart only: `history:accounts:est:ext`
+// (investment accounts walked past the oldest cash transaction) and
+// `history:accounts:partial` (balances measured on a day one institution
+// failed, so no total was recorded).
 
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
@@ -31,98 +25,63 @@ import { signedContribution } from './balance';
 
 const HISTORY_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth');
 const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
-// Per-account balances, one JSON map { account_id: balance } per date, so
-// individual accounts can be charted too.
+// Per-account balances: one JSON map { account_id: balance } per date.
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts');
-// When each day's snapshot was last written: date -> ISO instant. The history
-// keys are UTC days, which for anyone west of Greenwich can be the day after the
-// one they were in when it was taken; this is what lets a notice say "as of" in
-// the viewer's own time. Under "snapshot:" (this environment's record of when
-// its snapshots ran), so exports leave it out and a restore keeps its own. Losing
-// it costs only that precision: the date shows as before.
+// When each day's snapshot was written: date -> ISO instant. History keys are
+// UTC days, so this lets a notice say "as of" in the viewer's own time. Kept
+// under "snapshot:" so exports leave it out; losing it costs only that precision.
 const TAKEN_HASH = (ctx: Ctx) => kc(ctx, 'snapshot:taken');
 const ACCOUNTS_EST_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:est');
-// Per-account balances for dates BEYOND the estimated totals layer: backfill
-// walks an investment account past the oldest cash transaction, where its own
-// flows still have data but no total can honestly be stated (see reconstruct in
+// Per-account balances for dates BEYOND the estimated totals: backfill walks an
+// investment account past the oldest cash transaction (see reconstruct in
 // lib/backfill.ts).
 //
-// Its own key rather than more dates in ACCOUNTS_EST_HASH, and this is the
-// whole reason it exists. That hash is not just "per-account history": every
-// date in it is the account-by-account breakdown OF the estimated total for
-// that date, and the hidden-account subtraction in getHistory reads it as such.
-// The extension covers dates older than the newest run's totals -- exactly
-// where an EARLIER run's totals are retained (replaceRange only deletes from
-// the new run's oldest point forward) -- so writing there would answer "what
-// was in this total" with balances from a different run's walk, and hiding an
-// account would then subtract the wrong number from a point nothing rewrites.
-// Kept apart, it feeds the per-account chart and nothing else.
+// Not folded into ACCOUNTS_EST_HASH because every date there is the breakdown OF
+// that date's estimated total, and hidden-account subtraction in getHistory
+// reads it as such. These dates fall where an EARLIER run's totals are retained,
+// so mixing them in would subtract the wrong amount from points nothing rewrites.
 const ACCOUNTS_EST_EXT_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:est:ext');
 // Per-account balances MEASURED on a day the total could not be recorded: one
 // institution failed, so recordSnapshot wrote nothing, but every other
-// institution answered and its balances are as real as any snapshot's.
-// Without this, one broken bank turned every other account's chart into an
-// estimate for as long as it stayed broken (23 days, once).
+// institution answered. Without this, one broken bank turned every other
+// account's chart into an estimate for as long as it stayed broken.
 //
-// Its own key rather than ACCOUNTS_HASH because that hash means something this
-// one does not: each date there is the account-by-account breakdown of a
-// recorded TOTAL, and getHistory subtracts hidden accounts from that total by
-// reading it. A partial map is the breakdown of no total. getLatestAccountSnapshot
-// must not read it either: it relies on its newest date naming every account
-// that existed, and a partial map by definition leaves the failing
-// institution's accounts out. Feeds the per-account chart and nothing else.
+// Not folded into ACCOUNTS_HASH: each date there is the breakdown of a recorded
+// TOTAL (read by hidden-account subtraction and by getLatestAccountSnapshot,
+// which relies on its newest date naming every account). A partial map is the
+// breakdown of no total.
 const ACCOUNTS_PARTIAL_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:partial');
 
 /** The measured per-account layers' keys, for lib/links.ts, which reads them to
  *  date accounts. One place for the names. */
 export const measuredAccountHistoryKeys = (ctx: Ctx) => [ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx)];
-// The balances backfill folded into its flat `rest` term: everything that
-// isn't depository/credit (investments, loans, property, manual accounts),
-// captured as of the run that produced the estimated layer.
+// The balances backfill folded into its flat `rest` term (everything that isn't
+// depository/credit), as of the run that produced each estimated point.
 //
-// Keyed BY DATE, one map per estimated point. It used to be a single record,
-// on the reasoning that the amount is constant across every estimated point --
-// true while backfill rewrote the whole layer every run, false now that points
-// outside a run's window are retained. Two runs can leave two eras of points in
-// the layer, and one record can't describe both: a mortgage flat at $310k in
-// run 1 and $302k in run 2 would subtract $302k from points that baked in
-// $310k. Worse, an account that moves between the flat term and the walk
-// between runs (which investments now do) would sit in both sources at once,
-// breaking the exactly-one-applies rule getHistory depends on.
+// Keyed BY DATE because points outside a run's window are retained, so two runs
+// can leave two eras of points, each with different flat balances. A hidden
+// account is subtracted by the amount actually baked into a point; its current
+// balance would be wrong by however much it moved since, and wrong entirely for
+// an account linked after that run.
 //
-
-// This exists so a hidden account can be subtracted from estimated points by
-// the amount actually baked into them. Using its *current* balance instead
-// would be wrong by however much it moved since the last backfill (unbounded
-// for a 401k or a mortgage), and catastrophically wrong for an account linked
-// after that run, which was never in those points at all.
-//
-// Kept separate from ACCOUNTS_EST_HASH on purpose: merging it there would give
-// every flat-held account a fake per-account estimated series, which backfill's
-// header deliberately refuses to fabricate.
-//
-// Which accounts land here is not a property of their type -- investment
-// accounts are walked day by day when their transactions are available and flat
-// when they aren't, so the same account can move between the two layers between
-// runs. That's why membership is always checked directly (see
-// estimatedLayerCovers) rather than inferred from account type.
+// Kept apart from ACCOUNTS_EST_HASH so flat-held accounts don't get a fake
+// per-account estimated series. Membership is checked directly (see
+// estimatedLayerCovers), never inferred from type: investment accounts move
+// between walked and flat from run to run.
 const ACCOUNTS_EST_FLAT_BY_DATE = (ctx: Ctx) => kc(ctx, 'history:accounts:est:flatd');
-// The pre-per-date single record. Still read, never written: it's the only
-// thing that can describe estimated points written before this key existed.
-// A different key name rather than a reshape, because the old one is a plain
-// string and the new one a hash -- Redis would reject the write.
+// The old single-record form. Still read, never written: it is the only thing
+// describing points written before the per-date key. A new key name rather than
+// a reshape, because the old one is a string and Redis would reject a hash write.
 const ACCOUNTS_EST_FLAT_LEGACY = (ctx: Ctx) => kc(ctx, 'history:accounts:est:flat');
-// Which points a forget of a hidden account has already folded (see
-// foldHiddenAccount), under the forget's random tag: dates only, deleted when
-// the forget finishes. What lets a retry skip what is done.
+// Dates a forget of a hidden account has already folded (see foldHiddenAccount),
+// under the forget's random tag. Deleted when the forget finishes; lets a retry
+// skip what is done.
 const FOLD_PROGRESS = (ctx: Ctx, tag: string) => kc(ctx, `history:forgetting:${tag}`);
 const BACKFILL_FLAG = (ctx: Ctx) => kc(ctx, 'history:backfill-done');
-// How many runs in a row have finished with an Item's investment data still
-// importing. Backfill withholds the done-flag in that state so the next load
-// rebuilds with the flows once they arrive, and this is what stops that being
-// unbounded: PRODUCT_NOT_READY is supposed to clear in minutes, but a wedged
-// extraction would otherwise re-run a full multi-institution Plaid pull on
-// every app open, forever.
+// Consecutive runs that finished with an Item's investment data still importing.
+// Backfill withholds the done-flag then, so the next load rebuilds once the
+// flows arrive; this counter bounds that, so a wedged extraction can't trigger a
+// full Plaid pull on every app open.
 const BACKFILL_PENDING_TRIES = (ctx: Ctx) => kc(ctx, 'history:backfill-pending');
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
@@ -130,19 +89,13 @@ export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 /**
  * Records today's total, and the per-account breakdown behind it.
  *
- * Returns THE DATE KEY IT WROTE, or null if nothing landed. Two callers need
- * more than "it worked": /api/ingest/balance tells a script whether the chart
- * was updated, and /api/net-worth charts today's point itself (see
- * withTodayPoint) and must label it with the same day this wrote, not a second
- * reading of the clock that could fall on the other side of UTC midnight.
+ * Returns the date key it wrote, or null if nothing landed. Callers need the
+ * date, not a boolean: /api/net-worth charts today's point itself and must use
+ * the same day this wrote, not a second clock read that could straddle UTC
+ * midnight.
  *
- * THE TWO WRITES FAIL INDEPENDENTLY, and only the first decides the answer.
- * They were one try/catch returning a single boolean, which made a total that
- * landed indistinguishable from one that didn't whenever the per-account write
- * failed after it -- a state lib/history.ts already documents as reachable and
- * getHistory already handles. A caller told "nothing was recorded" would hide a
- * point that is genuinely in the chart's own layer. So: if the total lands the
- * date comes back, and a failed breakdown costs only the breakdown.
+ * The two writes fail independently and only the total decides the answer: a
+ * failed breakdown costs only the breakdown.
  */
 export async function recordSnapshot(ctx: Ctx, 
   netWorth: number,
@@ -151,41 +104,34 @@ export async function recordSnapshot(ctx: Ctx,
   const at = new Date();
   const today = at.toISOString().slice(0, 10);
 
-  // The breakdown before the total it breaks down. A reader that meets the
-  // two between the writes sees the new breakdown beside the old total, never
-  // an old breakdown beside a new total: forgetting a hidden account
-  // (foldHiddenAccount) reads the breakdown to decide what to take out of the
-  // total, and must never take out an account the new total doesn't have.
+  // Breakdown first, so a reader between the writes sees the new breakdown beside
+  // the old total, never the reverse. foldHiddenAccount reads the breakdown to
+  // decide what to take out of the total.
   let mapLanded = false;
   if (accountBalances && Object.keys(accountBalances).length > 0) {
     try {
       await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
       mapLanded = true;
     } catch {
-      // The total still goes in. What's lost is the ability to subtract a
-      // hidden account from THIS date later, which getHistory already handles
-      // by dropping the point it can't correct. Today's partial map, if any,
-      // is left alone below, so the per-account charts still have something
-      // measured for today.
+      // The total still goes in. What's lost is subtracting a hidden account
+      // from THIS date later, which getHistory handles by dropping the point.
     }
   }
 
   try {
     await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(String(netWorth)) });
   } catch {
-    // Best-effort: a missed snapshot just leaves a gap in the chart.
+    // Best-effort: a missed snapshot leaves a gap in the chart.
     return null;
   }
 
   if (mapLanded) {
-    // When it was taken, once the total has landed too. Best effort, and after
-    // the writes above so it can't change which of them a failure lands on.
+    // Best effort, after the writes above so it can't change which of them a
+    // failure lands on.
     await redis().hset(TAKEN_HASH(ctx), { [today]: at.toISOString() }).catch(() => {});
-    // This map now supersedes any partial one written earlier today. Clearing
-    // it is what lets getAccountHistory read a partial map that sits beside a
-    // real one as the NEWER measurement: it can only have been written after
-    // the last snapshot. Best-effort: if this fails, an earlier partial reading
-    // shows for today in place of this one, which costs one day's precision.
+    // This map supersedes any partial one written earlier today. Clearing it is
+    // what lets getAccountHistory treat a partial map beside a real one as the
+    // NEWER measurement. If this fails, one day loses a little precision.
     try {
       await redis().hdel(ACCOUNTS_PARTIAL_HASH(ctx), today);
     } catch {}
@@ -198,18 +144,11 @@ export async function recordSnapshot(ctx: Ctx,
  * Records today's balances for the accounts a partly failed fetch did measure
  * (see ACCOUNTS_PARTIAL_HASH). Only for when recordSnapshot didn't land.
  *
- * MERGED into anything already stored for today, because loads on a bad day
- * can fail differently: a bank that answered at 9am and not at noon keeps its
- * 9am balance. Newer values win for the same account.
- *
- * Skips the write, rather than starting from empty, whenever today's existing
- * map can't be read or decrypted: overwriting would replace a fuller map with a
- * smaller one, and a decrypt failure can be transient (a data key that didn't
- * load). The cost of skipping is at most this one load's values.
- *
- * Two partial writes racing on the same day can lose one's values (both read,
- * last write wins). Accepted: it costs part of one day's per-account points,
- * and a field per account would put account ids in plaintext.
+ * Merged into anything already stored for today (a bank that answered at 9am and
+ * not at noon keeps its 9am balance); newer values win. Skips the write whenever
+ * today's existing map can't be read or decrypted, since overwriting would
+ * replace a fuller map with a smaller one. Two racing writers can lose one's
+ * values; accepted, since a field per account would put account ids in plaintext.
  *
  * Best-effort, never throws.
  */
@@ -242,26 +181,17 @@ export async function recordPartialAccounts(ctx: Ctx, balances: Record<string, n
  * Replace the estimated layer over the range the new run actually covers,
  * leaving anything older intact.
  *
- * This used to delete the whole hash. That was safe when backfill ran once per
- * install, but it silently truncated the chart for anyone who had been running
- * long enough to accumulate estimated points older than the walk's 365-day
- * reach: a recompute regenerates [today-365, today] and the older region, which
- * no transaction stream can reconstruct any more, was simply lost. The left
- * edge of the chart jumped forward by up to a year.
- *
- * Scoping the delete to the new window keeps the recompute authoritative where
- * it has data and non-destructive where it doesn't. Points outside the window
- * are orphans from an earlier run: still the best answer available for those
- * dates, since nothing can rebuild them.
+ * Deleting the whole hash would truncate the chart for anyone with estimated
+ * points older than the walk's 365-day reach, which no transaction stream can
+ * rebuild. Points outside the window are orphans from an earlier run and still
+ * the best answer for those dates.
  */
 async function replaceRange(
   key: string,
   points: { date: string }[],
   encode: (p: any) => Promise<string>,
-  /** An extra date from which to clear, even where the run wrote no points --
-   *  for a layer whose dates are only valid while no other layer covers them.
-   *  Without it, "wrote nothing" means "keep everything", which is right for a
-   *  layer that stands alone and wrong for one that must yield. */
+  /** An extra date from which to clear even where the run wrote no points, for a
+   *  layer whose dates are only valid while no other layer covers them. */
   clearFrom?: string
 ): Promise<void> {
   const oldestPoint = points.reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
@@ -273,14 +203,13 @@ async function replaceRange(
       : oldestPoint ?? clearFrom ?? null;
   try {
     const existing = await redis().hkeys(key);
-    // No new points and no floor means nothing was reconstructable this run --
-    // keep every stored point rather than blanking the layer.
+    // No new points and no floor means nothing was reconstructable: keep every
+    // stored point rather than blanking the layer.
     const doomed = oldest ? existing.filter((d) => d >= oldest) : [];
     if (doomed.length > 0) await redis().hdel(key, ...doomed);
   } catch {
-    // Couldn't enumerate: fall through and just write. Stale dates inside the
-    // window get overwritten by the hset below anyway; the only loss is that a
-    // date the new run no longer produces keeps its old value.
+    // Couldn't enumerate: just write. Stale dates inside the window get
+    // overwritten anyway; a date the new run no longer produces keeps its value.
   }
   if (points.length === 0) return;
   const fields: Record<string, string> = {};
@@ -291,17 +220,10 @@ async function replaceRange(
 export async function replaceEstimated(ctx: Ctx, points: { date: string; value: number }[]): Promise<void> {
   await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(String(p.value)));
 }
-
-
 /**
- * Replaces the flat (non-cash) balances backfill folded into `rest`, one map
- * per date and range-scoped like the layers it describes.
- *
- * Per-date because a run only speaks for the dates it wrote. Retained points
- * from an earlier run keep that run's flat balances, so each point is
- * subtracted by the amount actually baked into it, and an account that moved
- * between the flat term and the walk between runs is in exactly one source for
- * any given date.
+ * Replaces the flat (non-cash) balances backfill folded into `rest`, one map per
+ * date and range-scoped like the layers it describes. Per-date so each retained
+ * point is subtracted by the amount actually baked into it.
  */
 export async function replaceEstimatedFlat(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[]
@@ -312,21 +234,18 @@ export async function replaceEstimatedFlat(ctx: Ctx,
 }
 
 /**
- * Whether the estimated layer can account for this id at all: either it has a
- * per-date balance (Plaid cash accounts, walked backward from transactions) or
- * a flat balance (everything else).
+ * Whether the estimated layer can account for this id at all: a per-date balance
+ * (Plaid cash accounts, walked backward) or a flat balance (everything else).
  *
- * Membership is checked directly rather than inferred from account type,
- * because type doesn't determine it. Backfill's cashType loop only iterates
- * *Plaid* accounts, so a MANUAL depository account -- which looks like cash by
- * type -- is actually in the flat term. Guessing from type left manual accounts
- * in neither map and silently un-subtracted from every estimated point.
+ * Checked directly rather than inferred from type: backfill walks only *Plaid*
+ * accounts, so a manual depository account is in the flat term despite looking
+ * like cash. Guessing from type left it un-subtracted from every estimated point.
  */
 export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promise<boolean> {
   if (account_id in ((await getEstimatedFlat(ctx)) ?? {})) return true;
   try {
     const flatByDate = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx));
-    // Newest date, for the same reason as the walked map below.
+    // Newest date, as for the walked map below.
     const newestFlat = Object.keys(flatByDate ?? {}).sort().pop();
     const flatSample = newestFlat ? flatByDate?.[newestFlat] : undefined;
     if (flatSample) {
@@ -338,20 +257,12 @@ export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promis
   }
   try {
     const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx));
-    // The NEWEST date, not an arbitrary one. Any date used to answer for all of
-    // them, because backfill seeded every cash account before the walk and
-    // rewrote the layer wholesale. Retention broke that: points older than the
-    // newest run's window are kept and carry whatever account set was linked
-    // back then, so an arbitrary sample can under-report a cash account --
-    // harmless in itself, since it only forces a recompute that wasn't needed,
-    // but it forces one on hides that didn't need it.
-    //
-    // The newest date is written by the newest run and holds every account it
-    // walked, which is what the caller is asking about: it hides a currently
-    // linked account. Over-reporting would be the dangerous direction (a
-    // skipped recompute leaves a cliff in the chart) and requires the account
-    // to be missing from the newest window, where the flat record checked just
-    // above already accounts for it.
+    // The NEWEST date, not an arbitrary one: retained points from older runs
+    // carry whatever account set was linked back then, so an arbitrary sample can
+    // under-report and force a needless recompute. The newest run's date holds
+    // every account it walked. Over-reporting is the dangerous direction (a
+    // skipped recompute leaves a cliff), and would need the account to be missing
+    // from the newest window, which the flat check above already covers.
     const newest = Object.keys(map ?? {}).sort().pop();
     const sample = newest ? map?.[newest] : undefined;
     if (!sample) return false;
@@ -364,19 +275,17 @@ export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promis
 /**
  * The flat balances captured by the last backfill.
  *
- * `{}` and `null` mean different things and callers must not conflate them.
- * `{}` is "backfill ran and folded no non-cash accounts in", so subtracting
- * nothing is correct. `null` is "we can't read what was baked in", where
- * subtracting nothing would silently shift the whole estimated region by the
- * hidden balance.
+ * `{}` and `null` differ: `{}` means backfill folded in no non-cash accounts, so
+ * subtracting nothing is correct; `null` means what was baked in is unreadable,
+ * and subtracting nothing would shift the estimated region by the hidden balance.
  */
 export async function getEstimatedFlat(ctx: Ctx): Promise<Record<string, number> | null> {
   try {
     const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
-    if (!blob) return {}; // never written (layer predates this key) -- genuinely empty
+    if (!blob) return {}; // never written (layer predates this key): genuinely empty
     return JSON.parse(await decrypt(blob)) as Record<string, number>;
   } catch {
-    return null; // unreadable: the caller must not treat this as "nothing to subtract"
+    return null; // unreadable: not the same as "nothing to subtract"
   }
 }
 
@@ -430,15 +339,12 @@ export function setDecryptedBudget(bytes: number): void {
 const digestOf = (blob: string) => createHash('sha256').update(blob).digest('base64');
 /**
  * A per-date balance map, decrypted once per process. getHistory reads every
- * per-account map on every load while anything is hidden, and a hidden
- * account stays hidden for good (including past a disconnect, #46), so without
- * this the same year of immutable maps is decrypted again on every dashboard
- * load. Keyed by a digest of the ciphertext, so a rewritten map (a backfill,
- * a re-encryption, a forgotten account) is a different key and never served
- * stale, and one container's entries can't answer for another's. Least
- * recently used entries go first, within a byte budget; forgetting an account
- * evicts the maps it rewrote (evictDecrypted), so its balances don't stay in
- * memory.
+ * per-account map on every load while anything is hidden, so without this the
+ * same year of immutable maps is decrypted on every dashboard load. Keyed by a
+ * digest of the ciphertext, so a rewritten map is a different key and never
+ * served stale, and one container's entries can't answer for another's. LRU
+ * within a byte budget; forgetting an account evicts the maps it rewrote
+ * (evictDecrypted) so its balances don't stay in memory.
  */
 async function decryptMap(blob: string): Promise<Record<string, number>> {
   const key = digestOf(blob);
@@ -458,12 +364,9 @@ export const decryptMapForTest = (blob: string) => decryptMap(blob);
 export const isDecryptedCached = (blob: string) => DECRYPTED_MAPS.has(digestOf(blob));
 
 /**
- * The flat balances that applied on one specific date, preferring the per-date
- * record and falling back to the legacy single record for points written before
- * the per-date one existed.
- *
- * Same tri-state contract as getEstimatedFlat: `{}` means "nothing was folded
- * in", `null` means "unreadable, don't treat as nothing".
+ * The flat balances that applied on one date: the per-date record, falling back
+ * to the legacy single record for points written before it existed. Same
+ * `{}` vs `null` contract as getEstimatedFlat.
  */
 async function flatFor(
   byDate: Record<string, string> | null,
@@ -479,9 +382,8 @@ async function flatFor(
   }
 }
 
-/** Same, for the per-account estimated layer -- and range-scoped for the same
- *  reason, so retained total points keep the per-date maps that hidden-account
- *  subtraction reads for those dates. */
+/** Same, for the per-account estimated layer, range-scoped so retained total
+ *  points keep the per-date maps that hidden-account subtraction reads. */
 export async function replaceEstimatedAccounts(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
@@ -490,22 +392,14 @@ export async function replaceEstimatedAccounts(ctx: Ctx,
 
 /**
  * Replaces the per-account extension layer (ACCOUNTS_EST_EXT_HASH): the span an
- * investment account's own flows reach past the cash horizon.
+ * investment account's own flows reach past the cash horizon. Range-scoped like
+ * every other layer.
  *
- * Range-scoped like every other layer, so a run that reaches less far back than
- * an earlier one leaves that earlier era's points alone rather than truncating
- * the chart.
- *
- * `coveredFrom` is this run's full-walk horizon, and it is what keeps the two
- * layers from disagreeing. The extension only means anything on dates the
- * estimated layer can't speak for, and which dates those are changes run to
- * run: link a bank with a longer transaction history and the full walk now
- * covers a span the extension used to own. getAccountHistory prefers the
- * extension where both have a date, so anything left behind there would shadow
- * the newer walk -- the account's chart would read from one run up to the old
- * seam and another after it, with a step at the join that is pure artifact.
- * So the extension is cleared from this horizon forward even on a run that
- * produces no extension points at all, which is the common case.
+ * `coveredFrom` is this run's full-walk horizon. getAccountHistory prefers the
+ * extension where both layers have a date, so a stale extension point left
+ * behind would shadow a newer walk that now covers it and leave a step at the
+ * join. The extension is therefore cleared from this horizon forward even when
+ * the run produces no extension points, which is the common case.
  */
 export async function replaceEstimatedExtension(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[],
@@ -520,31 +414,22 @@ export async function replaceEstimatedExtension(ctx: Ctx,
 }
 
 /**
- * The most recent REAL per-account snapshot, as `{ date, balances }`. Null when
- * nothing readable was ever recorded.
+ * The most recent REAL per-account snapshot, as `{ date, balances }`, or null
+ * when nothing readable was ever recorded.
  *
- * Exists so an institution whose live fetch just failed can still show its last
- * good balances with an honest "as of" (see lib/last-known.ts). The REAL layer
- * only, deliberately: the estimated layer is a reconstruction, and presenting a
- * walked figure as "your balance on Aug 7" would put an inferred number on
- * screen dressed as an observed one.
+ * Lets an institution whose live fetch just failed show its last good balances
+ * with an honest "as of" (see lib/last-known.ts). Real layer only: presenting a
+ * walked estimate as "your balance on Aug 7" would dress an inferred number as
+ * an observed one.
  *
- * ONE DATE, WHOLE. Returned as a single coherent picture rather than searched
- * per account, so an institution's subtotal is a figure that actually existed
- * on one day instead of a mix of dates that never coexisted.
+ * Returned as one whole date, so an institution's subtotal existed on a single
+ * day. It does not settle which accounts still exist: this map is global and
+ * needs every institution healthy, while an Item's own record needs only that
+ * Item healthy, so the two drift. lib/last-known.ts owns that reconciliation;
+ * do not add an inference here.
  *
- * What this map does NOT settle is which accounts still exist. It is a complete
- * picture of a day when everything answered (recordSnapshot only runs when
- * `clean`), but it is a GLOBAL record while the caller's other source is
- * per-Item, and the two have different write conditions: a snapshot needs every
- * institution healthy, an Item's record needs only that Item healthy. So they
- * drift, and an account can be in one and not the other for reasons that have
- * nothing to do with it being closed. lib/last-known.ts owns that reconciliation
- * and reports what it could not resolve; do not add an inference here.
- *
- * Reads the date keys, then fetches only the winner. `hgetall` would pull every
- * date since install -- each an encrypted map of every account -- to decrypt
- * one, on the degraded path, forever growing.
+ * Reads the date keys and fetches only the winner, since `hgetall` would pull
+ * every date since install to decrypt one.
  */
 export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
   date: string;
@@ -558,13 +443,11 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
   }
   if (keys.length === 0) return null;
 
-  // No age limit here on purpose: whether a snapshot is too old to present is a
-  // display decision, and the caller needs the date even when it fails that
-  // test so it can say "too old" rather than silently showing nothing.
+  // No age limit on purpose: whether a snapshot is too old is a display decision,
+  // and the caller needs the date to say "too old" rather than show nothing.
   //
-  // Future dates ARE excluded. Keys come from toISOString() on whichever
-  // machine wrote them, so clock skew can mint one, and it would otherwise win
-  // every lookup indefinitely.
+  // Future dates ARE excluded: clock skew on the writing machine can mint one,
+  // and it would win every lookup indefinitely.
   const today = new Date().toISOString().slice(0, 10);
   const dates = keys
     .filter((d) => d <= today)
@@ -578,7 +461,7 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
       if (!blob) continue;
       balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
     } catch {
-      continue; // undecryptable date (rotated key) -- try the day before
+      continue; // undecryptable date (rotated key): try the day before
     }
     const usable: Record<string, number> = {};
     for (const [id, b] of Object.entries(balances ?? {})) {
@@ -589,9 +472,7 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
   return null;
 }
 
-/** The moment the snapshot dated `date` was last written, if known. Best
- *  effort: null when it was never recorded (a snapshot from before this existed,
- *  or one whose record could not be written) or can't be read. */
+/** The moment the snapshot dated `date` was last written, or null if unknown. */
 export async function snapshotTakenAt(ctx: Ctx, date: string): Promise<string | null> {
   try {
     const v = await redis().hget<string>(TAKEN_HASH(ctx), date);
@@ -613,31 +494,24 @@ export async function getRealSnapshotDates(ctx: Ctx): Promise<Set<string>> {
  * Balance history for one account, merged like getHistory (real wins) with the
  * extension layer between the two.
  *
- * Resolved PER ACCOUNT, not per date. The three layers answer for different
- * account sets on the same date: the extension names only the investment
- * accounts walked past the cash horizon, so picking a whole map per date would
- * drop a cash account's retained point on any date the extension also covers.
- * Asking each layer for this one account in turn keeps every layer's coverage.
+ * Resolved per account, not per date: the layers answer for different account
+ * sets on the same date, so picking a whole map per date would drop a cash
+ * account's retained point wherever the extension also has that date.
  *
- * Extension over estimated, because where both have a date the extension is the
- * newer run: the estimated layer keeps points from an era whose walk reached
- * further back, and mixing two walks inside one line is what the precedence is
- * here to avoid.
+ * Extension over estimated: where both have a date the extension is the newer
+ * run, and mixing two walks in one line is what the precedence avoids.
  *
- * A partial measurement (ACCOUNTS_PARTIAL_HASH) comes FIRST for the accounts
- * it names, even over a real map for the same date. recordSnapshot clears the
- * day's partial map whenever it writes a real one, so a partial map beside a
- * real map was written after it: the newer measurement of the same day, and
- * possibly of an account that appeared after the snapshot. It only speaks for
- * the accounts it names, though. One that leaves this account out says its
- * institution failed at that moment, not that the account was gone, so the
- * other layers still get their turn in the usual order.
+ * A partial measurement (ACCOUNTS_PARTIAL_HASH) comes first for the accounts it
+ * names, even over a real map for the same date, because recordSnapshot clears
+ * the day's partial map whenever it writes a real one, so a partial beside a real
+ * one is newer. It only speaks for the accounts it names: one that leaves this
+ * account out means its institution failed, not that the account was gone.
  */
 export async function getAccountHistory(ctx: Ctx, 
   account_id: string,
-  /** Earlier ids of the SAME account (lib/links.ts), newest first. On each
-   *  date the current id wins, then these in order, so history recorded under
-   *  an id the account had before a reconnect joins up with its current one. */
+  /** Earlier ids of the SAME account (lib/links.ts), newest first. On each date
+   *  the current id wins, then these in order, so history recorded before a
+   *  reconnect joins up with the current id. */
   olderIds: string[] = []
 ): Promise<HistoryPoint[]> {
   const ids = [account_id, ...olderIds.filter((id) => id !== account_id)];
@@ -648,8 +522,8 @@ export async function getAccountHistory(ctx: Ctx,
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH(ctx)),
   ]);
 
-  /** This account's balance in one encrypted per-account map, under the first
-   *  of its ids the map names, or null when the map is unreadable or names none. */
+  /** This account's balance in one encrypted map under the first of its ids the
+   *  map names, or null when the map is unreadable or names none. */
   async function balanceIn(blob: string | undefined): Promise<number | null> {
     if (!blob) return null;
     try {
@@ -677,9 +551,9 @@ export async function getAccountHistory(ctx: Ctx,
       if (measured !== null) return { date, value: measured };
       if (realMap?.[date]) {
         const real = await balanceIn(realMap[date]);
-        // A real map that names none of the account's ids is an answer, not a
-        // gap: the account wasn't there that day. Falling through to an estimate would
-        // put a reconstructed figure on a date that was actually measured.
+        // A real map naming none of the account's ids is an answer (the account
+        // wasn't there), not a gap: an estimate here would show a reconstructed
+        // figure on a measured date.
         return real === null ? null : { date, value: real };
       }
       const value = (await balanceIn(extMap?.[date])) ?? (await balanceIn(estMap?.[date]));
@@ -691,32 +565,24 @@ export async function getAccountHistory(ctx: Ctx,
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-// The backfill flag makes /api/backfill idempotent; linking a new
-// institution clears it so history gets recomputed with the new accounts.
-//
-// It stores a schema number rather than a bare '1' so that changing HOW the
-// estimated layer is built forces a recompute. Without it, a layer built by an
-// older algorithm would live forever: the only automatic trigger is the client
-// noticing history is "thin", which is never true for anyone who already has an
-// estimated layer, so the improvement would only ever reach new users.
+// The backfill flag makes /api/backfill idempotent; linking a new institution
+// clears it. It stores a schema number rather than '1' so that changing HOW the
+// estimated layer is built forces a recompute: the client's "thin history"
+// trigger never fires for anyone who already has an estimated layer.
 //
 // Bump this whenever the walk changes shape.
 //   1 - cash and credit walked; everything else flat
 //   2 - investment external flows walked too
-//   3 - an investment account whose flows out-run its balance is floored at
-//       zero instead of dropped back to flat, and its own series is walked past
-//       the cash horizon. Both make a large arrival (a rollover) visible on the
-//       account's chart where it previously was not.
+//   3 - an investment account whose flows out-run its balance is floored at zero
+//       instead of dropped to flat, and its series is walked past the cash
+//       horizon, so a large arrival (a rollover) shows on its chart
 //   4 - a contribution booked as a single buy (or a payout as a single sell)
 //       with no cash row beside it counts as money crossing the boundary
-//       (countedTrades in lib/investments.ts). Before, the walk read each as an
-//       internal trade and carried every 401k paycheck back into the past.
-//   5 - an in-kind transfer reported with amount 0 is valued from its quantity
-//       and price; deposit, transfer and withdrawal trades count under the
-//       same rule as contributions, with sell/transfer as money out so an
-//       exchange nets to zero; and that rule is judged from cash rows within
-//       45 days of each trade. Investment rows come from the stored history
-//       (lib/invstore.ts).
+//       (countedTrades in lib/investments.ts)
+//   5 - an in-kind transfer with amount 0 is valued from quantity and price;
+//       deposit, transfer and withdrawal trades count like contributions (sell
+//       and transfer as money out, so an exchange nets to zero), judged from
+//       cash rows within 45 days of each trade. Rows come from lib/invstore.ts.
 const BACKFILL_SCHEMA = 5;
 
 export async function isBackfillDone(ctx: Ctx): Promise<boolean> {
@@ -736,12 +602,9 @@ export async function markBackfillDone(ctx: Ctx): Promise<void> {
 
 /**
  * Counts this run as one that ended with investment data still importing, and
- * says whether to stop waiting.
- *
- * True means give up and accept the reconstruction as it stands (investment
- * accounts held flat, which is what every run did before the retry existed).
- * A failure to count returns true for the same reason: the retry is an
- * optimization, and an uncountable one is an unbounded one.
+ * says whether to stop waiting. True means accept the reconstruction as it
+ * stands (investment accounts held flat). A failure to count also returns true:
+ * an uncountable retry is an unbounded one.
  */
 export async function backfillPendingExhausted(ctx: Ctx, limit: number): Promise<boolean> {
   try {
@@ -788,29 +651,23 @@ type HiddenSources = {
 };
 
 /**
- * What one hidden account contributed to one point, signed as it was added
- * to the total; null when that can't be told, and the point must be dropped.
- * The one rule for it, used to subtract a hidden account (getHistory) and to
- * fold a forgotten hidden account out of the totals (foldHiddenAccount).
+ * What one hidden account contributed to one point, signed as it was added to the
+ * total; null when that can't be told, and the point must be dropped. The one
+ * rule used both to subtract a hidden account (getHistory) and to fold a
+ * forgotten one out of the totals (foldHiddenAccount).
  *
- * REAL points: the per-account map recorded with the total. A real date with
- * no per-account map can't be corrected. This is reachable: recordSnapshot
- * writes the map and the total as two separate awaits, so the second can land
- * and the second fail. Showing the point would put a single-day spike the
- * size of the hidden account into the chart, so it is dropped instead and the
- * line interpolates across one day.
+ * REAL points: the per-account map recorded with the total. A real date with no
+ * map is reachable (recordSnapshot's two writes are separate awaits) and can't
+ * be corrected; showing it would spike the chart by the hidden balance, so it is
+ * dropped and the line interpolates across one day.
  *
- * ESTIMATED points: the estimated layer splits every account across two
- * sources, and exactly one of them applies: cash accounts have a per-date
- * balance (the transaction walk), everything else has a constant flat balance
- * (backfill's `rest` term). So a miss in one is only correct if the other is
- * readable and genuinely doesn't list the account. Resolved per date: two
- * runs can leave two eras of points in this layer, each with its own flat
- * balances, and an account can be flat in one era and walked in the next.
- * An unreadable flat record, or a missing per-date map for an account not in
- * it, means nothing here can be trusted. Absent from a map that could be read
- * means the account was never in these points (linked after the last
- * backfill): nothing to remove.
+ * ESTIMATED points: exactly one of two sources applies, the per-date walked
+ * balance (cash accounts) or the flat balance (everything else), so a miss in
+ * one is only correct if the other is readable and doesn't list the account.
+ * Resolved per date, since two runs can leave two eras of points. An unreadable
+ * flat record, or no per-date map for an account not in the flat one, means
+ * nothing here can be trusted. Absent from a readable map means the account was
+ * never in these points (linked after the last backfill): nothing to remove.
  */
 async function hiddenContribution(src: HiddenSources, date: string, estimated: boolean, id: string, type: string): Promise<number | null> {
   if (!estimated) {
@@ -832,25 +689,18 @@ async function hiddenContribution(src: HiddenSources, date: string, estimated: b
 /**
  * The net-worth series, with hidden accounts subtracted per date.
  *
- * Hiding is retroactive by construction: the stored totals include every
- * account (see the store-true principle in lib/hidden.ts; only a forgotten
- * hidden account is folded out of them), and the per-account
- * balance map recorded alongside each date is what lets a hidden account's
- * contribution be removed from every point. Hiding a $40k 401k therefore
- * redraws the whole chart as if it was never counted, instead of putting a $40k
- * cliff on the day you hid it -- which would be permanent, since nothing ever
- * rewrites a real point for a past date.
- *
- * Subtraction never consults a live balance, so it keeps working while an
- * institution is erroring (which is exactly when `computeNetWorth` returns no
- * accounts for it).
+ * Hiding is retroactive by construction: stored totals include every account
+ * (see lib/hidden.ts; only a forgotten hidden account is folded out), and the
+ * per-account map recorded with each date lets a hidden account's contribution
+ * be removed from every point. Hiding a $40k 401k redraws the whole chart as if
+ * it was never counted instead of leaving a permanent $40k cliff. Subtraction
+ * never consults a live balance, so it works while an institution is erroring.
  */
 export async function getHistory(ctx: Ctx, hidden?: HiddenMap): Promise<HistoryPoint[]> {
   const hiding = !!hidden && hidden.size > 0;
 
-  // The per-account maps are only read when something is actually hidden.
-  // Decrypting a year of them on every dashboard load to subtract nothing would
-  // be pure waste, and nothing hidden is the common case.
+  // Per-account maps are read only when something is hidden: decrypting a year
+  // of them on every load to subtract nothing would be waste.
   const [realMap, estMap, realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
     redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
     redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
@@ -901,25 +751,22 @@ const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
 
 /**
  * Replaces every run of estimated points that has a real point on BOTH sides
- * with a straight line between those two real points. Still `estimated`, so it
- * still draws dashed. Leading and trailing estimates are left alone. Expects
- * date-sorted points and returns a new array; never mutates what it is given
+ * with a straight line between those two real points (still `estimated`, so it
+ * draws dashed). Leading and trailing estimates are left alone. Expects
+ * date-sorted points and returns a new array; never mutates its input
  * (withTodayPoint's input shares point objects with the caller's).
  *
- * WHY. Inside a hole between two recorded days, the backward walk is a worse
- * answer than the line. The walk starts from today's accounts, so it cannot see
- * an account that has since been closed or deleted, and it holds manual and
- * other flat accounts at today's balance. Both are errors in LEVEL that change
- * on the day money moves between a seen and an unseen account. The one hole
- * this was written for showed a 22% dip that never happened: a manually tracked
- * 401k, since deleted, was rolled into a linked IRA mid-hole. Keeping the walk's
- * shape and shifting it to meet both real ends was tried on that data and still
- * drew a 9% dip followed by an 11% hump. The line is exact at both ends and
- * cannot invent a swing. What it costs is the timing of real events inside the
- * hole, which the dashed style already says are not known.
+ * Inside a hole between two recorded days the backward walk is worse than the
+ * line: it starts from today's accounts, so it can't see a since-closed account
+ * and holds flat accounts at today's balance, both errors in LEVEL that change
+ * on the day money moves between a seen and an unseen account. One hole showed a
+ * 22% dip that never happened (a deleted manual 401k rolled into a linked IRA);
+ * shifting the walk to meet both ends still drew a 9% dip and an 11% hump. The
+ * line is exact at both ends and can't invent a swing; it costs only the timing
+ * of events inside the hole, which the dashed style already says are unknown.
  *
- * For the TOTAL only. A single account's walk has neither error (it is that
- * account's own flows), so getAccountHistory keeps it.
+ * For the TOTAL only: a single account's walk is that account's own flows, so
+ * getAccountHistory keeps it.
  */
 export function bridgeInteriorEstimates(points: HistoryPoint[]): HistoryPoint[] {
   const out = points.slice();
@@ -945,26 +792,19 @@ export function bridgeInteriorEstimates(points: HistoryPoint[]): HistoryPoint[] 
 /**
  * Puts today's live figure into the history series.
  *
- * /api/net-worth starts getHistory() concurrently with the Plaid fetch, so what
- * comes back cannot include the snapshot recorded moments later in the same
- * request: it holds either no point for today at all, or the one an earlier
- * load wrote hours ago. Both would draw a chart that disagrees with the total
- * printed above it.
+ * /api/net-worth starts getHistory() concurrently with the Plaid fetch, so its
+ * result has no point for today, or a stale one from an earlier load, and the
+ * chart would disagree with the total above it.
  *
- * `visible` is the right value to write, not `netWorth`: getHistory subtracts
- * hidden accounts from every point it returns, and visible is that same
- * subtraction performed on today's live balances.
+ * `visible` is the value to write, not `netWorth`: it is the same hidden-account
+ * subtraction getHistory applies to every point, done on today's live balances.
  *
- * Only called when the snapshot actually landed, which is what keeps this
- * honest in both directions. A point appears in the chart exactly when one was
- * stored, so the chart never shows a figure the history layer doesn't have. And
- * because a snapshot is only recorded on a clean fetch, a total containing
- * balances recovered by lib/last-known.ts can never reach here -- charting one
- * would draw last week's figure as though it had been measured today, the one
- * thing that module's display-only rule exists to prevent.
+ * Only called when the snapshot landed, so the chart never shows a figure the
+ * history layer doesn't have, and a total containing balances recovered by
+ * lib/last-known.ts (display-only) can never be charted as if measured today.
  *
  * Bridged again afterwards: today's point can be the real one that closes a
- * hole, turning estimates getHistory left trailing into interior ones.
+ * hole, turning trailing estimates into interior ones.
  */
 export function withTodayPoint(
   history: HistoryPoint[],
@@ -976,7 +816,6 @@ export function withTodayPoint(
   return bridgeInteriorEstimates(rest.sort((a, b) => (a.date < b.date ? -1 : 1)));
 }
 
-// ---------------------------------------------------------------------------
 // Forgetting an earlier account (#46)
 
 /** Rewrites one field only if it still holds what was read. */
@@ -1154,35 +993,32 @@ return 1`;
 /**
  * Takes a HIDDEN account out of every past total for good, before it is
  * forgotten (lib/links.ts forgetEarlierAccount): each point's stored total is
- * lowered by what the account contributed to it, by the rule the chart uses
- * to subtract it (hiddenContribution), and the account is removed from the
- * per-account maps that point is read with set to 0, in ONE step per point
- * (HISTORY_FOLD). So at every moment each point is either untouched (and the
- * still-hidden account is subtracted by the chart as before) or folded (the
- * account is there with nothing, so the chart subtracts nothing and drops
- * nothing): never counted twice, never missing. Set to 0 rather than removed
- * while it is still hidden: removed, a flat-only estimated point would read
- * as "can't tell" and drop out of the chart until the forget finished, and a
- * retry would no longer see the account in the maps that give its life. The
- * caller removes the zeros once the hidden entry is gone
- * (forgetAccountBalances).
+ * lowered by what the account contributed (hiddenContribution) and the account
+ * is set to 0 in the per-account maps that point is read with, in ONE step per
+ * point (HISTORY_FOLD). At every moment a point is either untouched (the chart
+ * subtracts the still-hidden account as before) or folded (the account is there
+ * with nothing, so the chart subtracts nothing and drops nothing): never counted
+ * twice, never missing.
  *
- * A point the chart drops while the account is hidden (what it contributed
- * can't be told) is deleted if it falls within the account's known life, and
- * left alone outside it, where the account can't be in it. A real point
- * deleted takes that date's estimated total with it: the chart shows an
- * estimate only where there is no real point, so it would appear in its place.
+ * Set to 0 rather than removed while it is still hidden: removed, a flat-only
+ * estimated point would read as "can't tell" and drop out of the chart, and a
+ * retry would no longer see the account in the maps that give its life.
+ * forgetAccountBalances removes the zeros once the hidden entry is gone.
+ *
+ * A point the chart drops while the account is hidden (contribution can't be
+ * told) is deleted if it falls within the account's known life, and left alone
+ * outside it. Deleting a real point also deletes that date's estimated total,
+ * which would otherwise appear in its place.
  *
  * Totals and breakdowns are written breakdown first everywhere else
  * (recordSnapshot, the backfill), so a fold running beside one reads a new
- * breakdown with an old total, takes nothing out, and the new total that
- * follows never had the account; never the reverse.
+ * breakdown with an old total, takes nothing out, and the new total that follows
+ * never had the account; never the reverse.
  *
- * Before any point, the single pre-per-date flat record is copied to each
- * estimated date that still relies on it (the same record, so every point
- * reads exactly what it read before), so points can be folded one at a time.
+ * Before any point, the pre-per-date flat record is copied to each estimated
+ * date still relying on it, so points can be folded one at a time.
  *
- * Progress is kept under `tag` (FOLD_PROGRESS), so a retry skips what is done;
+ * Progress is kept under `tag` (FOLD_PROGRESS) so a retry skips what is done;
  * the caller deletes it when the forget finishes (dropFoldProgress). Stops,
  * changing nothing more, on anything that can't be read for now.
  */

@@ -5,25 +5,22 @@
 // store (lib/invstore.ts, "invtxns:<item_id>"), in stored characters, which are
 // bytes here (base64 travels as ASCII; lib/blob.ts).
 //
-// Measured when asked, not recorded as blobs are written: a size recorded on
-// write drifts from the blob it describes (a disconnect racing a sync, two
-// syncs at once, a failed record, the re-encryption pass rewriting a blob) and
-// misses every blob no write has touched since, including the one most worth
-// knowing about, a blob blocked at the ceiling. Measuring reads the truth: one
-// keyspace walk and one STRLEN per blob, which stays small at a few blobs per
-// linked institution.
+// Measured when asked, not recorded as blobs are written: a recorded size drifts
+// from the blob it describes (a disconnect racing a sync, a failed record, the
+// re-encryption pass rewriting a blob) and misses every blob no write has touched
+// since, including the one most worth knowing about, a blob blocked at the
+// ceiling. Measuring reads the truth with one keyspace walk and one STRLEN per
+// blob, which stays small at a few blobs per linked institution.
 //
 // Every blob is reported, including ones whose Item is no longer linked
-// (orphaned: a sync that finished after a disconnect can leave one), since
-// they cost the same. An Item blocked at the ceiling also carries the size its
-// last write was refused at (the marker in lib/transactions.ts).
+// (orphaned: a sync that finished after a disconnect can leave one), since they
+// cost the same. An Item blocked at the ceiling also carries the size its last
+// write was refused at (the marker in lib/transactions.ts).
 //
-// This is the number a storage quota would read, and what tells you whether one
-// import is about to cost an Upstash tier upgrade. Nothing enforces a quota
-// yet: when one comes, the refusal path it needs (tell the user, change
-// nothing) is the one the size ceiling already takes.
-//
-// Measured for one container: the walk covers only its keys (kc()).
+// This is the number a storage quota would read. Nothing enforces a quota yet;
+// when one comes, the refusal path it needs (tell the user, change nothing) is
+// the one the size ceiling already takes. Measured for one container: the walk
+// covers only its keys (kc()).
 
 import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';

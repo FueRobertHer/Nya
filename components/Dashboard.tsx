@@ -70,14 +70,11 @@ type Holding = {
   quantity: number | null;
   value: number | null;
   cost_basis: number | null;
-  // Plaid security fields, read by lib/cash.ts to tell an invested position
-  // from money parked in cash. All optional, because a payload cached in
-  // localStorage before this shipped carries none of them. What that payload
-  // DOES carry is `name`, and lib/cash.ts's last rule reads names -- so an
-  // offline first paint off an old cache still marks a fund called "...Money
-  // Market..." as cash, just without the confirmation Plaid's own flag gives.
-  // Graceful degradation rather than a blank: the amount and the share come
-  // from `value`, which was always there.
+  // Plaid security fields, read by lib/cash.ts to tell an invested position from
+  // money parked in cash. Optional: a payload cached in localStorage before these
+  // shipped has none, but it does carry `name`, which lib/cash.ts's last rule
+  // reads, so an offline first paint still marks a "...Money Market..." fund as
+  // cash (without Plaid's confirmation). The amount and share come from `value`.
   ticker?: string | null;
   security_type?: string | null;
   is_cash_equivalent?: boolean | null;
@@ -94,15 +91,14 @@ type Institution = {
   // compared explicitly against 'off' so a stale cached payload, which has no
   // such field, never offers the Enable button.
   liabilities?: string;
-  // YYYY-MM-DD when the shown balances were last observed, set only when the
-  // live fetch failed and they were recovered (recovery is all-or-nothing per
-  // institution, so this covers every account in it). Optional: a payload
-  // cached before this shipped has none, which reads as "not stale" and shows
-  // the plain error, matching the old behaviour.
+  // YYYY-MM-DD when the shown balances were last observed, set only when the live
+  // fetch failed and they were recovered (all-or-nothing per institution, so it
+  // covers every account in it). Optional: a payload cached before this shipped
+  // has none, which reads as "not stale" and shows the plain error.
   //
-  // The reverse direction is NOT disclosed: a rolled-back deploy reading a new
-  // localStorage payload renders recovered balances with no staleness marker at
-  // all, under the plain red error. The numbers are still real, just undated.
+  // The reverse is NOT disclosed: a rolled-back deploy reading a new localStorage
+  // payload renders recovered balances with no staleness marker, under the plain
+  // red error. The numbers are still real, just undated.
   stale_as_of?: string;
   // The instant behind stale_as_of (an ISO time), when the server knew it. The
   // date is a UTC day; this is what names the viewer's own day (fmtStaleDay).
@@ -117,12 +113,11 @@ type Institution = {
   // says so rather than presenting an incomplete figure as merely dated.
   stale_missing?: number;
   // How many accounts this institution previously reported were absent from an
-  // otherwise SUCCESSFUL fetch (lib/vanished.ts). Unlike the stale fields there
-  // is no error alongside it: the balances shown are fresh and correct, they are
-  // just not all of them, so the total is short by whatever the missing ones
-  // held. History is paused while this is set, which is why it has to be said
-  // out loud -- otherwise the hero total simply drops and disagrees with the
-  // last charted point for three days with nothing to explain it.
+  // otherwise SUCCESSFUL fetch (lib/vanished.ts). There is no error alongside it:
+  // the balances shown are fresh, just not all of them, so the total is short by
+  // whatever the missing ones held. History is paused while this is set, so it
+  // has to be said out loud, or the hero total drops and disagrees with the last
+  // charted point for three days with nothing to explain it.
   unconfirmed_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
 };
@@ -137,12 +132,10 @@ type ManualAccount = {
   balance: number;
 };
 
-// The form's working copy. `balance` is a STRING here, matching how
-// BudgetsTab and GoalsCard hold numeric inputs: an <input type="number">
-// reports '' for a partially-typed value like "-", and Number('') is 0, so
-// storing a number would erase the minus sign as you type it and make the
-// field impossible to clear. It's parsed once on submit instead.
-// `account_id` is null while adding; the server mints it on create.
+// The form's working copy. `balance` is a STRING, as in BudgetsTab and GoalsCard:
+// an <input type="number"> reports '' for a partly typed value like "-", and
+// Number('') is 0, so a number would erase the minus sign as you type it. It's
+// parsed once on submit. `account_id` is null while adding; the server mints it.
 type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
   account_id: string | null;
   balance: string;
@@ -158,16 +151,16 @@ const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
 
 type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
 
-// Last-known dashboard snapshot, kept on-device so the app paints instantly
-// on open (and still shows something useful offline) while fresh data loads
-// in the background. Cleared on logout; keyed per account (device-cache.ts).
+// Last-known dashboard snapshot, kept on-device so the app paints instantly on
+// open (and shows something useful offline) while fresh data loads. Cleared on
+// logout; keyed per account (device-cache.ts).
 /** Set once this page has been sent to the login page because its session
  *  ended: nothing may save the snapshot again after it was cleared. */
 let signedOut = false;
 
 // Currency-aware money, so a EUR/GBP account isn't rendered with a "$".
-// Delegates to the shared formatter (which falls back to $ for a null or
-// unrecognized code); "--" for a missing value.
+// Delegates to the shared formatter (falls back to $ for a null or unrecognized
+// code); "--" for a missing value.
 /** The value, or the last one that wasn't null: what a closing drawer keeps
  *  showing while it slides out. */
 function useLast<T>(value: T | null): T | null {
@@ -244,12 +237,11 @@ function liabilitySummary(a: Account): string | null {
 }
 
 /**
- * The rest of a liability's terms, shown only when the row is expanded — the
- * collapsed row already carries rate, minimum and due date.
+ * The rest of a liability's terms, shown only when the row is expanded (the
+ * collapsed row already carries rate, minimum and due date).
  *
- * Follows TxnDetail in MonthBreakdown: build the rows by pushing only fields
- * that are actually present, and render nothing at all rather than a list of
- * dashes when none are.
+ * Follows TxnDetail in MonthBreakdown: push only fields that are present, and
+ * render nothing rather than a list of dashes when none are.
  */
 function LiabilityDetail({
   liability,
@@ -299,13 +291,12 @@ function LiabilityDetail({
 }
 
 /**
- * Whether to offer "Enable payment details" for an institution.
- *
- * Only 'off' — the product was never initialized on this Item, and update mode
- * can add it. 'loading' means Plaid is already fetching (offering the button
- * there would loop: the reload right after a successful enable arrives before
- * the data does), and 'unavailable' means enabling would change nothing. A
- * stale cached payload has no field at all, which also falls through to false.
+ * Whether to offer "Enable payment details" for an institution. Only 'off': the
+ * product was never initialized on this Item and update mode can add it.
+ * 'loading' means Plaid is already fetching (offering the button would loop, since
+ * the reload after a successful enable arrives before the data), and
+ * 'unavailable' means enabling would change nothing. A stale cached payload has
+ * no field at all, which also yields false.
  */
 function canEnableLiabilities(inst: Institution): boolean {
   return inst.liabilities === 'off' && inst.accounts.some((a) => isOwedType(a.type));
@@ -425,9 +416,9 @@ export default function Dashboard({
   const [disconnecting, setDisconnecting] = useState(false);
   // Manual accounts: `manualDraft` drives the add/edit drawer, and
   // `editingManual` flips the same form between adding and editing.
-  // `manualError` is deliberately separate from the page-level `error` so a
-  // failed save can't linger on the Accounts card after the drawer closes, and
-  // a background refresh failure can't appear to be a save failure.
+  // `manualError` is separate from the page-level `error` so a failed save can't
+  // linger on the Accounts card after the drawer closes, and a background refresh
+  // failure can't look like a save failure.
   const [manualDraft, setManualDraft] = useState<ManualDraft | null>(null);
   const [editingManual, setEditingManual] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
@@ -486,12 +477,12 @@ export default function Dashboard({
       setConnected(data.institutions.length > 0);
 
       // First open with a near-empty chart: backfill estimated history from
-      // transactions in the background (what the big trackers do on link).
+      // transactions in the background.
       //
-      // `backfill_stale` covers the other case: a layer that already exists but
-      // was built by an older algorithm. That one is invisible from here -- the
-      // chart looks full -- so the server has to say so, or an improvement to
-      // the reconstruction would only ever reach people with no history yet.
+      // `backfill_stale` covers a layer that exists but was built by an older
+      // algorithm. That is invisible from here (the chart looks full), so the
+      // server has to say so, or an improvement to the reconstruction would only
+      // reach people with no history yet.
       const hist: HistoryPoint[] = data.history ?? [];
       const thin = hist.filter((h) => !h.estimated).length <= 1 && !hist.some((h) => h.estimated);
       if ((thin || data.backfill_stale) && data.institutions.length > 0 && !backfillTried.current) {
@@ -545,10 +536,9 @@ export default function Dashboard({
   }, []);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
-  // makes every API call answer 401. Without this the dashboard would sit
-  // showing load errors; send it to the login page instead. A layout effect,
-  // so it is in place before any effect (this component's or a child's)
-  // makes the first requests.
+  // makes every API call answer 401; send the dashboard to the login page instead
+  // of showing load errors. A layout effect, so it is in place before any effect
+  // (this component's or a child's) makes the first requests.
   useLayoutEffect(() => {
     const original = window.fetch;
     // Bound: a browser's fetch called without window as `this` throws.
@@ -597,10 +587,9 @@ export default function Dashboard({
     loadNetWorth();
   }, [loadNetWorth]);
 
-  // Everything else loads in parallel with net worth (no waterfall):
-  // transactions feed Activity + insights, budgets/goals feed the Budgets
-  // tab. All are cheap on the server (cached or Redis-only) and harmlessly
-  // empty when nothing is connected yet.
+  // Everything else loads in parallel with net worth (no waterfall): transactions
+  // feed Activity and insights, budgets/goals feed the Budgets tab. All are cheap
+  // on the server (cached or Redis-only) and empty when nothing is connected.
   useEffect(() => {
     loadTransactions();
     budgetsStore.load();
@@ -732,9 +721,9 @@ export default function Dashboard({
 
   /**
    * One manual-account mutation. Every call names a single account, so a stale
-   * page can only ever affect the account it acted on -- it can't delete
-   * accounts it doesn't know about, and it can't revert a balance that a
-   * scheduled push to /api/ingest/balance wrote in the meantime.
+   * page can only affect the account it acted on: it can't delete accounts it
+   * doesn't know about or revert a balance a scheduled push to
+   * /api/ingest/balance wrote meanwhile.
    */
   const mutateManual = useCallback(
     async (method: 'POST' | 'PATCH' | 'DELETE', body: unknown) => {
@@ -753,10 +742,10 @@ export default function Dashboard({
         }
         setManualDraft(null);
         setManualDeleteTarget(null);
-        // A forced fetch is what writes the new balance into today's history
-        // point, same as the disconnect flow. Then recompute estimated history,
-        // which the save just invalidated server-side -- the automatic backfill
-        // only fires when history is thin, so it won't re-run on its own.
+        // A forced fetch writes the new balance into today's history point, as the
+        // disconnect flow does. Then recompute estimated history, which the save
+        // invalidated server-side (the automatic backfill only fires when history
+        // is thin).
         await loadNetWorth(true);
         requestBackfill(() => loadNetWorth());
         return true;
@@ -942,11 +931,10 @@ export default function Dashboard({
     [institutions]
   );
 
-  // Institutions that failed and could NOT be recovered, so the hero is short
-  // by all of them. Deliberately every such case, not just the ones with a
-  // named reason (too old, nothing remembered, ids changed at reauth): these
-  // are MORE wrong than the stale ones, not less, and disclosing the recovered
-  // case while staying silent here would be exactly backwards.
+  // Institutions that failed and could NOT be recovered, so the hero is short by
+  // all of them. Every such case, not just ones with a named reason (too old,
+  // nothing remembered, ids changed at reauth): these are MORE wrong than the
+  // stale ones, and disclosing only the recovered case would be backwards.
   const uncountedInstitutions = useMemo(
     () => institutions.filter((i) => i.error && !i.stale_as_of),
     [institutions]
@@ -960,11 +948,10 @@ export default function Dashboard({
     [institutions]
   );
 
-  // Accounts that answered before and didn't this time, at institutions that
-  // are otherwise fine. Surfaced on the hero for the same reason as the stale
-  // cases: the total is what gets read, and this is a caveat on the total --
-  // it is short by however much those accounts held, and the chart is frozen
-  // until the absence resolves one way or the other.
+  // Accounts that answered before and didn't this time, at institutions that are
+  // otherwise fine. Surfaced on the hero like the stale cases: the total is what
+  // gets read, and this caveat says it is short by what those accounts held, with
+  // the chart frozen until the absence resolves.
   const vanishedCount = useMemo(
     () => institutions.reduce((n, i) => n + (i.unconfirmed_missing ?? 0), 0),
     [institutions]
@@ -993,13 +980,13 @@ export default function Dashboard({
     return { value, pct, days };
   }, [history]);
 
-  // Plaid returns institutions/accounts in no guaranteed order; sort by name
-  // so the Accounts tab renders the same way every load.
+  // Plaid returns institutions/accounts in no guaranteed order; sort by name so
+  // the Accounts tab renders the same every load.
   //
-  // Hidden accounts are dropped here and surface in the Hidden card instead. An
+  // Hidden accounts are dropped here and surface in the Hidden card. An
   // institution is only removed once it has nothing left to show: one whose
   // accounts are ALL hidden goes, but one that simply failed to load keeps its
-  // (already empty) account list so its error and Reconnect button still render.
+  // (empty) account list so its error and Reconnect button still render.
   const sortedInstitutions = useMemo(
     () =>
       [...institutions]
@@ -1034,12 +1021,10 @@ export default function Dashboard({
     [institutions, manageMode]
   );
 
-  // Investment accounts carrying enough uninvested cash to be worth a line on
-  // the Home tab. Built from `institutions` rather than `sortedInstitutions`
-  // because that list is also filtered by manage mode, and an insight has no
-  // business appearing and disappearing with a UI toggle on another tab.
-  // Hidden accounts are dropped here for the same reason they're dropped from
-  // every total: the user has said they don't want to see them.
+  // Investment accounts carrying enough uninvested cash to be worth a Home-tab
+  // line. Built from `institutions`, not `sortedInstitutions`, which manage mode
+  // also filters: an insight shouldn't come and go with a UI toggle on another
+  // tab. Hidden accounts are dropped, as from every total.
   const idleCashAccounts = useMemo(() => {
     const out: IdleCashAccount[] = [];
     for (const inst of institutions) {
@@ -1058,19 +1043,18 @@ export default function Dashboard({
         if (!flaggedAccounts.has(a.account_id)) continue;
         const cash = byAccount[a.account_id];
         out.push({
-          // Carries the id, the institution and the mask because account names
-          // are not distinctive: "Individual" and "Roth IRA" are what
-          // brokerages call them, and two of them would otherwise produce a
-          // duplicate React key and two identical, unactionable lines.
+          // Carries the id, institution and mask because account names aren't
+          // distinctive ("Individual", "Roth IRA"), and two would otherwise
+          // produce a duplicate React key and two identical, unactionable lines.
           account_id: a.account_id,
           name: a.name,
           mask: a.mask,
           institution_name: inst.institution_name,
           cash: cash.cash,
-          // Null where the denominator is degenerate (a margin debit bigger
-          // than the positions), so the insight drops the phrase rather than
-          // claiming "100% of its holdings" of an account that is also holding
-          // a short. The Accounts tab badge suppresses it the same way.
+          // Null where the denominator is degenerate (a margin debit bigger than
+          // the positions), so the insight drops the phrase rather than claiming
+          // "100% of its holdings" for an account also holding a short. The
+          // Accounts tab badge suppresses it the same way.
           share: cash.total > 0 ? cash.share : null,
           currency: a.currency,
         });
@@ -1079,11 +1063,10 @@ export default function Dashboard({
     return out.sort((x, y) => y.cash - x.cash);
   }, [institutions]);
 
-  // Hidden accounts for the Hidden card, built from the STORED set rather than
-  // from whatever resolved this load. An institution that's erroring returns no
-  // accounts, and deriving from the live list alone would make its hidden
-  // accounts silently disappear -- still hidden, still subtracted from history,
-  // but with no Unhide button anywhere.
+  // Hidden accounts for the Hidden card, built from the STORED set, not whatever
+  // resolved this load: an erroring institution returns no accounts, and
+  // deriving from the live list would make its hidden accounts vanish (still
+  // hidden, still subtracted from history, with no Unhide button anywhere).
   const hiddenAccounts = useMemo(() => {
     const live = new Map(
       institutions.flatMap((i) =>
@@ -1097,9 +1080,8 @@ export default function Dashboard({
         const resolved = live.get(account_id);
         if (resolved) return { ...resolved, resolved: true };
         // Hidden, but not in this load: its institution didn't answer, or was
-        // disconnected (a hidden account stays hidden past a disconnect, so
-        // re-linking it doesn't bring it back). Render what we stored so it
-        // can still be unhidden.
+        // disconnected (a hidden account stays hidden past a disconnect). Render
+        // what we stored so it can still be unhidden.
         return {
           account: {
             account_id,
@@ -1139,11 +1121,10 @@ export default function Dashboard({
         // like every other refresh here, so this can't kick off a first-ever
         // Plaid sync from the Accounts tab.
         if (txns !== null) loadTransactions(true);
-        // The estimated history layer doesn't know this account, so it can't
-        // subtract it and would sit high by its balance with a step at the
-        // estimated/real seam. The server cleared the backfill flag; actually
-        // running the recompute is on us, since the automatic one only fires
-        // when history is thin.
+        // The estimated layer doesn't know this account, so it can't subtract it
+        // and would sit high by its balance with a step at the estimated/real
+        // seam. The server cleared the backfill flag; running the recompute is on
+        // us, since the automatic one only fires when history is thin.
         if (data?.recompute) requestBackfill(() => loadNetWorth());
       } catch {
         setError('Could not update hidden accounts.');
@@ -1156,9 +1137,9 @@ export default function Dashboard({
 
   // One currency to label summed account figures (net worth, deltas). Accounts
   // can differ, so use the most common code and flag a genuine mix rather than
-  // implying an FX-converted total.
-  // Hidden accounts excluded: a hidden EUR account must not make the Home tab
-  // announce "Accounts use multiple currencies" with no such account on screen.
+  // implying an FX-converted total. Hidden accounts are excluded: a hidden EUR
+  // account must not make Home announce "Accounts use multiple currencies" with
+  // no such account on screen.
   const allAccounts = useMemo(
     () => institutions.flatMap((i) => i.accounts.filter((a) => !a.hidden)),
     [institutions]
@@ -1173,10 +1154,9 @@ export default function Dashboard({
     return seen.size > 1;
   }, [allAccounts]);
 
-  // Counts what's actually rendering, so hiding an institution's last account
-  // doesn't leave "3 institutions connected" above two cards. When everything
-  // is hidden the count would read "0 institutions connected", which sounds
-  // like nothing is linked rather than like it's all tucked away.
+  // Counts what's rendering, so hiding an institution's last account doesn't
+  // leave "3 institutions connected" above two cards, and a fully hidden set
+  // doesn't read "0 institutions connected" as if nothing were linked.
   const shownInstitutionCount = sortedInstitutions.length;
   const subtitle = loading
     ? 'Loading your accounts…'
@@ -1417,10 +1397,10 @@ export default function Dashboard({
                 {manageMode && admin && <AdminUnusedItems onRemoved={() => loadNetWorth(true)} />}
 
                 {sortedInstitutions.map((inst) => {
-                  // One verdict for the row badge, the per-holding chip and
-                  // the Holdings header, so they can't disagree about the same
-                  // money. `inst` is already filtered here, so a hidden
-                  // brokerage takes its cash with it.
+                  // One verdict for the row badge, the per-holding chip and the
+                  // Holdings header, so they can't disagree about the same money.
+                  // `inst` is already filtered, so a hidden brokerage takes its
+                  // cash with it.
                   const instCash = institutionCash(inst.accounts, inst.holdings);
                   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
                   const instCurrency = dominantCurrency(
@@ -1470,9 +1450,8 @@ export default function Dashboard({
                                   : null;
                               const liabLine = liabilitySummary(a);
                               // Undefined on an account that is cash by design:
-                              // institutionCash drops those, because 100% cash
-                              // in a cash management account is the account
-                              // working and the warning could never be cleared.
+                              // institutionCash drops those, since 100% cash in a
+                              // cash management account is the account working.
                               const cash = instCash.byAccount[a.account_id];
                               return (
                                 <Fragment key={a.account_id}>
@@ -1933,10 +1912,9 @@ export default function Dashboard({
                 goalsError={goalsState.error}
                 goalsSaveError={goalsState.saveError}
                 onSaveGoals={goalsStore.save}
-                // Hidden accounts stay in this list rather than being filtered
-                // out: GoalsCard needs them to tell "you hid this account" from
-                // "this account was disconnected". It excludes them from the
-                // picker itself.
+                // Hidden accounts stay in this list: GoalsCard needs them to tell
+                // "you hid this account" from "this account was disconnected". It
+                // excludes them from the picker itself.
                 accounts={institutions.flatMap((i) =>
                   i.accounts.map((a) => ({
                     account_id: a.account_id,
@@ -2029,9 +2007,8 @@ export default function Dashboard({
                 {isOwedType(shownManualDraft.type) ? 'Amount owed' : 'Current balance'}
                 <input
                   // Held as a string (see ManualDraft) so a leading "-" survives
-                  // being typed. Credit and loan balances are amounts owed, which
-                  // subtract from net worth, so a negative there would
-                  // double-negate into a positive.
+                  // typing. Credit and loan balances are amounts owed, which
+                  // subtract from net worth, so a negative would double-negate.
                   type="number"
                   inputMode="decimal"
                   step="0.01"

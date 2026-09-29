@@ -1,13 +1,12 @@
 // lib/backfill.ts
 //
 // The backward balance walk behind the ESTIMATED history layer: given today's
-// balances and a day-by-day table of flows, it returns each account's balance
-// on every past day, plus the walked share of net worth for the same days.
+// balances and a day-by-day table of flows, it returns each account's balance on
+// every past day, plus the walked share of net worth for the same days.
 //
-// Split out of app/api/backfill/route.ts because it is pure -- no Plaid, no
-// Redis, no clock beyond an injectable `now` -- which is what lets the route
-// stay orchestration and lets this be tested directly. The route still owns
-// fetching, deciding which accounts are walkable, and persisting.
+// Split out of app/api/backfill/route.ts because it is pure (no Plaid, no Redis,
+// no clock beyond an injectable `now`), so it can be tested directly. The route
+// still owns fetching, deciding which accounts are walkable, and persisting.
 
 import { signedContribution } from './balance';
 // Pure classifiers only; nothing here calls Plaid.
@@ -30,25 +29,23 @@ export type ItemInvestments = {
  * Which of an Item's investment accounts can be walked, whether to wait, and
  * which rows to walk.
  *
- * PER ACCOUNT. An account is walked when its own VERIFIED coverage runs from
- * the window's start to at least yesterday (to today when the latest fetch
- * failed: anything after the last verified sync is unknown, and a paycheck
- * posted since would otherwise be missing from a walk that is never redone).
- * One account short of that is held flat on its own; it no longer holds the
- * Item's other accounts flat with it.
+ * PER ACCOUNT. An account is walked when its own VERIFIED coverage runs from the
+ * window's start to at least yesterday (to today when the latest fetch failed:
+ * anything after the last verified sync is unknown, and a paycheck posted since
+ * would be missing from a walk that is never redone). One account short of that
+ * is held flat on its own without holding the Item's others flat.
  *
- * Waits (the caller's retry cap bounds it) only when a retry can help: Plaid
+ * Waits (bounded by the caller's retry cap) only when a retry can help: Plaid
  * extracting or temporarily failing (`pending`), another sync holding the store
  * (`busy`), or a fetch that worked while some account's coverage still falls
- * short, which the next run re-fetches. A failure that won't fix itself
- * (reauth, the product unavailable) doesn't wait: five runs change nothing,
- * and each repeats a billed balance call for every institution.
+ * short. A failure that won't fix itself (reauth, product unavailable) doesn't
+ * wait: five runs change nothing, and each repeats a billed balance call per
+ * institution.
  *
- * Rows marked missing but not yet confirmed are LEFT OUT of the walk. Right
- * after Plaid re-keys a batch, the old copies are still here for a day beside
- * the new ones, and walking both would count every flow twice. Leaving out a
- * row that turns out to be real costs that one flow; they don't hold the walk
- * up either, since confirming takes a day and the cap is a few page loads.
+ * Rows marked missing but not yet confirmed are LEFT OUT of the walk. Right after
+ * Plaid re-keys a batch the old copies sit here for a day beside the new ones,
+ * and walking both would count every flow twice. Leaving out a row that turns
+ * out to be real costs that one flow, and they don't hold the walk up.
  */
 export function investmentReadiness(
   inv: ItemInvestments,
@@ -72,11 +69,10 @@ export function investmentReadiness(
 }
 
 /**
- * Brings an Item's investment store up to date for the backfill and decides
- * what to walk. Takes the sync as a function so the one thing that matters
- * here, asking for freshness from a VERIFIED sync only, can be tested: a run
- * that served an unverified store without fetching again would spend one of
- * the backfill's capped retries and make no progress.
+ * Brings an Item's investment store up to date for the backfill and decides what
+ * to walk. Takes the sync as a function so the one thing that matters, asking
+ * for freshness from a VERIFIED sync only, can be tested: an unverified store
+ * served without fetching again would spend a capped retry and make no progress.
  */
 export async function loadItemInvestments(
   sync: (opts: { freshOnlyIfVerified: boolean }) => Promise<ItemInvestments>,
@@ -88,14 +84,13 @@ export async function loadItemInvestments(
 
 /**
  * Adds one Item's investment transactions to the walk's per-day table, for the
- * accounts being walked as investments, and returns the oldest date it added
- * (or null).
+ * accounts being walked as investments, and returns the oldest date it added (or
+ * null).
  *
- * Resolved over the Item's whole set rather than row by row, because whether a
+ * Resolved over the Item's whole set, not row by row, because whether a
  * contribution trade carries its own money depends on the rows beside it (see
  * countedTrades). Judged alone, a paycheck booked as a single contribution buy
- * reads as an internal trade, and the walk carried every one of them back into
- * the past as if the money had always been there.
+ * reads as an internal trade and gets carried back into the past.
  */
 export function addInvestmentFlows(
   dailyByAccount: Record<string, Record<string, number>>,
@@ -163,45 +158,32 @@ export type WalkResult = {
  * Walk backward one day at a time: un-applying day D's flows yields balances at
  * the end of day D-1.
  *
- * Two rules are worth knowing before changing anything here.
- *
- * DIRECTION. `balances[id] += walkType[id] === 'credit' ? -amount : amount` is
- * the same shape as signedContribution and the OPPOSITE concept -- a card
- * purchase RAISES what you owe -- so the two must not be merged. See the
- * warning in lib/balance.ts. signedContribution is used only for the net-worth
- * term, which is the question it actually answers.
+ * DIRECTION. `balances[id] += walkType[id] === 'credit' ? -amount : amount` has
+ * the same shape as signedContribution and the OPPOSITE meaning (a card purchase
+ * RAISES what you owe), so the two must not be merged (see lib/balance.ts).
+ * signedContribution is used only for the net-worth term.
  *
  * THE FLOOR. An investment account whose flows would take it below zero is held
- * at zero from that day backward instead. A brokerage account cannot hold less
- * than nothing, and the situation is common with large arrivals: an IRA opened
- * by a $60k rollover that is worth $58k today reconstructs to -$2k the day
- * before it existed, because the market moved and market movement is not a
- * transaction.
+ * at zero from that day backward. A brokerage account can't hold less than
+ * nothing, and it is common with large arrivals: an IRA opened by a $60k
+ * rollover worth $58k today reconstructs to -$2k the day before it existed,
+ * because market movement is not a transaction.
  *
- * This replaced dropping the whole account back to the flat term. Flat meant
- * held at TODAY's balance for the entire year, which is the exact error the
- * walk exists to remove -- it draws the rollover as if the money had always
- * been there, so the event itself is invisible on the account's chart -- and it
- * was triggered by precisely the transfers most worth seeing. Flooring keeps
- * the step, bounds the error to the reconstructed pre-arrival balance, and
- * never states a balance known to be impossible. Once floored an account takes
- * no earlier flows: every reconstruction further back rests on a premise the
- * data has already contradicted.
+ * This replaced dropping the account back to the flat term, which held TODAY's
+ * balance for the whole year (the very error the walk removes): the rollover
+ * looked as if the money had always been there, and the event was invisible on
+ * the account's chart. Flooring keeps the step, bounds the error to the
+ * reconstructed pre-arrival balance, and never states an impossible balance. Once
+ * floored an account takes no earlier flows, since the data has already
+ * contradicted the premise. The cost: flow data that overstates inflow (an
+ * internal cash sweep reported as an external deposit) now pulls the account
+ * toward zero, where flat was merely uninformative. `floored` in the response
+ * makes a systematically bad flow stream visible.
  *
- * What the floor gives up is the old fallback's one virtue: flow data that
- * overstates inflow (a broker reporting an internal cash sweep as an external
- * deposit, say) now pulls the account toward zero for the span before it,
- * where holding it flat was merely uninformative. The trade is deliberate --
- * flat was wrong in the common case and this is wrong in the rare one -- and
- * `floored` in the response is what makes a systematically bad flow stream
- * visible rather than silent.
- *
- * The NET-WORTH line moves with it, deliberately. A floored account contributes
- * zero to the walked total before its floor date instead of today's balance, so
- * money arriving from an institution the user hasn't linked now shows as a step
- * there too. That is what the walk already did for every arrival it trusted --
- * the flat fallback was the inconsistency -- and where both legs are linked the
- * sending account's matching drop cancels it out.
+ * The NET-WORTH line moves with it, deliberately: a floored account contributes
+ * zero to the walked total before its floor date, so money arriving from an
+ * unlinked institution shows as a step there too, as every trusted arrival
+ * already did. Where both legs are linked the sending account's drop cancels it.
  */
 export function reconstruct(input: WalkInput): WalkResult {
   const { walkType, dailyByAccount, oldestTxn, lookbackDays } = input;
@@ -209,22 +191,19 @@ export function reconstruct(input: WalkInput): WalkResult {
   const balances = { ...input.balances };
   const floored = new Set<string>();
 
-  // Investment flows can reach back further than cash ones -- a brokerage that
-  // reports a year against a bank that reports three months. The TOTAL series
-  // still stops at the cash horizon, because walking past it would hold every
-  // cash balance frozen and publish a flatline as if it were history. An
-  // investment account's OWN series has real data out there, so it keeps going:
-  // that extra span is where a rollover from six months ago lives.
+  // Investment flows can reach back further than cash ones (a brokerage that
+  // reports a year, a bank three months). The TOTAL series still stops at the
+  // cash horizon, since walking past it would freeze every cash balance and
+  // publish a flatline as history. An investment account's OWN series has real
+  // data out there, so it keeps going (where a rollover from six months ago lives).
   const invHorizon =
     input.oldestInvTxn && input.oldestInvTxn < oldestTxn ? input.oldestInvTxn : oldestTxn;
 
-  // The earliest date each account has a flow on. Past the cash horizon this is
-  // what bounds the extension per account, because `oldestInvTxn` is a single
-  // number across every Item: without it, a brokerage opened two months ago
-  // would be drawn as a flat line for the ten months before it existed, on the
-  // strength of some other account's longer history. An account is only drawn
-  // where its own data reaches, and one day either side of that is the most
-  // that can be said.
+  // The earliest date each account has a flow on. Past the cash horizon this
+  // bounds the extension per account, because `oldestInvTxn` is one number across
+  // every Item: without it a brokerage opened two months ago would be drawn flat
+  // for the ten months before it existed. One day either side of an account's own
+  // data is the most that can be said.
   const firstFlow: Record<string, string> = {};
   for (const [date, day] of Object.entries(dailyByAccount)) {
     for (const id of Object.keys(day)) {
@@ -248,10 +227,9 @@ export function reconstruct(input: WalkInput): WalkResult {
   for (let back = 1; back <= lookbackDays; back++) {
     const dayTxns = dailyByAccount[isoDaysAgo(back - 1, now)] ?? {};
     for (const [id, amount] of Object.entries(dayTxns)) {
-      // An id the caller isn't walking. Unreachable through the route, which
-      // filters both flow streams by membership, but `balances[id] += amount`
-      // on a missing key yields NaN and poisons every later point, so it is
-      // cheaper to refuse than to debug.
+      // An id the caller isn't walking. Unreachable through the route, but
+      // `balances[id] += amount` on a missing key yields NaN and poisons every
+      // later point, so refuse.
       if (!(id in balances) || floored.has(id)) continue;
       const next = balances[id] + (walkType[id] === 'credit' ? -amount : amount);
       if (walkType[id] === 'investment' && next < 0) {
@@ -269,17 +247,14 @@ export function reconstruct(input: WalkInput): WalkResult {
       totalPoints.push({ date, walked: walkedTotal() });
       continue;
     }
-    // Past the cash horizon: only the investment accounts still have data, so
-    // only they are recorded, and only back to where their own flows start.
-    // Everything left out simply has no point for these dates, which reads on a
-    // chart as history that hasn't been reconstructed rather than as a balance
-    // that didn't move.
+    // Past the cash horizon: only investment accounts still have data, so only
+    // they are recorded, back to where their own flows start. Everything else has
+    // no point for these dates, which reads as history not yet reconstructed
+    // rather than a balance that didn't move.
     //
-    // The day BEFORE the first flow is kept deliberately: it is the only point
-    // that shows what the account was worth before that flow, which for an
-    // account opened by a $60k rollover is the whole story. Nothing earlier is
-    // reconstructable -- with no flows left to un-apply, every earlier day would
-    // just repeat it.
+    // The day BEFORE the first flow is kept: it is the only point showing what the
+    // account was worth before that flow (for a $60k rollover, the whole story).
+    // Nothing earlier is reconstructable, since every earlier day would repeat it.
     const investOnly: Record<string, number> = {};
     for (const [id, b] of Object.entries(balances)) {
       if (walkType[id] !== 'investment') continue;

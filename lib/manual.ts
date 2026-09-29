@@ -4,19 +4,17 @@
 // unions, HSAs, 401k recordkeepers, foreign banks, crypto, real estate). You
 // type the balance; everything downstream treats it like a Plaid account.
 //
-// Stored as a Redis hash keyed by account_id -- one encrypted field per
-// account, the same shape as `plaid:items` in lib/storage.ts and for the same
-// reason: the ingest endpoint (app/api/ingest/balance) lets an external script
-// write on a schedule, concurrently with edits in the app. A single-blob
-// read-modify-write (the lib/goals.ts shape) would silently drop one of them.
+// Stored as a Redis hash keyed by account_id, one encrypted field per account,
+// like `plaid:items` in lib/storage.ts and for the same reason: the ingest
+// endpoint (app/api/ingest/balance) lets an external script write on a schedule,
+// concurrently with edits in the app, and a single-blob read-modify-write (the
+// lib/goals.ts shape) would silently drop one of them.
 //
-// READ FAILURES MUST THROW. This is the one place where the codebase's usual
-// "swallow the error and return empty" habit is actively dangerous: manual
-// balances feed net worth, and a net worth that's silently short by the whole
-// manual total gets written into the REAL history layer (lib/history.ts),
-// which nothing ever rewrites for a past date. A transient Redis blip would
-// permanently corrupt that day's point. Callers depend on the throw to mark
-// the read as failed instead -- see computeNetWorth() in lib/networth.ts.
+// READ FAILURES MUST THROW. Here the usual "swallow the error and return empty"
+// habit is dangerous: manual balances feed net worth, and a total silently short
+// by the whole manual sum gets written into the REAL history layer
+// (lib/history.ts), which nothing rewrites for a past date. Callers rely on the
+// throw to mark the read as failed (see computeNetWorth() in lib/networth.ts).
 
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
@@ -66,14 +64,11 @@ export function isManualId(id: string): boolean {
 /**
  * Decrypts and validates one stored record.
  *
- * The shape check is not paranoia. A cast alone (`as ManualAccount`) would let
- * a record with `balance: null` through, and computeNetWorth() skips null
- * balances silently -- so a single drifted record would understate net worth
- * with no error raised, and that wrong total gets written to the real history
- * layer for the day. A `balance` stored as a *string* is worse still: `0 +
- * "500"` concatenates, poisoning the running total for every account. Both are
- * exactly the silent shortfall this module exists to prevent, so they throw
- * like a decrypt failure does.
+ * The shape check matters: a bare cast would let a record with `balance: null`
+ * through, computeNetWorth() skips null balances silently, and one drifted
+ * record would understate net worth into the real history layer. A string
+ * `balance` is worse (`0 + "500"` concatenates and poisons the running total).
+ * Both throw, like a decrypt failure.
  */
 function parseStoredAccount(id: string, plaintext: string): ManualAccount {
   const raw = JSON.parse(plaintext) as Partial<ManualAccount>;
@@ -100,10 +95,9 @@ function parseStoredAccount(id: string, plaintext: string): ManualAccount {
 }
 
 /**
- * Every manual account. Throws if Redis is unreachable, or if ANY field fails
- * to decrypt, parse, or validate -- a partial list is indistinguishable from a
- * shorter one, and silently dropping an account understates net worth. See the
- * file header for why that matters more here than elsewhere.
+ * Every manual account. Throws if Redis is unreachable or ANY field fails to
+ * decrypt, parse or validate: a partial list is indistinguishable from a shorter
+ * one, and dropping an account understates net worth (see the file header).
  */
 export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   // Deliberately uncaught: a Redis error propagates to the caller.
@@ -144,10 +138,9 @@ export async function removeManualAccount(ctx: Ctx, account_id: string): Promise
 }
 
 /**
- * Updates just the balance, leaving every other field alone. Used by the
- * ingest endpoint so an automated push can't accidentally rewrite the name or
- * type. Returns false if the account doesn't exist (the caller reports that
- * rather than silently succeeding).
+ * Updates just the balance, leaving every other field alone, so an automated push
+ * (the ingest endpoint) can't rewrite the name or type. Returns false if the
+ * account doesn't exist, for the caller to report.
  */
 export async function setManualBalance(ctx: Ctx, account_id: string, balance: number): Promise<boolean> {
   const existing = await getManualAccount(ctx, account_id);
@@ -186,10 +179,9 @@ export type ManualInstitution = {
 };
 
 /**
- * Groups manual accounts into synthetic institutions so the Accounts tab can
- * render them with the same card markup as Plaid institutions. `holdings` is
- * always present (never undefined) because Dashboard dereferences
- * `inst.holdings.length` unguarded.
+ * Groups manual accounts into synthetic institutions so the Accounts tab renders
+ * them with the same card markup as Plaid institutions. `holdings` is always
+ * present because Dashboard dereferences `inst.holdings.length` unguarded.
  */
 export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
   const byInstitution = new Map<string, ManualInstitution>();
@@ -219,11 +211,10 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       account_id: a.account_id,
       name: a.name,
       official_name: null,
-      // Fields a Plaid account carries that a typed one has no equivalent for.
-      // Explicitly null rather than absent so the synthetic account is the same
-      // shape as a real one: `available` is pending-hold specific, `mask` is the
-      // last 4 of a real account number, and `limit` drives the credit
-      // utilization meter, which needs a real credit line to mean anything.
+      // Fields a Plaid account carries that a typed one has no equivalent for,
+      // explicitly null so the synthetic account has the same shape as a real one.
+      // `limit` drives the credit utilization meter, which needs a real credit
+      // line to mean anything.
       mask: null,
       available: null,
       limit: null,

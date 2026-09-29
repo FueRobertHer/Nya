@@ -35,18 +35,17 @@ export const maxDuration = 120;
 
 // Linking an account's history across a reconnect (lib/links.ts).
 //
-// GET lists what to offer (suggestions with evidence, and balance-only history
-// the user can assign), every earlier account that can be linked by hand
-// (`manual`), the links already made with how many categories each carried
-// across, and any saved link that can't be read (`broken`), so the user can
-// remove it. POST links or dismisses, DELETE unlinks. Everything reads stored
-// state only: opening the Accounts tab must not fan out to every
-// institution's Plaid endpoints.
+// GET lists what to offer (suggestions with evidence, balance-only history the
+// user can assign), every earlier account that can be linked by hand (`manual`),
+// the links already made with how many categories each carried across, and any
+// saved link that can't be read (`broken`) so the user can remove it. POST links
+// or dismisses, DELETE unlinks. Everything reads stored state only: opening the
+// Accounts tab must not fan out to every institution's Plaid endpoints.
 //
 // A POST is honoured only for a pair GET would offer right now (or list for
-// linking by hand), recomputed here from this container's own data, so a
-// client can't link or dismiss arbitrary ids. With #53 the container comes
-// from the session, never the request body.
+// linking by hand), recomputed here from this container's own data, so a client
+// can't link or dismiss arbitrary ids. The container comes from the session,
+// never the request body (#53).
 
 const MAX_ID = 100;
 const id = (v: unknown) => (typeof v === 'string' && v.length > 0 && v.length <= MAX_ID ? v : null);
@@ -176,10 +175,10 @@ async function linkPair(ctx: Ctx, old: string, to: string) {
   const suggestion = offer.suggestions.find((s) => s.old === old && s.to === to);
   const unclaimed = offer.unclaimed.find((u) => u.old === old) ?? manual.find((m) => m.old === old);
   // Recorded on the link: when the earlier id last reported (the order its
-  // history is joined in) and what kind of account it was, so a hidden
-  // account's earlier id is subtracted with its own sign. An id known only
-  // from balances takes the target's kind: the user said it is the same
-  // account, and the preview is where a wrong pairing would show.
+  // history is joined in) and what kind of account it was, so a hidden account's
+  // earlier id is subtracted with its own sign. An id known only from balances
+  // takes the target's kind: the user said it is the same account, and the
+  // preview is where a wrong pairing would show.
   const old_type = inputs.directory[old]?.type ?? inputs.directory[to]?.type ?? null;
   // Which provider each side came from: one today, recorded so a link
   // between two aggregators' ids needs no change to what is stored.

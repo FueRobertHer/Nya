@@ -1,26 +1,24 @@
 // lib/storage.ts
 //
-// Stores connected Plaid items (one per linked institution) in Upstash
-// Redis (Vercel KV's successor via the Vercel Marketplace), as a Redis
-// hash keyed by item_id. Access tokens are always stored encrypted -- see
-// lib/crypto.ts. This file never handles a raw access token; callers
-// encrypt/decrypt at the call site.
+// Stores connected Plaid items (one per linked institution) in Upstash Redis
+// (Vercel KV's successor via the Vercel Marketplace) as a hash keyed by item_id.
+// Access tokens are always stored encrypted (lib/crypto.ts); this file never
+// handles a raw one, and callers encrypt/decrypt at the call site.
 //
-// Uses HSET/HDEL on individual fields (not a single read-modify-write JSON
-// blob) so that two concurrent link flows can't clobber each other's writes.
+// Uses HSET/HDEL on individual fields, not a single read-modify-write JSON blob,
+// so two concurrent link flows can't clobber each other's writes.
 
 import { Redis } from '@upstash/redis';
 import type { Ctx } from './containers';
 
 // The @upstash/redis client speaks HTTP, so it needs the *REST* URL
 // (https://<host>), not a rediss:// connection string. Vercel's Upstash
-// Marketplace integration injects several env vars, and on some projects it
-// populates UPSTASH_REDIS_REST_URL with a rediss://…:6379 connection string
-// instead of the REST URL — which makes the client throw "invalid URL". So we
-// resolve the URL defensively: prefer any candidate that's already https://,
-// and if we only have a rediss:///redis:// one, derive the REST URL from its
-// host (Upstash serves REST on https://<same-host>). The REST token is the
-// same value as the connection-string password, so pairing them works.
+// integration sometimes populates UPSTASH_REDIS_REST_URL with a
+// rediss://...:6379 connection string, which makes the client throw "invalid
+// URL". So the URL is resolved defensively: prefer any candidate already
+// https://, else derive the REST URL from a rediss:// or redis:// host (Upstash
+// serves REST on https://<same-host>). The REST token is the same value as the
+// connection-string password, so pairing them works.
 function resolveRedisUrl(): string | undefined {
   const candidates = [
     process.env.UPSTASH_REDIS_REST_URL,
@@ -41,11 +39,10 @@ function resolveRedisUrl(): string | undefined {
   return undefined;
 }
 
-// Lazily constructed so importing this module (e.g. during `next build`)
-// doesn't require the env vars to be set. Supports both the env var names
-// the Upstash Marketplace integration injects (UPSTASH_REDIS_REST_*) and
-// the legacy names kept on stores auto-migrated from Vercel KV
-// (KV_REST_API_*).
+// Lazily constructed so importing this module (e.g. during `next build`) doesn't
+// require the env vars. Supports both the Upstash Marketplace names
+// (UPSTASH_REDIS_REST_*) and the legacy names on stores auto-migrated from Vercel
+// KV (KV_REST_API_*).
 function credentials(): { url: string; token: string } {
   const url = resolveRedisUrl();
   const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
@@ -64,13 +61,10 @@ export function redis(): Redis {
 }
 
 /**
- * A client that returns every value exactly as stored.
- *
- * The default client JSON-parses anything that looks like JSON on the way out,
- * so a stored "1" comes back as the number 1 and a stored '{"a":1}' as an
- * object. The app never notices, because it wrote those values through the
- * same client. A byte-exact copy of the database does notice: writing the
- * parsed form back would not reproduce what was there. Only lib/export.ts
+ * A client that returns every value exactly as stored. The default client
+ * JSON-parses anything that looks like JSON on the way out (a stored "1" comes
+ * back as the number 1), which the app never notices since it wrote through the
+ * same client, but a byte-exact copy of the database does. Only lib/export.ts
  * should need this.
  */
 let _rawRedis: Redis | undefined;
@@ -79,20 +73,18 @@ export function rawRedis(): Redis {
   return _rawRedis;
 }
 
-// All environments share one Upstash database, isolated by key namespace:
-// every Redis key is prefixed with the environment name (production:…,
-// preview:…, dev:…). Vercel sets VERCEL_ENV; local `next dev` falls through
-// to 'dev'. REDIS_PREFIX overrides both, e.g. to point a branch at another
-// namespace deliberately.
+// All environments share one Upstash database, isolated by key namespace: every
+// Redis key is prefixed with the environment name (production:..., preview:...,
+// dev:...). Vercel sets VERCEL_ENV; local `next dev` falls through to 'dev'.
+// REDIS_PREFIX overrides both, e.g. to point a branch at another namespace.
 //
-// The prefix must be a single plain segment: letters, digits, '-' and '_'.
-// A colon would nest one environment inside another ('production:restore-test'
-// lives under 'production:'), so anything that walks one environment's keys,
-// like lib/export.ts, would silently sweep up the other's too, and a restore
-// would then write them back as the outer environment's own data. Glob
-// characters would make a key-pattern match more than the prefix. Refused at
-// startup rather than tolerated: a misconfigured prefix should stop the app
-// loudly, not blend two databases together.
+// The prefix must be a single plain segment: letters, digits, '-' and '_'. A
+// colon would nest one environment inside another ('production:restore-test'
+// lives under 'production:'), so anything that walks one environment's keys, like
+// lib/export.ts, would sweep up the other's too and a restore would write them
+// back as the outer environment's data. Glob characters would make a key pattern
+// match more than the prefix. Refused at startup rather than tolerated: a bad
+// prefix should stop the app loudly, not blend two databases.
 const ENV_PREFIX = validPrefix(process.env.REDIS_PREFIX ?? process.env.VERCEL_ENV ?? 'dev');
 
 function validPrefix(prefix: string): string {
@@ -131,25 +123,19 @@ export function containerPrefix(ctx: Ctx): string {
 }
 
 /**
- * A key that belongs to the whole environment, never to one container.
- *
- * Everything else lives inside a container (#53). Only these are
- * environment-wide, and nothing else should be:
- *   - the encryption key store (lib/crypto.ts): a data key id must mean the
- *     same key everywhere in an environment, or a value could not be
- *     decrypted without knowing which container's store to look in;
- *   - the container registry (lib/containers.ts), which says what containers
- *     exist, so cannot live inside one;
- *   - the login rate limiter (app/api/login), which runs before anyone is
- *     known;
+ * A key that belongs to the whole environment, never to one container. Only
+ * these are environment-wide, and nothing else should be:
+ *   - the encryption key store (lib/crypto.ts): a data key id must mean the same
+ *     key everywhere in an environment;
+ *   - the container registry (lib/containers.ts), which can't live inside one;
+ *   - the login rate limiter (app/api/login), which runs before anyone is known;
  *   - the cutoff for sessions from before sessions named a container
- *     (lib/sessions.ts), which by definition belong to none;
- *   - the nightly backup's last outcome (lib/backup.ts), about the whole
- *     environment;
- *   - which signed-in account owns which container (lib/owners.ts), which
- *     decides the container, so cannot live inside one;
- *   - who shares which accounts with whom (lib/sharing.ts), which is
- *     between containers.
+ *     (lib/sessions.ts);
+ *   - the nightly backup's last outcome (lib/backup.ts);
+ *   - which signed-in account owns which container (lib/owners.ts), which decides
+ *     the container;
+ *   - who shares which accounts with whom (lib/sharing.ts), which is between
+ *     containers.
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;

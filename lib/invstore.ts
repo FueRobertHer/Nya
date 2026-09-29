@@ -4,45 +4,45 @@
 // year-to-date figures and the backfill walk can reach past Plaid's window and
 // keep working through an outage.
 //
-// WHY THIS IS NOT lib/transactions.ts AGAIN. The cash store rests on
-// /transactions/sync, which hands over a cursor and explicit added, modified and
-// removed lists. /investments/transactions/get is a date-range query with none
-// of that: no cursor, no removal signal, offset pagination, and account ids that
-// rotate on reauth. Every rule below exists because the obvious approach loses
-// rows nothing can re-serve. They were found by two reviews of this design, in
-// this order of danger:
+// Not lib/transactions.ts again: the cash store rests on /transactions/sync,
+// which hands over a cursor and explicit added/modified/removed lists.
+// /investments/transactions/get is a date-range query with none of that: no
+// cursor, no removal signal, offset pagination, and account ids that rotate on
+// reauth. Every rule below exists because the obvious approach loses rows
+// nothing can re-serve, in this order of danger:
 //
-// 1. A FAILURE NEVER MAKES ANYTHING WORSE. A Plaid error returns no rows for
-//    the ranges it cut off, and reading that as "everything was deleted" is
-//    the obvious mistake. Only ranges that were answered AND verified judge or
-//    cover anything; what was answered before a failure is kept.
-// 2. NOTHING IS EVER DELETED. A row is only EXCLUDED, and only once two
-//    verified syncs at least a day apart both covered its account and date and
-//    neither returned it. It comes back the moment a sync returns it again.
-//    Absence on one fetch proves nothing: an institution can omit an account,
-//    return a short page, or re-key rows. Excluding instead of deleting means
-//    even a wrong call costs a hidden row, never a lost one.
+// 1. A FAILURE NEVER MAKES ANYTHING WORSE. A Plaid error returns no rows for the
+//    ranges it cut off; reading that as "everything was deleted" is the obvious
+//    mistake. Only ranges that were answered AND verified judge or cover
+//    anything; what was answered before a failure is kept.
+// 2. NOTHING IS EVER DELETED. A row is only EXCLUDED, and only once two verified
+//    syncs at least a day apart both covered its account and date and neither
+//    returned it. It comes back the moment a sync returns it again. Absence on
+//    one fetch proves nothing (an institution can omit an account, return a
+//    short page, or re-key rows), so even a wrong call costs a hidden row, never
+//    a lost one.
 // 3. ONLY A VERIFIED ANSWER COUNTS AS EVIDENCE, range by range. Offset
 //    pagination skips a row whenever the list shifts between pages (a pending
-//    trade settling does it). So a range is split by date until each request
-//    fits in one page; a range is verified only if its answer held exactly the
-//    total it reported, with no duplicate ids. Anything else is upserted, which
-//    is always safe, and proves nothing about its own dates only.
+//    trade settling does it), so a range is split by date until each request
+//    fits in one page, and is verified only if its answer held exactly the total
+//    it reported, with no duplicate ids. Anything else is upserted, which is
+//    always safe, and proves nothing about its own dates.
 // 4. COVERAGE IS PER ACCOUNT AND ONLY FROM VERIFIED FETCHES. The store claims to
 //    hold every row of an account for [from, through] and nothing more, so a
 //    reader can tell a quiet month from an unfetched one.
 // 5. ONE SYNC PER ITEM AT A TIME, and a disconnected Item stays disconnected: a
-//    lock around read-fetch-write, and a check after writing that the Item
-//    still exists.
+//    lock around read-fetch-write, and a check after writing that the Item still
+//    exists.
 //
-// Account-id rotation is NOT remapped here. Rows stay under the old id: kept,
-// exported, never excluded (an account absent from a response is never judged),
-// just not shown on the new account. Remapping can be added later from this
-// data; doing it now risks merging two accounts for good, since masks repeat.
+// Account-id rotation is NOT remapped here. Rows stay under the old id (kept,
+// exported, never excluded, since an account absent from a response is never
+// judged), just not shown on the new account. Remapping could be added later
+// from this data; doing it now risks merging two accounts for good, since masks
+// repeat.
 //
-// Deleted with the Item on disconnect (clearInvestmentStore). A full relink
-// makes a new Item and a new, empty store, so history kept past Plaid's window
-// is lost for that institution, as with the cash store.
+// Deleted with the Item on disconnect (clearInvestmentStore). A full relink makes
+// a new Item and a new, empty store, so history kept past Plaid's window is lost
+// for that institution, as with the cash store.
 
 import type { AccountBase, InvestmentTransaction, Security } from 'plaid';
 import { plaidClient } from './plaid';
@@ -202,10 +202,10 @@ async function writeInvStore(ctx: Ctx, item_id: string, state: InvStoreState): P
       console.warn(`invstore: ${item_id} blob is ${encoded.length} chars, past 60% of the ceiling`);
     }
     await redis().set(stateKey(ctx, item_id), encoded);
-    // A disconnect that landed while this sync was running would otherwise be
-    // undone here, leaving an orphaned blob of financial data that every export
-    // then carries. Checked AFTER writing, so the window is closed rather than
-    // narrowed: whichever finishes second, the key ends up gone.
+    // A disconnect that landed while this sync ran would otherwise be undone
+    // here, leaving an orphaned blob that every export carries. Checked AFTER
+    // writing so the window is closed, not narrowed: whichever finishes second,
+    // the key ends up gone.
     if (!(await getItems(ctx)).some((i) => i.item_id === item_id)) {
       await redis().del(stateKey(ctx, item_id));
       return 'item-gone';
@@ -238,7 +238,6 @@ export async function storedInvestmentAccountIds(ctx: Ctx, item_id: string, stri
   }
 }
 
-// ---------------------------------------------------------------------------
 // Fetching
 
 /**
@@ -405,7 +404,6 @@ async function fetchWindow(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Merging
 
 /** Fold one fetch into a copy of the state. Only called for a fetch with no note. */
@@ -436,12 +434,12 @@ export function mergeFetch(
   }
 
   const returned = new Set(fetch.rows.map((r) => r.investment_transaction_id));
-  // Ids named by a cancel row are tombstoned for good, not just excluded now:
-  // cancel rows aren't stored, so a later partial fetch that returns the
-  // original without its cancel would otherwise serve the cancelled trade again.
+  // Ids named by a cancel row are tombstoned for good: cancel rows aren't stored,
+  // so a later partial fetch returning the original without its cancel would
+  // otherwise serve the cancelled trade again.
   state.cancelled ??= {};
-  // A cancel row tombstones the id it names and its own: Plaid can also cancel
-  // a trade by re-issuing it under the same id typed `cancel`, and
+  // A cancel row tombstones the id it names and its own: Plaid can also cancel a
+  // trade by re-issuing it under the same id typed `cancel`, and
   // cancel_transaction_id is a legacy field that is usually null.
   for (const r of fetch.rows) {
     if (String(r.type).toLowerCase() !== 'cancel') continue;
@@ -572,7 +570,6 @@ export function nextWindow(state: InvStoreState, now: number): { from: string; t
   return { from: from < floor ? floor : from, to: today };
 }
 
-// ---------------------------------------------------------------------------
 // The sync callers use
 
 export type InvSync = {

@@ -4,12 +4,12 @@
 //
 //   REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production --confirm-production
 //
-// Without --run it only reports what it would do. With --run it copies,
-// each write checked and recorded with it in one step. Run it again right before
+// Without --run it only reports what it would do. With --run it copies, each
+// write checked and recorded with it in one step. Run it again right before
 // deploying the release that reads containers, to pick up anything written
-// since; it refuses, writing nothing, if that release has already written a
-// key it would overwrite. See lib/move.ts, and "Moving the data into
-// containers" in the README for the whole procedure.
+// since; it refuses, writing nothing, if that release has already written a key
+// it would overwrite. See lib/move.ts, and docs/operations.md for the whole
+// procedure.
 //
 // The Upstash credentials come from .env.local (`vercel env pull .env.local`),
 // which Bun loads on its own. The container is this deployment's, by the rule
@@ -28,7 +28,7 @@
 //                          so no run is ever made again (only once a report
 //                          shows nothing left to do)
 //   --resolve <name>       settle a conflict reconciled by hand: keep what the
-//                          container holds now (see the README)
+//                          container holds now (see docs/operations.md)
 
 import { rawRedis } from '@/lib/storage';
 import { deploymentContainer } from '@/lib/sessions';
@@ -68,7 +68,7 @@ export async function main(argv: string[], client: MoveClient): Promise<void> {
   const env = checkMoveTarget(args.target, args.confirmProduction);
   const dep = await deploymentContainer();
   if (dep.kind !== 'container') {
-    throw new MoveRefused(dep.kind === 'none' ? 'No container exists yet. Create one first (see "Containers" in the README).' : dep.reason);
+    throw new MoveRefused(dep.kind === 'none' ? 'No container exists yet. Create one first (see "Containers" in docs/operations.md).' : dep.reason);
   }
   if ((args.retire ? 1 : 0) + (args.run ? 1 : 0) + (args.resolve ? 1 : 0) > 1) {
     throw new MoveRefused('--run, --retire and --resolve each go alone.');

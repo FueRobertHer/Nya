@@ -15,16 +15,16 @@ import { readAccountCache, writeAccountCache } from '@/lib/cache';
 // the holder has put in this year and the per-day flows behind the chart's
 // money-added line.
 //
-// Reads the Item's stored investment transactions (lib/invstore.ts), which it
-// brings up to date first. So the list and the line reach past Plaid's window,
-// and keep showing what was stored when the institution is down.
+// Reads the Item's stored investment transactions (lib/invstore.ts), bringing
+// them up to date first, so the list and the line reach past Plaid's window and
+// keep showing what was stored when the institution is down.
 //
-// Takes item_id from the caller rather than resolving it from account_id. There
-// is no reverse index: getItemAccountIds reads the transaction store, which an
-// investments-only Item never writes to, and the disconnect route works around
-// that by unioning with the net-worth cache -- which is empty whenever it has
-// expired or any institution is erroring. The Accounts tab already renders each
-// account inside its institution, so it just passes the id it has.
+// Takes item_id from the caller rather than resolving it from account_id: there
+// is no reverse index (getItemAccountIds reads the transaction store, which an
+// investments-only Item never writes, and the disconnect route's workaround
+// unions with the net-worth cache, empty whenever it has expired or any
+// institution is erroring). The Accounts tab renders each account inside its
+// institution, so it passes the id it has.
 
 const RECENT_LIMIT = 25;
 
@@ -38,18 +38,15 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing id or item_id' }, { status: 400 });
     }
 
-    // Resolved before the cache read, not after: the cache is keyed on
-    // account_id alone, so checking the item afterwards would make an unknown
-    // item_id 404 on a cold cache and quietly succeed on a warm one. Costs one
-    // Redis read on a cache hit and keeps the endpoint's behaviour the same
-    // either way.
+    // Resolved before the cache read: the cache is keyed on account_id alone, so
+    // checking the item afterwards would 404 an unknown item_id on a cold cache
+    // and quietly succeed on a warm one. Costs one Redis read on a hit.
     const item = (await getItems(ctx)).find((i) => i.item_id === item_id);
     if (!item) return NextResponse.json({ error: 'Unknown item' }, { status: 404 });
 
-    // Keyed on the pair, not account_id alone, so a mismatched item_id can't
-    // cache an empty answer under the real account's field.
-    // (The cache key carries a version, so payloads with an older meaning are
-    // not reachable.)
+    // Keyed on the pair, not account_id alone, so a mismatched item_id can't cache
+    // an empty answer under the real account's field. (The cache key carries a
+    // version, so payloads with an older meaning are not reachable.)
     const cacheField = `${item_id}:${account_id}`;
     const cached = await readAccountCache(ctx, cacheField);
     if (cached) return NextResponse.json({ ...cached, from_cache: true });
@@ -68,23 +65,22 @@ export async function GET(req: Request) {
     const sum = (rows: typeof thisYear) =>
       rows.reduce((total, t) => total + contributedAmount(t, counted), 0);
 
-    // Reported as two figures rather than one. A rollover is retirement money
-    // that already existed moving between accounts, so folding it into
-    // contributions makes a $60k 401k transfer read as a year of saving --
-    // while dropping it entirely would leave a large arrival in the activity
-    // list that no line above it accounts for.
+    // Reported as two figures: a rollover is retirement money that already existed
+    // moving between accounts, so folding it into contributions makes a $60k 401k
+    // transfer read as a year of saving, while dropping it would leave a large
+    // arrival in the activity list that no line accounts for.
     const ytd_contributions = sum(thisYear.filter((t) => isContribution(t, counted)));
     const ytd_rollovers = sum(thisYear.filter((t) => isIncomingRollover(t, counted)));
 
     // The money-added line, only across dates the store has VERIFIED for this
-    // account, and it ends where they end. A contribution after `through` isn't
-    // known yet (an outage, or the last sync couldn't be verified), so drawing
-    // past it would book that contribution as growth.
+    // account, ending where they end: a contribution after `through` isn't known
+    // yet (an outage, or an unverified last sync), so drawing past it would book it
+    // as growth.
     //
-    // It starts at the later of the verified start and the account's oldest
-    // row: an institution can keep less history than was asked for, and every
-    // contribution before its oldest row would otherwise read as growth. No
-    // rows at all proves nothing about how far the feed reaches, so no line.
+    // It starts at the later of the verified start and the account's oldest row:
+    // an institution can keep less history than was asked for, and every
+    // contribution before its oldest row would read as growth. No rows at all
+    // proves nothing about how far the feed reaches, so no line.
     const cov = sync.coverage[account_id];
     const oldest = mine.length ? mine[mine.length - 1].date : null;
     const flowsKnown = !!cov && !!oldest;
@@ -115,11 +111,11 @@ export async function GET(req: Request) {
       note,
     };
 
-    // Not cached after a Plaid failure (an outage should be re-checked on the
-    // next load), nor while another sync held the store: that answer is
-    // whatever was stored before it, which on a first link is nothing at all.
-    // A storage-only problem IS cached: the rows were just fetched live, and
-    // without it an unwritable store would re-run the full fetch every load.
+    // Not cached after a Plaid failure (re-check next load), nor while another
+    // sync held the store (that answer is whatever was stored, which on a first
+    // link is nothing). A storage-only problem IS cached: the rows were just
+    // fetched live, and otherwise an unwritable store would re-run the full fetch
+    // every load.
     if (!sync.note && !sync.busy) await writeAccountCache(ctx, cacheField, payload);
 
     return NextResponse.json({ ...payload, from_cache: false });

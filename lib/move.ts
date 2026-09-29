@@ -1,49 +1,47 @@
 // lib/move.ts
 //
-// Moves the stored data from its keys before containers ("<env>:budgets") to
-// its keys inside a container ("<env>:c:<id>:budgets"), once, at the cutover
-// (#53). Run with `bun run move-data` (scripts/move-data.ts); see "Moving the
-// data into containers" in the README for the order of steps.
+// Moves the stored data from its keys before containers ("<env>:budgets") to its
+// keys inside a container ("<env>:c:<id>:budgets"), once, at the cutover (#53).
+// Run with `bun run move-data` (scripts/move-data.ts); see docs/operations.md
+// for the order of steps.
 //
-// A COPY, never a move: the old keys stay exactly as they were, so rolling
-// back is redeploying the previous release, which reads only them. They are
-// deleted weeks later, separately, after a verified export.
+// A COPY, never a move: the old keys stay as they were, so rolling back is
+// redeploying the previous release, which reads only them. They are deleted
+// weeks later, separately, after a verified export.
 //
 // Driven by an explicit list (MOVED_KEYS, MOVED_PREFIXES), not a wildcard: a
-// wildcard would also match the copies, and a re-run would copy them again
-// into "c:<id>:c:<id>:...". The list is checked against every key the code
-// builds inside a container (test/move.test.ts), so a key cannot be forgotten.
+// wildcard would also match the copies, and a re-run would copy them again into
+// "c:<id>:c:<id>:...". test/move.test.ts checks the list against every key the
+// code builds inside a container, so a key cannot be forgotten.
 //
-// Byte for byte: values are read and written raw (no JSON parsing), strings
-// with SET and hashes rebuilt under a temporary key and swapped in with one
-// RENAME, so a reader never sees half a hash.
+// Byte for byte: values are read and written raw (no JSON parsing), strings with
+// SET and hashes rebuilt under a temporary key and swapped in with one RENAME, so
+// a reader never sees half a hash.
 //
 // Safe to run again, and meant to be: once to copy, once more right before
 // deploying to pick up anything written since, and after deploying to prove
-// nothing was left behind. What was copied is recorded (a digest per key, in
-// the container at "move:copied"), so each key can be judged by which side
-// changed since it was copied:
+// nothing was left behind. What was copied is recorded (a digest per key, in the
+// container at "move:copied"), so each key is judged by which side changed since:
 //   - neither: up to date;
-//   - only the old key: copied again ("refresh"), or, if it was deleted,
-//     the container's copy is deleted too (only with --propagate-deletes,
-//     and never many at once: that looks like the old keys being retired);
+//   - only the old key: copied again ("refresh"), or, if it was deleted, the
+//     container's copy is deleted too (only with --propagate-deletes, and never
+//     many at once: that looks like the old keys being retired);
 //   - only the container key (the new release wrote or deleted it): kept;
-//   - both: a CONFLICT, a write on each side that one of them would lose.
-//     The whole run is refused, nothing written, and the report names the
-//     keys to reconcile by hand before the old keys are ever deleted.
+//   - both: a CONFLICT, a write on each side that one of them would lose. The
+//     whole run is refused, nothing written, and the report names the keys to
+//     reconcile by hand before the old keys are ever deleted.
 // A container key that exists with no record, and differs, is a conflict too.
 //
-// Every write is a compare-and-set, done in one step with its record (Lua):
-// the container key is written, replaced or deleted only if it still holds
-// what the plan saw, and the record changes with it. So a write the new
-// release makes during a run is never overwritten (the run stops instead),
-// and a run that dies leaves every key either copied and recorded or not
-// touched at all.
+// Every write is a compare-and-set, done in one step with its record (Lua): the
+// container key is written, replaced or deleted only if it still holds what the
+// plan saw, and the record changes with it. So a write the new release makes
+// during a run is never overwritten (the run stops instead), and a run that dies
+// leaves every key either copied and recorded or untouched.
 //
-// Once the old keys are to be deleted, --retire marks the container: every
-// later run is refused, so a run can never mistake the missing old keys for
-// deletions to copy across. One run at a time (a lock in the container).
-// Without --run it only reports.
+// Once the old keys are to be deleted, --retire marks the container: every later
+// run is refused, so a run can never mistake the missing old keys for deletions
+// to copy across. One run at a time (a lock in the container). Without --run it
+// only reports.
 
 import { createHash } from 'node:crypto';
 import type { Ctx } from './containers';
@@ -476,13 +474,13 @@ async function plannedMove(client: MoveClient, run: Run, opts: MoveOptions): Pro
     refusals.push(`None of ${EXPECTED.join(', ')} exists under "${prefix}". Check .env.local and REDIS_PREFIX point at the environment you mean; pass --allow-empty if it really holds no data.`);
   }
   if (report.deleted > MAX_DELETES) {
-    refusals.push(`${report.deleted} old keys were deleted since they were copied; more than ${MAX_DELETES} at once looks like the old keys being retired, not the old release deleting a few, so nothing is deleted from the container this way. If they should go, delete them by hand (see the README): ${entries.filter((e) => e.action === 'delete').map((e) => e.key).join(', ')}.`);
+    refusals.push(`${report.deleted} old keys were deleted since they were copied; more than ${MAX_DELETES} at once looks like the old keys being retired, not the old release deleting a few, so nothing is deleted from the container this way. If they should go, delete them by hand (see docs/operations.md): ${entries.filter((e) => e.action === 'delete').map((e) => e.key).join(', ')}.`);
   } else if (report.deleted > 0 && !opts.propagateDeletes) {
     refusals.push(`${report.deleted} old key(s) were deleted since they were copied (${entries.filter((e) => e.action === 'delete').map((e) => e.key).join(', ')}). Check they should be, then pass --propagate-deletes to delete the container's copies too.`);
   }
   if (conflicts.length > 0) {
     refusals.push(
-      `${conflicts.length} key(s) changed on both sides since they were copied (${conflicts.map((c) => c.key).join(', ')}): copying either way would lose a write. Reconcile them by hand (see the README).`
+      `${conflicts.length} key(s) changed on both sides since they were copied (${conflicts.map((c) => c.key).join(', ')}): copying either way would lose a write. Reconcile them by hand (see docs/operations.md).`
     );
   }
   if (!opts.run) {
