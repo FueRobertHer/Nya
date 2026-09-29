@@ -11,18 +11,16 @@ import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock
 // outlives the lock it holds. A literal, as route segment config requires.
 export const maxDuration = 120;
 
-// Hides or unhides ONE account per request.
+// Hides or unhides ONE account per request, for the same reason as
+// app/api/manual-accounts: the client's account list can be stale (a tab left
+// open, a second device, the localStorage snapshot painted before the network
+// load resolves), and a whole-list write from that state would silently re-show
+// or re-hide accounts it didn't know about.
 //
-// One at a time, deliberately, for the same reason app/api/manual-accounts
-// works that way: the client's account list can be stale (a tab left open, a
-// second device, the localStorage snapshot painted before the network load
-// resolves), and a whole-list write from that state would silently re-show or
-// re-hide accounts it didn't know about.
-//
-// Note this does NOT clear the backfill flag. Hiding changes no balance, and
-// the estimated history layer is corrected by subtraction at read time
-// (lib/history.ts) rather than by regeneration, so a toggle costs zero Plaid
-// calls. Clearing the flag would force a full transaction re-pull for nothing.
+// This does NOT clear the backfill flag. Hiding changes no balance, and the
+// estimated layer is corrected by subtraction at read time (lib/history.ts), so a
+// toggle costs zero Plaid calls; clearing the flag would force a full
+// transaction re-pull for nothing.
 
 export async function POST(req: Request) {
   try {
@@ -58,12 +56,11 @@ async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
       return null;
     };
 
-    // Try the cached payload first, since this is a lookup of one string and
-    // a live computeNetWorth() fans out to every institution's balance
-    // endpoint. But fall through to the live call when the account ISN'T
-    // there: the cache lives for 15 minutes, so an account linked or created
-    // in that window is missing from it, and treating that as "no such
-    // account" would make a freshly added account impossible to hide.
+    // Try the cached payload first: it's a lookup of one string, where a live
+    // computeNetWorth() fans out to every institution. Fall through to the live
+    // call when the account ISN'T there, since the cache lives 15 minutes and an
+    // account linked or created in that window would otherwise be impossible to
+    // hide.
     const cached = await readCache<{ institutions: any[] }>(ctx, CacheKey.NetWorth);
     type = findType(cached?.institutions ?? []);
 
@@ -71,19 +68,16 @@ async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
     if (!type) type = findType(live);
 
     // Last resort: an account whose institution is currently FAILING. The
-    // Accounts tab now renders those rows from recovered balances
-    // (lib/last-known.ts), so Hide is reachable on them, but neither source
-    // above can answer -- the cache isn't written while anything is erroring
-    // and the live fetch is the call that just failed.
+    // Accounts tab renders those rows from recovered balances (lib/last-known.ts),
+    // so Hide is reachable on them, but neither source above can answer (the cache
+    // isn't written while anything is erroring, and the live fetch just failed).
     //
-    // Gated on the owning Item still being linked AND currently erroring,
-    // which is narrower than it looks. Without the gate this would also
-    // answer for accounts that no longer exist: a card closed at the bank, or
-    // an Item disconnected on another device, whose row is still on screen
-    // because the Dashboard paints from localStorage before the network load
-    // lands. Hiding one of those would write an entry that getHistory
-    // subtracts from every past date, for an account the user never saw
-    // hidden while it was live.
+    // Gated on the owning Item still being linked AND currently erroring.
+    // Without the gate this would also answer for accounts that no longer exist (a
+    // card closed at the bank, or an Item disconnected on another device whose row
+    // is still on screen from localStorage), and hiding one would write an entry
+    // getHistory subtracts from every past date, for an account the user never
+    // saw hidden while it was live.
     if (!type) {
       const remembered = await findRememberedAccount(ctx, account_id);
       const owner = remembered && live.find((i) => i.item_id === remembered.item_id);
@@ -107,14 +101,14 @@ async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
       // the account's earlier ids with it.
       await setAccountHidden(ctx, account_id, type ?? '', true);
     } else {
-      // Unhiding clears EVERY id the account has had. An earlier id left hidden
+      // Unhiding clears EVERY id the account has had: an earlier id left hidden
       // would keep hiding it through the link, and Unhide would do nothing.
-      // Unlinked, this is just the one id. A failed read of the links fails
-      // the request rather than leaving the account half-hidden.
-      // Through ACTIVE links only, the same ones the display follows: a
-      // paused link joins two live accounts that are each hidden on their own.
-      // Strict: an unreadable live set would make every paused link look
-      // active, and this write would unhide the other account for good.
+      // Unlinked, this is just the one id. A failed read of the links fails the
+      // request rather than leaving the account half-hidden. Through ACTIVE links
+      // only, the ones the display follows: a paused link joins two live accounts
+      // that are each hidden on their own. Strict: an unreadable live set would
+      // make every paused link look active, and this write would unhide the other
+      // account for good.
       const active = effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true }));
       const stored = await getHiddenAccounts(ctx);
       const ids = sameAccountIds(account_id, active);
@@ -129,15 +123,15 @@ async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
       for (const id of ids) await setAccountHidden(ctx, id, '', false);
     }
 
-    // The estimated layer can only subtract an account it knows about, either
-    // via a per-date balance or via the flat term. If it knows neither -- the
-    // account was linked after the last backfill, or the layer predates the
-    // flat key existing -- force a recompute, or the estimated region would sit
-    // high by this account's balance and put a step at the estimated/real seam.
+    // The estimated layer can only subtract an account it knows about, via a
+    // per-date balance or the flat term. If it knows neither (linked after the
+    // last backfill, or the layer predates the flat key), force a recompute, or
+    // the estimated region would sit high by this account's balance with a step at
+    // the estimated/real seam.
     //
-    // Checked by membership, not by type: a MANUAL depository account looks
-    // like cash but is in the flat term, because backfill's cashType loop only
-    // covers Plaid accounts.
+    // Checked by membership, not type: a MANUAL depository account looks like cash
+    // but is in the flat term, because backfill's cashType loop covers only Plaid
+    // accounts.
     let recompute = false;
     if (hidden && !(await estimatedLayerCovers(ctx, account_id))) {
       await clearBackfillDone(ctx);
@@ -150,9 +144,9 @@ async function toggle(ctx: Awaited<ReturnType<typeof dataCtx>>, req: Request) {
     await clearCaches(ctx);
 
     // The caller has to act on this: clearing the flag only makes a recompute
-    // POSSIBLE, it doesn't trigger one. The client's automatic backfill fires
-    // only when history is "thin", which is never true for anyone who already
-    // has an estimated layer -- i.e. exactly the users this branch is for.
+    // POSSIBLE. The client's automatic backfill fires only when history is "thin",
+    // which is never true for anyone who already has an estimated layer, i.e.
+    // exactly the users this branch is for.
     return NextResponse.json({ account_id, hidden, recompute });
   });
 }

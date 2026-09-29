@@ -128,7 +128,6 @@ export class MasterKeyError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Raw key handling
 
 export function decodeKeyMaterial(material: string, name: string): Uint8Array {
@@ -206,7 +205,6 @@ async function open(key: CryptoKey, keyId: string, body: string, aad?: Uint8Arra
   }
 }
 
-// ---------------------------------------------------------------------------
 // k0: the legacy key, straight from the environment
 
 // Imported once per process: reads decrypt hundreds of values per request. A
@@ -227,7 +225,6 @@ function legacyKey(): Promise<CryptoKey> {
   return _legacyKey;
 }
 
-// ---------------------------------------------------------------------------
 // The master key
 
 /**
@@ -281,7 +278,6 @@ function masterKey(): Promise<MasterKey> {
   return key;
 }
 
-// ---------------------------------------------------------------------------
 // Data keys
 
 /** How a data key is stored in the crypto:keys hash. */
@@ -378,25 +374,22 @@ async function dataKey(keyId: string): Promise<CryptoKey> {
   return load;
 }
 
-// ---------------------------------------------------------------------------
 // Master rotation
 //
 // Three states, recorded in "crypto:rotation":
 //   none      no rotation in progress.
 //   prepared  every data key also has a lock for the new master, proven to
 //             open. Written only after a COMPLETE, verified prepare, so a
-//             prepare that fails partway leaves no record, and nothing is ever
-//             removed on the strength of a partial one.
-//   finished  after the new master has been running for ROTATION_GRACE_MS, its
-//             deployment removes the old locks and the record. The grace
-//             period is the rollback window: until then, rolling back to the
-//             old deployment still works.
+//             failed one leaves no record and nothing is removed on the
+//             strength of a partial one.
+//   finished  after the new master has run for ROTATION_GRACE_MS, its
+//             deployment removes the old locks and the record. Until then,
+//             rolling back to the old deployment still works.
 //
 // Changing only the master does NOT protect against someone who already holds
-// a copy of the database (or a backup) together with the old master: they can
-// open the data keys in that copy, and the data keys do not change. Responding
-// to that needs new data keys and re-encryption, which come with the
-// re-encryption pass.
+// a copy of the database (or a backup) together with the old master: the data
+// keys in that copy do not change. Responding to that needs new data keys and
+// re-encryption (see lib/reencrypt.ts).
 
 /** How long the old master's locks are kept after the new master is running. */
 export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -474,15 +467,13 @@ async function withRotationLock<T>(fn: () => Promise<T>, onBusy?: () => Promise<
 
 /**
  * Step 1 of a master rotation, run by the deployment that has the CURRENT
- * master: give every data key a lock for the new master as well, and record
- * the rotation only once all of them are done and proven to open.
+ * master: give every data key a lock for the new master as well, and record the
+ * rotation only once all are done and proven to open.
  *
- * Every data key must open with the current master first. Each key is left
- * with exactly two locks, current and new; a lock for any other master is
- * dropped, which is how a new request replaces an unfinished rotation (say,
- * to a key that was mistyped or not saved). Interrupted, it leaves every key
- * still openable by the current master and no record, so nothing is ever
- * finished from it; running it again completes it.
+ * Each key ends with exactly two locks, current and new; a lock for any other
+ * master is dropped, which is how a new request replaces an unfinished rotation.
+ * If interrupted, every key is still openable by the current master and there is
+ * no record, so nothing is ever finished from it; running it again completes it.
  */
 export async function prepareMasterRotation(
   newMaterial: string,
@@ -628,7 +619,6 @@ function keyFor(keyId: string): Promise<CryptoKey> {
   return keyId === LEGACY_KEY_ID ? legacyKey() : dataKey(keyId);
 }
 
-// ---------------------------------------------------------------------------
 // Formats
 
 export type CiphertextFormat = { version: 1 | 2; keyId: string; flags: string };
@@ -674,7 +664,6 @@ function v2Aad(header: string, context: string | undefined): Uint8Array {
   return utf8(context === undefined ? header : `${header}\0${context}`);
 }
 
-// ---------------------------------------------------------------------------
 // The active data key: the one new writes use
 
 /** How long a process trusts the active key id it last read, and the data key
@@ -916,7 +905,6 @@ function noteFallback(err: unknown, now: number): void {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Public API
 
 /**

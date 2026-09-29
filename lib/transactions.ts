@@ -2,36 +2,20 @@
 //
 // Per-Item transaction store backed by Plaid's cursor-based /transactions/sync.
 //
-// Each Item's sync cursor and its transactions are persisted in Redis
-// (encrypted, like every other financial payload — see lib/crypto.ts). Every
-// call resumes from the stored cursor and applies only the deltas Plaid
-// returns, so after the one-time initial pull we transfer next to nothing.
+// Each Item's sync cursor and transactions are persisted in Redis (encrypted,
+// see lib/crypto.ts). Every call resumes from the stored cursor and applies only
+// the deltas Plaid returns. Reconciliation is idempotent (added/modified upsert
+// by transaction_id, removed deletes by id), so a replayed page or a
+// mid-pagination restart can't corrupt the set.
 //
-// This replaces /transactions/get offset pagination, which could silently
-// *skip* rows when the underlying data shifted between page requests (a large
-// recurring transaction like rent was a classic casualty). Sync pages are
-// internally consistent, and the reconciliation is idempotent — added/modified
-// upsert by transaction_id, removed deletes by id — so a replayed page (after
-// a failed persist) or a mid-pagination restart can't corrupt the set.
-//
-// We retain history indefinitely rather than to a fixed age. /transactions/sync
-// only reports `removed` when a bank deletes a transaction, never when one
-// simply ages out of the bank's window, so once we've stored a row it stays —
-// which is the point: it lets the store outlive short-history institutions
-// (e.g. a card that only exposes 90 days to Plaid) and accumulate a long trend
-// the bank alone can't give us. The only bound is a *size* guard: the blob is
-// gzip-compressed at rest, and if one would still exceed Upstash's request-size
-// ceiling, writeState REFUSES to write it rather than making it fit. At personal
-// volume the compressed blob stays far under that for many years, so in practice
-// this never fires.
-//
-// It used to trim the oldest rows instead, on the reasoning that the deltas are
-// idempotent: if Plaid later modifies a trimmed row we re-add it, and a removal
-// of one is a no-op. That argument is sound, and it covers exactly the rows
-// Plaid will serve again. It does not cover the long tail past an institution's
-// window — the data this store exists to hold and that nothing can re-serve. So
-// trimming oldest-first dropped precisely the irreplaceable rows, and did it
-// silently. Refusing is recoverable; that was not.
+// History is retained indefinitely, not to a fixed age. Sync only reports
+// `removed` when a bank deletes a transaction, never when one ages out of the
+// bank's window, so a stored row stays. That lets the store outlive
+// short-history institutions and accumulate a long trend the bank can't give.
+// The only bound is a size guard: the blob is gzip-compressed at rest, and if it
+// would still exceed Upstash's request-size ceiling, writeState REFUSES to write
+// it rather than trimming. Trimming oldest-first would drop precisely the rows
+// no bank will re-serve, silently; refusing is recoverable.
 
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
@@ -44,12 +28,10 @@ import type { Ctx } from './containers';
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
 export const TXN_SCHEMA_VERSION = 2;
 
-// Display shape sent to the client. `name` here is the display name
-// (merchant_name || raw name); the full-fidelity data lives in StoredTxn. We
-// project a widened-but-still-flat set of scalars (no nested objects) so the
-// Activity views can offer subcategory, channel, location, time, the real
-// merchant behind a processor, and a "what is this charge?" detail panel
-// without shipping the whole StoredTxn to the browser.
+// Display shape sent to the client: a flat set of scalars projected from
+// StoredTxn (`name` is merchant_name || raw name), so the Activity views get
+// subcategory, channel, location, time and the real merchant behind a
+// processor without shipping the whole StoredTxn.
 export type Txn = {
   transaction_id: string;
   date: string; // YYYY-MM-DD
@@ -79,11 +61,10 @@ export type Txn = {
   payment_reference: string | null; // payment_meta reference number, for "what is this charge?"
 };
 
-// Full-fidelity persisted form. We capture nearly everything Plaid returns per
-// transaction rather than a display subset: adding a field later would cost a
-// full re-sync (see TXN_SCHEMA_VERSION), and the blob is gzip-compressed at rest
-// where this repetitive data compresses heavily, so the space cost is small.
-// Read paths derive whatever narrower shape they need (e.g. the display Txn).
+// Full-fidelity persisted form: nearly everything Plaid returns per transaction.
+// Adding a field later would cost a full re-sync (see TXN_SCHEMA_VERSION), and
+// the gzip-compressed blob makes the space cost small. Read paths derive
+// narrower shapes (e.g. the display Txn).
 export type StoredTxn = {
   transaction_id: string;
   pending_transaction_id: string | null; // pending row → its later posted row
@@ -126,8 +107,7 @@ export type StoredTxn = {
   institution_name: string;
 };
 
-// Per-account metadata, captured from each sync's `accounts[]` (we previously
-// kept only the display name). Enables balance/net-worth and account-list views.
+// Per-account metadata captured from each sync's `accounts[]`.
 export type StoredAccount = {
   name: string;
   official_name: string | null;
@@ -152,18 +132,15 @@ type ItemState = {
 
 // Trailing window callers display / reconstruct by default.
 export const LOOKBACK_DAYS = 365;
-// Runaway guard for a single call: 50 * 500 = 25k updates. The initial pull of
-// a very large Item can exceed this; we persist progress and finish on the
-// next call (see the partial-history note).
+// Runaway guard for one call: 50 * 500 = 25k updates. A very large Item's
+// initial pull can exceed it; progress is persisted and finishes on the next call.
 const MAX_PAGES = 50;
 const MAX_MUTATION_RETRIES = 3;
 
 // Stable grouping key for vendor-level features (renames applied in
-// /api/transactions). Prefers Plaid's merchant entity id — unique per merchant
-// and stable across institutions — so a rename hits every transaction from that
-// merchant. Falls back to institution + merchant/display name when Plaid gives
-// no entity id (older rows, or merchants it can't resolve), which scopes the
-// rename to that institution to avoid colliding same-named merchants elsewhere.
+// /api/transactions). Prefers Plaid's merchant entity id (unique per merchant,
+// stable across institutions). Falls back to institution + merchant/display name
+// when there is none, which scopes the rename to that institution.
 export function vendorKey(t: {
   merchant_entity_id: string | null;
   merchant_name: string | null;
@@ -177,26 +154,22 @@ export function vendorKey(t: {
 
 /**
  * What identifies one real-world transaction across a re-link, when its
- * transaction_id doesn't survive: the account (as it is known now, following
- * links), the posting date, the amount in cents and the bank's own descriptor
- * (Plaid's raw `name`), normalized. The raw descriptor rather than the merchant
- * Plaid enriched it to: a fresh pull under a new Item re-runs the enrichment,
- * which can name the merchant differently or not at all, while the bank's text
- * for a posted transaction doesn't change. The account already scopes it, so
- * the institution isn't part of it.
+ * transaction_id doesn't survive: the account (as known now, following links),
+ * posting date, amount in cents and the bank's own descriptor (Plaid's raw
+ * `name`), normalized. Raw descriptor rather than the enriched merchant, since a
+ * fresh pull re-runs enrichment and may name the merchant differently while the
+ * bank's text for a posted transaction doesn't change.
  *
- * Two genuinely identical rows (same descriptor, amount and day) share a key;
- * lib/overrides.ts treats a key it can't attribute to one category as
- * ambiguous and carries nothing for it.
+ * Two genuinely identical rows share a key; lib/overrides.ts treats a key it
+ * can't attribute to one category as ambiguous and carries nothing for it.
  */
 export function contentKey(account_id: string, t: { date: string; amount: number; name: string }): string {
   const descriptor = t.name.toLowerCase().replace(/\s+/g, ' ').trim();
   return `${account_id}|${t.date}|${Math.round(t.amount * 100)}|${descriptor}`;
 }
 
-// PFC `detailed` humanized and stripped of its `primary` prefix, so
-// "FOOD_AND_DRINK_COFFEE" surfaces as just "coffee" alongside the primary
-// category rather than repeating it.
+// PFC `detailed` humanized and stripped of its `primary` prefix
+// ("FOOD_AND_DRINK_COFFEE" becomes "coffee").
 function humanizeSubcategory(pfc: StoredTxn['personal_finance_category']): string | null {
   const detailed = pfc?.detailed;
   if (!detailed) return null;
@@ -206,9 +179,8 @@ function humanizeSubcategory(pfc: StoredTxn['personal_finance_category']): strin
   return s || null;
 }
 
-// The real merchant behind a payment processor: Plaid resolves counterparties
-// with a `type`, so the underlying store (`merchant`) and the processor
-// (`payment_app`, e.g. PayPal/Square) can be separated from the raw descriptor.
+// The real merchant behind a payment processor, split from the raw descriptor
+// via Plaid's counterparty `type` (`merchant` vs `payment_app`).
 function resolveCounterparty(t: StoredTxn): string | null {
   const merchant = t.counterparties.find((c) => c.type === 'merchant');
   const name = merchant?.name ?? null;
@@ -223,11 +195,10 @@ function resolveProcessor(t: StoredTxn): string | null {
   return app?.name ?? null;
 }
 
-// Ids of pending rows that a later posted row supersedes: when a pending charge
-// posts, Plaid emits a new row carrying the pending one's id in
-// pending_transaction_id (and usually removes the pending original, but the two
-// can briefly coexist). Suppressing the pending original prevents the same
-// purchase from being counted twice.
+// Ids of pending rows that a later posted row supersedes: a posted row carries
+// the pending one's id in pending_transaction_id (and usually removes the
+// original, but the two can briefly coexist). Suppressing the pending original
+// avoids counting a purchase twice.
 function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
   const superseded = new Set<string>();
   for (const t of Object.values(txns)) {
@@ -247,17 +218,13 @@ function stateKey(ctx: Ctx, item_id: string): string {
 }
 
 // Set when an Item's blob is too large to persist (see writeState). Its own key
-// rather than a field inside the blob, because the blob is exactly the thing we
-// could not write.
+// because the blob is what we could not write.
 //
-// It exists to break a loop, not to record a fact. Refusing to persist means the
-// cursor never advances, so without this every dashboard load would re-pull the
-// Item's entire history from Plaid, forever, at real cost — a far worse failure
-// than the one refusing was meant to avoid.
+// It breaks a loop: refusing to persist means the cursor never advances, so
+// without this every dashboard load would re-pull the Item's whole history.
 //
-// Note for anything that later walks the keyspace (export, backup, migration):
-// this is deliberately NOT under the `txns:` prefix, since it is metadata about
-// a blob rather than a blob. `txns:*` does not match it; a looser `txns*` would.
+// Deliberately NOT under the `txns:` prefix: it is metadata about a blob, so a
+// walk of `txns:*` (export, backup, migration) must not match it.
 function blockedKey(ctx: Ctx, item_id: string): string {
   return kc(ctx, `txns-blocked:${item_id}`);
 }
@@ -386,11 +353,9 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
 }
 
 /**
- * The stored blob exists but could not be turned back into state.
- *
- * Thrown rather than swallowed because the caller's only other option is to
- * carry on with an empty state, and the next writeState would then persist that
- * emptiness over the real thing. See readState.
+ * The stored blob exists but could not be turned back into state. Thrown rather
+ * than swallowed: carrying on with an empty state would have the next writeState
+ * persist that emptiness over the real thing. See readState.
  */
 class StateUnreadableError extends Error {
   constructor(
@@ -408,24 +373,22 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
   try {
     blob = await redis().get<string>(stateKey(ctx, item_id));
   } catch (err) {
-    // A Redis blip is NOT an empty store. Treating it as one would re-pull from
-    // scratch and then persist the bank's short window over years of retained
-    // rows — the read failing is transient, the overwrite is not.
+    // A Redis blip is NOT an empty store: treating it as one would re-pull and
+    // persist the bank's short window over years of retained rows.
     throw new StateUnreadableError(item_id, 'read', err);
   }
 
-  // Genuinely absent: a new Item, or one whose state was deliberately cleared.
-  // This is the ONLY case that legitimately starts from empty.
+  // Genuinely absent (a new Item, or one deliberately cleared): the ONLY case
+  // that starts from empty.
   if (!blob) return emptyState();
 
   try {
     const parsed = await decodeState(blob);
     const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
     if (version >= TXN_SCHEMA_VERSION) {
-      // Current or newer. A newer blob (e.g. read by an older deploy after a
-      // rollback) is a superset, so pass its rows/accounts through untouched and
-      // preserve its version — never downgrade it, and never feed it to the
-      // legacy migrator, which would null the fields it doesn't know about.
+      // Current or newer. A newer blob (read by an older deploy after a
+      // rollback) is a superset: pass it through and never downgrade it or feed
+      // it to the legacy migrator, which would null fields it doesn't know.
       return {
         schema_version: version,
         cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
@@ -433,24 +396,17 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
         txns: parsed.txns ?? {},
       };
     }
-    // Strictly older / unversioned blob: upgrade in place, keeping every row and
-    // the cursor. Re-pulling would only recover what each bank still exposes to
-    // Plaid, dropping the long-tail history this store exists to retain (see
-    // file header). Newly-captured fields stay null on old rows until Plaid
-    // next `modified`s them.
+    // Older or unversioned: upgrade in place, keeping every row and the cursor.
+    // Re-pulling would recover only what each bank still exposes, dropping the
+    // long-tail history this store retains. New fields stay null on old rows
+    // until Plaid next `modified`s them.
     return migrateLegacyState(parsed as unknown as LegacyItemState);
   } catch (err) {
-    // Rotated key, corrupted value, a cipher format this build predates.
-    //
-    // This used to return emptyState() and "start clean and re-sync". That was
-    // silent permanent loss: the empty state goes straight to writeState, which
-    // persists it over the stored blob, and the re-pull only recovers what the
-    // bank still exposes. Everything older — the long tail this module exists
-    // to hold — was gone, with nothing on screen to say so.
-    //
-    // It matters more than it looks. Introducing a second ciphertext format
-    // makes every old deploy's decrypt throw here, so the rollback path of an
-    // encryption change ran straight through this catch.
+    // Rotated key, corrupted value, or a cipher format this build predates.
+    // Never return emptyState() here: it would go straight to writeState and
+    // overwrite the stored blob, losing everything older than the bank's window
+    // with nothing on screen to say so. This includes the rollback path of an
+    // encryption change, where an older deploy can't decrypt newer values.
     throw new StateUnreadableError(item_id, 'decode', err);
   }
 }
@@ -465,19 +421,14 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
 
     // OVER THE CEILING: refuse, and do not touch `state`.
     //
-    // This used to trim the oldest rows until the blob fit. Two things made
-    // that the wrong trade. It mutated the caller's object in place, and
-    // syncItem returns that same object — so a trim silently shortened the
-    // RESPONSE too, and lib/backfill.ts's walk (via readItemTransactions)
-    // would reconstruct balances from a set with a hole in it, producing a
-    // wrong history rather than a short one and persisting it over the real
-    // estimated layer. And the rows it dropped were the oldest, which are
-    // exactly the ones no bank will re-serve — the long tail this module
-    // exists to retain (see the file header).
+    // Trimming the oldest rows to fit would mutate the caller's object, and
+    // syncItem returns that same object, so the RESPONSE would be shortened too
+    // and lib/backfill.ts would reconstruct balances from a set with a hole in
+    // it, persisting a wrong history over the real estimated layer. The dropped
+    // rows are also the ones no bank will re-serve.
     //
-    // Refusing is recoverable: the cursor does not advance, the deltas are
-    // idempotent, and the stored blob stays whatever it last was. Dropped
-    // rows are not recoverable at all.
+    // Refusing is recoverable: the cursor doesn't advance, deltas are
+    // idempotent, and the stored blob stays as it was.
     if (encoded.length > maxBlobChars()) {
       console.error(
         `transactions: refusing to persist ${item_id} in container ${ctx.container}: blob is ${encoded.length} chars, over the ${maxBlobChars()} ceiling (${Object.keys(state.txns).length} txns). Nothing was written or dropped.`
@@ -487,7 +438,7 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
         await redis().set(blockedKey(ctx, item_id), JSON.stringify(marker));
       } catch {
         // Best effort. Without the marker the next sync re-pulls and refuses
-        // again — wasteful, but still correct.
+        // again: wasteful, still correct.
       }
       return { persisted: false, reason: 'oversize' };
     }
@@ -503,18 +454,16 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
     await redis().del(unsavedKey(ctx, item_id)).catch(() => {});
     return { persisted: true };
   } catch (err) {
-    // Persist failures are non-fatal for the current request (the in-memory
-    // state is still returned), and the deltas are idempotent so the next call
-    // resumes safely. But a *persistent* failure silently degrades into
-    // re-pulling the item's full history from Plaid on every sync, so log it
-    // rather than swallow it.
+    // Non-fatal for this request (the in-memory state is still returned) and
+    // the deltas are idempotent. Logged because a persistent failure silently
+    // becomes a full re-pull of the Item's history on every sync.
     console.warn(
       `transactions: failed to persist sync state for ${item_id} (${Object.keys(state.txns).length} txns); will re-sync next call`,
       err
     );
-    // The rows about to be shown aren't stored: say so, for the one reader
-    // that must know (lib/overrides.ts pruneOrphanOverrides, which would
-    // otherwise take a category set on one of them for an orphan).
+    // The rows about to be shown aren't stored. Says so for the one reader that
+    // must know (lib/overrides.ts pruneOrphanOverrides, which would otherwise
+    // take a category set on one of them for an orphan).
     await redis().set(unsavedKey(ctx, item_id), new Date().toISOString(), { ex: 7 * 86_400 }).catch(() => {});
     return { persisted: false, reason: 'error' };
   }
@@ -561,10 +510,8 @@ export async function storedAccountIds(ctx: Ctx, item_id: string): Promise<Set<s
 
 /**
  * Delete an Item's stored transactions. Call when the Item is disconnected.
- *
- * Clears the oversize marker too: reconnecting is what the note on that
- * condition tells the user to do, so it has to be the thing that resets it. A
- * marker left behind would block the freshly-relinked Item forever.
+ * Clears the oversize marker too: reconnecting is the fix that marker's note
+ * recommends, so a marker left behind would block the relinked Item forever.
  */
 export async function clearItemTransactions(ctx: Ctx, item_id: string): Promise<void> {
   try {
@@ -664,16 +611,14 @@ async function syncItem(ctx: Ctx,
     if (raw) {
       const marker = parseBlocked(raw);
 
-      // Raising the ceiling is the legitimate fix for this — a bigger Upstash
-      // plan allows a bigger request. Without this comparison the short-circuit
-      // would fire before any size is computed, so raising the limit would do
-      // nothing and the ONLY way out would be reconnecting, which discards the
-      // Item's stored history. That would make the destructive escape the only
-      // working one.
+      // Raising the ceiling is the legitimate fix (a bigger Upstash plan allows
+      // a bigger request). Without this comparison the short-circuit would fire
+      // before any size is computed, leaving reconnecting, which discards the
+      // Item's stored history, as the only way out.
       //
-      // An unparseable marker clears too, rather than blocking forever on a
-      // value nothing can interpret. The cost is one wasted pull, and
-      // writeState re-sets the marker if the blob is still too big.
+      // An unparseable marker clears too, rather than blocking forever. The cost
+      // is one wasted pull; writeState re-sets the marker if the blob is still
+      // too big.
       if (!marker || marker.chars <= maxBlobChars()) {
         await redis().del(blockedKey(ctx, item.item_id));
       } else {
@@ -684,15 +629,13 @@ async function syncItem(ctx: Ctx,
       }
     }
   } catch {
-    // Can't read the marker: fall through and sync. Worst case is the wasted
-    // pull this marker exists to prevent, which is better than refusing to
-    // sync because Redis hiccuped.
+    // Can't read the marker: sync anyway. Worst case is the wasted pull the
+    // marker prevents, which beats refusing to sync because Redis hiccuped.
   }
 
-  // Hard stop on an unreadable blob, the same shape as the undecryptable-
-  // credentials stop above. Carrying on would mean syncing from an empty state
-  // and persisting that over history no bank will re-serve, so the one thing
-  // this must not do is reach writeState.
+  // Hard stop on an unreadable blob, like the undecryptable-credentials stop
+  // above: syncing from empty and persisting it would overwrite history no bank
+  // will re-serve, so this must never reach writeState.
   let stored: ItemState;
   try {
     stored = await readState(ctx, item.item_id);
@@ -772,17 +715,14 @@ async function syncItem(ctx: Ctx,
       };
     }
 
-    // Advance the cursor and persist. writeState compresses the blob and, if it
-    // would exceed the request-size ceiling, refuses rather than dropping rows
-    // to fit.
+    // Advance the cursor and persist. writeState refuses, rather than dropping
+    // rows, if the blob would exceed the request-size ceiling.
     if (cursor) state.cursor = cursor;
     const write = await writeState(ctx, item.item_id, state);
 
-    // Couldn't persist because the blob is too large. `state` is still correct
-    // and complete — nothing was trimmed out of it — so return it: the user
-    // sees accurate figures this request, plus a note saying they won't stick.
-    // Returning null instead would blank the institution over a storage
-    // problem, which is a worse answer than the true one with a caveat.
+    // Too large to persist. `state` is still complete (nothing was trimmed), so
+    // return it: accurate figures this request plus a note that they won't
+    // stick, rather than blanking the institution over a storage problem.
     if (!write.persisted && write.reason === 'oversize') {
       return {
         state,
@@ -802,9 +742,8 @@ async function syncItem(ctx: Ctx,
     return { state, note: null };
   }
 
-  // Unreachable: every attempt either returns or (on the non-final mutation
-  // race) `continue`s, and the final attempt's catch returns. Here only to
-  // satisfy the compiler's exhaustiveness check.
+  // Unreachable: every attempt returns or continues, and the final attempt's
+  // catch returns. Here only to satisfy the compiler.
   return { state: null, note: `${item.institution_name}: could not fetch transactions` };
 }
 
@@ -813,15 +752,11 @@ async function syncItem(ctx: Ctx,
  * the trailing LOOKBACK window. Account names are re-resolved from the merged
  * map (an account can arrive on a later page than a transaction referencing it).
  *
- * `hiddenAccountIds` drops rows belonging to hidden accounts (lib/hidden.ts).
- * This is the only place that filter can go: the projection below is where
- * StoredTxn becomes Txn, and Txn has no `account_id` to filter on afterwards.
- * Doing it here also means hidden rows are never sent to the client at all, and
- * everything derived from the array downstream -- the Activity list, month
- * totals, budgets, insights, recurring-bill detection -- follows for free.
- *
- * The persisted store itself is untouched: hiding never deletes data, so
- * unhiding brings every row straight back.
+ * `hiddenAccountIds` drops rows of hidden accounts (lib/hidden.ts). It has to be
+ * filtered here: Txn has no `account_id` afterwards. Hidden rows are then never
+ * sent to the client, and everything derived from the array (Activity list,
+ * month totals, budgets, insights, recurring bills) follows. The persisted store
+ * is untouched, so unhiding brings every row back.
  */
 export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
@@ -836,8 +771,8 @@ export async function syncItemTransactions(ctx: Ctx,
   const carried = await carriedIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
-  // `name` is merchant_name || raw name — the display behavior recurring
-  // detection and search depend on; StoredTxn keeps both parts separately.
+  // `name` is merchant_name || raw name, which recurring detection and search
+  // depend on; StoredTxn keeps both parts.
   const txns: Txn[] = Object.values(state.txns)
     .filter(
       (t) =>

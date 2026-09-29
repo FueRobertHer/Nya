@@ -12,37 +12,32 @@ if (!PLAID_CLIENT_ID || !PLAID_SECRET) {
 }
 
 /**
- * Per-request ceiling, in ms. The SDK is axios underneath and sets no timeout of
- * its own, so without this a single wedged institution holds an entire dashboard
- * load open until the platform kills the whole function -- taking the five
- * healthy institutions down with it and returning nothing at all. With it, the
- * wedged Item alone fails, which the caller already knows how to render: its
- * card falls back to last-known balances (lib/last-known.ts) and the snapshot
- * and cache gates close, exactly as for any other failed fetch.
+ * Per-request ceiling, in ms. The SDK is axios underneath and sets no timeout, so
+ * without this one wedged institution holds a whole dashboard load open until the
+ * platform kills the function, taking the healthy institutions down with it. With
+ * it, only the wedged Item fails, which the caller already renders: its card falls
+ * back to last-known balances (lib/last-known.ts) and the snapshot and cache gates
+ * close, as for any failed fetch.
  *
- * Deliberately generous rather than tight, and the number is taken from Plaid
- * rather than picked. Their own documentation for /accounts/balance/get -- the
- * slowest balance call, and the one the app used to make on its critical path
- * (it reads /accounts/get now, so this is a wide margin) -- says latency is "typically less than 10
- * seconds, but occasionally up to 30 seconds or more", and advises adjusting
- * the timeout accordingly. So 30s would sit exactly ON the documented range and
- * cut off institutions that were going to answer. That matters more than it
- * looks: the snapshot and cache gates are all-or-nothing, so one institution
- * timed out early doesn't just lose its own balances, it skips the day's
- * snapshot and clears the cache for every other institution on that load.
- * Above the range, this only ever fires on a call that was not coming back.
+ * Deliberately generous, and the number comes from Plaid: its docs for
+ * /accounts/balance/get (the slowest balance call, no longer on the critical path
+ * since the app reads /accounts/get) say latency is "typically less than 10
+ * seconds, but occasionally up to 30 seconds or more". A 30s cutoff would sit on
+ * that range and cut off institutions that were going to answer, which matters
+ * because the snapshot and cache gates are all-or-nothing: one institution timed
+ * out early skips the day's snapshot and clears the cache for every other one.
+ * Above the range, this only fires on a call that was not coming back.
  *
- * baseOptions is spread into each request's axios config, and a per-call
- * options argument would override it, so this is the floor for every Plaid
- * call in the app -- balances, holdings, liabilities and transaction sync
- * pages alike (each page of a paginated sync gets the full allowance).
+ * baseOptions is spread into each request's axios config (a per-call options
+ * argument would override it), so this is the floor for every Plaid call:
+ * balances, holdings, liabilities and each page of a transaction sync.
  *
  * Callers must classify what comes out: axios reports a timeout as ECONNABORTED
- * (or ETIMEDOUT) with NO response, so `err.response.data.error_code` is
- * undefined and any code matching on it falls through to its generic branch.
- * Where that generic branch is durable rather than retried, the timeout needs
- * naming explicitly -- see the ECONNABORTED case in lib/investments.ts, which
- * would otherwise let one slow call permanently mark a backfill complete.
+ * (or ETIMEDOUT) with NO response, so `err.response.data.error_code` is undefined
+ * and code matching on it falls through to its generic branch. Where that branch
+ * is durable rather than retried, the timeout needs naming explicitly (see
+ * lib/investments.ts, where one slow call would otherwise permanently mark a
+ * backfill complete).
  */
 const PLAID_TIMEOUT_MS = 45_000;
 

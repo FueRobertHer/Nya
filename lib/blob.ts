@@ -2,34 +2,30 @@
 //
 // Encoding and size ceiling for the per-Item stores that hold one large JSON
 // document each: cash transactions (lib/transactions.ts) and investment
-// transactions (lib/invstore.ts). Moved here unchanged from lib/transactions.ts
-// so the two stores can't drift apart on how a blob is written or how big it may
-// be. What each store does when a read or write fails stays with the store.
+// transactions (lib/invstore.ts). Shared so the two can't drift apart on how a
+// blob is written or how big it may be. What each store does when a read or write
+// fails stays with the store.
 
 import { encrypt, decrypt } from './crypto';
 
 // Max size of a stored (compressed + encrypted) blob. Upstash's free-plan
-// *request-size* ceiling is 10 MB, and a get/set of an Item's blob is a single
-// request, so that — not the 100 MB max-record size — is the real wall. We keep
-// a margin below it; writers REFUSE to persist a blob that would cross it.
+// *request-size* ceiling is 10 MB, and a get/set of an Item's blob is one
+// request, so that (not the 100 MB max-record size) is the real wall. A margin is
+// kept below it; writers REFUSE to persist a blob that would cross it.
 //
-// Measured in CHARACTERS, which is why the name says so: the value is base64
-// (see encodeJsonBlob) travelling as ASCII in a JSON body, so one character is
-// one byte on the wire. Do not "correct" this by scaling for base64 expansion —
-// the expansion already happened before the measurement, and dividing would cut
-// the real ceiling to 6 MB for nothing.
+// Measured in CHARACTERS: the value is base64 (see encodeJsonBlob) travelling as
+// ASCII in a JSON body, so one character is one byte on the wire. Don't "correct"
+// for base64 expansion: it already happened before the measurement, and dividing
+// would cut the real ceiling to 6 MB for nothing.
 //
-// Overridable because the ceiling it shadows is a property of the Upstash plan,
-// not of this code, and those differ. Tests also use it to reach the refusal
-// path, which no realistic fixture could otherwise trigger.
+// Overridable because the ceiling is a property of the Upstash plan, which
+// differs, and tests use it to reach the refusal path.
 //
-// Validated rather than trusted: a negative or non-numeric value would
-// otherwise sail through and put every Item over the ceiling at once, blocking
-// every sync in the account over a typo in an env var.
+// Validated rather than trusted: a negative or non-numeric value would put every
+// Item over the ceiling at once, blocking every sync over an env var typo.
 //
-// Read when used, not when this module loads. Two stores import it now, and
-// whichever loads first would otherwise fix the value before anything else
-// had a chance to set it (tests do, and module caches are shared).
+// Read when used, not at module load: two stores import it, and whichever loads
+// first would otherwise fix the value before anything else (tests do) set it.
 const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
 let resolved: { raw: string | undefined; value: number } | null = null;
 export function maxBlobChars(): number {
@@ -53,13 +49,12 @@ export function maxBlobChars(): number {
 // while there is still time to do something about it.
 export const blobWarnChars = () => maxBlobChars() * 0.6;
 
-// Blobs are gzip-compressed before encryption — financial JSON is highly
-// repetitive (field names, categories, institution names repeat on every row),
-// so it shrinks ~10×, which both saves Upstash storage/bandwidth and keeps each
-// blob well under the request-size ceiling. We use the Web CompressionStream
-// API rather than node:zlib to stay runtime-portable, matching lib/crypto.ts.
-// Compression runs *before* encryption because ciphertext is high-entropy and
-// wouldn't compress.
+// Blobs are gzip-compressed before encryption: financial JSON is highly
+// repetitive, so it shrinks ~10x, saving Upstash storage and bandwidth and
+// keeping each blob under the request-size ceiling. Uses the Web
+// CompressionStream API rather than node:zlib to stay runtime-portable, like
+// lib/crypto.ts. Compression runs before encryption because ciphertext is
+// high-entropy and wouldn't compress.
 
 async function gzipString(input: string): Promise<Uint8Array> {
   const stream = new Response(input).body!.pipeThrough(new CompressionStream('gzip'));

@@ -4,37 +4,30 @@
 //
 // Plaid can issue new account ids for the same accounts, and a disconnect and
 // re-add always does (a new Item). Everything in Nya is keyed by account id, so
-// the new id starts from nothing and the old one's history is orphaned: not
-// deleted, just unreachable. This module lets each user say "this is the same
-// account", and lets the readers that matter follow that.
+// the old id's history is orphaned: not deleted, just unreachable. This module
+// lets each user say "this is the same account" and lets the readers that
+// matter follow that.
 //
-// THE RULES, each from a review of this design:
+// Rules:
 //
 // 1. STORED DATA IS NEVER REWRITTEN. A link is one entry, old id -> new id, in
-//    its own hash. Readers resolve it; nothing else changes. Unlinking deletes
-//    the entry and the split view comes straight back.
+//    its own hash. Readers resolve it; unlinking deletes the entry and the
+//    split view comes straight back.
 // 2. THE USER DECIDES. Suggestions come with evidence; nothing is linked
-//    automatically. With more than one user, "the user" is whoever owns the
-//    container (#53): every key here goes through kc(), so links, suggestions
-//    and the directory can only ever involve one container's accounts.
-// 3. LINKS FOLLOW HISTORY, NOT TRANSACTIONS. After a disconnect the old Item's
-//    transaction stores are deleted, so what survives under an old id is its
-//    balance history. Row-level merging only matters for a rotation inside one
-//    Item and is deferred until a real one shows what Plaid sends.
+//    automatically. Every key goes through kc(), so links, suggestions and the
+//    directory only ever involve one container's accounts.
+// 3. LINKS FOLLOW HISTORY, NOT TRANSACTIONS. A disconnect deletes the old Item's
+//    transaction stores, so what survives under an old id is its balance history.
 // 4. MANUAL ACCOUNTS ARE NEVER LINKED. A recreated manual account must not
-//    inherit a deleted one's series (lib/manual.ts says so).
+//    inherit a deleted one's series (lib/manual.ts).
 //
-// The DIRECTORY is what makes a re-added institution matchable: a record of
-// every account seen, with its provider, institution id, name, mask and type,
-// kept past a disconnect (accounts:meta and the stores are deleted then). It is
-// kept for as long as the account's balance history is, which is for good:
-// someone who comes back months later (a lapsed subscription, a new owner
-// re-linking) should see "Chase Checking ••4821", not an anonymous series.
-//
-// Two ways to link: the card OFFERS pairs and recent history (suggestLinks),
-// and the user can link any earlier account BY HAND (manualChoices), with no
-// time limit and even after declining an offer, since a declined or missed
-// match must stay fixable.
+// The DIRECTORY records every account seen (provider, institution id, name, mask,
+// type), kept past a disconnect for as long as the balance history is, so
+// someone returning months later sees "Chase Checking ••4821", not an anonymous
+// series. There are two ways to link: the card OFFERS pairs (suggestLinks), and
+// the user can link any earlier account BY HAND (manualChoices), with no time
+// limit and even after declining an offer, since a declined or missed match must
+// stay fixable.
 
 import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
@@ -49,7 +42,7 @@ import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } f
 import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 
-// Lazy keys, not module constants: the container (#53) will be a parameter.
+// Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
 const dismissedKey = (ctx: Ctx) => kc(ctx, 'account-links:dismissed');
 
@@ -62,7 +55,6 @@ const today = (now: number) => new Date(now).toISOString().slice(0, 10);
 const daysBetween = (a: string, b: string) =>
   Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY);
 
-// ---------------------------------------------------------------------------
 // Directory
 
 /** Where an account's data comes from. One provider today; recorded so a
@@ -215,13 +207,10 @@ export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[],
   }
 }
 
-// ---------------------------------------------------------------------------
 // Links: the pure core lives in lib/link-core.ts (so lib/last-known.ts and
 // lib/vanished.ts can follow links without importing this module back).
-
 export { getLinks, effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 
-// ---------------------------------------------------------------------------
 // Suggestions
 
 export type Suggestion = {
@@ -590,12 +579,10 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   }
 
   if (found.hidden) {
-    // Taken out of every past total for good, point by point, each in one
-    // step (lib/history.ts foldHiddenAccount): while it runs, a point is
-    // either untouched (the chart still subtracts the hidden account) or
-    // folded (the account is gone from it). The random tag, kept in its
-    // hidden entry, is where progress is kept, so a retry skips what is done;
-    // only once every point is folded is the hidden entry dropped.
+    // Taken out of every past total for good, point by point, each in one step
+    // (foldHiddenAccount). The random tag, kept in its hidden entry, holds
+    // progress so a retry skips what is done; the hidden entry is dropped only
+    // once every point is folded.
     const entry = hidden.get(id)!;
     const tag = entry.forget_tag ?? crypto.randomUUID();
     if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
@@ -702,7 +689,6 @@ export async function directoryParts(ctx: Ctx, ids: string[]): Promise<Record<st
 }
 
 
-// ---------------------------------------------------------------------------
 // Readers
 
 /**

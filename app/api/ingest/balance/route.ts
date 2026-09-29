@@ -8,19 +8,18 @@ import { computeNetWorth, recordFetch } from '@/lib/networth';
 import { clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
 
-// Machine-writable balance updates for manual accounts, so anything that can
-// make an HTTP request can feed Nya: a SimpleFIN puller, an OFX/ofxget cron, a
-// scraper running on your own machine. This is the escape hatch for
-// institutions Plaid doesn't support and that you'd rather not retype monthly.
+// Machine-writable balance updates for manual accounts, so anything that can make
+// an HTTP request can feed Nya: a SimpleFIN puller, an OFX cron, a scraper on your
+// own machine. The escape hatch for institutions Plaid doesn't support.
 //
-// Scoped to UPDATING accounts that already exist -- never creating them. A
-// leaked token can therefore corrupt balances but can't invent accounts, and
-// the account_id it would need is only shown inside the app.
+// Scoped to UPDATING accounts that already exist, never creating them: a leaked
+// token can corrupt balances but can't invent accounts, and the account_id it
+// would need is only shown inside the app.
 //
-// Like /api/snapshot this route is excluded from the session gate in proxy.ts
-// and authenticates itself instead. Unlike that route it is permanently
-// reachable by anyone on the internet rather than called by Vercel's cron, so
-// the token comparison is constant-time (lib/auth.ts) rather than `!==`.
+// Like /api/snapshot this route is excluded from the session gate in proxy.ts and
+// authenticates itself. Unlike that route it is reachable by anyone on the
+// internet rather than called by Vercel's cron, so the token comparison is
+// constant-time (lib/auth.ts).
 //
 // Example:
 //   curl -X POST https://<host>/api/ingest/balance \
@@ -88,10 +87,9 @@ export async function POST(req: Request) {
       }
 
       // Per-update, so one unreadable record doesn't discard the results of
-      // the updates that already succeeded. getManualAccount throws on a
-      // decrypt or shape failure by design (lib/manual.ts), and letting that
-      // escape the loop would turn a partial success into a bare 500 -- the
-      // opposite of the per-id reporting contract below.
+      // updates that already succeeded: getManualAccount throws on a decrypt or
+      // shape failure by design (lib/manual.ts), and letting that escape would turn
+      // a partial success into a bare 500, against the per-id reporting contract.
       try {
         const existing = await getManualAccount(ctx, account_id);
         if (!existing) {
@@ -122,27 +120,23 @@ export async function POST(req: Request) {
     if (updated > 0) {
       await clearCaches(ctx);
 
-      // Record the snapshot here rather than waiting for the app to be opened
-      // or for the 13:00 UTC cron. Without this a nightly script would write
-      // nothing to the chart, and one running after the cron would sit a full
-      // day behind forever. Same gating as /api/snapshot: only a clean,
-      // non-empty read gets recorded.
+      // Record the snapshot here rather than waiting for the app to be opened or
+      // the 13:00 UTC cron: otherwise a nightly script would write nothing to the
+      // chart, or sit a day behind. Same gating as /api/snapshot: only a clean,
+      // non-empty read is recorded.
       try {
         const { institutions, netWorth } = await computeNetWorth(ctx);
-        // `recorded` reflects whether the point actually landed, not just
-        // whether we tried: recordSnapshot swallows its own errors, and a
-        // script that trusts this field deserves the truth. recordFetch returns
-        // the date it wrote; collapsed to a boolean here because that is this
-        // endpoint's published response shape. True now means the TOTAL landed,
-        // so a failed per-account write no longer reports the chart as
-        // un-updated when the point is sitting in it. (A partly failed read
-        // still records the accounts that answered, but that is not the chart
-        // this field is about.)
+        // `recorded` reflects whether the point actually landed, not just whether
+        // we tried, since recordSnapshot swallows its own errors. recordFetch
+        // returns the date written, collapsed to a boolean because that is the
+        // published response shape. True means the TOTAL landed: a failed
+        // per-account write doesn't report the chart as un-updated when the point
+        // is in it. (A partly failed read still records the accounts that
+        // answered, but that isn't what this field is about.)
         const recorded = (await recordFetch(ctx, institutions, netWorth)) !== null;
-        // Record how to draw these accounts, for the same reason /api/snapshot
-        // does: this read may be the only clean one of the day, and an account
-        // it learned about would otherwise sit in the snapshot with nothing to
-        // render it from.
+        // Record how to draw these accounts, as /api/snapshot does: this read may
+        // be the only clean one of the day, and an account it learned about would
+        // otherwise sit in the snapshot with nothing to render it from.
         await rememberAccounts(ctx, institutions);
         await recordDirectory(ctx, institutions);
         return NextResponse.json({ updated, recorded, results });

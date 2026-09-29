@@ -3,22 +3,20 @@ import { secretsMatch } from '@/lib/auth';
 import { finishMasterRotation } from '@/lib/crypto';
 import { nothingSnapshotted, reasonOf, readRegistry, runSnapshots, snapshotDate } from '@/lib/snapshot-job';
 
-// Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the
-// net-worth chart stays gapless even on days the app isn't opened. It runs
-// each container on its own (lib/snapshot-job.ts): the answer is 200 with a
-// result per container, even when some failed, so the status says whether the
-// day has a snapshot and the body says which containers need attention. It
-// answers 500 when nothing was snapshotted: the registry
-// could not be read, holds no container, or no container was recorded (all
-// failed, unclean, deferred, or not active; the same body, so the cause is in
-// the logs and the response alike). Nothing linked is not a failure. The
-// catch-up cron (/api/snapshot/catchup, two hours later) runs the same job:
-// containers already recorded that day are skipped.
+// Daily snapshot endpoint, hit by Vercel Cron (see vercel.json) so the net-worth
+// chart stays gapless even on days the app isn't opened. It runs each container on
+// its own (lib/snapshot-job.ts) and answers 200 with a result per container, even
+// when some failed: the status says whether the day has a snapshot, the body says
+// which containers need attention. It answers 500 when nothing was snapshotted
+// (the registry could not be read, holds no container, or no container was
+// recorded: all failed, unclean, deferred, or not active), with the cause in the
+// logs and the response alike. Nothing linked is not a failure. The catch-up cron
+// (/api/snapshot/catchup, two hours later) runs the same job and skips containers
+// already recorded that day.
 //
-// This route is excluded from the session gate in proxy.ts and instead
-// authenticates the cron caller: Vercel sends `Authorization: Bearer
-// ${CRON_SECRET}` automatically when a CRON_SECRET env var is set on the
-// project. Without a valid secret the route always 401s.
+// Excluded from the session gate in proxy.ts; it authenticates the cron caller
+// instead: Vercel sends `Authorization: Bearer ${CRON_SECRET}` automatically when
+// CRON_SECRET is set on the project. Without a valid secret it always 401s.
 
 export const maxDuration = 300;
 
@@ -29,10 +27,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Finish a master key rotation if this deployment is the one it was
-  // rotating to (lib/crypto.ts). Also happens on first use of a data key;
-  // this makes sure it happens within a day even if none is used. Best
-  // effort: a failure here must not cost the day's snapshot.
+  // Finish a master key rotation if this deployment is the one it was rotating
+  // to (lib/crypto.ts). Also happens on first use of a data key; this makes sure
+  // it happens within a day even if none is used. Best effort: a failure must not
+  // cost the day's snapshot.
   await finishMasterRotation().catch((err) => console.error('Master rotation finish failed', reasonOf(err)));
 
   let registry;
@@ -46,7 +44,7 @@ export async function GET(req: Request) {
   if (registry.length === 0) {
     // Nobody can log in without one either (lib/sessions.ts), so this is a
     // setup that was never finished, not a quiet day.
-    const error = 'No container exists yet, so nothing was snapshotted. Create one (see "Containers" in the README).';
+    const error = 'No container exists yet, so nothing was snapshotted. Create one (see "Containers" in docs/operations.md).';
     console.error(`Snapshot: ${error}`);
     return NextResponse.json({ error }, { status: 500 });
   }

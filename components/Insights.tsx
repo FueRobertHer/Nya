@@ -12,10 +12,8 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 
 /**
  * An investment account with more cash sitting in it than looks deliberate,
- * already filtered to the flagged ones by lib/cash.ts. Optional on the props
- * below, so a caller that has no holdings to classify can leave it out; the
- * Dashboard always passes it, populated from whatever the payload could
- * resolve.
+ * already filtered to the flagged ones by lib/cash.ts. Optional so a caller with
+ * no holdings to classify can leave it out; the Dashboard always passes it.
  */
 export type IdleCashAccount = {
   /** React key. Account NAMES collide across institutions; ids don't. */
@@ -117,10 +115,9 @@ export default function Insights({
       }
     }
 
-    // Low balance on any checking/savings account. Keyed by position as well
-    // as name: two accounts can share a name (a manual account tracking the
-    // same institution as a linked one, say), and a duplicate React key would
-    // drop one of the alerts.
+    // Low balance on any checking/savings account. Keyed by position as well as
+    // name: two accounts can share a name (a manual account tracking the same
+    // institution as a linked one), and a duplicate React key would drop an alert.
     for (const [i, a] of accounts.entries()) {
       if (a.type === 'depository' && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
         out.push({
@@ -137,9 +134,8 @@ export default function Insights({
     const overdue: Insight[] = [];
     const dueSoon: { days: number; insight: Insight }[] = [];
     // Local midnight today, so "days until" counts calendar days rather than
-    // 24-hour blocks from this instant. Comparing against `now` directly made
-    // the answer drift by one over the course of the day: after local noon a
-    // payment due today rounded to -1 and was dropped as already past.
+    // 24-hour blocks from now. Comparing against `now` drifted by one over the
+    // day: after local noon a payment due today rounded to -1 and was dropped.
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     for (const [i, a] of accounts.entries()) {
       const l = a.liability;
@@ -175,10 +171,9 @@ export default function Insights({
     dueSoon.sort((x, y) => x.days - y.days);
     out.push(...[...overdue, ...dueSoon.map((d) => d.insight)].slice(0, 2));
 
-    // Uninvested cash in a brokerage: a contribution that was never placed, or
-    // a settlement fund quietly filling up. Largest first, max 2 -- someone
-    // with five brokerages doesn't need five lines to get the message, and the
-    // Accounts tab carries the per-account detail.
+    // Uninvested cash in a brokerage: a contribution never placed, or a settlement
+    // fund quietly filling up. Largest first, max 2: five brokerages don't need
+    // five lines, and the Accounts tab carries the per-account detail.
     for (const a of idleCash.slice(0, 2)) {
       const where = `${a.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`;
       const howMuch =
@@ -186,10 +181,9 @@ export default function Insights({
           ? ''
           : ` · ${(a.share * 100).toFixed(a.share >= 0.1 ? 0 : 1)}% of its holdings`;
       out.push({
-        // Keyed by account_id, not name: "Individual" and "Roth IRA" are what
-        // brokerages call accounts, so two of them collide easily, and a
-        // duplicate React key would drop one of the lines (see the low-balance
-        // block above, which has the same hazard).
+        // Keyed by account_id, not name: brokerages call accounts "Individual" and
+        // "Roth IRA", so names collide, and a duplicate React key would drop a
+        // line (as in the low-balance block above).
         key: `idle-cash-${a.account_id}`,
         text: `${where}: ${formatMoney(a.cash, a.currency)} uninvested${howMuch}`,
         tone: 'warn',

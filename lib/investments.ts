@@ -25,10 +25,9 @@ export type InvestmentTxn = {
   security: string | null;
 };
 
-// Unsettled rows. Investment transactions carry no `pending` boolean the way
-// cash transactions do (which backfill skips for the same reason) -- these two
-// subtypes are the equivalent. Left in, they'd be un-applied by the walk once
-// and then again when the settled row appears.
+// Unsettled rows. Investment transactions have no `pending` boolean, so these
+// two subtypes stand in for it. Left in, they'd be un-applied by the walk once
+// and again when the settled row appears.
 const PENDING_SUBTYPES = new Set(['pending credit', 'pending debit']);
 
 // Subtypes that move value in or out of the account from outside it. Everything
@@ -41,21 +40,17 @@ const EXTERNAL_FLOW_SUBTYPES = new Set([
   'transfer',
   'send',
   'request',
-  // Not a subtype Plaid emits today (it has no rollover value at all, see
-  // isRollover). Listed anyway because the alternative is worse than useless:
-  // if it ever appears, an unrecognised subtype falls through to 0 below, and a
-  // $60k arrival would be invisible to the balance walk AND to both figures the
-  // activity panel shows.
+  // Not a subtype Plaid emits today (see isRollover). Listed anyway: an
+  // unrecognised subtype falls through to 0, so a $60k arrival would be
+  // invisible to the balance walk and to the activity panel.
   'rollover',
 ]);
 
 // Corporate actions. Plaid files these under type 'transfer', but they are not
-// money entering or leaving: a spin-off or merger reports the notional value of
-// the shares RECEIVED while the matching position leaves the account, so the
-// net change in account value is ~0 and only the receiving leg carries a
-// nonzero amount. Treating them as external inflow would push the reconstructed
-// balance down by their full value a year ago -- the same class of error this
-// whole file exists to remove.
+// money entering or leaving: a spin-off or merger reports the value of the shares
+// RECEIVED while the matching position leaves, so net account value is ~0.
+// Treating them as external inflow would push the reconstructed balance down by
+// their full value a year ago.
 const CORPORATE_ACTION_SUBTYPES = new Set([
   'merger',
   'spin off',
@@ -73,36 +68,28 @@ const CORPORATE_ACTION_SUBTYPES = new Set([
 const CONTRIBUTION_SUBTYPES = new Set(['contribution', 'deposit', 'transfer']);
 
 // Rollovers: retirement money moved between accounts (401k -> IRA, IRA -> IRA).
-// InvestmentTransactionSubtype has no value for them, so they arrive wearing an
-// ordinary one -- `transfer`, `contribution` or `deposit` on the receiving side,
-// `withdrawal` or `distribution` on the sending side -- with the word itself
-// only in Plaid's free-text `name`, which is the institution's own description
-// of the transaction.
-//
-// Matching that description takes some care, because the word appears there for
-// two entirely different reasons.
+// Plaid has no subtype for them, so they arrive as `transfer`, `contribution` or
+// `deposit` on the receiving side and `withdrawal` or `distribution` on the
+// sending side, with the word itself only in the free-text `name`. Matching it
+// takes care because the word appears there for two different reasons.
 
-// Descriptions are formatted by the institution, so the same phrase arrives
-// separated by spaces, runs of spaces, underscores or hyphens, or not separated
-// at all. Flattening every non-alphanumeric run to one space lets the patterns
-// below be written once, against words.
+// Institutions format descriptions differently (spaces, underscores, hyphens,
+// none), so flatten every non-alphanumeric run to one space and write the
+// patterns below once, against words.
 function normalizeName(name: string): string {
   return (name || '')
-    // Split a camel-case run first: "RolloverIRA" is the account label with the
-    // space left out, and without this the event pattern's trailing boundary
-    // fails on it, sending a real rollover to the contributions line.
+    // Split camel case first: "RolloverIRA" is the account label with the space
+    // left out, and without this the event pattern's trailing boundary fails.
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ');
 }
 
 // "Rollover IRA" is the NAME OF AN ACCOUNT, not a description of what happened:
-// an IRA opened to receive a former employer's plan keeps that label for life,
-// and an institution that puts it in the description puts it on every row in
-// the account, contributions included. Institutions that do it don't agree on
-// the word order, so every spelling has to be here -- recognising one of them
-// is worse than recognising none, since it splits an account's rows between the
-// two figures according to nothing but phrasing.
+// an IRA opened to receive a former employer's plan keeps the label for life,
+// and some institutions put it on every row, contributions included. They don't
+// agree on word order, so every spelling has to be here: recognising only one
+// splits an account's rows between the two figures by phrasing alone.
 const ROLLOVER_ACCOUNT_LABEL =
   /\b(?:rollover (?:roth |trad |traditional )?(?:iras?|individual retirement accounts?)|iras? rollover)\b/g;
 
@@ -111,40 +98,36 @@ const ROLLOVER_ACCOUNT_LABEL =
 const CONTRIBUTION_MARKER = /\b(?:contributions?|contrib|payroll|employee|employer|deferrals?)\b/;
 
 // The event itself: rollover, roll over, rolled over, rolling over, rollovers.
-// The leading \b keeps this off words that merely end in "roll" -- the "ROLL
-// OVER" inside "PAYROLL OVERTIME" is not a rollover -- and the trailing one off
-// "ROLL OVERTIME".
+// The leading \b keeps it off words ending in "roll" ("PAYROLL OVERTIME"), the
+// trailing one off "ROLL OVERTIME".
 const ROLLOVER_EVENT = /\broll(?:ed|s|ing)?\s?overs?\b/;
 
 /**
  * A rollover, in either direction.
  *
- * The subtype gate comes first: only a subtype that actually moves money across
- * the account boundary can be a rollover leg, so a dividend or interest payment
- * credited inside a rollover IRA can't be read as one on the strength of the
- * account's name.
+ * The subtype gate comes first: only a subtype that moves money across the
+ * account boundary can be a rollover leg, so a dividend credited inside a
+ * rollover IRA isn't read as one because of the account's name.
  *
  * The description is then read twice, because the account label and the event
- * are the same word. Stripping the label unconditionally was wrong: it made
- * "ROLLOVER IRA DEPOSIT" -- a plain description of an arriving 401k -- an
- * ordinary contribution, and the two mistakes here are not the same size. A
- * contribution misread as a rollover is capped by the annual limit and lands on
- * a line the user can see next to it; a rollover misread as a contribution is
- * the whole 401k, and it lands on the headline figure with nothing to explain
- * its size. So the label is only believed to BE a label when removing it takes
- * the last mention of a rollover with it AND what remains identifies an
- * ordinary contribution by itself. Everything else stays a rollover.
+ * are the same word. Stripping the label unconditionally made "ROLLOVER IRA
+ * DEPOSIT" (a plain arriving 401k) an ordinary contribution, and the two
+ * mistakes differ in size: a contribution misread as a rollover is capped by the
+ * annual limit and shows on a line beside it, while a rollover misread as a
+ * contribution is the whole 401k on the headline figure. So the label is only
+ * believed to BE a label when removing it takes the last mention of a rollover
+ * with it AND what remains identifies an ordinary contribution by itself.
+ * Everything else stays a rollover.
  *
  * Irreducibly ambiguous, and resolved toward contribution: an institution that
  * stamps the label and also calls arriving rollover money a "contribution"
- * (some recordkeepers do) writes both cases as "ROLLOVER IRA CONTRIBUTION".
+ * writes both cases as "ROLLOVER IRA CONTRIBUTION".
  *
- * valueDelta deliberately still counts these: the money really did enter or
- * leave the account, so the balance reconstruction needs them. What they are
- * not is a *contribution* -- no new money entered the holder's retirement
- * savings and none of it counts against the annual limit -- which is why
- * isContribution excludes them. A $60k 401k rollover counted as
- * "contributed this year" overstates the figure by an order of magnitude.
+ * valueDelta still counts rollovers, since the money really entered or left and
+ * the balance reconstruction needs it. They are not a *contribution* (no new
+ * retirement savings, nothing against the annual limit), which is why
+ * isContribution excludes them: a $60k rollover counted as "contributed this
+ * year" overstates it by an order of magnitude.
  */
 export function isRollover(t: InvestmentTxn): boolean {
   const subtype = (t.subtype || '').toLowerCase();
@@ -174,46 +157,38 @@ export function isIncomingRollover(t: InvestmentTxn, counted: ReadonlySet<Invest
 /**
  * Signed change this transaction makes to the account's TOTAL value.
  *
- * Plaid's `amount` is positive when cash is debited from the account
- * (api.d.ts: "Positive values when cash is debited, e.g. purchases of stock"),
- * so an external flow changes the account's value by -amount: a $500 deposit
- * arrives as -500 and raises the balance by 500.
+ * Plaid's `amount` is positive when cash is debited (a purchase), so an external
+ * flow changes the account's value by -amount: a $500 deposit arrives as -500
+ * and raises the balance by 500.
  *
- * - buy / sell            -> -(fees). The principal nets out, because cash
- *                            becomes securities or back and both sit inside the
- *                            same account. Not zero, though: `amount` is "the
- *                            complete value of the transaction" and `fees` is
- *                            "the combined value of all fees applied to this
- *                            transaction", i.e. fees are inside amount. A buy
- *                            spends principal + fees of cash for principal of
- *                            securities, so the account is down by the fees.
+ * - buy / sell            -> -(fees). The principal nets out (cash becomes
+ *                            securities inside the same account), but `amount`
+ *                            includes fees, so a buy spends principal + fees for
+ *                            principal of securities and the account is down by
+ *                            the fees.
  * - transfer + corporate  -> 0, see CORPORATE_ACTION_SUBTYPES above.
  * - cash / fee / external -> -amount.
  * - anything unrecognized -> 0, so a subtype Plaid adds later can't silently
  *                            corrupt the reconstruction.
  *
- * Judges ONE row, so it cannot see a contribution booked as a single buy: that
- * takes the rows beside it (countedTrades). Callers walking a set use
- * walkDelta, which layers that answer on top of this.
+ * Judges ONE row, so it can't see a contribution booked as a single buy; that
+ * takes the rows beside it (countedTrades). Callers walking a set use walkDelta.
  *
- * Known imprecision: a dividend that the broker reports as a single reinvestment
- * row typed `buy` is treated as internal, so its inflow is missed. The chart
- * draws every point derived from this as estimated, which is the honest framing
- * -- market movement isn't modelled here either.
+ * Known imprecision: a dividend the broker reports as a single reinvestment row
+ * typed `buy` is treated as internal, so its inflow is missed. Every point
+ * derived from this is drawn as estimated, which is the honest framing.
  */
 export function valueDelta(t: InvestmentTxn): number {
   const subtype = (t.subtype || '').toLowerCase();
   const type = (t.type || '').toLowerCase();
 
-  // The corporate-action list is scoped to `transfer`, the type Plaid files
-  // those under. Unscoped it would shadow the type checks below, and several of
-  // its members are ordinary subtypes elsewhere: `{type:'cash', subtype:
-  // 'adjustment'}` is a real cash correction, `{type:'buy', subtype:'trade'}` is
-  // an ordinary bond purchase. Both would have been zeroed and dropped.
+  // Scoped to `transfer`, the type Plaid files corporate actions under. Unscoped
+  // it would shadow the type checks below and zero ordinary rows: `{type:'cash',
+  // subtype:'adjustment'}` is a real cash correction and `{type:'buy',
+  // subtype:'trade'}` an ordinary bond purchase.
   if (type === 'transfer' && CORPORATE_ACTION_SUBTYPES.has(subtype)) return 0;
-  // `t.fees ? ... : 0` rather than -(fees ?? 0), which yields -0 for a
-  // fee-free trade. Harmless arithmetically, but it survives JSON and compares
-  // false under Object.is, so it's not worth leaving lying around.
+  // `t.fees ? ... : 0` rather than -(fees ?? 0), which yields -0 for a fee-free
+  // trade (survives JSON, compares false under Object.is).
   if (type === 'buy' || type === 'sell') return t.fees ? -t.fees : 0;
   if (type === 'cash' || type === 'fee') return -t.amount;
   if (EXTERNAL_FLOW_SUBTYPES.has(subtype)) return t.amount === 0 ? inKindValue(t) : -t.amount;
@@ -222,14 +197,13 @@ export function valueDelta(t: InvestmentTxn): number {
 
 /**
  * The value of an in-kind transfer: shares moved between institutions with no
- * cash, which some institutions report with `amount` 0 and the shares in
- * `quantity` and `price`. Counted as 0, a $40k ACATS transfer would read as $40k
- * of growth on the chart and be missing from the walk.
+ * cash, which some report with `amount` 0 and the shares in `quantity` and
+ * `price`. Counted as 0, a $40k ACATS transfer would read as $40k of growth on
+ * the chart and be missing from the walk.
  *
- * Plaid documents quantity's sign only for trades (positive for a buy, negative
- * for a sell), so a transfer is read the same way: positive is shares
- * arriving. Only reached for a transfer-type external row whose amount is
- * exactly 0, so no row that reports a cash amount is affected.
+ * Quantity's sign is documented only for trades, so a transfer is read the same
+ * way: positive is shares arriving. Only reached for a transfer-type external
+ * row whose amount is exactly 0.
  */
 function inKindValue(t: InvestmentTxn): number {
   // Only a plain transfer: a zero-amount distribution or withdrawal under type
@@ -245,14 +219,13 @@ function inKindValue(t: InvestmentTxn): number {
  * contributions, deposits, transfers, rollovers, withdrawals and distributions,
  * in either direction. Zero for everything else.
  *
- * This is the "money added" side of the chart's added-vs-growth split, so the
- * line it draws matters in both directions. Dividends, interest and fees are
- * left out because they ARE growth (or its opposite). Buys and sells are left
- * out because they are internal, even when an institution stamps them with an
+ * This is the "money added" side of the chart's added-vs-growth split.
+ * Dividends, interest and fees are left out because they ARE growth (or its
+ * opposite), buys and sells because they are internal even when stamped with an
  * external-sounding subtype. Rollovers count: for this account they are money
- * arriving, not money the market made, which is the question being answered
- * (isContribution excludes them for a different one, the annual limit).
- * Corporate actions are already zero in valueDelta.
+ * arriving, not money the market made (isContribution excludes them for a
+ * different question, the annual limit). Corporate actions are already zero in
+ * valueDelta.
  */
 export function externalFlow(t: InvestmentTxn): number {
   const subtype = (t.subtype || '').toLowerCase();
@@ -269,13 +242,12 @@ export function externalFlow(t: InvestmentTxn): number {
   return valueDelta(t);
 }
 
-// Trade subtypes that can mean money crossing the boundary, by direction: a buy
-// made with outside money (a paycheck, a 401k loan repayment, a deposit or
-// transfer that lands directly as shares) and a sell whose proceeds leave the
-// account (a distribution or withdrawal). Plaid's documented pairings rarely
-// put deposit, transfer or withdrawal on a trade, but a recordkeeper that books
-// buys only has nowhere else to put them, and countedTrades still refuses them
-// in any account that books that subtype as cash.
+// Trade subtypes that can mean money crossing the boundary: a buy made with
+// outside money (a paycheck, a 401k loan repayment, a deposit or transfer that
+// lands directly as shares) and a sell whose proceeds leave the account. Plaid's
+// documented pairings rarely put deposit, transfer or withdrawal on a trade, but
+// a recordkeeper that books only buys has nowhere else to put them, and
+// countedTrades still refuses them in any account that books that subtype as cash.
 const MONEY_IN_BUY_SUBTYPES = new Set(['contribution', 'loan payment', 'deposit', 'transfer']);
 // Transfer is on both sides so a fund exchange booked as a sell/transfer and a
 // buy/transfer nets to zero instead of counting only the buy.
@@ -283,12 +255,10 @@ const MONEY_OUT_SELL_SUBTYPES = new Set(['distribution', 'withdrawal', 'transfer
 
 /**
  * A single-row contribution or distribution: some recordkeepers report a
- * paycheck contribution as one `buy` row (subtype contribution) that buys fund
- * shares directly, with no cash row, and a payout as one `sell` row (subtype
- * distribution). externalFlow alone reads both as internal trades, which would
- * put every paycheck on the growth side. Their value change is `amount` itself:
- * positive for shares bought with outside money, negative for shares sold and
- * paid out. Whether a given one counts is countedTrades' decision.
+ * paycheck as one `buy` row (subtype contribution) with no cash row, and a payout
+ * as one `sell` row (subtype distribution). externalFlow alone reads both as
+ * internal trades, putting every paycheck on the growth side. The value change is
+ * `amount` itself. Whether a given one counts is countedTrades' decision.
  */
 function tradeFlow(t: InvestmentTxn): number {
   const subtype = (t.subtype || '').toLowerCase();
@@ -312,44 +282,41 @@ function isCashLeg(t: InvestmentTxn, subtype: string): boolean {
   );
 }
 
+// How near a cash row of the same subtype must be for a trade to count as its
+// internal half (see countedTrades).
+const STYLE_EVIDENCE_DAYS = 45;
+
 /**
  * The contribution and distribution trades (tradeFlow) in a set that carry
  * their own money.
  *
- * Institutions report these one of two ways. Some book the money as a cash row
- * (cash/contribution) and then the shares it bought as a buy that is purely
- * internal. Others book only the buy. The question is which style an account
- * uses, and it is answered PER ACCOUNT AND SUBTYPE from the evidence NEAR
- * each trade: if the account has a cash row of that subtype within
- * STYLE_EVIDENCE_DAYS of it, the trade is the internal half and doesn't count;
- * if not, it is the only record of the money and counts.
+ * Institutions report these one of two ways: a cash row (cash/contribution) plus
+ * a purely internal buy of the shares it bought, or only the buy. That is
+ * decided PER ACCOUNT AND SUBTYPE from the evidence NEAR each trade: if the
+ * account has a cash row of that subtype within STYLE_EVIDENCE_DAYS, the trade is
+ * the internal half and doesn't count; if not, it is the only record of the
+ * money and counts.
  *
- * Deliberately not matched row to row. Pairing a cash row with a trade of the
- * same amount on the same day broke on ordinary cases, each counting the money
- * twice: a paycheck split across two funds (one cash row, two buys), an
- * employer match (two cash rows, one buy), a cash row that settles days before
- * the buy, and a distribution with tax withheld (one sell, a smaller cash row).
- * An institution does not switch styles between paychecks, so nearby evidence
- * answers for all of them.
+ * Deliberately not matched row to row: pairing a cash row with a same-amount
+ * trade on the same day double-counted on ordinary cases (a paycheck split across
+ * two funds, an employer match, a cash row settling days before the buy, a
+ * distribution with tax withheld). An institution doesn't switch styles between
+ * paychecks, so nearby evidence answers for all of them.
  *
- * Nearby rather than lifetime or calendar year. With years of stored history,
- * one cash row from before a recordkeeper change would flip every later trade
- * to internal. By calendar year, a cash contribution on Dec 31 whose buy
- * settles Jan 2 (or an RMD sold Dec 30 and paid Jan 3) would leave each year
- * seeing one leg and count the money twice.
+ * Nearby rather than lifetime or calendar year: with years of history, one cash
+ * row from before a recordkeeper change would flip every later trade to internal,
+ * and by calendar year a Dec 31 cash contribution whose buy settles Jan 2 would
+ * leave each year seeing one leg and count the money twice.
  *
- * Matched on the SAME subtype so an unrelated cash row can't suppress the
- * trades: a rollover arriving as a cash transfer says nothing about how the
- * same account books its paychecks.
+ * Matched on the SAME subtype so an unrelated cash row (a rollover arriving as a
+ * cash transfer) can't suppress the trades.
  *
- * Decided over the whole set because no single row can answer it. The balance
+ * Decided over the whole set because no single row can answer it, so the balance
  * walk (addInvestmentFlows), the chart's money-added line (dailyFlows) and the
- * year-to-date figures (contributedAmount) all read the same answer, so they
- * cannot disagree about whether a paycheck happened. Callers pass every row
- * they have for the account, not a window of them, so that answer can't depend
- * on where a window happens to start.
+ * year-to-date figures (contributedAmount) can't disagree about whether a
+ * paycheck happened. Callers pass every row they have for the account, not a
+ * window, so the answer doesn't depend on where a window starts.
  */
-const STYLE_EVIDENCE_DAYS = 45;
 
 export function countedTrades(txns: InvestmentTxn[]): Set<InvestmentTxn> {
   const cashLegDays = new Map<string, number[]>(); // `${account_id}\0${subtype}` -> day numbers
@@ -475,25 +442,20 @@ export function classifyFetchError(err: any): { note: string; pending: boolean }
   if (code === 'PRODUCT_NOT_READY') {
     return { note: 'Investment activity is still importing', pending: true };
   }
-  // A client-side timeout (lib/plaid.ts) reaches here with no Plaid error
-  // code at all, because Plaid never answered. It is transient in exactly the
-  // way PRODUCT_NOT_READY is, so it gets the same `pending` treatment, and
-  // that classification is load-bearing rather than cosmetic: /api/backfill
-  // deliberately does NOT treat an investment failure as a blocking note, so
-  // an unclassified one would leave invCovered AND invPending both false, and
-  // the run would persist an estimated layer with every investment account
-  // held flat and then MARK IT DONE. Nothing retries a done backfill, so one
-  // slow call would permanently cost the chart its investment history.
-  // `pending` instead leaves the flag unset for the next load, bounded by the
-  // MAX_PENDING_RUNS counter that already exists for the same reason.
+  // A client-side timeout (lib/plaid.ts) has no Plaid error code because Plaid
+  // never answered. It is transient like PRODUCT_NOT_READY and gets `pending` too,
+  // which is load-bearing: /api/backfill doesn't treat an investment failure as a
+  // blocking note, so an unclassified one would persist an estimated layer with
+  // every investment account held flat and MARK IT DONE, and nothing retries a
+  // done backfill. `pending` leaves the flag unset for the next load, bounded by
+  // the MAX_PENDING_RUNS counter.
   if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') {
     return { note: 'Investment activity timed out', pending: true };
   }
   // Temporary by Plaid's own classification: the institution is down or slow,
-  // Plaid had an internal error or is in maintenance, or a rate limit was hit
-  // (which a split first fill can do by itself). Treated as standing, the
-  // backfill would hold the Item's investments flat and mark itself done on the
-  // first run that met one. HTTP 429 and 5xx without an error body count too.
+  // Plaid had an internal error or maintenance, or a rate limit was hit. Treated
+  // as standing, the backfill would hold the Item's investments flat and mark
+  // itself done. HTTP 429 and 5xx without an error body count too.
   const type = err?.response?.data?.error_type;
   const status = err?.response?.status;
   if (

@@ -55,7 +55,7 @@ async function setUp(args: string[]): Promise<unknown> {
     return await redis().eval(CLAIM_OR_CREATE, [ownersKey(), registryKey()], args);
   } catch (err) {
     if (err instanceof Error && err.message.includes('NOCLAIM')) {
-      throw new ContainerError('No account owns any data, but several containers exist: map accounts to them by hand (see README).');
+      throw new ContainerError('No account owns any data, but several containers exist: map accounts to them by hand (see docs/authentication.md).');
     }
     throw err;
   }

@@ -6,27 +6,27 @@
 //
 // The epoch lives inside its container, at "sessions:epoch". It is not data:
 // exports leave it out and a restore never replaces it (lib/export.ts,
-// lib/restore.ts). Restoring an old value would bring revoked sessions back.
+// lib/restore.ts), since restoring an old value would bring revoked sessions back.
 //
-// A session is also only good for THIS deployment's container: the one
-// CONTAINER_ID names, or with it unset, the single active container. A token
-// naming any other container (after a restore replaced the registry, or
-// CONTAINER_ID changed) is refused, as is every session while the
-// deployment's container cannot be worked out (misconfigured, restoring,
-// more than one). Tokens from before sessions named a container are checked
-// against this deployment's container too, so "sign out everywhere" ends
-// them. Signing out everywhere also sets an environment-wide cutoff, and an
-// old token issued before it is refused whatever the container: a restore
-// that replaces the registry (and so the per-container epochs) cannot bring
-// those back. The cutoff, like the epoch, is never exported or restored.
+// A session is only good for THIS deployment's container: the one CONTAINER_ID
+// names, or with it unset, the single active container. A token naming any other
+// container (after a restore replaced the registry, or CONTAINER_ID changed) is
+// refused, as is every session while the deployment's container can't be worked
+// out (misconfigured, restoring, more than one). Tokens from before sessions
+// named a container are checked against this deployment's container too, so
+// "sign out everywhere" ends them. Signing out everywhere also sets an
+// environment-wide cutoff: a token issued before it is refused whatever the
+// container, so a restore that replaces the registry (and the per-container
+// epochs) can't bring those back. The cutoff, like the epoch, is never exported
+// or restored.
 //
 // Checked on every gated request (proxy.ts). Each instance reuses what it read
-// for CHECK_REUSE_MS, and the proxy and the route handlers keep separate
-// copies, so a revocation takes effect everywhere within a few seconds. If
-// the database cannot be reached the check lets the request through: every
-// route that follows needs the database anyway, so failing closed would only
-// turn an outage into a logout. A stored epoch that is not a count is not an
-// outage but damage, and fails closed.
+// for CHECK_REUSE_MS, and the proxy and route handlers keep separate copies, so a
+// revocation takes effect everywhere within a few seconds. If the database can't
+// be reached the check lets the request through (every route that follows needs
+// the database anyway, so failing closed would only turn an outage into a
+// logout). A stored epoch that is not a count is damage, not an outage, and fails
+// closed.
 
 import { redis, kc, kEnv } from './storage';
 import {
@@ -221,7 +221,7 @@ export async function loginContainer(): Promise<ContainerId> {
   if (dep.kind === 'container') return dep.container;
   if (dep.kind === 'none') {
     throw new ContainerError(
-      'No container exists yet, so no one can log in. Create one: with OPS_ENABLED=1 and OPS_SECRET set, POST {"create":true} to /api/ops/containers (see "Containers" in the README).'
+      'No container exists yet, so no one can log in. Create one: with OPS_ENABLED=1 and OPS_SECRET set, POST {"create":true} to /api/ops/containers (see "Containers" in docs/operations.md).'
     );
   }
   throw new ContainerError(`No one can log in until this is fixed: ${dep.reason}`);
