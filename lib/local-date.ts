@@ -1,0 +1,25 @@
+// lib/local-date.ts
+//
+// "Today" and "this month" as the person looking at the screen has them.
+//
+// toISOString() is UTC, so `new Date().toISOString().slice(0, 10)` is already
+// tomorrow for anyone west of Greenwich from the evening on, and next month on
+// the last evening of a month. Wherever the browser decides which day or month
+// it is (the current month's spending, a bill due "within a week"), it must
+// read the local calendar instead. Server code does not use this: stored
+// history is keyed by UTC day on purpose (lib/history.ts).
+//
+// Plaid's own dates (a transaction's date, a due date) are calendar days at the
+// bank and are shown as they are, never converted.
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** YYYY-MM-DD on the local calendar. */
+export function localDate(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** YYYY-MM on the local calendar. */
+export function localMonth(d: Date = new Date()): string {
+  return localDate(d).slice(0, 7);
+}

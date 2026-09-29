@@ -50,6 +50,11 @@ export type InstitutionResult = {
    * closed. Never populated by computeNetWorth itself.
    */
   stale_as_of?: string;
+  /** The instant behind `stale_as_of` (an ISO time), when known, so the date can
+   *  be shown in the viewer's own time zone. */
+  stale_as_of_at?: string;
+  /** Likewise for `stale_too_old`. */
+  stale_too_old_at?: string;
   /**
    * Set instead of `stale_as_of` when last-known balances exist but the newest
    * snapshot is past the age limit. The accounts stay empty; this only lets the

@@ -149,7 +149,7 @@ describe('finding people: nobody can', () => {
 
   test('a connection shows only what I call them, never their id or name from Clerk', async () => {
     const mine = await connectionsOf('user_partner');
-    expect(mine.connections).toEqual([{ id: pair, label: 'Someone', introduced_as: null, since: new Date().toISOString().slice(0, 10), sharing: {} }]);
+    expect(mine.connections).toEqual([{ id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {} }]);
     expect(JSON.stringify(mine)).not.toContain('user_owner');
     await share({ acct_joint: 'balance' });
     expect(JSON.stringify(await sharedWithPartner())).not.toContain('user_owner');
@@ -176,7 +176,7 @@ describe('connecting by invite link', () => {
     const token = await invite('user_owner', { from_name: 'Olive' });
     expect((await as('user_third', () => route('connections/accept', 'POST', { token, label: 'Mom', my_name: 'Rob' }))).status).toBe(200);
     const theirs = (await connectionsOf('user_third')).connections[0];
-    expect(theirs).toMatchObject({ label: 'Mom', introduced_as: 'Olive', since: new Date().toISOString().slice(0, 10) });
+    expect(theirs).toMatchObject({ label: 'Mom', introduced_as: 'Olive', since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
     // I left what I call them empty: their own introduction stands in.
     const mine = (await connectionsOf('user_owner')).connections.find((c: any) => c.id === theirs.id);
     expect(mine).toMatchObject({ label: 'Rob', introduced_as: 'Rob' });

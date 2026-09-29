@@ -241,7 +241,9 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
         id: c.id,
         label: c.labels[me] ?? 'Someone',
         introduced_as: c.intros[other(c, me)] ?? null,
-        since: c.meta.created_at.slice(0, 10),
+        // The full instant, not its UTC day: the app shows it in the viewer's own
+        // time (components/Sharing.tsx shortDate).
+        since: c.meta.created_at,
         sharing: c.shares[me]?.accounts ?? {},
       }))
       .sort(byLabel),
@@ -420,7 +422,7 @@ async function fromOwner(owner: string, share: Share, now: number): Promise<Shar
       // That it's there, and nothing about how much.
     } else if (m) {
       balance = m.balance;
-      as_of = m.updated_at.slice(0, 10);
+      as_of = m.updated_at; // an instant; a snapshot's date below is a day
     } else {
       const measured = (await getAccountHistory(theirs, id)).filter((p) => !p.estimated);
       const last = measured[measured.length - 1];

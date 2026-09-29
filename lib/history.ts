@@ -34,6 +34,13 @@ const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
 // Per-account balances, one JSON map { account_id: balance } per date, so
 // individual accounts can be charted too.
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts');
+// When each day's snapshot was last written: date -> ISO instant. The history
+// keys are UTC days, which for anyone west of Greenwich can be the day after the
+// one they were in when it was taken; this is what lets a notice say "as of" in
+// the viewer's own time. Under "snapshot:" (this environment's record of when
+// its snapshots ran), so exports leave it out and a restore keeps its own. Losing
+// it costs only that precision: the date shows as before.
+const TAKEN_HASH = (ctx: Ctx) => kc(ctx, 'snapshot:taken');
 const ACCOUNTS_EST_HASH = (ctx: Ctx) => kc(ctx, 'history:accounts:est');
 // Per-account balances for dates BEYOND the estimated totals layer: backfill
 // walks an investment account past the oldest cash transaction, where its own
@@ -141,7 +148,8 @@ export async function recordSnapshot(ctx: Ctx,
   netWorth: number,
   accountBalances?: Record<string, number>
 ): Promise<string | null> {
-  const today = new Date().toISOString().slice(0, 10);
+  const at = new Date();
+  const today = at.toISOString().slice(0, 10);
 
   // The breakdown before the total it breaks down. A reader that meets the
   // two between the writes sees the new breakdown beside the old total, never
@@ -170,6 +178,9 @@ export async function recordSnapshot(ctx: Ctx,
   }
 
   if (mapLanded) {
+    // When it was taken, once the total has landed too. Best effort, and after
+    // the writes above so it can't change which of them a failure lands on.
+    await redis().hset(TAKEN_HASH(ctx), { [today]: at.toISOString() }).catch(() => {});
     // This map now supersedes any partial one written earlier today. Clearing
     // it is what lets getAccountHistory read a partial map that sits beside a
     // real one as the NEWER measurement: it can only have been written after
@@ -576,6 +587,18 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
     if (Object.keys(usable).length > 0) return { date, balances: usable };
   }
   return null;
+}
+
+/** The moment the snapshot dated `date` was last written, if known. Best
+ *  effort: null when it was never recorded (a snapshot from before this existed,
+ *  or one whose record could not be written) or can't be read. */
+export async function snapshotTakenAt(ctx: Ctx, date: string): Promise<string | null> {
+  try {
+    const v = await redis().hget<string>(TAKEN_HASH(ctx), date);
+    return typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getRealSnapshotDates(ctx: Ctx): Promise<Set<string>> {

@@ -14,6 +14,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const {
   recordSnapshot,
+  snapshotTakenAt,
   replaceEstimated,
   replaceEstimatedAccounts,
   replaceEstimatedExtension,
@@ -636,6 +637,32 @@ describe('recordSnapshot return value', () => {
 
 // One failing institution used to turn every other account's chart into an
 // estimate, because nothing at all was recorded on a day the total couldn't be.
+describe('when a snapshot was taken', () => {
+  // The history key is a UTC day; the instant is what lets a notice name the
+  // viewer's own day (components/Dashboard.tsx fmtStaleDay).
+  test('is recorded with the snapshot, as an instant inside that day', async () => {
+    const before = Date.now();
+    const date = await recordSnapshot(ctx, 900, { ira: 900 });
+    const at = await snapshotTakenAt(ctx, date!);
+    expect(at).not.toBeNull();
+    expect(Date.parse(at!)).toBeGreaterThanOrEqual(before);
+    expect(at!.slice(0, 10)).toBe(date!);
+  });
+
+  test('is the latest write when the day is recorded again', async () => {
+    const date = await recordSnapshot(ctx, 900, { ira: 900 });
+    await fake.hset(ctxKey('snapshot:taken'), { [date!]: '2000-01-01T00:00:00.000Z' });
+    await recordSnapshot(ctx, 901, { ira: 901 });
+    expect(Date.parse((await snapshotTakenAt(ctx, date!))!)).toBeGreaterThan(Date.parse('2001-01-01'));
+  });
+
+  test('is absent for a day nothing was recorded, and for one recorded without a breakdown', async () => {
+    expect(await snapshotTakenAt(ctx, '2020-01-01')).toBeNull();
+    const date = await recordSnapshot(ctx, 900);
+    expect(await snapshotTakenAt(ctx, date!)).toBeNull();
+  });
+});
+
 describe('the partial per-account layer', () => {
   const today = () => new Date().toISOString().slice(0, 10);
   const partialKey = () => ctxKey('history:accounts:partial');

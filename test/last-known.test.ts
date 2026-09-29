@@ -179,6 +179,30 @@ describe('rememberAccounts', () => {
 });
 
 describe('recovering a failed institution', () => {
+  // The snapshot's date is a UTC day; the instant it was written lets the card
+  // name the viewer's own day instead (a snapshot taken at 8pm Pacific is already
+  // the next UTC day).
+  test('carries the instant the snapshot was taken, when it is known', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(RECENT, { card: 5544.35 });
+    const taken = `${RECENT}T03:19:00.000Z`;
+    await fake.hset(ctxKey('snapshot:taken'), { [RECENT]: taken });
+
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    expect(inst.stale_as_of).toBe(RECENT);
+    expect((inst as any).stale_as_of_at).toBe(taken);
+  });
+
+  test('says nothing more than the date for a snapshot with no recorded instant', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(RECENT, { card: 5544.35 });
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    expect(inst.stale_as_of).toBe(RECENT);
+    expect((inst as any).stale_as_of_at).toBeUndefined();
+  });
+
   test('fills accounts from the last snapshot and dates them', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit', { limit: 10_000 })]);
     await writeAccountSnapshot(RECENT, { card: 5544.35 });
@@ -528,8 +552,9 @@ describe('the total it produces', () => {
 
     expect(filled).toHaveLength(3);
     // hkeys + one hget for the winning snapshot date (never a full hgetall of
-    // every date since install), one hgetall of the metadata hash, and one of
-    // the account links (lib/links.ts). None of them per institution.
-    expect(fake.ops).toBe(4);
+    // every date since install), one hget for the instant it was taken, one
+    // hgetall of the metadata hash, and one of the account links (lib/links.ts).
+    // None of them per institution.
+    expect(fake.ops).toBe(5);
   });
 });

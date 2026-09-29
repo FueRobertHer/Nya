@@ -12,6 +12,7 @@
 
 import { type Txn } from '@/components/MonthBreakdown';
 import { dominantCurrency } from '@/lib/format';
+import { localDate } from '@/lib/local-date';
 
 export type RecurringBill = {
   name: string;
@@ -95,8 +96,12 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
 }
 
 /** Bills whose estimated next charge falls within the next `days` days. */
-export function upcomingBills(bills: RecurringBill[], days = 7): RecurringBill[] {
-  const today = new Date().toISOString().slice(0, 10);
+export function upcomingBills(
+  bills: RecurringBill[],
+  days = 7,
+  /** The viewer's local day, not UTC's (lib/local-date.ts). */
+  today: string = localDate()
+): RecurringBill[] {
   const cutoff = addDays(today, days);
   return bills
     .filter((b) => b.nextDate >= today && b.nextDate <= cutoff)
