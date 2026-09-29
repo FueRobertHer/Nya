@@ -8,6 +8,7 @@ import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
+import AdminUnusedItems from './AdminUnusedItems';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import { historyPausedSince } from '@/lib/history-status';
@@ -330,7 +331,16 @@ const TAB_LABELS: Record<Tab, string> = {
   budgets: 'Budgets',
 };
 
-export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; viewer?: string }) {
+export default function Dashboard({
+  clerk = false,
+  viewer,
+  admin = false,
+}: {
+  clerk?: boolean;
+  viewer?: string;
+  /** Set by the server (app/page.tsx): only the admin is sent the admin panel. */
+  admin?: boolean;
+}) {
   const cacheKey = cacheKeyFor(viewer);
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
@@ -1378,6 +1388,12 @@ export default function Dashboard({ clerk = false, viewer }: { clerk?: boolean; 
                     or a link to undo. A change reloads live, since links alter
                     hidden accounts and per-account history. */}
                 {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
+
+                {/* The admin's list of connections, across every account, that
+                    cost money and do nothing. Only ever mounted for the admin (decided
+                    on the server in app/page.tsx); the route also refuses
+                    anyone else. Removal is confirmed inside it. */}
+                {manageMode && admin && <AdminUnusedItems onRemoved={() => loadNetWorth(true)} />}
 
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and

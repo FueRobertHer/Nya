@@ -10,6 +10,8 @@ import { sessionCurrent } from '@/lib/sessions';
 // app/api/snapshot/route.ts; the catch-up is the same handler), the nightly backup (CRON_SECRET too,
 // app/api/backup/route.ts), and the manual-balance ingest endpoint (which
 // authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
+// Plaid's webhook endpoint (which verifies Plaid's signature, lib/plaid-webhook.ts),
+// the unused-Item check (CRON_SECRET, app/api/plaid/check-items/route.ts),
 // and the ops routes, export, rotate-master, reencrypt and containers (OPS_SECRET, and off entirely
 // unless OPS_ENABLED=1 -- see lib/ops.ts), and the demo sign-in (Preview only, and only
 // ever as a listed demo account -- see lib/demo.ts).
@@ -18,7 +20,7 @@ import { sessionCurrent } from '@/lib/sessions';
 // A bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 

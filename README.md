@@ -393,6 +393,37 @@ options, roughly in order of how well they hold up:
 Note that the endpoint only *updates* accounts that already exist. It can't
 create them, so a leaked token can't invent accounts.
 
+### Keeping Plaid costs down
+
+Plaid bills per linked institution (Item) per month for Transactions,
+Investments and Liabilities, and per request for its live-balance call. Nya is
+built to stay on the cheap side of that:
+
+- **Balances come from `/accounts/get`**, the balances Plaid already holds, not
+  the billed live-balance call. They are as fresh as the last transactions
+  update, which is plenty for a daily net-worth snapshot.
+- **Webhooks** (optional). Set `PLAID_WEBHOOK_URL` to the public URL of
+  `/api/plaid/webhook` on your deployment and Plaid tells Nya when new data is
+  ready. Nya then serves dashboard loads from its own stored data for up to
+  six hours instead of fifteen minutes, and drops that stored copy the moment
+  Plaid says something changed. Refresh still goes to Plaid. Webhooks are
+  verified against Plaid's signature; an unsigned request does nothing. Items
+  linked before you set it are registered by the daily check below, or by
+  reconnecting them.
+- **Unused connections (admin only)**. A daily check
+  (`/api/plaid/check-items`) flags a connection, in any account, once Plaid
+  has been unable to read it for 60 days (login expired, consent withdrawn) or
+  every account on it has been hidden for 60 days. **It never removes
+  anything.** The admin, meaning whoever owns the deployment's own account
+  (normally the first to sign in with Clerk, or the password holder), sees the flagged
+  ones under Manage on the Accounts tab, labelled by owner. Other accounts
+  see nothing and the route answers them with a 404. Review and disconnect
+  asks for the institution's name, and the server checks the connection again
+  first: if its owner has reconnected it or unhidden an account, or Plaid
+  does not answer, nothing is removed. Any success starts the count again; an
+  outage or timeout counts for nothing. Change the period with
+  `PLAID_UNUSED_DAYS` (minimum 14).
+
 ## 5. Deploy
 
 ```bash
