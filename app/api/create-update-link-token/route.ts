@@ -4,6 +4,7 @@ import { CountryCode, Products } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
+import { webhookUrlFor } from '@/lib/webhook-url';
 
 export async function POST(req: Request) {
   try {
@@ -33,6 +34,9 @@ export async function POST(req: Request) {
       ...(add_liabilities ? { products: [Products.Liabilities] } : {}),
       country_codes: [CountryCode.Us],
       language: 'en',
+      // Re-registers the Item's webhook, so an Item linked before webhooks were
+      // configured picks it up when it is reconnected.
+      ...(webhookUrlFor(ctx) ? { webhook: webhookUrlFor(ctx) } : {}),
     });
 
     return NextResponse.json(response.data);

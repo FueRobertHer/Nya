@@ -16,7 +16,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const plaid = { limited: 0, calls: 0 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
-    accountsBalanceGet: async () => {
+    accountsGet: async () => {
       plaid.calls++;
       if (plaid.limited-- > 0) throw { response: { status: 429, data: { error_type: 'RATE_LIMIT_EXCEEDED' } } };
       return {

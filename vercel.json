@@ -13,6 +13,10 @@
     {
       "path": "/api/backup",
       "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/plaid/check-items",
+      "schedule": "0 17 * * *"
     }
   ]
 }
