@@ -1,45 +1,42 @@
 // lib/reencrypt.ts
 //
-// The re-encryption pass: moves every stored value that is not under the
-// active data key (all of k0, and any older data key) to it.
+// The re-encryption pass: moves every stored value that is not under the active
+// data key (all of k0, and any older data key) to it.
 //
-// WHY. Until this runs, everything written before data keys existed is still
-// under k0 (PLAID_ENCRYPTION_KEY). Moving it is what lets a data key be
-// replaced after a leak, and what would let k0 be retired one day. The same
-// pass does both: whatever is not under the active key gets moved.
+// Until this runs, everything written before data keys existed is still under k0
+// (PLAID_ENCRYPTION_KEY). Moving it is what lets a data key be replaced after a
+// leak, and what would let k0 be retired one day.
 //
 // HOW IT STAYS SAFE WHILE THE APP IS RUNNING:
 //
 //   - EXPLICIT LIST, NOT GUESSWORK. Every key is classified below: a string or
-//     hash of ciphertext, the Plaid items (whose access token is one field of
-//     a JSON value), or known plaintext. A key that is not listed is reported
-//     and left alone, so a store added later cannot be missed silently; a
-//     test checks every key name in lib/ is listed.
+//     hash of ciphertext, the Plaid items (whose access token is one field of a
+//     JSON value), or known plaintext. An unlisted key is reported and left
+//     alone, so a store added later can't be missed silently (a test checks every
+//     key name in lib/ is listed).
 //   - COMPARE-AND-SET. Each value is written back by a small Lua script only if
 //     it still hashes to what was read. A save landing mid-pass wins; the pass
-//     reports that value as changed meanwhile and picks it up next time.
-//   - SAME PLAINTEXT, SAME READERS. Only the encryption changes. Every reader
+//     reports it as changed meanwhile and picks it up next time.
+//   - SAME PLAINTEXT, SAME READERS. Only the encryption changes; every reader
 //     already handles both formats and every key.
 //   - NEVER k0. It writes with the active key only (activeKeyForReencryption),
 //     never through encrypt(), which could fall back.
-//   - RESUMABLE. It keeps no state: each call walks from the start, skips what
-//     is already done cheaply, and stops at a time limit. Call it until it
-//     reports complete.
+//   - RESUMABLE. It keeps no state: each call walks from the start, skips what is
+//     already done cheaply, and stops at a time limit. Call it until it reports
+//     complete.
+//   - ONLY WHILE THE KEY STILL EXISTS. Each write also checks, in the same step,
+//     that its key is still the active one and still in the key store. A restore
+//     that replaced the key store mid-pass stops the pass instead of leaving
+//     values under a key that exists nowhere. (Don't run it during a restore
+//     anyway.)
+//   - A CHECK WRITES NOTHING. Not even the first data key: only a run creates
+//     that, after the database has been shown to support the scripts.
 //
-//   - ONLY WHILE THE KEY STILL EXISTS. Each write also checks, in the same
-//     step, that the key it encrypts with is still the active one and still
-//     in the key store. A restore that replaced the key store mid-pass stops
-//     the pass instead of leaving values under a key that exists nowhere.
-//     (Don't run it during a restore anyway.)
-//   - A CHECK WRITES NOTHING. Not even the first data key: that is only
-//     created by a run, after the database has been shown to support the
-//     scripts.
-//
-// "Complete" is a snapshot. An instance that cannot get the active key writes
-// k0 (and logs it), and one that has not yet noticed a change of active key
-// keeps writing the old one for up to a minute; either shows up on the next
-// call. Values are never decrypted into the report: it carries key names,
-// field names, counts and error types only.
+// "Complete" is a snapshot. An instance that can't get the active key writes k0
+// (and logs it), and one that hasn't noticed a change of active key keeps writing
+// the old one for up to a minute; either shows up on the next call. Values are
+// never decrypted into the report: it carries key names, field names, counts and
+// error types only.
 
 import { createHash } from 'node:crypto';
 import { rawRedis, envPrefix } from './storage';

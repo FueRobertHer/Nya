@@ -1,10 +1,8 @@
 // lib/overrides.ts
 //
-// Manual category overrides for transactions (Mint-style recategorization).
-// Plaid's auto-categorization is good but not always right; overrides are a
-// Redis hash of transaction_id -> category, applied on top of the fetched
-// data in /api/transactions. Values are encrypted for consistency with
-// everything else financial.
+// Manual category overrides for transactions (Mint-style recategorization): a
+// Redis hash of transaction_id -> category, applied on top of the fetched data
+// in /api/transactions. Values are encrypted like everything else financial.
 
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
@@ -38,26 +36,24 @@ export async function setOverride(ctx: Ctx, transaction_id: string, category: st
   await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(category) });
 }
 
-// ---------------------------------------------------------------------------
 // Carrying categories across a re-link (#46)
 //
-// A re-link gives every transaction a new transaction_id, so the overrides
-// above no longer match anything. When an Item is disconnected, each of its
-// overridden rows is recorded here under its contentKey (lib/transactions.ts:
-// account, date, amount, the bank's descriptor) before its store is deleted.
-// Once the user links the old account to the new one (lib/links.ts), the new
-// account's rows with the same key show the same category.
+// A re-link gives every transaction a new transaction_id, so the overrides above
+// no longer match. When an Item is disconnected, each of its overridden rows is
+// recorded here under its contentKey (lib/transactions.ts: account, date, amount,
+// the bank's descriptor) before its store is deleted. Once the user links the old
+// account to the new one (lib/links.ts), the new account's rows with the same key
+// show the same category.
 //
-// One encrypted record per earlier account, filed under its account id: the
-// keys name a date, an amount and a merchant, so they belong inside the
-// ciphertext, never in a field name. Filing by account is also what lets a
-// user forget one earlier account's data in one step (forgetCarried).
+// One encrypted record per earlier account, filed under its account id: the keys
+// name a date, an amount and a merchant, so they belong inside the ciphertext,
+// never in a field name. Filing by account also lets a user forget one earlier
+// account's data in one step (forgetCarried).
 //
-// Like links, this rewrites nothing: the carried categories are applied on
-// read, a category set on the new row itself still wins, and unlinking stops
-// the carry. A key that can't be pinned to one category (its rows were
-// categorized differently, or an identical row was left as it was) carries
-// nothing, rather than guessing.
+// Like links, this rewrites nothing: carried categories are applied on read, a
+// category set on the new row itself wins, and unlinking stops the carry. A key
+// that can't be pinned to one category (rows categorized differently, or an
+// identical row left as it was) carries nothing rather than guessing.
 
 const CARRY_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-carry');
 
@@ -67,10 +63,10 @@ export type CarriedRows = Record<string, string | null>;
 export type Carried = Map<string, CarriedRows>;
 
 /**
- * Records the overridden rows of an Item being disconnected, then deletes
- * those overrides. Call before its transaction store is cleared, once the
- * Item is removed at Plaid (its transactions can't be shown again). Throws if something can't be read, so the
- * caller can say it couldn't (it must not stop the disconnect).
+ * Records the overridden rows of an Item being disconnected, then deletes those
+ * overrides. Call before its transaction store is cleared, once the Item is
+ * removed at Plaid. Throws if something can't be read, so the caller can say so
+ * (it must not stop the disconnect).
  */
 export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<number> {
   const raw = (await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx))) ?? {};
@@ -185,11 +181,10 @@ export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carr
 }
 
 /**
- * Deletes overrides whose transaction no longer exists in any stored Item
- * (rows the bank removed, pending rows replaced by their posted ones, or rows
- * of an Item disconnected before categories were carried): they can never be
- * shown again, and are a transaction id and a category the user may have
- * forgotten. Only when every store could be read; otherwise nothing.
+ * Deletes overrides whose transaction no longer exists in any stored Item (rows
+ * the bank removed, pending rows replaced by their posted ones, rows of an Item
+ * disconnected before categories were carried): they can never be shown again.
+ * Only when every store could be read; otherwise nothing.
  */
 export async function pruneOrphanOverrides(ctx: Ctx, item_ids: string[]): Promise<number> {
   // The overrides first, then the stores: a category set on a row saved
@@ -249,11 +244,10 @@ export function carriedCategories(carried: Carried, links: Map<string, Link>): M
 
 /**
  * For each linked earlier account: how many categorized rows it had that can
- * carry, how many of them show on a row of the account now, and how many were
- * ambiguous (so never carry). `shown` holds the keys of the rows that are
- * displayed (inside the lookback, not superseded) and don't have a category
- * of their own. Reported on the Accounts tab so the carry-over is honest
- * about what didn't make it (rows older than the bank re-sends, ambiguous).
+ * carry, how many show on a row of the account now, and how many were ambiguous
+ * (never carried). `shown` holds the keys of displayed rows (inside the lookback,
+ * not superseded) with no category of their own. Reported on the Accounts tab so
+ * the carry-over is honest about what didn't make it.
  */
 export function carryCounts(
   carried: Carried,

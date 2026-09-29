@@ -4,20 +4,20 @@ import { clerkEnabled, clerkUserAllowed } from '@/lib/auth-mode';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 import { sessionCurrent } from '@/lib/sessions';
 
-// Everything is protected EXCEPT the login page, the login API, static PWA
-// assets (which must be publicly fetchable for install/offline to work), the
-// cron snapshot endpoints (which authenticate themselves via CRON_SECRET -- see
-// app/api/snapshot/route.ts; the catch-up is the same handler), the nightly backup (CRON_SECRET too,
-// app/api/backup/route.ts), and the manual-balance ingest endpoint (which
-// authenticates itself via INGEST_SECRET -- see app/api/ingest/balance/route.ts),
-// Plaid's webhook endpoint (which verifies Plaid's signature, lib/plaid-webhook.ts),
-// the unused-Item check (CRON_SECRET, app/api/plaid/check-items/route.ts),
-// and the ops routes, export, rotate-master, reencrypt and containers (OPS_SECRET, and off entirely
-// unless OPS_ENABLED=1 -- see lib/ops.ts), and the demo sign-in (Preview only, and only
-// ever as a listed demo account -- see lib/demo.ts).
+// Everything is protected EXCEPT: the login page and API; static PWA assets (they
+// must be publicly fetchable for install/offline to work); and routes that
+// authenticate themselves:
+//   - the cron endpoints (the snapshot and its catch-up, the nightly backup, the
+//     unused-Item check), via CRON_SECRET;
+//   - the manual-balance ingest, via INGEST_SECRET;
+//   - Plaid's webhook, by verifying Plaid's signature (lib/plaid-webhook.ts);
+//   - the ops routes (export, rotate-master, reencrypt, containers), via
+//     OPS_SECRET, and off entirely unless OPS_ENABLED=1 (lib/ops.ts);
+//   - the demo sign-in (Preview only, and only ever as a listed demo account;
+//     lib/demo.ts).
 //
-// Note the `$` anchors on the API entries: they exclude exactly those paths.
-// A bare prefix like `api/ingest/` would un-gate every future route under it.
+// Note the `$` anchors on the API entries: they exclude exactly those paths. A
+// bare prefix like `api/ingest/` would un-gate every future route under it.
 export const config = {
   matcher: [
     '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|login$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',

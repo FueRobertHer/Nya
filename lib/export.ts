@@ -2,38 +2,34 @@
 //
 // A complete, restorable copy of this environment's data, as NDJSON.
 //
-// WHY THIS EXISTS BEFORE ANY MIGRATION. The data here cannot be re-fetched.
-// Plaid will not re-serve transactions a bank has aged out, and no institution
-// serves daily balance history at all, because nothing but this app records it.
-// Phase 0 renames every key and changes the cipher format. Neither is safe to
-// attempt over irreplaceable data until a copy exists and has been shown to
-// restore.
+// The data here cannot be re-fetched: Plaid won't re-serve transactions a bank
+// has aged out, and no institution serves daily balance history at all, because
+// nothing but this app records it. So a copy must exist, and be shown to
+// restore, before any risky change (key renames, a cipher format change).
 //
-// THREE RULES, each for a reason:
+// THREE RULES:
 //
 // 1. CIPHERTEXT VERBATIM, NEVER DECRYPTED. Decrypting would put years of
-//    financial data in plaintext in function memory and possibly in logs, and
-//    would make a restore re-encrypt rather than reproduce. The cost is that
-//    the archive is useless without the keys: PLAID_ENCRYPTION_KEY for values
-//    still under k0, and MASTER_KEY for everything under a data key (the data
-//    keys themselves travel in the archive, wrapped). Keep those somewhere the
-//    database is not.
+//    financial data in plaintext in function memory and possibly logs, and make
+//    a restore re-encrypt rather than reproduce. The cost is that the archive is
+//    useless without the keys: PLAID_ENCRYPTION_KEY for values still under k0,
+//    and MASTER_KEY for everything under a data key (the data keys travel in the
+//    archive, wrapped). Keep those somewhere the database is not.
 //
-// 2. EXACT BYTES. Values are read through rawRedis(), not redis(). The default
-//    client JSON-parses on the way out, so a stored "1" would be archived as
-//    the number 1 and restore would write back something the app never wrote.
+// 2. EXACT BYTES. Values are read through rawRedis(), not redis(): the default
+//    client JSON-parses on the way out, so a stored "1" would be archived as the
+//    number 1 and restore would write back something the app never wrote.
 //
-// 3. PROVABLY COMPLETE. The last line is a footer with a key count and a
-//    SHA-256 over the header and every record line. A download cut off
-//    mid-stream has no footer, and one damaged in storage or transit fails the
-//    hash. Restore refuses both, because a partial archive restored over real
-//    data is worse than no archive. The hash is an integrity check, not a
-//    signature: it catches accidents, and anyone deliberately editing the file
-//    can recompute it.
+// 3. PROVABLY COMPLETE. The last line is a footer with a key count and a SHA-256
+//    over the header and every record line. A download cut off mid-stream has no
+//    footer, and one damaged in storage or transit fails the hash; restore
+//    refuses both, since a partial archive restored over real data is worse than
+//    none. The hash catches accidents, not a deliberate edit (anyone can
+//    recompute it).
 //
 // NOT A POINT-IN-TIME SNAPSHOT. Keys are read one after another, so a write
-// landing mid-export can leave two keys from different moments. Avoid running
-// it around 13:00 UTC, when the snapshot cron writes.
+// landing mid-export can leave two keys from different moments. Avoid running it
+// around 13:00 UTC, when the snapshot cron writes.
 //
 // Format:
 //   {"nya_export":1,"schema_era":"unscoped","env_prefix":"production",...}
@@ -42,11 +38,11 @@
 //   {"end":true,"keys":2,"sha256":"<hex>","unsupported":[]}
 //
 // The sha256 covers the UTF-8 bytes of the header line and every record line,
-// each including its trailing "\n", in file order. Not the footer. Restore
+// each including its trailing "\n", in file order (not the footer). Restore
 // recomputes it over the lines exactly as read, never over re-serialized JSON,
-// since re-serializing can reorder keys.
+// which can reorder keys.
 //
-// Keys are stored WITHOUT the environment prefix, and the header records which
+// Keys are stored WITHOUT the environment prefix and the header records which
 // prefix they came from, so restore can write them into a different namespace
 // (a restore-test copy) without rewriting every line.
 
@@ -65,21 +61,22 @@ export const EXPORT_FORMAT_VERSION = 1;
 export const SCHEMA_ERA = 'containers';
 
 /**
- * Deliberately left out. None is data, and each would be wrong after a
- * restore: a cache entry would show numbers from the moment of export as if
- * current, a rate-limit counter would lock out a login it was never about, a
- * sync lock would block a sync that isn't running, an old session epoch
- * would bring back sessions revoked since (lib/sessions.ts), and the snapshot
- * cron's log and lock describe the cron that wrote them (lib/snapshot-job.ts).
- * The data move's record is left out too: restored, it would vouch for values
- * it never copied, and a later move could overwrite them (lib/move.ts).
- * So is the lock on account-link changes: restored, it would block linking
- * and forgetting for minutes, for a change that isn't running. And a forget's
- * progress: it names points of a fold the restored data may not match, and a
- * retry works from the breakdowns without it (lib/history.ts
- * foldHiddenAccount). And the nightly backup's last outcome (lib/backup.ts):
- * restored, it would describe backups of another moment. And unused invite
- * links (lib/sharing.ts): they last hours, and a restored one would work again.
+ * Deliberately left out. None is data, and each would be wrong after a restore:
+ *   - cache entries would show numbers from the moment of export as current;
+ *   - rate-limit counters would lock out a login they were never about;
+ *   - sync and account-link locks would block work that isn't running;
+ *   - an old session epoch would bring back sessions revoked since
+ *     (lib/sessions.ts);
+ *   - the snapshot cron's log and lock describe the cron that wrote them
+ *     (lib/snapshot-job.ts);
+ *   - the data move's record would vouch for values it never copied, and a later
+ *     move could overwrite them (lib/move.ts);
+ *   - a forget's progress names points of a fold the restored data may not match
+ *     (lib/history.ts foldHiddenAccount);
+ *   - the nightly backup's last outcome would describe backups of another moment
+ *     (lib/backup.ts);
+ *   - unused invite links last hours, and a restored one would work again
+ *     (lib/sharing.ts).
  */
 export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:', 'backups:', 'invites:'] as const;
 
@@ -91,8 +88,8 @@ export type ExportHeader = {
   nya_export: typeof EXPORT_FORMAT_VERSION;
   schema_era: string;
   env_prefix: string;
-  /** Always null until containers exist (#53); present now so the field does
-   *  not have to be added to a format that archives already use. */
+  /** Always null; present so the field need not be added to a format that
+   *  archives already use. */
   container_id: string | null;
   taken_at: string;
   excluded: string[];
@@ -151,10 +148,9 @@ async function listKeys(client: ExportClient, prefix: string): Promise<string[]>
     // characters, so this pattern matches it literally.
     const [next, page] = await client.scan(cursor, { match: `${prefix}*`, count: PAGE });
     for (const key of page) {
-      // Checked rather than trusted. A key outside the prefix would otherwise
-      // be archived under a wrong name by the slice in exportLines. Thrown, not
-      // skipped: a pattern that matched something unexpected means the walk
-      // cannot be trusted at all.
+      // Checked rather than trusted: a key outside the prefix would be archived
+      // under a wrong name by the slice in exportLines. Thrown, not skipped, since
+      // a pattern matching something unexpected means the walk can't be trusted.
       if (!key.startsWith(prefix)) throw new Error(`Scan returned a key outside ${prefix}`);
       keys.add(key);
     }
@@ -183,12 +179,9 @@ async function readHash(client: ExportClient, key: string): Promise<Record<strin
     cursor = next;
   } while (String(cursor) !== '0');
 
-  // Sorted, because Redis promises no field order: two HSCANs of an unchanged
-  // hash can disagree, and a hash written back in one order can scan out in
-  // another. Without this, two exports of the same data would differ and a
-  // restore's read-back would see a correctly restored hash as changed.
-  // (Integer-like field names still serialize first, in numeric order, since
-  // that is how JS orders object keys. Deterministic either way.)
+  // Sorted, because Redis promises no field order: without it two exports of the
+  // same data would differ, and a restore's read-back would see a correctly
+  // restored hash as changed.
   const out: Record<string, string> = Object.create(null);
   for (const field of [...fields.keys()].sort(byCodePoint)) out[field] = fields.get(field)!;
   return out;

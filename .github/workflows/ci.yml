@@ -1,19 +1,9 @@
 name: CI
 
-# Typecheck and test on every pull request and every push to main.
-#
-# Until this existed, nothing automated gated a change: the only workflow was
-# sync-preview.yml, which merges main into preview on every push. So a broken
-# main reached the demo deployment unattended, and the only real gates were
-# whatever a contributor remembered to run locally plus Vercel's own build.
-#
-# That matters more than usual here because of what is coming: the container-
-# scoping work makes `k()` require a container id specifically so that an
-# unscoped key becomes a compile error. That guarantee is worth nothing if
-# `tsc --noEmit` only runs when someone remembers to run it.
-#
-# README tells contributors to run `bun run typecheck && bun run test`; this is
-# the same pair, so a green local run means a green CI run.
+# Typecheck and test on every pull request and every push to main. sync-preview.yml
+# merges main into preview on every push, so a broken main would otherwise reach
+# the demo deployment unattended. Runs the same pair as
+# `bun run typecheck && bun run test`, so a green local run means a green CI run.
 
 on:
   pull_request:

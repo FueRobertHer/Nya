@@ -2,27 +2,25 @@
 //
 // Which sign-in the app uses. Clerk (managed accounts, the start of #44) when
 // both of its keys are set; otherwise the shared password (lib/auth.ts),
-// unchanged. So a deployment without Clerk keys behaves exactly as before,
-// and turning Clerk on or off is a change of environment, not of code.
+// unchanged. Turning Clerk on or off is a change of environment, not of code.
 //
-// Only people on CLERK_ALLOWED_USER_IDS get in. It is comma-separated, and
-// each entry is a Clerk user id (user_...) or an email address. An email
-// matches an account that has it as a verified address, in any case: Clerk
-// has proved the person holds that inbox, so typing someone else's address
-// into an account gets nobody in. An
-// account matching more than one entry (its id and its email) is simply
-// allowed; to turn someone away, remove every entry that matches them.
-// Unset or empty lets nobody in: a signed-in stranger must never reach the
-// data. Which data an allowed account reaches is lib/owners.ts: the first to
-// sign in owns what is already here, each other its own.
+// Only people on CLERK_ALLOWED_USER_IDS get in. It is comma-separated, and each
+// entry is a Clerk user id (user_...) or an email address. An email matches an
+// account that has it as a verified address, in any case: Clerk has proved the
+// person holds that inbox, so typing someone else's address into an account gets
+// nobody in. An account matching more than one entry (its id and its email) is
+// simply allowed; to turn someone away, remove every entry that matches them.
+// Unset or empty lets nobody in: a signed-in stranger must never reach the data.
+// Which data an allowed account reaches is lib/owners.ts: the first to sign in
+// owns what is already here, each other its own.
 //
 // Ids are checked first and need nothing else. Emails need the account's
 // addresses from Clerk: looked up only when an email entry exists and the id
 // isn't listed, reused for a minute per instance (the proxy asks on every
 // request), and shared by requests that ask at the same time. If Clerk can't
-// answer, an answer up to ten minutes old is used instead, so a short Clerk
-// outage doesn't lock anyone out; with none, the person is turned away. List
-// the owner by id: ids never depend on Clerk answering.
+// answer, an answer up to ten minutes old is used, so a short Clerk outage
+// doesn't lock anyone out; with none, the person is turned away. List the owner
+// by id: ids never depend on Clerk answering.
 
 import { isDemoUser } from './demo';
 

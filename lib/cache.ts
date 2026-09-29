@@ -1,16 +1,13 @@
 // lib/cache.ts
 //
-// Short-lived cache of assembled API payloads (balances, transactions) in
-// Redis, so dashboard loads don't wait on live Plaid round trips every time.
-// The Refresh button bypasses it with ?refresh=1.
+// Short-lived cache of assembled API payloads (balances, transactions) in Redis,
+// so dashboard loads don't wait on live Plaid round trips. Refresh bypasses it
+// with ?refresh=1.
 //
-// These payloads are financial data, so they're encrypted with the same
-// AES-256-GCM key as the Plaid access tokens (lib/crypto.ts) -- a
-// database-only leak exposes neither tokens nor balances.
-//
-// Inside the request's container (#53), like all stored data. Callers name a
-// cache (CacheKey), never a Redis key; the key is built here, with kc(). A
-// cache is never allowed to break the request that uses it.
+// The payloads are financial data, so they're encrypted with the same key as
+// everything else (lib/crypto.ts). They live inside the request's container
+// (#53). Callers name a cache (CacheKey), never a Redis key; the key is built
+// here with kc(). A cache must never break the request that uses it.
 
 import { redis, kc, envPrefix } from './storage';
 import { encrypt, decrypt } from './crypto';
@@ -19,12 +16,12 @@ import type { Ctx } from './containers';
 import { webhooksEnabled } from './webhook-url';
 
 /**
- * How long a cached payload is served. Short by default, because nothing tells
- * the app when its data changed. With webhooks on (lib/webhook-url.ts) Plaid
- * says so, and the webhook route drops the caches (clearCaches) the moment new
- * data arrives, so a payload can safely stand for hours: dashboard loads then
- * come from our own storage, and only Refresh, a webhook or the daily snapshot
- * goes to Plaid. Read per call, not at import, so it follows the environment.
+ * How long a cached payload is served. Short by default, since nothing tells the
+ * app when its data changed. With webhooks on (lib/webhook-url.ts) Plaid says so
+ * and the webhook route drops the caches (clearCaches) when new data arrives, so
+ * a payload can stand for hours: loads come from our own storage, and only
+ * Refresh, a webhook or the daily snapshot goes to Plaid. Read per call, not at
+ * import, so it follows the environment.
  */
 const SHORT_TTL_SECONDS = 15 * 60;
 const WEBHOOK_TTL_SECONDS = 6 * 60 * 60;
@@ -37,25 +34,22 @@ export const CacheKey = {
 } as const;
 export type CacheKey = (typeof CacheKey)[keyof typeof CacheKey];
 
-// Per-account investment activity, one hash field per account_id rather than
-// one key each. A hash keeps clearCaches() a single del of known keys -- with
-// per-account keys it would need a scan, and this is the only cache whose key
-// set isn't known ahead of time.
+// Per-account investment activity, one hash field per account_id rather than one
+// key each, so clearCaches() is a single del of known keys (per-account keys
+// would need a scan).
 //
 // Versioned because the payload's MEANING changed when rollovers were split out
-// of its contributions figure, not just its shape: entries written by the
-// previous deploy would otherwise keep serving the un-split number for the rest
-// of their TTL. Versioning the key rather than the field lets the old hash
-// expire wholesale on the TTL it already carries, instead of leaving dead
-// fields inside a live hash that every write renews.
+// of contributions, not just its shape: entries from the previous deploy would
+// keep serving the un-split number for their TTL. Versioning the key rather than
+// the field lets the old hash expire wholesale instead of leaving dead fields
+// inside a live hash that every write renews.
 const INVESTMENT_ACTIVITY = 'cache:inv-activity:v4';
 
 /**
- * The same caches at their keys from before containers. Nothing reads or
- * writes them any more; clearCaches() still deletes them, so a rollback to the
- * previous deploy (which reads only these) is not served a payload that a
- * link or disconnect since should have cleared. Remove once no deployment
- * from before containers can come back.
+ * The same caches at their keys from before containers. Nothing reads or writes
+ * them; clearCaches() still deletes them so a rollback to the previous deploy
+ * (which reads only these) isn't served a payload a link or disconnect should
+ * have cleared. Remove once no deployment from before containers can come back.
  */
 const LEGACY_KEYS = () => ['cache:net-worth', 'cache:transactions', 'cache:inv-activity:v4'].map((key) => envPrefix() + key);
 
@@ -103,11 +97,10 @@ export async function readAccountCache<T>(ctx: Ctx, field: string): Promise<T | 
     const blob = await redis().hget<string>(keyOf(ctx, INVESTMENT_ACTIVITY), field);
     if (!blob) return null;
     const { at, value } = JSON.parse(await decrypt(blob)) as { at: number; value: T };
-    // Per-field expiry is enforced here, not by Redis. A hash carries one TTL
-    // for all its fields, and every write would slide it -- so under an
-    // expand/collapse loop a field written 40 minutes ago would keep being
-    // renewed by writes to other accounts and never expire. The key's own TTL
-    // stays on purely as cleanup for a hash nobody touches again.
+    // Per-field expiry is enforced here, not by Redis: a hash has one TTL for all
+    // fields and every write slides it, so under an expand/collapse loop a field
+    // written 40 minutes ago would keep being renewed by writes to other accounts.
+    // The key's own TTL stays only as cleanup for a hash nobody touches again.
     if (typeof at !== 'number' || Date.now() - at > ttlSeconds() * 1000) return null;
     return value;
   } catch {

@@ -1,27 +1,26 @@
 // lib/auth.ts
 //
-// Sessions (#56). One household password protects every route; this module
-// only decides whether a session token is still good. Who you are is decided
-// at /api/login, and the two stay separate: when real accounts arrive, login
-// changes completely and this should not have to.
+// Sessions (#56). One household password protects every route; this module only
+// decides whether a session token is still good. Who you are is decided at
+// /api/login, and the two stay separate so login can change without this.
 //
 // A token is  v1.<base64url(claims JSON)>.<hex HMAC-SHA256 of "v1.<claims>">
 // keyed by SESSION_SECRET. The claims:
 //
-//   v          1. A versioned object rather than a positional format, so
-//              adding a user or capabilities later does not break outstanding
-//              tokens. Any other version is rejected, never guessed at.
+//   v          1. A versioned object rather than a positional format, so adding
+//              a user or capabilities later doesn't break outstanding tokens.
+//              Any other version is rejected, never guessed at.
 //   container  which data the session may reach (a container id, #53).
-//   epoch      the container's session epoch when it was issued. Bumping the
-//              stored epoch (lib/sessions.ts) ends every older session.
+//   epoch      the container's session epoch when issued. Bumping the stored
+//              epoch (lib/sessions.ts) ends every older session.
 //   iat        issued at, ms. Checked here, not left to the cookie's maxAge.
-//   pw         a tag derived from APP_PASSWORD. Changing the password
-//              changes the tag, which ends every session at once.
+//   pw         a tag derived from APP_PASSWORD. Changing the password changes
+//              the tag, which ends every session at once.
 //
 // Tokens from before this format ("<issuedAt>.<hex>") are still accepted until
 // they expire (30 days), so nobody is logged out by the upgrade. They name no
-// container and carry no password tag, so a password change does not end
-// them; "sign out everywhere" does.
+// container and carry no password tag, so a password change does not end them;
+// "sign out everywhere" does.
 //
 // Uses Web Crypto so this works the same in the proxy, Bun and Node.
 
@@ -155,11 +154,10 @@ export async function verifySessionToken(
 }
 
 /**
- * Constant-time string equality. Hashes both sides first so the comparison
- * runs over fixed-length hex regardless of input, meaning neither the length
- * nor the content of the real secret leaks through timing. For comparing a
- * shared secret or a signature; it is not a password hash and must never be
- * used as one.
+ * Constant-time string equality. Hashes both sides first so the comparison runs
+ * over fixed-length hex regardless of input, so neither the length nor the
+ * content of the real secret leaks through timing. For shared secrets and
+ * signatures; not a password hash.
  */
 export async function secretsMatch(candidate: string, expected: string): Promise<boolean> {
   const [a, b] = await Promise.all([sha256Hex(candidate), sha256Hex(expected)]);

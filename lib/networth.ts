@@ -75,29 +75,23 @@ export type InstitutionResult = {
    * otherwise successful fetch, and have not been absent long enough to accept
    * as closed (lib/vanished.ts).
    *
-   * Closes the snapshot and cache gates exactly as `error` does, and for the
-   * same reason: the total on hand is not a measurement of everything this
-   * institution holds, so recording it would write a silent drop into a history
-   * layer nothing rewrites. Unlike `error`, the accounts that DID answer are
-   * fresh and correct, so the card shows them rather than falling back to
-   * last-known balances.
+   * Closes the snapshot and cache gates exactly as `error` does: the total on
+   * hand isn't a measurement of everything this institution holds. Unlike
+   * `error`, the accounts that DID answer are fresh, so the card shows them
+   * rather than falling back to last-known balances.
    *
-   * A count rather than the ids, because this object is sent to the client
-   * whole (app/api/net-worth/route.ts:144) and the ids would be the one place
-   * account ids leave the server in plaintext. Nothing downstream needs them;
-   * lib/vanished.ts keeps them encrypted in its own record.
+   * A count, not ids: this object is sent to the client whole, and ids would be
+   * the one place account ids leave the server in plaintext (lib/vanished.ts
+   * keeps them encrypted).
    */
   unconfirmed_missing?: number;
 };
 
 /**
  * Whether an institution's figures may be written to the permanent history
- * layer or frozen into a cache.
- *
- * One definition, used by every gate, because they must agree: /api/snapshot,
- * /api/net-worth and /api/ingest/balance each recorded the same
- * `every(i => !i.error)` by hand, so a new reason to withhold had to be
- * remembered in three places or it silently was not applied in the third.
+ * layer or frozen into a cache. One definition for every gate (/api/snapshot,
+ * /api/net-worth, /api/ingest/balance), so a new reason to withhold is applied
+ * everywhere.
  */
 export function isRecordable(inst: InstitutionResult): boolean {
   return !inst.error && !inst.unconfirmed_missing;
@@ -124,15 +118,13 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
 
   try {
     // /accounts/get, not /accounts/balance/get: it answers from the balances
-    // Plaid already holds for the Item (about once a day for a healthy one, per
-    // Plaid's docs) and carries no per-request charge, where the live balance
-    // call is billed on every use. The cost is that the Refresh button can no
-    // longer pull a live balance, and a snapshot can be up to a day behind the
-    // bank.
+    // Plaid already holds (about daily for a healthy Item) with no per-request
+    // charge, where the live balance call is billed on every use. The cost is
+    // that Refresh can't pull a live balance and a snapshot can be a day behind.
     const balanceRes = await withRateLimitRetry(() => plaidClient.accountsGet({ access_token }));
     // Served from what Plaid holds, a broken Item may answer 200 with the problem
-    // attached to the Item instead of failing. Treat that as the failure it is,
-    // or the reconnect prompt would never appear.
+    // on the Item instead of failing. Treat that as the failure it is, or the
+    // reconnect prompt would never appear.
     const itemError = balanceRes.data.item?.error?.error_code;
     if (itemError === 'ITEM_LOGIN_REQUIRED') throw { response: { data: { error_code: itemError } } };
     result.institution_id = balanceRes.data.item?.institution_id ?? null;
@@ -163,23 +155,18 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
     return result;
   }
 
-  // Holdings and liabilities are independent of each other and both swallow
-  // their own errors, so they run together rather than adding a second and
-  // third serial round trip to the uncached dashboard load and the daily cron.
+  // Holdings and liabilities are independent and both swallow their own errors,
+  // so they run together rather than adding serial round trips to the uncached
+  // load and the daily cron.
   //
-  // Both are gated on THIS fetch's account list, not on anything remembered:
-  // an account opened at an institution that already had only checking shows up
-  // in the balances above on the very first load after it appears, so the call
-  // it needs is made that same load. A cached hint could only ever be a
-  // prefetch, never the decision.
+  // Both are gated on THIS fetch's account list, not anything remembered: an
+  // account opened at an institution that had only checking shows up in the
+  // balances on the first load, so the call it needs is made that same load.
   const hasDebt = result.accounts.some((a) => isOwedType(a.type));
   const hasSecurities = result.accounts.some((a) => isInvestmentType(a.type));
   await Promise.all([
-    // Holdings exist only for investment/brokerage accounts, so for a
-    // cash-and-cards institution this call could only ever come back empty.
-    // It used to be made unconditionally, which put one guaranteed-useless
-    // Plaid round trip on the critical path of every such Item on every
-    // uncached load -- most of them, for most people.
+    // Holdings exist only for investment accounts; for a cash-and-cards
+    // institution this call could only come back empty.
     hasSecurities ? fetchHoldings(access_token, result) : Promise.resolve(),
     // Only worth a call if there's something a liability could describe.
     hasDebt ? fetchLiabilities(access_token, result) : Promise.resolve(),
@@ -197,20 +184,18 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
     const securities: Record<string, any> = {};
     (holdingsRes.data.securities || []).forEach((s) => (securities[s.security_id] = s));
     result.holdings = (holdingsRes.data.holdings || []).map((h) => ({
-      // Kept so holdings can be dropped along with a hidden parent account --
-      // otherwise hiding a brokerage would zero its balance but leave every
-      // position and its gain/loss on the Accounts tab.
+      // Kept so holdings drop along with a hidden parent account; otherwise
+      // hiding a brokerage would zero its balance but leave every position.
       account_id: h.account_id,
       name: securities[h.security_id]?.name || securities[h.security_id]?.ticker_symbol || 'Unknown',
       quantity: h.quantity,
       price: h.institution_price,
       value: h.institution_value,
       cost_basis: h.cost_basis, // total cost of the position, for gain/loss
-      // The three security fields lib/cash.ts reads to tell a position apart
-      // from money that is merely sitting in the account. Carried separately
-      // rather than resolved to a boolean here so the client can re-derive it:
-      // this payload is cached in localStorage, and a stored verdict would
-      // freeze whatever the rule said on the day it was written.
+      // The three security fields lib/cash.ts reads to tell a position from money
+      // merely sitting in the account. Sent raw, not as a verdict: this payload is
+      // cached in localStorage, and a stored verdict would freeze the rule as of
+      // the day it was written.
       ticker: securities[h.security_id]?.ticker_symbol ?? null,
       security_type: securities[h.security_id]?.type ?? null,
       is_cash_equivalent: securities[h.security_id]?.is_cash_equivalent ?? null,
@@ -223,20 +208,17 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
 /**
  * APRs, minimum payments and due dates for credit cards and loans.
  *
- * Note what this never does: set result.error. /api/net-worth and the snapshot
- * cron both gate on `institutions.every(i => !i.error)` before recording a
- * snapshot or writing the cache, so flagging "this Item has no liabilities
- * product" as an error would freeze the entire net-worth history and disable
- * caching outright. Product availability is reported through result.liabilities
- * instead, which nothing gates on.
+ * Never sets result.error: /api/net-worth and the snapshot cron gate on
+ * `institutions.every(i => !i.error)`, so flagging "no liabilities product" as
+ * an error would freeze the net-worth history and disable caching. Product
+ * availability goes through result.liabilities, which nothing gates on.
  */
 async function fetchLiabilities(access_token: string, result: InstitutionResult): Promise<void> {
   try {
     const res = await plaidClient.liabilitiesGet({ access_token });
-    // Inside the try on purpose: a throw out here would reject the Promise.all
-    // in computeNetWorth and 500 both callers -- worse than the error flag the
-    // comment above is avoiding. normalizeLiabilities is written to be total,
-    // and this is the belt to that braces.
+    // Inside the try on purpose: a throw here would reject the Promise.all in
+    // computeNetWorth and 500 both callers. normalizeLiabilities is written to
+    // be total; this is the belt to its braces.
     const byAccount = normalizeLiabilities(res.data.liabilities);
     result.accounts.forEach((a) => {
       if (byAccount[a.account_id]) a.liability = byAccount[a.account_id];
@@ -263,50 +245,42 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
 }> {
   const items = await getItems(ctx);
 
-  // Fetch every institution concurrently instead of one at a time --
-  // with N linked accounts this used to take N sequential round trips.
-  // The two reads the vanished check needs are whole hashes keyed by item_id,
-  // so they are issued alongside the Plaid fan-out rather than after it. They
-  // depend only on the Items, which are already in hand, and the fan-out takes
-  // seconds. Same reasoning as the eager() read in app/api/net-worth/route.ts.
+  // Fetch every institution concurrently. The vanished check's two reads depend
+  // only on the Items already in hand, so they are issued alongside the Plaid
+  // fan-out rather than after it (same reasoning as eager() in
+  // app/api/net-worth/route.ts).
   const vanishedReads = loadVanishedInputs(ctx);
 
   const institutions = await Promise.all(items.map(fetchInstitution));
 
-  // An account missing from a SUCCESSFUL fetch is either a closure or a
-  // provider glitch, and until that resolves the total on hand is not a
-  // measurement of everything held. Only healthy institutions are checked: a
-  // failed fetch returns no accounts at all, which lib/last-known.ts already
-  // owns and which would otherwise look like every account vanishing at once.
+  // An account missing from a SUCCESSFUL fetch is either a closure or a provider
+  // glitch, and until that resolves the total isn't a measurement of everything
+  // held. Only healthy institutions are checked: a failed fetch returns no
+  // accounts (lib/last-known.ts owns that) and would look like every account
+  // vanishing.
   const healthy = institutions.filter((i) => !i.error);
   const vanished = await applyVanished(ctx, healthy, await vanishedReads);
   for (const inst of healthy) {
     const res = vanished[inst.item_id];
     if (!res) continue;
     if (res.unconfirmed.length > 0) inst.unconfirmed_missing = res.unconfirmed.length;
-    // Counts only. Account ids are encrypted at rest everywhere else in this
-    // codebase, and the institution NAME is no better: which bank someone uses
-    // is at least as identifying as an opaque Plaid id. The stale-balance
-    // warning in /api/net-worth:129 logs a count and a date for the same
-    // reason, and this matches it.
+    // Counts only: account ids are encrypted at rest everywhere else, and which
+    // bank someone uses is at least as identifying. The stale-balance warning in
+    // /api/net-worth logs a count and a date for the same reason.
     console.warn(
       `net-worth: an institution is missing ${res.unconfirmed.length} account(s) pending confirmation, ${res.accepted.length} accepted as closed`
     );
   }
 
   // Manually-tracked accounts join the same list, so net worth, the Accounts
-  // tab, per-account history, goals and insights all treat them like any other
-  // account with no special-casing downstream.
+  // tab, history, goals and insights treat them like any other account.
   //
-  // A failed read becomes an institution with an `error` instead of an empty
-  // list. That matters: callers gate snapshot recording on
-  // `institutions.every(i => !i.error)`, and if a Redis blip silently returned
-  // "no manual accounts" the gate would still pass and a net worth short by
-  // the entire manual total would be written to the real history layer -- which
-  // nothing ever rewrites for a past date. Surfacing the error blocks the
-  // write instead. (Accepted consequence: a broken Plaid item freezes manual
-  // history too, since one gate covers the whole snapshot. Splitting it would
-  // corrupt the total series, which is worse.)
+  // A failed read becomes an institution with an `error`, not an empty list: a
+  // silent "no manual accounts" would pass the snapshot gate and write a net
+  // worth short by the whole manual total into the real history layer. Surfacing
+  // the error blocks the write. (A broken Plaid item thus freezes manual history
+  // too, since one gate covers the snapshot; splitting it would corrupt the
+  // total series.)
   try {
     institutions.push(...toInstitutions(await getManualAccounts(ctx)));
   } catch (err) {
@@ -341,11 +315,9 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
  * Flat { account_id: current balance } map, for per-account history snapshots.
  *
  * Skips accounts recovered from a past snapshot (lib/last-known.ts). Callers
- * today build this before recovery runs, so the filter never fires -- it is
- * here so the display-only rule survives someone reordering the route. Writing
- * a recovered balance into today's key would record last week's figure as
- * though it had been measured, and nothing ever rewrites a real point for a
- * past date, so that mistake would be permanent.
+ * build this before recovery runs, so the filter is a guard for the display-only
+ * rule against someone reordering the route: a recovered balance written to
+ * today's key would be recorded as measured, permanently.
  */
 export function accountBalanceMap(institutions: InstitutionResult[]): Record<string, number> {
   const map: Record<string, number> = {};
@@ -358,31 +330,27 @@ export function accountBalanceMap(institutions: InstitutionResult[]): Record<str
 }
 
 /**
- * The same map, over only the institutions that actually answered: what a
- * partly failed fetch still measured.
+ * The same map, over only the institutions that actually answered: what a partly
+ * failed fetch still measured.
  *
- * An institution with `error` is left out whole. Its accounts are either empty
- * or, after lib/last-known.ts, recovered balances that were never measured
- * today. One with `unconfirmed_missing` stays in: it answered, and the accounts
- * it returned are real. That some other account is missing from it is a
- * question for the total, not for these accounts' own charts.
+ * An institution with `error` is left out whole (its accounts are empty or
+ * recovered, never measured today). One with `unconfirmed_missing` stays in: the
+ * accounts it returned are real, and a missing account is a question for the
+ * total, not for these accounts' own charts.
  */
 export function measuredBalanceMap(institutions: InstitutionResult[]): Record<string, number> {
   return accountBalanceMap(institutions.filter((inst) => !inst.error));
 }
 
 /**
- * Writes what a fetch measured to history, and returns the date the TOTAL
- * landed on, or null if it didn't.
+ * Writes what a fetch measured to history, and returns the date the TOTAL landed
+ * on, or null if it didn't. The one place the recording rule lives, so
+ * /api/net-worth, /api/snapshot and /api/ingest/balance agree.
  *
- * The one place the recording rule lives, for the same reason isRecordable
- * does: /api/net-worth, /api/snapshot and /api/ingest/balance must agree.
- *
- * A clean, non-empty fetch records a real snapshot. Otherwise (or if that
- * write failed) the accounts that were measured still go to the partial
- * per-account layer, so one broken bank doesn't turn every other account's
- * chart into an estimate. Run it before fillFromLastKnown: recovered balances
- * must never be written anywhere as measured.
+ * A clean, non-empty fetch records a real snapshot. Otherwise (or if that write
+ * failed) the measured accounts still go to the partial per-account layer, so one
+ * broken bank doesn't turn every other account's chart into an estimate. Run it
+ * before fillFromLastKnown: recovered balances must never be written as measured.
  */
 export async function recordFetch(
   ctx: Ctx,

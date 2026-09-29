@@ -18,26 +18,24 @@ type NetWorthPayload = {
   institutions: InstitutionResult[];
   netWorth: number;
   history: HistoryPoint[];
-  // The stored hidden set, not just the accounts that resolved. An
-  // institution that's erroring returns no accounts, so without this its
-  // hidden accounts would vanish from the Hidden card and there'd be no way
-  // to unhide them. `hidden_at` is stored but not shipped -- nothing renders it.
+  // The stored hidden set, not just the accounts that resolved: an erroring
+  // institution returns no accounts, so without this its hidden accounts would
+  // vanish from the Hidden card with no way to unhide them. `hidden_at` is stored
+  // but not shipped (nothing renders it).
   hidden: HiddenForClient[];
   as_of: string;
 };
 
 // Whether the estimated layer was built by an older algorithm and should be
-// recomputed. The client can't work this out for itself: its only other trigger
-// is "the chart looks empty", which is false for exactly the users who already
-// have a stale layer.
+// recomputed. The client can't work this out itself: its only other trigger is
+// "the chart looks empty", which is false for exactly the users who already have
+// a stale layer.
 //
 // Deliberately NOT part of NetWorthPayload, so it can't be frozen into the
-// 15-minute cache. Cached true would re-POST /api/backfill on every load for
-// the rest of the TTL; cached false would swallow a recompute that a
-// clearBackfillDone() elsewhere had just asked for.
-//
-// The backups' state rides along for the same reason: a notice frozen for 15
-// minutes would outlive a backup that just recovered (lib/backup.ts).
+// 15-minute cache: cached true would re-POST /api/backfill on every load for the
+// TTL, and cached false would swallow a recompute clearBackfillDone() just asked
+// for. The backups' state rides along for the same reason: a frozen notice would
+// outlive a backup that just recovered (lib/backup.ts).
 async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null }> {
   const [done, backup_problem] = await Promise.all([isBackfillDone(ctx), backupProblem()]);
   return { backfill_stale: !done, backup_problem };
@@ -47,13 +45,12 @@ async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_pr
  * Starts a promise now, to be awaited later, without risking an unhandled
  * rejection in between.
  *
- * The Redis reads below are kicked off alongside the Plaid fetch but awaited in
- * the same order they used to run in, which is what preserves every gate. The
- * gap that opens up is the problem: if computeNetWorth() throws, control jumps
- * to the catch and these are never awaited, and an unhandled rejection takes
- * down the process on Node's default setting. The no-op catch marks the
- * rejection handled; awaiting the original promise still rejects normally, so
- * the error surfaces exactly where it did before.
+ * The Redis reads below start alongside the Plaid fetch but are awaited in their
+ * original order, which preserves every gate. If computeNetWorth() throws,
+ * control jumps to the catch and they are never awaited, and an unhandled
+ * rejection takes down the process on Node's default setting. The no-op catch
+ * marks the rejection handled; awaiting the original promise still rejects
+ * normally, so the error surfaces where it always did.
  */
 function eager<T>(p: Promise<T>): Promise<T> {
   p.catch(() => {});
@@ -79,16 +76,13 @@ export async function GET(req: Request) {
       }
     }
 
-    // The two reads below touch only Redis and depend on nothing the Plaid
-    // fetch produces, so they're started HERE and awaited further down, in the
-    // exact order they used to RUN in. That ordering is load-bearing, not
-    // stylistic: the snapshot is still recorded before the hidden set is
-    // awaited, so a hidden-read failure still cannot cost today's point (see
-    // the comment on recordFetch below). Only the waiting overlaps.
-    //
-    // On Upstash each of these is an HTTPS round trip (getHistory is several),
-    // and they used to queue up behind a multi-second Plaid fetch that was
-    // sitting idle on the network the whole time.
+    // The two reads below touch only Redis and depend on nothing the Plaid fetch
+    // produces, so they're started HERE and awaited further down, in the order
+    // they always ran. That order is load-bearing: the snapshot is still recorded
+    // before the hidden set is awaited, so a hidden-read failure can't cost
+    // today's point (see recordFetch below). Only the waiting overlaps. On
+    // Upstash each is an HTTPS round trip (getHistory is several), which used to
+    // queue behind a multi-second Plaid fetch.
     // Hidden accounts follow account links (lib/links.ts): every id an account
     // has had is hidden with it, and the client sees one current id each.
     const hiddenPromise = eager(getEffectiveHidden(ctx, { describe: true }));
@@ -96,45 +90,41 @@ export async function GET(req: Request) {
 
     const { institutions, netWorth } = await computeNetWorth(ctx);
 
-    // Record today's snapshot only when every institution answered cleanly
-    // and at least one is linked -- a partial fetch would chart an
-    // artificial dip, and zero institutions isn't a $0 net worth.
+    // Record today's snapshot only when every institution answered cleanly and at
+    // least one is linked: a partial fetch would chart an artificial dip, and zero
+    // institutions isn't a $0 net worth.
     //
     // This happens BEFORE the hidden set is AWAITED, and records the TRUE total
     // and the FULL account map. Storage never depends on what's hidden, which
-    // is what makes unhiding perfectly symmetric and means a hidden-set failure
-    // below can't cost today's point. (The read is now issued earlier, above --
-    // awaited, not issued, is what the guarantee rests on, because a rejection
-    // surfaces where it is awaited.)
+    // makes unhiding symmetric and means a hidden-set failure below can't cost
+    // today's point. (What the guarantee rests on is the await, not the issue: a
+    // rejection surfaces where it is awaited.)
     const clean = institutions.every(isRecordable);
-    // The date the point landed on, or null if it didn't. Taken from
-    // recordFetch rather than read from the clock again, so the point this
-    // route charts below is labelled with the day that was actually written
-    // even if the request straddles UTC midnight. When it didn't land, the
-    // accounts that did answer are still recorded for their own charts.
+    // The date the point landed on, or null. Taken from recordFetch rather than a
+    // second clock read, so the point charted below is labelled with the day
+    // actually written even if the request straddles UTC midnight. When it didn't
+    // land, the accounts that did answer are still recorded for their own charts.
     const snapshotDate = await recordFetch(ctx, institutions, netWorth);
 
-    // Capture how to render each account while its institution is answering, so
-    // a later failure can still draw its card. Per institution, not gated on
-    // `clean`: one broken bank shouldn't stop the others' records staying
-    // fresh. Writes only, so the broken one's record survives.
+    // Capture how to render each account while its institution is answering, so a
+    // later failure can still draw its card. Per institution, not gated on
+    // `clean`: one broken bank shouldn't stop the others' records staying fresh.
     await rememberAccounts(ctx, institutions);
     // And in the account directory, which outlives a disconnect so a re-added
-    // institution's accounts can be matched to the ones they replace. Started
-    // here and awaited before responding, so it overlaps the reads below
-    // instead of adding a round trip to every live load. It never throws.
+    // institution's accounts can be matched to the ones they replace. Awaited
+    // before responding so it overlaps the reads below. It never throws.
     const directoryWrite = recordDirectory(ctx, institutions);
 
-    // Everything from here down is display-only. `visibleNetWorth` excludes
-    // hidden accounts and is what ships as `netWorth` -- the client is never
-    // sent the true total, so the Home hero, the Accounts tab and the
-    // localStorage snapshot can't disagree with each other.
+    // Everything from here down is display-only. `visibleNetWorth` excludes hidden
+    // accounts and is what ships as `netWorth`: the client never gets the true
+    // total, so the Home hero, Accounts tab and localStorage snapshot can't
+    // disagree.
 
-    // An institution that failed shows its last good balances rather than
-    // $0.00, so the total isn't silently short by an entire bank. It runs HERE,
-    // below the two gates above, and never above them: `clean` is computed from
-    // the live fetch, so a recovered balance can't be mistaken for a measured
-    // one and written to history or frozen into the cache. See lib/last-known.ts.
+    // An institution that failed shows its last good balances rather than $0.00,
+    // so the total isn't silently short by a whole bank. Runs HERE, below the two
+    // gates above and never above them: `clean` comes from the live fetch, so a
+    // recovered balance can't be written to history or frozen into the cache. See
+    // lib/last-known.ts.
     const stale = await fillFromLastKnown(ctx, institutions);
     if (stale.length > 0) {
       // Counts and a date, not ids. Item and account ids are encrypted at rest
@@ -167,16 +157,15 @@ export async function GET(req: Request) {
       as_of: new Date().toISOString(),
     };
 
-    // Don't cache payloads containing errors: an institution that needs
-    // reauth (or hit a transient Plaid failure) should be re-checked on the
-    // next load, not frozen for the TTL.
+    // Don't cache payloads containing errors: an institution that needs reauth
+    // (or hit a transient failure) should be re-checked on the next load, not
+    // frozen for the TTL.
     //
-    // Not caching isn't enough on its own -- an entry written before the
-    // failure survives its full TTL, so loads would alternate between this
-    // payload (stale balances, disclosed) and that one (15-minute-old live
-    // balances, no disclosure at all), showing two different net worths and
-    // hiding the problem on every other load. Drop it so the next load also
-    // sees the failure.
+    // Not caching isn't enough: an entry written before the failure survives its
+    // TTL, so loads would alternate between this payload (stale balances,
+    // disclosed) and that one (15-minute-old balances, no disclosure), showing two
+    // net worths and hiding the problem every other load. Drop it so the next
+    // load also sees the failure.
     if (clean) {
       await writeCache(ctx, CacheKey.NetWorth, payload);
     } else {

@@ -21,19 +21,18 @@ import { pruneHidden } from '@/lib/hidden';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
 //
-// The obvious shape here is the /api/goals one: the client PUTs the whole list
-// and the server replaces it. That is unsafe for these records. The client's
-// list is derived from the last /api/net-worth payload, which can be stale (a
+// The /api/goals shape (the client PUTs the whole list) is unsafe here. The
+// client's list comes from the last /api/net-worth payload, which can be stale (a
 // tab left open, a second device, the localStorage snapshot painted before the
-// network load resolves) or *empty* (a manual-accounts read failure renders as
-// an institution with an error and no accounts). A whole-list write from any of
-// those states would delete every account the client didn't know about, and
-// each deletion orphans that account's balance history permanently, since
-// re-adding mints a new random id.
+// network load resolves) or *empty* (a manual-accounts read failure renders as an
+// institution with an error and no accounts). A whole-list write from those
+// states would delete every account the client didn't know about, and each
+// deletion orphans that account's balance history permanently, since re-adding
+// mints a new random id.
 //
-// Per-account operations remove the entire class: a request can only affect the
-// account it names. It also means a scheduled push to /api/ingest/balance can't
-// be reverted by an unrelated edit made in a stale tab.
+// Per-account operations remove the class: a request can only affect the account
+// it names. It also means a scheduled push to /api/ingest/balance can't be
+// reverted by an unrelated edit made in a stale tab.
 
 const MAX_ACCOUNTS = 50;
 
@@ -73,17 +72,16 @@ function validate(body: DraftInput): { error: string } | { value: Validated } {
   return { value: { name, institution_name, type, subtype, balance } };
 }
 
-/** Cached payloads still hold the old balances. The backfill flag is cleared
- *  only when the numbers actually moved: the estimated history layer was
- *  reconstructed without this account, so it would sit short by its balance
- *  and put a visible step at the estimated/real seam. A rename doesn't change
- *  any total, and recomputing forces a full Plaid transaction re-pull. */
+/** Cached payloads still hold the old balances. The backfill flag is cleared only
+ *  when the numbers actually moved: the estimated layer was reconstructed without
+ *  this account, so it would sit short by its balance with a step at the
+ *  estimated/real seam. A rename changes no total, and recomputing forces a full
+ *  Plaid transaction re-pull. */
 async function invalidate(ctx: Ctx, balanceChanged: boolean): Promise<void> {
   // Flag first, cache second. The other order leaves a window where a
-  // /api/net-worth request reads the flag as still-set and re-caches
-  // `backfill_stale: false`, pinning it for the TTL and silently dropping the
-  // recompute this call just asked for. (/api/hidden-accounts already does it
-  // in this order.)
+  // /api/net-worth request reads the flag as still set and re-caches
+  // `backfill_stale: false`, pinning it for the TTL and dropping the recompute
+  // this call just asked for. (/api/hidden-accounts does the same.)
   if (balanceChanged) await clearBackfillDone(ctx);
   await clearCaches(ctx);
 }
@@ -171,9 +169,9 @@ export async function PATCH(req: Request) {
 }
 
 /** Removes one account. Its balance history is intentionally left in place:
- *  history is keyed by date, not by account, and rewriting past dates is
- *  something this app never does. The orphaned series is unreachable once the
- *  account is gone. */
+ *  history is keyed by date, not account, and rewriting past dates is something
+ *  this app never does. The orphaned series is unreachable once the account is
+ *  gone. */
 export async function DELETE(req: Request) {
   try {
     const ctx = await dataCtx();

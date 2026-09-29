@@ -1,29 +1,24 @@
 // lib/restore.ts
 //
-// Writes an archive from lib/export.ts back into Redis, under THIS process's
-// key prefix. Driven by scripts/restore.ts, never by an HTTP route: a Vercel
-// function accepts at most about 4.5 MB of request body, and one Item's
-// transaction blob alone can be 8 MiB, so an upload route could not take a real
-// archive. Running locally also means nothing on the internet can overwrite the
+// Writes an archive from lib/export.ts back into Redis, under THIS process's key
+// prefix. Driven by scripts/restore.ts, never by an HTTP route: a Vercel function
+// accepts about 4.5 MB of request body, and one Item's transaction blob alone can
+// be 8 MiB. Running locally also means nothing on the internet can overwrite the
 // database.
 //
 // THE ORDER IS THE SAFETY:
 //
 // 1. VERIFY EVERYTHING BEFORE WRITING ANYTHING. The whole file is checked
-//    (format, era, footer, hash, count, every record's shape) before the first
-//    write. A bad archive is refused while the target is still untouched.
-//
+//    (format, era, footer, hash, count, every record's shape) first, so a bad
+//    archive is refused while the target is untouched.
 // 2. REFUSE A POPULATED TARGET unless told to overwrite, and the caller takes a
 //    fresh export of it before anything is deleted (scripts/restore.ts does).
-//
 // 3. REPLACE, DON'T MERGE. Overwrite deletes every key under the prefix first
 //    (except login rate limits), so the result is exactly the archive: no stray
-//    Item from after the backup, no hash field the archive does not have. That
-//    is also what makes a re-run after a crash safe: it starts clean again.
-//
-// 4. READ IT ALL BACK. After writing, the target is exported again and compared
-//    record for record with the archive. Only an exact match is reported as a
-//    restore; anything else throws.
+//    Item from after the backup, no leftover hash field. That also makes a re-run
+//    after a crash safe.
+// 4. READ IT ALL BACK. The target is exported again and compared record for
+//    record with the archive; only an exact match is reported as a restore.
 
 import { createHash } from 'node:crypto';
 import { envPrefix, kEnv } from './storage';
@@ -64,13 +59,11 @@ const HSET_CHUNK_CHARS = 512 * 1024;
  */
 const MIN_RESTORED_TTL = 60;
 
-/** Never deleted by an overwrite: they belong to the running environment,
- *  not to the data being restored. A counter of failed logins, and a
- *  container's session epoch, which a restore must never lower or it would
- *  bring back sessions revoked since, the snapshot cron's log and lock, and
- *  the data move's record, lock and retirement (lib/move.ts: restoring over
- *  them would let a later move run misjudge what it copied). Judged inside
- *  containers too. */
+/** Never deleted by an overwrite: they belong to the running environment, not to
+ *  the data being restored. Login rate-limit counters; a container's session
+ *  epoch (lowering it would bring back revoked sessions); the snapshot cron's log
+ *  and lock; and the data move's record, lock and retirement (restoring over them
+ *  would let a later move misjudge what it copied). Judged inside containers too. */
 const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:', 'move:'];
 
 function isPreserved(relative: string): boolean {
@@ -128,10 +121,9 @@ function checkRecord(raw: unknown, n: number): ExportRecord {
  * problem. Pure: touches no storage, so it is safe to run against anything.
  */
 export function verifyArchive(text: string): VerifiedArchive {
-  // Every line, footer included, ends in "\n". Anything after the final one is
-  // either a truncated line or something appended; either way not ours.
-  // Named specifically: an editor or a Windows download converting line
-  // endings would otherwise surface as a baffling checksum mismatch.
+  // Every line, footer included, ends in "\n"; anything after the final one is a
+  // truncated line or something appended. Named specifically: a converted line
+  // ending would otherwise surface as a baffling checksum mismatch.
   if (text.includes('\r\n')) {
     refuse('The file has Windows (CRLF) line endings, so it was converted after export. Use the original download.');
   }
@@ -149,7 +141,7 @@ export function verifyArchive(text: string): VerifiedArchive {
     refuse(
       `Archive was taken under key layout ${JSON.stringify(header.schema_era)}; this code uses ${JSON.stringify(SCHEMA_ERA)}.` +
         (header.schema_era === 'unscoped'
-          ? ' Restore it with a release from before containers, then move the data into a container with `bun run move-data` (see "Moving the data into containers" in the README).'
+          ? ' Restore it with a release from before containers, then move the data into a container with `bun run move-data` (see "Moving the data into containers" in docs/operations.md).'
           : '')
     );
   }

@@ -1,30 +1,29 @@
 // lib/item-usage.ts
 //
 // Finds linked Plaid Items that are costing money and doing nothing, and FLAGS
-// them. It never removes anything: the flagged Items are listed for the user in
+// them. It never removes anything: flagged Items are listed for the admin in
 // Manage accounts, and each is disconnected only by their own tap and typed
-// confirmation (components/UnusedItems.tsx, then /api/disconnect).
+// confirmation (components/AdminUnusedItems.tsx, then /api/disconnect).
 //
-// Plaid bills per connected Item per month whether or not anyone looks at it,
-// so an Item that can no longer be read, or whose every account is hidden, is
-// pure cost. An Item is flagged when, for UNUSED_DAYS running:
+// Plaid bills per connected Item per month whether or not anyone looks at it, so
+// an Item that can't be read, or whose every account is hidden, is pure cost. An
+// Item is flagged when, for UNUSED_DAYS running:
 //   - Plaid keeps refusing it for a reason only the user can fix (a login that
 //     needs redoing, consent withdrawn), or
 //   - every account it holds is hidden.
-// Either clears the moment it stops being true: a successful read that finds
-// the Item working, or an account visible, starts the count again. A timeout,
-// an outage or a rate limit says nothing and changes nothing. A flag is set only
-// by a read made in the same run that confirms the condition, never by a clock
-// an earlier run started: the Item may have been reconnected or unhidden since.
+// Either clears the moment it stops being true: a successful read that finds the
+// Item working, or an account visible, restarts the count. A timeout, outage or
+// rate limit says nothing and changes nothing. A flag is set only by a read made
+// in the same run that confirms the condition, never by a clock an earlier run
+// started: the Item may have been reconnected or unhidden since.
 //
-// The observations live in the container at "snapshot:item-usage" (a hash of
-// item id -> record), under the cron's own namespace: like the daily snapshot's
-// log it describes this environment's schedule, so exports leave it out and a
-// restore keeps the target's own (lib/export.ts, lib/restore.ts). Losing it
-// costs nothing but restarting the clocks.
+// Observations live in the container at "snapshot:item-usage" (item id ->
+// record), under the cron's own namespace: like the snapshot log it describes
+// this environment's schedule, so exports leave it out and a restore keeps the
+// target's own. Losing it costs only restarting the clocks.
 //
-// The check reads with /accounts/get, which carries no per-request charge, and
-// also registers the webhook URL on Items linked before webhooks were set up.
+// The check reads with /accounts/get (no per-request charge) and also registers
+// the webhook URL on Items linked before webhooks were set up.
 
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';

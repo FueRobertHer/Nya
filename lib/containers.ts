@@ -1,23 +1,21 @@
 // lib/containers.ts
 //
-// Containers: the unit every stored record will belong to (#53). Today there
-// is one, holding everything; keys move into it later (PRs 10-13). This file
-// only names containers and keeps the registry of them.
+// Containers: the unit every stored record belongs to (#53). This file names
+// containers and keeps the registry of them.
 //
 // THE REGISTRY is one environment-wide hash, kEnv('containers'):
 //   <container id> -> {"status": "active" | "restoring" | "archived",
 //                      "primary": true | false, "created_at": "<ISO>"}
 // It holds no secrets and nothing encrypted.
 //
-// MINTED ONCE, EXPLICITLY, NEVER LAZILY. The first container is created by an
-// operator through /api/ops/containers, and its id is then set as CONTAINER_ID
-// in the environment. Nothing creates one on first use: two requests racing a
-// lazy creator would mint two ids and split the data between them, silently
-// at one user. For the same reason, creating the first container is a single
-// atomic step that refuses if any container exists.
+// The FIRST container is minted explicitly, never lazily: an operator creates it
+// through /api/ops/containers and sets its id as CONTAINER_ID. Nothing creates
+// one on first use, since two requests racing a lazy creator would mint two ids
+// and split the data between them, silently. For the same reason, creating the
+// first container is a single atomic step that refuses if any container exists.
 //
-// A process learns its container from CONTAINER_ID, checked against the
-// registry (resolveCtx), never by picking one from the registry.
+// A process learns its container from CONTAINER_ID, checked against the registry
+// (resolveCtx), never by picking one from the registry.
 
 import { redis, kEnv } from './storage';
 
@@ -120,8 +118,7 @@ return 1`;
 
 /**
  * Create the first container, as the primary one. Refuses if any container
- * exists: there is one per environment until multi-user support, and a second
- * made by accident would be a place for data to go missing.
+ * exists: two racing creators would each mint one and split the data.
  */
 export async function createFirstContainer(now: number = Date.now()): Promise<ContainerId> {
   const id = asContainerId(crypto.randomUUID());
@@ -137,11 +134,10 @@ export async function createFirstContainer(now: number = Date.now()): Promise<Co
 export const CONTAINER_ENV = 'CONTAINER_ID';
 
 /**
- * The container this deployment acts within: CONTAINER_ID, which must name
- * an active container in the registry. Throws a ContainerError otherwise.
- * Never falls back to "the primary one" or to unscoped keys: a guess that
- * turns out wrong forks the data into two places, which nobody notices for
- * days.
+ * The container this deployment acts within: CONTAINER_ID, which must name an
+ * active container in the registry. Throws a ContainerError otherwise. Never
+ * falls back to "the primary one" or to unscoped keys: a wrong guess forks the
+ * data into two places, unnoticed for days.
  */
 export async function resolveCtx(): Promise<Ctx> {
   const raw = process.env[CONTAINER_ENV];
