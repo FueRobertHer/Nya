@@ -12,6 +12,36 @@ function runs(points: P[]): ('dashed' | 'solid')[] {
   );
 }
 
+// The chart must not change height as figures change or arrive: the split line
+// keeps its row whenever a split can appear at all, so nothing below it moves.
+describe('NetWorthChart layout stability', () => {
+  const pts = [
+    { date: '2026-09-01', value: 1000 },
+    { date: '2026-09-02', value: 1600 },
+    { date: '2026-09-03', value: 1650 },
+  ];
+
+  test('holds the split row while the transactions load', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} reserveSplit />);
+    expect(html).toContain('chart-readout-split');
+  });
+
+  test('keeps the row when the baseline is there but has nothing to say for the range', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} baselineFor={() => null} />);
+    expect(html).toContain('chart-readout-split');
+  });
+
+  test('puts the date on its own line under the figure, so a long one cannot push the chart', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} />);
+    expect(html).toContain('chart-readout chart-readout-stable');
+    expect(html).toContain('chart-readout-date');
+  });
+
+  test('adds no row to a chart that can never show a split', () => {
+    expect(renderToStaticMarkup(<NetWorthChart points={pts} />)).not.toContain('chart-readout-split');
+  });
+});
+
 describe('NetWorthChart segment styles', () => {
   test('consecutive real days draw solid, with no caption', () => {
     const points = [

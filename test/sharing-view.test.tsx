@@ -32,6 +32,17 @@ describe('dates', () => {
     expect(shortDate('2025-12-31', now)).toBe('Dec 31, 2025');
     expect(shortDate('not a date', now)).toBe('not a date');
   });
+
+  test('shows an instant as the day it was in the viewer local time, not its UTC day', () => {
+    const now = new Date('2026-09-29T12:00:00Z');
+    // 03:19 UTC on the 29th is still the 28th anywhere west of UTC-3:20, and the
+    // 29th anywhere east of it: the label must follow the machine zone.
+    const at = '2026-09-29T03:19:00.000Z';
+    const local = new Date(at);
+    expect(shortDate(at, now)).toBe(local.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+    // A bare date is a calendar day and is never shifted.
+    expect(shortDate('2026-09-29', now)).toBe('Sep 29');
+  });
 });
 
 describe('the sharing drawer', () => {

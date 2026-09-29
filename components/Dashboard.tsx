@@ -9,6 +9,7 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
+import { instantDay } from '@/lib/local-date';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import { historyPausedSince } from '@/lib/history-status';
@@ -103,6 +104,10 @@ type Institution = {
   // localStorage payload renders recovered balances with no staleness marker at
   // all, under the plain red error. The numbers are still real, just undated.
   stale_as_of?: string;
+  // The instant behind stale_as_of (an ISO time), when the server knew it. The
+  // date is a UTC day; this is what names the viewer's own day (fmtStaleDay).
+  stale_as_of_at?: string;
+  stale_too_old_at?: string;
   // Set instead of stale_as_of when last-known balances exist but are past the
   // age limit. The card stays at $0.00, and says why rather than looking like
   // an institution that never had recoverable balances at all.
@@ -207,6 +212,22 @@ function fmtDay(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
+}
+
+// The local day of an instant (an ISO time), not its UTC day.
+function fmtInstantDay(iso: string): string {
+  return instantDay(iso) ?? fmtDay(iso.slice(0, 10));
+}
+
+// The day a stored snapshot was taken, in the viewer's own time. The snapshot's
+// date is a UTC day, which for anyone west of Greenwich can be the day after the
+// one they were in; when the server knows the instant it was taken, that instant
+// is shown as the local day instead. Otherwise the date is all there is.
+function fmtStaleDay(date: string, at?: string): string {
+  // The instant must belong to that date's UTC day; a mismatch (a restore keeps
+  // this environment's own record of instants) means it isn't this snapshot's.
+  const local = at && at.slice(0, 10) === date ? instantDay(at) : null;
+  return local ?? fmtDay(date);
 }
 
 // The one-line summary under a credit or loan row: rate, minimum, due date.
@@ -1280,7 +1301,7 @@ export default function Dashboard({
                       {staleInstitutions.length === 1
                         ? `${staleInstitutions[0].institution_name} ${
                             staleInstitutions[0].needs_reauth ? 'needs reconnecting' : "couldn't refresh"
-                          }; its balances are from ${fmtDay(staleInstitutions[0].stale_as_of!)}`
+                          }; its balances are from ${fmtStaleDay(staleInstitutions[0].stale_as_of!, staleInstitutions[0].stale_as_of_at)}`
                         : `${staleInstitutions.length} institutions couldn't refresh; showing their last known balances`}
                     </div>
                   )}
@@ -1321,7 +1342,7 @@ export default function Dashboard({
                   {backupProblem && (
                     <div className="stale-note">
                       {backupProblem.reason ? 'The nightly backup failed' : 'The nightly backup hasn’t run'}
-                      {backupProblem.last_ok ? `; the last one saved was on ${fmtDay(backupProblem.last_ok.slice(0, 10))}.` : '; none has been saved yet.'}
+                      {backupProblem.last_ok ? `; the last one saved was on ${fmtInstantDay(backupProblem.last_ok)}.` : '; none has been saved yet.'}
                       {backupProblem.reason ? ` (${backupProblem.reason})` : ''} Check the backup cron in Vercel.
                     </div>
                   )}
@@ -1745,7 +1766,7 @@ export default function Dashboard({
                           }
                         >
                           {inst.error}
-                          {inst.stale_as_of && ` · balances as of ${fmtDay(inst.stale_as_of)}`}
+                          {inst.stale_as_of && ` · balances as of ${fmtStaleDay(inst.stale_as_of, inst.stale_as_of_at)}`}
                           {/* The shortfall is disclosed, not hidden: a card
                               drawn short understates debt, which overstates
                               net worth. Why a row is missing is unknowable
@@ -1756,7 +1777,7 @@ export default function Dashboard({
                               inst.stale_missing === 1 ? '' : 's'
                             } couldn't be shown, so this total is incomplete`}
                           {inst.stale_too_old &&
-                            ` · last known balances are from ${fmtDay(inst.stale_too_old)}, too old to show`}
+                            ` · last known balances are from ${fmtStaleDay(inst.stale_too_old, inst.stale_too_old_at)}, too old to show`}
                         </div>
                       )}
 

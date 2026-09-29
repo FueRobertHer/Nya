@@ -224,7 +224,8 @@ export type MyConnection = {
   label: string;
   /** The name they gave when connecting, if any. */
   introduced_as: string | null;
-  /** The day we connected. */
+  /** When we connected: an ISO time, shown as the viewer's own day
+   *  (components/Sharing.tsx shortDate). */
   since: string;
   sharing: Record<string, Level>;
 };
@@ -241,7 +242,9 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
         id: c.id,
         label: c.labels[me] ?? 'Someone',
         introduced_as: c.intros[other(c, me)] ?? null,
-        since: c.meta.created_at.slice(0, 10),
+        // The full instant, not its UTC day: the app shows it in the viewer's own
+        // time (components/Sharing.tsx shortDate).
+        since: c.meta.created_at,
         sharing: c.shares[me]?.accounts ?? {},
       }))
       .sort(byLabel),
@@ -354,7 +357,8 @@ export type SharedAccount = {
   level: Level;
   /** Null at the exists level, or before any balance was measured. */
   balance: number | null;
-  /** The day that balance was measured. */
+  /** When that balance was measured: an ISO time (a manual account, to the
+   *  hour), or a YYYY-MM-DD (a snapshot's day). shortDate reads both. */
   as_of: string | null;
   /** Money owed (a card, a loan) rather than held. */
   debt: boolean;
@@ -420,7 +424,10 @@ async function fromOwner(owner: string, share: Share, now: number): Promise<Shar
       // That it's there, and nothing about how much.
     } else if (m) {
       balance = m.balance;
-      as_of = m.updated_at.slice(0, 10);
+      // An instant, so the viewer sees their own day, cut to the hour: the sharee
+      // has no need of the minute their friend last touched a balance. A
+      // snapshot's date below is a UTC day.
+      as_of = `${m.updated_at.slice(0, 13)}:00:00.000Z`;
     } else {
       const measured = (await getAccountHistory(theirs, id)).filter((p) => !p.estimated);
       const last = measured[measured.length - 1];
