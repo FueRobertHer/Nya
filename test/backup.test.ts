@@ -9,6 +9,8 @@ type Stored = { body: string; uploadedAt: Date; options: any };
 const blobs = new Map<string, Stored>();
 let clock = new Date('2026-06-15T16:00:00.000Z');
 let corruptReads = false;
+/** The headers the last read was sent with. */
+let readHeaders: Record<string, string> | undefined;
 /** The abortSignal each call was last given. */
 const signals: Record<string, AbortSignal | undefined> = {};
 mock.module('@vercel/blob', () => ({
@@ -20,6 +22,7 @@ mock.module('@vercel/blob', () => ({
   },
   get: async (pathname: string, options: any) => {
     signals.get = options.abortSignal;
+    readHeaders = options.headers;
     const b = blobs.get(pathname);
     if (!b || options.access !== 'private') return null;
     const text = corruptReads ? b.body.slice(0, -2) + '\n' : b.body;
@@ -76,6 +79,11 @@ describe('the nightly backup', () => {
     expect(stored.options).toMatchObject({ access: 'private', addRandomSuffix: false, allowOverwrite: false });
     expect(result.bytes).toBe(Buffer.byteLength(stored.body));
     expect(verifyArchive(stored.body).records.map((r) => r.key)).toEqual(['budgets', 'history:net-worth']);
+  });
+
+  test('reads the copy back uncompressed', async () => {
+    await runBackup(fake as any, await store(), clock);
+    expect(readHeaders).toEqual({ 'accept-encoding': 'identity' });
   });
 
   test('a copy that doesn’t read back as written is removed and reported', async () => {

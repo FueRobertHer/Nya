@@ -189,7 +189,16 @@ export async function vercelBlobStore(): Promise<BackupStore | null> {
       // because nothing runs after the step's time limit ends the function.
       const started = Date.now();
       const seconds = () => ((Date.now() - started) / 1000).toFixed(1);
-      const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: signal });
+      // Uncompressed on purpose: the store answers Brotli, and in the deployed
+      // function (Node 24.3.0) the body of that never delivered a byte, while
+      // the headers arrived at once. The archive is about 1 MB, so the extra
+      // transfer costs nothing.
+      const res = await blob.get(pathname, {
+        access: 'private',
+        useCache: false,
+        abortSignal: signal,
+        headers: { 'accept-encoding': 'identity' },
+      });
       console.log(`Backup read-back response after ${seconds()}s`, res ? `status ${res.statusCode}` : 'not found');
       if (!res || res.statusCode !== 200) return null;
       console.log(
