@@ -183,14 +183,40 @@ export async function vercelBlobStore(): Promise<BackupStore | null> {
     },
     async get(pathname, signal) {
       // The signal reaches the fetch, so it cancels reading the body too.
-      // Logged in two parts so a read-back that stalls shows whether the
-      // response never arrived or its body never finished.
+      // Logged as it goes so a read-back that stalls shows how far it got: the
+      // body of a read-back once never finished in the deployed function while
+      // the same read took 0.3s locally. Progress lines go out as data arrives,
+      // because nothing runs after the step's time limit ends the function.
       const started = Date.now();
       const seconds = () => ((Date.now() - started) / 1000).toFixed(1);
       const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: signal });
       console.log(`Backup read-back response after ${seconds()}s`, res ? `status ${res.statusCode}` : 'not found');
       if (!res || res.statusCode !== 200) return null;
-      const text = await new Response(res.stream).text();
+      console.log(
+        'Backup read-back response headers',
+        JSON.stringify({
+          node: process.version,
+          nextPatchedFetch: Boolean((globalThis.fetch as { __nextPatched?: boolean }).__nextPatched),
+          contentEncoding: res.headers.get('content-encoding'),
+          transferEncoding: res.headers.get('transfer-encoding'),
+          contentLength: res.headers.get('content-length'),
+        })
+      );
+      const reader = res.stream.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      let nextMark = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        bytes += value.length;
+        if (bytes >= nextMark) {
+          console.log(`Backup read-back body at ${seconds()}s`, `${bytes} bytes in ${chunks.length} chunks`);
+          nextMark = bytes + 131_072;
+        }
+      }
+      const text = new TextDecoder().decode(Buffer.concat(chunks));
       console.log(`Backup read-back body after ${seconds()}s`, `${text.length} chars`);
       return text;
     },
