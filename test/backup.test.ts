@@ -297,6 +297,9 @@ describe('the backup cron', () => {
       for (const step of ['export', 'upload', 'read-back', 'list']) {
         expect(lines.some((l) => new RegExp(`^Backup ${step} took \\d+\\.\\ds$`).test(l))).toBe(true);
       }
+      // The read-back says whether the response or its body was slow.
+      expect(lines.some((l) => l.startsWith('Backup read-back response after'))).toBe(true);
+      expect(lines.some((l) => l.startsWith('Backup read-back body after'))).toBe(true);
       expect(lines.at(-1)).toStartWith('Backup written');
     } finally {
       console.log = log;
