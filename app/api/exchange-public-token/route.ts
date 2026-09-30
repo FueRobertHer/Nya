@@ -14,10 +14,22 @@ export async function POST(req: Request) {
 
     const encrypted_access_token = await encrypt(exchange.data.access_token);
 
+    // Asked of Plaid rather than taken from the client, which could send any id.
+    // Best effort: without it the Item still links, and the duplicate check falls
+    // back to the institution's name.
+    let institution_id: string | null = null;
+    try {
+      const item = await plaidClient.itemGet({ access_token: exchange.data.access_token });
+      institution_id = item.data.item.institution_id ?? null;
+    } catch (err: any) {
+      console.error('exchange: could not read the institution id', err?.response?.data?.error_code ?? err?.name);
+    }
+
     await saveItem(ctx, {
       item_id: exchange.data.item_id,
       institution_name: institution_name || 'Connected Account',
       encrypted_access_token,
+      institution_id,
     });
 
     // Cached payloads no longer reflect the linked institutions, and the

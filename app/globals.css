@@ -287,6 +287,7 @@ th.num {
 
 .card-actions {
   display: flex;
+  flex-wrap: wrap; /* up to three actions on a phone-width card */
   gap: 8px;
   margin-top: 14px;
 }
@@ -1715,6 +1716,13 @@ button:disabled {
 .button-pair > button {
   flex: 1 1 0;
   width: auto;
+}
+
+/* Full-width choices, one per line (the already-connected sheet). */
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 button.danger-outline {

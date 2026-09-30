@@ -13,6 +13,7 @@ import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
 import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
+import { clearNewAccounts } from './new-accounts';
 import type { Ctx } from './containers';
 
 /**
@@ -67,6 +68,9 @@ export async function disconnectItem(
   // Its vanished-account record goes with it: the Item is gone, so nothing
   // can confirm or clear those entries, and a relink starts clean.
   await forgetVanished(ctx, item_id);
+  // And any "new accounts available" prompt, which could only offer to add
+  // accounts to an Item that no longer exists.
+  await clearNewAccounts(ctx, item_id);
   // Its accounts stay in the account directory, so that if the same
   // institution is added back, even months later, they can be matched to
   // the new ones (lib/links.ts): nothing to do here.
