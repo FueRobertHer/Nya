@@ -299,6 +299,8 @@ describe('the backup cron', () => {
       }
       // The read-back says whether the response or its body was slow.
       expect(lines.some((l) => l.startsWith('Backup read-back response after'))).toBe(true);
+      expect(lines.some((l) => l.startsWith('Backup read-back response headers'))).toBe(true);
+      expect(lines.some((l) => l.startsWith('Backup read-back body at'))).toBe(true);
       expect(lines.some((l) => l.startsWith('Backup read-back body after'))).toBe(true);
       expect(lines.at(-1)).toStartWith('Backup written');
     } finally {
