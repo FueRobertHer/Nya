@@ -1,4 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 const fake = new FakeRedis();
@@ -9,11 +11,14 @@ type Stored = { body: string; uploadedAt: Date; options: any };
 const blobs = new Map<string, Stored>();
 let clock = new Date('2026-06-15T16:00:00.000Z');
 let corruptReads = false;
-/** The one blob whose reads deliver headers and then no body. */
-let stallPath: string | null = null;
-let blobUrl = 'https://store.blob.vercel-storage.com/x';
-/** The headers the last read was sent with. */
-let readHeaders: Record<string, string> | undefined;
+/** Reads of a blob's URL never answer, as a stalled connection doesn't. */
+let hangReads = false;
+/** The host the SDK says a blob lives on. */
+let blobHost = 'store.blob.vercel-storage.com';
+/** Whether the SDK's own body stream was let go. */
+let sdkStreamCancelled = false;
+/** The URLs read with node's client, and the headers each was sent. */
+const urlReads: { url: string; headers: Record<string, string> }[] = [];
 /** The abortSignal each call was last given. */
 const signals: Record<string, AbortSignal | undefined> = {};
 mock.module('@vercel/blob', () => ({
@@ -25,13 +30,15 @@ mock.module('@vercel/blob', () => ({
   },
   get: async (pathname: string, options: any) => {
     signals.get = options.abortSignal;
-    readHeaders = options.headers;
-    const b = blobs.get(pathname);
-    if (!b || options.access !== 'private') return null;
-    const text = corruptReads ? b.body.slice(0, -2) + '\n' : b.body;
-    // A stalled read: the response arrives and its body never sends a byte.
-    const stream = pathname === stallPath ? new ReadableStream<Uint8Array>() : new Response(text).body;
-    return { statusCode: 200, stream, headers: new Headers(), blob: { url: blobUrl } };
+    if (!blobs.has(pathname) || options.access !== 'private') return null;
+    // As in the deployed function: the response arrives, and its body never
+    // sends a byte.
+    const stream = new ReadableStream<Uint8Array>({
+      cancel() {
+        sdkStreamCancelled = true;
+      },
+    });
+    return { statusCode: 200, stream, headers: new Headers(), blob: { url: `https://${blobHost}/${pathname}` } };
   },
   list: async ({ prefix, cursor, abortSignal }: { prefix: string; cursor?: string; abortSignal?: AbortSignal }) => {
     signals.list = abortSignal;
@@ -51,7 +58,25 @@ mock.module('@vercel/blob', () => ({
   },
 }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, readBody, nodeText } = await import('@/lib/backup');
+// node's https client, serving the blobs kept above.
+mock.module('node:https', () => ({
+  get: (url: string, options: any, cb: (res: any) => void) => {
+    urlReads.push({ url, headers: options.headers });
+    const req = new EventEmitter();
+    if (hangReads) {
+      options.signal?.addEventListener('abort', () => req.emit('error', new Error('aborted')));
+      return req;
+    }
+    const b = blobs.get(decodeURIComponent(new URL(url).pathname.slice(1)));
+    const res: any = Readable.from(b ? [Buffer.from(corruptReads ? b.body.slice(0, -2) + '\n' : b.body)] : []);
+    res.statusCode = b ? 200 : 404;
+    res.headers = {};
+    queueMicrotask(() => cb(res));
+    return req;
+  },
+}));
+
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { GET } = await import('@/app/api/backup/route');
 
@@ -61,7 +86,10 @@ beforeEach(async () => {
   fake.reset();
   blobs.clear();
   corruptReads = false;
-  stallPath = null;
+  hangReads = false;
+  blobHost = 'store.blob.vercel-storage.com';
+  sdkStreamCancelled = false;
+  urlReads.length = 0;
   clock = new Date('2026-06-15T16:00:00.000Z');
   process.env.BLOB_READ_WRITE_TOKEN = 'token';
   process.env.CRON_SECRET = 'cron';
@@ -87,9 +115,28 @@ describe('the nightly backup', () => {
     expect(verifyArchive(stored.body).records.map((r) => r.key)).toEqual(['budgets', 'history:net-worth']);
   });
 
-  test('reads the copy back uncompressed', async () => {
+  test('reads the copy back from its URL with node’s client, with the token, uncompressed', async () => {
+    const { pathname } = await runBackup(fake as any, await store(), clock);
+    expect(urlReads).toEqual([
+      {
+        url: `https://store.blob.vercel-storage.com/${pathname}?cache=0`,
+        headers: { authorization: 'Bearer token', 'accept-encoding': 'identity' },
+      },
+    ]);
+  });
+
+  // In the deployed function the body of the SDK's own read never delivered a
+  // byte (Next patches fetch there), so what is compared is not read from it.
+  test('never waits on the SDK’s own body, and lets it go', async () => {
     await runBackup(fake as any, await store(), clock);
-    expect(readHeaders).toEqual({ 'accept-encoding': 'identity' });
+    expect(sdkStreamCancelled).toBe(true);
+  });
+
+  test('sends the token nowhere but Vercel Blob', async () => {
+    blobHost = 'example.com';
+    await expect(runBackup(fake as any, await store(), clock)).rejects.toThrow('example.com, which is not Vercel Blob');
+    expect(urlReads).toEqual([]);
+    expect(blobs.size).toBe(1); // unverified, not deleted
   });
 
   test('a copy that doesn’t read back as written is removed and reported', async () => {
@@ -203,6 +250,12 @@ describe('a step that never answers', () => {
     expect((seen.signal?.reason as Error).name).toBe('AbortError');
   });
 
+  test('a read of the URL that never answers fails as the read-back step and leaves the copy', async () => {
+    hangReads = true;
+    await expect(runBackup(fake as any, await store(), clock, { limits })).rejects.toThrow("backup's read-back step took longer than 0.02s");
+    expect(blobs.size).toBe(1);
+  });
+
   test('a step that finished is never failed by its report', async () => {
     const onStep = () => {
       throw new Error('logging broke');
@@ -311,11 +364,6 @@ describe('the backup cron', () => {
       for (const step of ['export', 'upload', 'read-back', 'list']) {
         expect(lines.some((l) => new RegExp(`^Backup ${step} took \\d+\\.\\ds$`).test(l))).toBe(true);
       }
-      // The read-back says whether the response or its body was slow.
-      expect(lines.some((l) => l.startsWith('Backup read-back response after'))).toBe(true);
-      expect(lines.some((l) => l.startsWith('Backup read-back response headers'))).toBe(true);
-      expect(lines.some((l) => l.startsWith('Backup read-back body at'))).toBe(true);
-      expect(lines.some((l) => l.startsWith('Backup read-back body after'))).toBe(true);
       expect(lines.at(-1)).toStartWith('Backup written');
     } finally {
       console.log = log;
@@ -400,83 +448,56 @@ describe('saying when backups have stopped', () => {
   });
 });
 
-describe('reading a backup back', () => {
-  const enc = new TextEncoder();
-  const streamOf = (chunks: Uint8Array[], then: 'end' | 'hang') =>
-    new ReadableStream<Uint8Array>({
-      start(c) {
-        for (const chunk of chunks) c.enqueue(chunk);
-        if (then === 'end') c.close();
-      },
-    });
-
-  test('a body is read to the end, with progress after each chunk', async () => {
-    const seen: [number, number][] = [];
-    const text = await readBody(streamOf([enc.encode('ab'), enc.encode('cde')], 'end'), 1000, (b, n) => seen.push([b, n]));
-    expect(text).toBe('abcde');
-    expect(seen).toEqual([[2, 1], [5, 2]]);
-  });
-
-  test('a character split across two chunks still reads as one', async () => {
-    const bytes = enc.encode('a€b'); // € is three bytes
-    expect(await readBody(streamOf([bytes.slice(0, 2), bytes.slice(2)], 'end'), 1000)).toBe('a€b');
-  });
-
-  test('a body that sends nothing is given up on', async () => {
-    const started = Date.now();
-    expect(await readBody(streamOf([], 'hang'), 30)).toBeNull();
-    expect(Date.now() - started).toBeLessThan(1000);
-  });
-
-  test('a body that stops part-way is given up on', async () => {
-    expect(await readBody(streamOf([enc.encode('ab')], 'hang'), 30)).toBeNull();
-  });
-
-  test('node’s client reads a URL, sends the headers, and refuses a failure', async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch: (req) => (new URL(req.url).pathname === '/ok' ? new Response(`hello ${req.headers.get('x-test')}`) : new Response('no', { status: 404 })),
-    });
+describe('reading a URL with node’s client', () => {
+  /** A local server, standing in for the store. */
+  async function serve(handler: (req: Request) => Response | Promise<Response>, run: (base: string) => Promise<void>) {
+    const server = Bun.serve({ port: 0, fetch: handler });
     try {
-      const base = `http://localhost:${server.port}`;
-      expect(await nodeText(`${base}/ok`, { 'x-test': 'yes' }, AbortSignal.timeout(2000))).toBe('hello yes');
-      await expect(nodeText(`${base}/missing`, {}, AbortSignal.timeout(2000))).rejects.toThrow('status 404');
+      await run(`http://localhost:${server.port}`);
     } finally {
       await server.stop(true);
     }
+  }
+
+  test('reads the body, sends the headers, and asks for it uncompressed', async () => {
+    await serve(
+      (req) => new Response(`${req.headers.get('x-test')} ${req.headers.get('accept-encoding')}`),
+      async (base) => {
+        expect(await nodeText(`${base}/ok`, { 'x-test': 'yes' }, AbortSignal.timeout(2000))).toBe('yes identity');
+        // Whatever the caller asks for, it is never a compressed body.
+        expect(await nodeText(`${base}/ok`, { 'x-test': 'yes', 'accept-encoding': 'br' }, AbortSignal.timeout(2000))).toBe('yes identity');
+      }
+    );
   });
 
-  test('a read-back that gets no data fails with a reason, and sends the token nowhere but Vercel Blob', async () => {
-    stallPath = `${backupFolder()}nya-${clock.toISOString().replace(/[:.]/g, '-')}.ndjson`;
-    blobUrl = 'https://example.com/x';
-    const log = console.log;
-    const lines: string[] = [];
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    try {
-      const s = (await vercelBlobStore(30))!;
-      await expect(runBackup(fake as any, s, clock)).rejects.toThrow('is not a Vercel Blob URL');
-      expect(lines.some((l) => l.startsWith('Backup read-back body stalled'))).toBe(true);
-      expect(lines.some((l) => l.includes('no older copy to compare with'))).toBe(true);
-    } finally {
-      console.log = log;
-      blobUrl = 'https://store.blob.vercel-storage.com/x';
-    }
+  test('a large body with multi-byte characters reads back whole', async () => {
+    const text = 'a€b'.repeat(200_000);
+    await serve(
+      () => new Response(text),
+      async (base) => expect(await nodeText(`${base}/big`, {}, AbortSignal.timeout(5000))).toBe(text)
+    );
   });
 
-  test('when the new copy stalls, an older one is read to tell whether any read does', async () => {
-    const s = (await vercelBlobStore(30))!;
-    const older = await runBackup(fake as any, s, new Date(clock.getTime() - DAY));
-    stallPath = `${backupFolder()}nya-${clock.toISOString().replace(/[:.]/g, '-')}.ndjson`;
-    const log = console.log;
-    const lines: string[] = [];
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    try {
-      await expect(runBackup(fake as any, s, clock)).rejects.toThrow('got no data');
-      const probe = lines.find((l) => l.includes('the older copy'))!;
-      expect(probe).toContain(older.pathname);
-      expect(probe).toContain('read fine');
-    } finally {
-      console.log = log;
-    }
+  test('refuses a failure', async () => {
+    await serve(
+      () => new Response('no', { status: 404 }),
+      async (base) => await expect(nodeText(`${base}/missing`, {}, AbortSignal.timeout(2000))).rejects.toThrow('status 404')
+    );
+  });
+
+  // This client doesn't decompress, and a compressed body compared with the
+  // archive would look like a bad copy, which is deleted.
+  test('refuses a body that came back compressed rather than passing it off as the archive', async () => {
+    await serve(
+      () => new Response('not really brotli', { headers: { 'content-encoding': 'br' } }),
+      async (base) => await expect(nodeText(`${base}/x`, {}, AbortSignal.timeout(2000))).rejects.toThrow('unexpected content-encoding br')
+    );
+  });
+
+  test('stops when its signal aborts', async () => {
+    await serve(
+      () => new Promise<Response>(() => {}),
+      async (base) => await expect(nodeText(`${base}/hang`, {}, AbortSignal.timeout(50))).rejects.toThrow()
+    );
   });
 });

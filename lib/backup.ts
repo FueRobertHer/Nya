@@ -8,7 +8,7 @@
 // The archive stays ciphertext (lib/export.ts rule 1): a stolen backup is
 // useless without MASTER_KEY and PLAID_ENCRYPTION_KEY, which are not in it.
 // It is still financial data, so the store is private: a blob is read only
-// with the store's token, never by URL.
+// with the store's token, never by its bare URL.
 //
 // One archive per environment per run, holding every container (a restore
 // replaces the environment; see lib/restore.ts). Named by the time it was
@@ -52,16 +52,15 @@ export const MIN_KEPT = 7;
 
 /**
  * How long each step may take, in milliseconds. The longest path (export,
- * upload, read-back, list, prune) adds up to 255s, 45s under the route's
- * maxDuration of 300s (a failure is recorded in 15s of that), so a failure is
- * still recorded before Vercel ends the function. The read-back has the most
- * because a stalled body is tried three other ways before it gives up. `discard` takes the place of list and prune when the read-back is
+ * upload, read-back, list, prune) adds up to 240s, a minute under the route's
+ * maxDuration of 300s, so a failure is still recorded before Vercel ends the
+ * function. `discard` takes the place of list and prune when the read-back is
  * wrong. A 1 MB archive takes seconds; these are for a call that never answers.
  */
 export const STEP_LIMITS_MS = {
   export: 90_000,
   upload: 45_000,
-  'read-back': 60_000,
+  'read-back': 45_000,
   list: 30_000,
   prune: 30_000,
   discard: 30_000,
@@ -167,52 +166,20 @@ export async function runBackup(
   return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned };
 }
 
-/** How long the read-back's body may go without a chunk before other ways of
- *  reading it are tried. Three of them at this long fit in the read-back step. */
-export const BODY_STALL_MS = 10_000;
-
 /**
- * Reads a response body to the end, or gives up (null) when no chunk arrives
- * for `stallMs`. The body of the SDK's read once never delivered a byte in the
- * deployed function, though the response had arrived and the same read took
- * 0.3s on a laptop: the caller then reads the same URL another way.
- * `onProgress` hears the total after each chunk.
+ * GETs a URL with node's own http(s) client. It sends `accept-encoding:
+ * identity` itself and refuses any other encoding, because unlike fetch this
+ * client doesn't decompress: a compressed body compared with the archive would
+ * look like a bad copy, and a bad copy is deleted.
  */
-export async function readBody(
-  stream: ReadableStream<Uint8Array>,
-  stallMs: number,
-  onProgress: (bytes: number, chunks: number) => void = () => {}
-): Promise<string | null> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (;;) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const stalled = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), stallMs);
-    });
-    const next = await Promise.race([reader.read(), stalled]).finally(() => clearTimeout(timer));
-    if (next === null) {
-      reader.cancel().catch(() => {});
-      return null;
-    }
-    if (next.done) break;
-    chunks.push(next.value);
-    bytes += next.value.length;
-    onProgress(bytes, chunks.length);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
-/** GETs a URL with node's own http(s) client, which involves neither fetch
- *  nor undici. */
 export function nodeText(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<string> {
   const get = url.startsWith('https:') ? httpsGet : httpGet;
   return new Promise((resolve, reject) => {
-    const req = get(url, { headers, signal }, (res) => {
-      if (res.statusCode !== 200) {
+    const req = get(url, { headers: { ...headers, 'accept-encoding': 'identity' }, signal }, (res) => {
+      const encoding = res.headers['content-encoding'];
+      if (res.statusCode !== 200 || (encoding && encoding !== 'identity')) {
         res.resume();
-        reject(new Error(`status ${res.statusCode}`));
+        reject(new Error(res.statusCode !== 200 ? `status ${res.statusCode}` : `unexpected content-encoding ${encoding}`));
         return;
       }
       const chunks: Buffer[] = [];
@@ -224,19 +191,15 @@ export function nodeText(url: string, headers: Record<string, string>, signal: A
   });
 }
 
-/** GETs a URL with fetch as it was before Next patched it (Next keeps it as
- *  _nextOriginalFetch), or plain fetch when there is no such thing. */
-async function originalFetchText(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<string> {
-  const patched = globalThis.fetch as typeof fetch & { _nextOriginalFetch?: typeof fetch };
-  const res = await (patched._nextOriginalFetch ?? fetch)(url, { headers, signal });
-  if (!res.ok) throw new Error(`status ${res.status}`);
-  return res.text();
-}
+/** What reads a blob's URL back: node's own client in production, a stand-in
+ *  in tests. */
+export type ReadUrl = (url: string, headers: Record<string, string>, signal: AbortSignal) => Promise<string>;
 
 /** Vercel Blob, private, with the token Vercel sets when a store is connected
  *  to the project (BLOB_READ_WRITE_TOKEN). Null when there isn't one. */
-export async function vercelBlobStore(stallMs: number = BODY_STALL_MS): Promise<BackupStore | null> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
+export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<BackupStore | null> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!token) return null;
   const blob = await import('@vercel/blob');
   return {
     async put(pathname, body, signal) {
@@ -251,100 +214,22 @@ export async function vercelBlobStore(stallMs: number = BODY_STALL_MS): Promise<
       });
     },
     async get(pathname, signal) {
-      // The signal reaches the fetch, so it cancels reading the body too.
-      // Logged as it goes so a read-back that stalls shows how far it got: the
-      // body of a read-back once never finished in the deployed function while
-      // the same read took 0.3s locally. Progress lines go out as data arrives,
-      // because nothing runs after the step's time limit ends the function.
-      const started = Date.now();
-      const seconds = () => ((Date.now() - started) / 1000).toFixed(1);
-      // Uncompressed, so what is compared is exactly what the store holds. This
-      // was tried for a body that never delivered a byte in the deployed
-      // function; it made no difference (the body stalled uncompressed too),
-      // and at about 1 MB the extra transfer costs nothing, so it stayed.
-      const res = await blob.get(pathname, {
-        access: 'private',
-        useCache: false,
-        abortSignal: signal,
-        headers: { 'accept-encoding': 'identity' },
-      });
-      console.log(`Backup read-back response after ${seconds()}s`, res ? `status ${res.statusCode}` : 'not found');
+      // The SDK finds the blob (null when it isn't there) and gives its URL, but
+      // its body is not what is read. In the deployed function the body of the
+      // SDK's read never delivered a byte, for any blob, while the response
+      // arrived at once: the SDK reads through fetch, and Next patches fetch in
+      // route handlers. The same URL read with node's own client returns the
+      // whole archive in under a second (as does Next's unpatched fetch), so
+      // that is what is compared.
+      const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: signal });
       if (!res || res.statusCode !== 200) return null;
-      console.log(
-        'Backup read-back response headers',
-        JSON.stringify({
-          node: process.version,
-          nextPatchedFetch: Boolean((globalThis.fetch as { __nextPatched?: boolean }).__nextPatched),
-          contentEncoding: res.headers.get('content-encoding'),
-          transferEncoding: res.headers.get('transfer-encoding'),
-          contentLength: res.headers.get('content-length'),
-        })
-      );
-      let nextMark = 0;
-      const text = await readBody(res.stream, stallMs, (bytes, chunks) => {
-        if (bytes < nextMark) return;
-        console.log(`Backup read-back body at ${seconds()}s`, `${bytes} bytes in ${chunks} chunks`);
-        nextMark = bytes + 131_072;
-      });
-      if (text !== null) {
-        console.log(`Backup read-back body after ${seconds()}s`, `${text.length} chars`);
-        return text;
-      }
-
-      // No data for stallMs. Try other ways of reading the same URL, all of
-      // them, so the log shows which work: fetch as it was before Next patched
-      // it, and node's own client. The first that returns the archive is used.
-      console.log(`Backup read-back body stalled after ${seconds()}s: no data for ${stallMs / 1000}s, trying other readers`);
-      const within = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(stallMs)]) : AbortSignal.timeout(stallMs));
-      const url = res.blob.url;
-      const headers = { authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`, 'accept-encoding': 'identity' };
+      res.stream.cancel().catch(() => {});
+      const url = new URL(res.blob.url);
       // The token goes to Vercel Blob and nowhere else.
-      const isBlobUrl = new URL(url).hostname.endsWith('.blob.vercel-storage.com');
-      const readers: [string, (signal: AbortSignal) => Promise<string>][] = isBlobUrl
-        ? [
-            [(globalThis.fetch as { _nextOriginalFetch?: unknown })._nextOriginalFetch ? 'original fetch' : 'fetch', (s) => originalFetchText(url, headers, s)],
-            ['node https', (s) => nodeText(url, headers, s)],
-          ]
-        : [];
-      if (!isBlobUrl) console.log(`Backup read-back: ${url} is not a Vercel Blob URL, so no other reader is tried`);
-      let found: string | null = null;
-      for (const [name, read] of readers) {
-        try {
-          const got = await read(within());
-          console.log(`Backup read-back via ${name} worked at ${seconds()}s`, `${got.length} chars`);
-          found ??= got;
-        } catch (err) {
-          console.log(`Backup read-back via ${name} failed at ${seconds()}s`, err instanceof Error ? err.message : String(err));
-        }
-      }
-
-      // Is it this copy that can't be read, or any read? An older copy, from an
-      // earlier run and long settled, is read the way the SDK read this one.
-      try {
-        const older = (await blob.list({ prefix: backupFolder(), abortSignal: within() })).blobs
-          .map((b) => b.pathname)
-          .filter((p) => p !== pathname)
-          .sort()
-          .at(-1);
-        if (!older) {
-          console.log('Backup read-back: no older copy to compare with');
-        } else {
-          const other = await blob.get(older, { access: 'private', useCache: false, abortSignal: within(), headers: { 'accept-encoding': 'identity' } });
-          const otherText = other && other.statusCode === 200 ? await readBody(other.stream, stallMs) : null;
-          console.log(
-            `Backup read-back: the older copy ${older} ${otherText === null ? 'also stalled or was not there' : `read fine, ${otherText.length} chars`} at ${seconds()}s`
-          );
-        }
-      } catch (err) {
-        console.log(`Backup read-back: reading an older copy failed at ${seconds()}s`, err instanceof Error ? err.message : String(err));
-      }
-
-      if (found !== null) return found;
-      throw new Error(
-        isBlobUrl
-          ? "The backup's read-back got no data from the store (tried the SDK, fetch and node's https)"
-          : `The backup's read-back got no data, and ${url} is not a Vercel Blob URL`
-      );
+      if (!url.hostname.endsWith('.blob.vercel-storage.com')) throw new Error(`The backup's read-back was pointed at ${url.hostname}, which is not Vercel Blob`);
+      // As the SDK's own read does, so what comes back is from the store, not a cache.
+      url.searchParams.set('cache', '0');
+      return readUrl(url.toString(), { authorization: `Bearer ${token}` }, signal ?? new AbortController().signal);
     },
     async list(prefix, signal) {
       const out: { pathname: string; uploadedAt: Date }[] = [];
