@@ -183,9 +183,16 @@ export async function vercelBlobStore(): Promise<BackupStore | null> {
     },
     async get(pathname, signal) {
       // The signal reaches the fetch, so it cancels reading the body too.
+      // Logged in two parts so a read-back that stalls shows whether the
+      // response never arrived or its body never finished.
+      const started = Date.now();
+      const seconds = () => ((Date.now() - started) / 1000).toFixed(1);
       const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: signal });
+      console.log(`Backup read-back response after ${seconds()}s`, res ? `status ${res.statusCode}` : 'not found');
       if (!res || res.statusCode !== 200) return null;
-      return new Response(res.stream).text();
+      const text = await new Response(res.stream).text();
+      console.log(`Backup read-back body after ${seconds()}s`, `${text.length} chars`);
+      return text;
     },
     async list(prefix, signal) {
       const out: { pathname: string; uploadedAt: Date }[] = [];
