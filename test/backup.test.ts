@@ -9,6 +9,9 @@ type Stored = { body: string; uploadedAt: Date; options: any };
 const blobs = new Map<string, Stored>();
 let clock = new Date('2026-06-15T16:00:00.000Z');
 let corruptReads = false;
+/** The one blob whose reads deliver headers and then no body. */
+let stallPath: string | null = null;
+let blobUrl = 'https://store.blob.vercel-storage.com/x';
 /** The headers the last read was sent with. */
 let readHeaders: Record<string, string> | undefined;
 /** The abortSignal each call was last given. */
@@ -26,7 +29,9 @@ mock.module('@vercel/blob', () => ({
     const b = blobs.get(pathname);
     if (!b || options.access !== 'private') return null;
     const text = corruptReads ? b.body.slice(0, -2) + '\n' : b.body;
-    return { statusCode: 200, stream: new Response(text).body, headers: new Headers(), blob: {} };
+    // A stalled read: the response arrives and its body never sends a byte.
+    const stream = pathname === stallPath ? new ReadableStream<Uint8Array>() : new Response(text).body;
+    return { statusCode: 200, stream, headers: new Headers(), blob: { url: blobUrl } };
   },
   list: async ({ prefix, cursor, abortSignal }: { prefix: string; cursor?: string; abortSignal?: AbortSignal }) => {
     signals.list = abortSignal;
@@ -46,7 +51,7 @@ mock.module('@vercel/blob', () => ({
   },
 }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, readBody, nodeText } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { GET } = await import('@/app/api/backup/route');
 
@@ -56,6 +61,7 @@ beforeEach(async () => {
   fake.reset();
   blobs.clear();
   corruptReads = false;
+  stallPath = null;
   clock = new Date('2026-06-15T16:00:00.000Z');
   process.env.BLOB_READ_WRITE_TOKEN = 'token';
   process.env.CRON_SECRET = 'cron';
@@ -391,5 +397,86 @@ describe('saying when backups have stopped', () => {
     await recordOutcome({ ok: true }, at('2026-06-14T16:00:00Z'));
     const { pathname } = await runBackup(fake as any, await store(), clock);
     expect(verifyArchive(blobs.get(pathname)!.body).records.map((r) => r.key)).not.toContain('backups:status');
+  });
+});
+
+describe('reading a backup back', () => {
+  const enc = new TextEncoder();
+  const streamOf = (chunks: Uint8Array[], then: 'end' | 'hang') =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const chunk of chunks) c.enqueue(chunk);
+        if (then === 'end') c.close();
+      },
+    });
+
+  test('a body is read to the end, with progress after each chunk', async () => {
+    const seen: [number, number][] = [];
+    const text = await readBody(streamOf([enc.encode('ab'), enc.encode('cde')], 'end'), 1000, (b, n) => seen.push([b, n]));
+    expect(text).toBe('abcde');
+    expect(seen).toEqual([[2, 1], [5, 2]]);
+  });
+
+  test('a character split across two chunks still reads as one', async () => {
+    const bytes = enc.encode('a€b'); // € is three bytes
+    expect(await readBody(streamOf([bytes.slice(0, 2), bytes.slice(2)], 'end'), 1000)).toBe('a€b');
+  });
+
+  test('a body that sends nothing is given up on', async () => {
+    const started = Date.now();
+    expect(await readBody(streamOf([], 'hang'), 30)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  test('a body that stops part-way is given up on', async () => {
+    expect(await readBody(streamOf([enc.encode('ab')], 'hang'), 30)).toBeNull();
+  });
+
+  test('node’s client reads a URL, sends the headers, and refuses a failure', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) => (new URL(req.url).pathname === '/ok' ? new Response(`hello ${req.headers.get('x-test')}`) : new Response('no', { status: 404 })),
+    });
+    try {
+      const base = `http://localhost:${server.port}`;
+      expect(await nodeText(`${base}/ok`, { 'x-test': 'yes' }, AbortSignal.timeout(2000))).toBe('hello yes');
+      await expect(nodeText(`${base}/missing`, {}, AbortSignal.timeout(2000))).rejects.toThrow('status 404');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test('a read-back that gets no data fails with a reason, and sends the token nowhere but Vercel Blob', async () => {
+    stallPath = `${backupFolder()}nya-${clock.toISOString().replace(/[:.]/g, '-')}.ndjson`;
+    blobUrl = 'https://example.com/x';
+    const log = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    try {
+      const s = (await vercelBlobStore(30))!;
+      await expect(runBackup(fake as any, s, clock)).rejects.toThrow('is not a Vercel Blob URL');
+      expect(lines.some((l) => l.startsWith('Backup read-back body stalled'))).toBe(true);
+      expect(lines.some((l) => l.includes('no older copy to compare with'))).toBe(true);
+    } finally {
+      console.log = log;
+      blobUrl = 'https://store.blob.vercel-storage.com/x';
+    }
+  });
+
+  test('when the new copy stalls, an older one is read to tell whether any read does', async () => {
+    const s = (await vercelBlobStore(30))!;
+    const older = await runBackup(fake as any, s, new Date(clock.getTime() - DAY));
+    stallPath = `${backupFolder()}nya-${clock.toISOString().replace(/[:.]/g, '-')}.ndjson`;
+    const log = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    try {
+      await expect(runBackup(fake as any, s, clock)).rejects.toThrow('got no data');
+      const probe = lines.find((l) => l.includes('the older copy'))!;
+      expect(probe).toContain(older.pathname);
+      expect(probe).toContain('read fine');
+    } finally {
+      console.log = log;
+    }
   });
 });
