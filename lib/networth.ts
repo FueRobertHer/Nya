@@ -85,6 +85,9 @@ export type InstitutionResult = {
    * keeps them encrypted).
    */
   unconfirmed_missing?: number;
+  /** Plaid has found accounts at this Item that the user hasn't shared yet
+   *  (lib/new-accounts.ts). Set by /api/net-worth only. */
+  new_accounts_available?: boolean;
 };
 
 /**
@@ -97,10 +100,13 @@ export function isRecordable(inst: InstitutionResult): boolean {
   return !inst.error && !inst.unconfirmed_missing;
 }
 
-async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
+export async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
   const result: InstitutionResult = {
     institution_name: item.institution_name,
     item_id: item.item_id,
+    // The stored id, so an Item that fails below still carries one; a
+    // successful fetch overwrites it with what Plaid reports.
+    institution_id: item.institution_id ?? null,
     accounts: [],
     holdings: [],
     error: null,
@@ -127,7 +133,7 @@ async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
     // reconnect prompt would never appear.
     const itemError = balanceRes.data.item?.error?.error_code;
     if (itemError === 'ITEM_LOGIN_REQUIRED') throw { response: { data: { error_code: itemError } } };
-    result.institution_id = balanceRes.data.item?.institution_id ?? null;
+    result.institution_id = balanceRes.data.item?.institution_id ?? result.institution_id;
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
       name: a.name,

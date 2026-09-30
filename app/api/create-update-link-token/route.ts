@@ -9,7 +9,12 @@ import { webhookUrlFor } from '@/lib/webhook-url';
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
-    const { item_id, add_liabilities } = await req.json();
+    const { item_id, add_liabilities, select_accounts } = await req.json();
+    // Two different flows, each with its own Link screen: asking for both at
+    // once would leave it to Plaid which one the user sees.
+    if (add_liabilities && select_accounts) {
+      return NextResponse.json({ error: 'Choose one change at a time' }, { status: 400 });
+    }
     const items = await getItems(ctx);
     const item = items.find((i) => i.item_id === item_id);
     if (!item) {
@@ -27,11 +32,17 @@ export async function POST(req: Request) {
     // existing Item. /liabilities/get has no async_update escape hatch (unlike
     // /investments/transactions/get), so an Item never initialized with the
     // product genuinely cannot serve it until the user re-consents here.
+    //
+    // `select_accounts` shows Link's account picker for the existing Item, so
+    // adding (or removing) an account at an institution already connected
+    // reuses this Item instead of creating a second one, which Plaid would bill
+    // separately and which would mean signing in again.
     const response = await plaidClient.linkTokenCreate({
       user: { client_user_id: ctx.container }, // as in create-link-token
       client_name: 'Nya',
       access_token,
       ...(add_liabilities ? { products: [Products.Liabilities] } : {}),
+      ...(select_accounts ? { update: { account_selection_enabled: true } } : {}),
       country_codes: [CountryCode.Us],
       language: 'en',
       // Re-registers the Item's webhook, so an Item linked before webhooks were
@@ -39,7 +50,10 @@ export async function POST(req: Request) {
       ...(webhookUrlFor(ctx) ? { webhook: webhookUrlFor(ctx) } : {}),
     });
 
-    return NextResponse.json(response.data);
+    // When the picker opened, by the server's clock, handed back to
+    // /api/item-accounts-updated: only an account first seen missing after this
+    // was removed in the picker. One missing from before went on its own.
+    return NextResponse.json(select_accounts ? { ...response.data, opened_at: new Date().toISOString() } : response.data);
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

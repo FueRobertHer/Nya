@@ -13,6 +13,7 @@ import {
 import { applyHidden } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
+import { itemsWithNewAccounts } from '@/lib/new-accounts';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -42,6 +43,17 @@ async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_pr
 }
 
 /**
+ * Marks the institutions where Plaid has found accounts the user hasn't added
+ * (lib/new-accounts.ts). Applied to the response, never stored in the cache, for
+ * the reason staleFlag isn't: a load in flight when the webhook sets the flag
+ * (or the picker clears it) would freeze the old answer for the cache's TTL.
+ */
+function withNewAccounts(institutions: InstitutionResult[], items: Set<string>): InstitutionResult[] {
+  if (items.size === 0) return institutions;
+  return institutions.map((inst) => (items.has(inst.item_id) ? { ...inst, new_accounts_available: true } : inst));
+}
+
+/**
  * Starts a promise now, to be awaited later, without risking an unhandled
  * rejection in between.
  *
@@ -68,11 +80,17 @@ export async function GET(req: Request) {
     // Wanted on both paths and dependent on neither, so it runs alongside
     // whichever one we take rather than adding a round trip to the end of it.
     const stalePromise = eager(staleFlag(ctx));
+    const newAccountsPromise = itemsWithNewAccounts(ctx); // never throws: a failed read is "none"
 
     if (!refresh) {
       const cached = await readCache<NetWorthPayload>(ctx, CacheKey.NetWorth);
       if (cached) {
-        return NextResponse.json({ ...cached, ...(await stalePromise), from_cache: true });
+        return NextResponse.json({
+          ...cached,
+          institutions: withNewAccounts(cached.institutions, await newAccountsPromise),
+          ...(await stalePromise),
+          from_cache: true,
+        });
       }
     }
 
@@ -172,7 +190,12 @@ export async function GET(req: Request) {
       await clearNetWorthCache(ctx);
     }
 
-    return NextResponse.json({ ...payload, ...(await stalePromise), from_cache: false });
+    return NextResponse.json({
+      ...payload,
+      institutions: withNewAccounts(payload.institutions, await newAccountsPromise),
+      ...(await stalePromise),
+      from_cache: false,
+    });
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
