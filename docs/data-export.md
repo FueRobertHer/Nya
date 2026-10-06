@@ -1,0 +1,299 @@
+# Downloading your data
+
+Everything Nya stores about you can be downloaded, decrypted, in open formats: one JSON file with all of it, or CSV files of your transactions and your balance history for a spreadsheet. This page says how to get it, what is in it field by field, and what is left out and why. The code is `lib/user-export.ts`, the route `app/api/my-data/route.ts`, and the card `components/DownloadMyData.tsx`.
+
+- [Getting a copy](#getting-a-copy)
+- [What is not in it](#what-is-not-in-it)
+- [Conventions](#conventions)
+- [The JSON file](#the-json-file)
+- [The CSV files](#the-csv-files)
+- [Every stored key, and where it goes](#every-stored-key-and-where-it-goes)
+- [How it differs from the operator backup](#how-it-differs-from-the-operator-backup)
+- [Adding a store](#adding-a-store)
+
+## Getting a copy
+
+On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pick a format:
+
+| Format | File | What it holds |
+| --- | --- | --- |
+| Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every stored transaction, one per row. |
+| Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
+
+**A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
+
+**Five downloads an hour**, per account. A sixth is refused with how long to wait.
+
+**All or nothing.** Every store is read before the first byte is sent. If any part can't be read (a value that won't decrypt, a database error), nothing is downloaded and the error says which part, rather than handing over a file that looks complete and isn't. The page reads the whole response before saving it, so a connection cut part way leaves no file behind.
+
+**Never written down.** The file is built in memory and streamed to your browser. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. The download itself is not encrypted, so keep the file somewhere safe.
+
+No email is sent when a download happens yet: there is no email provider. When one exists (#51), the route marks where to send it.
+
+## What is not in it
+
+The JSON file lists these itself, under `not_included`.
+
+- **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
+- **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
+- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
+- **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
+- **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves.
+- **Unused invite links.** They work for 72 hours and are then gone.
+
+## Conventions
+
+- **Amounts** are plain numbers in the account's currency. Nothing is converted between currencies.
+- **Transaction signs** follow Plaid: positive is money leaving the account (a purchase), negative is money coming in (a refund, a paycheck). Investment transactions are the same: positive when cash is debited (a buy).
+- **Balances** of credit cards and loans are positive amounts owed. Net worth adds every other account and subtracts those.
+- **Dates.** History is kept per UTC day (`YYYY-MM-DD`). Times (`..._at`, `datetime`) are ISO 8601 instants in UTC.
+- **`null`** means not known or never stored, never zero. A time Nya never recorded is `null`, not a made-up date.
+- **Ids** are Plaid's (`account_id`, `item_id` for a connection, `transaction_id`) or Nya's own (`manual_...` for manual accounts). They tie the parts of the file together.
+
+## The JSON file
+
+One object, pretty-printed, UTF-8. Its top-level fields, in order:
+
+| Field | What it is |
+| --- | --- |
+| `format` | Always `"nya-export"`. |
+| `version` | `1`. It goes up when a field is removed or changes meaning; an added field leaves it alone. |
+| `exported_at` | When the file was made. |
+| `documentation` | A link to this page. |
+| `not_included` | What the file leaves out, and why ([above](#what-is-not-in-it)). |
+| `notes` | Caveats about this download, if any: for example that the newest transactions from an institution could not be saved, so they may be missing. Usually empty. |
+| `institutions` | Your linked connections. |
+| `accounts` | Every linked account the file mentions anywhere. |
+| `manual_accounts` | Accounts you track by hand. |
+| `hidden_accounts` | Accounts you hid. |
+| `net_worth_history` | Your net worth by day. |
+| `account_history` | Each account's balance by day. |
+| `transactions` | Every stored transaction. |
+| `category_overrides` | Every category you set on a transaction. |
+| `merchant_renames` | Every merchant you renamed. |
+| `investment_transactions` | Every stored investment transaction. |
+| `investment_history_coverage` | Which days the stored investment transactions are known to be complete for. |
+| `account_links` | Accounts you linked across a reconnect, offers you declined, and categories carried across. |
+| `budgets` | Your monthly budgets. |
+| `goals` | Your savings goals. |
+| `sharing` | Your side of sharing, or `null` with the shared password. |
+
+### `institutions[]`
+
+| Field | Meaning |
+| --- | --- |
+| `item_id` | Plaid's id for the connection. |
+| `institution_name` | The bank's name, as Plaid Link gave it. |
+| `institution_id` | Plaid's id for the bank, or `null` for a connection made before it was stored. |
+| `provider` | `"plaid"`. |
+
+### `accounts[]`
+
+Every linked account the file mentions anywhere: connected ones, earlier ones whose institution you disconnected (kept for their history), and any id known only from its balance history or a link. Each detail comes from the freshest record that has it: what the last good balance fetch remembered, then the directory of every account seen, then the transaction store, then the investment store.
+
+| Field | Meaning |
+| --- | --- |
+| `account_id` | Plaid's id for the account. |
+| `provider` | `"plaid"`. |
+| `item_id` | The connection it belongs to, or `null` if unknown. |
+| `institution_name`, `institution_id` | Its bank. |
+| `connected` | Whether its connection is still linked. |
+| `name`, `official_name` | Its names at the bank. |
+| `type`, `subtype` | Plaid's kind of account: `depository`, `credit`, `loan`, `investment` or `other`, and for example `checking`. |
+| `mask` | The last digits of the account number. |
+| `currency` | Its currency code, when known. |
+| `credit_limit` | A card's credit line, when known. |
+| `persistent_account_id` | Plaid's id for the account across reconnects, where the bank offers one. |
+| `first_seen`, `last_seen` | The first and last day Nya knew the account. |
+| `hidden`, `hidden_at` | Whether you hid it, and when. Hiding one id of an account you linked hides every id it has had. |
+| `latest_balance` | `{ balance, date }`: its newest recorded balance (never an estimate) and the UTC day it was recorded, or `null`. |
+
+An account known only by its id has `null` for everything Nya never learned about it.
+
+### `manual_accounts[]`
+
+`account_id`, `name`, `institution_name`, `type`, `subtype`, `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency; the app shows them in US dollars.
+
+### `hidden_accounts[]`
+
+What you hid, as stored: `account_id`, `type` (kept so a hidden account can be taken out of past totals even while its bank is unreachable), `hidden_at`.
+
+### `net_worth_history`
+
+```json
+{ "includes_hidden_accounts": true, "points": [{ "date": "2026-01-01", "total": 1000, "kind": "recorded" }] }
+```
+
+One point per day. `kind` is `recorded` for a total Nya measured that day, or `estimated` for one reconstructed from your transactions for a day before it started recording (or a day it couldn't record). Where a day has both, the recorded total is given and the estimate, superseded, is not.
+
+**Totals include hidden accounts.** Hiding takes an account out of what the app shows, not out of what was recorded, so unhiding brings it back exactly. On a recorded day, the total the app charts is this total minus each hidden account's balance that day from `account_history` (plus it, for a hidden credit card or loan, whose balance was subtracted). On an estimated day the app also takes out a balance the estimate held flat, which is not in this file; it leaves out a day where it can't tell what a hidden account held; and it draws a straight line between two recorded days in place of the estimates between them. So the chart can differ from these totals on estimated days. (Forgetting a hidden earlier account takes it out of the stored totals for good, so a forgotten account is in neither.)
+
+### `account_history[]`
+
+```json
+{ "account_id": "...", "points": [{ "date": "2026-01-01", "balance": 1500, "kind": "recorded" }] }
+```
+
+Each account's own balance by day, one point per day, by the same rules the app's account chart uses: a balance measured on a day one of your banks failed (so no total was recorded) counts as recorded, and comes before the recorded map for that day; then the recorded map; then the estimate (the newer of the two estimate layers first). A day whose recorded map doesn't name the account has no point: it wasn't there that day. Accounts you linked across a reconnect keep their own ids here; the app joins them using `account_links.links`.
+
+### `transactions[]`
+
+Every stored transaction, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it:
+
+| Field | Meaning |
+| --- | --- |
+| `transaction_id` | Plaid's id. |
+| `pending_transaction_id` | On a posted transaction, the pending one it replaced. |
+| `account_id` | The account. |
+| `amount` | Plaid's sign: positive is money out. |
+| `iso_currency_code`, `unofficial_currency_code` | Its currency (the second for ones without an ISO code, such as crypto). |
+| `date` | The posting date. |
+| `authorized_date`, `authorized_datetime`, `datetime` | When it happened, where the bank says. |
+| `name` | The bank's own description of it. |
+| `merchant_name`, `merchant_entity_id`, `website`, `logo_url` | The merchant as Plaid identified it. |
+| `personal_finance_category` | Plaid's category: `primary`, `detailed` and `confidence_level`. |
+| `personal_finance_category_icon_url` | Its icon. |
+| `pending` | Not yet posted. |
+| `payment_channel` | `online`, `in store` or `other`. |
+| `transaction_code`, `transaction_type` | The bank's kind of transaction, where given. |
+| `check_number`, `account_owner` | Where given. |
+| `location` | `address`, `city`, `region`, `postal_code`, `country`, `lat`, `lon`, `store_number`. |
+| `payment_meta` | `reference_number`, `ppd_id`, `payee`, `by_order_of`, `payer`, `payment_method`, `payment_processor`, `reason`. |
+| `counterparties` | Who was on the other side: each with `name`, `type` (`merchant`, `payment_app`...), `entity_id`, `website`, `logo_url`, `confidence_level`. |
+| `category` | Plaid's primary category, in words (`food and drink`). |
+| `account_name`, `institution_name` | As they were when the transaction was stored. |
+
+Transactions stored before Nya kept every field carry only the date, description, amount, pending flag, category and names; the rest is `null`.
+
+And what Nya adds, your own edits beside the bank's, never over them:
+
+| Field | Meaning |
+| --- | --- |
+| `item_id` | The connection it came from. |
+| `vendor_key` | The merchant's key for renames: `mid:<merchant id>`, or `nm:<institution>::<name>` without one. |
+| `your_category` | A category you set on this transaction, or `null`. |
+| `your_category_from_earlier_account` | A category you set on the same transaction under an earlier account you linked to this one, or `null`. |
+| `your_merchant_name` | Your name for this merchant, or `null`. |
+| `superseded_by_posted` | A pending transaction its posted one replaced. The app hides these so nothing counts twice. |
+| `account_hidden` | Its account is hidden. |
+
+The app shows `your_category`, else `your_category_from_earlier_account`, else `category`; and `your_merchant_name`, else `merchant_name`, else `name`.
+
+### `category_overrides[]` and `merchant_renames[]`
+
+Every category you set (`transaction_id`, `category`), including any whose transaction is no longer stored (the bank removed it), and every merchant you renamed (`vendor_key`, `name`).
+
+### `investment_transactions[]`
+
+Every stored investment transaction, newest first, with every field Plaid sent (`investment_transaction_id`, `account_id`, `security_id`, `date`, `name`, `quantity`, `price`, `amount`, `fees`, `type`, `subtype`, `iso_currency_code`, `unofficial_currency_code`, `cancel_transaction_id`), and:
+
+| Field | Meaning |
+| --- | --- |
+| `item_id` | The connection it came from. |
+| `security` | The security as Plaid described it: `name`, `ticker_symbol`, `type`, `is_cash_equivalent`, `cusip`, `isin`, `iso_currency_code`; or `null`. |
+| `seen_at` | The last day a sync returned it. |
+| `missing_since` | When a complete check of its dates first didn't return it, or `null`. |
+| `excluded` | The app leaves it out: two complete checks a day apart didn't return it, or the bank cancelled it. It is kept, not deleted, and comes back if the bank returns it. |
+| `cancelled` | The bank sent a cancellation for it. |
+
+### `investment_history_coverage[]`
+
+`item_id`, `account_id`, `from`, `through`: the days for which the stored investment transactions of that account were checked complete. Outside them, a quiet month and an unfetched one look the same.
+
+### `account_links`
+
+| Field | Meaning |
+| --- | --- |
+| `links[]` | `earlier_account_id`, `account_id` (what it is linked to), `linked_at`, and `evidence` (what the offer was based on when you linked it). |
+| `declined_suggestions[]` | `earlier_account_id`, `account_id` (the offer you said wasn't the same account, or `null` for "None of these"), `declined_at`. |
+| `carried_categories[]` | For each earlier account: `rows[]` of `date`, `amount`, `description` (the bank's, lower-cased) and `category`, the categories you set before it was reconnected. `category` is `null` where two identical transactions were categorized differently, so nothing carries. |
+
+### `budgets[]` and `goals[]`
+
+Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`).
+
+### `sharing`
+
+`null` with the shared password. With Clerk, your side of each connection, never theirs:
+
+| Field | Meaning |
+| --- | --- |
+| `connections[]` | `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`. |
+| `blocked[]` | `name`: people you blocked, by what you called them. |
+
+## The CSV files
+
+Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, without a byte order mark: if accented letters look wrong in Excel, open the file with Data, From Text/CSV, and choose UTF-8.
+
+**Formula guard.** A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, and a leading tab or carriage return can smuggle one in too. Merchant names and bank descriptions come from outside, so any cell that starts with one of those and isn't a number gets a `'` in front of it, which makes the spreadsheet treat it as text. The `'` is not part of the data (the JSON file has the value as stored). Negative amounts are numbers and are left alone.
+
+### `nya-transactions-<date>.csv`
+
+One row per stored transaction, newest first, with the [transaction fields](#transactions) flattened. Columns, in order:
+
+`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`.
+
+`amount` keeps Plaid's sign (positive is money out). To total your spending, leave out rows where `superseded_by_posted` is `true`.
+
+### `nya-balances-<date>.csv`
+
+Oldest day first; on each day the net-worth row comes before the accounts. Columns:
+
+| Column | Meaning |
+| --- | --- |
+| `date` | The UTC day. |
+| `record` | `net_worth` for the day's total, `account` for one account's balance. |
+| `account_id`, `account_name`, `institution_name`, `account_type` | The account (empty on `net_worth` rows). |
+| `balance` | The total, or the account's balance (positive is owed for credit and loans). |
+| `currency` | The account's currency, when known. |
+| `kind` | `recorded` or `estimated`. |
+| `account_hidden` | The account is hidden (empty on `net_worth` rows). |
+
+`net_worth` rows include hidden accounts, as [stored](#net_worth_history). Don't add `account` rows to `net_worth` rows: the total already counts them.
+
+## Every stored key, and where it goes
+
+Each key a person's container can hold, and what the download does with it. The same list is `STORED_KEYS` in `lib/user-export.ts`, and a test fails if the code builds a container key that isn't on it, so a new store can't go missing from downloads unnoticed.
+
+| Key | In the download |
+| --- | --- |
+| `plaid:items` | `institutions` (the access token in each record is left out) |
+| `accounts:meta`, `accounts:directory` | `accounts` |
+| `manual:accounts` | `manual_accounts` |
+| `hidden:accounts` | `hidden_accounts`, and `accounts[].hidden` |
+| `history:net-worth`, `history:net-worth:est` | `net_worth_history` (recorded, estimated) |
+| `history:accounts`, `history:accounts:partial` | `account_history` (recorded) |
+| `history:accounts:est`, `history:accounts:est:ext` | `account_history` (estimated) |
+| `history:accounts:est:flatd`, `history:accounts:est:flat` | Left out: balances an estimate held flat (see above) |
+| `txns:<connection>` | `transactions` (the sync cursor is left out) |
+| `invtxns:<connection>` | `investment_transactions`, `investment_history_coverage` |
+| `txn-category-overrides` | `category_overrides`, and `transactions[].your_category` |
+| `txn-vendor-renames` | `merchant_renames`, and `transactions[].your_merchant_name` |
+| `txn-category-carry` | `account_links.carried_categories`, and `transactions[].your_category_from_earlier_account` |
+| `account-links`, `account-links:dismissed` | `account_links.links`, `account_links.declined_suggestions` |
+| `budgets`, `goals` | `budgets`, `goals` |
+| `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
+| `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:`, `ratelimit:` | Left out: the app's machinery |
+
+Sharing settings are not in your container (connections are between two people) and are read as your side only.
+
+## How it differs from the operator backup
+
+There are two exports, and they are kept apart on purpose (#55): one that did both jobs would be too decrypted to be safe, or too complete to be portable.
+
+| | Download my data | Operator export and nightly backup |
+| --- | --- | --- |
+| For | You, to keep or take elsewhere | Whoever runs Nya, to recover from losing the database |
+| Covers | One person | The whole environment, every person |
+| Values | Decrypted, in documented fields | Ciphertext, byte for byte; useless without the keys |
+| Formats | JSON, CSV | NDJSON of raw database keys, with a checksum |
+| Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records) |
+| Restores | Not yet: an import is planned (#43) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
+| Gets it | You, after a fresh sign-in, 5 an hour | The operator, with `OPS_SECRET`, or the nightly cron |
+
+Deleting your account deletes your data now, and the nightly backups expire it later; the receipt at the end gives the date ([authentication.md](authentication.md#deleting-an-account)). A file you downloaded is yours, and deleting your account doesn't reach it.
+
+## Adding a store
+
+A new store that stands alone (nothing else needs to read it to build the file) is one entry in `SECTIONS` in `lib/user-export.ts`: its key in the file, its name for errors, and a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape. Add its key to `STORED_KEYS` and a section to this page. Once the storage seam (`lib/repo.ts`) lets a store declare itself exportable, `SECTIONS` is extended from those declarations instead, as the comment there describes. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.

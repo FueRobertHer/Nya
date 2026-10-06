@@ -50,7 +50,9 @@ After you disconnect an institution, Nya keeps each of its accounts' balance his
 - Unlink a linked account first.
 - An account of an institution that is still connected (a card you closed, say) is listed there once you disconnect the institution.
 
-Forget can't reach copies made before it: a backup you downloaded (see [operations.md](operations.md#backups)) still has the account, and restoring that backup brings it back. A goal that pointed at the account keeps pointing at it (as an account id only) until you change the goal.
+Forget can't reach copies made before it: a backup you downloaded (see [operations.md](operations.md#backups)) still has the account, and restoring that backup brings it back, and a file from [Download my data](data-export.md) still lists it. A goal that pointed at the account keeps pointing at it (as an account id only) until you change the goal.
+
+Disconnecting ends the connection at Plaid as well as in Nya, but it can't reach the records Plaid keeps itself, under its own privacy policy. The confirmation links to the [Plaid Portal](https://my.plaid.com), where you can see and delete them.
 
 ## Payment details
 

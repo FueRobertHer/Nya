@@ -19,6 +19,8 @@ Amounts are shown in the currency they carry. Totals (net worth, month totals, b
 
 More than one person can use a deployment: sign in with Clerk and each account gets its own data, with optional read-only sharing between people who connect. Otherwise a single shared password protects the app. See [docs/authentication.md](docs/authentication.md).
 
+Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
+
 ## Screenshots
 
 Captured in Plaid `sandbox` mode, so the balances and transactions are test data. Anything named "Plaid ..." is a sandbox fixture; HealthEquity and Alliant Credit Union are manual accounts added by hand. The budget meters read $0.00 because the capture was taken on the 2nd of the month, before anything had posted against them.
@@ -96,7 +98,8 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 | --- | --- |
 | [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, preview deployments. |
 | [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down. |
-| [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion, sharing, demo accounts. |
+| [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion and its receipt, sharing, demo accounts. |
+| [Downloading your data](docs/data-export.md) | Getting everything Nya stores about you: the JSON and CSV formats field by field, what is left out, and how it differs from the operator backup. |
 | [Architecture](docs/architecture.md) | Storage and encryption, caching, how net-worth history is recorded and reconstructed, containers. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move. |
 

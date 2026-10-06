@@ -50,7 +50,13 @@ Never delete the whole `owners` key once there is more than one container: with 
 
 ### Deleting an account
 
-Under Manage accounts, "Delete my account" (type DELETE to confirm) disconnects that person's banks at Plaid, deletes everything stored for them, ends all sharing to and from them, and deletes their Clerk sign-in. If it stops part way, their data is already out of reach, and running it again finishes. The primary account (the first, the owner's) can't be deleted from the app. Nightly backups keep a copy for up to 30 days; take the person off `CLERK_ALLOWED_USER_IDS` too.
+In the account window (the avatar menu, then Manage account), the **Data & privacy** page has "Delete my account" (type DELETE to confirm). It disconnects that person's banks at Plaid, deletes everything stored for them, ends all sharing to and from them, and deletes their Clerk sign-in. If it stops part way, their data is already out of reach, and running it again finishes. The primary account (the first, the owner's) can't be deleted from the app. Take the person off `CLERK_ALLOWED_USER_IDS` too. To keep a copy first, they can download everything ([data-export.md](data-export.md)).
+
+It ends with a **receipt**, shown on the sign-in page it signs out to, with Copy and Download as text (`lib/deletion-receipt.ts`):
+
+- **Deleted now:** banks disconnected at Plaid (and any Plaid wouldn't disconnect), accounts, transactions, investment transactions, days of balance history, connections where sharing ended, and the sign-in. A count that couldn't be read says so; it never stops the deletion. If an attempt stopped after deleting the data, the retry's receipt adds up both.
+- **Expires later:** the date the last nightly backup holding the data is gone. Copies older than `BACKUP_KEEP_DAYS` (30 by default) are deleted by the next successful nightly run, but the newest 7 are always kept, so the last copy goes `BACKUP_KEEP_DAYS` + 1 days after the deletion (31 by default), or 7 days when that is longer. That holds while the nightly backup keeps running, and the receipt says when it has stopped. Without a blob store there are no backups, and it says that instead.
+- **What stays, and why:** Plaid's own copy of what it collected, under its own policy, with a link to the [Plaid Portal](https://my.plaid.com) where people can see and delete it; server logs, which hold no amounts or balances; and any file they downloaded themselves.
 
 ### Turning it on in production
 
@@ -83,5 +89,5 @@ Before making Preview public (turning off Vercel's protection for it), give it i
 ## What is not covered
 
 - **The shared password is one secret for everyone who has it.** Anyone with it gets full access, including the ability to disconnect accounts. Sessions can be ended everywhere, but not one device at a time. Use Clerk for more than one person.
-- **Rate limiting covers only the login endpoint**, not the data routes (those already require a valid session).
+- **Rate limiting covers the login and data downloads only**: wrong passwords per IP (shared by the login and the password asked for before a download), and five downloads of your data an hour per account. The other data routes already require a valid session.
 - **The on-device snapshot is readable without the app password.** The dashboard keeps its last-known snapshot in the browser's `localStorage` so the PWA opens instantly and shows balances offline. Someone with your unlocked phone can read it. That is acceptable for a personal device, but worth knowing. It is cleared on logout (and per signed-in account with Clerk).
