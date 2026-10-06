@@ -10,6 +10,7 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
+import DownloadMyData from './DownloadMyData';
 import { instantDay } from '@/lib/local-date';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
@@ -2027,6 +2028,11 @@ export default function Dashboard({
                     )}
                   </div>
                 )}
+
+                {/* Download my data, with the rest of the account upkeep
+                    behind Manage accounts; after the accounts, so it doesn't
+                    push them down. It asks for a fresh sign-in itself. */}
+                {manageMode && <DownloadMyData clerk={clerk} />}
 
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
