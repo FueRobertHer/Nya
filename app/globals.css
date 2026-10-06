@@ -1976,3 +1976,9 @@ button.danger-outline {
 .receipt-done {
   margin-top: 10px;
 }
+
+/* --- links inside notes, such as the Plaid Portal in the disconnect sheet --- */
+
+.panel-note a {
+  color: var(--accent);
+}

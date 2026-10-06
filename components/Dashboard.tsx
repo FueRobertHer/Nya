@@ -12,6 +12,7 @@ import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
 import { instantDay } from '@/lib/local-date';
+import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import { historyPausedSince } from '@/lib/history-status';
@@ -2286,9 +2287,20 @@ export default function Dashboard({
         {shownDisconnectTarget && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya. You can
-              reconnect it later. Type <strong>{shownDisconnectTarget.institution_name}</strong> below to
-              confirm.
+              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
+              connection at Plaid. You can reconnect it later. Type{' '}
+              <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
+            </p>
+            {/* What Plaid itself keeps is beyond a disconnect's reach (the
+                deletion receipt says the same, lib/deletion-receipt.ts): say
+                where people can see and delete it. */}
+            <p className="panel-note">
+              Plaid keeps its own records of what it collected, under its own privacy policy. See and delete
+              them at the{' '}
+              <a href={PLAID_PORTAL} target="_blank" rel="noreferrer">
+                Plaid Portal
+              </a>
+              .
             </p>
             <label className="field" style={{ marginTop: 12 }}>
               Institution name
