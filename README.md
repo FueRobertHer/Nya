@@ -2,18 +2,19 @@
 
 <img src="public/icons/icon-512.png" width="100"/>
 
-A personal finance tracker built with Next.js and React. It connects to your financial accounts through Plaid (banks, brokerages, credit cards, loans) and keeps a running net worth, a year of transactions, budgets and savings goals. It runs on Bun, deploys to Vercel, stores everything encrypted in Upstash Redis, and installs on your phone as a PWA.
+A personal finance tracker built with Next.js and React. It connects to your financial accounts through Plaid (banks, brokerages, credit cards, loans) and keeps a running net worth, a year of transactions, budgets and savings goals, and works out when you could be financially independent and how a retirement would have lasted. It runs on Bun, deploys to Vercel, stores everything encrypted in Upstash Redis, and installs on your phone as a PWA.
 
 **[Try the live demo](https://nya-git-preview-fueroberthers-projects.vercel.app/?_vercel_share=hsOPuA6Qvofd4jxnrQVjuqXhPVkNqykh)** and sign in with one of the two **demo accounts** (Alex or Sam). It runs against Plaid's sandbox on its own database, so every account and balance you see there is fake. Everyone who tries the demo shares those accounts, so anything you add is visible to other visitors. See [Demo accounts](docs/authentication.md#demo-accounts-preview-only) and [Preview deployments](docs/deployment.md#preview-deployments) for how it is wired.
 
 ## What it does
 
-Four tabs, mobile-first, with bottom navigation:
+Five tabs, mobile-first, with bottom navigation:
 
 - **Home**: net worth with a 30-day delta and a scrubbable over-time chart (daily snapshots plus an estimated backfill), and insights and alerts: budgets over or approaching their limit, low balances, uninvested cash sitting in a brokerage, upcoming recurring bills and payments due, spending pace against last month, and the biggest purchase.
 - **Accounts**: a per-institution balance sheet. Tap an account for its own balance history. Holdings show gain or loss against cost basis, and money that isn't actually invested (a settlement fund, a sweep account) is marked and flagged once it is large enough to be worth placing. Credit cards and loans show their APR, minimum payment and due date. Investment accounts show the last year of activity and this year's contributions, with rollovers counted separately from money saved. Any account can be **hidden** (still syncing, no longer counted), and institutions Plaid can't reach can be tracked as **manual accounts**.
 - **Activity**: twelve months of transactions with a monthly breakdown (trend columns, money in, out and net, top categories) and search. Recategorize a transaction or rename a vendor; both are manual overrides that persist, and a rename applies to every transaction from that merchant. Transfers and loan payments are left out of the totals, and a pending charge is de-duplicated against its posted version.
 - **Budgets**: monthly budgets per spending category with severity meters, savings goals tracked against a linked account's live balance, and recurring-bill detection with estimated next charge dates.
+- **Plan**: financial independence from your own data. The FI number, years to FI, Coast FI and Barista FI, from your last year of spending, your invested assets and an estimate of your savings (each one can be typed over), and a retirement simulator: historical cycles on monthly US data since 1871, or a seeded Monte Carlo, with five withdrawal rules (constant, percent of portfolio, Guyton-Klinger guardrails, VPW, floor and ceiling), other income, one-off expenses, fees and a flat tax. It shows the success rate with its definition, a fan chart, the worst starting years, a grid by withdrawal rate and length, and every assumption beside the result. See [Planning](docs/features.md#planning).
 
 Amounts are shown in the currency they carry. Totals (net worth, month totals, budgets, recurring bills) are labelled with your most common currency and say so when a period or your accounts mix currencies: nothing is converted between currencies. The header's refresh button bypasses the cache and re-reads from Plaid.
 
@@ -95,7 +96,7 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 | Guide | What is in it |
 | --- | --- |
 | [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, preview deployments. |
-| [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down. |
+| [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down, planning (the FI figures, the simulator, its data and its limits). |
 | [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion, sharing, demo accounts. |
 | [Architecture](docs/architecture.md) | Storage and encryption, caching, how net-worth history is recorded and reconstructed, containers. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move. |
@@ -108,6 +109,7 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 - **Liabilities and Investments are paid Plaid products.** Free in `sandbox`, billed per institution per month in `production`.
 - **Offline is read-only last-known data.** The PWA opens with the last snapshot from `localStorage`, but refreshing, linking and transactions need a network connection.
 - **The shared password is one secret for everyone who has it.** Use Clerk for more than one person.
+- **Plan results are hypothetical.** They come from US market history only, with taxes as one flat rate and the stock and bond mix you set (Nya doesn't look inside funds). The data is Shiller's, whose page states no license terms: check before any paid use. See [Planning](docs/features.md#limits).
 
 ## Ideas
 

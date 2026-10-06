@@ -9,6 +9,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [When an institution can't be reached](#when-an-institution-cant-be-reached)
 - [Manual accounts](#manual-accounts)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
+- [Planning](#planning)
 
 ## Connecting accounts
 
@@ -121,3 +122,84 @@ Plaid bills per linked institution (Item) per month for Transactions, Investment
 - **Unused connections (admin only).** A daily check (`/api/plaid/check-items`) flags a connection, in any account, once Plaid has been unable to read it for 60 days (login expired, consent withdrawn) or every account on it has been hidden for 60 days. **It never removes anything.** The admin, meaning whoever owns the deployment's own account (normally the first to sign in with Clerk, or the password holder), sees the flagged ones under Manage on the Accounts tab, labelled by owner. Other accounts see nothing and the route answers them with a 404. Review and disconnect asks for the institution's name, and the server checks the connection again first: if its owner has reconnected it or unhidden an account, or Plaid does not answer, nothing is removed. Any success starts the count again; an outage or timeout counts for nothing. Change the period with `PLAID_UNUSED_DAYS` (minimum 14).
 
 Liabilities and Investments are paid Plaid products: free in `sandbox`, but billed per Item per month in `production`, so enabling payment details or linking brokerages on many institutions has a running cost.
+
+## Planning
+
+The **Plan** tab answers two questions: how much you need to be financially independent (FI), and how a retirement on that money would have lasted through US market history. Everything is in today's dollars. The results are hypothetical: they come from US history, or sequences resampled from it, and are not a prediction and not advice. The tab says so beside every result, with the assumptions behind it.
+
+### The FI figures
+
+- **FI number**: your annual spending divided by the withdrawal rate (4% by default), grossed up for the tax on withdrawals: `spending / (1 - tax) / rate`. Spending $40,000 at 4% with no tax needs $1,000,000.
+- **Years to FI**: how long your invested assets take to reach the FI number, adding your annual savings at the end of each year and earning a steady real return (5% a year after inflation by default). It says "Not at this rate" when savings and growth never get there.
+- **Coast FI**: what you need invested today for it to grow to the FI number by your target age with nothing more added, at the same return.
+- **Barista FI**: the FI number when part-time income (after tax) covers part of your spending, so the portfolio covers only the rest.
+- **At your target age**: the balance projected at the steady return. Real markets don't move steadily, which is what the simulation is for.
+
+### Where the inputs come from
+
+Each input says where it came from, and any of them can be typed over. A typed figure stays until you switch back to Nya's.
+
+- **Annual spending**: the last 365 days of money out, by the same rule as the Activity tab. Transfers between your accounts, ATM withdrawals and loan payments are not spending, so paying a card off isn't counted twice, and a pending charge whose posted version has arrived was already dropped. With less than about eleven months of history the total is scaled up to a year, and the label says from how many months. Under four weeks gives no figure.
+- **Invested assets**: your investment accounts at their current balance, without hidden ones, plus checking and savings if you tick the box. Debts are not subtracted. Every investment account counts, a 529 or an HSA included, since tax buckets aren't modelled yet: type your own total to leave one out.
+- **Annual savings**: a year of income minus spending. It is an estimate: pre-tax 401(k) contributions and an employer match never pass through a bank account, so they are missing; add them by typing your own figure.
+- **Ages and assumptions**: typed by you. Your age places Social Security, pensions and one-off expenses in the plan.
+
+### Will it last?
+
+The simulation runs a retirement through market history. It starts with your FI number at your target age (or your invested assets today, or a balance you type), withdraws by a rule each year, and runs for the length you choose: to age 95 by default, or 30 years when no age is set. There are two methods:
+
+- **Historical cycles** start the plan in every month from January 1871 that leaves its whole length inside the data (1,470 starts for 30 years) and live through what actually followed, the idea behind cFIREsim and FIRECalc, on monthly rather than annual data.
+- **Monte Carlo** runs 5,000 sequences, each built from five-year blocks of consecutive months drawn at random from the same history (a circular block bootstrap). A block keeps the months together, so stocks, bonds and inflation stay matched, as do runs of good or bad years shorter than a block; longer cycles are cut at block edges, so the results spread wider than the history's. The draws are seeded, so the same plan always gives the same answer.
+
+**Success** means the portfolio never ran out: every year's withdrawal was paid in full to the end of the plan. The success rate is the share of starts (or runs) that succeeded. The fan chart shows the balance each year at the 10th, 25th, 50th, 75th and 90th percentiles, with a table of the same figures. The worst starting years are those that ran out soonest, or, when none did, came closest (the lowest spending, then the lowest balance left), listed once per calendar year. The grid repeats the plan at 3% to 5% and 20 to 50 years, plus your own rate and length; for a rule that cannot run out it shows how far spending fell instead.
+
+Each plan year, in order:
+
+1. The rule sets the year's withdrawal from the balance at the start of the year.
+2. Other income (Social Security, a pension, after tax) pays part of that year's spending, so the portfolio withdraws less; income beyond the spending is invested. One-off expenses are added. What the portfolio pays is grossed up for the flat tax.
+3. If that is more than the balance, the plan has run out that year.
+4. The rest earns the next twelve months' returns, at your mix, rebalanced every year by default (every month, or never, are the options).
+5. Fund fees are charged (0.1% a year by default).
+
+Withdrawals are taken once a year at the start of the year, the convention of the annual studies, slightly conservative against spreading them out. Returns compound monthly. Cash keeps up with inflation and earns nothing more: Shiller's data has no short-term rate, and the 10-year yield would credit cash with a bond's returns.
+
+### The withdrawal rules
+
+- **Constant (the 4% rule)**: the first year withdraws the rate times the starting balance, and every later year the same amount in today's dollars, whatever the market does.
+- **Percent of portfolio**: every year withdraws the rate times the balance at the start of that year. It cannot run out; spending moves with the market, and the result shows how far it fell.
+- **Guardrails (Guyton-Klinger)**: starts at the rate, then keeps the amount steady in today's dollars, except that after a year the portfolio lost money the raise for inflation is skipped while the withdrawal is above the starting rate (of the current balance); above 120% of that rate it is cut by 10% (not in the last 15 years), and below 80% it is raised by 10%.
+- **VPW (variable percentage withdrawal)**: each year withdraws the share an annuity would pay over the years left, at an expected real return from your mix (5% for stocks, 2% for bonds, 0% for cash). It spends the portfolio down to zero at the end, on purpose.
+- **Floor and ceiling**: each year withdraws the rate times the balance, kept between a floor and a ceiling set as shares of the first year's withdrawal (90% and 125% by default).
+
+The exact definitions are in `lib/fire/rules.ts`.
+
+### The data, and its license
+
+The history is Robert Shiller's monthly US data (the S&P composite's price and dividends, the consumer price index and the long-term government bond yield), January 1871 to June 2023, as packaged by [datasets/s-and-p-500](https://github.com/datasets/s-and-p-500). The package extends the price past June 2023 without the other columns, so the history stops there. The packaging is licensed under the ODC Public Domain Dedication and License (ODC-PDDL-1.0), but **Shiller's own page states no license terms** beyond a disclaimer. Check before any paid use.
+
+`scripts/fire-data.ts` turns the package's CSV into `lib/fire/history-data.ts`: monthly real stock returns, real bond returns and inflation, in millionths. It is reproducible, and the module records the source URL (a pinned commit), the SHA-256 of the file and a SHA-256 of the rows used:
+
+```bash
+curl -sSLo /tmp/sp500.csv https://raw.githubusercontent.com/datasets/s-and-p-500/07b81e6af68239acd65b901a11844d6d95db6ead/data/data.csv
+bun run fire-data /tmp/sp500.csv
+```
+
+The derivations are in `lib/fire/derive.ts`:
+
+- **Stocks**: total return over a month is `(next price + next dividend / 12) / price - 1`. Shiller's dividends are annualized, so a month earns a twelfth.
+- **Bonds**: a 10-year bond bought at par at this month's yield and sold a month later, with 9 years 11 months left, at next month's yield, plus a month of coupon: the standard constant-maturity approximation.
+- **Real returns**: `(1 + nominal) / (1 + inflation) - 1`, from the CPI. Inflation is applied this once; the engine never adjusts a withdrawal for it again.
+
+### How it is checked
+
+The engine is pure functions (`lib/fire/`), run in the browser. Property tests check that no value appears from nowhere (with no returns, the balance is the start plus deposits minus withdrawals), that inflation is applied exactly once, that a higher withdrawal rate never raises the success rate, that a seed reproduces a Monte Carlo run, and that random plans give no NaN or negative balance. Golden tests compare it with published results as ranges, since annual and monthly data differ: 4% over 30 years succeeds in 96% to 97.5% of the historical starts with half or more in stocks, in line with the Trinity study, Bengen, FIRECalc and cFIREsim (roughly 95% or more), and its failures and near misses all start in the known bad periods (around the 1929 crash, the mid-1960s, and the early 1900s). The tests name each source.
+
+### Limits
+
+- **US history only**, in US inflation terms. Accounts in other currencies are shown in their own currency but simulated on US data.
+- **Taxes are one flat rate** on withdrawals: no brackets, capital gains, account types (taxable, tax-deferred, Roth), required minimum distributions or subsidies.
+- **No fund look-through.** Nya doesn't know what your funds hold, so the mix is what you set: split a target-date or balanced fund by hand.
+- **One history.** Monte Carlo reshuffles it in five-year blocks, so it can string bad stretches together, but every month in it is a month that happened.
+- **Spending from bank data** misses anything paid from accounts you haven't connected, and last year's spending may not be what retirement costs.
+
+The tab saves only your assumptions (one encrypted value per account, `fire-plan`), never a result; everything else is worked out again from your data each time it opens.
