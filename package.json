@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "restore": "bun scripts/restore.ts",
-    "move-data": "bun scripts/move-data.ts"
+    "move-data": "bun scripts/move-data.ts",
+    "fire-data": "bun scripts/fire-data.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.7",
