@@ -3,6 +3,7 @@
 How Nya stores, protects and reconstructs your data. Operational procedures are in [operations.md](operations.md).
 
 - [Storage and encryption](#storage-and-encryption)
+  - [Storage seam](#storage-seam)
 - [Caching](#caching)
 - [Net-worth history](#net-worth-history)
 - [Containers](#containers)
@@ -18,6 +19,43 @@ Encryption is layered. Data is encrypted with **data keys** that the app generat
 The protection is against someone who obtains the database or a backup without the keys. It does not protect against someone with access to the Vercel environment, which holds both the master key and the database credentials.
 
 Each institution's stored transaction and investment history is one compressed, encrypted blob, refused (never trimmed) past a size ceiling (`MAX_TXN_BLOB_CHARS`, 8,388,608 characters by default). Trimming would drop the oldest rows, which are exactly the ones no bank will serve again. `GET /api/storage-usage` measures every stored blob, per institution and in total, with the ceiling, the container they belong to, blobs left behind by a disconnected institution, and the size a blocked institution was refused at. A refusal's log line names the container too. Nothing enforces a quota yet; these are the numbers one would read (`lib/blob-sizes.ts`).
+
+### Storage seam
+
+New stores are built on the storage seam, `lib/repo.ts`, never on the Redis client. A store gets a few named operations instead of raw key access, so the code that uses it does not depend on Redis, and a Postgres or SQLite backend (which self-hosting would need) can later replace Redis one store at a time. It is Phase 1 of the Postgres migration plan, and changes nothing about how existing data is stored.
+
+A store is declared once, in a module under `lib/`, with:
+
+- a **name**, its key family: each container's data is at `<prefix>:c:<container id>:<name>`;
+- **`what`**, a plural noun for messages ("Your saved rules could not be read");
+- **`isValid`**, the shape check run on every read and before every write;
+- **`exportable`**: whether its content belongs in the person's own data download.
+
+There are two shapes. `defineValueStore` holds one encrypted JSON value per container, replaced whole on every save, like goals and budgets (`get`, `set`, `remove`). `defineMapStore` holds one encrypted JSON value per id in a Redis hash, each entry written on its own so two writers never clobber each other, like manual accounts (`get`, `getAll`, `getAllLenient`, `set`, `setMany`, `remove`, `count`, `has`).
+
+```ts
+// lib/rules.ts
+export const rulesStore = defineMapStore<Rule>('rules', {
+  what: 'rules',
+  isValid: isRule,
+  exportable: true,
+});
+
+// lib/stores.ts
+import './rules';
+```
+
+The rules for a new store:
+
+- **Use the seam.** New code never imports `redis()`, `rawRedis()` or `@upstash/redis`, nor the raw-key helpers of `lib/stored-json.ts`. If the seam lacks an operation, add a named, tested method to `lib/repo.ts` (with its Lua script, if it must be atomic), never a way to reach an arbitrary key. `test/storage-boundary.test.ts` enforces this. Its LEGACY list names the files that reached Redis before the seam, and it only ever shrinks.
+- **Declare the store, and import its module in `lib/stores.ts`.** That catalogue is how everything that walks every store sees all of them: the key inventory (`classify()` in `lib/reencrypt.ts`, which the re-encryption pass relies on) and a person's data download. A declared store is in the key inventory by construction, with no list to update. `test/repo.test.ts` fails if a declaring module is missing from the catalogue or two stores share a name.
+- **Label strictness.** Reads are strict: never saved reads as empty, a value that cannot be decrypted, parsed or shape-checked throws `StoredDataUnreadableError`, and a storage failure throws as it is, so a failure never looks like "nothing saved". `getAllLenient` is the one lenient read. It leaves out entries it cannot read (a storage failure still throws) and is only for conveniences that nothing writes, deletes or records on; say so where it is called. A value store refuses to save over a value it cannot read, and a map store has no "replace everything".
+- **Use opaque ids.** A map store's ids are Redis field names, stored and backed up in plaintext. Use random ids, hashes or a provider's own ids, never names, merchants, dates or amounts. The seam accepts only letters, digits and `_.:-`.
+- **Decide `exportable`.** True for what the person entered or what describes their money; false for secrets (token hashes, connector credentials) and the service's own bookkeeping.
+
+Seam values are encrypted like everything else, but not bound to a crypto context (the `c` flag in `lib/crypto.ts`). The re-encryption pass cannot move a bound value, so it could never finish, and binding stops no swap while values written under `k0` cannot carry a context. The header of `lib/repo.ts` says what binding would take later.
+
+The existing stores still call Redis directly and move behind the seam one at a time, each coming off the LEGACY list as it does. The seam's contract tests run the same assertions against the test double and, where `redis-server` is installed, against a real Redis.
 
 ## Caching
 
@@ -58,4 +96,4 @@ The dashboard keeps its last-known snapshot in the browser's `localStorage` so t
 
 ## Tests
 
-`bun test` runs quickly with no Redis, Plaid keys or network: storage and the Plaid client are faked. The suite concentrates on the logic where a silent wrong answer is worst: the net-worth history layers and hidden-account subtraction, the backward balance walk, Plaid's investment sign conventions and pagination, liability normalization, the credit/loan sign rule every total depends on, last-known-balance recovery, idle-cash detection, encryption and key rotation, backup and restore, sharing, and the session and proxy gates. Some React components and routes are covered as well. Anything talking to live Plaid is not.
+`bun test` runs quickly with no Redis, Plaid keys or network: storage and the Plaid client are faked. The suite concentrates on the logic where a silent wrong answer is worst: the net-worth history layers and hidden-account subtraction, the backward balance walk, Plaid's investment sign conventions and pagination, liability normalization, the credit/loan sign rule every total depends on, last-known-balance recovery, idle-cash detection, encryption and key rotation, backup and restore, sharing, and the session and proxy gates. Some React components and routes are covered as well. Anything talking to live Plaid is not. The storage seam's contract runs against both the test double and a real Redis (where `redis-server` is installed), and an import-boundary test keeps new code off the Redis client.
