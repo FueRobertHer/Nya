@@ -372,6 +372,14 @@ describe('the gate', () => {
     expect((await proxy(request('/api/budgets'))).status).toBe(401);
     expect((await proxy(request('/api/budgets', 'v1.e30.00'))).status).toBe(401);
   });
+
+  test('a page it lets through carries the Content-Security-Policy; an API response does not', async () => {
+    const token = await createSessionToken({ container, epoch: 0 });
+    const page = await proxy(request('/', token));
+    expect(page.headers.get('content-security-policy-report-only')).toContain("frame-ancestors 'none'");
+    const api = await proxy(request('/api/budgets', token));
+    expect(api.headers.get('content-security-policy-report-only')).toBeNull();
+  });
 });
 
 describe('sign out everywhere', () => {
