@@ -20,7 +20,10 @@
 //                     hash with a field per id; in a table, a row per id.
 //
 // Either keeps its data inside the container (kc in lib/storage.ts),
-// encrypted (lib/crypto.ts).
+// encrypted (lib/crypto.ts). A value store's save checks what is there and
+// then replaces it, two steps another save can land between, so it suits data
+// one person edits at a time. Anything more than one writer can change at once
+// (a webhook, a script, two devices) belongs in a map store.
 //
 // DECLARING ONE, in a module under lib/:
 //

@@ -6,7 +6,8 @@ import { startRedis, upstashOn, type RealRedis } from './real-redis';
 
 // The storage seam (lib/repo.ts). One contract, run twice: against the test
 // double, and against a real Redis where redis-server is installed (as in CI).
-// Then what only one of them can show, the key inventory, and the catalogue.
+// Then the checks only one of the two can make, the key inventory, and the
+// catalogue.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -521,9 +522,12 @@ describe('the key inventory', () => {
     expect(classify('seam-contract-notes')).toBe('hash');
     expect(classify(`${c}seam-contract-undeclared`)).toBeNull();
     // Read from the registry each time, so a forgotten store is unknown again.
-    const temp = defineMapStore('seam-contract-temp', { what: 'test notes', isValid: isNote, exportable: false });
-    expect(classify(`${c}${temp.name}`)).toBe('hash');
-    forgetDeclaredStore(temp.name);
+    try {
+      defineMapStore('seam-contract-temp', { what: 'test notes', isValid: isNote, exportable: false });
+      expect(classify(`${c}seam-contract-temp`)).toBe('hash');
+    } finally {
+      forgetDeclaredStore('seam-contract-temp');
+    }
     expect(classify(`${c}seam-contract-temp`)).toBeNull();
   });
 
@@ -551,14 +555,17 @@ describe('the key inventory', () => {
   });
 
   test('declaring a name again replaces the store, unless it is another kind', () => {
-    defineMapStore('seam-contract-again', { what: 'test notes', isValid: isNote, exportable: false });
-    const second = defineMapStore('seam-contract-again', { what: 'test notes', isValid: isNote, exportable: true });
-    expect(declaredStore('seam-contract-again')).toBe(second);
-    expect(() => defineValueStore('seam-contract-again', { what: 'test notes', isValid: isNotes, exportable: false })).toThrow(
-      'already declared, as a map store'
-    );
-    expect(declaredStore('seam-contract-again')).toBe(second);
-    forgetDeclaredStore('seam-contract-again');
+    try {
+      defineMapStore('seam-contract-again', { what: 'test notes', isValid: isNote, exportable: false });
+      const second = defineMapStore('seam-contract-again', { what: 'test notes', isValid: isNote, exportable: true });
+      expect(declaredStore('seam-contract-again')).toBe(second);
+      expect(() => defineValueStore('seam-contract-again', { what: 'test notes', isValid: isNotes, exportable: false })).toThrow(
+        'already declared, as a map store'
+      );
+      expect(declaredStore('seam-contract-again')).toBe(second);
+    } finally {
+      forgetDeclaredStore('seam-contract-again');
+    }
   });
 });
 

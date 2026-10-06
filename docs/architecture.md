@@ -31,7 +31,7 @@ A store is declared once, in a module under `lib/`, with:
 - **`isValid`**, the shape check run on every read and before every write;
 - **`exportable`**: whether its content belongs in the person's own data download.
 
-There are two shapes. `defineValueStore` holds one encrypted JSON value per container, replaced whole on every save, like goals and budgets (`get`, `set`, `remove`). `defineMapStore` holds one encrypted JSON value per id in a Redis hash, each entry written on its own so two writers never clobber each other, like manual accounts (`get`, `getAll`, `getAllLenient`, `set`, `setMany`, `remove`, `count`, `has`).
+There are two shapes. `defineValueStore` holds one encrypted JSON value per container, replaced whole on every save, like goals and budgets (`get`, `set`, `remove`). `defineMapStore` holds one encrypted JSON value per id in a Redis hash, each entry written on its own so two writers never clobber each other, like manual accounts (`get`, `getAll`, `getAllLenient`, `set`, `setMany`, `remove`, `count`, `has`). A value store suits data one person edits at a time; anything a webhook, a script or a second device can change at the same time belongs in a map store.
 
 ```ts
 // lib/rules.ts
