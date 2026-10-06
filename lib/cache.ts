@@ -23,8 +23,10 @@ import { webhooksEnabled } from './webhook-url';
  * Refresh, a webhook or the daily snapshot goes to Plaid. Read per call, not at
  * import, so it follows the environment.
  */
-const SHORT_TTL_SECONDS = 15 * 60;
-const WEBHOOK_TTL_SECONDS = 6 * 60 * 60;
+// Exported for the retention table on the privacy page (app/privacy), which a
+// test holds to these.
+export const SHORT_TTL_SECONDS = 15 * 60;
+export const WEBHOOK_TTL_SECONDS = 6 * 60 * 60;
 const ttlSeconds = () => (webhooksEnabled() ? WEBHOOK_TTL_SECONDS : SHORT_TTL_SECONDS);
 
 /** The caches a caller can name. The value is the key inside the container. */

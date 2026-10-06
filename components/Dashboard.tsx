@@ -13,6 +13,7 @@ import AdminUnusedItems from './AdminUnusedItems';
 import { instantDay } from '@/lib/local-date';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
+import { CoverageNote, TrustLinks } from './TrustLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -1351,6 +1352,7 @@ export default function Dashboard({
               <button onClick={startConnect} disabled={connecting}>
                 {connecting ? 'Starting…' : 'Connect an account'}
               </button>
+              <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
                   entry point for someone whose bank Plaid doesn't support at all. */}
@@ -1486,6 +1488,7 @@ export default function Dashboard({
                   <button onClick={startConnect} disabled={connecting}>
                     {connecting ? 'Starting…' : 'Connect an account'}
                   </button>
+                  <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
                   <div className="action-row">
@@ -2076,6 +2079,8 @@ export default function Dashboard({
             )}
           </>
         )}
+        {/* At the foot of every tab: how the data is protected, and who can read it. */}
+        <TrustLinks />
       </main>
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
 

@@ -1881,3 +1881,144 @@ button.danger-outline {
   width: 100%;
   font-size: 15px;
 }
+
+/* --- security and privacy pages (app/security, app/privacy), the links to
+   them and the bank coverage note (components/InfoPage.tsx, TrustLinks.tsx) --- */
+
+.info-page {
+  /* No tab bar here, so none of .wrap's room for one. */
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+
+.info-brand {
+  margin-bottom: 20px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.info-page h1 {
+  font-size: 24px;
+  margin: 0 0 6px;
+}
+
+.info-section h2 {
+  margin-top: 0;
+}
+
+.info-section h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.info-section p,
+.info-section li {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.info-section p {
+  margin: 0 0 10px;
+}
+
+.info-section p:last-child {
+  margin-bottom: 0;
+}
+
+.info-section ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.info-section li + li {
+  margin-top: 6px;
+}
+
+.info-section .info-aside {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.info-section a,
+.info-section code {
+  color: var(--accent);
+}
+
+.info-section code {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* A plain-language summary, not a legal policy: said first, in amber. */
+.info-notice {
+  border-left: 3px solid var(--warn);
+}
+
+.info-table th[scope="row"] {
+  width: 36%;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.info-table th,
+.info-table td {
+  vertical-align: top;
+  line-height: 1.45;
+}
+
+.info-status {
+  margin: 0;
+}
+
+.info-status dt {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.info-status dd {
+  margin: 4px 0 0;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.trust-links {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin: 24px 0 4px;
+  font-size: 13px;
+}
+
+.trust-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.trust-links a[aria-current="page"] {
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .trust-links a:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+}
+
+.auth-wrap .coverage-note {
+  max-width: 400px;
+  margin: 0;
+  text-align: center;
+}
+
+.auth-wrap .trust-links {
+  margin: 0;
+}

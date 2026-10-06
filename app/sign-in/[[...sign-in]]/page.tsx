@@ -4,6 +4,7 @@ import { clerkEnabled } from '@/lib/auth-mode';
 import { demoUsers } from '@/lib/demo';
 import { Brand } from '@/components/Brand';
 import { ForgetDevice } from '@/components/ForgetDevice';
+import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 
 // Clerk's sign-in (lib/auth-mode.ts). Without Clerk keys the app signs in with
 // the shared password instead. On Preview, one-click demo accounts above it
@@ -35,6 +36,8 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         </div>
       )}
       <SignIn />
+      <CoverageNote />
+      <TrustLinks />
     </main>
   );
 }
