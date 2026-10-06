@@ -240,6 +240,13 @@ export async function rememberedIdsByItem(ctx: Ctx, strict = false): Promise<Rec
   return out;
 }
 
+/** Every Item's remembered accounts, whole, for the download of my data
+ *  (lib/user-export.ts). Strict: throws on a failed read or any record that
+ *  can't be read, rather than leaving that Item's accounts out. */
+export async function rememberedAccountsByItem(ctx: Ctx): Promise<Record<string, RememberedAccount[]>> {
+  return recallByItem(ctx, true);
+}
+
 /**
  * Deletes the remembered records of Items no longer stored that name this
  * account, for a user forgetting it. A disconnect already deletes the Item's

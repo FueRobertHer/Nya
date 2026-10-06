@@ -306,12 +306,66 @@ export async function removeConnection(me: string, id: string, opts: { block?: b
 }
 
 /** Removes every connection someone is in, blocked ones too (their account
- *  is going away). */
-export async function dropConnectionsOf(userId: string): Promise<void> {
+ *  is going away). Returns how many were active, for the deletion receipt
+ *  (lib/account-deletion.ts): those are where sharing ended. */
+export async function dropConnectionsOf(userId: string): Promise<number> {
   const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
-  const ids = new Set((await allConnections()).filter((c) => c.meta.users.includes(userId)).map((c) => c.id));
+  const theirs = (await allConnections()).filter((c) => c.meta.users.includes(userId));
+  const ids = new Set(theirs.map((c) => c.id));
   const fields = Object.keys(raw).filter((f) => ids.has(f.split('|')[0]));
   if (fields.length > 0) await redis().hdel(connectionsKey(), ...fields);
+  return theirs.filter((c) => c.meta.status === 'active').length;
+}
+
+/** My side of sharing, for the download of my data (lib/user-export.ts). */
+export type MySharing = {
+  connections: {
+    /** What I call them. */
+    name: string;
+    /** The name I gave when connecting, if any. */
+    my_introduction: string | null;
+    /** When we connected: an ISO time. */
+    connected_at: string;
+    /** What I share with them. */
+    shared: { account_id: string; level: Level }[];
+    /** When I last changed that, or null when I share nothing. */
+    shared_updated_at: string | null;
+  }[];
+  /** People I blocked, by what I called them. */
+  blocked: { name: string }[];
+};
+
+/**
+ * My side of every connection: what I call each person, how I introduced
+ * myself, when we connected and what I share, and the people I blocked. Never
+ * the other side's: what they call me, how they introduced themselves and
+ * what they share with me are their data, and a blocked connection someone
+ * else made is gone as far as I can see (as in myConnections). Throws when
+ * the connections can't be read; a field that can't be parsed counts for
+ * nothing, exactly as everywhere else in this module, so this says what the
+ * app acts on.
+ */
+export async function mySharing(me: string): Promise<MySharing> {
+  const mine = (await allConnections()).filter((c) => c.meta.users.includes(me));
+  const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
+  return {
+    connections: mine
+      .filter((c) => c.meta.status === 'active')
+      .map((c) => ({
+        name: c.labels[me] ?? 'Someone',
+        my_introduction: c.intros[me] ?? null,
+        connected_at: c.meta.created_at,
+        shared: Object.entries(c.shares[me]?.accounts ?? {})
+          .map(([account_id, level]) => ({ account_id, level }))
+          .sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0)),
+        shared_updated_at: c.shares[me]?.updated_at || null,
+      }))
+      .sort(byName),
+    blocked: mine
+      .filter((c) => c.meta.status === 'blocked' && c.meta.blocked_by === me)
+      .map((c) => ({ name: c.labels[me] ?? 'Someone' }))
+      .sort(byName),
+  };
 }
 
 /** A person's container, read-only use: only for reading what they shared. */

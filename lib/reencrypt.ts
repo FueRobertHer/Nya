@@ -107,7 +107,7 @@ const PREFIXES: [string, Kind][] = [
   ['invtxns-lock:', 'plain'],
   ['txns-unsaved:', 'plain'],
   ['history:forgetting:', 'plain'],
-  ['ratelimit:', 'plain'],
+  ['ratelimit:', 'plain'], // counters: login attempts (environment-wide), data downloads (per container), lib/rate-limit.ts
   ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
   ['move:', 'plain'], // the data move's record (lib/move.ts)
   ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)

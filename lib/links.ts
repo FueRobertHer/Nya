@@ -98,6 +98,28 @@ async function readDirectory(ctx: Ctx): Promise<{ entries: Record<string, Direct
   return { entries, unreadable };
 }
 
+/** The whole directory, for the download of my data (lib/user-export.ts).
+ *  Strict: throws when it can't be read or any entry can't be, rather than
+ *  leaving an account's name out. */
+export async function readDirectoryStrict(ctx: Ctx): Promise<Map<string, DirectoryEntry>> {
+  const { entries, unreadable } = await readDirectory(ctx);
+  if (unreadable.size > 0) throw new Error('An entry in the account directory could not be read');
+  for (const e of Object.values(entries)) {
+    if (!e || typeof e !== 'object' || typeof e.institution_name !== 'string') {
+      throw new Error('An entry in the account directory has an unexpected shape');
+    }
+  }
+  return new Map(Object.entries(entries));
+}
+
+/** Every offer the user declined (dismissPair, dismissAll): "<old>><new>" or
+ *  "<old>>*" -> when. For the download of my data; strict, unlike
+ *  getDismissed. */
+export async function readDismissedStrict(ctx: Ctx): Promise<Map<string, string>> {
+  const raw = (await redis().hgetall<Record<string, unknown>>(dismissedKey(ctx))) ?? {};
+  return new Map(Object.entries(raw).map(([k, v]) => [k, String(v)]));
+}
+
 export type Span = { first: string; last: string; firstBalance: number; lastBalance: number };
 
 /**

@@ -32,6 +32,23 @@ export async function getOverrides(ctx: Ctx): Promise<Record<string, string>> {
   }
 }
 
+/**
+ * Every override, transaction_id -> category, for the download of my data
+ * (lib/user-export.ts). Strict where getOverrides is lenient: a failed read,
+ * or any value that can't be decrypted, throws instead of being dropped, so a
+ * download never leaves out a category the user set without saying so.
+ */
+export async function readOverridesStrict(ctx: Ctx): Promise<Map<string, string>> {
+  const map = (await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx))) ?? {};
+  const out = new Map<string, string>();
+  for (const [id, category] of await Promise.all(
+    Object.entries(map).map(async ([id, blob]) => [id, await decrypt(String(blob))] as const)
+  )) {
+    out.set(id, category);
+  }
+  return out;
+}
+
 export async function setOverride(ctx: Ctx, transaction_id: string, category: string): Promise<void> {
   await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(category) });
 }
@@ -178,6 +195,23 @@ export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carr
     console.warn('overrides: could not read carried categories', err instanceof Error ? err.message : err);
     return new Map();
   }
+}
+
+/**
+ * Every earlier account's record, for the download of my data
+ * (lib/user-export.ts). Strict where getCarried is lenient: a failed read, or
+ * a record that can't be decrypted or parsed, throws instead of being skipped.
+ */
+export async function readCarriedStrict(ctx: Ctx): Promise<Carried> {
+  const raw = (await redis().hgetall<Record<string, string>>(CARRY_HASH(ctx))) ?? {};
+  const out: Carried = new Map();
+  for (const [id, rows] of await Promise.all(
+    Object.entries(raw).map(async ([id, blob]) => [id, await parseRows(String(blob))] as const)
+  )) {
+    if (!rows) throw new Error('The categories carried for an earlier account could not be read');
+    out.set(id, rows);
+  }
+  return out;
 }
 
 /**
