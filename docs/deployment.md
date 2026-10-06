@@ -123,7 +123,7 @@ Plaid Link and Clerk load scripts, frames and connections that only a live sessi
 2. Open the deployment in Chrome in a window without extensions (a guest profile, or Incognito with extensions off), open DevTools on the **Console** tab, and tick **Preserve log**, so messages survive the redirects of signing in.
 3. In the **Network** tab, click the request for the page itself and check its response headers include `content-security-policy-report-only` with a `'nonce-...'` and `'strict-dynamic'`.
 4. Go through every flow:
-   - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows;
+   - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows, and on Preview with a demo button too;
    - open the account menu, **Manage account**, each page of the account window (Data & privacy included), then sign out from it;
    - **Connect an account** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank);
    - **Reconnect** and **Add or remove accounts** on a connected institution;

@@ -173,6 +173,9 @@ describe('the policy', () => {
     expect(d['frame-src']).toContain('https://challenges.cloudflare.com');
     expect(d['worker-src']).toContain('blob:');
     expect(d['style-src']).toContain("'unsafe-inline'");
+    // The demo sign-in's form post may be redirected through Clerk.
+    expect(d['form-action']).toEqual(["'self'", 'https://clerk.nya.example.com']);
+    expect(directives()['form-action']).toEqual(["'self'"]);
   });
 
   test("Clerk's telemetry host only for a development instance, the only kind that sends it", () => {

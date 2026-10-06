@@ -1891,6 +1891,8 @@ button.danger-outline {
 }
 
 .info-brand {
+  /* Only the logo and name are the link back, not the whole row. */
+  display: inline-flex;
   margin-bottom: 20px;
   color: var(--text);
   text-decoration: none;

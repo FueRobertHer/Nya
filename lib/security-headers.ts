@@ -169,7 +169,10 @@ export function cspDirectives(opts: CspOptions): Record<string, string[]> {
     'worker-src': ["'self'", 'blob:'],
     'object-src': ["'none'"],
     'base-uri': ["'none'"],
-    'form-action': ["'self'"],
+    // The demo sign-in is a form post (app/sign-in), and browsers apply this to
+    // the redirects that follow it too, which may pass through Clerk's Frontend
+    // API when its middleware refreshes a session.
+    'form-action': ["'self'", ...fapi],
     'frame-ancestors': ["'none'"],
   };
 }

@@ -210,4 +210,18 @@ describe('getting to them', () => {
       expect(source(`app/api/${route}/route.ts`)).toContain('country_codes: [CountryCode.Us]');
     }
   });
+
+  // Read from the source: rendering these needs Clerk and the router, which
+  // other test files mock process-wide in their own ways.
+  test('the login and sign-in pages show both, and every Connect an account button the coverage statement', () => {
+    for (const page of ['app/login/page.tsx', 'app/sign-in/[[...sign-in]]/page.tsx']) {
+      expect(source(page)).toContain('<CoverageNote />');
+      expect(source(page)).toContain('<TrustLinks />');
+    }
+    const dashboard = source('components/Dashboard.tsx');
+    const buttons = dashboard.split("{connecting ? 'Starting…' : 'Connect an account'}").slice(1);
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const after of buttons) expect(after.slice(0, 200)).toMatch(/^\s*<\/button>\s*<CoverageNote \/>/);
+    expect(dashboard).toContain('<TrustLinks />');
+  });
 });
