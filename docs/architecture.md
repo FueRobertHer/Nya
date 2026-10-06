@@ -7,11 +7,12 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
 - [Net-worth history](#net-worth-history)
 - [Containers](#containers)
 - [On-device snapshot and offline use](#on-device-snapshot-and-offline-use)
+- [Security headers and the public pages](#security-headers-and-the-public-pages)
 - [Tests](#tests)
 
 ## Storage and encryption
 
-Everything is stored in Upstash Redis, in a key namespace per environment (`production:`, `preview:`, `dev:`; see `lib/storage.ts`). Plaid access tokens, balances, history and transactions are all encrypted (AES-256-GCM, `lib/crypto.ts`) before they are written, so a leak of the database or of a backup alone exposes none of it.
+Everything is stored in Upstash Redis, in a key namespace per environment (`production:`, `preview:`, `dev:`; see `lib/storage.ts`). The values that hold financial data are encrypted (AES-256-GCM, `lib/crypto.ts`) before they are written: Plaid access tokens, balances, history, transactions, budgets, goals, category changes and renames, manual accounts and the caches. The structure around them is not: key and field names, and the few stores that hold no amounts (`classify()` in `lib/reencrypt.ts` lists every store and how it is kept). So a leak of the database or of a backup alone exposes no balances, transactions or access tokens, but it does expose dates and times, account, transaction and connection ids, the names of your linked banks, the merchant names you have renamed, and for sharing, the names people gave each other and which accounts each shares at which level (the same list as [operations.md](operations.md#taking-a-backup-by-hand)).
 
 Encryption is layered. Data is encrypted with **data keys** that the app generates and keeps in Redis, each locked with one **master key** (`MASTER_KEY`, which lives only in your environment variables). `PLAID_ENCRYPTION_KEY` is the original key, `k0`, used for everything written before data keys existed and as a fallback if a data key is ever unavailable. Rotating the master key re-locks only the data keys, never the data. See [operations.md](operations.md#encryption-keys) for turning it on, moving old data across, and rotating.
 
@@ -56,6 +57,12 @@ Every record belongs to a container, stored under `<prefix>:c:<container id>:`. 
 
 The dashboard keeps its last-known snapshot in the browser's `localStorage` so the PWA opens instantly and still shows balances offline. The service worker never caches `/api/*` responses, so refreshing, linking and transactions need a network connection. The snapshot is readable on the device without the app password; see [authentication.md](authentication.md#what-is-not-covered).
 
+## Security headers and the public pages
+
+The headers that are the same on every response (HSTS, nosniff, the referrer policy, the permissions policy, framing and the opener policy) are set in `next.config.js`, so they also reach static files and the routes the proxy skips. Each page's Content-Security-Policy is built per request in `proxy.ts` (`lib/security-headers.ts`) with a fresh nonce, which Next.js puts on its scripts and Clerk on its own (`ClerkProvider`'s `dynamic`, `app/layout.tsx`); `CSP_MODE` sends it report-only (the default), enforced, or not at all. The app writes no inline script of its own: the service worker registers from a client component. How to check the policy against a live Plaid Link and Clerk session and then enforce it is in [deployment.md](deployment.md#security-headers-and-the-content-security-policy).
+
+`/security` and `/privacy` say in plain language how the data is protected, who can read what, and how long things are kept. They are readable without signing in (`PUBLIC_PAGES` in `proxy.ts`, which still runs on them, for the policy), read no stored data, and are held by `test/public-pages.test.tsx` to the code's figures and to a list of claims they must never make (that nobody but you can read the data, that it is encrypted end to end, that deletion is instant and complete).
+
 ## Tests
 
-`bun test` runs quickly with no Redis, Plaid keys or network: storage and the Plaid client are faked. The suite concentrates on the logic where a silent wrong answer is worst: the net-worth history layers and hidden-account subtraction, the backward balance walk, Plaid's investment sign conventions and pagination, liability normalization, the credit/loan sign rule every total depends on, last-known-balance recovery, idle-cash detection, encryption and key rotation, backup and restore, sharing, and the session and proxy gates. Some React components and routes are covered as well. Anything talking to live Plaid is not.
+`bun test` runs quickly with no Redis, Plaid keys or network: storage and the Plaid client are faked. The suite concentrates on the logic where a silent wrong answer is worst: the net-worth history layers and hidden-account subtraction, the backward balance walk, Plaid's investment sign conventions and pagination, liability normalization, the credit/loan sign rule every total depends on, last-known-balance recovery, idle-cash detection, encryption and key rotation, backup and restore, sharing, the session and proxy gates, and the security headers and Content-Security-Policy. Some React components and routes are covered as well. Anything talking to live Plaid is not.

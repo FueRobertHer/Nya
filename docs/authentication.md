@@ -12,7 +12,7 @@ Nya has two ways to sign in. Without Clerk keys set, one shared password protect
 
 Deploying to Vercel gives the app a public HTTPS URL. Anyone who found it could otherwise view your balances or link their own account into your Redis store. So every route is gated by `proxy.ts` (Next's renamed middleware convention), which checks a signed, expiring session cookie. Logging in at `/login` sets that cookie for 30 days.
 
-The exceptions are the login page and API, the PWA assets needed for install, and routes that authenticate themselves: the crons (`CRON_SECRET`), the balance ingest (`INGEST_SECRET`), Plaid's webhook (its signature), the ops routes (`OPS_SECRET`, off unless `OPS_ENABLED=1`) and the demo sign-in. See the header of `proxy.ts`.
+The exceptions are the login page and API, the Security and Privacy pages (`/security`, `/privacy`, which read no stored data), the PWA assets needed for install, and routes that authenticate themselves: the crons (`CRON_SECRET`), the balance ingest (`INGEST_SECRET`), Plaid's webhook (its signature), the ops routes (`OPS_SECRET`, off unless `OPS_ENABLED=1`) and the demo sign-in. With Clerk on, `/sign-in` and `/not-allowed` are open too. The public pages still pass through the proxy, which gives every page its Content-Security-Policy ([deployment.md](deployment.md#security-headers-and-the-content-security-policy)). See the header of `proxy.ts`.
 
 Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
 

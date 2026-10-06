@@ -73,7 +73,7 @@ describe('never promised', () => {
   });
 
   test('no dashes of the kinds the house style rules out', () => {
-    for (const page of [security(), privacy()]) expect(page).not.toMatch(/[–—]/);
+    for (const page of [security(), privacy()]) expect(page).not.toMatch(/[\u2013\u2014]/);
   });
 });
 
