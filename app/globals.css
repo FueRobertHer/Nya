@@ -1881,3 +1881,249 @@ button.danger-outline {
   width: 100%;
   font-size: 15px;
 }
+
+/* --- Plan tab (components/PlanTab.tsx): FI figures, the simulation and its grid --- */
+
+/* A label and its figure on one line, a note (and an Edit button) under them. */
+.plan-rows {
+  margin-top: 12px;
+}
+
+.plan-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-row:last-child {
+  border-bottom: none;
+}
+
+.plan-row-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.plan-row-label {
+  font-size: 14px;
+}
+
+.plan-row-value {
+  font-weight: 600;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.plan-row-note {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* A quiet text button: big enough to tap, no box around it. */
+button.plan-edit {
+  width: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 2px 0 2px 8px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+button.plan-edit:disabled {
+  color: var(--muted);
+}
+
+.plan-subhead {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.plan-choice {
+  margin: 10px 0 4px;
+}
+
+/* The success rate: a figure and what it counts, read as one sentence. */
+.plan-stat {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 12px;
+}
+
+.plan-stat-value {
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.plan-stat-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.plan-definition {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 6px 0 4px;
+}
+
+/* The fan chart's key: a line for the median, washes for the two bands. */
+.plan-legend {
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.plan-legend-line {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.plan-legend-swatch {
+  width: 12px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.plan-legend-swatch.inner {
+  opacity: 0.34;
+}
+
+.plan-legend-swatch.outer {
+  opacity: 0.12;
+}
+
+.plan-table-view {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plan-table-view summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.plan-table-view td,
+.plan-table-view th {
+  padding: 6px 4px;
+  font-size: 12px;
+}
+
+/* The grid: figures centred in single-hue cells two pixels apart (the
+   surface gap), the plan's own outlined. */
+.plan-grid {
+  margin-top: 10px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 2px;
+}
+
+.plan-grid th,
+.plan-grid td {
+  padding: 8px 2px;
+  text-align: center;
+  border-bottom: none;
+}
+
+.plan-grid td.plan-grid-cell {
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.plan-grid td.plan-grid-cell.own {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.plan-grid th.plan-grid-rate {
+  color: var(--text);
+  font-size: 13px;
+  text-transform: none;
+  text-align: left;
+}
+
+.plan-worst,
+.plan-assumptions,
+.plan-accounts {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.plan-worst li,
+.plan-accounts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.plan-worst li:last-child,
+.plan-accounts li:last-child {
+  border-bottom: none;
+}
+
+.plan-accounts .num {
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-assumptions li {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
+.plan-muted {
+  color: var(--muted);
+}
+
+.plan-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.plan-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+/* Two short fields side by side (stocks and bonds, floor and ceiling). */
+.plan-pair {
+  display: flex;
+  gap: 10px;
+}
+
+.plan-pair .field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.plan-save-error {
+  margin: 0 0 12px;
+}

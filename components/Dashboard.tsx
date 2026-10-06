@@ -27,6 +27,18 @@ import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance'
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
+import dynamic from 'next/dynamic';
+
+// The Plan tab carries the projection engine and 44 KB of market history, so
+// it is loaded only when the tab is opened (and never on the server).
+const PlanTab = dynamic(() => import('./PlanTab'), {
+  ssr: false,
+  loading: () => (
+    <div className="card">
+      <div className="spinner" role="status" aria-label="Loading" />
+    </div>
+  ),
+});
 
 type Account = {
   account_id: string;
@@ -155,7 +167,7 @@ const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
   { value: 'other', label: 'Other (property, crypto)' },
 ];
 
-type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
+type Tab = 'home' | 'accounts' | 'activity' | 'budgets' | 'plan';
 
 // Last-known dashboard snapshot, kept on-device so the app paints instantly on
 // open (and shows something useful offline) while fresh data loads. Cleared on
@@ -340,6 +352,11 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
       <path d="M12 12V3M12 12l6.4 6.4" />
     </svg>
   ),
+  plan: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />
+    </svg>
+  ),
 };
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -347,6 +364,7 @@ const TAB_LABELS: Record<Tab, string> = {
   accounts: 'Accounts',
   activity: 'Activity',
   budgets: 'Budgets',
+  plan: 'Plan',
 };
 
 export default function Dashboard({
@@ -2074,6 +2092,26 @@ export default function Dashboard({
                 loading={txnsLoading}
               />
             )}
+
+            {tab === 'plan' && (
+              <PlanTab
+                txns={txns}
+                txnsLoading={txnsLoading}
+                // Hidden accounts too: the tab leaves them out itself.
+                accounts={institutions.flatMap((i) =>
+                  i.accounts.map((a) => ({
+                    account_id: a.account_id,
+                    name: a.name,
+                    institution: i.institution_name,
+                    type: a.type,
+                    balance: a.balance,
+                    currency: a.currency,
+                    hidden: a.hidden,
+                  }))
+                )}
+                currency={accountCurrency}
+              />
+            )}
           </>
         )}
       </main>
@@ -2081,7 +2119,7 @@ export default function Dashboard({
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">
-          {(['home', 'accounts', 'activity', 'budgets'] as const).map((t) => (
+          {(['home', 'accounts', 'activity', 'budgets', 'plan'] as const).map((t) => (
             <button
               key={t}
               className={tab === t ? 'active' : ''}
