@@ -18,6 +18,8 @@ export type FakeCommand =
   | 'hdel'
   | 'hkeys'
   | 'hgetall'
+  | 'hlen'
+  | 'hexists'
   | 'expire'
   | 'scan'
   | 'hscan'
@@ -191,6 +193,21 @@ export class FakeRedis {
     const h = this.hashes.get(key);
     if (!h || h.size === 0) return null; // Upstash returns null, not {}
     return Object.fromEntries([...h].map(([f, v]) => [f, this.out(v)])) as T;
+  }
+
+  /** Fields in a hash; 0 for a missing key. A string there is Redis's
+   *  WRONGTYPE, as for strlen. */
+  async hlen(key: string): Promise<number> {
+    this.gate('hlen');
+    if (this.strings.has(key)) throw new Error('WRONGTYPE');
+    return this.hashes.get(key)?.size ?? 0;
+  }
+
+  /** 1 if the hash has the field, else 0: a number, as Upstash answers. */
+  async hexists(key: string, field: string): Promise<number> {
+    this.gate('hexists');
+    if (this.strings.has(key)) throw new Error('WRONGTYPE');
+    return this.hashes.get(key)?.has(field) ? 1 : 0;
   }
 
   async expire(key: string, seconds: number): Promise<void> {

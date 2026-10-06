@@ -141,7 +141,9 @@ describe('the list of keys', () => {
     // this file never hears of. Spell it out at the call, or list it here.
     // lib/move.ts builds keys only from its own lists, which test/move.test.ts
     // checks against every key the code builds; they are classified below.
-    expect(opaque.filter((o) => !o.startsWith('lib/move.ts: kc(ctx, '))).toEqual([]);
+    // lib/repo.ts builds one key, a declared store's, from its name, which
+    // classify() reads from the declaration itself (test/repo.test.ts).
+    expect(opaque.filter((o) => !o.startsWith('lib/move.ts: kc(ctx, ') && !o.startsWith('lib/repo.ts: kc(ctx, name)'))).toEqual([]);
     const { MOVED_KEYS, MOVED_PREFIXES } = await import('@/lib/move');
     for (const key of [...MOVED_KEYS, ...MOVED_PREFIXES.map((p) => `${p}x`)]) names.add(key);
     const missing = [...names].filter((n) => n !== '' && classify(n) === null);

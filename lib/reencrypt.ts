@@ -11,9 +11,11 @@
 //
 //   - EXPLICIT LIST, NOT GUESSWORK. Every key is classified below: a string or
 //     hash of ciphertext, the Plaid items (whose access token is one field of a
-//     JSON value), or known plaintext. An unlisted key is reported and left
-//     alone, so a store added later can't be missed silently (a test checks every
-//     key name in lib/ is listed).
+//     JSON value), or known plaintext. A store declared through the storage seam
+//     (lib/repo.ts) is classified by its declaration, found through the
+//     catalogue in lib/stores.ts. An unlisted key is reported and left alone, so
+//     a store added later can't be missed silently (a test checks every key name
+//     in lib/ is listed).
 //   - COMPARE-AND-SET. Each value is written back by a small Lua script only if
 //     it still hashes to what was read. A save landing mid-pass wins; the pass
 //     reports it as changed meanwhile and picks it up next time.
@@ -41,6 +43,7 @@
 import { createHash } from 'node:crypto';
 import { rawRedis, envPrefix } from './storage';
 import { splitScoped, isEnvWide } from './containers';
+import { declaredStore } from './stores';
 import {
   activeKeyForReencryption,
   activeKeyName,
@@ -117,8 +120,8 @@ const PREFIXES: [string, Kind][] = [
   ['invites:', 'plain'], // unused invite links, hashed (lib/sharing.ts)
 ];
 
-/** How a key (without the environment prefix) is stored, or null if it is not
- *  on the list. */
+/** How a key (without the environment prefix) is stored, or null if it is
+ *  neither on the list nor a declared store. */
 export function classify(key: string): Kind | null {
   // A key inside a container is stored like the same key outside one, except
   // that environment-wide stores never belong in one, and containers never
@@ -130,7 +133,11 @@ export function classify(key: string): Kind | null {
   }
   if (Object.hasOwn(EXACT, key)) return EXACT[key];
   for (const [prefix, kind] of PREFIXES) if (key.startsWith(prefix)) return kind;
-  return null;
+  // A store declared through the seam: a value store is one string of
+  // ciphertext, a map store a hash of it. After the lists, so nothing on them
+  // changes (test/repo.test.ts checks no declared name collides with them).
+  const store = declaredStore(key);
+  return store === null ? null : store.kind === 'value' ? 'string' : 'hash';
 }
 
 // The compare-and-set scripts. The value read is compared by SHA-1, so an

@@ -57,7 +57,11 @@ function isUnreadable(err: unknown): boolean {
   );
 }
 
-async function parse<T>(blob: string, what: string, isValid: (v: unknown) => v is T): Promise<T> {
+/** One stored value, decrypted, parsed and checked. StoredDataUnreadableError
+ *  if the value itself cannot be read; anything else (a deployment problem)
+ *  as it is. The storage seam (lib/repo.ts) reads each entry of a map store
+ *  with this, so entries and whole values are judged alike. */
+export async function parseEncryptedJson<T>(blob: string, what: string, isValid: (v: unknown) => v is T): Promise<T> {
   let value: unknown;
   try {
     value = JSON.parse(await decrypt(blob));
@@ -83,7 +87,7 @@ export async function readEncryptedJson<T>(
 ): Promise<T | null> {
   const blob = await redis().get<string>(key);
   if (blob === null || blob === undefined || blob === '') return null;
-  return parse(String(blob), what, isValid);
+  return parseEncryptedJson(String(blob), what, isValid);
 }
 
 /**
