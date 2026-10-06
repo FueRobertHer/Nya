@@ -287,14 +287,8 @@ export default function PlanTab({
             kind={shownSheet.figure}
             currency={displayCurrency}
             measured={shownSheet.figure === 'assets' ? assets.total : shownSheet.figure === 'spending' ? (flows?.spending ?? null) : (flows?.savings ?? null)}
-            measuredText={
-              shownSheet.figure === 'assets'
-                ? `from ${assets.accounts.length} account${assets.accounts.length === 1 ? '' : 's'}`
-                : flows
-                  ? flowsSource(flows)
-                  : ''
-            }
-            accounts={assets.accounts}
+            measuredText={flows ? flowsSource(flows) : ''}
+            assetsFor={(includeCash) => investedAssets(accounts, includeCash)}
           />
         )}
         {shownSheet?.kind === 'income' && <IncomeForm key={opened} {...formProps} item={shownSheet.item} />}
@@ -378,7 +372,7 @@ export function FiCard({
     yearsLine = yearsText(view.yearsToFi);
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
   } else {
-    yearsNote = 'Needs your invested assets or savings.';
+    yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : 'Needs your invested assets or savings.';
   }
 
   return (

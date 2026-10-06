@@ -52,8 +52,10 @@ export default function PlanGrid({
       text = '--';
       title = `${pct(rate)} for ${years} years: no ${pathsNoun} lasted`;
     }
-    // More success (or less of a cut), more accent: 6% to 46% opacity.
-    const shade = value === null ? 0 : 0.06 + 0.4 * Math.max(0, Math.min(1, value));
+    // More success (or less of a cut), more accent, from faint at 50% or
+    // less to strongest at 100%: below half, every plan is a poor one, and
+    // spreading the shades over 50% to 100% keeps 85% and 100% apart.
+    const shade = value === null ? 0 : 0.06 + 0.4 * Math.max(0, Math.min(1, (value - 0.5) / 0.5));
     return (
       <td
         key={years}

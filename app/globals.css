@@ -2043,6 +2043,13 @@ button.plan-edit:disabled {
   border-bottom: none;
 }
 
+/* Column heads wrap ("20 / yrs") rather than run into each other on a
+   narrow phone. */
+.plan-grid thead th {
+  font-size: 10px;
+  white-space: normal;
+}
+
 .plan-grid td.plan-grid-cell {
   font-size: 13px;
   font-weight: 600;
@@ -2082,6 +2089,14 @@ button.plan-edit:disabled {
 .plan-worst li:last-child,
 .plan-accounts li:last-child {
   border-bottom: none;
+}
+
+.plan-worst li > span:first-child {
+  white-space: nowrap;
+}
+
+.plan-worst li > span:last-child {
+  text-align: right;
 }
 
 .plan-accounts .num {

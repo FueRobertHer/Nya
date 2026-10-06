@@ -160,7 +160,18 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
   },
 };
 
-export function FigureForm(props: SaveProps & { kind: FigureKind; measured: number | null; measuredText: string; currency: string | null; accounts?: { account_id: string; name: string; institution: string; balance: number }[] }) {
+type CountedAccount = { account_id: string; name: string; institution: string; balance: number };
+
+export function FigureForm(
+  props: SaveProps & {
+    kind: FigureKind;
+    measured: number | null;
+    measuredText: string;
+    currency: string | null;
+    /** Invested assets with or without cash, so the total follows the box as it is ticked. */
+    assetsFor?: (includeCash: boolean) => { total: number | null; accounts: CountedAccount[] };
+  }
+) {
   const { plan, kind } = props;
   const typedNow = plan[kind];
   const [mode, setMode] = useState<'measured' | 'typed'>(typedNow === null && props.measured !== null ? 'measured' : 'typed');
@@ -168,6 +179,9 @@ export function FigureForm(props: SaveProps & { kind: FigureKind; measured: numb
   const [includeCash, setIncludeCash] = useState(plan.includeCash);
   const s = useSave(props);
   const t = FIGURE_TEXT[kind];
+  const live = kind === 'assets' && props.assetsFor ? props.assetsFor(includeCash) : null;
+  const measured = live ? live.total : props.measured;
+  const measuredText = live ? `from ${live.accounts.length} account${live.accounts.length === 1 ? '' : 's'}` : props.measuredText;
   const range = kind === 'savings' ? [-LIMITS.money, LIMITS.money] : kind === 'assets' ? [0, LIMITS.balance] : [0, LIMITS.money];
   return (
     <>
@@ -185,11 +199,11 @@ export function FigureForm(props: SaveProps & { kind: FigureKind; measured: numb
       />
       {mode === 'measured' ? (
         <p className="panel-note">
-          {props.measured === null ? (
+          {measured === null ? (
             'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
           ) : (
             <>
-              <strong>{wholeMoney(props.measured, props.currency)}</strong> {props.measuredText}
+              <strong>{wholeMoney(measured, props.currency)}</strong> {measuredText}
             </>
           )}
         </p>
@@ -207,9 +221,9 @@ export function FigureForm(props: SaveProps & { kind: FigureKind; measured: numb
             <input type="checkbox" checked={includeCash} onChange={(e) => setIncludeCash(e.target.checked)} disabled={s.saving} />
             Count checking and savings accounts too
           </label>
-          {props.accounts && props.accounts.length > 0 && mode === 'measured' && (
+          {live && live.accounts.length > 0 && mode === 'measured' && (
             <ul className="plan-accounts">
-              {props.accounts.map((a) => (
+              {live.accounts.map((a) => (
                 <li key={a.account_id}>
                   <span>
                     {a.name} <span className="plan-muted">· {a.institution}</span>
@@ -334,10 +348,15 @@ export function SimulationForm(props: SaveProps & { fiNumber: number | null; ass
         <label className="field">
           Method
           <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving}>
-            <option value="historical">{METHOD_NAMES.historical}: every start month since 1871</option>
-            <option value="monte-carlo">{METHOD_NAMES['monte-carlo']}: 5,000 runs resampled from history</option>
+            <option value="historical">{METHOD_NAMES.historical}</option>
+            <option value="monte-carlo">{METHOD_NAMES['monte-carlo']}</option>
           </select>
         </label>
+        <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
+          {method === 'historical'
+            ? 'Starts the plan in every month since 1871 that leaves all of it inside the data, and lives through what followed.'
+            : '5,000 runs, each built from 5-year blocks of months drawn at random from the same history: more sequences than history holds, spread wider.'}
+        </p>
         <label className="field">
           Withdrawal rule
           <select value={rule} onChange={(e) => setRule(e.target.value as RuleKind)} disabled={s.saving}>
@@ -367,15 +386,16 @@ export function SimulationForm(props: SaveProps & { fiNumber: number | null; ass
         <label className="field">
           Start with
           <select value={start} onChange={(e) => setStart(e.target.value as FirePlan['start'])} disabled={s.saving}>
-            <option value="fi-number">
-              Your FI number{props.fiNumber !== null ? ` (${wholeMoney(props.fiNumber, props.currency)})` : ''}, at your target age
-            </option>
-            <option value="assets">
-              Your invested assets{props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}, today
-            </option>
-            <option value="custom">A balance you type, at your target age</option>
+            <option value="fi-number">FI number{props.fiNumber !== null ? ` (${wholeMoney(props.fiNumber, props.currency)})` : ''}</option>
+            <option value="assets">Invested assets{props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}</option>
+            <option value="custom">A balance I type</option>
           </select>
         </label>
+        <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
+          {start === 'assets'
+            ? `Retiring today${plan.age !== null ? `, at ${plan.age}` : ''}, with what you have now.`
+            : `Retiring at your target age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''}.`}
+        </p>
         {start === 'custom' && (
           <label className="field">
             Starting balance

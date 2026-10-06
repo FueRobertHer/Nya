@@ -17,7 +17,10 @@ import { wholeMoney } from './plan-text';
 
 const W = 340;
 const H = 160;
-const PAD_LEFT = 8;
+// A gutter for the money axis: the bands fill the plot right down to $0 at
+// its left edge, where labels drawn inside it (as on the other charts) would
+// sit on top of them.
+const PAD_LEFT = 38;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 const PAD_BOTTOM = 20;
@@ -64,12 +67,10 @@ export default function PlanFanChart({
     const step = years <= 20 ? 5 : 10;
     const xTicks: { x: number; label: string; anchor: 'start' | 'middle' | 'end' }[] = [];
     for (let y = 0; y <= years; y += step) {
-      const tx = x(y);
-      const anchor = y === 0 ? 'start' : years - y < step / 2 ? 'end' : 'middle';
-      const label = startAge !== null ? `${y === 0 ? 'age ' : ''}${startAge + y}` : `${y === 0 ? 'year ' : ''}${y}`;
-      // The last tick would crowd the plan's end; the end label replaces it.
+      // A tick close to the plan's end would crowd its label, which follows.
       if (y > 0 && years - y < step / 2) continue;
-      xTicks.push({ x: tx, label, anchor });
+      const label = startAge !== null ? `${y === 0 ? 'age ' : ''}${startAge + y}` : `${y === 0 ? 'year ' : ''}${y}`;
+      xTicks.push({ x: x(y), label, anchor: y === 0 ? 'start' : 'middle' });
     }
     xTicks.push({
       x: x(years),
@@ -137,7 +138,7 @@ export default function PlanFanChart({
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={yv(t)} y2={yv(t)} stroke="#262a33" strokeWidth={1} />
-            <text className="chart-tick" x={PAD_LEFT} y={yv(t) - 3}>
+            <text className="chart-tick" x={PAD_LEFT - 6} y={yv(t)} textAnchor="end" dominantBaseline="middle">
               {compactMoney(t, currency)}
             </text>
           </g>
