@@ -12,7 +12,8 @@ import {
   type ShillerMonth,
 } from '@/lib/fire/derive';
 import { BONDS_REAL, HISTORY_FIRST_MONTH, HISTORY_MONTHS, HISTORY_SCALE, INFLATION, STOCKS_REAL } from '@/lib/fire/history-data';
-import { compound, makeMarket, monthIndex, monthLabel, usMarket, yearFactors } from '@/lib/fire/market';
+import { compound, makeMarket, monthIndex, monthLabel, yearFactors } from '@/lib/fire/market';
+import { usMarket } from '@/lib/fire/us-market';
 import { buildModule, parseShillerCsv } from '@/scripts/fire-data';
 
 const row = (month: string, price: number, dividend: number, cpi: number, longRate: number): ShillerMonth => ({

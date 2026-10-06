@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { realReturn } from '@/lib/fire/derive';
 import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, yearsToTarget } from '@/lib/fire/fi';
-import { makeMarket, usMarket, type Market } from '@/lib/fire/market';
+import { makeMarket, type Market } from '@/lib/fire/market';
+import { usMarket } from '@/lib/fire/us-market';
 import { seededRandom } from '@/lib/fire/random';
 import {
   canRunOut,

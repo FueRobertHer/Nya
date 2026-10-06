@@ -67,6 +67,7 @@ export type Kind =
 const EXACT: Record<string, Kind> = {
   goals: 'string',
   budgets: 'string',
+  'fire-plan': 'string', // the Plan tab's assumptions (lib/fire-plan.ts)
   'history:accounts:est:flat': 'string',
 
   'history:net-worth': 'hash',

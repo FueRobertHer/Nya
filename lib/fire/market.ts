@@ -2,13 +2,12 @@
 //
 // The market history the engine runs on: monthly real returns for stocks and
 // bonds, and monthly inflation, all aligned on one month index. The US
-// history (lib/fire/history-data.ts, 1871 to 2023) is decoded once into typed
-// arrays; tests build small synthetic markets with makeMarket.
+// history is lib/fire/us-market.ts; tests build small synthetic markets with
+// makeMarket.
 //
-// Imports only the generated data, and only through usMarket: the Plan tab
-// loads this module lazily so the other tabs never carry the data.
-
-import { BONDS_REAL, HISTORY_FIRST_MONTH, HISTORY_MONTHS, HISTORY_SCALE, INFLATION, STOCKS_REAL } from './history-data';
+// Imports nothing, and in particular not the 44 KB of data: the plan's
+// validation (lib/fire/plan.ts, which the API route uses) reaches this module
+// through the engine's types and must not carry it.
 
 export type Market = {
   /** YYYY-MM of month 0. */
@@ -46,18 +45,6 @@ export function makeMarket(firstMonth: string, stocks: ArrayLike<number>, bonds:
     bonds: Float64Array.from(bonds),
     inflation: Float64Array.from(inflation),
   };
-}
-
-let us: Market | null = null;
-
-/** US stocks, 10-year Treasuries and CPI, monthly from January 1871. */
-export function usMarket(): Market {
-  if (!us) {
-    const decode = (s: readonly number[]) => s.map((v) => v / HISTORY_SCALE);
-    us = makeMarket(HISTORY_FIRST_MONTH, decode(STOCKS_REAL), decode(BONDS_REAL), decode(INFLATION));
-    if (us.months !== HISTORY_MONTHS) throw new Error('history data is not the length it says');
-  }
-  return us;
 }
 
 /** YYYY-MM of a month index. */

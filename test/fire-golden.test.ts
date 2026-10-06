@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { usMarket } from '@/lib/fire/market';
+import { usMarket } from '@/lib/fire/us-market';
 import { historicalCycles, monteCarlo, successGrid, type SimPlan, type SimResult } from '@/lib/fire/simulate';
 
 // Golden tests: the engine against what published studies of the same

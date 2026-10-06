@@ -1,0 +1,403 @@
+// lib/fire/plan.ts
+//
+// The person's plan assumptions, as stored (lib/fire-plan.ts, one encrypted
+// value per container) and as the Plan tab edits them, and how they turn into
+// the deterministic FI view and an engine plan.
+//
+// The stored value holds only what the person chose or typed. Anything Nya
+// measures (spending, savings, invested assets) is stored only as an
+// OVERRIDE: null means "use what Nya measures", so a plan saved in March
+// follows the spending of April instead of freezing March's figure.
+//
+// parsePlan is the one validator: the API route runs every PUT through it,
+// and the store's reader uses it to recognise a stored value. Strict on
+// purpose: every field must be present, of its type and in its range, and
+// nothing else may be. Imports no data and no storage, so the route and the
+// browser can both use it.
+
+import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, yearsToTarget } from './fi';
+import { vpwExpectedReturn, type RuleKind, type RuleSpec } from './rules';
+import { CASH_REAL_RETURN, MAX_YEARS, type Method, type Rebalance, type SimPlan } from './simulate';
+
+export type StartChoice = 'fi-number' | 'assets' | 'custom';
+
+export type PlanIncome = {
+  id: string;
+  label: string;
+  /** A year, after tax, in today's dollars. */
+  amount: number;
+  fromAge: number;
+  /** Social Security keeps up with inflation; many pensions do not. */
+  inflationAdjusted: boolean;
+};
+
+export type PlanExpense = {
+  id: string;
+  label: string;
+  /** In today's dollars, after tax. */
+  amount: number;
+  atAge: number;
+};
+
+export type FirePlan = {
+  version: 1;
+  /** Typed by the person. */
+  age: number | null;
+  targetAge: number | null;
+  /** Overrides of what Nya measures; null uses the measurement. */
+  spending: number | null;
+  savings: number | null;
+  assets: number | null;
+  /** Count checking and savings balances as invested assets too. */
+  includeCash: boolean;
+  /** Fractions: 0.04 is 4%. */
+  withdrawalRate: number;
+  realReturn: number;
+  taxRate: number;
+  /** Barista FI: part-time income a year, after tax. 0 leaves it out. */
+  partTimeIncome: number;
+  method: Method;
+  rule: RuleKind;
+  /** What the simulated retirement starts with. */
+  start: StartChoice;
+  /** The balance for start 'custom'. */
+  startBalance: number | null;
+  /** Years; null runs to PLAN_TO_AGE when the starting age is known. */
+  horizon: number | null;
+  /** Whole percents; cash is the rest. */
+  stocksPct: number;
+  bondsPct: number;
+  rebalance: Rebalance;
+  fee: number;
+  /** Floor-and-ceiling rule bounds, as multiples of the first year's withdrawal. */
+  floor: number;
+  ceiling: number;
+  income: PlanIncome[];
+  expenses: PlanExpense[];
+};
+
+export const DEFAULT_PLAN: FirePlan = {
+  version: 1,
+  age: null,
+  targetAge: null,
+  spending: null,
+  savings: null,
+  assets: null,
+  includeCash: false,
+  withdrawalRate: 0.04,
+  realReturn: 0.05,
+  taxRate: 0,
+  partTimeIncome: 0,
+  method: 'historical',
+  rule: 'constant',
+  start: 'fi-number',
+  startBalance: null,
+  horizon: null,
+  stocksPct: 75,
+  bondsPct: 25,
+  rebalance: 'annual',
+  fee: 0.001,
+  floor: 0.9,
+  ceiling: 1.25,
+  income: [],
+  expenses: [],
+};
+
+/** A plan with no age runs this long. */
+export const DEFAULT_YEARS = 30;
+/** With an age, a plan runs to this age (within 10 to MAX_YEARS years). */
+export const PLAN_TO_AGE = 95;
+
+export const LIMITS = {
+  age: [16, 100],
+  money: 10_000_000,
+  balance: 1_000_000_000,
+  withdrawalRate: [0.005, 0.15],
+  realReturn: [-0.05, 0.15],
+  taxRate: [0, 0.6],
+  horizon: [5, MAX_YEARS],
+  fee: [0, 0.03],
+  floor: [0.5, 1],
+  ceiling: [1, 3],
+  eventAge: [16, 110],
+  incomes: 5,
+  expenses: 10,
+  label: 60,
+  id: 40,
+} as const;
+
+const METHODS: readonly Method[] = ['historical', 'monte-carlo'];
+const RULES: readonly RuleKind[] = ['constant', 'percent', 'guardrails', 'vpw', 'floor-ceiling'];
+const STARTS: readonly StartChoice[] = ['fi-number', 'assets', 'custom'];
+const REBALANCES: readonly Rebalance[] = ['annual', 'monthly', 'none'];
+const KEYS = Object.keys(DEFAULT_PLAN) as (keyof FirePlan)[];
+
+class Invalid extends Error {}
+
+function num(v: unknown, field: string, min: number, max: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw new Invalid(`${field} must be a number from ${min} to ${max}`);
+  return v;
+}
+function int(v: unknown, field: string, min: number, max: number): number {
+  const n = num(v, field, min, max);
+  if (!Number.isInteger(n)) throw new Invalid(`${field} must be a whole number`);
+  return n;
+}
+function orNull<T>(v: unknown, read: (v: unknown) => T): T | null {
+  return v === null ? null : read(v);
+}
+function bool(v: unknown, field: string): boolean {
+  if (typeof v !== 'boolean') throw new Invalid(`${field} must be true or false`);
+  return v;
+}
+function oneOf<T extends string>(v: unknown, field: string, options: readonly T[]): T {
+  if (typeof v !== 'string' || !(options as readonly string[]).includes(v)) throw new Invalid(`${field} must be one of ${options.join(', ')}`);
+  return v as T;
+}
+function id(v: unknown, field: string): string {
+  if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(v)) throw new Invalid(`${field} must be a short id`);
+  return v;
+}
+function label(v: unknown, field: string): string {
+  if (typeof v !== 'string') throw new Invalid(`${field} must be text`);
+  const t = v.trim();
+  if (!t || t.length > LIMITS.label) throw new Invalid(`${field} must be 1 to ${LIMITS.label} characters`);
+  return t;
+}
+function exactKeys(v: unknown, keys: readonly string[], field: string): Record<string, unknown> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Invalid(`${field} must be an object`);
+  const o = v as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (!keys.includes(k)) throw new Invalid(`${field} has an unknown field "${k.slice(0, 40)}"`);
+  for (const k of keys) if (!(k in o)) throw new Invalid(`${field} is missing "${k}"`);
+  return o;
+}
+
+/** A clean copy of a plan, or why it is not one. */
+export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string } {
+  try {
+    const o = exactKeys(raw, KEYS, 'plan');
+    if (o.version !== 1) throw new Invalid('version must be 1');
+    const [ageMin, ageMax] = LIMITS.age;
+    const stocksPct = int(o.stocksPct, 'stocksPct', 0, 100);
+    const bondsPct = int(o.bondsPct, 'bondsPct', 0, 100);
+    if (stocksPct + bondsPct > 100) throw new Invalid('stocksPct and bondsPct add up to more than 100');
+    const floor = num(o.floor, 'floor', ...LIMITS.floor);
+    const ceiling = num(o.ceiling, 'ceiling', ...LIMITS.ceiling);
+    if (!Array.isArray(o.income) || o.income.length > LIMITS.incomes) throw new Invalid(`income must be a list of at most ${LIMITS.incomes}`);
+    if (!Array.isArray(o.expenses) || o.expenses.length > LIMITS.expenses) throw new Invalid(`expenses must be a list of at most ${LIMITS.expenses}`);
+    const income = o.income.map((x, i): PlanIncome => {
+      const e = exactKeys(x, ['id', 'label', 'amount', 'fromAge', 'inflationAdjusted'], `income[${i}]`);
+      return {
+        id: id(e.id, `income[${i}].id`),
+        label: label(e.label, `income[${i}].label`),
+        amount: num(e.amount, `income[${i}].amount`, 0, LIMITS.money),
+        fromAge: int(e.fromAge, `income[${i}].fromAge`, ...LIMITS.eventAge),
+        inflationAdjusted: bool(e.inflationAdjusted, `income[${i}].inflationAdjusted`),
+      };
+    });
+    const expenses = o.expenses.map((x, i): PlanExpense => {
+      const e = exactKeys(x, ['id', 'label', 'amount', 'atAge'], `expenses[${i}]`);
+      return {
+        id: id(e.id, `expenses[${i}].id`),
+        label: label(e.label, `expenses[${i}].label`),
+        amount: num(e.amount, `expenses[${i}].amount`, 0, LIMITS.money * 10),
+        atAge: int(e.atAge, `expenses[${i}].atAge`, ...LIMITS.eventAge),
+      };
+    });
+    const ids = [...income, ...expenses].map((x) => x.id);
+    if (new Set(ids).size !== ids.length) throw new Invalid('income and expense ids must be unique');
+    const plan: FirePlan = {
+      version: 1,
+      age: orNull(o.age, (v) => int(v, 'age', ageMin, ageMax)),
+      targetAge: orNull(o.targetAge, (v) => int(v, 'targetAge', ageMin, ageMax)),
+      spending: orNull(o.spending, (v) => num(v, 'spending', 0, LIMITS.money)),
+      savings: orNull(o.savings, (v) => num(v, 'savings', -LIMITS.money, LIMITS.money)),
+      assets: orNull(o.assets, (v) => num(v, 'assets', 0, LIMITS.balance)),
+      includeCash: bool(o.includeCash, 'includeCash'),
+      withdrawalRate: num(o.withdrawalRate, 'withdrawalRate', ...LIMITS.withdrawalRate),
+      realReturn: num(o.realReturn, 'realReturn', ...LIMITS.realReturn),
+      taxRate: num(o.taxRate, 'taxRate', ...LIMITS.taxRate),
+      partTimeIncome: num(o.partTimeIncome, 'partTimeIncome', 0, LIMITS.money),
+      method: oneOf(o.method, 'method', METHODS),
+      rule: oneOf(o.rule, 'rule', RULES),
+      start: oneOf(o.start, 'start', STARTS),
+      startBalance: orNull(o.startBalance, (v) => num(v, 'startBalance', 0, LIMITS.balance)),
+      horizon: orNull(o.horizon, (v) => int(v, 'horizon', ...LIMITS.horizon)),
+      stocksPct,
+      bondsPct,
+      rebalance: oneOf(o.rebalance, 'rebalance', REBALANCES),
+      fee: num(o.fee, 'fee', ...LIMITS.fee),
+      floor,
+      ceiling,
+      income,
+      expenses,
+    };
+    if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('a custom start needs startBalance');
+    return { plan };
+  } catch (err) {
+    if (err instanceof Invalid) return { error: err.message };
+    throw err;
+  }
+}
+
+/** Whether a value is a valid stored plan. */
+export function isFirePlan(v: unknown): v is FirePlan {
+  return 'plan' in parsePlan(v);
+}
+
+/** What Nya measured, for the inputs a plan can override. Null when there is
+ *  nothing to measure from (no transactions, no investment accounts). */
+export type Measured = {
+  spending: number | null;
+  savings: number | null;
+  assets: number | null;
+};
+
+/** Where an input came from, for the label beside it. */
+export type Source = 'measured' | 'typed' | 'none';
+
+export type Input = { value: number | null; source: Source };
+
+function input(typed: number | null, measured: number | null): Input {
+  if (typed !== null) return { value: typed, source: 'typed' };
+  if (measured !== null) return { value: measured, source: 'measured' };
+  return { value: null, source: 'none' };
+}
+
+export type FiView = {
+  spending: Input;
+  savings: Input;
+  assets: Input;
+  /** Null without spending to base it on. */
+  fiNumber: number | null;
+  /** Invested assets as a share of the FI number. */
+  progress: number | null;
+  /** Years until the FI number, at the plan's real return: 0 when already
+   *  there, Infinity when never, null without the inputs. */
+  yearsToFi: number | null;
+  /** The age then, when the age is known and it ever happens. */
+  fiAge: number | null;
+  /** Coast FI, when both ages are known. */
+  coast: { number: number; years: number; reached: boolean } | null;
+  /** Barista FI, when part-time income is set. */
+  barista: { number: number; yearsTo: number | null } | null;
+  /** The balance projected at the target age, when both ages are known. */
+  atTargetAge: number | null;
+};
+
+/** The deterministic FI view of a plan, from what was typed and what Nya measured. */
+export function fiView(plan: FirePlan, measured: Measured): FiView {
+  const spending = input(plan.spending, measured.spending);
+  const savings = input(plan.savings, measured.savings);
+  const assets = input(plan.assets, measured.assets);
+  const fi = spending.value === null ? null : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
+  const a = assets.value ?? 0;
+  const c = savings.value ?? 0;
+  const yearsToFi = fi === null || (assets.value === null && savings.value === null) ? null : yearsToTarget(a, c, plan.realReturn, fi);
+  const fiAge = yearsToFi !== null && Number.isFinite(yearsToFi) && plan.age !== null ? plan.age + yearsToFi : null;
+  const span = plan.age !== null && plan.targetAge !== null ? plan.targetAge - plan.age : null;
+  const coastNumber = fi !== null && span !== null ? coastFiNumber(fi, plan.realReturn, span) : null;
+  let barista: FiView['barista'] = null;
+  if (plan.partTimeIncome > 0 && spending.value !== null) {
+    const number = baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
+    barista = { number, yearsTo: assets.value === null && savings.value === null ? null : yearsToTarget(a, c, plan.realReturn, number) };
+  }
+  return {
+    spending,
+    savings,
+    assets,
+    fiNumber: fi,
+    progress: fi !== null && fi > 0 && assets.value !== null ? assets.value / fi : null,
+    yearsToFi,
+    fiAge,
+    coast: coastNumber === null || span === null ? null : { number: coastNumber, years: Math.max(0, span), reached: a >= coastNumber },
+    barista,
+    atTargetAge: span !== null && (assets.value !== null || savings.value !== null) ? projectBalance(a, c, plan.realReturn, Math.max(0, span)) : null,
+  };
+}
+
+/** The rule as the engine takes it. */
+export function ruleSpec(plan: FirePlan): RuleSpec {
+  switch (plan.rule) {
+    case 'constant':
+    case 'percent':
+    case 'guardrails':
+      return { kind: plan.rule, rate: plan.withdrawalRate };
+    case 'floor-ceiling':
+      return { kind: 'floor-ceiling', rate: plan.withdrawalRate, floor: plan.floor, ceiling: plan.ceiling };
+    case 'vpw':
+      return { kind: 'vpw', expectedReturn: vpwExpectedReturn(allocationOf(plan)) };
+  }
+}
+
+export function allocationOf(plan: FirePlan): SimPlan['allocation'] {
+  return { stocks: plan.stocksPct / 100, bonds: plan.bondsPct / 100, cash: (100 - plan.stocksPct - plan.bondsPct) / 100 };
+}
+
+/** The age the simulated retirement starts at: today's for a start from
+ *  today's assets, the target age otherwise (each falls back to the other). */
+export function startAge(plan: FirePlan): number | null {
+  return plan.start === 'assets' ? plan.age ?? plan.targetAge : plan.targetAge ?? plan.age;
+}
+
+/** How long the simulated retirement runs: the plan's own length, or to
+ *  PLAN_TO_AGE from the starting age, or DEFAULT_YEARS without an age. */
+export function planYears(plan: FirePlan): number {
+  if (plan.horizon !== null) return plan.horizon;
+  const age = startAge(plan);
+  if (age === null) return DEFAULT_YEARS;
+  return Math.min(MAX_YEARS, Math.max(10, PLAN_TO_AGE - age));
+}
+
+export type EnginePlan = {
+  sim: SimPlan;
+  startAge: number | null;
+  /** Income and expenses that could not be placed: no age to place them by,
+   *  or an expense dated before the plan starts or after it ends. */
+  left: { income: PlanIncome[]; expenses: PlanExpense[] };
+};
+
+/**
+ * The plan as the engine runs it, or why it can't run: the start balance
+ * needs the FI number (and so the spending), the invested assets, or a typed
+ * balance, by the plan's start choice.
+ */
+export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing: string } {
+  let startBalance: number | null;
+  if (plan.start === 'fi-number') startBalance = view.fiNumber;
+  else if (plan.start === 'assets') startBalance = view.assets.value;
+  else startBalance = plan.startBalance;
+  if (startBalance === null) {
+    return { missing: plan.start === 'fi-number' ? 'spending' : plan.start === 'assets' ? 'assets' : 'balance' };
+  }
+  const years = planYears(plan);
+  const age = startAge(plan);
+  const left: EnginePlan['left'] = { income: [], expenses: [] };
+  const income: SimPlan['income'] = [];
+  for (const s of plan.income) {
+    if (age === null) left.income.push(s);
+    else income.push({ amount: s.amount, fromYear: Math.max(0, s.fromAge - age), inflationAdjusted: s.inflationAdjusted });
+  }
+  const oneOffs: SimPlan['oneOffs'] = [];
+  for (const e of plan.expenses) {
+    const year = age === null ? -1 : e.atAge - age;
+    if (year < 0 || year >= years) left.expenses.push(e);
+    else oneOffs.push({ amount: e.amount, year });
+  }
+  return {
+    sim: {
+      startBalance,
+      years,
+      allocation: allocationOf(plan),
+      rebalance: plan.rebalance,
+      fee: plan.fee,
+      taxRate: plan.taxRate,
+      rule: ruleSpec(plan),
+      income,
+      oneOffs,
+      cashRealReturn: CASH_REAL_RETURN,
+    },
+    startAge: age,
+    left,
+  };
+}
