@@ -23,6 +23,12 @@
 // would have no rule left to pick one.
 //
 // Nightly backups (lib/backup.ts) still hold the data until they age out.
+//
+// THE RECEIPT. What is stored is counted between steps 1 and 2, the way the
+// download of my data would read it (lib/user-export.ts), and the steps count
+// what they do, for the receipt the person is shown at the end
+// (lib/deletion-receipt.ts). Counting reads and never writes, and never stops
+// a deletion: a count that can't be read is null.
 
 import { redis, containerPrefix, getItems } from './storage';
 import { getContainer, isContainerId, registryKey, type ContainerId, type ContainerRecord, type Ctx } from './containers';
@@ -30,8 +36,55 @@ import { ownersKey } from './owners';
 import { dropConnectionsOf } from './sharing';
 import { isDemoUser } from './demo';
 import { decrypt } from './crypto';
+import { collectUserData, buildUserExport } from './user-export';
+import type { DeletionCounts } from './deletion-receipt';
 
 export class DeletionRefused extends Error {}
+
+/** The sign-in could not be deleted (step 6), after everything else was.
+ *  `counts` says what was, so the receipt a retry ends with can include it. */
+export class SignInNotDeleted extends Error {
+  constructor(
+    readonly counts: DeletionCounts,
+    cause: unknown
+  ) {
+    super('The sign-in could not be deleted', { cause });
+    this.name = 'SignInNotDeleted';
+  }
+}
+
+export type DeletionResult = {
+  disconnected: number;
+  deletedKeys: number;
+  counts: DeletionCounts;
+  /** Whether the account still had a container to delete. */
+  found_data: boolean;
+  /** An earlier attempt had already started on it: the counts are what was left. */
+  resumed: boolean;
+};
+
+type StoredCounts = Pick<DeletionCounts, 'accounts' | 'transactions' | 'investment_transactions' | 'history_days'>;
+
+/** What a container holds, counted as the download of my data reads it.
+ *  Never throws: what can't be read is null, and is deleted all the same. */
+async function countStored(ctx: Ctx): Promise<StoredCounts> {
+  try {
+    const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
+    const days = new Set([
+      ...doc.net_worth_history.points.map((p) => p.date),
+      ...doc.account_history.flatMap((s) => s.points.map((p) => p.date)),
+    ]);
+    return {
+      accounts: doc.accounts.length + doc.manual_accounts.length,
+      transactions: doc.transactions.length,
+      investment_transactions: doc.investment_transactions.length,
+      history_days: days.size,
+    };
+  } catch (err) {
+    console.error('Account deletion: what was stored could not be counted', err instanceof Error ? err.name : typeof err);
+    return { accounts: null, transactions: null, investment_transactions: null, history_days: null };
+  }
+}
 
 const PAGE = 500;
 
@@ -67,14 +120,17 @@ export async function deletionCheck(userId: string): Promise<{ allowed: true } |
 export async function deleteAccount(
   userId: string,
   opts: { removeItem: (accessToken: string) => Promise<void>; deleteUser?: (userId: string) => Promise<void> }
-): Promise<{ disconnected: number; deletedKeys: number }> {
+): Promise<DeletionResult> {
   const check = await deletionCheck(userId);
   if (!check.allowed) throw new DeletionRefused(check.reason);
 
   const raw = await redis().hget<string>(ownersKey(), userId);
   const container = typeof raw === 'string' && isContainerId(raw) ? (raw as ContainerId) : null;
   let disconnected = 0;
+  let notDisconnected = 0;
   let deletedKeys = 0;
+  let stored: StoredCounts = { accounts: 0, transactions: 0, investment_transactions: 0, history_days: 0 };
+  let resumed = false;
 
   if (container) {
     const ctx: Ctx = { container };
@@ -83,13 +139,19 @@ export async function deleteAccount(
     if (rec && rec.status !== 'archived') {
       const archived: ContainerRecord = { ...rec, status: 'archived' };
       await redis().hset(registryKey(), { [container]: JSON.stringify(archived) });
+    } else {
+      // Archived already, or out of the registry: an earlier attempt got this far.
+      resumed = true;
     }
+    // What it holds, for the receipt, before any of it goes.
+    stored = await countStored(ctx);
     // 2. Its banks.
     for (const item of await getItems(ctx)) {
       try {
         await opts.removeItem(await decrypt(item.encrypted_access_token));
         disconnected++;
       } catch (err) {
+        notDisconnected++;
         console.error('Account deletion: a bank could not be disconnected at Plaid', err instanceof Error ? err.name : err);
       }
     }
@@ -100,17 +162,28 @@ export async function deleteAccount(
   }
   await redis().hdel(ownersKey(), userId);
   // 5. Sharing, both ways.
-  await dropConnectionsOf(userId);
+  const connectionsEnded = await dropConnectionsOf(userId);
 
   // 6. The sign-in.
   let signInError: unknown = null;
+  let signInDeleted = false;
   try {
-    await opts.deleteUser?.(userId);
+    if (opts.deleteUser) {
+      await opts.deleteUser(userId);
+      signInDeleted = true;
+    }
   } catch (err) {
     signInError = err;
   }
   // 7. Late writes.
   if (container) deletedKeys += await sweep({ container });
-  if (signInError) throw signInError;
-  return { disconnected, deletedKeys };
+  const counts: DeletionCounts = {
+    banks_disconnected: disconnected,
+    banks_not_disconnected: notDisconnected,
+    ...stored,
+    connections_ended: connectionsEnded,
+    sign_in_deleted: signInDeleted,
+  };
+  if (signInError) throw new SignInNotDeleted(counts, signInError);
+  return { disconnected, deletedKeys, counts, found_data: container !== null, resumed };
 }

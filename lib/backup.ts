@@ -120,6 +120,36 @@ export function keepDays(): number {
   return n;
 }
 
+/**
+ * How long the nightly backups can keep a copy of data deleted now, for the
+ * receipt an account deletion shows (lib/deletion-receipt.ts).
+ *
+ * Every copy taken before the deletion still holds the data, the newest no
+ * later than the deletion itself. A copy is pruned by the first successful run
+ * at which it is older than keepDays() and not among the newest MIN_KEPT
+ * (runBackup). With one run a night, a copy just short of the limit at one run
+ * goes at the next, so the last copy holding the data is gone keepDays() + 1
+ * days after the deletion at most, or MIN_KEPT days when that is longer (the
+ * newest MIN_KEPT are kept whatever their age). That holds only while runs
+ * succeed: nothing is pruned on a night that fails, so a receipt says so when
+ * backups have stopped (backupProblem).
+ *
+ * `kept` is false when this deployment has no blob store, so it takes no
+ * backups at all. Null when BACKUP_KEEP_DAYS is invalid: then no backup runs
+ * (runBackup refuses before anything else), none is pruned either, and no
+ * date would be true.
+ */
+export function backupRetention(): { kept: false } | { kept: true; keep_days: number; min_kept: number; max_days: number } | null {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return { kept: false };
+  let days: number;
+  try {
+    days = keepDays();
+  } catch {
+    return null;
+  }
+  return { kept: true, keep_days: days, min_kept: MIN_KEPT, max_days: Math.max(days + 1, MIN_KEPT) };
+}
+
 /** Where this environment's backups live in the store. */
 export function backupFolder(): string {
   return `backups/${envPrefix().replace(/:$/, '')}/`;

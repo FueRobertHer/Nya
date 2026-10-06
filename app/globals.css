@@ -1934,3 +1934,45 @@ button.danger-outline {
 .download-card a {
   color: var(--accent);
 }
+
+/* --- the receipt after deleting an account (components/DeletionReceipt.tsx) --- */
+
+.receipt-card {
+  width: 100%;
+  max-width: 480px;
+  margin: 0;
+}
+
+.privacy-panel .receipt-card {
+  max-width: none;
+  padding: 0;
+  background: transparent;
+}
+
+.receipt-card h2 {
+  margin: 0 0 6px;
+}
+
+.receipt-section {
+  margin-top: 18px;
+}
+
+.receipt-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.receipt-section li {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.receipt-card a {
+  color: var(--accent);
+}
+
+.receipt-done {
+  margin-top: 10px;
+}

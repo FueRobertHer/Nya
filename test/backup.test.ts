@@ -76,7 +76,7 @@ mock.module('node:https', () => ({
   },
 }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { GET } = await import('@/app/api/backup/route');
 
@@ -499,5 +499,37 @@ describe('reading a URL with node’s client', () => {
       () => new Promise<Response>(() => {}),
       async (base) => await expect(nodeText(`${base}/hang`, {}, AbortSignal.timeout(50))).rejects.toThrow()
     );
+  });
+});
+
+// The receipt an account deletion shows promises a date by which the last
+// backup holding the data is gone (lib/deletion-receipt.ts). That date must be
+// what pruning really does, not a figure from the docs.
+describe('how long a backup outlasts a deletion', () => {
+  for (const keep of [undefined, '3', '10']) {
+    test(`with BACKUP_KEEP_DAYS ${keep ?? 'unset'}, the last copy goes exactly when the receipt says`, async () => {
+      if (keep) process.env.BACKUP_KEEP_DAYS = keep;
+      const retention = backupRetention();
+      if (!retention?.kept) throw new Error('expected backups to be kept');
+      const s = await store();
+      // The copy taken by the run just before the deletion, then one run a night.
+      const start = clock.getTime();
+      const { pathname: last } = await runBackup(fake as any, s, new Date(start));
+      for (let night = 1; night <= retention.max_days; night++) {
+        clock = new Date(start + night * DAY);
+        await runBackup(fake as any, s, clock);
+        expect(blobs.has(last)).toBe(night < retention.max_days);
+      }
+    });
+  }
+
+  test('no blob store, no backups; a setting that can’t be read, no date', () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(backupRetention()).toEqual({ kept: false });
+    process.env.BLOB_READ_WRITE_TOKEN = 'token';
+    process.env.BACKUP_KEEP_DAYS = '0';
+    expect(backupRetention()).toBeNull();
+    process.env.BACKUP_KEEP_DAYS = '45';
+    expect(backupRetention()).toEqual({ kept: true, keep_days: 45, min_kept: MIN_KEPT, max_days: 46 });
   });
 });
