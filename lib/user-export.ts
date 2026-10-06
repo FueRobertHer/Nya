@@ -70,13 +70,16 @@ export type ExportSource = { ctx: Ctx; userId: string | null };
 
 /**
  * A store that could not be read: the download stops before anything is
- * sent. `what` names it for the person; the message is theirs to read and
- * holds nothing stored (an institution's name at most, which is theirs).
+ * sent. `what` names it for the person, and the message is theirs to read: it
+ * holds nothing stored but, at most, an institution's name, which is theirs.
+ * `store` is the kind of store alone ("transactions"), for the server's log,
+ * which must not say which bank someone uses.
  */
 export class ExportReadError extends Error {
   constructor(
     readonly what: string,
-    cause: unknown
+    cause: unknown,
+    readonly store: string = what
   ) {
     super(
       `Your ${what} could not be read, so nothing was downloaded: a file without them would look complete and not be. Nothing was changed. Try again later; if it keeps happening, whoever runs this Nya needs to look at it.`,
@@ -246,9 +249,9 @@ async function readDeclined(ctx: Ctx): Promise<DeclinedOffer[]> {
  */
 export async function collectUserData(src: ExportSource): Promise<UserData> {
   const { ctx } = src;
-  const read = <T>(what: string, fn: () => Promise<T>): Promise<T> =>
+  const read = <T>(what: string, fn: () => Promise<T>, store: string = what): Promise<T> =>
     fn().catch((err: unknown) => {
-      throw err instanceof ExportReadError ? err : new ExportReadError(what, err);
+      throw err instanceof ExportReadError ? err : new ExportReadError(what, err, store);
     });
 
   const items = await read('linked institutions', () => readItems(ctx));
@@ -260,18 +263,23 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
-          read(`transactions from ${item.institution_name}`, async () => {
-            const [stored, behind] = await Promise.all([readStoredItem(ctx, item.item_id), storeIsBehind(ctx, item.item_id)]);
-            return { item_id: item.item_id, ...stored, behind };
-          })
+          read(
+            `transactions from ${item.institution_name}`,
+            async () => {
+              const [stored, behind] = await Promise.all([readStoredItem(ctx, item.item_id), storeIsBehind(ctx, item.item_id)]);
+              return { item_id: item.item_id, ...stored, behind };
+            },
+            'transactions'
+          )
         )
       ),
       Promise.all(
         items.map((item) =>
-          read(`investment transactions from ${item.institution_name}`, async () => ({
-            item_id: item.item_id,
-            state: await readInvStore(ctx, item.item_id),
-          }))
+          read(
+            `investment transactions from ${item.institution_name}`,
+            async () => ({ item_id: item.item_id, state: await readInvStore(ctx, item.item_id) }),
+            'investment transactions'
+          )
         )
       ),
       read('categories', () => readOverridesStrict(ctx)),
