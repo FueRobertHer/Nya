@@ -139,8 +139,8 @@ export default function SecurityPage() {
           stop, the last ones are not deleted.
         </p>
         <p>
-          A backup holds what the database holds: the encrypted values, the plain text listed above, and the data keys
-          in their locked form. Its encrypted parts cannot be read without the keys kept in the server’s environment.
+          A backup holds the same kinds of data as the database: the encrypted values, the plain text listed above, and
+          the data keys in their locked form. Its encrypted parts cannot be read without the keys kept in the server’s environment.
         </p>
       </InfoSection>
 

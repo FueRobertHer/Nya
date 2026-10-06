@@ -1972,6 +1972,30 @@ button.danger-outline {
   line-height: 1.45;
 }
 
+/* On a phone two columns leave each too narrow to read: every row stacks,
+   its name over its text. */
+@media (max-width: 480px) {
+  .info-table thead {
+    display: none;
+  }
+
+  .info-table tr,
+  .info-table th[scope="row"],
+  .info-table td {
+    display: block;
+    width: auto;
+  }
+
+  .info-table th[scope="row"] {
+    padding: 12px 0 2px;
+    border-bottom: none;
+  }
+
+  .info-table td {
+    padding: 0 0 12px;
+  }
+}
+
 .info-status {
   margin: 0;
 }
