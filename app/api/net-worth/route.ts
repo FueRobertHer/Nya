@@ -14,6 +14,7 @@ import { applyHidden } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
+import { loggable } from '@/lib/log-safe';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -199,7 +200,7 @@ export async function GET(req: Request) {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to fetch net worth' }, { status: 500 });
   }
 }
