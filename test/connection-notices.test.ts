@@ -339,6 +339,22 @@ describe('records', () => {
     expect(syncs.unreadable).toEqual(['item_damaged']);
   });
 
+  test('a lapsed warning is dropped only if it is still the one read: a fresh one recorded meanwhile stays', async () => {
+    await recordWarning(ctx, 'item_chase', { webhook_code: 'PENDING_EXPIRATION', consent_expiration_time: new Date(day(1)).toISOString() }, day(0));
+    // The webhook lands between the run's read and its tidying.
+    const original = warningsStore.update;
+    warningsStore.update = async (c, id, fn) => {
+      await warningsStore.set(c, id, { kind: 'pending_disconnect', received_at: new Date(day(3)).toISOString(), ends_at: new Date(day(10)).toISOString(), ends_estimated: true, reason: null });
+      return original(c, id, fn);
+    };
+    try {
+      await run([healthy('item_chase')], day(3));
+    } finally {
+      warningsStore.update = original;
+    }
+    expect((await warningsStore.get(ctx, 'item_chase'))?.kind).toBe('pending_disconnect');
+  });
+
   test('stored encrypted, under the connection id, outside nothing but the container', async () => {
     await run([broken('item_chase')], day(0));
     const raw = await fake.hget<string>(ctxKey('connection-notices'), 'item_chase');

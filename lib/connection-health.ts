@@ -1,9 +1,9 @@
 // lib/connection-health.ts
 //
 // The server side of connection health (#51): Plaid's early warnings, when
-// each connection last answered cleanly, and each connection's health
-// (lib/connection-state.ts) attached to what the dashboard is sent. The daily
-// job's emails are lib/connection-notices.ts; the stores are
+// each connection last answered without an error, and each connection's
+// health (lib/connection-state.ts) attached to what the dashboard is sent.
+// The daily job's emails are lib/connection-notices.ts; the stores are
 // lib/connection-records.ts.
 //
 // Nothing here reads or writes a balance or the history layer. What it records

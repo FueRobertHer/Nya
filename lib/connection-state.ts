@@ -278,7 +278,8 @@ export type ConnectionHealth = {
   cause: Cause;
   side: Side;
   action: HealthAction;
-  /** When it last answered cleanly (an ISO time), or null if never recorded. */
+  /** When it last answered without an error (an ISO time), or null if never
+   *  recorded. */
   last_ok_at: string | null;
   /** For reconnect soon: when the connection ends (an ISO time). */
   ends_at?: string;
@@ -300,7 +301,7 @@ function health(cause: Cause, side: Side, last_ok_at: string | null): Connection
  * answered is "reconnect soon" while an unlapsed warning or a near consent
  * expiry stands, the earlier end first; then "partial" if accounts it used to
  * report were missing; otherwise healthy. `lastOkAt` is when it last answered
- * cleanly, which for one that just answered is now.
+ * without an error, which for one that just answered is now.
  */
 export function healthOf(inst: HealthInput, warning: ConnectionWarning | null, lastOkAt: string | null, now: number): ConnectionHealth {
   if (inst.error) {

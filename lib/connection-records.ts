@@ -12,8 +12,8 @@
 //                        (lib/connection-health.ts). Removed when the
 //                        connection is repaired or removed, or the warning
 //                        lapses.
-//   connection-syncs     when the connection last answered cleanly: every load
-//                        that fetched it, and the daily snapshot.
+//   connection-syncs     when the connection last answered without an error:
+//                        every load that fetched it, and the daily snapshot.
 //   connection-notices   the email bookkeeping for a break: when it began, and
 //                        when its notice and its reminder went
 //                        (lib/connection-notices.ts, from the daily job).
@@ -31,7 +31,8 @@
 import { defineMapStore } from './repo';
 import { HEALTH_STATES, type ConnectionWarning, type HealthState } from './connection-state';
 
-/** When a connection last answered cleanly. */
+/** When a connection last answered without an error (whatever accounts it
+ *  reported: one missing an account still answered). */
 export type LastSync = { at: string };
 
 /** One break of one connection, from the first daily run that saw it until a

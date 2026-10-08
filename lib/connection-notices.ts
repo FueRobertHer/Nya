@@ -260,19 +260,25 @@ export async function checkConnections(ctx: Ctx, institutions: InstitutionResult
   // Records of connections no longer linked (a disconnect removes its own; this
   // catches one a run in flight wrote back), and warnings that have lapsed.
   // Readable entries only: nothing is removed on the strength of a read that
-  // failed.
+  // failed. A lapsed warning goes only if it is still the one read: a webhook
+  // can record a fresh one meanwhile, and that one stays.
   const gone = (ids: Iterable<string>) => [...ids].filter((id) => !live.has(id));
-  const lapsed = linked
-    .filter((inst) => {
-      const w = warnings.entries.get(inst.item_id);
-      return w !== undefined && warningLapsed(w, lastOkOf(inst), inst.consent_expires_at);
-    })
-    .map((inst) => inst.item_id);
-  await Promise.all([
-    warningsStore.remove(ctx, ...gone(warnings.entries.keys()), ...lapsed),
-    syncsStore.remove(ctx, ...gone(syncs.entries.keys())),
-    noticesStore.remove(ctx, ...gone(notices.entries.keys())),
-  ]);
+  const lapsed = linked.flatMap((inst) => {
+    const w = warnings.entries.get(inst.item_id);
+    return w !== undefined && warningLapsed(w, lastOkOf(inst), inst.consent_expires_at) ? [[inst.item_id, JSON.stringify(w)] as const] : [];
+  });
+  try {
+    await Promise.all([
+      warningsStore.remove(ctx, ...gone(warnings.entries.keys())),
+      ...lapsed.map(([id, read]) => warningsStore.update(ctx, id, (current) => (current && JSON.stringify(current) === read ? null : current))),
+      syncsStore.remove(ctx, ...gone(syncs.entries.keys())),
+      noticesStore.remove(ctx, ...gone(notices.entries.keys())),
+    ]);
+  } catch (err) {
+    // Tidying only: what is decided below never reads a lapsed warning or a
+    // gone connection's record, and the next run tidies again.
+    console.error(`Connection notices: old records could not be dropped for container ${ctx.container}.`, nameOf(err));
+  }
 
   let skipped = 0;
   let unreadable = 0;
