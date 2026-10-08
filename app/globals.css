@@ -1881,3 +1881,132 @@ button.danger-outline {
   width: 100%;
   font-size: 15px;
 }
+
+/* --- debt payoff planner (components/DebtPayoff.tsx) --- */
+
+/* The currency and order choices: the chosen one in the accent, like a
+   pressed action button. */
+.payoff-choice > button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A note or error straight under a field, which has its own margin already. */
+.payoff-field-note,
+.payoff-field-error {
+  margin-top: 0;
+}
+
+/* One card or loan: its name and balance, where it is, then its two terms
+   side by side. */
+.payoff-debt {
+  padding: 12px 0;
+}
+
+.payoff-debt + .payoff-debt {
+  border-top: 1px solid var(--line);
+}
+
+.payoff-debt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.payoff-debt-owed {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.payoff-terms {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.payoff-terms .field {
+  margin-bottom: 4px;
+}
+
+/* Where a term came from: Plaid, typed, or still needed. */
+.payoff-source {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.payoff-source.needed {
+  color: var(--warn);
+}
+
+.payoff-source.invalid {
+  color: var(--down);
+}
+
+.payoff-leave {
+  margin-top: 8px;
+}
+
+/* The comparison: the chosen order's row in full ink, the others muted. */
+.payoff-compare td {
+  color: var(--muted);
+  vertical-align: top;
+}
+
+.payoff-compare tr.chosen td {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* A line's key in the chart's legend and readout: a short stroke, since the
+   series are lines. */
+.payoff-key {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.chart-legend-item .payoff-key {
+  margin-right: 0;
+}
+
+.payoff-steps {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.payoff-steps li {
+  padding: 8px 0;
+}
+
+.payoff-steps li + li {
+  border-top: 1px solid var(--line);
+}
+
+.payoff-step {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.payoff-step-when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The line under a month or a debt: how long, and what it costs. */
+.payoff-sub {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-top: 2px;
+}
