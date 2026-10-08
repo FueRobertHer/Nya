@@ -731,9 +731,13 @@ export function FiCard({
       flows.refunds > 0
         ? `, less ${money(flows.refunds)} of refunds${big ? ` (the largest, ${money(big.amount)} from ${big.name} on ${dayName(big.date)})` : ''}`
         : '';
+    // Transactions the person left out of budgets and reports count in no
+    // figure here either (lib/fire/inputs.ts), which the label says.
+    const left = flows.excludedCount;
+    const excluded = left > 0 ? ` Leaves out ${left} transaction${left === 1 ? '' : 's'} you excluded from budgets and reports.` : '';
     spendingNote = (
       <Notes
-        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.`}
+        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.${excluded}`}
         warnings={[
           flows.unclearLoans > 0
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`

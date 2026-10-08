@@ -60,6 +60,14 @@ export type Txn = {
   counterparty: string | null; // real merchant behind a processor, when it differs
   payment_processor: string | null; // e.g. the PayPal/Square in front of the merchant
   payment_reference: string | null; // payment_meta reference number, for "what is this charge?"
+
+  // Set by /api/transactions on rows that aren't a bank's, and on any row the
+  // person excluded; absent otherwise, so a payload cached before they existed
+  // reads the same.
+  source?: string; // a manual row's source: 'manual' for one entered by hand (lib/manual-txns.ts)
+  account_id?: string; // a manual row's account, for editing it
+  note?: string | null; // a manual row's note
+  excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
 };
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.

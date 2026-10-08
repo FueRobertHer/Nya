@@ -6,13 +6,17 @@
 // (green positive, red negative). Below it, a two-line chart traces cumulative
 // income vs spend across the days of the selected month. Then a summary shows
 // money in / money out / net (transfers and loan payments excluded, so
-// credit-card payments don't double-count as both spending and income); top
-// spending categories draw as single-hue horizontal bars (magnitude lives in
-// length, not color); and finally the searchable transaction list.
+// credit-card payments don't double-count as both spending and income, and so
+// is anything the person excluded: lib/spending.ts); top spending categories
+// draw as single-hue horizontal bars (magnitude lives in length, not color);
+// and finally the searchable transaction list, where a manual row can be
+// edited and any row excluded from budgets and reports.
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { dominantCurrency } from "@/lib/format";
+import { countsInTotals } from "@/lib/spending";
+import { sourceLabel } from "@/lib/manual-txn-input";
 
 export type Txn = {
   transaction_id: string;
@@ -40,6 +44,11 @@ export type Txn = {
   counterparty: string | null;
   payment_processor: string | null;
   payment_reference: string | null;
+  // As in lib/transactions.ts: on manual rows, and on rows the person excluded.
+  source?: string;
+  account_id?: string;
+  note?: string | null;
+  excluded?: boolean | null;
 };
 
 function fmtUsd(n: number): string {
@@ -132,18 +141,11 @@ function isLowConfidence(t: Txn): boolean {
   return !!t.category_confidence && LOW_CONFIDENCE.has(t.category_confidence);
 }
 
-// Money moving between your own accounts isn't income or spending. Plaid's
-// transaction_code is the reliable signal (transfer / atm / bank charge / fee);
-// the category heuristic stays as a fallback for rows Plaid didn't code (older
-// data, or codes it never resolved).
-const TRANSFER_CODES = new Set(["transfer", "atm", "bank charge"]);
-export function isTransfer(t: Txn): boolean {
-  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
-  return (
-    !!t.category &&
-    (t.category.startsWith("transfer") || t.category === "loan payments")
-  );
-}
+// Money moving between your own accounts isn't income or spending, and a
+// transaction the person excluded counts in no total: both decided in
+// lib/spending.ts, which every total uses. isTransfer is re-exported for code
+// that imported it from here.
+export { isTransfer } from "@/lib/spending";
 
 // A short "HH:MM" from Plaid's ISO datetime, in the viewer's locale. Null when
 // the row carries only a posting date.
@@ -155,7 +157,7 @@ function fmtTime(iso: string | null): string | null {
 }
 
 // Base category options for recategorization, merged with whatever
-// categories appear in the data.
+// categories appear in the data (categoryOptions).
 const BASE_CATEGORIES = [
   "food and drink",
   "general merchandise",
@@ -172,6 +174,16 @@ const BASE_CATEGORIES = [
   "loan payments",
   "other",
 ];
+
+/** The categories to choose from: the base ones and every one in the data,
+ *  sorted. Shared with the quick-add form (components/ManualTxnSheet.tsx). */
+export function categoryOptions(txns: Txn[] | null): string[] {
+  const set = new Set(BASE_CATEGORIES);
+  (txns ?? []).forEach((t) => {
+    if (t.category) set.add(t.category);
+  });
+  return [...set].sort();
+}
 
 // "What is this charge?" detail panel, shown inside the expanded row. Surfaces
 // the Plaid fields that answer the question — the real merchant behind a
@@ -209,6 +221,7 @@ function TxnDetail({ t }: { t: Txn }) {
     rows.push({ label: "Reference", value: t.payment_reference });
   if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
   if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
+  if (t.note) rows.push({ label: "Note", value: t.note });
 
   if (rows.length === 0) return null;
 
@@ -230,25 +243,29 @@ export default function MonthBreakdown({
   loading,
   onRecategorize,
   onRename,
+  onAddTransaction,
+  onEditTransaction,
+  onToggleExcluded,
 }: {
   txns: Txn[] | null;
   notes: string[];
   loading: boolean;
   onRecategorize: (transaction_id: string, category: string) => void;
   onRename: (vendor_key: string, name: string) => void;
+  /** Opens the quick-add form; left out when there is no manual account to
+   *  add to, which hides the button. */
+  onAddTransaction?: () => void;
+  /** Opens a manual row's edit form. */
+  onEditTransaction?: (t: Txn) => void;
+  /** Leaves a transaction out of budgets and reports, or puts it back. */
+  onToggleExcluded?: (t: Txn, excluded: boolean) => void;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
   const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
   const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
 
-  const categoryOptions = useMemo(() => {
-    const set = new Set(BASE_CATEGORIES);
-    (txns ?? []).forEach((t) => {
-      if (t.category) set.add(t.category);
-    });
-    return [...set].sort();
-  }, [txns]);
+  const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
   const months = useMemo(() => {
     const set = new Set<string>();
@@ -276,12 +293,24 @@ export default function MonthBreakdown({
     return seen.size > 1;
   }, [monthTxns]);
 
+  // Rows the person excluded, and rows whether they did couldn't be read
+  // (counted, so the total may include one): both said under the summary.
+  const { excludedCount, unknownCount } = useMemo(() => {
+    let excludedCount = 0;
+    let unknownCount = 0;
+    for (const t of monthTxns) {
+      if (t.excluded === true) excludedCount++;
+      else if (t.excluded === null) unknownCount++;
+    }
+    return { excludedCount, unknownCount };
+  }, [monthTxns]);
+
   const { moneyIn, moneyOut, categories } = useMemo(() => {
     let inflow = 0;
     let outflow = 0;
     const byCategory: Record<string, number> = {};
     for (const t of monthTxns) {
-      if (isTransfer(t)) continue;
+      if (!countsInTotals(t)) continue;
       if (t.amount < 0) {
         inflow += -t.amount;
       } else {
@@ -303,7 +332,7 @@ export default function MonthBreakdown({
     let online = 0;
     let inStore = 0;
     for (const t of monthTxns) {
-      if (t.amount <= 0 || isTransfer(t)) continue;
+      if (t.amount <= 0 || !countsInTotals(t)) continue;
       if (t.payment_channel === "online") online += t.amount;
       else if (t.payment_channel === "in store") inStore += t.amount;
     }
@@ -315,7 +344,7 @@ export default function MonthBreakdown({
   const topCities = useMemo(() => {
     const byCity: Record<string, number> = {};
     for (const t of monthTxns) {
-      if (t.amount <= 0 || isTransfer(t) || !t.city) continue;
+      if (t.amount <= 0 || !countsInTotals(t) || !t.city) continue;
       const label = t.region ? `${t.city}, ${t.region}` : t.city;
       byCity[label] = (byCity[label] ?? 0) + t.amount;
     }
@@ -334,7 +363,7 @@ export default function MonthBreakdown({
         let inflow = 0;
         let outflow = 0;
         for (const t of txns ?? []) {
-          if (t.date.slice(0, 7) !== m || isTransfer(t)) continue;
+          if (t.date.slice(0, 7) !== m || !countsInTotals(t)) continue;
           if (t.amount < 0) inflow += -t.amount;
           else outflow += t.amount;
         }
@@ -392,11 +421,23 @@ export default function MonthBreakdown({
     );
   }
 
+  // Entering a transaction by hand, on a manual account: first on the tab,
+  // where a phone reaches it without scrolling.
+  const addCard = onAddTransaction && (
+    <div className="card">
+      <button onClick={onAddTransaction}>Add a transaction</button>
+      <p className="panel-note">For cash, or a manual account. It doesn&apos;t change the account&apos;s balance unless you ask.</p>
+    </div>
+  );
+
   if (!txns || (txns.length === 0 && notes.length === 0)) {
     return (
-      <div className="card">
-        <p className="empty-note">No transactions in the last 12 months.</p>
-      </div>
+      <>
+        {addCard}
+        <div className="card">
+          <p className="empty-note">No transactions in the last 12 months.</p>
+        </div>
+      </>
     );
   }
 
@@ -405,6 +446,7 @@ export default function MonthBreakdown({
 
   return (
     <>
+      {addCard}
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
@@ -469,7 +511,12 @@ export default function MonthBreakdown({
           </div>
         </div>
         <div className="chart-note">
-          Transfers and loan payments excluded.
+          Transfers and loan payments excluded
+          {excludedCount > 0 &&
+            `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
+          .
+          {unknownCount > 0 &&
+            ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
           {mixedCurrency && " Totals mix currencies and aren't converted."}
         </div>
       </div>
@@ -629,7 +676,18 @@ export default function MonthBreakdown({
                               {t.institution_name} · {t.account_name}
                               {t.category ? ` · ${t.category}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
+                              {t.source ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
+                            {t.excluded === true && (
+                              <div className="excluded-tag">
+                                Excluded from budgets and reports
+                              </div>
+                            )}
+                            {t.excluded === null && (
+                              <div className="excluded-tag">
+                                Couldn&apos;t read whether you excluded this
+                              </div>
+                            )}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -646,12 +704,25 @@ export default function MonthBreakdown({
                               }}
                               aria-label={`Category for ${t.name}`}
                             >
-                              {categoryOptions.map((c) => (
+                              {pickable.map((c) => (
                                 <option key={c} value={c}>
                                   {c}
                                 </option>
                               ))}
                             </select>
+                            {t.source && onEditTransaction && (
+                              <div className="rename-row">
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    onEditTransaction(t);
+                                    setRecatId(null);
+                                  }}
+                                >
+                                  Edit or delete
+                                </button>
+                              </div>
+                            )}
                             {t.vendor_key && (
                               <>
                                 <div className="rename-row">
@@ -682,11 +753,33 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
+                            {onToggleExcluded && (
+                              <>
+                                <div className="rename-row">
+                                  <button
+                                    className="secondary"
+                                    onClick={() => {
+                                      onToggleExcluded(t, t.excluded !== true);
+                                      setRecatId(null);
+                                    }}
+                                  >
+                                    {t.excluded === true
+                                      ? "Include in budgets and reports"
+                                      : "Exclude from budgets and reports"}
+                                  </button>
+                                </div>
+                                <div className="rename-hint">
+                                  {t.excluded === true
+                                    ? "Counts in totals, budgets, insights, bills and the Plan again."
+                                    : "For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan."}
+                                </div>
+                              </>
+                            )}
                             <TxnDetail t={t} />
                           </div>
                         )}
                       </td>
-                      <td className={`num${t.amount < 0 ? " inflow" : ""}`}>
+                      <td className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true ? " excluded" : ""}`}>
                         {fmtTxnAmount(t.amount, t.iso_currency_code)}
                       </td>
                     </tr>

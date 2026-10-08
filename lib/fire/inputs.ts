@@ -4,9 +4,9 @@
 // with what it was measured from and what may be missing from it, for the
 // label beside it. The person can override every one (lib/fire/plan.ts).
 //
-// SPENDING starts from the Activity tab's rule (components/MonthBreakdown.tsx
-// isTransfer, unchanged there) and puts back what that rule leaves out for a
-// reason that doesn't hold for planning. The Activity tab drops every loan
+// SPENDING starts from the Activity tab's rule (lib/spending.ts isTransfer,
+// unchanged there) and puts back what that rule leaves out for a reason that
+// doesn't hold for planning. The Activity tab drops every loan
 // payment and every ATM withdrawal so that paying a card off isn't counted as
 // spending twice; but a mortgage, car or student loan payment, or cash taken
 // out and spent, is money the person needs every year, and nothing else
@@ -32,7 +32,11 @@
 //     spending, so an odd large one (a deposit returned) can be seen.
 // Pending rows count, as they do on the Activity tab; a pending row whose
 // posted row has arrived was already dropped by /api/transactions
-// (lib/transactions.ts supersededPendingIds), so nothing counts twice.
+// (lib/transactions.ts supersededPendingIds), so nothing counts twice. A
+// transaction the person excluded from budgets and reports (lib/spending.ts
+// isExcluded: a car bought outright, say) counts in none of the year's
+// figures; it still marks how far back the history goes, and the label says
+// how many were left out.
 //
 // SAVINGS is a year of income minus spending from bank data, plus what was
 // contributed to workplace retirement plans (401(k) and the like), which
@@ -48,7 +52,8 @@
 // checking and savings), not hidden, as the Accounts tab shows them, with
 // what is stale or missing named.
 
-import { isTransfer, type Txn } from '@/components/MonthBreakdown';
+import { type Txn } from '@/components/MonthBreakdown';
+import { isExcluded, isTransfer } from '@/lib/spending';
 import { isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 
@@ -150,6 +155,9 @@ export type TrailingFlows = {
   scaled: boolean;
   /** Transactions counted (transfers and card payments left out). */
   count: number;
+  /** Transactions in the window the person excluded, counted in none of
+   *  the figures. */
+  excludedCount: number;
   /** The currency most of them are in, and whether others were summed with it. */
   currency: string | null;
   mixedCurrency: boolean;
@@ -180,6 +188,7 @@ export function trailingFlows(txns: Txn[], today: string): TrailingFlows | null 
     transfer: 0,
   };
   let count = 0;
+  let excludedCount = 0;
   let earliest = end;
   const counted: Txn[] = [];
   let largestRefund: TrailingFlows['largestRefund'] = null;
@@ -187,6 +196,10 @@ export function trailingFlows(txns: Txn[], today: string): TrailingFlows | null 
     const d = dayNumber(t.date);
     if (!(d >= start && d <= end)) continue; // also skips a malformed date
     if (d < earliest) earliest = d;
+    if (isExcluded(t)) {
+      excludedCount++;
+      continue;
+    }
     const flow = planFlow(t);
     sums[flow] += t.amount;
     if (flow === 'refund' && (largestRefund === null || -t.amount > largestRefund.amount)) {
@@ -217,6 +230,7 @@ export function trailingFlows(txns: Txn[], today: string): TrailingFlows | null 
     days,
     scaled: scale !== 1,
     count,
+    excludedCount,
     currency: dominantCurrency(counted),
     mixedCurrency: currencies.size > 1,
   };

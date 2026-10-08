@@ -18,7 +18,9 @@
 //   import './rules';
 
 import './fire-plan';
+import './manual-txns';
 import './rate-limit';
+import './txn-annotations';
 
 import { storesDeclaredSoFar, type Store } from './repo';
 

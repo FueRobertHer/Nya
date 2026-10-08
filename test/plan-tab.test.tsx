@@ -28,6 +28,7 @@ const flows: TrailingFlows = {
   days: 365,
   scaled: false,
   count: 400,
+  excludedCount: 0,
   currency: 'USD',
   mixedCurrency: false,
 };
@@ -148,6 +149,14 @@ describe('the FI card', () => {
       'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
     );
     expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
+  });
+
+  test('says how many transactions the person excluded were left out of spending', () => {
+    expect(card(plan())).not.toContain('Leaves out');
+    expect(card(plan(), { f: { ...flows, excludedCount: 1 } })).toContain(
+      'from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026). Leaves out 1 transaction you excluded from budgets and reports.'
+    );
+    expect(card(plan(), { f: { ...flows, excludedCount: 3 } })).toContain('Leaves out 3 transactions you excluded from budgets and reports.');
   });
 
   test('a figure that may be short says so, beside it and on the FI number, naming the institution', () => {

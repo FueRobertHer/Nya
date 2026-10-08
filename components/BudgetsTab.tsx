@@ -2,12 +2,15 @@
 
 // Budgets tab -- the Mint core loop: monthly budgets per spending category
 // with progress meters (fill carries severity: accent -> warning -> over),
-// plus detected recurring bills. Spending is the current month's non-transfer
-// outflows, from the already-loaded transactions.
+// plus detected recurring bills. Spending is the current month's outflows that
+// count in totals (lib/spending.ts: not transfers or loan payments, and not
+// excluded), from the already-loaded transactions: the same rule as the
+// Activity tab and the Home insights, so a budget agrees with both.
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
+import { countsInTotals } from '@/lib/spending';
 import { detectRecurring } from '@/lib/recurring';
 import { localMonth } from '@/lib/local-date';
 import { formatMoney, dominantCurrency } from '@/lib/format';
@@ -20,10 +23,6 @@ function fmtDay(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
-}
-
-function isTransfer(t: Txn): boolean {
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
 }
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
@@ -79,7 +78,7 @@ export default function BudgetsTab({
   const spendByCat = useMemo(() => {
     const map: Record<string, number> = {};
     (txns ?? []).forEach((t) => {
-      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || isTransfer(t)) return;
+      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || !countsInTotals(t)) return;
       const cat = t.category ?? 'other';
       map[cat] = (map[cat] ?? 0) + t.amount;
     });
@@ -90,7 +89,7 @@ export default function BudgetsTab({
   const availableCategories = useMemo(() => {
     const seen = new Set<string>();
     (txns ?? []).forEach((t) => {
-      if (t.amount > 0 && !isTransfer(t)) seen.add(t.category ?? 'other');
+      if (t.amount > 0 && countsInTotals(t)) seen.add(t.category ?? 'other');
     });
     return [...seen].filter((c) => !(c in budgets)).sort();
   }, [txns, budgets]);

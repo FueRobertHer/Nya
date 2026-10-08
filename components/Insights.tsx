@@ -2,10 +2,12 @@
 
 // Small computed observations for the Home tab -- the "is this normal?"
 // glance the big trackers lead with. Everything derives from data already
-// loaded (history + transactions), no extra API calls.
+// loaded (history + transactions), no extra API calls. Spending is what counts
+// in totals (lib/spending.ts), as on the Activity and Budgets tabs.
 
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
+import { countsInTotals } from '@/lib/spending';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { localMonth } from '@/lib/local-date';
 import { formatMoney, dominantCurrency } from '@/lib/format';
@@ -53,12 +55,6 @@ export type InsightAccount = {
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
 
-const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
-function isTransfer(t: Txn): boolean {
-  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
-}
-
 // 'warn' is the amber the Accounts tab uses for idle cash: worth doing
 // something about, but nothing has gone wrong, which is what separates it from
 // the red 'down' of an overdue payment.
@@ -89,7 +85,7 @@ export default function Insights({
     if (txns) {
       const spendByCat: Record<string, number> = {};
       for (const t of txns) {
-        if (t.date.slice(0, 7) !== thisMonthKey || t.amount <= 0 || isTransfer(t)) continue;
+        if (t.date.slice(0, 7) !== thisMonthKey || t.amount <= 0 || !countsInTotals(t)) continue;
         const cat = t.category ?? 'other';
         spendByCat[cat] = (spendByCat[cat] ?? 0) + t.amount;
       }
@@ -213,7 +209,7 @@ export default function Insights({
 
       const spend = (month: string) =>
         txns
-          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && !isTransfer(t))
+          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && countsInTotals(t))
           .reduce((sum, t) => sum + t.amount, 0);
 
       // --- spending pace vs last month, prorated to the same day-of-month ---
@@ -245,7 +241,7 @@ export default function Insights({
 
       // --- biggest purchase this month ---
       const purchases = txns.filter(
-        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && !isTransfer(t)
+        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && countsInTotals(t)
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));

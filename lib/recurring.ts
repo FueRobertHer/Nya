@@ -7,12 +7,14 @@
 // roughly once per month, at a consistent amount (spread <= 25% of the
 // average, with a $5 floor for small subscriptions). Loan payments count
 // (mortgage/car payments are classic bills); transfers between own accounts
-// don't. Grouped per institution so the same subscription showing on two
-// linked accounts isn't miscounted as twice-monthly.
+// don't, and neither does a charge the person excluded (lib/spending.ts).
+// Grouped per institution so the same subscription showing on two linked
+// accounts isn't miscounted as twice-monthly.
 
 import { type Txn } from '@/components/MonthBreakdown';
 import { dominantCurrency } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
+import { isExcluded, isMoneyMovement } from '@/lib/spending';
 
 export type RecurringBill = {
   name: string;
@@ -25,10 +27,6 @@ export type RecurringBill = {
   monthsSeen: number;
 };
 
-// Codes that move money without being spending: transfers, ATM, fees. Plaid's
-// transaction_code is more reliable than the category heuristic below.
-const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
-
 function addDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -38,11 +36,10 @@ function addDays(iso: string, days: number): string {
 export function detectRecurring(txns: Txn[]): RecurringBill[] {
   const groups = new Map<string, Txn[]>();
   for (const t of txns) {
-    if (t.amount <= 0 || t.pending) continue;
+    if (t.amount <= 0 || t.pending || isExcluded(t)) continue;
     // Loan payments intentionally still count (mortgage/car are classic bills);
-    // only true transfers/ATM/fees are excluded.
-    if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) continue;
-    if (t.category?.startsWith('transfer')) continue;
+    // only money moved (transfers, ATM, a bank's charges) is left out.
+    if (isMoneyMovement(t)) continue;
     const key = `${t.institution_name}::${t.name.toLowerCase().trim()}`;
     const list = groups.get(key);
     if (list) list.push(t);

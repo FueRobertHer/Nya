@@ -618,7 +618,13 @@ describe('stores built on the storage seam', () => {
     const doc = await download();
     const keys = Object.keys(doc);
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
-    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings', 'fire-plan']);
+    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'export-test-plans',
+      'export-test-settings',
+      'fire-plan',
+      'manual-transactions',
+      'transaction-annotations',
+    ]);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
       { id: 'p1', value: { name: 'House', target: 120_000 } },

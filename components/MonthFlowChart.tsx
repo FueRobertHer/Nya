@@ -7,12 +7,14 @@
 // carries a small legend, and the scrub readout shows both values at once.
 //
 // Transfers and loan payments are excluded (same rule as the rest of the
-// Activity tab) so credit-card payments don't double-count. For the current
+// Activity tab, lib/spending.ts) so credit-card payments don't double-count,
+// and so is anything the person excluded. For the current
 // month the x-axis stops at today rather than trailing a flat line to
 // month-end.
 
 import { useMemo, useRef, useState } from 'react';
-import { isTransfer, type Txn } from './MonthBreakdown';
+import { type Txn } from './MonthBreakdown';
+import { countsInTotals } from '@/lib/spending';
 import { formatMoney, compactMoney, dominantCurrency } from '@/lib/format';
 
 const W = 340;
@@ -50,7 +52,7 @@ export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: st
     const inByDay = new Array(lastDay + 1).fill(0);
     const outByDay = new Array(lastDay + 1).fill(0);
     for (const t of txns) {
-      if (isTransfer(t)) continue;
+      if (!countsInTotals(t)) continue;
       const day = Number(t.date.slice(8, 10));
       if (day < 1 || day > lastDay) continue;
       if (t.amount < 0) inByDay[day] += -t.amount;
