@@ -22,7 +22,12 @@ export type DeletionCounts = {
   /** Banks Plaid wouldn't disconnect: their tokens are deleted with the rest,
    *  but Plaid may keep the connection (see the receipt's last section). */
   banks_not_disconnected: number;
+  /** The accounts of the banks still connected, and the manual accounts, an
+   *  account linked across a reconnect counted once (lib/user-export.ts
+   *  countAccounts). */
   accounts: number | null;
+  /** Accounts of banks disconnected earlier, kept for their history. */
+  earlier_accounts: number | null;
   transactions: number | null;
   investment_transactions: number | null;
   /** Days with any recorded or estimated balance. */
@@ -33,6 +38,14 @@ export type DeletionCounts = {
 };
 
 export type BackupRetention = { kept: false } | { kept: true; keep_days: number; min_kept: number; max_days: number } | null;
+
+/**
+ * A day added to the backup date people are given. The nightly backup is
+ * pruned minutes into a run that a cron can start up to an hour late, so the
+ * last copy can outlive the exact figure (lib/backup.ts backupRetention) by
+ * that much: past midnight, for some time zones.
+ */
+export const BACKUP_DATE_MARGIN_DAYS = 1;
 
 export type DeletionReceipt = {
   /** When it finished: an ISO time. */
@@ -78,25 +91,34 @@ export function buildDeletionReceipt(input: {
               kept: true,
               keep_days: retention.keep_days,
               min_kept: retention.min_kept,
-              until: new Date(input.deleted_at.getTime() + retention.max_days * 86_400_000).toISOString(),
+              until: new Date(input.deleted_at.getTime() + (retention.max_days + BACKUP_DATE_MARGIN_DAYS) * 86_400_000).toISOString(),
               stopped: input.stopped,
             },
   };
 }
 
-const sum = (a: number | null, b: number | null) => (a === null || b === null ? null : a + b);
+/** What was stored, across two attempts: counted by the first (a retry
+ *  doesn't count again, and answers null), plus whatever a retry still found
+ *  (0 once the container is gone). Unknown at first stays unknown. */
+const stored = (earlier: number | null, later: number | null) => (earlier === null ? null : later === null ? earlier : earlier + later);
 
-/** An earlier attempt's counts added to a later one's, for a deletion that
- *  took two tries: what the first deleted is gone before the second looks.
- *  Unknown stays unknown. */
+/**
+ * An earlier attempt's counts and a later one's, for a deletion that took two
+ * tries. The banks are as the latest attempt that still found them saw them: a
+ * retry sees every one again (those the first disconnected now report
+ * themselves gone, which counts as disconnected), so adding the two would
+ * count them twice; once they are swept, the first attempt's view stands.
+ */
 export function mergeCounts(earlier: DeletionCounts, later: DeletionCounts): DeletionCounts {
+  const banks = later.banks_disconnected + later.banks_not_disconnected > 0 ? later : earlier;
   return {
-    banks_disconnected: earlier.banks_disconnected + later.banks_disconnected,
-    banks_not_disconnected: earlier.banks_not_disconnected + later.banks_not_disconnected,
-    accounts: sum(earlier.accounts, later.accounts),
-    transactions: sum(earlier.transactions, later.transactions),
-    investment_transactions: sum(earlier.investment_transactions, later.investment_transactions),
-    history_days: sum(earlier.history_days, later.history_days),
+    banks_disconnected: banks.banks_disconnected,
+    banks_not_disconnected: banks.banks_not_disconnected,
+    accounts: stored(earlier.accounts, later.accounts),
+    earlier_accounts: stored(earlier.earlier_accounts, later.earlier_accounts),
+    transactions: stored(earlier.transactions, later.transactions),
+    investment_transactions: stored(earlier.investment_transactions, later.investment_transactions),
+    history_days: stored(earlier.history_days, later.history_days),
     connections_ended: earlier.connections_ended + later.connections_ended,
     sign_in_deleted: later.sign_in_deleted,
   };
@@ -120,13 +142,15 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): ReceiptSection[] {
   const number = new Intl.NumberFormat(opts.locale);
   const day = (iso: string) => new Intl.DateTimeFormat(opts.locale, { dateStyle: 'long', timeZone: opts.timeZone }).format(new Date(iso));
-  const count = (n: number | null) => (n === null ? 'not counted (it couldn’t be read to count it, and was deleted all the same)' : number.format(n));
+  const count = (n: number | null) => (n === null ? 'unavailable' : number.format(n));
   const d = r.deleted;
+  const unavailable = [d.accounts, d.transactions, d.investment_transactions, d.history_days].some((n) => n === null);
 
   const now = [
     `Banks disconnected at Plaid: ${number.format(d.banks_disconnected)}`,
     ...(d.banks_not_disconnected > 0 ? [`Banks Plaid wouldn’t disconnect: ${number.format(d.banks_not_disconnected)} (see What stays)`] : []),
     `Accounts: ${count(d.accounts)}`,
+    ...(d.earlier_accounts ? [`Earlier accounts, of banks you had disconnected, kept for their history: ${number.format(d.earlier_accounts)}`] : []),
     `Transactions: ${count(d.transactions)}`,
     `Investment transactions: ${count(d.investment_transactions)}`,
     `Days of balance history: ${count(d.history_days)}`,
@@ -136,7 +160,9 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
   if (!r.found_data && !r.includes_earlier_attempt) {
     now.push('Nothing was stored for this account any more: an earlier attempt had already deleted it, or nothing was ever stored.');
   } else if (r.resumed && !r.includes_earlier_attempt) {
-    now.push('An earlier attempt had already deleted part of this, so these counts are what was left.');
+    now.push('An earlier attempt had already begun this deletion, so what was stored wasn’t counted again (part of it may already have been gone). All of it was deleted.');
+  } else if (unavailable) {
+    now.push('A figure shown as unavailable couldn’t be counted in time. What it describes was deleted all the same.');
   }
 
   const b = r.backups;
@@ -146,7 +172,7 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
       : !b.kept
         ? ['Nightly backups: this server keeps none, so no copy of your data is left in one.']
         : [
-            `Nightly backups: copies taken before the deletion still hold your data, encrypted. Each copy is deleted once it is more than ${plural(b.keep_days, 'day', 'days')} old, and the newest ${b.min_kept} are always kept, so the last one holding your data is gone by ${day(b.until)}. ` +
+            `Nightly backups: copies taken before the deletion still hold your data. Its values are encrypted, but dates, account and transaction ids, bank names and the merchant names you renamed are in plain text. Each copy is deleted once it is more than ${plural(b.keep_days, 'day', 'days')} old, and the newest ${b.min_kept} are always kept, so the last one holding your data is gone by ${day(b.until)}. ` +
               (b.stopped
                 ? 'The nightly backup isn’t running right now, and old copies are deleted only when it runs, so that date moves later by as long as it stays stopped.'
                 : 'That holds as long as the nightly backup keeps running.'),

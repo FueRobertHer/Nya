@@ -115,7 +115,8 @@ export function DeleteAccountView({
           <p className="sub">
             Disconnects your banks, deletes everything stored for you (balances, history, transactions, categories,
             budgets, goals) and stops all sharing, then deletes your sign-in. This can’t be undone.
-            {typeof status.backup_days === 'number' && ` Nightly backups keep an encrypted copy for up to ${status.backup_days} days.`}{' '}
+            {typeof status.backup_days === 'number' &&
+              ` Nightly backups keep a copy for up to ${status.backup_days} days: encrypted, except dates, ids, bank names and the merchant names you renamed.`}{' '}
             To keep a copy, use Download my data under Manage accounts first. When it’s done you’ll get a receipt of what
             was deleted and what stays.
           </p>

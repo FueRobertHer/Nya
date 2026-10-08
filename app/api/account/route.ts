@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { clerkEnabled } from '@/lib/auth-mode';
-import { deleteAccount, deletionCheck, DeletionRefused, SignInNotDeleted } from '@/lib/account-deletion';
+import { deleteAccount, deletionCheck, DeletionRefused, DeletionIncomplete } from '@/lib/account-deletion';
 import { backupProblem, backupRetention } from '@/lib/backup';
-import { buildDeletionReceipt } from '@/lib/deletion-receipt';
+import { buildDeletionReceipt, BACKUP_DATE_MARGIN_DAYS } from '@/lib/deletion-receipt';
 import { plaidClient } from '@/lib/plaid';
 
 // The signed-in account itself (lib/account-deletion.ts). Only with Clerk on:
@@ -12,12 +12,23 @@ import { plaidClient } from '@/lib/plaid';
 //
 // A finished deletion answers with its receipt (lib/deletion-receipt.ts): what
 // was deleted, when the last backup holding it expires, and what stays. One
-// that stopped after deleting the data but not the sign-in answers with what
-// it did delete (deleted_so_far), so the receipt the retry ends with counts it.
+// that stopped part way, after counting, answers with what it had done
+// (deleted_so_far), so the receipt the retry ends with counts it.
 
-// Counting what is stored reads all of it once, and each bank is a call to
-// Plaid: more than the default allows for a large account.
-export const maxDuration = 60;
+// Each bank is a call to Plaid and the whole container is swept: the same
+// allowance as the other routes that walk a lot of data, and no less than the
+// platform's own default.
+export const maxDuration = 300;
+
+/** Plaid no longer has the connection: an earlier attempt removed it, or the
+ *  person did, at the Plaid Portal. ITEM_NOT_FOUND only: INVALID_ACCESS_TOKEN
+ *  is also what a token from another Plaid environment gets (a deployment's
+ *  settings changed), when the connection may well still exist, so that one
+ *  stays a connection Plaid wouldn't disconnect (lib/item-usage.ts reads it
+ *  the same way). */
+function goneAtPlaid(err: unknown): boolean {
+  return (err as { response?: { data?: { error_code?: string } } } | null)?.response?.data?.error_code === 'ITEM_NOT_FOUND';
+}
 
 async function signedIn(): Promise<string | null> {
   const { auth } = await import('@clerk/nextjs/server');
@@ -28,7 +39,7 @@ async function signedIn(): Promise<string | null> {
  *  null when this server keeps none, or it can't be worked out. */
 function backupDays(): number | null {
   const r = backupRetention();
-  return r?.kept ? r.max_days : null;
+  return r?.kept ? r.max_days + BACKUP_DATE_MARGIN_DAYS : null;
 }
 
 export async function GET() {
@@ -53,7 +64,12 @@ export async function DELETE(req: Request) {
   try {
     const result = await deleteAccount(userId, {
       removeItem: async (access_token) => {
-        await plaidClient.itemRemove({ access_token });
+        try {
+          await plaidClient.itemRemove({ access_token });
+        } catch (err) {
+          // Already gone is disconnected, which is what this step is for.
+          if (!goneAtPlaid(err)) throw err;
+        }
       },
       deleteUser: async (id) => (await import('@/lib/clerk-users')).deleteClerkUser(id),
     });
@@ -69,12 +85,12 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ deleted: true, disconnected: result.disconnected, deletedKeys: result.deletedKeys, receipt });
   } catch (err) {
     if (err instanceof DeletionRefused) return NextResponse.json({ error: err.message }, { status: 409 });
-    const cause = err instanceof SignInNotDeleted && err.cause instanceof Error ? `: ${err.cause.name}` : '';
+    const cause = err instanceof DeletionIncomplete && err.cause instanceof Error ? `: ${err.cause.name}` : '';
     console.error('Account deletion failed', err instanceof Error ? `${err.name}${cause}` : err);
     return NextResponse.json(
       {
         error: 'The deletion stopped part way. Run it again to finish.',
-        ...(err instanceof SignInNotDeleted ? { deleted_so_far: err.counts } : {}),
+        ...(err instanceof DeletionIncomplete ? { deleted_so_far: err.counts } : {}),
       },
       { status: 500 }
     );

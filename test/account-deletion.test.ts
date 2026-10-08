@@ -6,10 +6,13 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const removed: string[] = [];
 let removeFails = false;
+/** What Plaid answers instead, when set: an error in Plaid's own shape. */
+let removeError: unknown = null;
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     itemRemove: async (req: any) => {
       if (removeFails) throw new Error('plaid down');
+      if (removeError) throw removeError;
       removed.push(req.access_token);
       return { data: {} };
     },
@@ -39,6 +42,15 @@ const { ownerContainer, ownersKey } = await import('@/lib/owners');
 const { saveManualAccount } = await import('@/lib/manual');
 const { registryKey } = await import('@/lib/containers');
 const { myConnections } = await import('@/lib/sharing');
+const { deleteAccount } = await import('@/lib/account-deletion');
+
+/** Reads of the partner's history never answer, as a stalled database call
+ *  doesn't. Returns the undo. */
+const stallHistory = () => {
+  const hgetall = fake.hgetall.bind(fake);
+  (fake as any).hgetall = (key: string) => (key.includes(':history:') ? new Promise(() => {}) : hgetall(key));
+  return () => void delete (fake as any).hgetall;
+};
 
 const route = async (path: string, method: string, body?: unknown) => {
   const mod: any = await import(`@/app/api/${path}/route`);
@@ -59,6 +71,7 @@ beforeEach(async () => {
   removed.length = 0;
   deletedUsers.length = 0;
   removeFails = false;
+  removeError = null;
   deleteUserFails = false;
   duringDeleteUser = async () => {};
   (await import('@/lib/sessions')).forgetEpochs();
@@ -125,6 +138,7 @@ describe('deleting my account', () => {
         banks_disconnected: 1,
         banks_not_disconnected: 0,
         accounts: 2, // the linked one and the manual one
+        earlier_accounts: 0,
         transactions: 2,
         investment_transactions: 0,
         history_days: 2,
@@ -179,20 +193,29 @@ describe('deleting my account', () => {
     fake.failNext('del');
     const errors = console.error;
     console.error = () => {};
+    let firstTry: { status: number; body: any };
     try {
-      expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(500);
+      firstTry = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
     } finally {
       console.error = errors;
     }
+    // What it had done comes back, counts and all, for the retry's receipt.
+    expect(firstTry.status).toBe(500);
     // Archived: its own requests and anyone it shared with reach nothing.
     const rec = JSON.parse((await fake.hget<string>(registryKey(), partner.container))!);
     expect(rec.status).toBe('archived');
+    expect(firstTry.body.deleted_so_far).toMatchObject({ banks_disconnected: 1, accounts: 2, transactions: 2, sign_in_deleted: false });
     expect((await as('user_partner', () => route('shared', 'GET'))).status).toBe(503);
     expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toEqual([]);
-    // Again: finished, and the receipt says an earlier attempt had started.
+    // Again: finished, and the receipt says an earlier attempt had begun. What
+    // was stored isn't counted again (part of it may be gone): unavailable,
+    // not a smaller number. The bank, which Plaid now no longer has, counts
+    // as disconnected rather than as one Plaid wouldn't disconnect.
+    removeError = { response: { data: { error_code: 'ITEM_NOT_FOUND' } } };
     const again = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
     expect(again.status).toBe(200);
     expect(again.body.receipt).toMatchObject({ found_data: true, resumed: true });
+    expect(again.body.receipt.deleted).toMatchObject({ banks_disconnected: 1, banks_not_disconnected: 0, accounts: null, transactions: null, history_days: null });
     expect(keysOf(partner.container)).toEqual([]);
     expect(await fake.hget(registryKey(), partner.container)).toBeNull();
   });
@@ -213,6 +236,7 @@ describe('deleting my account', () => {
       banks_disconnected: 1,
       banks_not_disconnected: 0,
       accounts: 2,
+      earlier_accounts: 0,
       transactions: 2,
       investment_transactions: 0,
       history_days: 2,
@@ -253,12 +277,63 @@ describe('deleting my account', () => {
     expect(keysOf(partner.container)).toEqual([]);
   });
 
+  test('counting that stalls never stands between the person and their banks being disconnected', async () => {
+    const undo = stallHistory();
+    const said: string[] = [];
+    const errors = console.error;
+    console.error = (...a: unknown[]) => void said.push(a.map(String).join(' '));
+    try {
+      const result = await deleteAccount('user_partner', { removeItem: async (t) => void removed.push(t), countLimitMs: 50 });
+      expect(removed).toEqual(['token-partner']);
+      expect(keysOf(partner.container)).toEqual([]);
+      expect(result.counts).toMatchObject({ banks_disconnected: 1, accounts: null, transactions: null, history_days: null });
+    } finally {
+      console.error = errors;
+      undo();
+    }
+    expect(said).toEqual(['Account deletion: counting what was stored took longer than 0.05s, so the receipt goes without it']);
+  });
+
+  test('a retry doesn’t count again, so a stalled count can’t hold it up either', async () => {
+    fake.failNext('del');
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(500);
+    } finally {
+      console.error = errors;
+    }
+    // With the full ten-second limit, a count would outlast this test's own time limit.
+    const undo = stallHistory();
+    try {
+      const again = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
+      expect(again.status).toBe(200);
+      expect(again.body.receipt.deleted.accounts).toBeNull();
+    } finally {
+      undo();
+    }
+    expect(keysOf(partner.container)).toEqual([]);
+  });
+
+  test('a token from another Plaid environment is still a bank Plaid wouldn’t disconnect', async () => {
+    removeError = { response: { data: { error_code: 'INVALID_ACCESS_TOKEN' } } };
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      const res = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
+      expect(res.body.receipt.deleted).toMatchObject({ banks_disconnected: 0, banks_not_disconnected: 1 });
+    } finally {
+      console.error = errors;
+    }
+  });
+
   test('the receipt’s backup date is the honest maximum, and says when backups have stopped', async () => {
     process.env.BLOB_READ_WRITE_TOKEN = 'token';
-    expect((await as('user_partner', () => route('account', 'GET'))).body).toMatchObject({ can_delete: true, backup_days: 31 });
+    // 31 days by the pruning rules, and a day for the cron's timing.
+    expect((await as('user_partner', () => route('account', 'GET'))).body).toMatchObject({ can_delete: true, backup_days: 32 });
     const res = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
     const { deleted_at, backups } = res.body.receipt;
-    expect(backups).toEqual({ kept: true, keep_days: 30, min_kept: 7, until: new Date(Date.parse(deleted_at) + 31 * 86_400_000).toISOString(), stopped: false });
+    expect(backups).toEqual({ kept: true, keep_days: 30, min_kept: 7, until: new Date(Date.parse(deleted_at) + 32 * 86_400_000).toISOString(), stopped: false });
   });
 
   test('with backups stopped, or kept for less than the newest seven', async () => {
@@ -266,7 +341,7 @@ describe('deleting my account', () => {
     process.env.BACKUP_KEEP_DAYS = '3';
     await fake.set('test:backups:status', JSON.stringify({ last_ok: null, last_failed: new Date().toISOString(), reason: 'x' }));
     const { deleted_at, backups } = (await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).body.receipt;
-    expect(backups).toMatchObject({ kept: true, keep_days: 3, until: new Date(Date.parse(deleted_at) + 7 * 86_400_000).toISOString(), stopped: true });
+    expect(backups).toMatchObject({ kept: true, keep_days: 3, until: new Date(Date.parse(deleted_at) + 8 * 86_400_000).toISOString(), stopped: true });
   });
 
   test('a backup setting that can’t be read gives no date at all', async () => {

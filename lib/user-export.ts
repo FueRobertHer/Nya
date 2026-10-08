@@ -36,8 +36,18 @@
 import type { Ctx } from './containers';
 import { getItems } from './storage';
 import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
-import { readDirectoryStrict, readDismissedStrict, liveAccountIds, expandHidden, getLinks, effectiveLinks, type DirectoryEntry, type Link } from './links';
-import { getManualAccounts, type ManualAccount } from './manual';
+import {
+  readDirectoryStrict,
+  readDismissedStrict,
+  liveAccountIds,
+  expandHidden,
+  getLinks,
+  effectiveLinks,
+  resolveId,
+  type DirectoryEntry,
+  type Link,
+} from './links';
+import { getManualAccounts, isManualId, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -463,6 +473,40 @@ function mentionedAccountIds(data: UserData): Set<string> {
   }
   for (const id of data.carried.keys()) add(id);
   return ids;
+}
+
+/**
+ * How many accounts the person had, as they would count them, for the receipt
+ * an account deletion ends with (lib/account-deletion.ts):
+ *   - `accounts`: the accounts of the banks still connected, and the manual
+ *     accounts;
+ *   - `earlier`: the accounts of banks they disconnected, kept for their
+ *     history, apart from those.
+ * An account linked across a reconnect (lib/links.ts) is one account, under
+ * however many ids. An id known only from balance history, a link or a
+ * declined offer is not an account of its own here: `accounts` in the
+ * download lists those ids, which is a different question.
+ */
+export function countAccounts(data: UserData): { accounts: number; earlier: number } {
+  const links = effectiveLinks(data.links, data.live);
+  const connected = new Set(data.items.map((i) => i.item_id));
+  const current = new Set<string>();
+  const add = (into: Set<string>, id: string) => {
+    if (!isManualId(id)) into.add(resolveId(id, links));
+  };
+  for (const [item_id, accounts] of Object.entries(data.remembered)) {
+    if (connected.has(item_id)) for (const a of accounts) add(current, a.account_id);
+  }
+  // A connected bank's stores name its accounts too, including one it has
+  // stopped reporting (a closed card with stored transactions).
+  for (const s of data.stores) for (const id of Object.keys(s.accounts)) add(current, id);
+  for (const inv of data.investments) for (const id of Object.keys(inv.state.accounts)) add(current, id);
+  const earlier = new Set<string>();
+  for (const [id, entry] of data.directory) {
+    if (!connected.has(entry.item_id)) add(earlier, id);
+  }
+  for (const id of current) earlier.delete(id);
+  return { accounts: current.size + data.manual.length, earlier: earlier.size };
 }
 
 /** The newest recorded balance in a series (never an estimate), with its day. */

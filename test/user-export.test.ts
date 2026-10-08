@@ -20,6 +20,7 @@ const { getHistory, getAccountHistory } = await import('@/lib/history');
 const {
   collectUserData,
   buildUserExport,
+  countAccounts,
   exportFile,
   jsonPieces,
   fileByteLength,
@@ -561,6 +562,41 @@ describe('caveats', () => {
   test('a part named like a core one can’t replace it', async () => {
     const data = await collectUserData({ ctx, userId: 'user_me' });
     expect(() => buildUserExport({ ...data, sections: [['accounts', []]] }, NOW)).toThrow('called accounts');
+  });
+});
+
+describe('accounts as the person counts them, for the deletion receipt', () => {
+  const counted = async () => countAccounts(await collectUserData({ ctx, userId: 'user_me' }));
+
+  test('each connected bank’s accounts and each manual one, hidden or not; an id seen only in history isn’t one', async () => {
+    // Checking, the hidden card, the brokerage and the house. The old checking
+    // of a disconnected bank is linked to today’s: the same account, counted
+    // once. acc_ghost has only balance history.
+    expect(await counted()).toEqual({ accounts: 4, earlier: 0 });
+  });
+
+  test('an account of a disconnected bank, linked to nothing, is an earlier account, counted apart', async () => {
+    await fake.hdel(ctxKey('account-links'), 'acc_old');
+    expect(await counted()).toEqual({ accounts: 4, earlier: 1 });
+  });
+
+  test('two ids of one connected account, linked, count once', async () => {
+    // A closed card the store still names, linked to its replacement.
+    const stored = await collectUserData({ ctx, userId: 'user_me' });
+    const store = stored.stores.find((s) => s.item_id === 'item_a')!;
+    const data = {
+      ...stored,
+      stores: [{ ...store, accounts: { ...store.accounts, acc_card_old: store.accounts.acc_card } }],
+      links: new Map([...stored.links, ['acc_card_old', { to: 'acc_card', linked_at: '2026-02-01T00:00:00.000Z', evidence: {} }]]),
+    };
+    expect(countAccounts(data)).toEqual({ accounts: 4, earlier: 0 });
+    // Unlinked, it is an account of its own.
+    expect(countAccounts({ ...data, links: stored.links })).toEqual({ accounts: 5, earlier: 0 });
+  });
+
+  test('a manual account that was removed isn’t counted, though its balance history stays', async () => {
+    await fake.hset(ctxKey('history:accounts'), { '2026-01-02': await enc({ acc_chk: 1600.5, acc_card: 500, manual_boat: 9000 }) });
+    expect(await counted()).toEqual({ accounts: 4, earlier: 0 });
   });
 });
 

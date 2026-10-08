@@ -15,6 +15,7 @@ const COUNTS: Counts = {
   banks_disconnected: 2,
   banks_not_disconnected: 0,
   accounts: 7,
+  earlier_accounts: 0,
   transactions: 1234,
   investment_transactions: 56,
   history_days: 400,
@@ -52,7 +53,7 @@ describe('the receipt', () => {
         '- Your sign-in: deleted',
         '',
         'Expires later',
-        '- Nightly backups: copies taken before the deletion still hold your data, encrypted. Each copy is deleted once it is more than 30 days old, and the newest 7 are always kept, so the last one holding your data is gone by November 6, 2026. That holds as long as the nightly backup keeps running.',
+        '- Nightly backups: copies taken before the deletion still hold your data. Its values are encrypted, but dates, account and transaction ids, bank names and the merchant names you renamed are in plain text. Each copy is deleted once it is more than 30 days old, and the newest 7 are always kept, so the last one holding your data is gone by November 7, 2026. That holds as long as the nightly backup keeps running.',
         '',
         'What stays, and why',
         `- Plaid’s own copy: Plaid keeps what it collected from your banks under its own privacy policy. Disconnecting ended Nya’s connections; it doesn’t delete Plaid’s records. See and delete what Plaid holds at the Plaid Portal: ${PLAID_PORTAL}`,
@@ -63,8 +64,10 @@ describe('the receipt', () => {
     );
   });
 
-  test('the backup date is the deletion plus the honest maximum', () => {
-    expect(receipt().backups).toEqual({ kept: true, keep_days: 30, min_kept: 7, until: '2026-11-06T14:05:00.000Z', stopped: false });
+  test('the backup date is the deletion plus the honest maximum, and a day for the cron’s timing', () => {
+    // 31 days by the pruning rules, and one more: the cron can start up to an
+    // hour late, which is past midnight somewhere.
+    expect(receipt().backups).toEqual({ kept: true, keep_days: 30, min_kept: 7, until: '2026-11-07T14:05:00.000Z', stopped: false });
   });
 
   test('backups that have stopped, or that this server doesn’t keep, or can’t say', () => {
@@ -82,23 +85,52 @@ describe('the receipt', () => {
     );
   });
 
-  test('a count that couldn’t be read says so instead of showing zero', () => {
+  test('a figure that couldn’t be counted is unavailable, never zero, and says why', () => {
     const [now] = receiptSections(receipt({ counts: { ...COUNTS, transactions: null } }), US);
-    expect(now.lines).toContain('Transactions: not counted (it couldn’t be read to count it, and was deleted all the same)');
+    expect(now.lines).toContain('Transactions: unavailable');
+    expect(now.lines.at(-1)).toBe('A figure shown as unavailable couldn’t be counted in time. What it describes was deleted all the same.');
+    expect(receiptSections(receipt(), US)[0].lines.some((l) => l.includes('unavailable'))).toBe(false);
   });
 
-  test('an earlier attempt: what was left, or nothing left at all', () => {
-    expect(receiptSections(receipt({ resumed: true }), US)[0].lines.at(-1)).toBe('An earlier attempt had already deleted part of this, so these counts are what was left.');
+  test('earlier accounts, of banks disconnected before, are counted apart', () => {
+    const [now] = receiptSections(receipt({ counts: { ...COUNTS, earlier_accounts: 2 } }), US);
+    expect(now.lines).toContain('Accounts: 7');
+    expect(now.lines).toContain('Earlier accounts, of banks you had disconnected, kept for their history: 2');
+    expect(receiptSections(receipt(), US)[0].lines.some((l) => l.startsWith('Earlier accounts'))).toBe(false);
+  });
+
+  test('an earlier attempt: not counted again, or nothing left at all', () => {
+    const resumed = receiptSections(receipt({ resumed: true, counts: { ...COUNTS, accounts: null, earlier_accounts: null, transactions: null, investment_transactions: null, history_days: null } }), US)[0];
+    expect(resumed.lines).toContain('Accounts: unavailable');
+    expect(resumed.lines.at(-1)).toBe(
+      'An earlier attempt had already begun this deletion, so what was stored wasn’t counted again (part of it may already have been gone). All of it was deleted.'
+    );
     expect(receiptSections(receipt({ found_data: false }), US)[0].lines.at(-1)).toContain('Nothing was stored for this account any more');
     // Once the page has added the earlier attempt's counts, neither applies.
     const merged = { ...receipt({ found_data: false, resumed: true }), includes_earlier_attempt: true };
     expect(receiptSections(merged, US)[0].lines.at(-1)).toBe('Your sign-in: deleted');
   });
 
-  test('two attempts add up, and unknown stays unknown', () => {
+  const none = { banks_disconnected: 0, banks_not_disconnected: 0, accounts: 0, earlier_accounts: 0, transactions: 0, investment_transactions: 0, history_days: 0, connections_ended: 0, sign_in_deleted: true };
+  const skipped = { ...none, accounts: null, earlier_accounts: null, transactions: null, investment_transactions: null, history_days: null };
+
+  test('two attempts: what the first counted stands, and a sign-in deleted the second time', () => {
     const first = { ...COUNTS, sign_in_deleted: false };
-    const second = { banks_disconnected: 0, banks_not_disconnected: 0, accounts: 0, transactions: null, investment_transactions: 0, history_days: 0, connections_ended: 0, sign_in_deleted: true };
-    expect(mergeCounts(first, second)).toEqual({ ...COUNTS, transactions: null, sign_in_deleted: true });
+    // The retry found the container gone: nothing left, nothing stored.
+    expect(mergeCounts(first, none)).toEqual(COUNTS);
+    // The retry found it archived, so it didn't count again.
+    expect(mergeCounts(first, skipped)).toEqual(COUNTS);
+    // Unknown at first stays unknown, whatever the retry found.
+    expect(mergeCounts({ ...first, transactions: null }, none).transactions).toBeNull();
+  });
+
+  test('banks are as the latest attempt that still found them saw them, never counted twice', () => {
+    // The first disconnected two; the retry finds the same two, which Plaid now says are gone (disconnected).
+    expect(mergeCounts({ ...COUNTS, banks_disconnected: 2 }, { ...skipped, banks_disconnected: 2 })).toMatchObject({ banks_disconnected: 2, banks_not_disconnected: 0 });
+    // One Plaid refused the first time goes through on the retry.
+    expect(mergeCounts({ ...COUNTS, banks_disconnected: 1, banks_not_disconnected: 1 }, { ...skipped, banks_disconnected: 2 })).toMatchObject({ banks_disconnected: 2, banks_not_disconnected: 0 });
+    // Swept already: the retry sees no banks, so the first attempt's view stands.
+    expect(mergeCounts({ ...COUNTS, banks_disconnected: 1, banks_not_disconnected: 1 }, none)).toMatchObject({ banks_disconnected: 1, banks_not_disconnected: 1 });
   });
 
   test('only a receipt-shaped value is taken back from storage', () => {
@@ -114,7 +146,7 @@ describe('the receipt, on screen', () => {
     expect(html).toContain('Your account was deleted');
     for (const title of ['Deleted now', 'Expires later', 'What stays, and why']) expect(html).toContain(title);
     expect(html).toContain(`<a href="${PLAID_PORTAL}" target="_blank" rel="noreferrer">${PLAID_PORTAL}</a>`);
-    expect(html).toContain('November 6, 2026');
+    expect(html).toContain('November 7, 2026');
     expect(html).toContain('>Copy</button>');
     expect(html).toContain('>Download as text</button>');
     expect(html).toContain('>Done</button>');
@@ -133,7 +165,7 @@ describe('the receipt, on screen', () => {
     const form = renderToStaticMarkup(
       <DeleteAccountView status={{ enabled: true, can_delete: true, backup_days: 31 }} typed="" busy={false} error="" onType={() => {}} onDelete={() => {}} />
     );
-    expect(form).toContain('Nightly backups keep an encrypted copy for up to 31 days.');
+    expect(form).toContain('Nightly backups keep a copy for up to 31 days: encrypted, except dates, ids, bank names and the merchant names you renamed.');
     expect(form).toContain('use Download my data under Manage accounts first');
     expect(form).toContain('you’ll get a receipt');
     const none = renderToStaticMarkup(<DeleteAccountView status={{ enabled: true, can_delete: true, backup_days: null }} typed="" busy={false} error="" onType={() => {}} onDelete={() => {}} />);
