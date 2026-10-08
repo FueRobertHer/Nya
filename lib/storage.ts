@@ -128,7 +128,10 @@ export function containerPrefix(ctx: Ctx): string {
  *   - the encryption key store (lib/crypto.ts): a data key id must mean the same
  *     key everywhere in an environment;
  *   - the container registry (lib/containers.ts), which can't live inside one;
- *   - the login rate limiter (app/api/login), which runs before anyone is known;
+ *   - the rate limiters that count by address, before anyone is known: the
+ *     login's (lib/rate-limit.ts) and the demo sign-in's
+ *     (app/api/demo/sign-in); a limit on what a signed-in person does lives
+ *     in their container instead (kc);
  *   - the cutoff for sessions from before sessions named a container
  *     (lib/sessions.ts);
  *   - the nightly backup's last outcome (lib/backup.ts);
