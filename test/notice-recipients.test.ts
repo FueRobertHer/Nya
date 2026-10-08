@@ -1,0 +1,100 @@
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, TEST_CTX, testKey, unscopedDataKeys } from './fake-redis';
+
+// Who is emailed about a container's connections (lib/notice-recipients.ts):
+// with Clerk, the owner's primary address if Clerk verified it; with the shared
+// password, NOTIFY_EMAIL, for the deployment's own container only. Never a
+// guess, and never somebody else's container.
+
+const ctx = TEST_CTX;
+const OTHER = { container: '7c1e0f3a-9b2d-4c5e-8f6a-0b1c2d3e4f5a' } as typeof TEST_CTX;
+const fake = new FakeRedis({ deserialize: true });
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
+mock.module('@/lib/storage', () => storageMock(fake));
+
+const { noticeRecipients, primaryVerifiedOf, notifyEmails } = await import('@/lib/notice-recipients');
+const { ownersOf } = await import('@/lib/owners');
+
+const saved = { ...process.env };
+beforeEach(() => {
+  fake.reset();
+  for (const k of ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'NOTIFY_EMAIL', 'CONTAINER_ID', 'DEMO_USER_IDS', 'VERCEL_ENV']) delete process.env[k];
+});
+afterEach(() => {
+  process.env = { ...saved };
+});
+
+const clerkOn = () => {
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+  process.env.CLERK_SECRET_KEY = 'sk_test_x';
+};
+const emails: Record<string, string | null> = { user_owner: 'owner@example.com', user_partner: 'partner@example.com', user_unverified: null };
+const primaryEmail = async (id: string) => emails[id] ?? null;
+
+describe('with Clerk', () => {
+  test('the primary verified address of each account that owns the container, and nobody else', async () => {
+    clerkOn();
+    process.env.NOTIFY_EMAIL = 'ops@example.com'; // ignored with Clerk: it would get every account's notices
+    await fake.hset(testKey('owners'), { user_owner: ctx.container, user_other: OTHER.container });
+    expect(await ownersOf(ctx.container)).toEqual(['user_owner']);
+    expect(await noticeRecipients(ctx, { primaryEmail })).toEqual(['owner@example.com']);
+  });
+
+  test('a container mapped by hand to two accounts tells both, once each; an unverified primary gets nothing', async () => {
+    clerkOn();
+    expect(await noticeRecipients(ctx, { owners: async () => ['user_owner', 'user_partner', 'user_unverified'], primaryEmail })).toEqual([
+      'owner@example.com',
+      'partner@example.com',
+    ]);
+    expect(await noticeRecipients(ctx, { owners: async () => ['user_unverified'], primaryEmail })).toEqual([]);
+    expect(await noticeRecipients(ctx, { owners: async () => [], primaryEmail })).toEqual([]);
+  });
+
+  test("Preview's demo accounts are never emailed", async () => {
+    clerkOn();
+    process.env.VERCEL_ENV = 'preview';
+    process.env.DEMO_USER_IDS = 'user_owner:Alex';
+    expect(await noticeRecipients(ctx, { owners: async () => ['user_owner'], primaryEmail })).toEqual([]);
+  });
+
+  test('an owner mapping that cannot be read is an error, never an empty list taken as nobody', async () => {
+    clerkOn();
+    fake.failNext('hgetall');
+    await expect(noticeRecipients(ctx, { primaryEmail })).rejects.toThrow();
+  });
+
+  test('the primary address counts only once Clerk has verified it', () => {
+    const user = (status: string | null, primary = 'e1') => ({
+      primaryEmailAddressId: primary,
+      emailAddresses: [
+        { id: 'e0', emailAddress: 'other@example.com', verification: { status: 'verified' } },
+        { id: 'e1', emailAddress: 'me@example.com', verification: status ? { status } : null },
+      ],
+    });
+    expect(primaryVerifiedOf(user('verified'))).toBe('me@example.com');
+    expect(primaryVerifiedOf(user('unverified'))).toBeNull();
+    expect(primaryVerifiedOf(user(null))).toBeNull();
+    // Another verified address is not the primary one.
+    expect(primaryVerifiedOf({ ...user('verified'), primaryEmailAddressId: null })).toBeNull();
+  });
+});
+
+describe('with the shared password', () => {
+  const deployment = async () => ({ kind: 'container' as const, container: ctx.container });
+
+  test('NOTIFY_EMAIL, for the deployment’s own container', async () => {
+    process.env.NOTIFY_EMAIL = 'me@example.com';
+    expect(await noticeRecipients(ctx, { deployment })).toEqual(['me@example.com']);
+    process.env.NOTIFY_EMAIL = ' me@example.com, you@example.com ,not-an-address';
+    expect(await noticeRecipients(ctx, { deployment })).toEqual(['me@example.com', 'you@example.com']);
+  });
+
+  test('nobody for another container in the registry, or with NOTIFY_EMAIL unset', async () => {
+    process.env.NOTIFY_EMAIL = 'me@example.com';
+    expect(await noticeRecipients(OTHER, { deployment })).toEqual([]);
+    expect(await noticeRecipients(ctx, { deployment: async () => ({ kind: 'none' as const }) })).toEqual([]);
+    delete process.env.NOTIFY_EMAIL;
+    expect(await noticeRecipients(ctx, { deployment })).toEqual([]);
+    expect(notifyEmails()).toEqual([]);
+  });
+});

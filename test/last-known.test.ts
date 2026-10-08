@@ -589,3 +589,38 @@ describe('the total it produces', () => {
     expect(fake.ops).toBe(5);
   });
 });
+
+// The connection health view names the accounts a failure affects (#51): the
+// ones recovery could not show, by name and mask, never by balance.
+describe('the accounts a broken card cannot show', () => {
+  test('are named when some, all, or none of the balances could be recovered', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit'), acct('save', 'Savings', 'depository', { mask: '7777' })]);
+    const none = broken('item_a');
+    await fillFromLastKnown(ctx, [none]);
+    expect((none as any).unshown_accounts).toEqual([
+      { name: 'Venture', mask: '0189' },
+      { name: 'Savings', mask: '7777' },
+    ]);
+
+    await writeAccountSnapshot(RECENT, { card: 500 });
+    const some = broken('item_a');
+    await fillFromLastKnown(ctx, [some]);
+    expect(some.accounts.map((a) => a.account_id)).toEqual(['card']);
+    expect((some as any).unshown_accounts).toEqual([{ name: 'Savings', mask: '7777' }]);
+
+    await writeAccountSnapshot(RECENT, { card: 500, save: 20 });
+    const all = broken('item_a');
+    await fillFromLastKnown(ctx, [all]);
+    expect((all as any).unshown_accounts).toBeUndefined();
+  });
+
+  test('past the age limit, every remembered account is unshown', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(daysAgo(60), { card: 500 });
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    expect(inst.stale_too_old).toBe(daysAgo(60));
+    expect((inst as any).unshown_accounts).toEqual([{ name: 'Venture', mask: '0189' }]);
+    expect(JSON.stringify(inst)).not.toContain('500');
+  });
+});

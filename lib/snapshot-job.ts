@@ -41,6 +41,7 @@ import { computeNetWorth, recordFetch, isRecordable } from './networth';
 import { rememberAccounts } from './last-known';
 import { recordDirectory } from './links';
 import { clearCaches } from './cache';
+import { checkConnections } from './connection-notices';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
@@ -50,8 +51,10 @@ export const REGISTRY_RETRY_MS = 1000;
  * calls in series at up to 45 s each (balances, then holdings and liabilities
  * together). A rate-limited balance call adds at most one more try (a 429
  * that took up to 10 s, a 1 s wait, then up to 45 s: lib/rate-limit-retry.ts),
- * so about 101 s at worst, and the rest is margin for the database. One not
- * started is deferred to the catch-up run.
+ * so about 101 s at worst. An email about its connections adds at most 13 s
+ * (5 s to find the recipient, 8 s to send: lib/connection-notices.ts,
+ * lib/mail.ts), and the rest is margin for the database. One not started is
+ * deferred to the catch-up run.
  */
 export const START_BUDGET_MS = 180_000;
 /** How long a run holds its container's lock: the route's maxDuration, so a
@@ -216,6 +219,13 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
 export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reason?: string }> {
   const { institutions, netWorth } = await computeNetWorth(ctx);
   const recorded = await recordFetch(ctx, institutions, netWorth);
+  // Each connection's last good sync, and the one email for a connection that
+  // broke or will end soon (lib/connection-notices.ts). Before the returns
+  // below: an unclean run is exactly when a connection is broken. It never
+  // costs the snapshot: a failure is logged, and the next run tries again.
+  await checkConnections(ctx, institutions).catch((err) => {
+    console.error(`Connection notices failed for container ${ctx.container}:`, reasonOf(err));
+  });
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
   if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.' };
 

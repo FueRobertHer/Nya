@@ -61,6 +61,21 @@ async function setUp(args: string[]): Promise<unknown> {
   }
 }
 
+/**
+ * The accounts that own a container, in id order: normally one, its first
+ * sign-in or its creator, unless the mapping was edited by hand to give one
+ * container to more than one account (docs/authentication.md). For the
+ * notices about its bank connections (lib/notice-recipients.ts), which go to
+ * whoever owns the data and to nobody else. Throws when the mapping can't be
+ * read: no recipient is ever a guess.
+ */
+export async function ownersOf(container: ContainerId): Promise<string[]> {
+  const all = ((await redis().hgetall(ownersKey())) ?? {}) as Record<string, unknown>;
+  return Object.keys(all)
+    .filter((userId) => all[userId] === container)
+    .sort();
+}
+
 async function owned(userId: string): Promise<ContainerId | null> {
   const id = await redis().hget<string>(ownersKey(), userId);
   if (id === null || id === undefined) return null;
