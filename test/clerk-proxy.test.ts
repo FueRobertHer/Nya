@@ -98,6 +98,9 @@ describe('with Clerk on', () => {
     expect(api.status).toBe(200);
     expect(api.headers.get('content-security-policy-report-only')).toBeNull();
     expect(api.headers.get('content-security-policy')).toBeNull();
+    // A browser sent to an /api/ path that does not exist gets the HTML 404 page, so the policy too.
+    const nav = await proxy(new NextRequest('https://nya.test/api/nope', { headers: { accept: 'text/html' } }), {} as any);
+    expect(nav.headers.get('content-security-policy-report-only')).toContain("'strict-dynamic'");
   });
 
   test('an allowed account gets in', async () => {

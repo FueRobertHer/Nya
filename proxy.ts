@@ -45,10 +45,13 @@ const NONCE_CARRIERS = ['x-nonce', 'content-security-policy', 'content-security-
 // Lets a request through. A page also gets its Content-Security-Policy
 // (lib/security-headers.ts), in the mode CSP_MODE sets, with a nonce made for
 // this request alone and passed on in the request headers as well: Next.js
-// reads it there to put it on its own scripts, and Clerk on its. An API
-// response is JSON, not a document, so it gets none.
+// reads it there to put it on its own scripts, and Clerk on its. An API call
+// is answered with JSON, not a document, so it gets none; but a browser that
+// navigates to an /api/ path that does not exist is shown the HTML 404 page,
+// so a request that asks for HTML gets the policy wherever it goes.
 function pass(req: NextRequest): NextResponse {
-  if (req.nextUrl.pathname.startsWith('/api/')) return NextResponse.next();
+  const document = !req.nextUrl.pathname.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html');
+  if (!document) return NextResponse.next();
   const headers = new Headers(req.headers);
   for (const name of NONCE_CARRIERS) headers.delete(name);
   const mode = cspMode();
@@ -56,6 +59,7 @@ function pass(req: NextRequest): NextResponse {
   const nonce = newNonce();
   const policy = buildCsp({
     nonce,
+    mode,
     dev: process.env.NODE_ENV === 'development',
     plaidEnv: process.env.PLAID_ENV,
     clerkPublishableKey: clerkEnabled() ? process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY : undefined,

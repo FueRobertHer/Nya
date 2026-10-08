@@ -376,9 +376,19 @@ describe('the gate', () => {
   test('a page it lets through carries the Content-Security-Policy; an API response does not', async () => {
     const token = await createSessionToken({ container, epoch: 0 });
     const page = await proxy(request('/', token));
-    expect(page.headers.get('content-security-policy-report-only')).toContain("frame-ancestors 'none'");
+    expect(page.headers.get('content-security-policy-report-only')).toContain("'strict-dynamic'");
     const api = await proxy(request('/api/budgets', token));
     expect(api.headers.get('content-security-policy-report-only')).toBeNull();
+  });
+
+  test('so does a browser sent to an /api/ path that does not exist, which is shown the HTML 404 page', async () => {
+    const token = await createSessionToken({ container, epoch: 0 });
+    const nav = (path: string) =>
+      proxy(new NextRequest(`http://localhost${path}`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${token}`, accept: 'text/html,application/xhtml+xml' } }));
+    const res = await nav('/api/nope');
+    const policy = res.headers.get('content-security-policy-report-only')!;
+    expect(policy).toContain("'strict-dynamic'");
+    expect(res.headers.get('x-middleware-request-x-nonce')).toBe(/'nonce-([^']+)'/.exec(policy)![1]);
   });
 });
 

@@ -5,12 +5,14 @@
 // alike.
 
 /** Which banks connect: the link-token routes ask Plaid for US institutions
- *  only (app/api/create-link-token, app/api/create-update-link-token). */
+ *  only (app/api/create-link-token, app/api/create-update-link-token). The
+ *  alternative it offers takes US dollars only (lib/manual.ts), which matters
+ *  most to exactly the people this is for. */
 export function CoverageNote() {
   return (
     <p className="panel-note coverage-note">
       Bank connections work for US institutions only, through Plaid. Anything else can be tracked as a manual account,
-      with a balance you enter.
+      with a balance you enter in US dollars.
     </p>
   );
 }

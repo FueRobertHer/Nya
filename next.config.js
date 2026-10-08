@@ -1,9 +1,12 @@
 // Sent with every response: pages, API routes, static files, and the routes
-// proxy.ts never sees. A page's full Content-Security-Policy is added per
-// request by proxy.ts (lib/security-headers.ts), since it carries a nonce; the
-// one here only forbids framing, which nothing ever needs, so it holds whatever
-// CSP_MODE says.
+// proxy.ts never sees. A page's Content-Security-Policy is added per request by
+// proxy.ts (lib/security-headers.ts), since it carries a nonce.
 //
+// - X-Frame-Options: DENY forbids framing everywhere, whatever CSP_MODE says.
+//   No Content-Security-Policy is sent from here: two headers of that name
+//   would both be enforced, and how Vercel combines one from here with the
+//   proxy's is not documented, so the page policy is the only one. Once it is
+//   enforced it says frame-ancestors 'none' too.
 // - HSTS: browsers use HTTPS only, for two years after a visit. Subdomains of
 //   the app's host included; not submitted for preloading.
 // - Referrer-Policy: other sites see at most this origin, never a path (an
@@ -25,7 +28,6 @@ const securityHeaders = [
       'accelerometer=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), idle-detection=(), magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=(), xr-spatial-tracking=()',
   },
   { key: 'X-Frame-Options', value: 'DENY' },
-  { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
   { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
 ];
 

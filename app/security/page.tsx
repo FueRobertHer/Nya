@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { cspMode, type CspMode } from '@/lib/security-headers';
+import { masterKeyConfigured } from '@/lib/crypto';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -11,20 +13,23 @@ export const metadata: Metadata = {
 // trust it (public: proxy.ts). Every statement must stay true of the code:
 // docs/architecture.md and docs/operations.md are the sources, and
 // test/public-pages.test.tsx holds the page to them and to the plan's list of
-// things never to promise. Reads no stored data; the one thing it reads from
-// the environment is how the Content-Security-Policy is sent.
+// things never to promise. Reads no stored data. From the environment it reads
+// only how the Content-Security-Policy is sent and whether a master key is set
+// (lib/crypto.ts), since each changes what is true of this copy.
 
-const POLICY_STATE: Record<CspMode, string> = {
-  enforce: 'This copy of Nya enforces it.',
-  'report-only':
-    'This copy of Nya is still checking it against live Plaid and Clerk sign-ins: for now browsers report anything it would block, without blocking it.',
-  off: 'This copy of Nya has it switched off.',
+const LIMITS =
+  'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
+
+const POLICY: Record<CspMode, string> = {
+  enforce: `Every page also carries a Content-Security-Policy, which this copy of Nya enforces: ${LIMITS}, and no other site may show it in a frame.`,
+  'report-only': `Every page also carries a Content-Security-Policy, which this copy of Nya is still checking against live Plaid and Clerk sign-ins: browsers report anything it would block, and block nothing yet. Once it is enforced, ${LIMITS}.`,
+  off: `Pages can also carry a Content-Security-Policy, under which ${LIMITS}. This copy of Nya has it switched off.`,
 };
 
-const WHO_CAN_READ: [string, string][] = [
+const whoCanRead = (envelope: boolean): [string, string][] => [
   [
     'The operator, who runs this copy of Nya',
-    'Everything, in practice. The master key and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.',
+    `Everything, in practice. The ${envelope ? 'master key' : 'key'} and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.`,
   ],
   ['Upstash, the database', 'The encrypted values, and the plain text listed above.'],
   [
@@ -37,7 +42,7 @@ const WHO_CAN_READ: [string, string][] = [
   ],
   [
     'Clerk, the sign-in service',
-    'Your email address and your sign-in activity. Only when this copy of Nya uses Clerk accounts rather than a shared password.',
+    'Your email address and your sign-in activity, and your name and picture if you sign in with Google or another account. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs. Only when this copy of Nya uses Clerk accounts rather than a shared password.',
   ],
   [
     'People you share with',
@@ -45,11 +50,52 @@ const WHO_CAN_READ: [string, string][] = [
   ],
   [
     'Your device',
-    'The balances the app last showed, kept in the browser so it opens at once and works offline. Anyone using the unlocked device can read them. They are cleared when you sign out.',
+    'Your accounts, their balances and your net-worth history, as the app last showed them, kept in the browser so it opens at once and works offline. Anyone using the unlocked device can read them. They are cleared when you sign out.',
   ],
 ];
 
+function Encryption({ envelope }: { envelope: boolean }): ReactNode {
+  return (
+    <>
+      <p>
+        These values are encrypted with AES-256-GCM before they are written to the database: the tokens that connect
+        your banks through Plaid, balances, net-worth history, transactions, budgets, goals, the categories you set and
+        the names you give merchants, manual accounts, and the short-lived copies of what the dashboard last showed.
+        Some details around them are not; they are listed below.
+      </p>
+      {envelope ? (
+        <>
+          <p>
+            This copy of Nya uses envelope encryption. Those values are encrypted with data keys that the app generates.
+            Each data key is stored only in locked form, encrypted with a master key that is kept in the server’s
+            environment settings, never in the database. Changing the master key locks the data keys again under the new
+            one and leaves the data itself untouched, so a key change cannot damage it.
+          </p>
+          <p className="info-aside">
+            Values written before the master key was set up stay under Nya’s original single key (also AES-256-GCM, also
+            kept only in the environment) until they are moved to a data key, and if a data key ever cannot be used, a
+            value is written under that original key and the server’s log says so. One set of data keys covers everyone
+            on a copy of Nya; a key per person is planned.
+          </p>
+        </>
+      ) : (
+        <p>
+          This copy of Nya encrypts them with one key, kept in the server’s environment settings, never in the database.
+          Envelope encryption, where a master key locks separate data keys so that the key can be changed without
+          touching the data, is built in but not turned on here.
+        </p>
+      )}
+      <p>
+        What this protects against: someone who gets a copy of the database or a backup, but not the keys. What it does
+        not protect against: someone with access to the server’s environment, which holds both the{' '}
+        {envelope ? 'master key' : 'key'} and the database password. That includes whoever runs Nya.
+      </p>
+    </>
+  );
+}
+
 export default function SecurityPage() {
+  const envelope = masterKeyConfigured();
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -71,28 +117,8 @@ export default function SecurityPage() {
         </ul>
       </InfoSection>
 
-      <InfoSection title="How your data is encrypted">
-        <p>
-          Everything financial is encrypted with AES-256-GCM before it is written to the database: the tokens that
-          connect your banks through Plaid, balances, net-worth history, transactions, budgets, goals, the categories and
-          names you change, manual accounts, and the short-lived copies of what the dashboard last showed.
-        </p>
-        <p>
-          It uses envelope encryption. Your data is encrypted with data keys that the app generates. Each data key is
-          stored only in locked form, encrypted with a master key that is kept in the server’s environment settings,
-          never in the database. Changing the master key locks the data keys again under the new one and leaves the data
-          itself untouched, so a key change cannot damage it.
-        </p>
-        <p className="info-aside">
-          Values written before the master key was set up stay under Nya’s original single key (also AES-256-GCM, also
-          kept only in the environment) until they are moved to a data key. Today one set of data keys covers everyone
-          on a copy of Nya; a key per person is planned.
-        </p>
-        <p>
-          What this protects against: someone who gets a copy of the database or a backup, but not the keys. What it
-          does not protect against: someone with access to the server’s environment, which holds both the master key
-          and the database password. That includes whoever runs Nya.
-        </p>
+      <InfoSection title="What is encrypted, and how">
+        <Encryption envelope={envelope} />
       </InfoSection>
 
       <InfoSection title="What is stored as plain text">
@@ -110,6 +136,10 @@ export default function SecurityPage() {
             shares at which level, never the balances or transactions themselves.
           </li>
         </ul>
+        <p>
+          The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes, and on
+          the demo, that of a device that used a demo account, for up to 10 minutes. These never go into backups.
+        </p>
         <p>Encrypting these as well is planned.</p>
       </InfoSection>
 
@@ -122,7 +152,7 @@ export default function SecurityPage() {
             </tr>
           </thead>
           <tbody>
-            {WHO_CAN_READ.map(([who, what]) => (
+            {whoCanRead(envelope).map(([who, what]) => (
               <tr key={who}>
                 <th scope="row">{who}</th>
                 <td>{what}</td>
@@ -139,8 +169,9 @@ export default function SecurityPage() {
           stop, the last ones are not deleted.
         </p>
         <p>
-          A backup holds the same kinds of data as the database: the encrypted values, the plain text listed above, and
-          the data keys in their locked form. Its encrypted parts cannot be read without the keys kept in the server’s environment.
+          A backup holds the same kinds of data as the database: the encrypted values and the plain text listed above
+          {envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read without the
+          keys kept in the server’s environment.
         </p>
       </InfoSection>
 
@@ -148,13 +179,16 @@ export default function SecurityPage() {
         <p>
           If you sign in with your own account, Delete my account is in your account window: open your account menu
           (your picture or initial, at the top right), choose Manage account, then Data &amp; privacy. It disconnects
-          each of your banks at Plaid, deletes
-          everything stored for you, ends all sharing both ways, and deletes your sign-in. If it stops part way, your
-          data is already out of reach, and running it again finishes the job.
+          each of your banks at Plaid, deletes everything stored for you, ends all sharing both ways, and deletes your
+          sign-in. If it stops part way, your data is already out of reach, and running it again finishes the job.
         </p>
         <p>What it does not reach:</p>
         <ul>
           <li>Backups: your data stays in the nightly copies until they age out, within 30 days.</li>
+          <li>
+            Invite links you made that nobody has used: each holds your sign-in id and the name you gave, and expires on
+            its own within 72 hours.
+          </li>
           <li>
             Plaid’s own copy: Plaid keeps what it collected under its own policy. You can see and delete your connections
             at Plaid in the{' '}
@@ -192,8 +226,7 @@ export default function SecurityPage() {
             <code>Strict-Transport-Security</code>: browsers only connect to Nya over HTTPS, for two years after a visit.
           </li>
           <li>
-            <code>X-Frame-Options: DENY</code>, and a <code>Content-Security-Policy</code> of{' '}
-            <code>frame-ancestors &apos;none&apos;</code>: no other site can show Nya inside a frame.
+            <code>X-Frame-Options: DENY</code>: no other site can show Nya inside a frame.
           </li>
           <li>
             <code>X-Content-Type-Options: nosniff</code>: a file is only ever treated as the type it says it is.
@@ -211,18 +244,15 @@ export default function SecurityPage() {
             window, while your bank’s sign-in window, opened from Plaid, still works.
           </li>
         </ul>
-        <p>
-          Every page also carries a full <code>Content-Security-Policy</code>. A page may only run scripts that carry a
-          one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself,
-          Plaid, and, with Clerk accounts, Clerk and the bot check it uses. {POLICY_STATE[cspMode()]}
-        </p>
+        <p>{POLICY[cspMode()]}</p>
       </InfoSection>
 
       <InfoSection title="Where bank connections work">
         <p>
           Bank connections go through Plaid and work for US institutions only: Nya asks Plaid for US institutions when
           you connect. Anything else, such as a bank in another country, an institution Plaid cannot reach, or a house or
-          a car, can be tracked as a manual account: you enter the balance and update it when you like.
+          a car, can be tracked as a manual account: you enter the balance in US dollars, the only currency manual
+          accounts take for now, and update it when you like.
         </p>
       </InfoSection>
     </InfoPage>

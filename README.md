@@ -110,7 +110,7 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 - **Liabilities and Investments are paid Plaid products.** Free in `sandbox`, billed per institution per month in `production`.
 - **Offline is read-only last-known data.** The PWA opens with the last snapshot from `localStorage`, but refreshing, linking and transactions need a network connection.
 - **The shared password is one secret for everyone who has it.** Use Clerk for more than one person.
-- **Bank connections are US only.** Both link-token routes ask Plaid for US institutions. Anything else is tracked as a manual account.
+- **Bank connections are US only.** Both link-token routes ask Plaid for US institutions. Anything else is tracked as a manual account, in US dollars: manual accounts take no other currency yet.
 - **Not encrypted end to end.** Whoever runs a deployment holds the keys, so they can read its data; the encryption protects the database and the backups when they are taken without the keys. `/security` lists exactly who can read what.
 
 ## Ideas

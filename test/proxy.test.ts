@@ -76,9 +76,13 @@ describe('without a session', () => {
   });
 
   test('CSP_MODE=enforce sends it as Content-Security-Policy, off sends none', async () => {
+    // Report-only leaves frame-ancestors out: browsers ignore it there.
+    expect((await call('/privacy')).headers.get('content-security-policy-report-only')).not.toContain('frame-ancestors');
+
     process.env.CSP_MODE = 'enforce';
     let res = await call('/privacy');
     expect(res.headers.get('content-security-policy')).toContain("'strict-dynamic'");
+    expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     expect(res.headers.get('content-security-policy-report-only')).toBeNull();
     expect(res.headers.get('x-middleware-request-content-security-policy')).toBe(res.headers.get('content-security-policy'));
 

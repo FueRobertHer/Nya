@@ -14,7 +14,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 
 Log in, then click **Connect an Account**. Click it again for each additional institution. Each one is added to your dashboard with a running net worth total.
 
-Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside **Connect an account** and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts).
+Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside **Connect an account** and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
 
 ### More accounts at an institution you already have
 

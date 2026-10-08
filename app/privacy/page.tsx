@@ -84,14 +84,17 @@ const COMMITMENTS: Commitment[] = [
 
 const PROCESSORS: [string, string][] = [
   ['Vercel', 'Hosts the app and stores the nightly backups. Handles every request and response, and keeps the app’s logs.'],
-  ['Upstash', 'The database. Holds your data encrypted, and the plain-text details listed on the Security page.'],
+  [
+    'Upstash',
+    'The database. Holds your data: the values that hold money encrypted, and the details listed on the Security page in plain text.',
+  ],
   [
     'Plaid',
     'Connects your banks. Sees your bank login (in Plaid’s window, never shown to Nya), then your accounts, balances and transactions, under Plaid’s own privacy policy.',
   ],
   [
     'Clerk',
-    'Signs you in, when this copy of Nya uses accounts rather than a shared password. Holds your email address and sign-in activity, and may email you sign-in codes and invitations.',
+    'Signs you in, when this copy of Nya uses accounts rather than a shared password. Holds your email address and sign-in activity, and your name and picture if you sign in with Google or another account, and may email you sign-in codes and invitations. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs.',
   ],
 ];
 
@@ -99,24 +102,24 @@ const RETENTION: [string, string][] = [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'A bank you disconnect',
-    'Its transactions are deleted at once. Its accounts’ balance history, names and the categories you set stay, so a reconnected account can carry on, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
+    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
   ],
   ['Nightly backups', '30 days. The newest 7 are always kept, so if backups stop, the last ones remain.'],
   [
     'A deleted account',
-    'Gone from the database at once, and from backups as they age out, within 30 days. Plaid’s copy stays until you delete it at Plaid.',
+    'Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. From backups as they age out, within 30 days. Plaid keeps what it collected under its own policy.',
   ],
   ['Invite links', '72 hours, or until used.'],
   [
     'Copies of what the dashboard shows',
-    'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted like everything else.',
+    'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted.',
   ],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],
   [
     'What your device keeps',
-    'The balances the app last showed, until you sign out on that device, or it next finds you were signed out elsewhere.',
+    'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere.',
   ],
 ];
 
@@ -124,10 +127,7 @@ export default function PrivacyPage() {
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
-        <p>
-          This page is a plain-language summary, not a legal privacy policy. Nya’s owner has not yet set up a legal
-          entity or had a lawyer review it, and a formal policy and terms are still to be written.
-        </p>
+        <p>This page is a plain-language summary, not a legal privacy policy.</p>
       </section>
 
       <h2>Our commitments</h2>
@@ -194,6 +194,10 @@ export default function PrivacyPage() {
         </p>
         <ul>
           <li>Nightly backups keep a copy until it ages out, within 30 days.</li>
+          <li>
+            Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
+            own within 72 hours.
+          </li>
           <li>
             Plaid keeps its own record of the connections you made through it. To see what Plaid holds about you, or
             delete it, use the{' '}

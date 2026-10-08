@@ -103,15 +103,19 @@ Vercel gives you a free HTTPS domain automatically.
 
 ## Security headers and the Content-Security-Policy
 
-Every response carries the same security headers, set in `next.config.js` so they also reach static files and the routes `proxy.ts` never sees: `Strict-Transport-Security` (two years, subdomains included, not preloaded), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a `Permissions-Policy` that turns off device features the app never uses, `X-Frame-Options: DENY` with a `Content-Security-Policy` of `frame-ancestors 'none'`, and `Cross-Origin-Opener-Policy: same-origin-allow-popups` (not `same-origin`, which would cut a bank's sign-in pop-up off from Plaid Link). HSTS covers subdomains of the host Nya is served from: on `*.vercel.app` or a subdomain such as `nya.example.com` that is nothing else, but served at a bare domain it would require HTTPS on every subdomain of it.
+Every response carries the same security headers, set in `next.config.js` so they also reach static files and the routes `proxy.ts` never sees: `Strict-Transport-Security` (two years, subdomains included, not preloaded), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a `Permissions-Policy` that turns off device features the app never uses, `X-Frame-Options: DENY`, and `Cross-Origin-Opener-Policy: same-origin-allow-popups` (not `same-origin`, which would cut a bank's sign-in pop-up off from Plaid Link). HSTS covers subdomains of the host Nya is served from: on `*.vercel.app` or a subdomain such as `nya.example.com` that is nothing else, but served at a bare domain it would require HTTPS on every subdomain of it.
 
-Every page also gets a full Content-Security-Policy, built per request in `proxy.ts` (`lib/security-headers.ts`, which says where each host in it comes from). Scripts run only with that request's nonce, or when loaded by one that has it (`'strict-dynamic'`); that is how Plaid Link's script, Clerk's scripts and Cloudflare's bot check arrive. Every page already renders per request (the root layout awaits `connection()`), so the nonce costs no static rendering. `CSP_MODE` says how it is sent:
+Every page also gets a Content-Security-Policy, built per request in `proxy.ts` (`lib/security-headers.ts`, which says where each host in it comes from). Scripts run only with that request's nonce, or when loaded by one that has it (`'strict-dynamic'`); that is how Plaid Link's script, Clerk's scripts and Cloudflare's bot check arrive. Every page already renders per request (the root layout awaits `connection()`), so the nonce costs no static rendering. A browser sent to an `/api/` path that doesn't exist is shown the HTML 404 page, so any request that asks for HTML gets the policy; API calls answered with JSON get none.
+
+It is the only Content-Security-Policy the app sends. A browser enforces every policy it is sent, and how Vercel combines a header from `next.config.js` with one of the same name from the proxy is not documented, so `next.config.js` sends none: framing is forbidden on every response by `X-Frame-Options`, and the enforced page policy says `frame-ancestors 'none'` as well. The report-only policy leaves `frame-ancestors` out, since browsers ignore it there and Chrome logs an error for it on every page.
+
+`CSP_MODE` says how it is sent:
 
 | `CSP_MODE` | Header | Effect |
 | --- | --- | --- |
 | unset or `report-only` | `Content-Security-Policy-Report-Only` | The browser logs in its console what the policy would block, and blocks nothing. |
 | `enforce` | `Content-Security-Policy` | The browser blocks it. |
-| `off` | none | No page policy. Framing stays forbidden by the headers above. |
+| `off` | none | No page policy. Framing stays forbidden by `X-Frame-Options`. |
 
 Any other value counts as `report-only` and is logged once per instance, so a typo can never enforce by accident. The Security page (`/security`) says which mode the deployment is in.
 
@@ -130,8 +134,11 @@ Plaid Link and Clerk load scripts, frames and connections that only a live sessi
    - the Activity tab (merchant logos and category icons) and the Budgets tab;
    - the **Application** tab: the service worker is registered.
 5. Read the console. Each violation is a line starting `[Report Only] Refused to load ...` (or `... to connect to`, `... to frame`) naming the URL and the directive. A clean pass has none. For each one from Plaid, Clerk or the app itself, add its host to the matching directive in `lib/security-headers.ts`, saying where it comes from, deploy, and go through the flows again.
-6. When a pass is clean on Production too, set `CSP_MODE=enforce` on Production and Preview and redeploy. Check the page's response header is now `content-security-policy`, and go through the flows once more: anything missed now fails (Link doesn't open, sign-in stalls) with a `Refused to ...` error in the console.
-7. If anything breaks after that, set `CSP_MODE=report-only` (or `off`) and redeploy. Nothing else changes.
+
+   On Preview, the Vercel Toolbar (`vercel.live`) adds its own script and frame to the page, and its lines in the console are not the app's. Turn the toolbar off for the check (in the project's settings, or for your session from the toolbar's own menu), or skip the lines that name `vercel.live`. Never add it to the policy: Production shares it. Once Preview enforces the policy, the toolbar no longer loads there.
+6. Do the same pass on an iPhone, the app's main platform: in Safari, and in the app installed to the Home Screen. Turn on Web Inspector on the phone (Settings, Safari, Advanced), connect it to a Mac, and open the page from Safari's Develop menu there; its console shows report-only violations too. Sign in, connect the pop-up bank, and open each tab.
+7. When a pass is clean on Production too, set `CSP_MODE=enforce` on Production and Preview and redeploy. In the page's response headers, check that `content-security-policy` is there and that it contains `'nonce-` and `'strict-dynamic'`: that is the policy that protects the scripts, and the Security page should now say this copy enforces it. There should be exactly one `content-security-policy` header. If something in front of the app adds a second, the browser enforces both, so check the second only narrows what the first allows. Then go through the flows once more, on both platforms: anything missed now fails (Link doesn't open, sign-in stalls) with a `Refused to ...` error in the console.
+8. If anything breaks after that, set `CSP_MODE=report-only` (or `off`) and redeploy. Nothing else changes.
 
 There is no reporting endpoint: violations go only to the console of the browser that met them.
 

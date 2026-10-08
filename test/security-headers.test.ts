@@ -18,7 +18,7 @@ const keyFor = (host: string, live = false) => `pk_${live ? 'live' : 'test'}_${b
 const DEV_KEY = keyFor('fine-heron-12.clerk.accounts.dev');
 const LIVE_KEY = keyFor('clerk.nya.example.com', true);
 
-const base: CspOptions = { nonce: 'bm9uY2Vub25jZW5vbmNlMQ==', dev: false, plaidEnv: 'production' };
+const base: CspOptions = { nonce: 'bm9uY2Vub25jZW5vbmNlMQ==', mode: 'enforce', dev: false, plaidEnv: 'production' };
 const directives = (opts: Partial<CspOptions> = {}) => cspDirectives({ ...base, ...opts });
 
 describe('CSP_MODE', () => {
@@ -122,6 +122,14 @@ describe('the policy', () => {
     expect(d['form-action']).toEqual(["'self'"]);
   });
 
+  test("frame-ancestors only when enforced: report-only ignores it, and Chrome logs an error for it", () => {
+    expect(buildCsp(base)).toContain("frame-ancestors 'none'");
+    const reportOnly = buildCsp({ ...base, mode: 'report-only' });
+    expect(reportOnly).not.toContain('frame-ancestors');
+    // Everything else is the same policy, so report-only shows what enforce would block.
+    expect(reportOnly).toBe(buildCsp(base).replace("; frame-ancestors 'none'", ''));
+  });
+
   test("no 'unsafe-eval' outside next dev", () => {
     expect(buildCsp(base)).not.toContain('unsafe-eval');
     expect(buildCsp({ ...base, clerkPublishableKey: DEV_KEY })).not.toContain('unsafe-eval');
@@ -207,7 +215,10 @@ describe('the headers on every response (next.config.js)', () => {
     expect(h['x-content-type-options']).toBe('nosniff');
     expect(h['referrer-policy']).toBe('strict-origin-when-cross-origin');
     expect(h['x-frame-options']).toBe('DENY');
-    expect(h['content-security-policy']).toBe("frame-ancestors 'none'");
+    // The page policy from the proxy is the only Content-Security-Policy: two
+    // would both be enforced, and how Vercel combines them is not documented.
+    expect(h['content-security-policy']).toBeUndefined();
+    expect(h['content-security-policy-report-only']).toBeUndefined();
     // Not same-origin: that would cut a bank's sign-in pop-up off from Plaid Link.
     expect(h['cross-origin-opener-policy']).toBe('same-origin-allow-popups');
     for (const feature of ['camera', 'microphone', 'geolocation', 'payment', 'usb', 'browsing-topics']) {

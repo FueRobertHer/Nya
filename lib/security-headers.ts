@@ -39,6 +39,14 @@
 //   'unsafe-eval' only under `next dev`, where React uses eval for its error
 //     overlay. Never in a build.
 //
+// ONE POLICY PER PAGE. This is the only Content-Security-Policy the app sends:
+// next.config.js forbids framing with X-Frame-Options alone, because two
+// headers of the same name would both be enforced, and how Vercel combines one
+// from next.config.js with one from the proxy is not documented. The enforced
+// policy says frame-ancestors 'none' as well; the report-only one leaves it
+// out, since browsers ignore it there (and Chrome logs an error each load,
+// in the console the live check reads).
+//
 // A page that needs anything new shows it as a violation in the browser
 // console (in report-only mode, without breaking): add the host here, with
 // where it comes from. docs/deployment.md says how to check a live session.
@@ -129,6 +137,8 @@ export function plaidApiHost(plaidEnv: string | undefined): string {
 
 export type CspOptions = {
   nonce: string;
+  /** How it is sent: frame-ancestors only counts in an enforced policy. */
+  mode: Exclude<CspMode, 'off'>;
   /** Running under `next dev`. */
   dev: boolean;
   /** PLAID_ENV. */
@@ -173,7 +183,9 @@ export function cspDirectives(opts: CspOptions): Record<string, string[]> {
     // the redirects that follow it too, which may pass through Clerk's Frontend
     // API when its middleware refreshes a session.
     'form-action': ["'self'", ...fapi],
-    'frame-ancestors': ["'none'"],
+    // Report-only ignores it (see ONE POLICY PER PAGE above); X-Frame-Options
+    // forbids framing meanwhile.
+    ...(opts.mode === 'enforce' ? { 'frame-ancestors': ["'none'"] } : {}),
   };
 }
 
