@@ -18,6 +18,7 @@ import { isOwedType } from '@/lib/balance';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { pruneHidden } from '@/lib/hidden';
+import { loggable } from '@/lib/log-safe';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
 //
@@ -93,7 +94,7 @@ export async function GET() {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to load manual accounts' }, { status: 500 });
   }
 }
@@ -127,7 +128,7 @@ export async function POST(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to add manual account' }, { status: 500 });
   }
 }
@@ -163,7 +164,7 @@ export async function PATCH(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to update manual account' }, { status: 500 });
   }
 }
@@ -188,7 +189,7 @@ export async function DELETE(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to remove manual account' }, { status: 500 });
   }
 }

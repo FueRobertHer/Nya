@@ -8,6 +8,7 @@ import nextConfig from '@/next.config.js';
 import { DEFAULT_KEEP_DAYS, MIN_KEPT } from '@/lib/backup';
 import { SESSION_MAX_AGE_SECONDS } from '@/lib/auth';
 import { SHORT_TTL_SECONDS, WEBHOOK_TTL_SECONDS } from '@/lib/cache';
+import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -32,8 +33,7 @@ const { INVITE_HOURS, SHARED_TXN_DAYS } = await (async () => {
 // the first test below reports by name instead of failing the whole file.
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const routeFigure = (path: string, pattern: RegExp) => Number(pattern.exec(source(path))?.[1]);
-const LOGIN_MAX_FAILURES = routeFigure('app/api/login/route.ts', /const MAX_FAILURES = (\d+);/);
-const LOGIN_WINDOW_MINUTES = routeFigure('app/api/login/route.ts', /const WINDOW_SECONDS = (\d+) \* 60;/);
+const LOGIN_WINDOW_MINUTES = LOGIN_WINDOW_SECONDS / 60;
 const DEMO_WINDOW_MINUTES = routeFigure('app/api/demo/sign-in/route.ts', /const WINDOW_SECONDS = (\d+) \* 60;/);
 
 /** The page as text: tags dropped, the entities React writes decoded, spaces collapsed. */
@@ -63,7 +63,7 @@ const DAYS = SESSION_MAX_AGE_SECONDS / 86400;
 const MASTER = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
 test('finds the limits it checks in their routes', () => {
-  for (const [name, value] of Object.entries({ LOGIN_MAX_FAILURES, LOGIN_WINDOW_MINUTES, DEMO_WINDOW_MINUTES })) {
+  for (const [name, value] of Object.entries({ DEMO_WINDOW_MINUTES })) {
     expect({ [name]: Number.isFinite(value) }).toEqual({ [name]: true });
   }
 });

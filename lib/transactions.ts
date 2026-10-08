@@ -23,6 +23,7 @@ import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { redis, kc, type StoredItem } from './storage';
 import type { Ctx } from './containers';
+import { loggable } from './log-safe';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -198,8 +199,9 @@ function resolveProcessor(t: StoredTxn): string | null {
 // Ids of pending rows that a later posted row supersedes: a posted row carries
 // the pending one's id in pending_transaction_id (and usually removes the
 // original, but the two can briefly coexist). Suppressing the pending original
-// avoids counting a purchase twice.
-function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
+// avoids counting a purchase twice. Exported for the download of my data
+// (lib/user-export.ts), which keeps such rows but marks them.
+export function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
   const superseded = new Set<string>();
   for (const t of Object.values(txns)) {
     if (t.pending_transaction_id && txns[t.pending_transaction_id]) {
@@ -485,6 +487,22 @@ export async function readStoredTxns(ctx: Ctx, item_id: string, opts: { shown?: 
 }
 
 /**
+ * Everything an Item's store holds, for the download of my data
+ * (lib/user-export.ts): its accounts as last synced and every stored row,
+ * read without syncing, all of history rather than the lookback, pending rows
+ * a posted row replaced included. The sync cursor is left out: it is Plaid's
+ * bookmark, not data. Strict: throws when the store can't be read, since a
+ * download must never pass off an unreadable store as an empty one.
+ */
+export async function readStoredItem(
+  ctx: Ctx,
+  item_id: string
+): Promise<{ accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn> }> {
+  const { accounts, txns } = await readState(ctx, item_id);
+  return { accounts, txns };
+}
+
+/**
  * The account ids this Item is known to own, straight from the persisted state
  * (no Plaid call). A partial answer: an investments-only Item, or one linked
  * and never synced, persists no transaction state, so this is empty for it.
@@ -698,7 +716,7 @@ async function syncItem(ctx: Ctx,
           note: `${item.institution_name}: transactions are still syncing — try again in a minute`,
         };
       }
-      console.error(err?.response?.data || err);
+      console.error(loggable(err));
       return { state: null, note: `${item.institution_name}: could not fetch transactions` };
     }
 

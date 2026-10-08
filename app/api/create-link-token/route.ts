@@ -3,6 +3,7 @@ import { Products, CountryCode } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { webhookUrlFor } from '@/lib/webhook-url';
+import { loggable } from '@/lib/log-safe';
 
 export async function POST() {
   try {
@@ -32,7 +33,7 @@ export async function POST() {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to create link token' }, { status: 500 });
   }
 }
