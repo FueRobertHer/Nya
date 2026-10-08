@@ -2187,6 +2187,14 @@ button.danger-outline {
   font-size: 13px;
 }
 
+/* When it last synced, whose side, and Plaid's code: a sentence, so not in
+   the type tag's capitals. */
+.health-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* A state at a glance, shaped like the Manual badge: amber for a deadline or
    something that clears on its own, red for what only the person can fix. */
 .health-badge {

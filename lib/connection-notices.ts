@@ -275,11 +275,13 @@ export async function checkConnections(ctx: Ctx, institutions: InstitutionResult
   ]);
 
   let skipped = 0;
+  let unreadable = 0;
   const due: (DueNotice & { item_id: string; episode: string })[] = [];
   for (const inst of linked) {
     const id = inst.item_id;
     if (unusable.has(id)) {
       skipped++;
+      unreadable++;
       continue;
     }
     // healthOf passes over a lapsed warning by the same rule as above.
@@ -301,8 +303,8 @@ export async function checkConnections(ctx: Ctx, institutions: InstitutionResult
     }
     if (send && stored) due.push({ item_id: id, episode: stored.episode, institution_name: inst.institution_name, health, since: stored.since, kind: send });
   }
-  if (unusable.size > 0) {
-    console.error(`Connection notices: ${unusable.size} connection(s) in container ${ctx.container} have records that could not be read; left as they are.`);
+  if (unreadable > 0) {
+    console.error(`Connection notices: ${unreadable} connection(s) in container ${ctx.container} have records that could not be read; left as they are.`);
   }
 
   const report = (mail: CheckReport['mail']): CheckReport => ({ skipped, due: due.length, mail });

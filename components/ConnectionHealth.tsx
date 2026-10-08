@@ -295,7 +295,7 @@ export function ConnectionHealthView({
                       {line}
                     </p>
                   ))}
-                  <div className="type-tag">
+                  <div className="health-meta">
                     {lastSyncedText(h)}
                     {side ? ` · ${side}` : ''}
                     {h.code ? ` · Plaid code ${h.code}` : ''}
