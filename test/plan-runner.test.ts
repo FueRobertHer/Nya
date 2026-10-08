@@ -19,7 +19,8 @@ const plan: SimPlan = {
 const job: PlanJob = { kind: 'simulate', method: 'historical', plan };
 const here = async (j: PlanJob) => runPlanJob(j, usMarket());
 
-/** A worker that answers on the next tick, or fails when told to. */
+/** A worker that answers on the next tick, or holds its answers until told
+ *  (answer = false), or fails when told to. */
 class FakeWorker implements WorkerLike {
   onmessage: WorkerLike['onmessage'] = null;
   onerror: WorkerLike['onerror'] = null;
@@ -29,7 +30,10 @@ class FakeWorker implements WorkerLike {
   postMessage(message: unknown) {
     const m = message as PlanMessage;
     this.posted.push(m);
-    if (this.answer) setTimeout(() => this.onmessage?.({ data: { id: m.id, result: runPlanJob(m.job, usMarket()) } } as MessageEvent), 0);
+    if (this.answer) setTimeout(() => this.respond(m), 0);
+  }
+  respond(m: PlanMessage = this.posted[this.posted.length - 1]) {
+    this.onmessage?.({ data: { id: m.id, result: runPlanJob(m.job, usMarket()) } } as MessageEvent);
   }
   terminate() {
     this.terminated = true;
@@ -58,13 +62,40 @@ describe('the jobs', () => {
 });
 
 describe('the runner', () => {
-  test('sends jobs to the worker and matches each answer to its job', async () => {
+  test('sends jobs to the worker one at a time, and matches each answer to its job', async () => {
     const worker = new FakeWorker();
     const runner = createPlanRunner({ startWorker: () => worker, runHere: async () => ({ ok: false, error: 'not here' }) });
-    const [a, b] = await Promise.all([runner.run(job), runner.run({ ...job, plan: { ...plan, years: 20 } })]);
+    const both = Promise.all([runner.run(job), runner.run({ ...job, plan: { ...plan, years: 20 } })]);
+    expect(worker.posted).toHaveLength(1); // the second waits on the page
+    const [a, b] = await both;
     expect(worker.posted.map((m) => m.id)).toEqual([1, 2]);
     expect(a.ok && a.kind === 'simulate' && a.result.years).toBe(30);
     expect(b.ok && b.kind === 'simulate' && b.result.years).toBe(20);
+  });
+
+  // A plan changed twice quickly: the first plan's waiting jobs are dropped,
+  // so the current plan's answer never waits behind them.
+  test('a cancelled job is dropped before it reaches the worker; the running one finishes', async () => {
+    const worker = new FakeWorker();
+    worker.answer = false;
+    const runner = createPlanRunner({ startWorker: () => worker, runHere: here });
+    const old = new AbortController();
+    const running = runner.run(job, old.signal);
+    const waiting = [runner.run({ ...job, plan: { ...plan, years: 20 } }, old.signal), runner.run({ ...job, plan: { ...plan, years: 25 } }, old.signal)];
+    const current = runner.run({ ...job, plan: { ...plan, years: 40 } });
+    old.abort();
+    expect(await Promise.all(waiting)).toEqual([
+      { ok: false, error: 'cancelled' },
+      { ok: false, error: 'cancelled' },
+    ]);
+    worker.respond(); // the one already running is answered
+    expect((await running).ok).toBe(true);
+    worker.respond(); // and next comes the current plan's, not the dropped ones
+    const r = await current;
+    expect(r.ok && r.kind === 'simulate' && r.result.years).toBe(40);
+    expect(worker.posted.map((m) => (m.job.kind === 'simulate' ? m.job.plan.years : 0))).toEqual([30, 40]);
+    // Already cancelled: never queued.
+    expect(await runner.run(job, old.signal)).toEqual({ ok: false, error: 'cancelled' });
   });
 
   test('without a worker, runs the jobs on the page, one per task', async () => {
@@ -79,6 +110,14 @@ describe('the runner', () => {
     const r = await runner.run(job);
     expect(r.ok).toBe(true);
     expect(ran).toEqual([job]);
+    // Dropped there too while it waits.
+    const old = new AbortController();
+    const first = runner.run(job, old.signal);
+    const second = runner.run({ ...job, plan: { ...plan, years: 20 } }, old.signal);
+    old.abort();
+    expect(await second).toEqual({ ok: false, error: 'cancelled' });
+    expect((await first).ok).toBe(true); // already handed to its task
+    expect(ran).toHaveLength(2);
     // A worker that can't even be built counts the same.
     const throwing = createPlanRunner({
       startWorker: () => {
@@ -89,7 +128,7 @@ describe('the runner', () => {
     expect((await throwing.run(job)).ok).toBe(true);
   });
 
-  test('a worker that fails hands its waiting jobs to the page, and every later one', async () => {
+  test('a worker that fails hands its running job to the page, and every later one', async () => {
     const worker = new FakeWorker();
     worker.answer = false; // stuck: never answers
     let onPage = 0;
@@ -126,12 +165,14 @@ describe('the runner', () => {
     expect(runPlanJob({ ...job, plan: { ...plan, years: 0 } }, usMarket())).not.toHaveProperty('unavailable');
   });
 
-  test('stopping answers waiting jobs, and refuses new ones', async () => {
+  test('stopping answers running and waiting jobs, and refuses new ones', async () => {
     const worker = new FakeWorker();
     worker.answer = false;
     const runner = createPlanRunner({ startWorker: () => worker, runHere: here });
+    const running = runner.run(job);
     const waiting = runner.run(job);
     runner.dispose();
+    expect(await running).toEqual({ ok: false, error: 'stopped' });
     expect(await waiting).toEqual({ ok: false, error: 'stopped' });
     expect(await runner.run(job)).toEqual({ ok: false, error: 'stopped' });
     expect(worker.terminated).toBe(true);

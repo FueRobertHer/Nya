@@ -143,74 +143,83 @@ const STARTS: readonly StartChoice[] = ['fi-number', 'assets', 'custom'];
 const REBALANCES: readonly Rebalance[] = ['annual', 'monthly', 'none'];
 const KEYS = Object.keys(DEFAULT_PLAN) as (keyof FirePlan)[];
 
-class Invalid extends Error {}
+/** Why a plan isn't valid, and the field it is about ("withdrawalRate",
+ *  "income[2].label", "allocation"), for repairPlan. */
+class Invalid extends Error {
+  constructor(
+    readonly field: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
 
 function num(v: unknown, field: string, min: number, max: number): number {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw new Invalid(`${field} must be a number from ${min} to ${max}`);
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw new Invalid(field, `${field} must be a number from ${min} to ${max}`);
   return v;
 }
 function int(v: unknown, field: string, min: number, max: number): number {
   const n = num(v, field, min, max);
-  if (!Number.isInteger(n)) throw new Invalid(`${field} must be a whole number`);
+  if (!Number.isInteger(n)) throw new Invalid(field, `${field} must be a whole number`);
   return n;
 }
 function orNull<T>(v: unknown, read: (v: unknown) => T): T | null {
   return v === null ? null : read(v);
 }
 function bool(v: unknown, field: string): boolean {
-  if (typeof v !== 'boolean') throw new Invalid(`${field} must be true or false`);
+  if (typeof v !== 'boolean') throw new Invalid(field, `${field} must be true or false`);
   return v;
 }
 function oneOf<T extends string>(v: unknown, field: string, options: readonly T[]): T {
-  if (typeof v !== 'string' || !(options as readonly string[]).includes(v)) throw new Invalid(`${field} must be one of ${options.join(', ')}`);
+  if (typeof v !== 'string' || !(options as readonly string[]).includes(v)) throw new Invalid(field, `${field} must be one of ${options.join(', ')}`);
   return v as T;
 }
 function id(v: unknown, field: string): string {
-  if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(v)) throw new Invalid(`${field} must be a short id`);
+  if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(v)) throw new Invalid(field, `${field} must be a short id`);
   return v;
 }
 function label(v: unknown, field: string): string {
-  if (typeof v !== 'string') throw new Invalid(`${field} must be text`);
+  if (typeof v !== 'string') throw new Invalid(field, `${field} must be text`);
   const t = v.trim();
-  if (!t || t.length > LIMITS.label) throw new Invalid(`${field} must be 1 to ${LIMITS.label} characters`);
+  if (!t || t.length > LIMITS.label) throw new Invalid(field, `${field} must be 1 to ${LIMITS.label} characters`);
   return t;
 }
 function exactKeys(v: unknown, keys: readonly string[], field: string): Record<string, unknown> {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Invalid(`${field} must be an object`);
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Invalid(field, `${field} must be an object`);
   const o = v as Record<string, unknown>;
-  for (const k of Object.keys(o)) if (!keys.includes(k)) throw new Invalid(`${field} has an unknown field "${k.slice(0, 40)}"`);
-  for (const k of keys) if (!(k in o)) throw new Invalid(`${field} is missing "${k}"`);
+  for (const k of Object.keys(o)) if (!keys.includes(k)) throw new Invalid(field, `${field} has an unknown field "${k.slice(0, 40)}"`);
+  for (const k of keys) if (!(k in o)) throw new Invalid(field, `${field} is missing "${k}"`);
   return o;
 }
 
 /** A clean copy of a plan, or why it is not one. `input` checks everything a
  *  save must meet; otherwise only the shape and types, as a stored plan is
  *  checked (see the top of this file). */
-function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string } {
+function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string; field: string } {
   // Ranges and rules between fields apply to input only.
   const n = (v: unknown, field: string, min: number, max: number) => num(v, field, input ? min : -Infinity, input ? max : Infinity);
   const whole = (v: unknown, field: string, min: number, max: number) => int(v, field, input ? min : -Infinity, input ? max : Infinity);
   const text = (v: unknown, field: string) => {
     if (input) return label(v, field);
-    if (typeof v !== 'string') throw new Invalid(`${field} must be text`);
+    if (typeof v !== 'string') throw new Invalid(field, `${field} must be text`);
     return v;
   };
   const key = (v: unknown, field: string) => {
     if (input) return id(v, field);
-    if (typeof v !== 'string') throw new Invalid(`${field} must be an id`);
+    if (typeof v !== 'string') throw new Invalid(field, `${field} must be an id`);
     return v;
   };
   const list = (v: unknown, field: string, max: number): unknown[] => {
-    if (!Array.isArray(v) || (input && v.length > max)) throw new Invalid(`${field} must be a list of at most ${max}`);
+    if (!Array.isArray(v) || (input && v.length > max)) throw new Invalid(field, `${field} must be a list of at most ${max}`);
     return v;
   };
   try {
     const o = exactKeys(raw, KEYS, 'plan');
-    if (o.version !== 1) throw new Invalid('version must be 1');
+    if (o.version !== 1) throw new Invalid('version', 'version must be 1');
     const [ageMin, ageMax] = LIMITS.age;
     const stocksPct = whole(o.stocksPct, 'stocksPct', 0, 100);
     const bondsPct = whole(o.bondsPct, 'bondsPct', 0, 100);
-    if (input && stocksPct + bondsPct > 100) throw new Invalid('stocksPct and bondsPct add up to more than 100');
+    if (input && stocksPct + bondsPct > 100) throw new Invalid('allocation', 'stocksPct and bondsPct add up to more than 100');
     const floor = n(o.floor, 'floor', ...LIMITS.floor);
     const ceiling = n(o.ceiling, 'ceiling', ...LIMITS.ceiling);
     const income = list(o.income, 'income', LIMITS.incomes).map((x, i): PlanIncome => {
@@ -232,13 +241,19 @@ function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: s
         atAge: whole(e.atAge, `expenses[${i}].atAge`, ...LIMITS.eventAge),
       };
     });
-    const ids = [...income, ...expenses].map((x) => x.id);
-    if (input && new Set(ids).size !== ids.length) throw new Invalid('income and expense ids must be unique');
+    if (input) {
+      const seen = new Set<string>();
+      const all = [...income.map((x, i) => [x.id, `income[${i}]`]), ...expenses.map((x, i) => [x.id, `expenses[${i}]`])];
+      for (const [itemId, path] of all) {
+        if (seen.has(itemId)) throw new Invalid(path, 'income and expense ids must be unique');
+        seen.add(itemId);
+      }
+    }
     // Account ids, as Plaid and manual accounts make them; repeats dropped.
     const bankFunded = [
       ...new Set(
         list(o.bankFunded, 'bankFunded', LIMITS.bankFunded).map((v, i) => {
-          if (typeof v !== 'string' || (input && !/^[A-Za-z0-9_.:-]{1,100}$/.test(v))) throw new Invalid(`bankFunded[${i}] must be an account id`);
+          if (typeof v !== 'string' || (input && !/^[A-Za-z0-9_.:-]{1,100}$/.test(v))) throw new Invalid(`bankFunded[${i}]`, `bankFunded[${i}] must be an account id`);
           return v;
         })
       ),
@@ -271,22 +286,67 @@ function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: s
       bankFunded,
     };
     if (input) {
-      if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('a custom start needs startBalance');
+      if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('start', 'a custom start needs startBalance');
       // A target in the past would have Coast FI grow money backwards in time
       // and the simulation retire before today.
-      if (plan.age !== null && plan.targetAge !== null && plan.targetAge < plan.age) throw new Invalid('targetAge must not be before age');
+      if (plan.age !== null && plan.targetAge !== null && plan.targetAge < plan.age) throw new Invalid('targetAge', 'targetAge must not be before age');
     }
     return { plan };
   } catch (err) {
-    if (err instanceof Invalid) return { error: err.message };
+    if (err instanceof Invalid) return { error: err.message, field: err.field };
     throw err;
   }
 }
 
 /** A clean copy of a plan to save, or why it can't be saved: every field in
  *  today's range, and the rules between fields. */
-export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string } {
+export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string; field: string } {
   return readPlan(raw, true);
+}
+
+/**
+ * A stored plan as today's checks accept it, and what had to change: each
+ * value they refuse replaced by its default, and an income, expense or plan
+ * paid from the bank they refuse left out. A plan saved under another
+ * release can hold a value this one doesn't take (a range narrowed since, or
+ * widened by a later release that was rolled back); the Plan tab works from
+ * this instead, says what it changed, and offers to save it.
+ */
+/** What repairPlan changed: a field set to its default ("allocation" for the
+ *  stock and bond mix together), or an item left out of a list, with the
+ *  label of an income or expense. "plan" when nothing short of the defaults
+ *  would do. */
+export type Repair = { field: string; item?: string };
+
+export function repairPlan(plan: FirePlan): { plan: FirePlan; fixed: Repair[] } {
+  let p: FirePlan = plan;
+  const fixed: Repair[] = [];
+  // Each round fixes the first value refused; a plan has far fewer values.
+  for (let round = 0; round < 64; round++) {
+    const r = parsePlan(p);
+    if ('plan' in r) return { plan: r.plan, fixed };
+    const field = r.field;
+    const item = /^(income|expenses|bankFunded)\[(\d+)\]/.exec(field);
+    if (item) {
+      const list = item[1] as 'income' | 'expenses' | 'bankFunded';
+      const at = Number(item[2]);
+      const gone = p[list][at];
+      fixed.push({ field: list, item: typeof gone === 'object' && gone !== null && typeof gone.label === 'string' ? gone.label : undefined });
+      p = { ...p, [list]: (p[list] as unknown[]).filter((_, i) => i !== at) };
+    } else if (field === 'income' || field === 'expenses' || field === 'bankFunded') {
+      fixed.push({ field });
+      p = { ...p, [field]: (p[field] as unknown[]).slice(0, LIMITS[field === 'income' ? 'incomes' : field]) };
+    } else if (field === 'allocation') {
+      fixed.push({ field });
+      p = { ...p, stocksPct: DEFAULT_PLAN.stocksPct, bondsPct: DEFAULT_PLAN.bondsPct };
+    } else if ((KEYS as string[]).includes(field) && field !== 'version') {
+      fixed.push({ field });
+      p = { ...p, [field]: DEFAULT_PLAN[field as keyof FirePlan] };
+    } else {
+      break; // not a value a default can stand in for
+    }
+  }
+  return { plan: DEFAULT_PLAN, fixed: [{ field: 'plan' }] };
 }
 
 /** Whether a value is a plan as stored: the current shape and types (after
@@ -360,11 +420,24 @@ export type FiView = {
   atTargetAge: number | null;
 };
 
-/** The deterministic FI view of a plan, from what was typed and what Nya measured. */
+const within = (v: number, min: number, max: number) => Number.isFinite(v) && v >= min && v <= max;
+
+/** Whether the FI formulas (lib/fire/fi.ts) take the plan's rates. Every plan
+ *  parsePlan accepts does; a stored plan read leniently may not. */
+export function formulasTake(plan: FirePlan): boolean {
+  return within(plan.withdrawalRate, 1e-6, 1) && within(plan.taxRate, 0, 0.99) && within(plan.realReturn, -0.99, 1);
+}
+
+/** The deterministic FI view of a plan, from what was typed and what Nya
+ *  measured. Total: for rates the formulas don't take, the figures are left
+ *  out (null) rather than thrown on, so no stored plan can stop the tab. */
 export function fiView(plan: FirePlan, measured: Measured): FiView {
   const spending = input(plan.spending, measured.spending);
   const savings = input(plan.savings, measured.savings);
   const assets = input(plan.assets, measured.assets);
+  if (!formulasTake(plan)) {
+    return { spending, savings, assets, fiNumber: null, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
+  }
   const fi = spending.value === null ? null : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
   const a = assets.value ?? 0;
   const c = savings.value ?? 0;

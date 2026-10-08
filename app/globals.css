@@ -1982,9 +1982,21 @@ button.plan-edit:disabled {
 
 /* A new answer is being worked out: the last one stays, dimmed, so nothing
    below it moves. */
-.plan-result-pending {
-  opacity: 0.55;
-  transition: opacity 0.2s;
+/* While a new answer is worked out, the last one keeps its place (so nothing
+   jumps) but is hidden: it answered other assumptions. */
+.plan-result {
+  position: relative;
+}
+
+.plan-result-pending > :not(.plan-working) {
+  visibility: hidden;
+}
+
+.plan-result-pending > .plan-working {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
 }
 
 .plan-working {

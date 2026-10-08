@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import PlanTab, { EventsCard, FiCard, GridCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
+import PlanTab, { EventsCard, FiCard, GridCard, RepairCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import PlanFanChart from '@/components/PlanFanChart';
 import { FigureForm } from '@/components/PlanForms';
 import PlanGrid from '@/components/PlanGrid';
@@ -326,8 +326,16 @@ describe('the simulation card', () => {
     expect(t).toMatch(/Its first year spends \$[\d,]+ after tax, against the \$40,000 you spend now/);
   });
 
-  test('a new answer being worked out keeps the last one, dimmed; the first shows a placeholder', () => {
-    expect(render(plan({ horizon: 30 }), measured, { pending: true })).toContain('plan-result-pending');
+  // The last answer answered other assumptions: while the new one is worked
+  // out it keeps its place (nothing jumps) but is hidden, and so is the
+  // assumptions list beside it, which describes the answer shown.
+  test('a new answer being worked out hides the last one, assumptions and all; the first shows a placeholder', () => {
+    const html = render(plan({ horizon: 30 }), measured, { pending: true });
+    expect(html).toContain('plan-result plan-result-pending');
+    expect(html).toContain('role="status">Working out the new answer');
+    const start = html.indexOf('plan-result plan-result-pending');
+    expect(html.indexOf('plan-stat-value')).toBeGreaterThan(start);
+    expect(html.indexOf('plan-assumptions')).toBeGreaterThan(start);
     expect(render(plan({ horizon: 30 }))).not.toContain('plan-result-pending');
     expect(read(plan({ horizon: 30 }), measured, { noOutcome: true })).toContain('Working it out');
   });
@@ -476,6 +484,48 @@ describe('income and one-offs', () => {
     const aged = plan({ ...p, targetAge: 50, horizon: 5 });
     const late = text(renderToStaticMarkup(<EventsCard plan={aged} engine={enginePlan(aged, fiView(aged, measured))} money={money} editable open={noop} />));
     expect(late).toContain("Roof $30,000 at age 60. After the plan ends at 55: only the grid's longer columns reach it.");
+  });
+});
+
+describe('a saved plan this version cannot use as it is', () => {
+  test('says what is used instead, and offers to save it', () => {
+    const t = text(
+      renderToStaticMarkup(
+        <RepairCard fixed={[{ field: 'withdrawalRate' }, { field: 'income', item: 'Pension' }]} editable onSave={noop} />
+      )
+    );
+    expect(t).toContain('Your saved plan has values this version of Nya can\'t use: the withdrawal rate and the income "Pension".');
+    expect(t).toContain('the figures below use the defaults instead and leave out what is named');
+    expect(t).toContain('Save it this way');
+    expect(text(renderToStaticMarkup(<RepairCard fixed={[{ field: 'horizon' }]} editable onSave={noop} />))).toContain(
+      'has a value this version of Nya can\'t use: the length.'
+    );
+  });
+
+  test('a rate the formulas cannot take leaves the figures out, never crashes the card', () => {
+    const p = plan({ withdrawalRate: 2, taxRate: 1.5 });
+    const t = text(
+      renderToStaticMarkup(
+        <FiCard
+          plan={p}
+          view={fiView(p, measured)}
+          flows={flows}
+          unread={[]}
+          txnsLoading={false}
+          txnsFailed={false}
+          assets={assets()}
+          balancesAsOf={null}
+          workplace={noPlans}
+          workplaceCount={0}
+          currencyNote={null}
+          money={money}
+          editable
+          open={noop}
+        />
+      )
+    );
+    expect(t).toContain('FI number --');
+    expect(t).toContain("Can't be worked out from the saved withdrawal, tax or return rate");
   });
 });
 

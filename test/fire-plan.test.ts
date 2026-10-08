@@ -17,7 +17,7 @@ const { firePlanStore } = await import('@/lib/fire-plan');
 const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
-const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, startAge, upgradePlan } = await import('@/lib/fire/plan');
+const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, repairPlan, startAge, upgradePlan } = await import('@/lib/fire/plan');
 const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
 const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
@@ -157,6 +157,79 @@ describe('a stored plan', () => {
       expect(isFirePlan(value)).toBe(false);
     });
   }
+
+  // What the Plan tab works from when a stored plan has a value this release
+  // doesn't take: never a crash, and it says what changed.
+  test('is repaired to what today accepts, saying what changed', () => {
+    const pension = { id: 'p', label: 'Pension', amount: 2e7, fromAge: 65, inflationAdjusted: false };
+    const r = repairPlan(
+      plan({
+        withdrawalRate: 2,
+        horizon: 61,
+        stocksPct: 80,
+        bondsPct: 30,
+        age: 40,
+        targetAge: 30,
+        income: [pension, { id: 'ss', label: 'Social Security', amount: 20_000, fromAge: 67, inflationAdjusted: true }],
+        expenses: [{ id: 'ss', label: 'Roof', amount: 1, atAge: 60 }], // repeats an income's id
+      })
+    );
+    expect('plan' in parsePlan(r.plan)).toBe(true);
+    expect(r.plan.withdrawalRate).toBe(DEFAULT_PLAN.withdrawalRate);
+    expect(r.plan.horizon).toBe(DEFAULT_PLAN.horizon);
+    expect([r.plan.stocksPct, r.plan.bondsPct]).toEqual([DEFAULT_PLAN.stocksPct, DEFAULT_PLAN.bondsPct]);
+    expect(r.plan.targetAge).toBeNull();
+    expect(r.plan.income.map((x) => x.label)).toEqual(['Social Security']);
+    expect(r.plan.expenses).toEqual([]);
+    expect(r.plan.age).toBe(40); // what was fine is kept
+    expect(r.fixed).toEqual([
+      { field: 'allocation' },
+      { field: 'income', item: 'Pension' },
+      { field: 'expenses', item: 'Roof' },
+      { field: 'withdrawalRate' },
+      { field: 'horizon' },
+      { field: 'targetAge' },
+    ]);
+    // A plan today accepts comes back as it is.
+    expect(repairPlan(plan({ age: 40 }))).toEqual({ plan: plan({ age: 40 }), fixed: [] });
+  });
+
+  test('any plan the lenient reader takes is repaired into one the FI view and the engine plan never throw on', () => {
+    let seed = 7;
+    const random = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const anyNumber = () => [0, -1, 1e9, -1e9, 0.5, 2, 150, 0.99, -0.99, 1e-9][Math.floor(random() * 10)] * (random() < 0.5 ? 1 : random() * 3);
+    const whole = () => Math.round(anyNumber());
+    for (let i = 0; i < 300; i++) {
+      const p = plan({
+        age: random() < 0.3 ? null : whole(),
+        targetAge: random() < 0.3 ? null : whole(),
+        spending: random() < 0.3 ? null : anyNumber(),
+        savings: random() < 0.3 ? null : anyNumber(),
+        assets: random() < 0.3 ? null : anyNumber(),
+        withdrawalRate: anyNumber(),
+        realReturn: anyNumber(),
+        taxRate: anyNumber(),
+        partTimeIncome: anyNumber(),
+        startBalance: random() < 0.5 ? null : anyNumber(),
+        start: (['fi-number', 'assets', 'custom'] as const)[Math.floor(random() * 3)],
+        horizon: random() < 0.5 ? null : whole(),
+        stocksPct: whole(),
+        bondsPct: whole(),
+        fee: anyNumber(),
+        floor: anyNumber(),
+        ceiling: anyNumber(),
+        income: [{ id: 'i', label: 'x'.repeat(1 + Math.floor(random() * 80)), amount: anyNumber(), fromAge: whole(), inflationAdjusted: true }],
+        expenses: [{ id: 'e', label: 'y', amount: anyNumber(), atAge: whole() }],
+      });
+      expect(isFirePlan(JSON.parse(JSON.stringify(p)))).toBe(true);
+      const measured = { spending: anyNumber(), savings: anyNumber(), assets: anyNumber() };
+      // Even unrepaired, the FI view never throws: it leaves out what it can't work out.
+      expect(() => fiView(p, measured)).not.toThrow();
+      const fixed = repairPlan(p).plan;
+      expect('plan' in parsePlan(fixed)).toBe(true);
+      expect(() => enginePlan(fixed, fiView(fixed, measured))).not.toThrow();
+    }
+  });
 
   test('saved without a field added since, is given its default; anything else is left as it is', () => {
     const full = plan({ age: 40, spending: 50_000 });

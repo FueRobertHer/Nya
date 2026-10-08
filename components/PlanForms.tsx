@@ -154,7 +154,7 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
   spending: {
     title: 'Annual spending',
     field: 'Spending a year',
-    note: "Nya adds up a year of money out, leaving out transfers between your own accounts and card payments (they settle purchases already counted). Unlike the Activity tab it counts loan payments, whose principal is spending until the loan ends, and cash withdrawals, and takes refunds off. Type your own if you expect to spend differently once you stop working, after a mortgage ends, say.",
+    note: "Nya adds up a year of money out, leaving out transfers between your own accounts and card payments (they settle purchases already counted). Unlike the Activity tab it counts mortgage, car, student and personal loan payments, whose principal is spending until the loan ends, and cash withdrawals, and takes refunds in spending categories off. Type your own if you expect to spend differently once you stop working, after a mortgage ends, say.",
   },
   savings: {
     title: 'Annual savings',

@@ -71,11 +71,14 @@ import {
   DEFAULT_PLAN,
   enginePlan,
   fiView,
+  formulasTake,
   isFirePlan,
+  repairPlan,
   type EnginePlan,
   type FirePlan,
   type FiView,
   type Missing,
+  type Repair,
   type PlanExpense,
   type PlanIncome,
 } from '@/lib/fire/plan';
@@ -272,7 +275,13 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     void store.load();
   }, [store]);
 
-  const plan = state.value ?? DEFAULT_PLAN;
+  // A saved plan this release can't take as it is (a range narrowed since it
+  // was saved, say): the tab works from a repaired copy, says what changed,
+  // and offers to save it; saving any change saves it too. Nothing here ever
+  // computes with a value outside what the formulas take.
+  const stored = state.value ?? DEFAULT_PLAN;
+  const repair = useMemo(() => repairPlan(stored), [stored]);
+  const plan = repair.plan;
   const editable = state.status === 'ready' && !state.saving;
 
   // What Nya measures, and what may be missing from it. "Today" is the
@@ -355,8 +364,10 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     const s = simRef.current;
     if (!simRunKey || !s) return;
     let live = true;
+    // Dropped from the runner's queue if the plan changes before it runs.
+    const stop = new AbortController();
     void runner()
-      .run({ kind: 'simulate', method: methodRef.current, plan: s })
+      .run({ kind: 'simulate', method: methodRef.current, plan: s }, stop.signal)
       .then((r) => {
         if (!live) return;
         setMain({
@@ -370,6 +381,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
       });
     return () => {
       live = false;
+      stop.abort();
     };
     // simRunKey stands for plan.method and sim, which are new objects each
     // render, and the attempt.
@@ -394,6 +406,8 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     const s = simRef.current;
     if (!gridKey || !s) return;
     let live = true;
+    // The cells not yet run are dropped if the plan changes meanwhile.
+    const stop = new AbortController();
     const cells: GridCell[] = [];
     const failed: FailedCell[] = [];
     let unavailable = false;
@@ -401,7 +415,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     for (const years of gridYears) {
       for (const rate of gridRates) {
         void runner()
-          .run({ kind: 'grid-cell', method, plan: s, rate, years })
+          .run({ kind: 'grid-cell', method, plan: s, rate, years }, stop.signal)
           .then((r) => {
             if (!live) return;
             if (r.ok && r.kind === 'grid-cell') cells.push(r.cell);
@@ -415,6 +429,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     }
     return () => {
       live = false;
+      stop.abort();
     };
     // gridKey stands for everything the grid is computed from, and the attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -453,6 +468,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         </div>
       )}
       {state.saveError && <div className="error plan-save-error">{state.saveError}</div>}
+      {repair.fixed.length > 0 && <RepairCard fixed={repair.fixed} editable={editable} onSave={() => void store.save(plan)} />}
 
       <FiCard
         plan={plan}
@@ -553,6 +569,63 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         {shownSheet?.kind === 'expense' && <ExpenseForm key={opened} {...formProps} item={shownSheet.item} />}
       </Sheet>
     </>
+  );
+}
+
+/** What the repaired values were, for the card that says so. */
+const REPAIR_NAMES: Record<string, string> = {
+  age: 'your age',
+  targetAge: 'your target age',
+  spending: 'the spending you typed',
+  savings: 'the savings you typed',
+  assets: 'the invested assets you typed',
+  includeCash: 'whether cash counts as invested',
+  withdrawalRate: 'the withdrawal rate',
+  realReturn: 'the real return',
+  taxRate: 'the tax rate',
+  partTimeIncome: 'the part-time income',
+  method: 'the method',
+  rule: 'the withdrawal rule',
+  start: 'where the simulation starts',
+  startBalance: 'the starting balance',
+  horizon: 'the length',
+  allocation: 'the stock and bond mix',
+  stocksPct: 'the stock and bond mix',
+  bondsPct: 'the stock and bond mix',
+  rebalance: 'the rebalancing',
+  fee: 'the fund fee',
+  floor: 'the floor',
+  ceiling: 'the ceiling',
+  income: 'other income',
+  expenses: 'one-off expenses',
+  bankFunded: 'the plans paid from your bank',
+};
+
+/** A saved plan this release can't use as it is, and what the tab uses instead. */
+export function RepairCard({ fixed, editable, onSave }: { fixed: Repair[]; editable: boolean; onSave: () => void }) {
+  const whole = fixed.some((f) => f.field === 'plan');
+  const what = names(
+    fixed.map((f) =>
+      f.item !== undefined ? `${f.field === 'income' ? 'the income' : 'the one-off'} "${f.item}"` : REPAIR_NAMES[f.field] ?? f.field
+    )
+  );
+  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'bankFunded');
+  return (
+    <div className="card">
+      <div className="error" style={{ marginTop: 0 }}>
+        {whole
+          ? "Your saved plan can't be used by this version of Nya, so the figures below use the defaults."
+          : `Your saved plan has ${fixed.length === 1 ? 'a value' : 'values'} this version of Nya can't use: ${what}.`}
+      </div>
+      <p className="panel-note">
+        {whole
+          ? 'Saving any change replaces it with what you see here.'
+          : `Until you change ${fixed.length === 1 ? 'it' : 'them'}, the figures below use the defaults instead${dropped ? ' and leave out what is named' : ''}, and saving any change keeps that. Everything else is as you saved it.`}
+      </p>
+      <button className="secondary" style={{ marginTop: 12 }} onClick={onSave} disabled={!editable}>
+        Save it this way
+      </button>
+    </div>
   );
 }
 
@@ -743,7 +816,9 @@ export function FiCard({
       <div className="as-of">
         {view.fiNumber !== null && spending.value !== null
           ? `${money(spending.value)} a year${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
-          : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
+          : !formulasTake(plan)
+            ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
+            : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
       </div>
       {spendingShort && <div className="as-of stale">May be low: spending is missing transactions that couldn&apos;t be read (below).</div>}
       {view.progress !== null && (
@@ -948,13 +1023,20 @@ export function SimulationCard({
     <div className="card">
       {header}
       <p className="panel-note">{setup}</p>
-      {vpw && spendingNow !== null && (
-        <p className="panel-note">
-          Its first year spends {money(r.firstYearSpending)} after tax, against the {money(spendingNow)} you spend now.
-        </p>
-      )}
 
+      {/* While a new answer is worked out, the last one keeps its place but
+          is hidden: it answered other assumptions than the ones above. */}
       <div className={pending ? 'plan-result plan-result-pending' : 'plan-result'} aria-busy={pending}>
+        {pending && (
+          <div className="plan-working" role="status">
+            Working out the new answer…
+          </div>
+        )}
+        {vpw && spendingNow !== null && (
+          <p className="panel-note">
+            Its first year spends {money(r.firstYearSpending)} after tax, against the {money(spendingNow)} you spend now.
+          </p>
+        )}
         <div className="plan-stats">
           <div className="plan-stat">
             <span className="plan-stat-value">{successText(r.successRate, 1)}</span>
@@ -1006,38 +1088,38 @@ export function SimulationCard({
             </ul>
           </>
         )}
-      </div>
 
-      <div className="plan-subhead">Assumptions</div>
-      <ul className="plan-assumptions">
-        <li>
-          {r.method === 'historical'
-            ? `${METHOD_NAMES.historical}: the plan started in every month from ${monthName(r.firstStart!)} to ${monthName(r.lastStart!)}, each living through what followed.`
-            : `${METHOD_NAMES['monte-carlo']}: ${(r.runs ?? DEFAULT_RUNS).toLocaleString()} runs, each built from ${(r.blockMonths ?? BLOCK_MONTHS) / 12}-year blocks of consecutive months drawn at random from the history (seed ${r.seed ?? DEFAULT_SEED}, so the same plan gives the same answer).`}
-        </li>
-        <li>
-          Mix: {pct(alloc.stocks, 0)} stocks, {pct(alloc.bonds, 0)} bonds, {pct(alloc.cash, 0)} cash (cash keeps up with inflation and earns nothing more), {REBALANCE_TEXT[plan.rebalance]}.
-        </li>
-        <li>
-          {RULE_NAMES[plan.rule]}: {ruleText(plan.rule, { rate, floor: plan.floor, ceiling: plan.ceiling, expectedReturn: vpwExpectedReturn(alloc) })}
-        </li>
-        <li>
-          Withdrawals once a year, at the start of the year. Fund fees {pct(plan.fee)} a year. Tax {pct(plan.taxRate)} of every withdrawal.
-        </li>
-        {placedIncome.map((x) => (
-          <li key={x.id}>
-            {x.label}: {money(x.amount)} a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
+        <div className="plan-subhead">Assumptions</div>
+        <ul className="plan-assumptions">
+          <li>
+            {r.method === 'historical'
+              ? `${METHOD_NAMES.historical}: the plan started in every month from ${monthName(r.firstStart!)} to ${monthName(r.lastStart!)}, each living through what followed.`
+              : `${METHOD_NAMES['monte-carlo']}: ${(r.runs ?? DEFAULT_RUNS).toLocaleString()} runs, each built from ${(r.blockMonths ?? BLOCK_MONTHS) / 12}-year blocks of consecutive months drawn at random from the history (seed ${r.seed ?? DEFAULT_SEED}, so the same plan gives the same answer).`}
           </li>
-        ))}
-        {placedExpenses.map((x) => (
-          <li key={x.id}>
-            {x.label}: {money(x.amount)} at age {x.atAge}, on top of the year&apos;s spending.
+          <li>
+            Mix: {pct(alloc.stocks, 0)} stocks, {pct(alloc.bonds, 0)} bonds, {pct(alloc.cash, 0)} cash (cash keeps up with inflation and earns nothing more), {REBALANCE_TEXT[plan.rebalance]}.
           </li>
-        ))}
-        <li>
-          Returns are after inflation, from US history only: stocks are {DATA_STOCKS}, bonds {DATA_BONDS}.
-        </li>
-      </ul>
+          <li>
+            {RULE_NAMES[plan.rule]}: {ruleText(plan.rule, { rate, floor: plan.floor, ceiling: plan.ceiling, expectedReturn: vpwExpectedReturn(alloc) })}
+          </li>
+          <li>
+            Withdrawals once a year, at the start of the year. Fund fees {pct(plan.fee)} a year. Tax {pct(plan.taxRate)} of every withdrawal.
+          </li>
+          {placedIncome.map((x) => (
+            <li key={x.id}>
+              {x.label}: {money(x.amount)} a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
+            </li>
+          ))}
+          {placedExpenses.map((x) => (
+            <li key={x.id}>
+              {x.label}: {money(x.amount)} at age {x.atAge}, on top of the year&apos;s spending.
+            </li>
+          ))}
+          <li>
+            Returns are after inflation, from US history only: stocks are {DATA_STOCKS}, bonds {DATA_BONDS}.
+          </li>
+        </ul>
+      </div>
     </div>
   );
 }
