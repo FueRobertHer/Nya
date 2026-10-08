@@ -5,9 +5,13 @@
 // A store is declared in its own module, next to its type and shape check, and
 // registers itself when that module loads. Each such module is imported below,
 // so anything that walks every store sees all of them, whatever its own code
-// happens to load: the key inventory (classify() in lib/reencrypt.ts) and a
-// person's data download. test/repo.test.ts fails if a module under lib/
+// happens to load: the key inventory (classify() in lib/reencrypt.ts) and, once
+// it exists, the person's data download. test/repo.test.ts fails if a module
 // declares a store and is not imported here.
+//
+// Only stores built on the seam are here. Anything walking this catalogue (a
+// data download, say) misses the older stores, goals and budgets and history
+// among them, until each moves behind the seam.
 //
 // One line per declaring module, in alphabetical order, like:
 //   import './rules';
