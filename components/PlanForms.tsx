@@ -6,7 +6,7 @@
 // through onSave, closing only once the server has it.
 
 import { useState } from 'react';
-import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 
@@ -178,8 +178,8 @@ export function FigureForm(
     currency: string | null;
     /** Invested assets with or without cash, so the total follows the box as it is ticked. */
     assetsFor?: (includeCash: boolean) => { total: number | null; accounts: CountedAccount[] };
-    /** Savings: the workplace plans whose contributions are added, each with
-     *  its "Paid through payroll" switch. */
+    /** Savings: the workplace plans whose contributions are measured, each
+     *  with how it is paid into. */
     workplacePlans?: { account_id: string; label: string }[];
   }
 ) {
@@ -188,14 +188,18 @@ export function FigureForm(
   const [mode, setMode] = useState<'measured' | 'typed'>(typedNow === null && props.measured !== null ? 'measured' : 'typed');
   const [text, setText] = useState(asText(typedNow ?? (props.measured === null ? null : Math.round(props.measured))));
   const [includeCash, setIncludeCash] = useState(plan.includeCash);
-  const [fromBank, setFromBank] = useState<string[]>(plan.bankFunded);
+  // How each workplace plan is paid into, by account id; absent is not set.
+  const [funding, setFunding] = useState(() => new Map(plan.planFunding.map((f) => [f.account_id, f.paidFrom])));
   const plans = kind === 'savings' ? (props.workplacePlans ?? []) : [];
-  // The plans switched off here, plus any switched off before that isn't
-  // listed now (hidden, or disconnected for a while), as long as they fit.
-  const bankFunded = () => {
+  // What is set here, plus what was set before for a plan not listed now
+  // (hidden, or disconnected for a while), as long as it fits.
+  const planFunding = (): PlanFunding[] => {
     const listed = new Set(plans.map((p) => p.account_id));
-    const off = plans.filter((p) => fromBank.includes(p.account_id)).map((p) => p.account_id);
-    return [...off, ...plan.bankFunded.filter((id) => !listed.has(id))].slice(0, LIMITS.bankFunded);
+    const here = plans.flatMap((p) => {
+      const paidFrom = funding.get(p.account_id);
+      return paidFrom ? [{ account_id: p.account_id, paidFrom }] : [];
+    });
+    return [...here, ...plan.planFunding.filter((f) => !listed.has(f.account_id))].slice(0, LIMITS.planFunding);
   };
   const s = useSave(props);
   const t = FIGURE_TEXT[kind];
@@ -258,22 +262,33 @@ export function FigureForm(
       {plans.length > 0 && (
         <>
           <p className="panel-note">
-            Nya&apos;s figure adds what went into these workplace plans, taken as paid from your pay before it reaches a
-            bank. Turn &quot;Paid through payroll&quot; off for a plan you pay into from your bank account (a Solo 401(k),
-            say): those payments already count as saved, so adding them would count them twice.
+            How each workplace plan is paid into. <strong>Payroll</strong>: every contribution is added, since it comes out
+            of your pay before it reaches a bank. <strong>My bank</strong>: none is, since the transfers that paid for them
+            already count as saved (a Solo 401(k), say). <strong>Not set</strong>: a contribution is added unless a
+            transfer from your bank to investment and retirement funds paid for it.
           </p>
           {plans.map((p) => (
-            <label key={p.account_id} className="plan-check">
-              <input
-                type="checkbox"
-                checked={!fromBank.includes(p.account_id)}
-                onChange={(e) =>
-                  setFromBank((ids) => (e.target.checked ? ids.filter((id) => id !== p.account_id) : [...ids, p.account_id]))
-                }
+            <div key={p.account_id} className="plan-funding">
+              <div className="plan-funding-name">{p.label}</div>
+              <Choice
+                label={`How ${p.label} is paid into`}
+                value={funding.get(p.account_id) ?? 'unset'}
                 disabled={s.saving}
+                onChange={(v) =>
+                  setFunding((m) => {
+                    const next = new Map(m);
+                    if (v === 'unset') next.delete(p.account_id);
+                    else next.set(p.account_id, v);
+                    return next;
+                  })
+                }
+                options={[
+                  ['unset', 'Not set'],
+                  ['payroll', 'Payroll'],
+                  ['bank', 'My bank'],
+                ]}
               />
-              {p.label}: paid through payroll
-            </label>
+            </div>
           ))}
         </>
       )}
@@ -287,7 +302,7 @@ export function FigureForm(
             ...plan,
             [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
             includeCash: kind === 'assets' ? includeCash : plan.includeCash,
-            bankFunded: kind === 'savings' ? bankFunded() : plan.bankFunded,
+            planFunding: kind === 'savings' ? planFunding() : plan.planFunding,
           }))
         }
       />

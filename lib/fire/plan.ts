@@ -43,6 +43,12 @@ export type PlanExpense = {
   atAge: number;
 };
 
+/** How the person says a workplace plan is paid into (lib/fire/inputs.ts
+ *  workplaceSavings): "payroll", so every contribution is added to savings,
+ *  or "bank", so none is (the transfers that paid for them already count as
+ *  saved). */
+export type PlanFunding = { account_id: string; paidFrom: 'payroll' | 'bank' };
+
 export type FirePlan = {
   version: 1;
   /** Typed by the person. */
@@ -78,11 +84,10 @@ export type FirePlan = {
   ceiling: number;
   income: PlanIncome[];
   expenses: PlanExpense[];
-  /** Workplace plans (account ids) the person pays into from a bank account,
-   *  with "Paid through payroll" turned off: their contributions are already
-   *  counted as saved by income minus spending, so they aren't added again.
-   *  Every other workplace plan is taken as paid through payroll. */
-  bankFunded: string[];
+  /** How each workplace plan is paid into, by account id, where the person
+   *  has said. A plan not listed is not set: a contribution to it is added
+   *  unless a transfer to investment and retirement funds paid for it. */
+  planFunding: PlanFunding[];
 };
 
 export const DEFAULT_PLAN: FirePlan = {
@@ -110,7 +115,7 @@ export const DEFAULT_PLAN: FirePlan = {
   ceiling: 1.25,
   income: [],
   expenses: [],
-  bankFunded: [],
+  planFunding: [],
 };
 
 /** A plan with no age runs this long. */
@@ -134,13 +139,14 @@ export const LIMITS = {
   expenses: 10,
   label: 60,
   id: 40,
-  bankFunded: 20,
+  planFunding: 20,
 } as const;
 
 const METHODS: readonly Method[] = ['historical', 'monte-carlo'];
 const RULES: readonly RuleKind[] = ['constant', 'percent', 'guardrails', 'vpw', 'floor-ceiling'];
 const STARTS: readonly StartChoice[] = ['fi-number', 'assets', 'custom'];
 const REBALANCES: readonly Rebalance[] = ['annual', 'monthly', 'none'];
+const PAID_FROM: readonly PlanFunding['paidFrom'][] = ['payroll', 'bank'];
 const KEYS = Object.keys(DEFAULT_PLAN) as (keyof FirePlan)[];
 
 /** Why a plan isn't valid, and the field it is about ("withdrawalRate",
@@ -249,15 +255,19 @@ function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: s
         seen.add(itemId);
       }
     }
-    // Account ids, as Plaid and manual accounts make them; repeats dropped.
-    const bankFunded = [
-      ...new Set(
-        list(o.bankFunded, 'bankFunded', LIMITS.bankFunded).map((v, i) => {
-          if (typeof v !== 'string' || (input && !/^[A-Za-z0-9_.:-]{1,100}$/.test(v))) throw new Invalid(`bankFunded[${i}]`, `bankFunded[${i}] must be an account id`);
-          return v;
-        })
-      ),
-    ];
+    // By account id, as Plaid and manual accounts make them; one entry for
+    // each, the last said.
+    const funding = new Map<string, PlanFunding['paidFrom']>();
+    list(o.planFunding, 'planFunding', LIMITS.planFunding).forEach((x, i) => {
+      const e = exactKeys(x, ['account_id', 'paidFrom'], `planFunding[${i}]`);
+      if (typeof e.account_id !== 'string' || (input && !/^[A-Za-z0-9_.:-]{1,100}$/.test(e.account_id))) {
+        throw new Invalid(`planFunding[${i}]`, `planFunding[${i}].account_id must be an account id`);
+      }
+      const paidFrom = oneOf(e.paidFrom, `planFunding[${i}].paidFrom`, PAID_FROM);
+      funding.delete(e.account_id);
+      funding.set(e.account_id, paidFrom);
+    });
+    const planFunding = [...funding].map(([account_id, paidFrom]) => ({ account_id, paidFrom }));
     const plan: FirePlan = {
       version: 1,
       age: orNull(o.age, (v) => whole(v, 'age', ageMin, ageMax)),
@@ -283,7 +293,7 @@ function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: s
       ceiling,
       income,
       expenses,
-      bankFunded,
+      planFunding,
     };
     if (input) {
       if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('start', 'a custom start needs startBalance');
@@ -304,20 +314,20 @@ export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string; f
   return readPlan(raw, true);
 }
 
+/** What repairPlan changed: a field set to its default ("allocation" for the
+ *  stock and bond mix together), or an item left out of a list (an income or
+ *  one-off with what it was, so it can be named and typed in again). "plan"
+ *  when nothing short of the defaults would do. */
+export type Repair = { field: string; item?: { label: string; amount: number; age: number } };
+
 /**
  * A stored plan as today's checks accept it, and what had to change: each
- * value they refuse replaced by its default, and an income, expense or plan
- * paid from the bank they refuse left out. A plan saved under another
+ * value they refuse replaced by its default, and an income, one-off or
+ * workplace plan setting they refuse left out. A plan saved under another
  * release can hold a value this one doesn't take (a range narrowed since, or
  * widened by a later release that was rolled back); the Plan tab works from
- * this instead, says what it changed, and offers to save it.
+ * this instead, says what it changed, and saves it only when asked.
  */
-/** What repairPlan changed: a field set to its default ("allocation" for the
- *  stock and bond mix together), or an item left out of a list, with the
- *  label of an income or expense. "plan" when nothing short of the defaults
- *  would do. */
-export type Repair = { field: string; item?: string };
-
 export function repairPlan(plan: FirePlan): { plan: FirePlan; fixed: Repair[] } {
   let p: FirePlan = plan;
   const fixed: Repair[] = [];
@@ -326,14 +336,27 @@ export function repairPlan(plan: FirePlan): { plan: FirePlan; fixed: Repair[] } 
     const r = parsePlan(p);
     if ('plan' in r) return { plan: r.plan, fixed };
     const field = r.field;
-    const item = /^(income|expenses|bankFunded)\[(\d+)\]/.exec(field);
+    const item = /^(income|expenses|planFunding)\[(\d+)\]/.exec(field);
     if (item) {
-      const list = item[1] as 'income' | 'expenses' | 'bankFunded';
+      const list = item[1] as 'income' | 'expenses' | 'planFunding';
       const at = Number(item[2]);
-      const gone = p[list][at];
-      fixed.push({ field: list, item: typeof gone === 'object' && gone !== null && typeof gone.label === 'string' ? gone.label : undefined });
+      const gone: unknown = p[list][at];
+      const g = (typeof gone === 'object' && gone !== null ? gone : {}) as Record<string, unknown>;
+      const age = list === 'income' ? g.fromAge : g.atAge;
+      fixed.push(
+        list === 'planFunding'
+          ? { field: list }
+          : {
+              field: list,
+              item: {
+                label: typeof g.label === 'string' ? g.label : '',
+                amount: typeof g.amount === 'number' ? g.amount : 0,
+                age: typeof age === 'number' ? age : 0,
+              },
+            }
+      );
       p = { ...p, [list]: (p[list] as unknown[]).filter((_, i) => i !== at) };
-    } else if (field === 'income' || field === 'expenses' || field === 'bankFunded') {
+    } else if (field === 'income' || field === 'expenses' || field === 'planFunding') {
       fixed.push({ field });
       p = { ...p, [field]: (p[field] as unknown[]).slice(0, LIMITS[field === 'income' ? 'incomes' : field]) };
     } else if (field === 'allocation') {
@@ -371,10 +394,18 @@ export function isFirePlan(v: unknown): v is FirePlan {
  */
 export function upgradePlan(stored: unknown): unknown {
   if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored;
-  const o = stored as Record<string, unknown>;
+  let o = stored as Record<string, unknown>;
   if (o.version !== 1) return stored;
-  const missing = KEYS.filter((k) => !Object.prototype.hasOwnProperty.call(o, k));
-  if (missing.length === 0) return stored;
+  // The workplace plan switch was two-way: a list of plans paid from a bank
+  // (bankFunded), every other plan matched against transfers. Those are
+  // "bank" now, and the rest are not set, which is what matching meant.
+  if (Object.hasOwn(o, 'bankFunded') && !Object.hasOwn(o, 'planFunding')) {
+    const { bankFunded, ...rest } = o;
+    if (!Array.isArray(bankFunded) || !bankFunded.every((id) => typeof id === 'string')) return stored;
+    o = { ...rest, planFunding: bankFunded.map((account_id) => ({ account_id, paidFrom: 'bank' })) };
+  }
+  const missing = KEYS.filter((k) => !Object.hasOwn(o, k));
+  if (missing.length === 0) return o;
   const filled: Record<string, unknown> = { ...o };
   for (const k of missing) filled[k] = structuredClone(DEFAULT_PLAN[k]);
   return filled;
