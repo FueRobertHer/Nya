@@ -36,6 +36,22 @@ export async function getRenames(ctx: Ctx): Promise<Record<string, string>> {
   }
 }
 
+/**
+ * Every rename, vendor_key -> name, for the download of my data
+ * (lib/user-export.ts). Strict where getRenames is lenient: a failed read, or
+ * any value that can't be decrypted, throws instead of being dropped.
+ */
+export async function readRenamesStrict(ctx: Ctx): Promise<Map<string, string>> {
+  const map = (await redis().hgetall<Record<string, string>>(RENAMES_HASH(ctx))) ?? {};
+  const out = new Map<string, string>();
+  for (const [key, name] of await Promise.all(
+    Object.entries(map).map(async ([key, blob]) => [key, await decrypt(String(blob))] as const)
+  )) {
+    out.set(key, name);
+  }
+  return out;
+}
+
 export async function setRename(ctx: Ctx, vendor_key: string, name: string): Promise<void> {
   await redis().hset(RENAMES_HASH(ctx), { [vendor_key]: await encrypt(name) });
 }

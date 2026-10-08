@@ -520,6 +520,25 @@ export class FakeRedis {
       else this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
+    // A counter store's: GET or INCR, and the expiry, as one step. Like
+    // Redis, INCR refuses a value that is not an integer, and a hash at the
+    // key is WRONGTYPE.
+    if (name === '-- nya:repo-counter-read' || name === '-- nya:repo-counter-take') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      let value = this.strings.get(keys[0]);
+      if (name === '-- nya:repo-counter-read' && value === undefined) return ['', 0];
+      if (name === '-- nya:repo-counter-take') {
+        if (value !== undefined && !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error('ERR nya: the stored count is not a count');
+        value = String(Number(value ?? 0) + 1);
+        this.strings.set(keys[0], value);
+      }
+      let ttl = this.ttls.get(keys[0]) ?? -1;
+      if (ttl < 0) {
+        ttl = Number(args[0]);
+        this.ttls.set(keys[0], ttl);
+      }
+      return name === '-- nya:repo-counter-read' ? [`v${value}`, ttl] : [Number(value), ttl];
+    }
     throw new Error(`FakeRedis: unknown script ${name}`);
   }
 

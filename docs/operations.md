@@ -15,6 +15,8 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 
 Some of what Nya stores exists nowhere else: banks stop serving old transactions after a while, and no bank serves daily balance history at all. A copy is taken every night; take one by hand before any risky change too.
 
+These are the operator's copies of the whole environment, for recovery, with every value kept as stored: what is encrypted in the database stays encrypted, and what is plain text there (dates, ids, bank names, renamed merchant names; see below) is plain text in the copy. A person's own copy of their data, decrypted, is a different thing they download themselves: see [data-export.md](data-export.md).
+
 ### Nightly backups
 
 Every night at 16:00 UTC (after the daily snapshot and its catch-up), a cron (`/api/backup`) takes the same archive as the manual export below and saves it to Vercel Blob under `backups/<environment>/`. It reads each copy back to check it before anything old is deleted. Copies older than 30 days are deleted, but the newest 7 are always kept.
@@ -50,7 +52,7 @@ Not everything in it is encrypted, so still treat the file as private: dates, ac
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
-Caches and login rate-limit counters are left out on purpose. Avoid running it around 13:00 UTC, when the daily snapshot writes.
+Caches and the login's rate-limit counters are left out on purpose. Each account's count of data downloads is a store on the storage seam, so it is kept like the rest, with its expiry. Avoid running it around 13:00 UTC, when the daily snapshot writes.
 
 ## Restoring a backup
 

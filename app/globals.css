@@ -1881,3 +1881,104 @@ button.danger-outline {
   width: 100%;
   font-size: 15px;
 }
+
+/* --- download my data (components/DownloadMyData.tsx) --- */
+
+.download-formats {
+  border: none;
+  padding: 0;
+  margin: 16px 0 8px;
+  min-width: 0;
+}
+
+.download-format {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.download-format + .download-format {
+  border-top: 1px solid var(--line);
+}
+
+.download-format input {
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.download-format-name {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.download-format-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.download-card .field {
+  margin-top: 8px;
+}
+
+.download-card > button {
+  margin-top: 8px;
+}
+
+.download-card a {
+  color: var(--accent);
+}
+
+/* --- the receipt after deleting an account (components/DeletionReceipt.tsx) --- */
+
+.receipt-card {
+  width: 100%;
+  max-width: 480px;
+  margin: 0;
+}
+
+.privacy-panel .receipt-card {
+  max-width: none;
+  padding: 0;
+  background: transparent;
+}
+
+.receipt-card h2 {
+  margin: 0 0 6px;
+}
+
+.receipt-section {
+  margin-top: 18px;
+}
+
+.receipt-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.receipt-section li {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.receipt-card a {
+  color: var(--accent);
+}
+
+.receipt-done {
+  margin-top: 10px;
+}
+
+/* --- links inside notes, such as the Plaid Portal in the disconnect sheet --- */
+
+.panel-note a {
+  color: var(--accent);
+}
