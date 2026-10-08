@@ -6,6 +6,7 @@ import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
 import { getEffectiveHidden, type Link } from '@/lib/links';
+import { loggable } from '@/lib/log-safe';
 
 type TransactionsPayload = {
   transactions: Txn[];
@@ -84,7 +85,7 @@ export async function GET(req: Request) {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
   }
 }

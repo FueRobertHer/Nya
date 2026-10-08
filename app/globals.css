@@ -2031,3 +2031,271 @@ button.danger-outline {
   margin-top: 6px;
   text-align: left;
 }
+
+/* --- download my data (components/DownloadMyData.tsx) --- */
+
+.download-formats {
+  border: none;
+  padding: 0;
+  margin: 16px 0 8px;
+  min-width: 0;
+}
+
+.download-format {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.download-format + .download-format {
+  border-top: 1px solid var(--line);
+}
+
+.download-format input {
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.download-format-name {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.download-format-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.download-card .field {
+  margin-top: 8px;
+}
+
+.download-card > button {
+  margin-top: 8px;
+}
+
+.download-card a {
+  color: var(--accent);
+}
+
+/* --- the receipt after deleting an account (components/DeletionReceipt.tsx) --- */
+
+.receipt-card {
+  width: 100%;
+  max-width: 480px;
+  margin: 0;
+}
+
+.privacy-panel .receipt-card {
+  max-width: none;
+  padding: 0;
+  background: transparent;
+}
+
+.receipt-card h2 {
+  margin: 0 0 6px;
+}
+
+.receipt-section {
+  margin-top: 18px;
+}
+
+.receipt-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.receipt-section li {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.receipt-card a {
+  color: var(--accent);
+}
+
+.receipt-done {
+  margin-top: 10px;
+}
+
+/* --- links inside notes, such as the Plaid Portal in the disconnect sheet --- */
+
+.panel-note a {
+  color: var(--accent);
+}
+
+/* --- security and privacy pages (app/security, app/privacy), the links to
+   them and the bank coverage note (components/InfoPage.tsx, TrustLinks.tsx) --- */
+
+.info-page {
+  /* No tab bar here, so none of .wrap's room for one. */
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+
+.info-brand {
+  /* Only the logo and name are the link back, not the whole row. */
+  display: inline-flex;
+  margin-bottom: 20px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.info-page h1 {
+  font-size: 24px;
+  margin: 0 0 6px;
+}
+
+.info-section h2 {
+  margin-top: 0;
+}
+
+.info-section h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.info-section p,
+.info-section li {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.info-section p {
+  margin: 0 0 10px;
+}
+
+.info-section p:last-child {
+  margin-bottom: 0;
+}
+
+.info-section ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.info-section li + li {
+  margin-top: 6px;
+}
+
+.info-section .info-aside {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.info-section a,
+.info-section code {
+  color: var(--accent);
+}
+
+.info-section code {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* A plain-language summary, not a legal policy: said first, in amber. */
+.info-notice {
+  border-left: 3px solid var(--warn);
+}
+
+.info-table th[scope="row"] {
+  width: 36%;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.info-table th,
+.info-table td {
+  vertical-align: top;
+  line-height: 1.45;
+}
+
+/* On a phone two columns leave each too narrow to read: every row stacks,
+   its name over its text. */
+@media (max-width: 480px) {
+  .info-table thead {
+    display: none;
+  }
+
+  .info-table tr,
+  .info-table th[scope="row"],
+  .info-table td {
+    display: block;
+    width: auto;
+  }
+
+  .info-table th[scope="row"] {
+    padding: 12px 0 2px;
+    border-bottom: none;
+  }
+
+  .info-table td {
+    padding: 0 0 12px;
+  }
+}
+
+.info-status {
+  margin: 0;
+}
+
+.info-status dt {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.info-status dd {
+  margin: 4px 0 0;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.trust-links {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin: 24px 0 4px;
+  font-size: 13px;
+}
+
+.trust-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.trust-links a[aria-current="page"] {
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .trust-links a:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+}
+
+.auth-wrap .coverage-note {
+  max-width: 400px;
+  margin: 0;
+  text-align: center;
+}
+
+.auth-wrap .trust-links {
+  margin: 0;
+}

@@ -1,8 +1,12 @@
 // lib/crypto.ts
 //
-// Encrypts everything Nya stores (Plaid access tokens, balances, history,
-// transactions) before it is written to Redis, so a leak of the database or
-// of a backup alone doesn't expose it.
+// Encrypts the values that hold financial data (Plaid access tokens, balances,
+// history, transactions and the rest; classify() in lib/reencrypt.ts lists
+// every store) before they are written to Redis, so a leak of the database or
+// of a backup alone doesn't expose them. Key and field names, and the few
+// stores that hold no amounts, stay plain text: dates, ids, bank names,
+// renamed merchants' original names, sharing's names and levels
+// (docs/architecture.md).
 //
 // Uses the Web Crypto API (available in Bun, Node 19+, and Vercel's Edge
 // runtime).
@@ -107,6 +111,18 @@ export class MalformedCiphertextError extends Error {
   }
 }
 
+/** A value in a format this code does not know, though a later version might
+ *  write it: another version tag, or a flag added after this code. Still a
+ *  MalformedCiphertextError to every caller that does not tell them apart; the
+ *  storage seam (lib/repo.ts) does, so a rollback never treats such a value as
+ *  damaged. */
+export class UnsupportedFormatError extends MalformedCiphertextError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedFormatError';
+  }
+}
+
 /** The key is right but authentication failed: the value, its header, or its
  *  context does not match what was encrypted. */
 export class DecryptFailedError extends Error {
@@ -141,6 +157,25 @@ export function decodeKeyMaterial(material: string, name: string): Uint8Array {
     throw new Error(`${name} must decode to exactly 32 bytes (AES-256). Generate with: openssl rand -base64 32`);
   }
   return raw;
+}
+
+/**
+ * Whether this deployment has a usable master key, read from the environment
+ * alone (MASTER_KEY set, and 32 bytes of base64): no database read, so the
+ * public security page (app/security) can say which scheme this copy uses.
+ * True does not mean every value is under a data key yet: values from before
+ * the master was set stay under k0 until the re-encryption pass moves them,
+ * and a write that can't use a data key falls back to k0 (and logs it).
+ */
+export function masterKeyConfigured(): boolean {
+  const material = process.env[MASTER_KEY_ENV];
+  if (!material) return false;
+  try {
+    decodeKeyMaterial(material, MASTER_KEY_ENV);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Non-extractable: once imported, the key's bytes cannot be read back out of
@@ -631,9 +666,8 @@ function parse(payload: string): Parsed {
   const parts = payload.split('.');
   // Named only when it looks like a version tag; anything else is not quoted.
   if (parts[0] !== 'v2') {
-    throw new MalformedCiphertextError(
-      /^v[0-9]{1,3}$/.test(parts[0]) ? `Unsupported encryption format "${parts[0]}".` : 'Unrecognised encrypted value.'
-    );
+    if (/^v[0-9]{1,3}$/.test(parts[0])) throw new UnsupportedFormatError(`Unsupported encryption format "${parts[0]}".`);
+    throw new MalformedCiphertextError('Unrecognised encrypted value.');
   }
   if (parts.length !== 4) throw new MalformedCiphertextError('Encrypted value does not have four parts.');
   const [, keyId, flags, body] = parts;
@@ -641,7 +675,7 @@ function parse(payload: string): Parsed {
   if (!FLAGS.test(flags)) throw new MalformedCiphertextError('Encrypted value has invalid flags.');
   if (flags !== '-') {
     for (const f of flags) {
-      if (!KNOWN_FLAGS.has(f)) throw new MalformedCiphertextError(`Encrypted value uses unknown flag "${f}".`);
+      if (!KNOWN_FLAGS.has(f)) throw new UnsupportedFormatError(`Encrypted value uses unknown flag "${f}".`);
     }
     if ([...new Set(flags)].sort().join('') !== flags) {
       throw new MalformedCiphertextError('Encrypted value has flags out of order or repeated.');

@@ -10,10 +10,13 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
+import DownloadMyData from './DownloadMyData';
 import { instantDay } from '@/lib/local-date';
+import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
+import { CoverageNote, TrustLinks } from './TrustLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
@@ -1355,6 +1358,7 @@ export default function Dashboard({
               <button onClick={startConnect} disabled={connecting}>
                 {connecting ? 'Starting…' : 'Connect an account'}
               </button>
+              <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
                   entry point for someone whose bank Plaid doesn't support at all. */}
@@ -1490,6 +1494,7 @@ export default function Dashboard({
                   <button onClick={startConnect} disabled={connecting}>
                     {connecting ? 'Starting…' : 'Connect an account'}
                   </button>
+                  <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
                   <div className="action-row">
@@ -2039,6 +2044,11 @@ export default function Dashboard({
                   </div>
                 )}
 
+                {/* Download my data, with the rest of the account upkeep
+                    behind Manage accounts; after the accounts, so it doesn't
+                    push them down. It asks for a fresh sign-in itself. */}
+                {manageMode && <DownloadMyData clerk={clerk} />}
+
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
@@ -2087,6 +2097,8 @@ export default function Dashboard({
             )}
           </>
         )}
+        {/* At the foot of every tab: how the data is protected, and who can read it. */}
+        <TrustLinks />
       </main>
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
       {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
@@ -2293,9 +2305,20 @@ export default function Dashboard({
         {shownDisconnectTarget && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya. You can
-              reconnect it later. Type <strong>{shownDisconnectTarget.institution_name}</strong> below to
-              confirm.
+              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
+              connection at Plaid. You can reconnect it later. Type{' '}
+              <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
+            </p>
+            {/* What Plaid itself keeps is beyond a disconnect's reach (the
+                deletion receipt says the same, lib/deletion-receipt.ts): say
+                where people can see and delete it. */}
+            <p className="panel-note">
+              Plaid keeps its own records of what it collected, under its own privacy policy. See and delete
+              them at the{' '}
+              <a href={PLAID_PORTAL} target="_blank" rel="noreferrer">
+                Plaid Portal
+              </a>
+              .
             </p>
             <label className="field" style={{ marginTop: 12 }}>
               Institution name

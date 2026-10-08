@@ -12,7 +12,7 @@ Nya has two ways to sign in. Without Clerk keys set, one shared password protect
 
 Deploying to Vercel gives the app a public HTTPS URL. Anyone who found it could otherwise view your balances or link their own account into your Redis store. So every route is gated by `proxy.ts` (Next's renamed middleware convention), which checks a signed, expiring session cookie. Logging in at `/login` sets that cookie for 30 days.
 
-The exceptions are the login page and API, the PWA assets needed for install, and routes that authenticate themselves: the crons (`CRON_SECRET`), the balance ingest (`INGEST_SECRET`), Plaid's webhook (its signature), the ops routes (`OPS_SECRET`, off unless `OPS_ENABLED=1`) and the demo sign-in. See the header of `proxy.ts`.
+The exceptions are the login page and API, the Security and Privacy pages (`/security`, `/privacy`, which read no stored data), the PWA assets needed for install, and routes that authenticate themselves: the crons (`CRON_SECRET`), the balance ingest (`INGEST_SECRET`), Plaid's webhook (its signature), the ops routes (`OPS_SECRET`, off unless `OPS_ENABLED=1`) and the demo sign-in. With Clerk on, `/sign-in` and `/not-allowed` are open too. The public pages still pass through the proxy, which gives every page its Content-Security-Policy ([deployment.md](deployment.md#security-headers-and-the-content-security-policy)). See the header of `proxy.ts`.
 
 Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
 
@@ -50,7 +50,14 @@ Never delete the whole `owners` key once there is more than one container: with 
 
 ### Deleting an account
 
-Under Manage accounts, "Delete my account" (type DELETE to confirm) disconnects that person's banks at Plaid, deletes everything stored for them, ends all sharing to and from them, and deletes their Clerk sign-in. If it stops part way, their data is already out of reach, and running it again finishes. The primary account (the first, the owner's) can't be deleted from the app. Nightly backups keep a copy for up to 30 days; take the person off `CLERK_ALLOWED_USER_IDS` too.
+In the account window (the avatar menu, then Manage account), the **Data & privacy** page has "Delete my account" (type DELETE to confirm). It disconnects that person's banks at Plaid, deletes everything stored for them, ends all sharing to and from them, and deletes their Clerk sign-in. If it stops part way, their data is already out of reach, and running it again finishes. The primary account (the first, the owner's) can't be deleted from the app. Take the person off `CLERK_ALLOWED_USER_IDS` too. To keep a copy first, they can download everything ([data-export.md](data-export.md)).
+
+It ends with a **receipt**, shown on the sign-in page it signs out to, with Copy and Download as text (`lib/deletion-receipt.ts`):
+
+- **Deleted now:** banks disconnected at Plaid (and any Plaid wouldn't disconnect), accounts, transactions, investment transactions, days of balance history, connections where sharing ended, and the sign-in. Accounts are counted as the person knows them: the accounts of the banks still connected and the manual ones, an account linked across a reconnect once. Accounts of banks they had disconnected, kept for their history, are listed apart.
+- **Counting never holds up the deletion.** What is stored is counted after the container is archived and before any bank is disconnected, and the count gets ten seconds (`COUNT_LIMIT_MS` in `lib/account-deletion.ts`); past that, or if something can't be read, the deletion goes on and the receipt shows those figures as unavailable, never as a wrong number. A retry, which finds the container archived already, doesn't count again: part of the data may be gone by then. If an attempt stopped part way, the page keeps what it had counted and done, and the retry's receipt includes it. A bank Plaid no longer has (it answers `ITEM_NOT_FOUND`, for example because the first attempt already removed it) counts as disconnected; `INVALID_ACCESS_TOKEN` doesn't, since a token from another Plaid environment gets that answer too, while its connection may still exist.
+- **Expires later:** the date the last nightly backup holding the data is gone. Those copies keep the data as it was stored: its values encrypted, but dates, account and transaction ids, bank names and the merchant names the person renamed in plain text ([operations.md](operations.md#taking-a-backup-by-hand)). Copies older than `BACKUP_KEEP_DAYS` (30 by default) are deleted by the next successful nightly run, but the newest 7 are always kept, so the last copy goes `BACKUP_KEEP_DAYS` + 1 days after the deletion, or 7 days when that is longer. The cron can start up to an hour late, so the receipt adds a day: 32 days by default. That holds while the nightly backup keeps running, and the receipt says when it has stopped. Without a blob store there are no backups, and it says that instead.
+- **What stays, and why:** Plaid's own copy of what it collected, under its own policy, with a link to the [Plaid Portal](https://my.plaid.com) where people can see and delete it; server logs, which hold no amounts or balances; and any file they downloaded themselves.
 
 ### Turning it on in production
 
@@ -83,5 +90,5 @@ Before making Preview public (turning off Vercel's protection for it), give it i
 ## What is not covered
 
 - **The shared password is one secret for everyone who has it.** Anyone with it gets full access, including the ability to disconnect accounts. Sessions can be ended everywhere, but not one device at a time. Use Clerk for more than one person.
-- **Rate limiting covers only the login endpoint**, not the data routes (those already require a valid session).
+- **Rate limiting covers signing in and data downloads only**: wrong passwords per IP (shared by the login and the password asked for before a download), demo sign-ins per IP, and five downloads of your data an hour per account. The other data routes already require a valid session.
 - **The on-device snapshot is readable without the app password.** The dashboard keeps its last-known snapshot in the browser's `localStorage` so the PWA opens instantly and shows balances offline. Someone with your unlocked phone can read it. That is acceptable for a personal device, but worth knowing. It is cleared on logout (and per signed-in account with Clerk).

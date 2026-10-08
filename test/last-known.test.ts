@@ -17,7 +17,10 @@ const {
   rememberedIdsForItem,
   findRememberedAccount,
   forgetItem,
+  rememberedAccountsByItem,
+  rememberedIdsByItem,
 } = await import('@/lib/last-known');
+const { liveAccountIds } = await import('@/lib/links');
 const { applyHidden } = await import('@/lib/hidden');
 const { accountBalanceMap } = await import('@/lib/networth');
 
@@ -164,6 +167,23 @@ describe('rememberAccounts', () => {
     });
 
     expect(await findRememberedAccount(ctx, 'old_acct_id')).toBeNull();
+    expect(await fake.hkeys(ctxKey('accounts:meta'))).toEqual(['item_a']);
+  });
+
+  // The download of my data, and the count an account deletion takes for its
+  // receipt, promise to change nothing: their strict reads skip the tidying.
+  test('a strict read for the download leaves records of the old shape where they are', async () => {
+    await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: 'x' }) });
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await fake.hset(ctxKey('accounts:meta'), {
+      old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
+    });
+
+    expect(Object.keys(await rememberedAccountsByItem(ctx))).toEqual(['item_a']);
+    expect([...(await liveAccountIds(ctx, { strict: true, readOnly: true }))]).toEqual(['card']);
+    expect((await fake.hkeys(ctxKey('accounts:meta'))).sort()).toEqual(['item_a', 'old_acct_id']);
+    // Any other strict read still tidies, as before.
+    expect(await rememberedIdsByItem(ctx, true)).toEqual({ item_a: ['card'] });
     expect(await fake.hkeys(ctxKey('accounts:meta'))).toEqual(['item_a']);
   });
 
