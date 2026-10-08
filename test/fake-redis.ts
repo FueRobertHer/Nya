@@ -503,6 +503,22 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[1]);
       return 1;
     }
+    // The storage seam's (lib/repo.ts). A string at the key is Redis's
+    // WRONGTYPE, as HMGET and HGET answer it.
+    if (name === '-- nya:repo-read-entries') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      return args.map((field) => {
+        const value = this.hashes.get(keys[0])?.get(field);
+        return value === undefined ? '' : `v${value}`;
+      });
+    }
+    if (name === '-- nya:repo-update-entry') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      if ((this.hashes.get(keys[0])?.get(args[0]) ?? '') !== args[1]) return 0;
+      if (args[2] === '') this.hdelNow(keys[0], [args[0]]);
+      else this.hash(keys[0]).set(args[0], args[2]);
+      return 1;
+    }
     throw new Error(`FakeRedis: unknown script ${name}`);
   }
 

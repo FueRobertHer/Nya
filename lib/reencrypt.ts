@@ -9,13 +9,13 @@
 //
 // HOW IT STAYS SAFE WHILE THE APP IS RUNNING:
 //
-//   - EXPLICIT LIST, NOT GUESSWORK. Every key is classified below: a string or
-//     hash of ciphertext, the Plaid items (whose access token is one field of a
-//     JSON value), or known plaintext. A store declared through the storage seam
-//     (lib/repo.ts) is classified by its declaration, found through the
-//     catalogue in lib/stores.ts. An unlisted key is reported and left alone, so
-//     a store added later can't be missed silently (a test checks every key name
-//     in lib/ is listed).
+//   - EXPLICIT LIST, NOT GUESSWORK. Every key is classified by the lists in
+//     lib/key-families.ts: a string or hash of ciphertext, the Plaid items (whose
+//     access token is one field of a JSON value), or known plaintext. A store
+//     declared through the storage seam (lib/repo.ts) is classified by its
+//     declaration, found through the catalogue in lib/stores.ts. An unlisted key
+//     is reported and left alone, so a store added later can't be missed
+//     silently (a test checks every key name in lib/ is listed).
 //   - COMPARE-AND-SET. Each value is written back by a small Lua script only if
 //     it still hashes to what was read. A save landing mid-pass wins; the pass
 //     reports it as changed meanwhile and picks it up next time.
@@ -44,6 +44,7 @@ import { createHash } from 'node:crypto';
 import { rawRedis, envPrefix } from './storage';
 import { splitScoped, isEnvWide } from './containers';
 import { declaredStore } from './stores';
+import { listedKind, type Kind } from './key-families';
 import {
   activeKeyForReencryption,
   activeKeyName,
@@ -59,85 +60,26 @@ import {
   UnknownKeyError,
 } from './crypto';
 
-/** How a key's values are stored. */
-export type Kind =
-  | 'string' // the whole value is ciphertext
-  | 'hash' // every field's value is ciphertext
-  | 'cipher' // either of those, whichever type the key has (the caches)
-  | 'items' // plaid:items: JSON values whose encrypted_access_token is ciphertext
-  | 'plain'; // no ciphertext (checked: a v2 value in one is reported)
-
-const EXACT: Record<string, Kind> = {
-  goals: 'string',
-  budgets: 'string',
-  'history:accounts:est:flat': 'string',
-
-  'history:net-worth': 'hash',
-  'history:net-worth:est': 'hash',
-  'history:accounts': 'hash',
-  'history:accounts:est': 'hash',
-  'history:accounts:est:ext': 'hash',
-  'history:accounts:partial': 'hash',
-  'history:accounts:est:flatd': 'hash',
-  'accounts:vanished': 'hash',
-  'accounts:meta': 'hash',
-  'accounts:directory': 'hash',
-  'account-links': 'hash',
-  'txn-category-overrides': 'hash',
-  'txn-category-carry': 'hash',
-  'account-links:lock': 'plain',
-  'txn-vendor-renames': 'hash',
-  'manual:accounts': 'hash',
-  'hidden:accounts': 'hash',
-
-  'plaid:items': 'items',
-
-  'history:backfill-done': 'plain',
-  'history:backfill-pending': 'plain',
-  'account-links:dismissed': 'plain',
-  'plaid:new-accounts': 'plain', // item id -> when Plaid reported new accounts (lib/new-accounts.ts)
-
-  containers: 'plain', // the container registry
-  owners: 'plain', // which Clerk account owns which container (lib/owners.ts)
-  grants: 'plain', // sharing's first version (#88), no longer read or written
-  connections: 'plain', // who is connected, and what each shares (lib/sharing.ts)
-};
-
-const PREFIXES: [string, Kind][] = [
-  ['txns:', 'string'],
-  ['invtxns:', 'string'],
-  ['txns-blocked:', 'plain'],
-  ['invtxns-lock:', 'plain'],
-  ['txns-unsaved:', 'plain'],
-  ['history:forgetting:', 'plain'],
-  ['ratelimit:', 'plain'],
-  ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
-  ['move:', 'plain'], // the data move's record (lib/move.ts)
-  ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
-  ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
-  ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
-  ['backups:', 'plain'], // the nightly backup's last outcome (lib/backup.ts)
-  ['invites:', 'plain'], // unused invite links, hashed (lib/sharing.ts)
-];
+// How a key's values are stored, and the frozen lists of key families stored
+// the old way: lib/key-families.ts.
+export type { Kind } from './key-families';
 
 /** How a key (without the environment prefix) is stored, or null if it is
- *  neither on the list nor a declared store. */
+ *  neither on the lists nor a declared store's. */
 export function classify(key: string): Kind | null {
   // A key inside a container is stored like the same key outside one, except
   // that environment-wide stores never belong in one, and containers never
   // nest: either means a key was built wrongly, so it is reported.
   const scoped = splitScoped(key);
-  if (scoped.container) {
-    if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
-    return classify(scoped.key);
-  }
-  if (Object.hasOwn(EXACT, key)) return EXACT[key];
-  for (const [prefix, kind] of PREFIXES) if (key.startsWith(prefix)) return kind;
-  // A store declared through the seam: a value store is one string of
-  // ciphertext, a map store a hash of it. After the lists, so nothing on them
-  // changes (test/repo.test.ts checks no declared name collides with them).
-  const store = declaredStore(key);
-  return store === null ? null : store.kind === 'value' ? 'string' : 'hash';
+  if (!scoped.container) return listedKind(key);
+  if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
+  // Then a store declared through the seam: a value store is one string of
+  // ciphertext, a map store a hash of it. Only inside a container, where the
+  // seam keeps everything; the same name outside one was built wrongly, so it
+  // is reported. The seam refuses a name the lists claim, so this changes
+  // nothing on them.
+  const store = declaredStore(scoped.key);
+  return listedKind(scoped.key) ?? (store === null ? null : store.kind === 'value' ? 'string' : 'hash');
 }
 
 // The compare-and-set scripts. The value read is compared by SHA-1, so an

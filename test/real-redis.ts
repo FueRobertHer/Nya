@@ -52,13 +52,28 @@ function parsedOr(value: string): unknown {
   }
 }
 
-/** What Upstash's default client does to GET's and HGET's answer: JSON is
- *  parsed, except a number that would not print back the same, and anything
- *  else comes back as the string it was. */
+/** Upstash's default decoding of an answer (its parseRecursive): JSON is
+ *  parsed, a list item by item, except a number that would not print back the
+ *  same; anything that does not parse comes back as it was. For GET, HGET and
+ *  EVAL. */
 function upstashParse(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  const parsed = parsedOr(value);
-  return typeof parsed === 'number' && String(parsed) !== value ? value : parsed;
+  const parse = (v: unknown): unknown => {
+    const parsed = Array.isArray(v)
+      ? v.map((item) => {
+          try {
+            return parse(item);
+          } catch {
+            return item;
+          }
+        })
+      : JSON.parse(v as string);
+    return typeof parsed === 'number' && parsed.toString() !== v ? v : parsed;
+  };
+  try {
+    return parse(value);
+  } catch {
+    return value;
+  }
 }
 
 /** What it does to each HGETALL value: parsed, except a number that is not a
@@ -69,13 +84,14 @@ function upstashParseField(value: string): unknown {
 }
 
 /**
- * The commands of the Upstash client that the storage seam sends (lib/repo.ts
- * and lib/stored-json.ts), run on a real Redis and answered the way Upstash
- * answers them: values JSON-parsed on the way out where they parse, an empty
- * hash as null, HGETALL built as a plain object. Lets one suite run the same
- * assertions against test/fake-redis.ts and a real server: only the client
- * object is stood in for (Upstash speaks HTTP, which redis-server does not);
- * every command is the real server's to answer.
+ * The commands of the Upstash client that the storage seam (lib/repo.ts) and
+ * the key store under it (lib/crypto.ts) send, run on a real Redis and answered
+ * the way Upstash answers them: values JSON-parsed on the way out where they
+ * parse, an empty hash as null, HGETALL built as a plain object. Lets one suite
+ * run the same assertions against test/fake-redis.ts and a real server: only
+ * the client object is stood in for (Upstash speaks HTTP, which redis-server
+ * does not), every command is the real server's to answer, and
+ * test/repo.test.ts checks this decodes like the real client.
  *
  * `failNext` arms failures like the fake's, standing in for a request that
  * never reached the server; `sent` lists every command sent, by name.
@@ -120,5 +136,7 @@ export function upstashOn(client: RedisClient) {
     hdel: async (key: string, ...fields: string[]) => Number(await call('hdel', [key, ...fields])),
     hlen: async (key: string) => Number(await call('hlen', [key])),
     hexists: async (key: string, field: string) => Number(await call('hexists', [key, field])),
+    eval: async (script: string, keys: string[], args: string[]) =>
+      upstashParse(await call('eval', [script, String(keys.length), ...keys, ...args])),
   };
 }

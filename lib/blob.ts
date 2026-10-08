@@ -86,7 +86,13 @@ function base64ToBytes(b64: string): Uint8Array {
 
 /** JSON, gzipped, base64-wrapped and encrypted: what a store writes. */
 export async function encodeJsonBlob(value: unknown): Promise<string> {
-  return encrypt(bytesToBase64(await gzipString(JSON.stringify(value))));
+  return encodeJsonText(JSON.stringify(value));
+}
+
+/** The same for JSON text already serialized, so a writer that checked that
+ *  text (lib/repo.ts) stores exactly what it checked. */
+export async function encodeJsonText(json: string): Promise<string> {
+  return encrypt(bytesToBase64(await gzipString(json)));
 }
 
 /** The reverse. Throws on anything it can't decrypt or parse; the caller
