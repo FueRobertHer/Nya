@@ -191,6 +191,7 @@ export default function ConnectionHealth({
   unavailable = false,
   connecting,
   focus = false,
+  onFocused,
   onReconnect,
   onRemove,
   onManageAccounts,
@@ -201,6 +202,9 @@ export default function ConnectionHealth({
   connecting: boolean;
   /** Opened from a notice email's link: show it, and scroll to it. */
   focus?: boolean;
+  /** Called once it has been shown for `focus`, so coming back to the tab
+   *  later doesn't scroll to it again. */
+  onFocused?: () => void;
   onReconnect: (item_id: string) => void;
   onRemove: (item_id: string) => void;
   onManageAccounts: (item_id: string) => void;
@@ -220,11 +224,15 @@ export default function ConnectionHealth({
   useEffect(() => {
     if (troubled > 0 || focus) setOpen(true);
   }, [troubled, focus]);
+  // Once there is a card to show (the institutions may still be loading).
+  const shown = rows.length > 0;
   useEffect(() => {
-    if (focus) ref.current?.scrollIntoView({ block: 'start' });
-  }, [focus]);
+    if (!focus || !shown || !ref.current) return;
+    ref.current.scrollIntoView({ block: 'start' });
+    onFocused?.();
+  }, [focus, shown, onFocused]);
 
-  if (rows.length === 0) return null;
+  if (!shown) return null;
   return <ConnectionHealthView ref={ref} rows={rows} open={open} onToggle={() => setOpen((o) => !o)} unavailable={unavailable} connecting={connecting} onReconnect={onReconnect} onRemove={onRemove} onManageAccounts={onManageAccounts} />;
 }
 

@@ -614,7 +614,7 @@ function toStoredAccount(a: AccountBase): StoredAccount {
  * means usable-but-partial (e.g. the initial pull hit the page cap, which also
  * sets `importing`). Prior stored state is left untouched on a hard stop.
  */
-async function syncItem(ctx: Ctx,
+async function syncItem(ctx: Ctx, 
   item: StoredItem
 ): Promise<{ state: ItemState | null; note: string | null; importing?: boolean }> {
   let access_token: string;
@@ -785,7 +785,7 @@ async function syncItem(ctx: Ctx,
  * arriving; or `missing`, none at all this time (a hard stop above), so every
  * month is short by whatever it holds.
  */
-export async function syncItemTransactions(ctx: Ctx,
+export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
   hiddenAccountIds?: Set<string>,
   /** Categories carried across a re-link, by contentKey (lib/overrides.ts).

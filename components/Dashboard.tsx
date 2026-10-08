@@ -412,6 +412,7 @@ export default function Dashboard({
   // could read Plaid's warnings, and whether a notice email's link opened it.
   const [healthUnavailable, setHealthUnavailable] = useState(false);
   const [healthFocus, setHealthFocus] = useState(false);
+  const clearHealthFocus = useCallback(() => setHealthFocus(false), []);
   // The Item update mode is open on, so its success can be recorded
   // (app/api/item-reconnected).
   const reconnectingItemRef = useRef<string | null>(null);
@@ -1532,6 +1533,7 @@ export default function Dashboard({
                   unavailable={healthUnavailable}
                   connecting={connecting}
                   focus={healthFocus}
+                  onFocused={clearHealthFocus}
                   onReconnect={startReconnect}
                   onManageAccounts={startManageAccounts}
                   onRemove={(item_id) => {
