@@ -2010,3 +2010,24 @@ button.danger-outline {
   font-weight: 400;
   margin-top: 2px;
 }
+
+/* Several sentences in one note: what the plan can't see, or why it waits.
+   Spaced from the headline that follows it. */
+.payoff-notes {
+  margin-bottom: 12px;
+}
+
+.payoff-notes p {
+  margin: 0 0 4px;
+}
+
+.payoff-notes p:last-child {
+  margin-bottom: 0;
+}
+
+/* A held payment's reason, then each figure offered for it on its own line. */
+.payoff-hold .link-btn {
+  display: block;
+  margin-top: 6px;
+  text-align: left;
+}

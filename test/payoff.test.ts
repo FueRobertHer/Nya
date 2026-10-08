@@ -3,6 +3,7 @@ import {
   HORIZON_MONTHS,
   MAX_APR,
   addMonths,
+  blindSpots,
   byCurrency,
   comparePlans,
   coversInterest,
@@ -15,10 +16,15 @@ import {
   planRows,
   resolveApr,
   resolveMinimum,
+  scheduledPaymentCents,
   simulate,
+  splitByWeight,
+  termMonths,
   toCents,
   type Debt,
+  type DebtAccount,
   type DebtInstitutionInput,
+  type PlanChoices,
   type Plan,
 } from '@/lib/payoff';
 import { normalizeLiabilities } from '@/lib/liabilities';
@@ -423,6 +429,34 @@ describe('months and labels', () => {
   });
 });
 
+describe('what the extra alone saves', () => {
+  const debts = [debt('card', 4_000, 22, 120), debt('loan', 9_000, 7, 210)];
+
+  test('the same order with and without the extra, apart from what rolling payments over saves', () => {
+    const c = comparePlans(debts, { startMonth: START, extraCents: toCents(200) });
+    const without = run(debts, 'avalanche', 0);
+    expect(c.avalanche.extraSaved).toEqual({
+      interestCents: without.interestCents! - c.avalanche.interestCents!,
+      months: without.months! - c.avalanche.months!,
+    });
+    expect(c.avalanche.extraSaved!.interestCents!).toBeGreaterThan(0);
+    // Against minimums only it saves more: the extra and the rollover together.
+    expect(c.avalanche.saved.interestCents!).toBeGreaterThan(c.avalanche.extraSaved!.interestCents!);
+  });
+
+  test('no extra, nothing to measure', () => {
+    const c = comparePlans(debts, { startMonth: START });
+    expect(c.avalanche.extraSaved).toBeNull();
+    expect(c.snowball.extraSaved).toBeNull();
+  });
+
+  test('when only the extra makes it finish, there is no finite saving to state', () => {
+    const c = comparePlans([debt('card', 10_000, 24, 150)], { startMonth: START, extraCents: toCents(100) });
+    expect(c.avalanche.months).not.toBeNull();
+    expect(c.avalanche.extraSaved).toEqual({ interestCents: null, months: null });
+  });
+});
+
 describe('typed terms', () => {
   test('parseApr takes 0 to 100 and nothing else', () => {
     expect(parseApr('')).toBeNull();
@@ -446,31 +480,372 @@ describe('typed terms', () => {
     expect(parseCents('x')).toBe('invalid');
   });
 
+  // The fields resolveMinimum reads, for an account with an ordinary minimum.
+  const minimumOf = (defaultMinimumCents: number | null, more: Partial<DebtAccount> = {}) => ({
+    defaultMinimumCents,
+    plaidMinimumCents: defaultMinimumCents,
+    minimumHold: null,
+    workedOut: null,
+    ...more,
+  });
+
   test("Plaid's value stands until something is typed", () => {
     expect(resolveApr(21.24, undefined)).toEqual({ value: 21.24, source: 'plaid', error: null });
-    expect(resolveMinimum(3500, undefined)).toEqual({ value: 3500, source: 'plaid', error: null });
+    expect(resolveMinimum(minimumOf(3500), undefined)).toEqual({ value: 3500, source: 'plaid', error: null });
     expect(resolveApr(null, undefined)).toEqual({ value: null, source: null, error: null });
   });
 
-  test('what is typed wins, and retyping the same figure is still Plaid’s', () => {
+  test("what is typed wins, and retyping the same figure is still Plaid's", () => {
     expect(resolveApr(21.24, '19.99')).toEqual({ value: 19.99, source: 'typed', error: null });
     expect(resolveApr(21.24, '21.240')).toEqual({ value: 21.24, source: 'plaid', error: null });
-    expect(resolveMinimum(3500, '50')).toEqual({ value: 5000, source: 'typed', error: null });
-    expect(resolveMinimum(null, '50')).toEqual({ value: 5000, source: 'typed', error: null });
+    expect(resolveMinimum(minimumOf(3500), '50')).toEqual({ value: 5000, source: 'typed', error: null });
+    expect(resolveMinimum(minimumOf(null), '50')).toEqual({ value: 5000, source: 'typed', error: null });
   });
 
   test("a cleared field is needed again rather than quietly falling back to Plaid's", () => {
     expect(resolveApr(21.24, '')).toEqual({ value: null, source: null, error: null });
+    expect(resolveMinimum(minimumOf(3500), '')).toEqual({ value: null, source: null, error: null });
   });
 
   test('a typed value out of range is refused with a reason', () => {
     expect(resolveApr(21.24, '2124')).toMatchObject({ value: null, source: 'typed', error: 'Enter a rate from 0 to 100%.' });
-    expect(resolveMinimum(3500, '-3')).toMatchObject({ value: null, error: 'Enter an amount of 0 or more.' });
+    expect(resolveMinimum(minimumOf(3500), '-3')).toMatchObject({ value: null, error: 'Enter an amount of 0 or more.' });
   });
 
   test("a Plaid figure out of range is not planned on: it's needed instead", () => {
     expect(resolveApr(2124, undefined)).toEqual({ value: null, source: null, error: null });
-    expect(resolveMinimum(-500, undefined)).toEqual({ value: null, source: null, error: null });
+    expect(resolveMinimum(minimumOf(-500), undefined)).toEqual({ value: null, source: null, error: null });
+  });
+
+  test('a held mortgage payment: typed figures are named for where they came from', () => {
+    const workedOut = { cents: 202657, principal: 425000, months: 360, apr: 3.99 };
+    const escrow = minimumOf(null, { plaidMinimumCents: 314154, minimumHold: 'escrow', workedOut });
+    expect(resolveMinimum(escrow, undefined)).toEqual({ value: null, source: null, error: null });
+    expect(resolveMinimum(escrow, '2026.57')).toEqual({ value: 202657, source: 'worked-out', error: null });
+    // Plaid's escrow-inclusive figure typed back in is the person's choice, not Plaid's.
+    expect(resolveMinimum(escrow, '3141.54')).toEqual({ value: 314154, source: 'typed', error: null });
+    // With no escrow reported, saying it has none makes Plaid's figure the payment.
+    const unknown = minimumOf(null, { plaidMinimumCents: 210050, minimumHold: 'escrow-unknown', workedOut: null });
+    expect(resolveMinimum(unknown, '2100.50')).toEqual({ value: 210050, source: 'plaid', error: null });
+    // A typed 0 stays a typed 0, even where Plaid's 0 was held.
+    expect(resolveMinimum(minimumOf(null, { plaidMinimumCents: 0, minimumHold: 'zero' }), '0')).toEqual({
+      value: 0,
+      source: 'typed',
+      error: null,
+    });
+  });
+});
+
+describe('payments from Plaid that are not what the plan needs', () => {
+  test('termMonths and the scheduled payment of a fixed-rate loan', () => {
+    expect(termMonths('30 year')).toBe(360);
+    expect(termMonths('10 years')).toBe(120);
+    expect(termMonths('360 month')).toBe(360);
+    expect(termMonths('15 yr')).toBe(180);
+    expect(termMonths('thirty')).toBeNull();
+    expect(termMonths('700 months')).toBeNull(); // past the horizon
+    expect(termMonths(null)).toBeNull();
+    // Plaid's example mortgage: $425,000 at 3.99% over 30 years.
+    expect(scheduledPaymentCents(425_000, 3.99, 360)).toBe(202657);
+    expect(scheduledPaymentCents(12_000, 0, 48)).toBe(25000);
+    expect(scheduledPaymentCents(10_000, 0, 3)).toBe(333334);
+  });
+
+  // Plaid's own example mortgage (LiabilitiesGetResponse in its API spec): the
+  // payment includes escrow, and the escrow account holds money.
+  const exampleMortgage = normalizeLiabilities({
+    mortgage: [
+      {
+        account_id: 'mortgage',
+        escrow_balance: 3141.54,
+        interest_rate: { percentage: 3.99, type: 'fixed' },
+        loan_term: '30 year',
+        next_monthly_payment: 3141.54,
+        origination_principal_amount: 425000,
+      },
+    ],
+  } as unknown as Parameters<typeof normalizeLiabilities>[0]).mortgage;
+  const mortgageAt = (liability: object, balance = 56_302.06) =>
+    debtAccounts([
+      {
+        institution_name: 'Chase',
+        accounts: [{ account_id: 'm', name: 'Mortgage', type: 'loan', subtype: 'mortgage', balance, currency: 'USD', liability: liability as never }],
+      },
+    ])[0];
+
+  test("a mortgage reporting escrow is never planned on Plaid's payment, and is offered its principal and interest", () => {
+    const m = mortgageAt(exampleMortgage);
+    expect(m).toMatchObject({
+      minimumHold: 'escrow',
+      plaidMinimumCents: 314154,
+      defaultMinimumCents: null,
+      escrowCents: 314154,
+      workedOut: { cents: 202657, principal: 425000, months: 360, apr: 3.99 },
+    });
+    const { rows, debts, waiting } = planRows([m], { typed: {}, leftOut: {}, withoutAccrued: {} });
+    expect(rows[0].status).toBe('needs-terms');
+    expect(waiting).toBe(1);
+    expect(debts).toEqual([]);
+    // Taking the worked-out figure plans on principal and interest only.
+    const taken = planRows([m], { typed: { m: { minimum: '2026.57' } }, leftOut: {}, withoutAccrued: {} });
+    expect(taken.debts[0].minimumCents).toBe(202657);
+    expect(taken.rows[0].minimum.source).toBe('worked-out');
+  });
+
+  test("escrow never rolls into the next debt: the strategy's monthly total holds principal and interest only", () => {
+    const m = mortgageAt(exampleMortgage);
+    const card = debtAccounts([
+      {
+        institution_name: 'Chase',
+        accounts: [
+          { account_id: 'c', name: 'Card', type: 'credit', balance: 2000, currency: 'USD', liability: { kind: 'credit', apr: 20, apr_label: 'Purchase APR', minimum_payment: 60 } },
+        ],
+      },
+    ])[0];
+    const { debts } = planRows([m, card], { typed: { m: { minimum: '2026.57' } }, leftOut: {}, withoutAccrued: {} });
+    const c = comparePlans(debts, { startMonth: START });
+    expect(c.avalanche.monthlyCents).toBe(202657 + 6000);
+  });
+
+  test('a mortgage reporting no escrow balance is held too, since Plaid gives no split', () => {
+    for (const escrow of [null, 0]) {
+      const m = mortgageAt({ ...exampleMortgage, escrow_balance: escrow });
+      expect(m.minimumHold).toBe('escrow-unknown');
+      expect(m.defaultMinimumCents).toBeNull();
+    }
+    // A variable rate, or no term: nothing is worked out.
+    expect(mortgageAt({ ...exampleMortgage, interest_rate_type: 'variable' }).workedOut).toBeNull();
+    expect(mortgageAt({ ...exampleMortgage, loan_term: null }).workedOut).toBeNull();
+  });
+
+  // Plaid's example student loan: $65,262 of principal and $6,227.36 accrued.
+  const studentAt = (institution_id: string | null, outstanding_interest: number | null) =>
+    debtAccounts([
+      {
+        institution_name: 'Servicer',
+        institution_id,
+        accounts: [
+          {
+            account_id: 's',
+            name: 'Student Loan',
+            type: 'loan',
+            subtype: 'student',
+            balance: 65_262,
+            currency: 'USD',
+            liability: { kind: 'student', apr: 5.25, apr_label: 'Interest rate', minimum_payment: 25, outstanding_interest },
+          },
+        ],
+      },
+    ])[0];
+
+  test("a student loan's accrued interest is owed on top of its balance, unless left out", () => {
+    const s = studentAt('ins_1', 6227.36);
+    expect(s.balanceCents).toBe(6526200);
+    expect(s.accruedInterestCents).toBe(622736);
+    const planned = planRows([s], { typed: {}, leftOut: {}, withoutAccrued: {} });
+    expect(planned.rows[0]).toMatchObject({ owedCents: 7148936, accruedIncluded: true });
+    expect(planned.debts[0].balanceCents).toBe(7148936);
+    const without = planRows([s], { typed: {}, leftOut: {}, withoutAccrued: { s: true } });
+    expect(without.rows[0]).toMatchObject({ owedCents: 6526200, accruedIncluded: false });
+    expect(without.debts[0].balanceCents).toBe(6526200);
+  });
+
+  test("Sallie Mae's balance already includes it, as Plaid documents, so nothing is added twice", () => {
+    expect(studentAt('ins_116944', 6227.36).accruedInterestCents).toBeNull();
+    expect(studentAt('ins_1', null).accruedInterestCents).toBeNull();
+    expect(studentAt('ins_1', 0).accruedInterestCents).toBeNull();
+  });
+
+  const zeroMinimum = (type: 'credit' | 'loan', kind: 'credit' | 'student') =>
+    debtAccounts([
+      {
+        institution_name: 'Navient',
+        accounts: [
+          { account_id: 'z', name: 'Loan', type, balance: 20_000, currency: 'USD', liability: { kind, apr: 8.5, apr_label: 'Interest rate', minimum_payment: 0 } },
+        ],
+      },
+    ])[0];
+
+  test('a Plaid minimum of $0 on a debt that owes something is needed, never planned as a payment', () => {
+    for (const z of [zeroMinimum('loan', 'student'), zeroMinimum('credit', 'credit')]) {
+      expect(z).toMatchObject({ minimumHold: 'zero', plaidMinimumCents: 0, defaultMinimumCents: null });
+      const { rows, waiting } = planRows([z], { typed: {}, leftOut: {}, withoutAccrued: {} });
+      expect(rows[0].status).toBe('needs-terms');
+      expect(waiting).toBe(1);
+    }
+    // A typed 0 is the person's own figure, planned as it is (and never clears on its own).
+    const typedZero = planRows([zeroMinimum('loan', 'student')], { typed: { z: { minimum: '0' } }, leftOut: {}, withoutAccrued: {} });
+    expect(typedZero.debts[0].minimumCents).toBe(0);
+    expect(coversInterest(typedZero.debts[0])).toBe(false);
+  });
+
+  test('splitByWeight: whole cents, in proportion, adding up exactly', () => {
+    expect(splitByWeight(40000, [800000, 700000, 900000, 600000])).toEqual([10667, 9333, 12000, 8000]);
+    expect(splitByWeight(100, [1, 1, 1])).toEqual([34, 33, 33]);
+    expect(splitByWeight(7, [0, 5])).toEqual([0, 7]);
+    // Past 2^53 in the products, still exact.
+    const big = splitByWeight(1e14, [1e14 - 1, 3]);
+    expect(big[0] + big[1]).toBe(1e14);
+  });
+
+  const loan = (id: string, balance: number, minimum: number) => ({
+    account_id: id,
+    name: id,
+    type: 'loan',
+    subtype: 'student',
+    balance,
+    currency: 'USD',
+    liability: { kind: 'student' as const, apr: 4.9, apr_label: 'Interest rate', minimum_payment: minimum },
+  });
+
+  test('student loans at one institution showing the same minimum share one payment, split by balance', () => {
+    const accounts = debtAccounts([
+      { institution_name: 'Great Lakes', accounts: [loan('a', 8000, 400), loan('b', 7000, 400), loan('c', 9000, 400), loan('d', 6000, 400), loan('e', 3000, 95)] },
+      { institution_name: 'Nelnet', accounts: [loan('f', 5000, 400)] },
+    ]);
+    const by = Object.fromEntries(accounts.map((a) => [a.id, a]));
+    expect(['a', 'b', 'c', 'd'].map((id) => by[id].defaultMinimumCents)).toEqual([10667, 9333, 12000, 8000]);
+    for (const id of ['a', 'b', 'c', 'd']) expect(by[id].sharedMinimum).toEqual({ totalCents: 40000, loans: 4 });
+    // A different minimum, or the same one at another institution, is its own.
+    expect(by.e).toMatchObject({ defaultMinimumCents: 9500, sharedMinimum: null });
+    expect(by.f).toMatchObject({ defaultMinimumCents: 40000, sharedMinimum: null });
+    // The plan's monthly total counts the shared payment once.
+    const { debts } = planRows(accounts.filter((a) => a.institution === 'Great Lakes'), { typed: {}, leftOut: {}, withoutAccrued: {} });
+    expect(comparePlans(debts, { startMonth: START }).avalanche.monthlyCents).toBe(40000 + 9500);
+  });
+
+  test("each loan's own payment can be typed over its share", () => {
+    const accounts = debtAccounts([{ institution_name: 'Great Lakes', accounts: [loan('a', 8000, 400), loan('b', 7000, 400)] }]);
+    const { rows } = planRows(accounts, { typed: { a: { minimum: '400' } }, leftOut: {}, withoutAccrued: {} });
+    expect(rows.find((r) => r.account.id === 'a')!.minimum).toEqual({ value: 40000, source: 'typed', error: null });
+    expect(rows.find((r) => r.account.id === 'b')!.minimum.source).toBe('plaid');
+  });
+
+  test('loans owing nothing, or with no minimum, share nothing', () => {
+    const accounts = debtAccounts([{ institution_name: 'Great Lakes', accounts: [loan('a', 8000, 400), loan('paid', 0, 400)] }]);
+    expect(accounts.every((a) => a.sharedMinimum === null)).toBe(true);
+  });
+
+  const card = (last_payment_amount: number | null, last_statement_balance: number | null) =>
+    debtAccounts([
+      {
+        institution_name: 'Chase',
+        accounts: [
+          {
+            account_id: 'c',
+            name: 'Card',
+            type: 'credit',
+            balance: 1240,
+            currency: 'USD',
+            liability: { kind: 'credit', apr: 21.24, apr_label: 'Purchase APR', minimum_payment: 35, last_payment_amount, last_statement_balance },
+          },
+        ],
+      },
+    ])[0];
+
+  test('a card paid in full at its last statement starts out of the plan, and can be put in', () => {
+    const paid = card(980.5, 980.5);
+    expect(paid.paidInFull).toBe(true);
+    const out = planRows([paid], { typed: {}, leftOut: {}, withoutAccrued: {} });
+    expect(out.rows[0].status).toBe('paid-in-full');
+    expect(out.debts).toEqual([]);
+    expect(out.waiting).toBe(0);
+    const included = planRows([paid], { typed: {}, leftOut: { c: false }, withoutAccrued: {} });
+    expect(included.rows[0].status).toBe('ready');
+    const leftOut = planRows([paid], { typed: {}, leftOut: { c: true }, withoutAccrued: {} });
+    expect(leftOut.rows[0].status).toBe('left-out');
+  });
+
+  test('a card carrying a balance, or one whose payments Plaid does not report, is planned', () => {
+    expect(card(168.25, 1708.77).paidInFull).toBe(false);
+    expect(card(null, 980.5).paidInFull).toBe(false);
+    expect(card(980.5, null).paidInFull).toBe(false);
+    // Nothing on the statement and nothing paid: no balance was carried.
+    expect(card(0, 0).paidInFull).toBe(true);
+  });
+
+  // Plaid's example card: four rates, one a 0% special rate on $1,000.
+  const exampleCard = normalizeLiabilities({
+    credit: [
+      {
+        account_id: 'card',
+        aprs: [
+          { apr_percentage: 15.24, apr_type: 'balance_transfer_apr', balance_subject_to_apr: 1562.32, interest_charge_amount: 130.22 },
+          { apr_percentage: 27.95, apr_type: 'cash_apr', balance_subject_to_apr: 56.22, interest_charge_amount: 14.81 },
+          { apr_percentage: 12.5, apr_type: 'purchase_apr', balance_subject_to_apr: 157.01, interest_charge_amount: 25.66 },
+          { apr_percentage: 0, apr_type: 'special', balance_subject_to_apr: 1000, interest_charge_amount: 0 },
+        ],
+        last_payment_amount: 168.25,
+        last_statement_balance: 1708.77,
+        minimum_payment_amount: 20,
+      },
+    ],
+  } as unknown as Parameters<typeof normalizeLiabilities>[0]).card;
+
+  test("a card's rates are blended by what each applied to, so a 0% promotional balance isn't charged the purchase APR", () => {
+    const [c] = debtAccounts([
+      { institution_name: 'Chase', accounts: [{ account_id: 'c', name: 'Card', type: 'credit', balance: 2775.55, currency: 'USD', liability: exampleCard }] },
+    ]);
+    // (15.24 × 1,562.32 + 27.95 × 56.22 + 12.5 × 157.01 + 0 × 1,000) / 2,775.55
+    expect(c.plaidApr).toBe(9.852);
+    expect(c.plaidAprLabel).toBe('Blended APR');
+    expect(c.aprParts).toHaveLength(4);
+    expect(c.paidInFull).toBe(false);
+    // One rate with a balance says nothing about the rest: the usual pick stands.
+    const [single] = debtAccounts([
+      {
+        institution_name: 'Chase',
+        accounts: [
+          {
+            account_id: 'c',
+            name: 'Card',
+            type: 'credit',
+            balance: 500,
+            currency: 'USD',
+            liability: { ...exampleCard, apr: 21.24, apr_label: 'Purchase APR', apr_balances: [{ type: 'cash_apr', rate: 27.95, balance: 56.22 }] },
+          },
+        ],
+      },
+    ]);
+    expect(single).toMatchObject({ plaidApr: 21.24, plaidAprLabel: 'Purchase APR', aprParts: null });
+  });
+});
+
+describe('what the plan cannot see', () => {
+  const owed = { account_id: 'x', name: 'Card', type: 'credit', balance: 10, currency: 'USD' };
+
+  test('an institution that failed with nothing recovered, or too old to use, may hold debts', () => {
+    expect(blindSpots([{ institution_name: 'Citi', error: 'Could not fetch balances', accounts: [] }])).toEqual([
+      { kind: 'unloaded', institution: 'Citi' },
+    ]);
+    expect(
+      blindSpots([
+        { institution_name: 'Citi', error: 'Could not fetch balances', stale_too_old: '2026-06-01', stale_too_old_at: '2026-06-01T13:00:00Z', accounts: [] },
+      ])
+    ).toEqual([{ kind: 'too-old', institution: 'Citi', date: '2026-06-01', at: '2026-06-01T13:00:00Z' }]);
+  });
+
+  test('recovered balances are dated, and accounts that could not be recovered are counted', () => {
+    expect(
+      blindSpots([
+        { institution_name: 'Chase', error: 'Could not fetch balances', stale_as_of: '2026-08-07', stale_missing: 1, accounts: [owed] },
+      ])
+    ).toEqual([
+      { kind: 'dated', institution: 'Chase', date: '2026-08-07', at: null },
+      { kind: 'missing', institution: 'Chase', count: 1 },
+    ]);
+  });
+
+  test('accounts missing from an answer are counted; a date on a bank holding no debts is not given', () => {
+    expect(blindSpots([{ institution_name: 'Chase', unconfirmed_missing: 2, accounts: [owed] }])).toEqual([
+      { kind: 'vanished', institution: 'Chase', count: 2 },
+    ]);
+    const checking = { ...owed, type: 'depository' };
+    expect(blindSpots([{ institution_name: 'Ally', error: 'x', stale_as_of: '2026-08-07', accounts: [checking] }])).toEqual([]);
+  });
+
+  test('a healthy institution has nothing to say', () => {
+    expect(blindSpots([{ institution_name: 'Chase', error: null, accounts: [owed] }])).toEqual([]);
   });
 });
 
@@ -514,26 +889,29 @@ describe('from accounts to debts', () => {
       account('no-balance', 'credit', null),
     ],
   };
+  const none: PlanChoices = { typed: {}, leftOut: {}, withoutAccrued: {} };
 
   test('takes the terms Plaid supplies: purchase APR for a card, interest rate and payment for loans', () => {
     const byId = Object.fromEntries(debtAccounts([plaidBank]).map((d) => [d.id, d]));
     expect(byId.card).toMatchObject({
       type: 'credit',
       kind: 'credit',
-      owedCents: 421055,
+      balanceCents: 421055,
       plaidApr: 21.24,
       plaidAprLabel: 'Purchase APR',
       plaidMinimumCents: 3500,
+      defaultMinimumCents: 3500,
       noTerms: null,
       manual: false,
       institution: 'Chase',
       mask: '1234',
     });
-    expect(byId.student).toMatchObject({ kind: 'student', plaidApr: 6.8, plaidAprLabel: 'Interest rate', plaidMinimumCents: 42000 });
-    // A mortgage reports its scheduled payment in the minimum's place (lib/liabilities.ts).
-    expect(byId.home).toMatchObject({ kind: 'mortgage', plaidApr: 5.25, plaidMinimumCents: 210050 });
+    expect(byId.student).toMatchObject({ kind: 'student', plaidApr: 6.8, plaidAprLabel: 'Interest rate', defaultMinimumCents: 42000 });
+    // A mortgage reports its whole payment in the minimum's place
+    // (lib/liabilities.ts), which is held: it can include escrow.
+    expect(byId.home).toMatchObject({ kind: 'mortgage', plaidApr: 5.25, plaidMinimumCents: 210050, defaultMinimumCents: null, minimumHold: 'escrow-unknown' });
     // A record with no usable rate: the rate is needed, the minimum stands.
-    expect(byId['card-no-apr']).toMatchObject({ plaidApr: null, plaidAprLabel: null, plaidMinimumCents: 2500, noTerms: null });
+    expect(byId['card-no-apr']).toMatchObject({ plaidApr: null, plaidAprLabel: null, defaultMinimumCents: 2500, noTerms: null });
     expect(byId.auto).toMatchObject({ kind: null, plaidApr: null, plaidMinimumCents: null, noTerms: 'not-reported' });
   });
 
@@ -578,7 +956,7 @@ describe('from accounts to debts', () => {
       plaidMinimumCents: null,
       currency: 'USD',
       subtype: 'auto',
-      owedCents: 842000,
+      balanceCents: 842000,
       updatedAt: '2026-08-02T17:02:00.000Z',
     });
   });
@@ -602,37 +980,36 @@ describe('from accounts to debts', () => {
 
   test('plans what is ready, waits on a missing term, and leaves out what owes nothing', () => {
     const accounts = debtAccounts([plaidBank]);
-    const { rows, debts, waiting } = planRows(accounts, {}, {});
+    const { rows, debts, waiting } = planRows(accounts, none);
     const status = Object.fromEntries(rows.map((r) => [r.account.id, r.status]));
     expect(status).toEqual({
       auto: 'needs-terms',
       card: 'ready',
       'card-no-apr': 'needs-terms',
-      home: 'ready',
+      home: 'needs-terms', // its payment is held: it may include escrow
       'no-balance': 'no-balance',
       'paid-off': 'nothing-owed',
       refund: 'nothing-owed',
       student: 'ready',
     });
-    expect(waiting).toBe(2);
-    expect(debts.map((d) => d.id).sort()).toEqual(['card', 'home', 'student']);
+    expect(waiting).toBe(3);
+    expect(debts.map((d) => d.id).sort()).toEqual(['card', 'student']);
     expect(debts.find((d) => d.id === 'card')).toEqual({ id: 'card', balanceCents: 421055, apr: 21.24, minimumCents: 3500 });
   });
 
   test('typed terms fill the gaps and are labelled as typed; a left-out debt waits on nothing', () => {
     const accounts = debtAccounts([plaidBank]);
-    const { rows, debts, waiting } = planRows(
-      accounts,
-      { 'card-no-apr': { apr: '27.49' }, auto: { apr: '7.9', minimum: '310' } },
-      {}
-    );
+    const { rows, debts, waiting } = planRows(accounts, {
+      ...none,
+      typed: { 'card-no-apr': { apr: '27.49' }, auto: { apr: '7.9', minimum: '310' }, home: { minimum: '1711.83' } },
+    });
     expect(waiting).toBe(0);
     const row = (id: string) => rows.find((r) => r.account.id === id)!;
     expect(row('card-no-apr').apr).toEqual({ value: 27.49, source: 'typed', error: null });
     expect(row('card-no-apr').minimum).toEqual({ value: 2500, source: 'plaid', error: null });
     expect(debts.find((d) => d.id === 'auto')).toEqual({ id: 'auto', balanceCents: 1_200_000, apr: 7.9, minimumCents: 31000 });
 
-    const out = planRows(accounts, {}, { auto: true, 'card-no-apr': true });
+    const out = planRows(accounts, { ...none, leftOut: { auto: true, 'card-no-apr': true, home: true } });
     expect(out.waiting).toBe(0);
     expect(out.rows.find((r) => r.account.id === 'auto')!.status).toBe('left-out');
     expect(out.debts.map((d) => d.id)).not.toContain('auto');
@@ -640,18 +1017,13 @@ describe('from accounts to debts', () => {
 
   test('a term typed wrong holds the plan, like a missing one', () => {
     const accounts = debtAccounts([plaidBank]);
-    const { rows, waiting } = planRows(accounts, { card: { apr: '2124' } }, { auto: true, 'card-no-apr': true });
+    const { rows, waiting } = planRows(accounts, {
+      ...none,
+      typed: { card: { apr: '2124' } },
+      leftOut: { auto: true, 'card-no-apr': true, home: true },
+    });
     expect(waiting).toBe(1);
     expect(rows.find((r) => r.account.id === 'card')!.apr.error).toBe('Enter a rate from 0 to 100%.');
-  });
-
-  test('a Plaid minimum of zero is a real figure, planned as it is (and never clears on its own)', () => {
-    const [d] = debtAccounts([
-      { institution_name: 'Bank', accounts: [account('card', 'credit', 500, { liability: { ...terms.card, minimum_payment: 0 } })] },
-    ]);
-    const { debts } = planRows([d], {}, {});
-    expect(debts[0].minimumCents).toBe(0);
-    expect(coversInterest(debts[0])).toBe(false);
   });
 });
 
@@ -670,6 +1042,13 @@ describe('currencies', () => {
     );
     expect(groups.map((g) => g.currency)).toEqual(['USD', 'EUR', null]);
     expect(groups[0].accounts.map((a) => a.id)).toEqual(['b', 'c']);
+  });
+
+  test('on a tie, by code, with no code last', () => {
+    const groups = byCurrency(
+      debtAccounts([{ institution_name: 'Bank', accounts: [acct('d', null), acct('b', 'USD'), acct('a', 'EUR')] }])
+    );
+    expect(groups.map((g) => g.currency)).toEqual(['EUR', 'USD', null]);
   });
 
   test('one currency is one group', () => {

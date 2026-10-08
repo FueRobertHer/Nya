@@ -7,11 +7,11 @@
 // interest that costs: avalanche or snowball, beside paying only the minimums.
 //
 // Nothing is saved. What the person types (rates, payments, the extra amount,
-// the order) is state in this component, which the Dashboard mounts once outside
-// the tabs: it lasts while the app is open, through closing the drawer and
-// switching tabs, and a reload starts again from Plaid's terms. Keeping it in
-// browser storage would be one more place for financial details to outlive a
-// sign-out, to save retyping a rate.
+// the order, what is left in or out) is state in this component, which the
+// Dashboard mounts once outside the tabs: it lasts while the app is open,
+// through closing the drawer and switching tabs, and a reload starts again from
+// Plaid's terms. Keeping it in browser storage would be one more place for
+// financial details to outlive a sign-out, to save retyping a rate.
 
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
@@ -22,14 +22,15 @@ import {
   MAX_APR,
   MAX_CENTS,
   addMonths,
+  blindSpots,
   byCurrency,
   comparePlans,
-  coversInterest,
   debtAccounts,
   durationLabel,
   firstInterestCents,
   parseCents,
   planRows,
+  type BlindSpot,
   type Comparison,
   type Debt,
   type DebtAccount,
@@ -44,8 +45,11 @@ import {
 export type PayoffInputs = {
   /** What was typed for each account's terms, by account id. */
   typed: Record<string, TypedTerms>;
-  /** Accounts the person left out of the plan. */
+  /** true leaves a debt out; false puts in one that starts out (a card paid in
+   *  full). Absent is the default. */
   leftOut: Record<string, boolean>;
+  /** Student loans planned without their accrued interest. */
+  withoutAccrued: Record<string, boolean>;
   /** The extra each month as typed, per currency: an amount means nothing in
    *  another currency, so switching currency doesn't carry it over. */
   extra: Record<string, string>;
@@ -54,7 +58,14 @@ export type PayoffInputs = {
   currency: string | null;
 };
 
-export const NO_INPUTS: PayoffInputs = { typed: {}, leftOut: {}, extra: {}, strategy: 'avalanche', currency: null };
+export const NO_INPUTS: PayoffInputs = {
+  typed: {},
+  leftOut: {},
+  withoutAccrued: {},
+  extra: {},
+  strategy: 'avalanche',
+  currency: null,
+};
 
 const STRATEGY_LABEL: Record<Strategy, string> = { avalanche: 'Avalanche', snowball: 'Snowball' };
 
@@ -67,6 +78,24 @@ const currencyKey = (c: string | null) => c ?? '';
 export function monthLabel(month: string): string {
   const [y, m] = month.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+/**
+ * Cents as money in the plan's currency. With no currency code (Plaid reports
+ * an unofficial currency without one) there is no symbol: formatMoney's
+ * fallback would print "$" for what may not be dollars.
+ */
+function moneyIn(currency: string | null): (cents: number) => string {
+  return (cents) =>
+    currency
+      ? formatMoney(cents / 100, currency)
+      : (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function compactIn(currency: string | null, amount: number): string {
+  return currency
+    ? compactMoney(amount, currency)
+    : new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(amount);
 }
 
 // "Aug 7" from a YYYY-MM-DD, parsed at local midnight so it never shows the day before.
@@ -86,8 +115,26 @@ function listNames(list: string[]): string {
   return list.length <= 2 ? list.join(' and ') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`;
 }
 
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
 function accountName(a: DebtAccount): string {
   return a.mask ? `${a.name} ••${a.mask}` : a.name;
+}
+
+/** What the plan can't see, as one sentence each (lib/payoff.ts blindSpots). */
+function spotText(s: BlindSpot): string {
+  switch (s.kind) {
+    case 'unloaded':
+      return `${s.institution} couldn't be loaded, so any cards or loans there aren't in this plan.`;
+    case 'too-old':
+      return `${s.institution} couldn't be loaded and its last balances, from ${staleDay(s.date, s.at)}, are too old to use, so any cards or loans there aren't in this plan.`;
+    case 'missing':
+      return `${s.count} ${plural(s.count, 'account', 'accounts')} at ${s.institution} couldn't be recovered, so ${plural(s.count, "it isn't", "they aren't")} in this plan.`;
+    case 'vanished':
+      return `${s.count} ${plural(s.count, 'account', 'accounts')} ${s.institution} used to report ${plural(s.count, "isn't", "aren't")} in its latest answer, so ${plural(s.count, "it isn't", "they aren't")} in this plan.`;
+    case 'dated':
+      return `${s.institution} couldn't be reached: its balances here are from ${staleDay(s.date, s.at)}.`;
+  }
 }
 
 /** The drawer, and the state that outlives it. */
@@ -122,13 +169,19 @@ export function PayoffPanel({
 }) {
   const start = startMonth ?? localMonth();
   const groups = useMemo(() => byCurrency(debtAccounts(institutions)), [institutions]);
+  const spots = useMemo(() => blindSpots(institutions), [institutions]);
   const group = groups.find((g) => currencyKey(g.currency) === inputs.currency) ?? groups[0];
   const currency = group?.currency ?? null;
   const key = currencyKey(currency);
 
   const { rows, debts, waiting } = useMemo(
-    () => planRows(group?.accounts ?? [], inputs.typed, inputs.leftOut),
-    [group, inputs.typed, inputs.leftOut]
+    () =>
+      planRows(group?.accounts ?? [], {
+        typed: inputs.typed,
+        leftOut: inputs.leftOut,
+        withoutAccrued: inputs.withoutAccrued,
+      }),
+    [group, inputs.typed, inputs.leftOut, inputs.withoutAccrued]
   );
   const extraText = inputs.extra[key] ?? '';
   const extra = parseCents(extraText);
@@ -140,32 +193,91 @@ export function PayoffPanel({
     [debts, waiting, extra, start]
   );
 
-  if (!group) return <p className="empty-note">No cards or loans to plan.</p>;
+  const spotNote = spots.length > 0 && (
+    <div className="stale-note payoff-notes">
+      {spots.map((s, i) => (
+        <p key={i}>{spotText(s)}</p>
+      ))}
+    </div>
+  );
+  if (!group) {
+    return (
+      <>
+        {spotNote}
+        <p className="empty-note">No cards or loans to plan.</p>
+      </>
+    );
+  }
 
-  const money = (cents: number) => formatMoney(cents / 100, currency);
+  const money = moneyIn(currency);
   const nameOf = (id: string) => accountName(rows.find((r) => r.account.id === id)!.account);
   const setTerm = (id: string, field: keyof TypedTerms, value: string | undefined) =>
     onChange((prev) => ({ ...prev, typed: { ...prev.typed, [id]: { ...prev.typed[id], [field]: value } } }));
-  const setLeftOut = (id: string, out: boolean) =>
-    onChange((prev) => ({ ...prev, leftOut: { ...prev.leftOut, [id]: out } }));
+  // Undefined goes back to the default (a card paid in full starts out).
+  const setLeftOut = (id: string, out: boolean | undefined) =>
+    onChange((prev) => {
+      const leftOut = { ...prev.leftOut };
+      if (out === undefined) delete leftOut[id];
+      else leftOut[id] = out;
+      return { ...prev, leftOut };
+    });
+  const setWithoutAccrued = (id: string, without: boolean) =>
+    onChange((prev) => ({ ...prev, withoutAccrued: { ...prev.withoutAccrued, [id]: without } }));
+
   const owing = rows.filter((r) => r.status !== 'nothing-owed' && r.status !== 'no-balance');
+  const noBalance = rows.filter((r) => r.status === 'no-balance').length;
+  const paidInFull = rows.filter((r) => r.status === 'paid-in-full').length;
+  const outside = rows.filter((r) => r.status === 'left-out' || r.status === 'paid-in-full').length;
 
   let summary: ReactNode;
   if (owing.length === 0) {
-    summary = <p className="empty-note">Nothing is owed on these cards and loans.</p>;
-  } else if (waiting > 0) {
     summary = (
-      <div className="stale-note">
-        Add the missing rate or payment for {waiting === 1 ? '1 debt' : `${waiting} debts`} below, or leave{' '}
-        {waiting === 1 ? 'it' : 'them'} out, to see the plan.
-      </div>
+      <p className="empty-note">
+        {noBalance === 0
+          ? 'Nothing is owed on these cards and loans.'
+          : noBalance === rows.length
+            ? "No balance was reported for these cards and loans, so there's nothing to plan."
+            : `${noBalance} of these reported no balance and the rest owe nothing, so there's nothing to plan.`}
+      </p>
     );
+  } else if (waiting > 0) {
+    summary = <Waiting rows={rows} waiting={waiting} money={money} />;
   } else if (debts.length === 0) {
-    summary = <p className="empty-note">Every debt is left out of the plan. Include one below to plan it.</p>;
+    summary = (
+      <p className="empty-note">
+        {paidInFull === owing.length
+          ? `${plural(paidInFull, 'This card is', 'These cards are')} paid in full each month, so no balance is carried to pay off. Include one below to plan it as a balance you carry.`
+          : 'Every debt is left out of the plan. Include one below to plan it.'}
+      </p>
+    );
   } else if (!comparison) {
     summary = <div className="stale-note">Enter an extra amount of 0 or more to see the plan.</div>;
   } else {
-    summary = <PlanSummary comparison={comparison} strategy={inputs.strategy} money={money} nameOf={nameOf} />;
+    // "Debt-free" only when nothing owed is outside this plan: left out, in
+    // another currency, or at an institution the plan can't see.
+    const complete = outside === 0 && groups.length === 1 && !spots.some((s) => s.kind !== 'dated');
+    summary = (
+      <PlanSummary
+        comparison={comparison}
+        strategy={inputs.strategy}
+        money={money}
+        nameOf={nameOf}
+        complete={complete}
+        outside={outside}
+        only={groups.length > 1 ? currency ?? 'Other' : null}
+        extraCents={typeof extra === 'number' ? extra : 0}
+        interestNowCents={debts.reduce((sum, d) => sum + firstInterestCents(d), 0)}
+      />
+    );
+  }
+
+  // One payment Plaid shows on several loans, split here: said near the headline
+  // too, since it changes the plan's monthly total.
+  const shared = new Map<string, { institution: string; totalCents: number; loans: number }>();
+  for (const r of rows) {
+    const s = r.account.sharedMinimum;
+    if (!s || r.minimum.source !== 'plaid' || (r.status !== 'ready' && r.status !== 'needs-terms')) continue;
+    shared.set(`${r.account.institution}:${s.totalCents}`, { institution: r.account.institution, ...s });
   }
 
   return (
@@ -197,11 +309,26 @@ export function PayoffPanel({
         </section>
       )}
 
-      <section className="panel-section">{summary}</section>
+      <section className="panel-section">
+        {spotNote}
+        {currency === null && (
+          <p className="panel-note">
+            These report no standard currency code, so amounts are shown without a symbol, and they may not
+            all be in the same currency.
+          </p>
+        )}
+        {summary}
+        {[...shared.values()].map((s) => (
+          <p className="panel-note" key={`${s.institution}:${s.totalCents}`}>
+            Plaid shows one {money(s.totalCents)} payment on {s.loans} student loans at {s.institution}, so
+            it&apos;s split across them by balance.
+          </p>
+        ))}
+      </section>
 
       <section className="panel-section">
         <label className="field">
-          Extra each month{groups.length > 1 && currency ? ` (${currency})` : ''}
+          Extra each month{groups.length > 1 ? ` (${currency ?? 'Other'})` : ''}
           <input
             type="number"
             inputMode="decimal"
@@ -268,6 +395,7 @@ export function PayoffPanel({
             money={money}
             onTerm={(field, value) => setTerm(row.account.id, field, value)}
             onLeftOut={(out) => setLeftOut(row.account.id, out)}
+            onAccrued={(without) => setWithoutAccrued(row.account.id, without)}
           />
         ))}
       </section>
@@ -275,11 +403,54 @@ export function PayoffPanel({
       <p className="panel-note">
         Interest is worked out monthly, at the APR / 12, rounded to the cent. Card issuers charge it daily, so
         real interest on a card runs a little higher. Payments stay at today&apos;s amounts, nothing new is
-        charged, and promotional rates and fees aren&apos;t included. Nothing typed here is saved: it lasts
-        until the app is reloaded.
+        charged, fees aren&apos;t included, and a promotional rate is taken as lasting, since when it ends
+        isn&apos;t known. Nothing typed here is saved: it lasts until the app is reloaded.
       </p>
     </>
   );
+}
+
+/** Why a debt's payment is held, said near the headline as on its row. */
+function holdReason(a: DebtAccount, money: (cents: number) => string): string | null {
+  const plaid = a.plaidMinimumCents;
+  if (plaid === null) return null;
+  switch (a.minimumHold) {
+    case 'escrow':
+      return `Plaid's ${money(plaid)} payment includes escrow, which doesn't pay down the loan, so its principal and interest are needed.`;
+    case 'escrow-unknown':
+      return `Plaid's ${money(plaid)} is the whole monthly payment and may include escrow, so its principal and interest are needed.`;
+    case 'zero':
+      return `Plaid shows a ${money(0)} minimum, which usually isn't a real payment.`;
+    default:
+      return null;
+  }
+}
+
+/** The plan is waiting on terms: how many, and the debts held for a reason. */
+function Waiting({ rows, waiting, money }: { rows: PlanRow[]; waiting: number; money: (cents: number) => string }) {
+  const held = rows.filter(
+    (r) => r.status === 'needs-terms' && r.minimum.value === null && !r.minimum.error && r.account.minimumHold
+  );
+  return (
+    <div className="stale-note payoff-notes">
+      <p>
+        Add the missing rate or payment for {waiting === 1 ? '1 debt' : `${waiting} debts`} below, or leave{' '}
+        {plural(waiting, 'it', 'them')} out, to see the plan.
+      </p>
+      {held.map((r) => (
+        <p key={r.account.id}>
+          {accountName(r.account)}: {holdReason(r.account, money)}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** "$1,234.56 in interest and 1 year 2 months", leaving out whichever is zero. */
+function savingText(interestCents: number, months: number, money: (cents: number) => string): string {
+  return [interestCents > 0 ? `${money(interestCents)} in interest` : null, months > 0 ? durationLabel(months) : null]
+    .filter(Boolean)
+    .join(' and ');
 }
 
 /** The headline: when the chosen order clears everything, what it costs, and what it saves. */
@@ -288,43 +459,74 @@ function PlanSummary({
   strategy,
   money,
   nameOf,
+  complete,
+  outside,
+  only,
+  extraCents,
+  interestNowCents,
 }: {
   comparison: Comparison;
   strategy: Strategy;
   money: (cents: number) => string;
   nameOf: (id: string) => string;
+  /** Nothing owed is outside this plan, so it can say "Debt-free". */
+  complete: boolean;
+  /** Debts left out of the plan (by the person, or paid in full). */
+  outside: number;
+  /** The currency planned, when the debts are in several. */
+  only: string | null;
+  extraCents: number;
+  /** The first month's interest across the plan, to tell "too slow" from "never". */
+  interestNowCents: number;
 }) {
   const plan = comparison[strategy];
   if (plan.months === null) {
+    // Past 50 years is not the same as never: a payment a little over the
+    // interest pays off eventually, just not within the horizon.
     return (
       <div className="stale-note">
-        At {money(plan.monthlyCents)} a month these debts aren&apos;t paid off within {HORIZON_YEARS} years:
-        the interest grows faster than the payments. Add more each month.
+        At {money(plan.monthlyCents)} a month these debts aren&apos;t paid off within {HORIZON_YEARS} years
+        {plan.monthlyCents <= interestNowCents ? ": the payments don't cover the interest" : ''}. Add more each
+        month.
       </div>
     );
   }
-  const neverOnMinimums = comparison.minimums.debts.filter((d) => d.months === null).map((d) => nameOf(d.id));
-  const { interestCents, months } = plan.saved;
-  let saving: string;
-  if (neverOnMinimums.length > 0) {
-    // There is no finite cost to measure a saving against.
-    saving = `This clears ${listNames(neverOnMinimums)}, which paying only the minimums never would.`;
-  } else if (months! > 0 || interestCents! > 0) {
-    const parts = [
-      interestCents! > 0 ? `${money(interestCents!)} in interest` : null,
-      months! > 0 ? durationLabel(months!) : null,
-    ].filter(Boolean);
-    saving = `Saves ${parts.join(' and ')} against paying only the minimums.`;
-  } else {
-    saving = 'The same as paying only the minimums. An extra amount each month pays it off sooner.';
+
+  const lines: string[] = [];
+  if (extraCents > 0 && plan.extraSaved) {
+    const { interestCents, months } = plan.extraSaved;
+    lines.push(
+      interestCents === null || months === null
+        ? `Without the extra ${money(extraCents)} a month, these debts aren't paid off within ${HORIZON_YEARS} years.`
+        : `The extra ${money(extraCents)} a month saves ${savingText(interestCents, months, money) || 'nothing here'}.`
+    );
   }
+  const neverOnMinimums = comparison.minimums.debts.filter((d) => d.months === null).map((d) => nameOf(d.id));
+  if (neverOnMinimums.length > 0) {
+    lines.push(
+      `Against paying only the minimums: this clears ${listNames(neverOnMinimums)}, which minimums alone don't within ${HORIZON_YEARS} years.`
+    );
+  } else {
+    const { interestCents, months } = plan.saved;
+    const saving = savingText(interestCents!, months!, money);
+    lines.push(
+      saving
+        ? `Against paying only the minimums, this saves ${saving}.`
+        : 'The same as paying only the minimums. An extra amount each month pays it off sooner.'
+    );
+  }
+
+  const notes = [outside > 0 ? `${outside} left out` : null, only ? `${only} only` : null].filter(Boolean);
   return (
     <>
       <div className="summary-row">
         <div>
-          <div className="total-label">Debt-free</div>
+          <div className="total-label">{complete ? 'Debt-free' : 'Paid off'}</div>
           <div className="summary-value">{monthLabel(plan.month!)}</div>
-          <div className="as-of">in {durationLabel(plan.months)}</div>
+          <div className="as-of">
+            in {durationLabel(plan.months)}
+            {notes.length > 0 ? `, ${notes.join(', ')}` : ''}
+          </div>
         </div>
         <div>
           <div className="total-label">Interest</div>
@@ -332,7 +534,11 @@ function PlanSummary({
           <div className="as-of">{STRATEGY_LABEL[strategy].toLowerCase()} order</div>
         </div>
       </div>
-      <div className="status-note">{saving}</div>
+      {lines.map((l) => (
+        <div className="status-note" key={l}>
+          {l}
+        </div>
+      ))}
     </>
   );
 }
@@ -359,7 +565,7 @@ function PlanDetail({
     <tr className={chosen ? 'chosen' : undefined}>
       <td>{label}</td>
       <td>
-        {p.month ? monthLabel(p.month) : 'Never'}
+        {p.month ? monthLabel(p.month) : 'Not by 50 years'}
         <div className="payoff-sub">
           {p.months !== null ? durationLabel(p.months) : `not within ${HORIZON_YEARS} years`}
         </div>
@@ -386,7 +592,7 @@ function PlanDetail({
           <thead>
             <tr>
               <th>Order</th>
-              <th>Debt-free</th>
+              <th>Paid off</th>
               <th className="num">Interest</th>
             </tr>
           </thead>
@@ -410,6 +616,7 @@ function PlanDetail({
             baseline={minimums}
             planLabel={STRATEGY_LABEL[strategy]}
             currency={currency}
+            money={money}
             start={start}
           />
         </section>
@@ -422,7 +629,7 @@ function PlanDetail({
             <li key={d.id}>
               <div className="payoff-step">
                 <span>{nameOf(d.id)}</span>
-                <span className="payoff-step-when">{d.month ? monthLabel(d.month) : 'Never'}</span>
+                <span className="payoff-step-when">{d.month ? monthLabel(d.month) : 'Not by 50 years'}</span>
               </div>
               <div className="payoff-sub">
                 {d.months !== null
@@ -444,7 +651,14 @@ const NO_TERMS_HINT: Record<NonNullable<DebtAccount['noTerms']>, string> = {
   'not-enabled':
     "Payment details aren't enabled for this institution. Type them here, or tap Enable payment details on its card.",
   loading: 'Payment details are still importing from this institution. Type them here, or check back soon.',
-  'not-reported': "Plaid doesn't report terms for this account. Type them from a statement.",
+  'not-reported': 'Plaid has no terms for this account right now. Type them from a statement.',
+};
+
+const APR_KIND: Record<string, string> = {
+  purchase_apr: 'purchases',
+  cash_apr: 'cash advances',
+  balance_transfer_apr: 'balance transfers',
+  special: 'a special rate',
 };
 
 /** One card or loan: its balance, its two terms, and where each came from. */
@@ -454,13 +668,16 @@ function DebtRow({
   money,
   onTerm,
   onLeftOut,
+  onAccrued,
 }: {
   row: PlanRow;
   /** What was typed for it, as typed (undefined fields are untouched). */
   typed: TypedTerms;
   money: (cents: number) => string;
   onTerm: (field: keyof TypedTerms, value: string | undefined) => void;
-  onLeftOut: (out: boolean) => void;
+  /** true leaves it out, false puts it in, undefined goes back to the default. */
+  onLeftOut: (out: boolean | undefined) => void;
+  onAccrued: (without: boolean) => void;
 }) {
   const { account: a, apr, minimum, status } = row;
   const card = a.type === 'credit';
@@ -470,8 +687,7 @@ function DebtRow({
     : updated
       ? ` · updated ${updated}`
       : '';
-  const owed =
-    status === 'nothing-owed' ? 'Nothing owed' : status === 'no-balance' ? '--' : money(a.owedCents!);
+  const owed = status === 'nothing-owed' ? 'Nothing owed' : status === 'no-balance' ? '--' : money(row.owedCents!);
   const head = (
     <>
       <div className="payoff-debt-head">
@@ -487,6 +703,18 @@ function DebtRow({
       </div>
     </>
   );
+  // Plaid reports a student loan's accrued interest apart from its balance;
+  // it is owed, so it is planned unless the person leaves it out.
+  const accrued = a.accruedInterestCents !== null && status !== 'nothing-owed' && status !== 'no-balance' && (
+    <div className="payoff-sub">
+      {row.accruedIncluded
+        ? `Includes ${money(a.accruedInterestCents)} of accrued interest. `
+        : `${money(a.accruedInterestCents)} of accrued interest left out. `}
+      <button className="link-btn" onClick={() => onAccrued(row.accruedIncluded)}>
+        {row.accruedIncluded ? 'Leave it out' : 'Include it'}
+      </button>
+    </div>
+  );
 
   if (status === 'nothing-owed') return <div className="payoff-debt">{head}</div>;
   if (status === 'no-balance') {
@@ -497,42 +725,73 @@ function DebtRow({
       </div>
     );
   }
-  if (status === 'left-out') {
+  if (status === 'paid-in-full' || status === 'left-out') {
     return (
       <div className="payoff-debt">
         {head}
+        {accrued}
         <p className="panel-note">
-          Left out of the plan.{' '}
+          {status === 'paid-in-full'
+            ? "Paid in full at its last statement: no interest is charged while that continues, so it's left out. "
+            : 'Left out of the plan. '}
           <button className="link-btn" onClick={() => onLeftOut(false)}>
-            Include
+            Include it
           </button>
         </p>
       </div>
     );
   }
 
-  // Plaid's figure fills the field until something is typed over it. A figure
+  // The figures that fill the fields until something is typed over them. One
   // out of range is left out of the field, as it is out of the plan
   // (resolveApr, resolveMinimum).
   const plaidApr = a.plaidApr !== null && a.plaidApr >= 0 && a.plaidApr <= MAX_APR ? a.plaidApr : null;
-  const plaidMinimum =
-    a.plaidMinimumCents !== null && a.plaidMinimumCents >= 0 && a.plaidMinimumCents <= MAX_CENTS
-      ? a.plaidMinimumCents
+  const fallback =
+    a.defaultMinimumCents !== null && a.defaultMinimumCents >= 0 && a.defaultMinimumCents <= MAX_CENTS
+      ? a.defaultMinimumCents
       : null;
+  const plaidPayment =
+    a.plaidMinimumCents !== null && a.plaidMinimumCents > 0 && a.plaidMinimumCents <= MAX_CENTS ? a.plaidMinimumCents : null;
+  const cents = (c: number) => (c / 100).toFixed(2);
   const aprText = typed.apr ?? (plaidApr !== null ? String(plaidApr) : '');
-  const minimumText = typed.minimum ?? (plaidMinimum !== null ? (plaidMinimum / 100).toFixed(2) : '');
+  const minimumText = typed.minimum ?? (fallback !== null ? cents(fallback) : '');
+  const minimumNeeded = minimum.value === null && !minimum.error;
   // Why a term is needed, said only where Plaid has nothing usable for it. A
   // field the person cleared shows "Needed" with Plaid's figure a tap away
-  // instead (TermSource).
+  // instead (TermSource), and a held payment says why below.
   const noPlaid =
     (apr.value === null && !apr.error && plaidApr === null) ||
-    (minimum.value === null && !minimum.error && plaidMinimum === null);
+    (minimumNeeded && fallback === null && !a.minimumHold);
   const debt: Debt | null =
-    status === 'ready' ? { id: a.id, balanceCents: a.owedCents!, apr: apr.value!, minimumCents: minimum.value! } : null;
+    status === 'ready' ? { id: a.id, balanceCents: row.owedCents!, apr: apr.value!, minimumCents: minimum.value! } : null;
+
+  let interestLine: ReactNode = null;
+  if (debt) {
+    const interest = firstInterestCents(debt);
+    const pay = debt.minimumCents;
+    interestLine =
+      pay > interest ? (
+        <div className="payoff-sub">About {money(interest)} a month in interest at this balance.</div>
+      ) : (
+        <div className="stale-note">
+          {pay === 0
+            ? interest === 0
+              ? 'With no payment, it never pays off on its own.'
+              : `With no payment, it never pays off on its own, and it grows by about ${money(interest)} a month in interest.`
+            : pay === interest
+              ? `${money(pay)} a month only covers the interest, so on its own the balance never falls.`
+              : `${money(pay)} a month doesn't cover the interest (about ${money(interest)} a month), so on its own it never pays this off.`}
+        </div>
+      );
+  }
 
   return (
     <div className="payoff-debt">
       {head}
+      {accrued}
+      {a.paidInFull && (
+        <p className="panel-note">Paid in full at its last statement. It&apos;s planned here as a balance carried, with interest.</p>
+      )}
       <div className="payoff-terms">
         <div>
           <label className="field">
@@ -550,9 +809,9 @@ function DebtRow({
           </label>
           <TermSource
             term={apr}
-            fromPlaid={`${a.plaidAprLabel ?? 'APR'} from Plaid`}
-            plaid={plaidApr !== null ? `${plaidApr}%` : null}
-            onUsePlaid={() => onTerm('apr', undefined)}
+            fromDefault={`${a.plaidAprLabel ?? 'APR'} from Plaid`}
+            restore={plaidApr !== null ? `Use Plaid's ${plaidApr}%` : null}
+            onRestore={() => onTerm('apr', undefined)}
           />
         </div>
         <div>
@@ -570,58 +829,105 @@ function DebtRow({
           </label>
           <TermSource
             term={minimum}
-            fromPlaid={a.kind === 'mortgage' ? 'Monthly payment from Plaid' : 'Minimum from Plaid'}
-            plaid={plaidMinimum !== null ? money(plaidMinimum) : null}
-            onUsePlaid={() => onTerm('minimum', undefined)}
+            fromDefault={
+              a.sharedMinimum
+                ? `Share of one ${money(a.sharedMinimum.totalCents)} payment on ${a.sharedMinimum.loans} loans`
+                : a.minimumHold === 'escrow-unknown'
+                  ? 'Monthly payment from Plaid, with no escrow'
+                  : 'Minimum from Plaid'
+            }
+            restore={fallback !== null ? `Use ${a.sharedMinimum ? 'the shared split' : "Plaid's"} ${money(fallback)}` : null}
+            onRestore={() => onTerm('minimum', undefined)}
           />
         </div>
       </div>
+
+      {apr.source === 'plaid' && a.aprParts && (
+        <p className="panel-note">
+          Blended from the card&apos;s rates by what each applied to at its last statement:{' '}
+          {a.aprParts
+            .map((p) => `${p.rate}% on ${money(Math.round(p.balance * 100))}${p.type && APR_KIND[p.type] ? ` (${APR_KIND[p.type]})` : ''}`)
+            .join(', ')}
+          .
+        </p>
+      )}
+
       {noPlaid && (
         <p className="panel-note">
           {a.noTerms ? NO_TERMS_HINT[a.noTerms] : 'Plaid has no usable figure for this one. Type it from a statement.'}
         </p>
       )}
-      {a.kind === 'mortgage' && minimum.source === 'plaid' && (
+
+      {minimumNeeded && (a.minimumHold === 'escrow' || a.minimumHold === 'escrow-unknown') && plaidPayment !== null && (
+        <div className="payoff-hold">
+          <p className="panel-note">
+            {a.minimumHold === 'escrow'
+              ? `Plaid's ${money(plaidPayment)} includes escrow (taxes and insurance${a.escrowCents !== null ? `; the escrow account holds ${money(a.escrowCents)}` : ''}), which doesn't pay down the loan. Type the principal and interest from a statement.`
+              : `Plaid's ${money(plaidPayment)} is the whole monthly payment, which can include escrow (taxes and insurance) that doesn't pay down the loan. Type the principal and interest from a statement.`}
+          </p>
+          {a.workedOut && (
+            <button className="link-btn" onClick={() => onTerm('minimum', cents(a.workedOut!.cents))}>
+              Use {money(a.workedOut.cents)}, worked out from the original {money(Math.round(a.workedOut.principal * 100))}{' '}
+              over {durationLabel(a.workedOut.months)} at {a.workedOut.apr}%
+            </button>
+          )}
+          {a.minimumHold === 'escrow-unknown' && (
+            <button className="link-btn" onClick={() => onTerm('minimum', cents(plaidPayment))}>
+              No escrow? Use Plaid&apos;s {money(plaidPayment)}
+            </button>
+          )}
+        </div>
+      )}
+
+      {minimumNeeded && a.minimumHold === 'zero' && (
         <p className="panel-note">
-          Plaid&apos;s monthly payment can include escrow (taxes and insurance), which doesn&apos;t pay down the
-          loan. If it does here, type just the principal and interest.
+          Plaid shows a {money(0)} minimum. That&apos;s usually autopay at some servicers, nothing due this
+          cycle, or a deferment rather than a payment. Type what you pay each month.
         </p>
       )}
-      {debt &&
-        (coversInterest(debt) ? (
-          <div className="payoff-sub">About {money(firstInterestCents(debt))} a month in interest at this balance.</div>
-        ) : (
-          <div className="stale-note">
-            {money(debt.minimumCents)} a month doesn&apos;t cover the interest (about{' '}
-            {money(firstInterestCents(debt))} a month), so on its own it never pays this off.
-          </div>
-        ))}
-      <button className="link-btn payoff-leave" onClick={() => onLeftOut(true)}>
+
+      {a.sharedMinimum && minimum.source === 'plaid' && (
+        <div className="payoff-hold">
+          <p className="panel-note">
+            Plaid shows the same {money(a.sharedMinimum.totalCents)} minimum on {a.sharedMinimum.loans} loans
+            here. Some servicers bill one payment across all of an account&apos;s loans, so it&apos;s split by
+            balance.
+          </p>
+          <button className="link-btn" onClick={() => onTerm('minimum', cents(a.sharedMinimum!.totalCents))}>
+            Billed separately? Use {money(a.sharedMinimum.totalCents)} for this loan
+          </button>
+        </div>
+      )}
+
+      {interestLine}
+
+      {/* A card paid in full goes back to starting out; anything else is left out. */}
+      <button className="link-btn payoff-leave" onClick={() => onLeftOut(a.paidInFull ? undefined : true)}>
         Leave out of the plan
       </button>
     </div>
   );
 }
 
-/** Where a term came from: Plaid, typed, or still needed (with a way back to Plaid's). */
+/** Where a term came from: Plaid, worked out, typed, or still needed, with a way back to the default. */
 function TermSource({
   term,
-  fromPlaid,
-  plaid,
-  onUsePlaid,
+  fromDefault,
+  restore,
+  onRestore,
 }: {
   term: Term;
-  /** How a Plaid value is described ("Purchase APR from Plaid"). */
-  fromPlaid: string;
-  /** Plaid's value, formatted, when it has a usable one. */
-  plaid: string | null;
-  onUsePlaid: () => void;
+  /** How the default value is described ("Purchase APR from Plaid"). */
+  fromDefault: string;
+  /** The link back to the default, when there is one. */
+  restore: string | null;
+  onRestore: () => void;
 }) {
-  const restore = plaid && (
+  const back = restore && (
     <>
       {' '}
-      <button className="link-btn" onClick={onUsePlaid}>
-        Use Plaid&apos;s {plaid}
+      <button className="link-btn" onClick={onRestore}>
+        {restore}
       </button>
     </>
   );
@@ -629,39 +935,34 @@ function TermSource({
     return (
       <div className="payoff-source invalid">
         {term.error}
-        {restore}
+        {back}
       </div>
     );
   }
-  if (term.source === 'plaid') return <div className="payoff-source">{fromPlaid}</div>;
+  if (term.source === 'plaid') return <div className="payoff-source">{fromDefault}</div>;
+  if (term.source === 'worked-out') {
+    return (
+      <div className="payoff-source">
+        Worked out from the original loan
+        {back}
+      </div>
+    );
+  }
   if (term.source === 'typed') {
     return (
       <div className="payoff-source">
         Typed
-        {restore}
+        {back}
       </div>
     );
   }
   return (
     <div className="payoff-source needed">
       Needed
-      {restore}
+      {back}
     </div>
   );
 }
-
-// The chart's frame, in the house style of MonthFlowChart.
-const W = 340;
-const H = 140;
-const PAD_LEFT = 8;
-const PAD_RIGHT = 10;
-const PAD_TOP = 12;
-const PAD_BOTTOM = 20;
-const PLAN_COLOR = 'var(--accent)';
-// The baseline is context, so it is a gray, but darker than --muted: checked
-// against the card surface (over 3:1) and against the accent (far enough apart
-// for colour-blind readers too).
-const BASELINE_COLOR = '#6b7080';
 
 /**
  * The line through `vals`, cut where it rises past `top` and picked up again
@@ -699,6 +1000,19 @@ function niceTicks(max: number): number[] {
   return out;
 }
 
+// The chart's frame, in the house style of MonthFlowChart.
+const W = 340;
+const H = 140;
+const PAD_LEFT = 8;
+const PAD_RIGHT = 10;
+const PAD_TOP = 12;
+const PAD_BOTTOM = 20;
+const PLAN_COLOR = 'var(--accent)';
+// The baseline is context, so it is a gray, but darker than --muted: checked
+// against the card surface (over 3:1) and against the accent (far enough apart
+// for colour-blind readers too).
+const BASELINE_COLOR = '#6b7080';
+
 /**
  * What is owed in total, month by month: the chosen order against paying only
  * the minimums. Scrubbing reads both at a month; at rest it shows the month the
@@ -709,12 +1023,14 @@ function PayoffChart({
   baseline,
   planLabel,
   currency,
+  money,
   start,
 }: {
   plan: Plan;
   baseline: Plan;
   planLabel: string;
   currency: string | null;
+  money: (cents: number) => string;
   start: string;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -753,7 +1069,9 @@ function PayoffChart({
   }, [plan, baseline]);
 
   const { done, span, planVals, baseVals, x, y, top, plotW, planPath, basePath, ticks } = geo;
-  const i = active ?? done;
+  // Clamped: a pointer left resting on the chart keeps its index while a larger
+  // extra shortens the plan under it.
+  const i = Math.min(active ?? done, span);
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
@@ -763,7 +1081,7 @@ function PayoffChart({
     setActive(Math.max(0, Math.min(span, Math.round(((px - PAD_LEFT) / plotW) * span))));
   }
 
-  const fmt = (v: number) => formatMoney(v, currency);
+  const fmt = (v: number) => money(Math.round(v * 100));
   const endLabel = monthLabel(addMonths(start, span));
   return (
     <div>
@@ -774,11 +1092,13 @@ function PayoffChart({
         </span>
         <span className="chart-legend-item">
           <span className="payoff-key" style={{ background: BASELINE_COLOR }} />
-          Minimums only{baseline.months === null ? ', never paid off' : ''}
+          Minimums only{baseline.months === null ? `, not paid off by ${HORIZON_YEARS} years` : ''}
         </span>
       </div>
 
-      <div className="chart-readout">
+      {/* Two figures on one line and the date on its own, so a long figure
+          can't wrap and move the chart under the finger while scrubbing. */}
+      <div className="chart-readout chart-readout-stable">
         <span className="chart-readout-value">
           <span className="payoff-key" style={{ background: PLAN_COLOR }} />
           {fmt(planVals[i])}
@@ -795,7 +1115,7 @@ function PayoffChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Total owed from now to ${endLabel}. ${planLabel} reaches zero in ${monthLabel(plan.month!)}; paying only the minimums, ${baseline.month ? `in ${monthLabel(baseline.month)}` : 'it never does'}.`}
+        aria-label={`Total owed from now to ${endLabel}. ${planLabel} reaches zero in ${monthLabel(plan.month!)}; paying only the minimums, ${baseline.month ? `in ${monthLabel(baseline.month)}` : `not within ${HORIZON_YEARS} years`}.`}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -804,7 +1124,7 @@ function PayoffChart({
           <g key={t}>
             <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
-              {compactMoney(t, currency)}
+              {compactIn(currency, t)}
             </text>
           </g>
         ))}

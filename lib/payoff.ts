@@ -122,14 +122,20 @@ export type Plan = {
 };
 
 export type Saving = {
-  /** Interest saved against paying only the minimums. Null when either plan
+  /** Interest saved against the plan compared with. Null when either plan
    *  never finishes, since there is then no finite cost to subtract. */
   interestCents: number | null;
   /** How many months sooner the debts are cleared, or null likewise. */
   months: number | null;
 };
 
-export type StrategyPlan = Plan & { saved: Saving };
+export type StrategyPlan = Plan & {
+  /** Against paying only the minimums: the extra and the rollover together. */
+  saved: Saving;
+  /** What the extra alone buys: this order with the extra against the same
+   *  order without it. Null when there is no extra. */
+  extraSaved: Saving | null;
+};
 
 export type Comparison = {
   minimums: Plan;
@@ -383,29 +389,82 @@ export function simulate(
   };
 }
 
-/** How a strategy compares with paying only the minimums. */
-function savingAgainst(plan: Plan, minimums: Plan): Saving {
-  if (plan.months === null || minimums.months === null) return { interestCents: null, months: null };
+/** How a plan compares with another: what it saves in interest and months. */
+function savingAgainst(plan: Plan, base: Plan): Saving {
+  if (plan.months === null || base.months === null) return { interestCents: null, months: null };
   return {
-    interestCents: minimums.interestCents! - plan.interestCents!,
-    months: minimums.months - plan.months,
+    interestCents: base.interestCents! - plan.interestCents!,
+    months: base.months - plan.months,
   };
 }
 
 /**
  * Both strategies with `extraCents` on top, beside paying only the minimums
  * (which never has the extra: it is the baseline the savings are measured from).
+ * With an extra, each strategy is also followed without it, so what the extra
+ * alone buys can be told apart from what rolling payments over buys.
  */
 export function comparePlans(
   debts: Debt[],
   opts: { startMonth: string; extraCents?: number; horizon?: number }
 ): Comparison {
   const minimums = simulate(debts, 'minimums', opts);
+  const extra = opts.extraCents ?? 0;
   const strategy = (kind: Strategy): StrategyPlan => {
     const plan = simulate(debts, kind, opts);
-    return { ...plan, saved: savingAgainst(plan, minimums) };
+    const withoutExtra = extra > 0 ? simulate(debts, kind, { ...opts, extraCents: 0 }) : null;
+    return {
+      ...plan,
+      saved: savingAgainst(plan, minimums),
+      extraSaved: withoutExtra ? savingAgainst(plan, withoutExtra) : null,
+    };
   };
   return { minimums, avalanche: strategy('avalanche'), snowball: strategy('snowball') };
+}
+
+/**
+ * `total` split in proportion to `weights`, in whole units that add up to
+ * exactly `total`: each part is its share rounded down, and the units left over
+ * go one each to the largest remainders (the earlier part on a tie). Integer
+ * arithmetic throughout (BigInt, since total × weight can pass 2^53), so the
+ * parts never drift from the total. Weights must be non-negative integers with
+ * a positive sum.
+ */
+export function splitByWeight(total: number, weights: number[]): number[] {
+  const t = BigInt(total);
+  const sum = weights.reduce((s, w) => s + BigInt(w), BigInt(0));
+  const parts = weights.map((w) => (t * BigInt(w)) / sum);
+  const remainders = weights.map((w, i) => t * BigInt(w) - parts[i] * sum);
+  let left = total - parts.reduce((s, p) => s + Number(p), 0);
+  const byRemainder = weights
+    .map((_, i) => i)
+    .sort((a, b) => (remainders[b] > remainders[a] ? 1 : remainders[b] < remainders[a] ? -1 : a - b));
+  const out = parts.map(Number);
+  for (const i of byRemainder) {
+    if (left === 0) break;
+    out[i] += 1;
+    left -= 1;
+  }
+  return out;
+}
+
+/**
+ * A fixed-rate loan's scheduled payment, in cents: the amortization payment
+ * r × P / (1 - (1 + r)^-n) for its original amount, rate and term in months,
+ * rounded to the cent (at 0%, the amount over the term, rounded up).
+ */
+export function scheduledPaymentCents(principal: number, apr: number, months: number): number {
+  if (apr === 0) return Math.ceil(toCents(principal) / months);
+  const r = apr / 1200;
+  return Math.round(((r * principal) / (1 - Math.pow(1 + r, -months))) * 100);
+}
+
+/** A loan term as Plaid gives it ("30 year", "360 month") in months, or null. */
+export function termMonths(term: string | null | undefined): number | null {
+  const m = typeof term === 'string' ? /^\s*(\d+)\s*(year|yr|month|mo)s?\b/i.exec(term) : null;
+  if (!m) return null;
+  const months = /^y/i.test(m[2]) ? Number(m[1]) * 12 : Number(m[1]);
+  return months > 0 && months <= HORIZON_MONTHS ? months : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -430,19 +489,38 @@ export type DebtAccountInput = {
     apr: number | null;
     apr_label: string | null;
     minimum_payment: number | null;
+    last_statement_balance?: number | null;
+    last_payment_amount?: number | null;
+    outstanding_interest?: number | null;
+    escrow_balance?: number | null;
+    apr_balances?: { type: string | null; rate: number; balance: number }[];
+    origination_principal_amount?: number | null;
+    loan_term?: string | null;
+    interest_rate_type?: string | null;
   };
 };
 
 export type DebtInstitutionInput = {
   institution_name: string;
+  /** Plaid's institution id; absent on manual and older cached institutions. */
+  institution_id?: string | null;
   manual?: boolean;
   /** Plaid's liabilities product on this Item: 'on' | 'off' | 'loading' |
    *  'unavailable' (lib/networth.ts). Absent on an older cached payload. */
   liabilities?: string;
+  /** Set when the institution couldn't be loaded this time (lib/networth.ts). */
+  error?: string | null;
   /** Set when the institution couldn't be reached and its balances were
    *  recovered: the day they are from, and the instant when known. */
   stale_as_of?: string;
   stale_as_of_at?: string;
+  /** Set instead when the last balances are too old to show. */
+  stale_too_old?: string;
+  stale_too_old_at?: string;
+  /** Accounts that couldn't be recovered with the rest (lib/last-known.ts). */
+  stale_missing?: number;
+  /** Accounts missing from an otherwise good answer (lib/vanished.ts). */
+  unconfirmed_missing?: number;
   accounts: DebtAccountInput[];
 };
 
@@ -457,9 +535,23 @@ export type NoTermsReason =
   | 'not-enabled'
   /** Enabled, and Plaid is still fetching. */
   | 'loading'
-  /** Plaid answers but has nothing for this account (an auto or personal loan,
-   *  which its liabilities product doesn't cover). */
+  /** Plaid answered with nothing for this account: a loan its liabilities
+   *  product doesn't cover (auto, personal), or a fetch that failed this time. */
   | 'not-reported';
+
+/** Why Plaid's minimum isn't planned on as it is. */
+export type MinimumHold =
+  /** A mortgage whose payment includes escrow (Plaid reports a positive escrow
+   *  balance). Taxes and insurance don't pay down the loan, and planned as part
+   *  of the payment they would roll into the next debt once it is cleared. */
+  | 'escrow'
+  /** A mortgage whose payment may include escrow: Plaid reports the whole
+   *  payment and no split, so it can't be planned on until the person says. */
+  | 'escrow-unknown'
+  /** Plaid shows $0, which is more often a reporting artifact than a payment:
+   *  autopay at some servicers (Plaid names Navient and Firstmark), nothing due
+   *  this cycle, or a deferment. */
+  | 'zero';
 
 export type DebtAccount = {
   id: string;
@@ -468,20 +560,58 @@ export type DebtAccount = {
   institution: string;
   type: 'credit' | 'loan';
   subtype: string | null;
-  /** Plaid's kind of liability, where it reported terms. A mortgage's payment
-   *  can include escrow, which the planner says. */
+  /** Plaid's kind of liability, where it reported terms. */
   kind: 'credit' | 'student' | 'mortgage' | null;
-  /** What is owed, in cents. Zero or less means nothing is owed; null that no
-   *  balance was reported. */
-  owedCents: number | null;
+  /** The balance as reported, in cents. Zero or less means nothing is owed;
+   *  null that none was reported. For a loan it is principal only (Sallie Mae's
+   *  student loans aside), so a student loan's accrued interest is apart. */
+  balanceCents: number | null;
+  /**
+   * A student loan's accrued interest (Plaid's outstanding_interest_amount), in
+   * cents, which the person owes on top of the balance and which is planned as
+   * owed unless they leave it out. Null when there is none, or when it is in
+   * the balance already: Plaid says Sallie Mae's balances include it and return
+   * no separate figure, and the institution id is checked as well.
+   */
+  accruedInterestCents: number | null;
   currency: string | null;
   manual: boolean;
-  /** Plaid's APR as a percentage, and which rate it is ('Purchase APR',
-   *  'Highest APR', 'Interest rate'), or null. */
+  /** The APR the plan uses unless something is typed, as a percentage, and
+   *  which rate it is ('Purchase APR', 'Highest APR', 'Interest rate', or
+   *  'Blended APR' for a card with balances at several rates). */
   plaidApr: number | null;
   plaidAprLabel: string | null;
-  /** Plaid's minimum payment (a mortgage's scheduled payment), in cents, or null. */
+  /** The rates a blended APR is made of, each with what it applied to. */
+  aprParts: { type: string | null; rate: number; balance: number }[] | null;
+  /** Plaid's minimum (a mortgage's whole monthly payment) as reported, in cents. */
   plaidMinimumCents: number | null;
+  /**
+   * The payment the plan uses unless something is typed, in cents: Plaid's
+   * minimum, or a share of one payment Plaid shows on several loans
+   * (sharedMinimum). Null while it is needed, including when Plaid's figure
+   * can't be planned on as it is (minimumHold).
+   */
+  defaultMinimumCents: number | null;
+  minimumHold: MinimumHold | null;
+  /**
+   * One minimum Plaid shows on two or more student loans at this institution.
+   * Plaid documents that some servicers bill one payment across all of an
+   * account's loans and show it on each loan, so it is split across them by
+   * balance rather than counted once per loan.
+   */
+  sharedMinimum: { totalCents: number; loans: number } | null;
+  /** A fixed-rate mortgage's principal-and-interest payment worked out from its
+   *  original amount, term and rate: offered when the payment is needed, never
+   *  assumed. */
+  workedOut: { cents: number; principal: number; months: number; apr: number } | null;
+  /** A mortgage's escrow balance as reported, in cents, for the reason shown. */
+  escrowCents: number | null;
+  /**
+   * A card whose last payment covered its last statement: paid in full, so no
+   * interest is charged while that continues. It starts out of the plan, and
+   * the person can put it in.
+   */
+  paidInFull: boolean;
   /** Why Plaid has no terms for it at all, or null when it has a record (which
    *  may still lack one of the two). */
   noTerms: NoTermsReason | null;
@@ -493,8 +623,134 @@ export type DebtAccount = {
   updatedAt: string | null;
 };
 
+/** Plaid's institution id for Sallie Mae, whose student loan balances already
+ *  include accrued interest (Plaid's AccountBalance.current documentation). */
+const SALLIE_MAE = 'ins_116944';
+
 function finite(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/**
+ * A card's rates weighted by the part of the balance each applied to last
+ * statement, when it reports two or more: a 0% promotional balance beside a
+ * purchase balance would otherwise be charged the purchase APR in full. With
+ * one, creditApr's pick stands (lib/liabilities.ts): a lone cash balance says
+ * nothing about the rate new purchases will be charged.
+ */
+function blendedApr(
+  parts: { type: string | null; rate: number; balance: number }[] | undefined
+): { rate: number; parts: { type: string | null; rate: number; balance: number }[] } | null {
+  if (!parts || parts.length < 2) return null;
+  const total = parts.reduce((s, p) => s + p.balance, 0);
+  if (!(total > 0)) return null;
+  const rate = Math.round((parts.reduce((s, p) => s + p.rate * p.balance, 0) / total) * 1000) / 1000;
+  return isApr(rate) ? { rate, parts } : null;
+}
+
+function toDebtAccount(inst: DebtInstitutionInput, a: DebtAccountInput): DebtAccount {
+  const l = a.liability;
+  const kind = l?.kind ?? null;
+  const balance = finite(a.balance);
+  const balanceCents = balance === null ? null : toCents(balance);
+  const minimum = finite(l?.minimum_payment);
+  const plaidMinimumCents = minimum === null ? null : toCents(minimum);
+
+  const accrued = kind === 'student' && inst.institution_id !== SALLIE_MAE ? finite(l?.outstanding_interest) : null;
+  const blend = kind === 'credit' ? blendedApr(l?.apr_balances) : null;
+  const escrow = kind === 'mortgage' ? finite(l?.escrow_balance) : null;
+
+  let hold: MinimumHold | null = null;
+  if (plaidMinimumCents === 0 && balanceCents !== null && balanceCents > 0) hold = 'zero';
+  else if (kind === 'mortgage' && plaidMinimumCents !== null) hold = escrow !== null && escrow > 0 ? 'escrow' : 'escrow-unknown';
+
+  let workedOut: DebtAccount['workedOut'] = null;
+  const months = termMonths(l?.loan_term);
+  const original = finite(l?.origination_principal_amount);
+  const rate = finite(l?.apr);
+  if (
+    kind === 'mortgage' &&
+    months !== null &&
+    original !== null &&
+    original > 0 &&
+    rate !== null &&
+    isApr(rate) &&
+    l?.interest_rate_type?.toLowerCase() === 'fixed'
+  ) {
+    const cents = scheduledPaymentCents(original, rate, months);
+    if (isCents(cents)) workedOut = { cents, principal: original, months, apr: rate };
+  }
+
+  const lastPayment = finite(l?.last_payment_amount);
+  const lastStatement = finite(l?.last_statement_balance);
+
+  return {
+    id: a.account_id,
+    name: a.name,
+    mask: a.mask ?? null,
+    institution: inst.institution_name,
+    type: a.type as 'credit' | 'loan',
+    subtype: a.subtype ?? null,
+    kind,
+    balanceCents,
+    accruedInterestCents: accrued !== null && accrued > 0 ? toCents(accrued) : null,
+    currency: a.currency ?? null,
+    manual: !!inst.manual,
+    plaidApr: blend ? blend.rate : finite(l?.apr),
+    plaidAprLabel: blend ? 'Blended APR' : l?.apr_label ?? null,
+    aprParts: blend ? blend.parts : null,
+    plaidMinimumCents,
+    defaultMinimumCents: hold ? null : plaidMinimumCents,
+    minimumHold: hold,
+    sharedMinimum: null,
+    workedOut,
+    escrowCents: escrow === null ? null : toCents(escrow),
+    paidInFull:
+      kind === 'credit' && lastPayment !== null && lastStatement !== null && lastStatement >= 0 && lastPayment >= lastStatement,
+    noTerms: l
+      ? null
+      : inst.manual
+        ? 'manual'
+        : inst.stale_as_of
+          ? 'unreachable'
+          : inst.liabilities === 'off'
+            ? 'not-enabled'
+            : inst.liabilities === 'loading'
+              ? 'loading'
+              : 'not-reported',
+    staleAsOf: inst.stale_as_of ?? null,
+    staleAsOfAt: inst.stale_as_of ? inst.stale_as_of_at ?? null : null,
+    updatedAt: inst.manual ? a.updated_at ?? null : null,
+  };
+}
+
+/**
+ * One institution's student loans that show the same minimum: Plaid documents
+ * that some servicers (Great Lakes, Firstmark and others) bill one payment
+ * across all of an account's loans and show that payment on each loan. Counted
+ * once per loan, four loans sharing $400 would be planned at $1,600 a month. So
+ * the payment is split across them by balance; the person can type each loan's
+ * own payment if they are billed separately.
+ */
+function splitSharedMinimums(accounts: DebtAccount[]): void {
+  const byMinimum = new Map<number, DebtAccount[]>();
+  for (const a of accounts) {
+    const m = a.defaultMinimumCents;
+    if (a.kind !== 'student' || m === null || !isCents(m) || m <= 0) continue;
+    if (a.balanceCents === null || a.balanceCents <= 0 || !isCents(a.balanceCents)) continue;
+    byMinimum.set(m, [...(byMinimum.get(m) ?? []), a]);
+  }
+  for (const [total, loans] of byMinimum) {
+    if (loans.length < 2) continue;
+    const shares = splitByWeight(
+      total,
+      loans.map((l) => l.balanceCents!)
+    );
+    loans.forEach((l, i) => {
+      l.defaultMinimumCents = shares[i];
+      l.sharedMinimum = { totalCents: total, loans: loans.length };
+    });
+  }
 }
 
 /**
@@ -505,41 +761,9 @@ function finite(n: unknown): number | null {
 export function debtAccounts(institutions: DebtInstitutionInput[]): DebtAccount[] {
   const out: DebtAccount[] = [];
   for (const inst of institutions) {
-    for (const a of inst.accounts) {
-      if (a.hidden || !isOwedType(a.type)) continue;
-      const l = a.liability;
-      const balance = finite(a.balance);
-      const minimum = finite(l?.minimum_payment);
-      out.push({
-        id: a.account_id,
-        name: a.name,
-        mask: a.mask ?? null,
-        institution: inst.institution_name,
-        type: a.type as 'credit' | 'loan',
-        subtype: a.subtype ?? null,
-        kind: l?.kind ?? null,
-        owedCents: balance === null ? null : toCents(balance),
-        currency: a.currency ?? null,
-        manual: !!inst.manual,
-        plaidApr: finite(l?.apr),
-        plaidAprLabel: l?.apr_label ?? null,
-        plaidMinimumCents: minimum === null ? null : toCents(minimum),
-        noTerms: l
-          ? null
-          : inst.manual
-            ? 'manual'
-            : inst.stale_as_of
-              ? 'unreachable'
-              : inst.liabilities === 'off'
-                ? 'not-enabled'
-                : inst.liabilities === 'loading'
-                  ? 'loading'
-                  : 'not-reported',
-        staleAsOf: inst.stale_as_of ?? null,
-        staleAsOfAt: inst.stale_as_of ? inst.stale_as_of_at ?? null : null,
-        updatedAt: inst.manual ? a.updated_at ?? null : null,
-      });
-    }
+    const here = inst.accounts.filter((a) => !a.hidden && isOwedType(a.type)).map((a) => toDebtAccount(inst, a));
+    splitSharedMinimums(here);
+    out.push(...here);
   }
   return out.sort(
     (x, y) =>
@@ -548,20 +772,64 @@ export function debtAccounts(institutions: DebtInstitutionInput[]): DebtAccount[
 }
 
 /**
- * Accounts by currency, the currency with the most accounts first. Each group is
- * planned on its own: nothing in this app converts between currencies, so one
- * plan across two would add dollars to euros. A null currency (Plaid reports an
- * unofficial one) is a group of its own.
+ * Accounts by currency, the currency with the most accounts first (then by
+ * code, and no code last). Each group is planned on its own: nothing in this app
+ * converts between currencies, so one plan across two would add dollars to
+ * euros. Accounts with no code (Plaid reports an unofficial currency, which
+ * lib/networth.ts doesn't keep) are one group, which may mix currencies.
  */
 export function byCurrency(accounts: DebtAccount[]): { currency: string | null; accounts: DebtAccount[] }[] {
   const groups = new Map<string | null, DebtAccount[]>();
   for (const a of accounts) groups.set(a.currency, [...(groups.get(a.currency) ?? []), a]);
+  const byCode = (x: string | null, y: string | null) =>
+    x === y ? 0 : x === null ? 1 : y === null ? -1 : x.localeCompare(y);
   return [...groups.entries()]
     .map(([currency, list]) => ({ currency, accounts: list }))
-    .sort(
-      (x, y) =>
-        y.accounts.length - x.accounts.length || (x.currency ?? '￿').localeCompare(y.currency ?? '￿')
-    );
+    .sort((x, y) => y.accounts.length - x.accounts.length || byCode(x.currency, y.currency));
+}
+
+/** Something the plan can't see, or can only see as it was. */
+export type BlindSpot =
+  /** The institution couldn't be loaded, and nothing was recovered. */
+  | { kind: 'unloaded'; institution: string }
+  /** It couldn't be loaded, and its last balances are too old to use. */
+  | { kind: 'too-old'; institution: string; date: string; at: string | null }
+  /** Recovered short: some of its accounts couldn't be shown. */
+  | { kind: 'missing'; institution: string; count: number }
+  /** It answered without accounts it used to report. */
+  | { kind: 'vanished'; institution: string; count: number }
+  /** Its balances in the plan are recovered ones, from this day. */
+  | { kind: 'dated'; institution: string; date: string; at: string | null };
+
+/**
+ * What the plan can't see, said as the Home total says it (Dashboard.tsx): an
+ * institution that couldn't be loaded may hold cards or loans the plan leaves
+ * out, one recovered short or answering without accounts it used to report is
+ * missing some, and recovered balances are dated. A date is given only where
+ * the institution has a card or loan in the plan's view; on a bank holding none
+ * it says nothing about the plan.
+ */
+export function blindSpots(institutions: DebtInstitutionInput[]): BlindSpot[] {
+  const out: BlindSpot[] = [];
+  for (const inst of institutions) {
+    const institution = inst.institution_name;
+    if (inst.error && !inst.stale_as_of) {
+      out.push(
+        inst.stale_too_old
+          ? { kind: 'too-old', institution, date: inst.stale_too_old, at: inst.stale_too_old_at ?? null }
+          : { kind: 'unloaded', institution }
+      );
+      continue;
+    }
+    if (inst.stale_as_of && inst.accounts.some((a) => !a.hidden && isOwedType(a.type))) {
+      out.push({ kind: 'dated', institution, date: inst.stale_as_of, at: inst.stale_as_of_at ?? null });
+    }
+    if (inst.stale_missing) out.push({ kind: 'missing', institution, count: inst.stale_missing });
+    if (inst.unconfirmed_missing && !inst.error) {
+      out.push({ kind: 'vanished', institution, count: inst.unconfirmed_missing });
+    }
+  }
+  return out;
 }
 
 /**
@@ -574,8 +842,13 @@ export type TypedTerms = { apr?: string; minimum?: string };
 export type Term = {
   /** The value used: an APR as a percentage, a payment in cents. Null while it is needed. */
   value: number | null;
-  /** Where the value came from. A typed value equal to Plaid's counts as Plaid's. */
-  source: 'plaid' | 'typed' | null;
+  /**
+   * Where the value came from. A typed value equal to the default counts as
+   * the default's ('plaid'), one equal to a mortgage's worked-out payment as
+   * 'worked-out', and Plaid's mortgage payment typed back after saying it has
+   * no escrow as 'plaid'.
+   */
+  source: 'plaid' | 'typed' | 'worked-out' | null;
   /** Why what was typed can't be used. */
   error: string | null;
 };
@@ -601,32 +874,38 @@ export function parseCents(text: string): number | 'invalid' | null {
 
 const NEEDED: Term = { value: null, source: null, error: null };
 
-function resolve(
-  plaid: number | null,
-  typed: string | undefined,
-  valid: (n: number) => boolean,
-  parse: (t: string) => number | 'invalid' | null,
-  error: string
-): Term {
-  if (typed === undefined) {
-    // Plaid's figure, unless it is out of range: that is no rate or payment
-    // anyone has, and planning on it would present a broken number as a fact.
-    return plaid !== null && valid(plaid) ? { value: plaid, source: 'plaid', error: null } : NEEDED;
-  }
-  const parsed = parse(typed);
-  if (parsed === null) return NEEDED;
-  if (parsed === 'invalid') return { value: null, source: 'typed', error };
-  return { value: parsed, source: parsed === plaid ? 'plaid' : 'typed', error: null };
-}
-
-/** A debt's APR: what was typed, else Plaid's, else needed. */
+/** A debt's APR: what was typed, else Plaid's (out of range is no rate anyone
+ *  has, so it is needed instead), else needed. */
 export function resolveApr(plaidApr: number | null, typed: string | undefined): Term {
-  return resolve(plaidApr, typed, isApr, parseApr, `Enter a rate from 0 to ${MAX_APR}%.`);
+  if (typed === undefined) return plaidApr !== null && isApr(plaidApr) ? { value: plaidApr, source: 'plaid', error: null } : NEEDED;
+  const parsed = parseApr(typed);
+  if (parsed === null) return NEEDED;
+  if (parsed === 'invalid') return { value: null, source: 'typed', error: `Enter a rate from 0 to ${MAX_APR}%.` };
+  return { value: parsed, source: parsed === plaidApr ? 'plaid' : 'typed', error: null };
 }
 
-/** A debt's monthly payment in cents: what was typed, else Plaid's, else needed. */
-export function resolveMinimum(plaidCents: number | null, typed: string | undefined): Term {
-  return resolve(plaidCents, typed, isCents, parseCents, 'Enter an amount of 0 or more.');
+/** A debt's monthly payment in cents: what was typed, else the default
+ *  (defaultMinimumCents), else needed. */
+export function resolveMinimum(
+  account: Pick<DebtAccount, 'defaultMinimumCents' | 'plaidMinimumCents' | 'minimumHold' | 'workedOut'>,
+  typed: string | undefined
+): Term {
+  const fallback = account.defaultMinimumCents;
+  if (typed === undefined) {
+    return fallback !== null && isCents(fallback) ? { value: fallback, source: 'plaid', error: null } : NEEDED;
+  }
+  const parsed = parseCents(typed);
+  if (parsed === null) return NEEDED;
+  if (parsed === 'invalid') return { value: null, source: 'typed', error: 'Enter an amount of 0 or more.' };
+  const source =
+    parsed === fallback
+      ? 'plaid'
+      : parsed === account.workedOut?.cents
+        ? 'worked-out'
+        : account.minimumHold === 'escrow-unknown' && parsed === account.plaidMinimumCents
+          ? 'plaid'
+          : 'typed';
+  return { value: parsed, source, error: null };
 }
 
 export type RowStatus =
@@ -636,13 +915,36 @@ export type RowStatus =
   | 'needs-terms'
   /** The person left it out of the plan. */
   | 'left-out'
+  /** A card paid in full at its last statement, out of the plan until the
+   *  person puts it in: no interest is charged while it is paid in full. */
+  | 'paid-in-full'
   /** Owes nothing (a zero or credit balance). */
   | 'nothing-owed'
   /** No usable balance: none was reported (or one past MAX_CENTS, which no
    *  account can hold), so there is nothing to plan from. */
   | 'no-balance';
 
-export type PlanRow = { account: DebtAccount; apr: Term; minimum: Term; status: RowStatus };
+export type PlanRow = {
+  account: DebtAccount;
+  /** What is planned as owed, in cents: the balance, plus a student loan's
+   *  accrued interest unless the person left it out. */
+  owedCents: number | null;
+  /** Whether owedCents includes accrued interest. */
+  accruedIncluded: boolean;
+  apr: Term;
+  minimum: Term;
+  status: RowStatus;
+};
+
+/** What the person has chosen in the planner, beyond the terms. */
+export type PlanChoices = {
+  typed: Record<string, TypedTerms>;
+  /** true leaves a debt out; false keeps in one that starts out of the plan (a
+   *  card paid in full). Absent is the default. */
+  leftOut: Record<string, boolean>;
+  /** Student loans planned on the balance alone, without their accrued interest. */
+  withoutAccrued: Record<string, boolean>;
+};
 
 /**
  * Each account's terms and where it stands, and the debts ready to plan. The
@@ -652,21 +954,24 @@ export type PlanRow = { account: DebtAccount; apr: Term; minimum: Term; status: 
  */
 export function planRows(
   accounts: DebtAccount[],
-  typed: Record<string, TypedTerms>,
-  leftOut: Record<string, boolean>
+  choices: PlanChoices
 ): { rows: PlanRow[]; debts: Debt[]; waiting: number } {
   const rows: PlanRow[] = [];
   const debts: Debt[] = [];
   let waiting = 0;
   for (const account of accounts) {
-    const t = typed[account.id] ?? {};
+    const t = choices.typed[account.id] ?? {};
     const apr = resolveApr(account.plaidApr, t.apr);
-    const minimum = resolveMinimum(account.plaidMinimumCents, t.minimum);
-    const owed = account.owedCents;
+    const minimum = resolveMinimum(account, t.minimum);
+    const accruedIncluded = account.accruedInterestCents !== null && !choices.withoutAccrued[account.id];
+    const owed =
+      account.balanceCents === null ? null : account.balanceCents + (accruedIncluded ? account.accruedInterestCents! : 0);
+    const out = choices.leftOut[account.id];
     let status: RowStatus;
     if (owed === null || owed > MAX_CENTS) status = 'no-balance';
     else if (owed <= 0) status = 'nothing-owed';
-    else if (leftOut[account.id]) status = 'left-out';
+    else if (out === true) status = 'left-out';
+    else if (out === undefined && account.paidInFull) status = 'paid-in-full';
     else if (apr.value === null || minimum.value === null) status = 'needs-terms';
     else status = 'ready';
 
@@ -674,7 +979,7 @@ export function planRows(
     // Every term is in range by now (the balance just above, the rest in
     // resolveApr and resolveMinimum), so simulate never throws on these.
     if (status === 'ready') debts.push({ id: account.id, balanceCents: owed!, apr: apr.value!, minimumCents: minimum.value! });
-    rows.push({ account, apr, minimum, status });
+    rows.push({ account, owedCents: owed, accruedIncluded, apr, minimum, status });
   }
   return { rows, debts, waiting };
 }
