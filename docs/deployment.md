@@ -43,7 +43,7 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `INGEST_SECRET` | optional | Authenticates scripted balance pushes to manual accounts. Unset keeps `/api/ingest/balance` closed. |
 | `OPS_SECRET`, `OPS_ENABLED` | optional | Backups and other operations, only while you run one. |
 | `BLOB_READ_WRITE_TOKEN` | optional | Set for you when a private Blob store is connected; turns on nightly backups. |
-| `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). The public Security and Privacy pages state 30, so change them with it. |
+| `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). The deletion receipt and the public Security and Privacy pages read it (and whether a Blob store is connected), so what they say follows it. |
 | `PLAID_WEBHOOK_URL` | optional | Public URL of `/api/plaid/webhook`. See [features.md](features.md#keeping-plaid-costs-down). |
 | `PLAID_UNUSED_DAYS` | optional | Days before an unused connection is flagged (default 60, minimum 14). |
 | `MAX_TXN_BLOB_CHARS` | optional | Ceiling on one institution's stored transactions (default 8,388,608 characters). See [architecture.md](architecture.md#storage-and-encryption). |

@@ -5,10 +5,13 @@ import SecurityPage from '@/app/security/page';
 import PrivacyPage from '@/app/privacy/page';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 import nextConfig from '@/next.config.js';
-import { DEFAULT_KEEP_DAYS, MIN_KEPT } from '@/lib/backup';
+import { backupRetention, keepDays, MIN_KEPT } from '@/lib/backup';
+import { backupDaysAtMost, buildDeletionReceipt, PLAID_PORTAL, type DeletionCounts } from '@/lib/deletion-receipt';
 import { SESSION_MAX_AGE_SECONDS } from '@/lib/auth';
 import { SHORT_TTL_SECONDS, WEBHOOK_TTL_SECONDS } from '@/lib/cache';
 import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
+import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
+import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -28,13 +31,7 @@ const { INVITE_HOURS, SHARED_TXN_DAYS } = await (async () => {
   }
 })();
 
-// Route files may export only their handlers, so the limits that live in
-// routes are read from their source. One that can't be found reads NaN, which
-// the first test below reports by name instead of failing the whole file.
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-const routeFigure = (path: string, pattern: RegExp) => Number(pattern.exec(source(path))?.[1]);
-const LOGIN_WINDOW_MINUTES = LOGIN_WINDOW_SECONDS / 60;
-const DEMO_WINDOW_MINUTES = routeFigure('app/api/demo/sign-in/route.ts', /const WINDOW_SECONDS = (\d+) \* 60;/);
 
 /** The page as text: tags dropped, the entities React writes decoded, spaces collapsed. */
 function text(html: string): string {
@@ -59,14 +56,19 @@ const security = () => text(securityHtml());
 const privacy = () => text(privacyHtml());
 
 const DAYS = SESSION_MAX_AGE_SECONDS / 86400;
+const LOGIN_WINDOW_MINUTES = LOGIN_WINDOW_SECONDS / 60;
+const DEMO_WINDOW_MINUTES = DEMO_WINDOW_SECONDS / 60;
 /** A usable master key: 32 bytes, base64. */
 const MASTER = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
-test('finds the limits it checks in their routes', () => {
-  for (const [name, value] of Object.entries({ DEMO_WINDOW_MINUTES })) {
-    expect({ [name]: Number.isFinite(value) }).toEqual({ [name]: true });
-  }
-});
+/** The three ways backups can be kept: none (no blob store), by BACKUP_KEEP_DAYS, or not at all while it is invalid. */
+function backupsAre(state: 'none' | 'kept' | 'invalid', keep?: string) {
+  if (state === 'none') delete process.env.BLOB_READ_WRITE_TOKEN;
+  else process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_placeholder';
+  if (state === 'invalid') process.env.BACKUP_KEEP_DAYS = 'a month';
+  else if (keep) process.env.BACKUP_KEEP_DAYS = keep;
+  else delete process.env.BACKUP_KEEP_DAYS;
+}
 
 describe('never promised', () => {
   // The plan's "What not to promise", overclaims about what is encrypted, and
@@ -99,12 +101,16 @@ describe('never promised', () => {
     }
   });
 
-  test('neither page makes a claim the plan rules out, with a master key or without', () => {
+  test('neither page makes a claim the plan rules out, however this copy is set up', () => {
     for (const master of [undefined, MASTER]) {
-      if (master) process.env.MASTER_KEY = master;
-      else delete process.env.MASTER_KEY;
-      for (const page of [security(), privacy()]) {
-        for (const claim of RULED_OUT) expect(page).not.toMatch(claim);
+      for (const backups of ['none', 'kept', 'invalid'] as const) {
+        process.env = { ...saved };
+        if (master) process.env.MASTER_KEY = master;
+        else delete process.env.MASTER_KEY;
+        backupsAre(backups);
+        for (const page of [security(), privacy()]) {
+          for (const claim of RULED_OUT) expect(page).not.toMatch(claim);
+        }
       }
     }
   });
@@ -126,6 +132,7 @@ describe('the security page', () => {
   });
 
   test('describes envelope encryption only where a master key is set', () => {
+    backupsAre('kept');
     delete process.env.MASTER_KEY;
     let page = security();
     expect(page).toContain('This copy of Nya encrypts them with one key');
@@ -170,15 +177,15 @@ describe('the security page', () => {
     expect(page).toContain('Your accounts, their balances and your net-worth history, as the app last showed them');
   });
 
-  test('backups, deletion, sessions and the login limit, with the figures the code uses', () => {
+  test('deletion, sessions and the login limit, with the figures the code uses', () => {
     const page = security();
-    expect(page).toContain(`Copies are kept for ${DEFAULT_KEEP_DAYS} days. The newest ${MIN_KEPT} are always kept`);
     expect(page).toContain('Delete my account');
+    expect(page).toContain('It ends with a receipt, to copy or save');
     expect(page).toContain(`Invite links you made that nobody has used: each holds your sign-in id and the name you gave, and expires on its own within ${INVITE_HOURS} hours.`);
     expect(page).toContain(`good for ${DAYS} days`);
     expect(page).toContain('Sign out everywhere');
     expect(page).toContain(`${LOGIN_MAX_FAILURES} wrong passwords per ${LOGIN_WINDOW_MINUTES} minutes`);
-    expect(securityHtml()).toContain('href="https://my.plaid.com"');
+    expect(securityHtml()).toContain(`href="${PLAID_PORTAL}"`);
   });
 
   test('describes every header the app sends (next.config.js)', async () => {
@@ -210,6 +217,76 @@ describe('the security page', () => {
   });
 });
 
+describe('backups, on both pages, by the rule the deletion receipt dates by', () => {
+  const COUNTS: DeletionCounts = {
+    banks_disconnected: 0,
+    banks_not_disconnected: 0,
+    accounts: 0,
+    earlier_accounts: 0,
+    transactions: 0,
+    investment_transactions: 0,
+    history_days: 0,
+    connections_ended: 0,
+    sign_in_deleted: true,
+  };
+  /** Days from a deletion to the date its receipt gives for the last backup copy. */
+  const receiptDays = () => {
+    const receipt = buildDeletionReceipt({ counts: COUNTS, found_data: true, resumed: false, deleted_at: new Date(0), retention: backupRetention(), stopped: false });
+    return receipt.backups?.kept ? Date.parse(receipt.backups.until) / 86_400_000 : null;
+  };
+
+  test('with a blob store: the days kept and the newest kept, from the code', () => {
+    for (const keep of [undefined, '90', '3']) {
+      backupsAre('kept', keep);
+      const r = backupRetention();
+      if (!r?.kept) throw new Error('expected backups to be kept');
+      expect(r.keep_days).toBe(keepDays());
+      expect(r.min_kept).toBe(MIN_KEPT);
+      const within = backupDaysAtMost(r);
+      // The same number of days a receipt gives, for every setting.
+      expect(within).toBe(receiptDays()!);
+
+      const sec = security();
+      expect(sec).toContain(`A copy is deleted once it is more than ${keepDays()} days old, but the newest ${MIN_KEPT} are always kept, so if backups ever stop, the last ones are not deleted.`);
+      expect(sec).toContain(`Backups: copies taken before the deletion keep your data until they are deleted, within ${within} days while the nightly backup keeps running. If it stops, nothing is deleted until it runs again.`);
+      expect(sec).toContain('and the nightly backups, which it stores');
+
+      const priv = privacy();
+      expect(priv).toContain(`Nightly backups ${keepDays()} days. The newest ${MIN_KEPT} are always kept, so if backups stop, the last ones remain.`);
+      expect(priv).toContain(`keep a copy until they are deleted, within ${within} days while the nightly backup keeps running; if it stops, nothing is deleted until it runs again.`);
+      expect(priv).toContain('The receipt gives the date.');
+      expect(priv).toContain('Hosts the app and stores the nightly backups.');
+    }
+  });
+
+  test('without a blob store: no backups, said plainly, and no figure', () => {
+    backupsAre('none');
+    expect(backupRetention()).toEqual({ kept: false });
+    const sec = security();
+    expect(sec).toContain('This copy of Nya takes no backups: no backup store is set up for it');
+    expect(sec).not.toContain('Every night the server copies');
+    expect(sec).not.toContain('Backups: copies taken before the deletion');
+    expect(sec).not.toContain('nightly backups, which it stores');
+    const priv = privacy();
+    expect(priv).toContain('Nightly backups None: no backup store is set up for this copy of Nya.');
+    expect(priv).toContain('This copy of Nya takes no backups, so no copy is left in one.');
+    expect(priv).toContain('Vercel Hosts the app. Handles every request');
+    expect(priv).not.toMatch(/within \d+ days/);
+  });
+
+  test('with BACKUP_KEEP_DAYS invalid: no backup taken or deleted, and no figure', () => {
+    backupsAre('invalid');
+    expect(backupRetention()).toBeNull();
+    const sec = security();
+    expect(sec).toContain('their retention setting is not valid, so no backup is being taken, and no older one deleted');
+    expect(sec).toContain('Backups: copies taken before the deletion keep your data until the backup setting is fixed');
+    const priv = privacy();
+    expect(priv).toContain('Nightly backups None taken and none deleted while the retention setting is not valid.');
+    expect(priv).toContain('until their retention setting, which is not valid on this copy of Nya, is fixed');
+    for (const page of [sec, priv]) expect(page).not.toMatch(/within \d+ days/);
+  });
+});
+
 describe('the privacy page', () => {
   test('says first that it is a plain-language summary, not a legal policy, and nothing of internal plans', () => {
     const page = privacy();
@@ -232,9 +309,22 @@ describe('the privacy page', () => {
     ];
     for (const promise of promises) expect(text(html)).toContain(promise);
     expect(html.match(/<dt>True today<\/dt>/g)).toHaveLength(promises.length);
-    // "Being built" only where work is under way: the download.
-    expect(html.match(/<dt>Being built<\/dt>/g)).toHaveLength(1);
-    expect(text(html)).toMatch(/Being built Download my data, under Manage accounts/);
+    // The download and the receipt exist now: nothing is "being built".
+    expect(html).not.toContain('<dt>Being built</dt>');
+    expect(text(html)).not.toMatch(/being built/i);
+  });
+
+  test('describes the download and the deletion receipt as they are', () => {
+    const page = privacy();
+    expect(page).toContain(
+      `True today Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, or CSV files of your transactions and of your balance history. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
+    );
+    expect(page).toContain('On the Accounts tab, tap Manage, then Download my data at the bottom.');
+    expect(page).toContain(`Each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`);
+    expect(page).toContain('The file itself is not encrypted, so keep it somewhere safe.');
+    expect(page).toContain('then gives you a receipt of what was deleted, what expires when, and what stays and why.');
+    expect(page).toContain('It ends with a receipt, to copy or save');
+    expect(page).not.toContain('Until then there is no way to download');
   });
 
   test('names the processors, and the kinds not used yet', () => {
@@ -247,9 +337,8 @@ describe('the privacy page', () => {
     expect(page).toContain('no email provider');
   });
 
-  test('states retention with the figures the code uses', () => {
+  test('states the other retention figures the code uses', () => {
     const page = privacy();
-    expect(page).toContain(`Nightly backups ${DEFAULT_KEEP_DAYS} days. The newest ${MIN_KEPT} are always kept`);
     expect(page).toContain(`Invite links ${INVITE_HOURS} hours, or until used.`);
     expect(page).toContain(`used for ${SHORT_TTL_SECONDS / 60} minutes, or up to ${WEBHOOK_TTL_SECONDS / 3600} hours`);
     expect(page).toContain(`Sessions with the shared password ${DAYS} days`);
@@ -262,14 +351,8 @@ describe('the privacy page', () => {
     expect(page).toContain(`apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within ${INVITE_HOURS} hours`);
     expect(page).toContain(`Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their own within ${INVITE_HOURS} hours.`);
     expect(page).toContain('for each one you recategorized, its date, amount and bank description are kept, encrypted');
-    expect(page).toContain('Plaid keeps what it collected under its own policy.');
-  });
-
-  test('says how to download and delete, and points to the Plaid Portal', () => {
-    const page = privacy();
-    expect(page).toContain('It will appear under Manage accounts as Download my data');
-    expect(page).toContain('Delete my account');
-    expect(privacyHtml()).toContain('href="https://my.plaid.com"');
+    expect(page).toContain('Plaid keeps what it collected under its own policy');
+    expect(privacyHtml()).toContain(`href="${PLAID_PORTAL}"`);
   });
 });
 

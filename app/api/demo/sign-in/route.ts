@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { demoUsers } from '@/lib/demo';
+import { demoUsers, DEMO_SIGN_INS_PER_WINDOW, DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { redis, kEnv } from '@/lib/storage';
 
 // The demo buttons on the sign-in page (lib/demo.ts): a form post naming a
@@ -7,9 +7,6 @@ import { redis, kEnv } from '@/lib/storage';
 // ticket for it, which signs the visitor in. Public (proxy.ts lets it
 // through): it only ever signs in as a listed demo account, and only on
 // Preview. Limited per address, since each ticket is a call to Clerk.
-
-const MAX_PER_WINDOW = 20;
-const WINDOW_SECONDS = 10 * 60;
 
 export async function POST(req: Request) {
   const users = demoUsers();
@@ -22,8 +19,8 @@ export async function POST(req: Request) {
   const key = kEnv(`ratelimit:demo:${ip}`);
   try {
     const count = await redis().incr(key);
-    if (count === 1) await redis().expire(key, WINDOW_SECONDS);
-    if (count > MAX_PER_WINDOW) return NextResponse.json({ error: 'Too many demo sign-ins. Try again in a few minutes.' }, { status: 429 });
+    if (count === 1) await redis().expire(key, DEMO_WINDOW_SECONDS);
+    if (count > DEMO_SIGN_INS_PER_WINDOW) return NextResponse.json({ error: 'Too many demo sign-ins. Try again in a few minutes.' }, { status: 429 });
   } catch {
     // Redis unavailable: the limiter is a courtesy to Clerk, not a lock.
   }

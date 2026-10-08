@@ -16,6 +16,14 @@
 
 export type DemoUser = { id: string; label: string };
 
+/** How many demo sign-ins one address may start per window, and the window: a
+ *  courtesy to Clerk, since each is a call to it (app/api/demo/sign-in). Here
+ *  rather than in the route, which may export only its handler, so the public
+ *  security page's statement of how long an address is kept can be tested.
+ */
+export const DEMO_SIGN_INS_PER_WINDOW = 20;
+export const DEMO_WINDOW_SECONDS = 10 * 60;
+
 /** Whether this deployment may offer demo accounts at all. */
 export function demoEnvironment(): boolean {
   return process.env.VERCEL_ENV === 'preview' || (process.env.NODE_ENV === 'development' && !process.env.VERCEL_ENV);

@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
+import { backupRetention } from '@/lib/backup';
+import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
+import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -9,10 +12,11 @@ export const metadata: Metadata = {
 
 // How Nya handles personal data: its commitments, who processes the data, how
 // long things are kept, and how to download and delete it. Public (proxy.ts)
-// and a plain-language summary, not a legal policy: Nya has no legal entity
-// and no counsel has reviewed it. Each commitment says what makes it true
-// today and what is not built yet, and "being built" only where work is under
-// way. test/public-pages.test.tsx holds the retention figures to the code.
+// and a plain-language summary, not a legal policy. Each commitment says what
+// makes it true today and what is not built yet. Reads no stored data: what it
+// says of backups comes from backupRetention() (lib/backup.ts, environment
+// only), the rule the deletion receipt dates by, so the two never disagree.
+// test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
   promise: string;
@@ -20,7 +24,16 @@ type Commitment = {
   next: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned'; text: ReactNode };
 };
 
-const COMMITMENTS: Commitment[] = [
+/** What happens to a deleted account's data in the nightly backups here. */
+function deletedInBackups(backups: BackupRetention): string {
+  if (backups === null) {
+    return 'Nightly backups taken before a deletion keep a copy until their retention setting, which is not valid on this copy of Nya, is fixed and they are deleted in turn.';
+  }
+  if (!backups.kept) return 'This copy of Nya takes no backups, so no copy is left in one.';
+  return `Nightly backups taken before a deletion keep a copy until they are deleted, within ${backupDaysAtMost(backups)} days while the nightly backup keeps running; if it stops, nothing is deleted until it runs again.`;
+}
+
+const commitments = (backups: BackupRetention): Commitment[] => [
   {
     promise: 'We never sell or share your financial data.',
     today:
@@ -29,20 +42,18 @@ const COMMITMENTS: Commitment[] = [
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today:
-      'Not yet. The only export today is the operator’s backup, which covers everyone on this copy of Nya and stays encrypted.',
+    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, or CSV files of your transactions and of your balance history. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`,
     next: {
-      label: 'Being built',
-      text: 'Download my data, under Manage accounts: everything stored about you, as JSON. Files in CSV and OFX, and a way to bring the download into another copy of Nya, come later.',
+      label: 'Not built yet',
+      text: 'OFX files for other money apps, a passphrase to protect the file, a way to bring a download into another copy of Nya, and an email each time a download happens.',
     },
   },
   {
     promise: 'You can delete everything, and it reaches backups and connected services.',
-    today:
-      'Delete my account disconnects your banks at Plaid, deletes everything stored for you, ends all sharing and deletes your sign-in. Backups keep a copy for up to 30 days, and Plaid keeps its own until you delete it at Plaid.',
+    today: `Delete my account disconnects your banks at Plaid, deletes everything stored for you, ends all sharing and deletes your sign-in, then gives you a receipt of what was deleted, what expires when, and what stays and why. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy; the receipt links to the Plaid Portal, where you can delete it.`,
     next: {
       label: 'Not built yet',
-      text: 'A key per person, so deleting your account makes your copies in backups unreadable at once, and a receipt that lists what was deleted, what expires when, and what stays and why.',
+      text: 'A key per person, so that deleting your account makes your copies in backups unreadable at once.',
     },
   },
   {
@@ -74,16 +85,19 @@ const COMMITMENTS: Commitment[] = [
   },
   {
     promise: 'You can leave.',
-    today: 'You can delete your account, and everything stored for you, at any time.',
+    today: 'You can download everything stored about you, and delete your account and everything stored for you, at any time.',
     next: {
       label: 'Not built yet',
-      text: 'The download (being built, above), a public API, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
+      text: 'A public API, a way to bring your download into another copy of Nya, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
     },
   },
 ];
 
-const PROCESSORS: [string, string][] = [
-  ['Vercel', 'Hosts the app and stores the nightly backups. Handles every request and response, and keeps the app’s logs.'],
+const processors = (backups: BackupRetention): [string, string][] => [
+  [
+    'Vercel',
+    `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'} Handles every request and response, and keeps the app’s logs.`,
+  ],
   [
     'Upstash',
     'The database. Holds your data: the values that hold money encrypted, and the details listed on the Security page in plain text.',
@@ -98,16 +112,22 @@ const PROCESSORS: [string, string][] = [
   ],
 ];
 
-const RETENTION: [string, string][] = [
+function backupsRow(backups: BackupRetention): string {
+  if (backups === null) return 'None taken and none deleted while the retention setting is not valid.';
+  if (!backups.kept) return 'None: no backup store is set up for this copy of Nya.';
+  return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
+}
+
+const retention = (backups: BackupRetention): [string, string][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'A bank you disconnect',
     'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
   ],
-  ['Nightly backups', '30 days. The newest 7 are always kept, so if backups stop, the last ones remain.'],
+  ['Nightly backups', backupsRow(backups)],
   [
     'A deleted account',
-    'Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. From backups as they age out, within 30 days. Plaid keeps what it collected under its own policy.',
+    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy.`,
   ],
   ['Invite links', '72 hours, or until used.'],
   [
@@ -124,6 +144,7 @@ const RETENTION: [string, string][] = [
 ];
 
 export default function PrivacyPage() {
+  const backups = backupRetention();
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
@@ -131,7 +152,7 @@ export default function PrivacyPage() {
       </section>
 
       <h2>Our commitments</h2>
-      {COMMITMENTS.map((c) => (
+      {commitments(backups).map((c) => (
         <section className="card info-section" key={c.promise}>
           <h3>{c.promise}</h3>
           <dl className="info-status">
@@ -146,7 +167,7 @@ export default function PrivacyPage() {
       <InfoSection title="Who processes your data">
         <table className="info-table">
           <tbody>
-            {PROCESSORS.map(([name, what]) => (
+            {processors(backups).map(([name, what]) => (
               <tr key={name}>
                 <th scope="row">{name}</th>
                 <td>{what}</td>
@@ -169,7 +190,7 @@ export default function PrivacyPage() {
             </tr>
           </thead>
           <tbody>
-            {RETENTION.map(([what, howLong]) => (
+            {retention(backups).map(([what, howLong]) => (
               <tr key={what}>
                 <th scope="row">{what}</th>
                 <td>{howLong}</td>
@@ -181,19 +202,34 @@ export default function PrivacyPage() {
 
       <InfoSection title="Download your data">
         <p>
-          A per-person download is being built. It will appear under Manage accounts as Download my data, and give you
-          everything stored about you as JSON. Until then there is no way to download your own data from the app.
+          On the Accounts tab, tap Manage, then Download my data at the bottom. Choose everything, as one JSON file, or
+          your transactions or your balance history, each as a CSV file for a spreadsheet. The values come decrypted.
+        </p>
+        <p>
+          A fresh sign-in comes first: with Clerk accounts, one from the last ten minutes, or Clerk asks you to confirm
+          it is you; with the shared password, the password again. Each account can download {DOWNLOADS_PER_WINDOW} times
+          an hour.
+        </p>
+        <p>
+          The file itself is not encrypted, so keep it somewhere safe. It leaves out the tokens that reach your banks,
+          which are credentials rather than your data, your sign-in, and other people’s data; the JSON file lists what it
+          leaves out.
         </p>
       </InfoSection>
 
       <InfoSection title="Delete your account">
         <p>
           If you sign in with your own account, open your account menu (your picture or initial, at the top right),
-          choose Manage account, then Data &amp; privacy, and use Delete my account. It disconnects your banks at Plaid, deletes everything stored for you, ends
-          all sharing both ways, and deletes your sign-in. It cannot be undone.
+          choose Manage account, then Data &amp; privacy, and use Delete my account. It disconnects your banks at Plaid,
+          deletes everything stored for you, ends all sharing both ways, and deletes your sign-in. It cannot be undone. It
+          ends with a receipt, to copy or save: what was deleted, when the last backup holding your data is gone, and what
+          stays and why.
         </p>
         <ul>
-          <li>Nightly backups keep a copy until it ages out, within 30 days.</li>
+          <li>
+            {deletedInBackups(backups)}
+            {backups?.kept ? ' The receipt gives the date.' : ''}
+          </li>
           <li>
             Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
             own within 72 hours.
@@ -201,7 +237,7 @@ export default function PrivacyPage() {
           <li>
             Plaid keeps its own record of the connections you made through it. To see what Plaid holds about you, or
             delete it, use the{' '}
-            <a href="https://my.plaid.com" target="_blank" rel="noopener noreferrer">
+            <a href={PLAID_PORTAL} target="_blank" rel="noopener noreferrer">
               Plaid Portal (my.plaid.com)
             </a>
             .

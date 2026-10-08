@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { cspMode, type CspMode } from '@/lib/security-headers';
 import { masterKeyConfigured } from '@/lib/crypto';
+import { backupRetention } from '@/lib/backup';
+import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -14,8 +16,10 @@ export const metadata: Metadata = {
 // docs/architecture.md and docs/operations.md are the sources, and
 // test/public-pages.test.tsx holds the page to them and to the plan's list of
 // things never to promise. Reads no stored data. From the environment it reads
-// only how the Content-Security-Policy is sent and whether a master key is set
-// (lib/crypto.ts), since each changes what is true of this copy.
+// only how the Content-Security-Policy is sent, whether a master key is set
+// (lib/crypto.ts) and how backups are kept (lib/backup.ts backupRetention, the
+// rule the deletion receipt uses too), since each changes what is true of this
+// copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -26,7 +30,7 @@ const POLICY: Record<CspMode, string> = {
   off: `Pages can also carry a Content-Security-Policy, under which ${LIMITS}. This copy of Nya has it switched off.`,
 };
 
-const whoCanRead = (envelope: boolean): [string, string][] => [
+const whoCanRead = (envelope: boolean, backups: BackupRetention): [string, string][] => [
   [
     'The operator, who runs this copy of Nya',
     `Everything, in practice. The ${envelope ? 'master key' : 'key'} and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.`,
@@ -34,7 +38,7 @@ const whoCanRead = (envelope: boolean): [string, string][] => [
   ['Upstash, the database', 'The encrypted values, and the plain text listed above.'],
   [
     'Vercel, the host',
-    'Every request and response while the app handles it, the app’s logs, and the nightly backups, which it stores.',
+    `Every request and response while the app handles it, and the app’s logs${backups?.kept === false ? '' : ', and the nightly backups, which it stores'}.`,
   ],
   [
     'Plaid',
@@ -94,8 +98,58 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
   );
 }
 
+// How backups are kept here: none without a blob store; none taken or pruned
+// while BACKUP_KEEP_DAYS is invalid (null); otherwise the receipt's rule.
+function Backups({ backups, envelope }: { backups: BackupRetention; envelope: boolean }): ReactNode {
+  if (backups === null) {
+    return (
+      <p>
+        Nightly backups are set up for this copy of Nya, but their retention setting is not valid, so no backup is
+        being taken, and no older one deleted, until whoever runs it fixes the setting.
+      </p>
+    );
+  }
+  if (!backups.kept) {
+    return <p>This copy of Nya takes no backups: no backup store is set up for it, so nothing is copied out of the database.</p>;
+  }
+  return (
+    <>
+      <p>
+        Every night the server copies the database to a private Vercel Blob store, and reads each copy back to check it
+        before any older one is deleted. A copy is deleted once it is more than {backups.keep_days} days old, but the
+        newest {backups.min_kept} are always kept, so if backups ever stop, the last ones are not deleted.
+      </p>
+      <p>
+        A backup holds the same kinds of data as the database: the encrypted values and the plain text listed above
+        {envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read without the keys
+        kept in the server’s environment.
+      </p>
+    </>
+  );
+}
+
+function DeletedInBackups({ backups }: { backups: BackupRetention }): ReactNode {
+  if (backups === null) {
+    return (
+      <li>
+        Backups: copies taken before the deletion keep your data until the backup setting is fixed and they are
+        deleted in turn.
+      </li>
+    );
+  }
+  if (!backups.kept) return null; // no backups here, so nothing to outlive the deletion
+  return (
+    <li>
+      Backups: copies taken before the deletion keep your data until they are deleted, within{' '}
+      {backupDaysAtMost(backups)} days while the nightly backup keeps running. If it stops, nothing is deleted until it
+      runs again. The receipt gives the date.
+    </li>
+  );
+}
+
 export default function SecurityPage() {
   const envelope = masterKeyConfigured();
+  const backups = backupRetention();
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -152,7 +206,7 @@ export default function SecurityPage() {
             </tr>
           </thead>
           <tbody>
-            {whoCanRead(envelope).map(([who, what]) => (
+            {whoCanRead(envelope, backups).map(([who, what]) => (
               <tr key={who}>
                 <th scope="row">{who}</th>
                 <td>{what}</td>
@@ -163,16 +217,7 @@ export default function SecurityPage() {
       </InfoSection>
 
       <InfoSection title="Backups">
-        <p>
-          Every night the server copies the database to a private Vercel Blob store, and reads each copy back to check it
-          before any older one is deleted. Copies are kept for 30 days. The newest 7 are always kept, so if backups ever
-          stop, the last ones are not deleted.
-        </p>
-        <p>
-          A backup holds the same kinds of data as the database: the encrypted values and the plain text listed above
-          {envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read without the
-          keys kept in the server’s environment.
-        </p>
+        <Backups backups={backups} envelope={envelope} />
       </InfoSection>
 
       <InfoSection title="Deleting your account">
@@ -180,11 +225,13 @@ export default function SecurityPage() {
           If you sign in with your own account, Delete my account is in your account window: open your account menu
           (your picture or initial, at the top right), choose Manage account, then Data &amp; privacy. It disconnects
           each of your banks at Plaid, deletes everything stored for you, ends all sharing both ways, and deletes your
-          sign-in. If it stops part way, your data is already out of reach, and running it again finishes the job.
+          sign-in. If it stops part way, your data is already out of reach, and running it again finishes the job. It
+          ends with a receipt, to copy or save: what was deleted, when the last backup holding your data is gone, and
+          what stays and why.
         </p>
         <p>What it does not reach:</p>
         <ul>
-          <li>Backups: your data stays in the nightly copies until they age out, within 30 days.</li>
+          <DeletedInBackups backups={backups} />
           <li>
             Invite links you made that nobody has used: each holds your sign-in id and the name you gave, and expires on
             its own within 72 hours.
@@ -192,7 +239,7 @@ export default function SecurityPage() {
           <li>
             Plaid’s own copy: Plaid keeps what it collected under its own policy. You can see and delete your connections
             at Plaid in the{' '}
-            <a href="https://my.plaid.com" target="_blank" rel="noopener noreferrer">
+            <a href={PLAID_PORTAL} target="_blank" rel="noopener noreferrer">
               Plaid Portal
             </a>
             .
