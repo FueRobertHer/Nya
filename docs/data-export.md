@@ -82,6 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). None yet. |
 
 ### `institutions[]`
 
@@ -226,6 +227,10 @@ Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `accou
 | `connections[]` | `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`. |
 | `blocked[]` | `name`: people you blocked, by what you called them. |
 
+### Stores built on the storage seam
+
+Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. They are read as strictly as everything else: if any entry can't be read, nothing is downloaded and the error names the store. They are in the JSON file only.
+
 ## The CSV files
 
 Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, starting with a byte order mark (the bytes `EF BB BF`), which is how Excel on Windows knows the file is UTF-8 and shows accented and non-Latin merchant names as they are. Spreadsheets and most CSV readers skip the mark; in Python, open the file with `encoding="utf-8-sig"`.
@@ -278,7 +283,8 @@ Each key a person's container can hold, and what the download does with it. The 
 | `account-links`, `account-links:dismissed` | `account_links.links`, `account_links.declined_suggestions` |
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
-| `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:`, `download-count` (a counter store on the storage seam) | Left out: the app's machinery |
+| `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: today only `download-count`, the counter behind the five downloads an hour. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only.
 
@@ -300,4 +306,6 @@ Deleting your account deletes your data now, and the nightly backups expire it l
 
 ## Adding a store
 
-A new store that stands alone (nothing else needs to read it to build the file) is one entry in `SECTIONS` in `lib/user-export.ts`: its key in the file, its name for errors, a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape, and, if it names accounts, which ids it names, so `accounts` lists them. Add its key to `STORED_KEYS` and a section to this page. Once the storage seam (`lib/repo.ts`) lets a store declare itself exportable, `SECTIONS` is extended from those declarations instead, as the comment there describes. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.
+A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it strictly. Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that.
+
+The older stores are read by hand. One that stands alone (nothing else needs to read it to build the file) is an entry in `SECTIONS`: its key in the file, its name for errors, a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape, and, if it names accounts, which ids it names, so `accounts` lists them. Its key goes in `STORED_KEYS`. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.

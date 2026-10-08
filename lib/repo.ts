@@ -52,7 +52,8 @@
 //
 // then import that module in lib/stores.ts, the catalogue that everything
 // walking every store reads: the key inventory in lib/reencrypt.ts, and the
-// person's data download once there is one. The name is the key family, so a
+// person's data download (lib/user-export.ts), where each store declared
+// exportable is a section of its own. The name is the key family, so a
 // declared store is in the key inventory by construction.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with

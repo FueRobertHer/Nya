@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
@@ -29,11 +29,16 @@ const {
   ExportReadError,
   STORED_KEYS,
   storedKeyListed,
+  SECTIONS,
+  declaredSections,
   TRANSACTION_COLUMNS,
   BALANCE_COLUMNS,
   EXPORT_FORMAT,
   EXPORT_VERSION,
 } = await import('@/lib/user-export');
+
+const { defineMapStore, defineValueStore, forgetDeclaredStore, UnreadableEntriesError, UnreadableValueError } = await import('@/lib/repo');
+const { declaredStores } = await import('@/lib/stores');
 
 const ctx = TEST_CTX;
 const OTHER = { container: '9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f' } as typeof TEST_CTX;
@@ -258,6 +263,8 @@ describe('everything stored, decrypted, and nothing else', () => {
       'budgets',
       'goals',
       'sharing',
+      // Then a section for each store on the storage seam declared exportable.
+      ...declaredSections().map((s) => s.key),
     ]);
   });
 
@@ -580,6 +587,91 @@ describe('caveats', () => {
   test('a part named like a core one can’t replace it', async () => {
     const data = await collectUserData({ ctx, userId: 'user_me' });
     expect(() => buildUserExport({ ...data, sections: [['accounts', []]] }, NOW)).toThrow('called accounts');
+  });
+});
+
+describe('stores built on the storage seam', () => {
+  // Declared here the way the app declares its stores, and forgotten after, so
+  // no other test sees them.
+  type Plan = { name: string; target: number };
+  const isPlan = (v: unknown): v is Plan =>
+    typeof v === 'object' && v !== null && typeof (v as Plan).name === 'string' && Number.isFinite((v as Plan).target);
+  const isPlans = (v: unknown): v is Plan[] => Array.isArray(v) && v.every(isPlan);
+  let plans: ReturnType<typeof defineMapStore<Plan>>;
+  let settings: ReturnType<typeof defineValueStore<Plan[]>>;
+  let secrets: ReturnType<typeof defineMapStore<Plan>>;
+  beforeAll(() => {
+    plans = defineMapStore<Plan>('export-test-plans', { what: 'test plans', isValid: isPlan, exportable: true });
+    settings = defineValueStore<Plan[]>('export-test-settings', { what: 'test settings', isValid: isPlans, exportable: true });
+    secrets = defineMapStore<Plan>('export-test-secrets', { what: 'test secrets', isValid: isPlan, exportable: false });
+  });
+  afterAll(() => ['export-test-plans', 'export-test-settings', 'export-test-secrets'].forEach(forgetDeclaredStore));
+
+  test('each one declared exportable is a section of its own, after the others, in name order; the rest are left out', async () => {
+    await plans.setMany(ctx, [
+      ['p2', { name: 'Retire at 55', target: 2_000_000 }],
+      ['p1', { name: 'House', target: 120_000 }],
+    ]);
+    await settings.set(ctx, [{ name: 'Trip', target: 3000 }]);
+    await secrets.set(ctx, 's1', { name: 'SECRET-NOT-EXPORTED', target: 1 });
+    await plans.set(OTHER, 'o1', { name: 'OTHER-PERSON-PLAN', target: 1 });
+    const doc = await download();
+    const keys = Object.keys(doc);
+    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings']);
+    // A map store's entries in id order, a value store's value, as stored.
+    expect(doc['export-test-plans']).toEqual([
+      { id: 'p1', value: { name: 'House', target: 120_000 } },
+      { id: 'p2', value: { name: 'Retire at 55', target: 2_000_000 } },
+    ]);
+    expect(doc['export-test-settings']).toEqual([{ name: 'Trip', target: 3000 }]);
+    const text = JSON.stringify(doc);
+    expect(text).not.toContain('SECRET-NOT-EXPORTED');
+    expect(text).not.toContain('OTHER-PERSON-PLAN');
+    // The download limit's own counter is bookkeeping, never part of it.
+    expect(keys).not.toContain('download-count');
+    // In the file as written, too, one entry per line.
+    const written = [...exportFile(doc, 'json').pieces()].join('');
+    expect(JSON.parse(written)['export-test-plans']).toEqual(doc['export-test-plans']);
+    expect(written).toContain('\n    {"id":"p1","value":{"name":"House","target":120000}},\n');
+  });
+
+  test('never saved is an empty section, not a missing one', async () => {
+    const doc = await download();
+    expect(doc['export-test-plans']).toEqual([]);
+    expect(doc['export-test-settings']).toBeNull();
+  });
+
+  test('an entry that can’t be read or isn’t recognised fails the download, naming the store', async () => {
+    await plans.set(ctx, 'p1', { name: 'House', target: 120_000 });
+    // Damaged bytes.
+    await fake.hset(ctxKey('export-test-plans'), { p2: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const damaged = await collectUserData({ ctx, userId: 'user_me' }).catch((e) => e);
+    expect(damaged).toBeInstanceOf(ExportReadError);
+    expect(damaged.what).toBe('test plans');
+    expect(damaged.message).toStartWith('Your test plans could not be read, so nothing was downloaded');
+    expect(damaged.cause).toBeInstanceOf(UnreadableEntriesError);
+    expect(damaged.cause.unreadable).toEqual(['p2']);
+    // Intact, but a shape this code doesn't know.
+    await fake.hdel(ctxKey('export-test-plans'), 'p2');
+    await fake.set(ctxKey('export-test-settings'), await encrypt(JSON.stringify({ not: 'plans' })));
+    const unrecognised = await collectUserData({ ctx, userId: 'user_me' }).catch((e) => e);
+    expect(unrecognised).toBeInstanceOf(ExportReadError);
+    expect(unrecognised.what).toBe('test settings');
+    expect(unrecognised.cause).toBeInstanceOf(UnreadableValueError);
+    expect(unrecognised.cause.unrecognised).toBe(true);
+  });
+
+  test('a store that isn’t exportable is never read for it, so it can’t fail a download either', async () => {
+    await fake.hset(ctxKey('export-test-secrets'), { s1: 'not-ciphertext-but-long-enough-to-be-tried' });
+    expect((await download())['export-test-secrets']).toBeUndefined();
+  });
+
+  test('no store on the seam is named like a part of the file already there', async () => {
+    // With every store the app declares loaded (lib/stores.ts), as when it runs.
+    const data = await collectUserData({ ctx, userId: 'user_me' });
+    const core = new Set([...Object.keys(buildUserExport({ ...data, sections: [] }, NOW)), ...SECTIONS.map((s) => s.key)]);
+    expect(declaredSections().filter((s) => core.has(s.key)).map((s) => s.key)).toEqual([]);
+    expect(declaredStores().some((s) => s.name === 'download-count' && !s.exportable)).toBe(true);
   });
 });
 

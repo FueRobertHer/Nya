@@ -66,6 +66,8 @@ import { readHistoryForExport, type StoredPoint } from './history';
 import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
+import { declaredStores } from './stores';
+import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 
 export const EXPORT_FORMAT = 'nya-export';
@@ -106,7 +108,8 @@ export class ExportReadError extends Error {
  * test/user-export.test.ts checks every key the code builds inside a
  * container is listed here, so a new store can't be missing from the download
  * without someone having decided it should be. docs/data-export.md carries
- * the same list for people.
+ * the same list for people. A store declared through the storage seam is not
+ * listed: its declaration says whether it is exported (declaredSections).
  */
 export const STORED_KEYS: readonly (readonly [key: string, where: string])[] = [
   ['plaid:items', 'institutions (the access token in each record is left out)'],
@@ -160,13 +163,10 @@ export function storedKeyListed(key: string): boolean {
  * Its reader must be strict (throw on anything it can't read), like every
  * reader here.
  *
- * SEAM (lib/repo.ts). The storage seam, built in parallel, lets a store
- * declare itself exportable. Once it lands, this list is extended from those
- * declarations instead of by hand, each becoming
- *   { key: store.exportKey, what: store.label, read: ({ ctx }) => store.exportAll(ctx) }
- * so a store built on the seam reaches this download without anyone
- * remembering to add it. Stores that the core sections below cross-reference
- * (accounts, history, transactions) stay in collectUserData.
+ * These are the stores that predate the storage seam (lib/repo.ts). A store
+ * built on the seam needs no entry: declared exportable, it is a section of
+ * its own (declaredSections, below). Stores that the core sections below
+ * cross-reference (accounts, history, transactions) stay in collectUserData.
  */
 export type ExportSection = {
   /** Its key in the JSON file. */
@@ -215,6 +215,29 @@ export const SECTIONS: readonly ExportSection[] = [
   }),
 ];
 
+/**
+ * The sections the storage seam's catalogue adds (lib/stores.ts): one for each
+ * store declared with exportable: true, under its own name, after SECTIONS, in
+ * name order. Read strictly, like every reader here: an unreadable or
+ * unrecognised entry fails the download, naming the store. A value store's
+ * section is its value (null if never saved); a map store's is its entries as
+ * { id, value }, in id order. Declaring a store exportable is the whole
+ * decision: nothing else has to remember to add it.
+ */
+export function declaredSections(): ExportSection[] {
+  return declaredStores().flatMap((store): ExportSection[] =>
+    store.exportable && store.kind !== 'counter' ? [{ key: store.name, what: store.what, read: ({ ctx }) => readDeclared(store, ctx) }] : []
+  );
+}
+
+async function readDeclared(store: ValueStore<unknown> | MapStore<unknown>, ctx: Ctx): Promise<unknown> {
+  if (store.kind === 'value') return store.get(ctx);
+  return [...(await store.getAll(ctx))].map(([id, value]) => ({ id, value }));
+}
+
+/** SECTIONS, then the seam's. */
+const allSections = (): ExportSection[] => [...SECTIONS, ...declaredSections()];
+
 // ---- Reading ----
 
 export type DeclinedOffer = { earlier_account_id: string; account_id: string | null; declined_at: string };
@@ -238,7 +261,7 @@ export type UserData = {
   declined: DeclinedOffer[];
   carried: Carried;
   history: { totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> };
-  /** SECTIONS, read, in order. */
+  /** SECTIONS and the seam's (declaredSections), read, in order. */
   sections: (readonly [string, unknown])[];
 };
 
@@ -314,7 +337,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       read('account links', () => readDeclined(ctx)),
       read('categories', () => readCarriedStrict(ctx)),
       read('balance history', () => readHistoryForExport(ctx)),
-      Promise.all(SECTIONS.map(async (s) => [s.key, await read(s.what, () => s.read(src))] as const)),
+      Promise.all(allSections().map(async (s) => [s.key, await read(s.what, () => s.read(src))] as const)),
     ]);
   return {
     people: src.userId !== null,
