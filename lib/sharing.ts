@@ -17,12 +17,24 @@
 // it's there), balance, or balance and recent transactions. There is no
 // accept step per share; the viewer only ever reads.
 //
+// A SHARE CAN END. Its owner can give it an end, expires_at: an instant, the
+// start of the day after the one they chose, in their own time zone (the
+// drawer works that out on their device). Every read compares it with the
+// time of that read, instant to instant, so no time zone enters the
+// comparison: from that instant on the share shows nothing, with nothing to
+// do. Ending keeps the share's accounts and levels, so it can be renewed, and
+// deletes nothing.
+//
 // Stored environment-wide (connections live between containers, so in none):
 //   <env>:connections  field "<id>"              {users: [a, b], status, blocked_by?, created_at}
 //                      field "<id>|label|<user>" what <user> calls the other
 //                      field "<id>|intro|<user>" the name <user> gave when connecting
-//                      field "<id>|share|<user>" {accounts: {"<account id>": level}, updated_at}
+//                      field "<id>|share|<user>" what <user> shares: {accounts: {"<account id>": level}, updated_at},
+//                                                or with an end {expiring: {...}, expires_at, updated_at}
 //   <env>:invites:<sha256 of the token>          {from, from_name, their_label, created_at}, with an expiry
+// A share with an end keeps its accounts under "expiring", not "accounts":
+// a release from before shares could end reads it as sharing nothing, so
+// rolling back past this can end a share early but never extend one.
 // Every field of a connection is in one hash, so removing one (the breakup
 // case) is a single HDEL: every share both ways ends at once, none missed.
 // Blocking keeps the connection's record, marked blocked, which is what stops
@@ -31,12 +43,21 @@
 //
 // THE BOUNDARY. This module is the only place that reads another person's
 // container. It builds that person's Ctx itself, from the owners map, and
-// passes it only to read functions; nothing it returns carries the Ctx or the
-// other person's user id, and no route ever gets one to write with.
+// passes it only to read functions and to recordView: when someone reads what
+// another person shares with them, that one write records it in the owner's
+// access log (lib/access-log.ts), and it can write nothing else. Nothing this
+// module returns carries the Ctx or the other person's user id, and no route
+// ever gets one to write with.
 // Everything is filtered to the shared accounts here, on the server, before it
 // leaves: the browser never receives an account it wasn't shared, not even to
 // hide it. An account the owner has since hidden, or no longer has, is left
 // out at read time.
+//
+// ONE PROJECTION. projectShare is the only code that works out what someone
+// is shown of a share. Their own read (sharedWithMe) and the owner's preview
+// of it (previewShare) both call it, so the preview is what they see, with the
+// as-of dates they see, and the two can't drift apart. The preview leaves out
+// what they call the owner (their words, not the owner's) and records nothing.
 //
 // Balances and transactions are what the owner's own loads and the nightly
 // snapshot stored; this never calls Plaid on the owner's behalf. Each
@@ -54,13 +75,19 @@ import { getManualAccounts } from './manual';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredTxns } from './transactions';
+import { accessLogStore, withView } from './access-log';
+import { isLevel, SHARE_END_MAX_DAYS, type Level } from './share-rules';
 
-export type Level = 'exists' | 'balance' | 'transactions';
-export type Share = { accounts: Record<string, Level>; updated_at: string };
+export type { Level } from './share-rules';
+export type Share = {
+  accounts: Record<string, Level>;
+  updated_at: string;
+  /** When it stops showing anything: an ISO instant, or null for no end. */
+  expires_at: string | null;
+};
 
 export const connectionsKey = () => kEnv('connections');
 const inviteKey = (token: string) => kEnv(`invites:${createHash('sha256').update(token).digest('hex')}`);
-const LEVELS = new Set<Level>(['exists', 'balance', 'transactions']);
 /** How far back shared transactions go. */
 export const SHARED_TXN_DAYS = 30;
 /** How long an invite link works. */
@@ -102,12 +129,58 @@ function parse<T>(raw: unknown): T | null {
   }
 }
 
+/** An instant exactly as toISOString() writes one: how an end is stored and sent. */
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const DAY_MS = 86_400_000;
+
+function isInstant(v: unknown): v is string {
+  if (typeof v !== 'string' || !INSTANT.test(v)) return false;
+  const t = Date.parse(v);
+  // A day that doesn't exist (Feb 30) parses as another one: refused, not moved.
+  return Number.isFinite(t) && new Date(t).toISOString() === v;
+}
+
+/** A stored share, in either shape (see the header), or null when it can't be
+ *  read, which counts as sharing nothing, like any field here that can't be
+ *  parsed. That includes an end that isn't an instant: a share whose end
+ *  can't be read shows nothing, rather than risk showing past its end. */
 function parseShare(raw: unknown): Share | null {
-  const g = parse<Share>(raw);
-  if (!g || typeof g !== 'object' || typeof g.accounts !== 'object' || g.accounts === null) return null;
+  const g = parse<Record<string, unknown>>(raw);
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+  const ending = 'expiring' in g || 'expires_at' in g;
+  if (ending && ('accounts' in g || !isInstant(g.expires_at))) return null;
+  const levels = ending ? g.expiring : g.accounts;
+  if (typeof levels !== 'object' || levels === null || Array.isArray(levels)) return null;
   const accounts: Record<string, Level> = {};
-  for (const [id, level] of Object.entries(g.accounts)) if (LEVELS.has(level)) accounts[id] = level;
-  return { accounts, updated_at: String(g.updated_at ?? '') };
+  for (const [id, level] of Object.entries(levels)) if (isLevel(level)) accounts[id] = level;
+  return { accounts, updated_at: String(g.updated_at ?? ''), expires_at: ending ? (g.expires_at as string) : null };
+}
+
+/** A share as stored (see the header): with an end, its accounts go under
+ *  "expiring". */
+function storedShare(s: Share): string {
+  return JSON.stringify(
+    s.expires_at === null
+      ? { accounts: s.accounts, updated_at: s.updated_at }
+      : { expiring: s.accounts, expires_at: s.expires_at, updated_at: s.updated_at }
+  );
+}
+
+/** Whether a share shows anything at `now`: it has no end, or its end is
+ *  still ahead. From the end itself on, it shows nothing. */
+export function shareShowing(share: Pick<Share, 'expires_at'>, now: number): boolean {
+  return share.expires_at === null || now < Date.parse(share.expires_at);
+}
+
+/** A new end as the drawer sends it: null for none, or an instant (isInstant)
+ *  still ahead and at most SHARE_END_MAX_DAYS away. */
+function checkEnd(raw: unknown, now: number): string | null {
+  if (raw === null) return null;
+  if (!isInstant(raw)) throw new SharingRefused('That end date can’t be used. Choose it again.');
+  const at = Date.parse(raw);
+  if (at <= now) throw new SharingRefused('That end date has already passed. Choose a later one.');
+  if (at - now > SHARE_END_MAX_DAYS * DAY_MS) throw new SharingRefused('An end date can be at most two years away.');
+  return raw;
 }
 
 type Conn = { id: string; meta: Meta; labels: Record<string, string>; intros: Record<string, string>; shares: Record<string, Share> };
@@ -228,10 +301,13 @@ export type MyConnection = {
    *  (components/Sharing.tsx shortDate). */
   since: string;
   sharing: Record<string, Level>;
+  /** When what I share with them ends (an ISO instant, which may have
+   *  passed: then they see none of it), or null for no end. */
+  expires_at: string | null;
 };
 
 /** My active connections (what I call each, and what I share with each: all
- *  they can see about me), and the people I blocked. */
+ *  they can see about me, and until when), and the people I blocked. */
 export async function myConnections(me: string): Promise<{ connections: MyConnection[]; blocked: { id: string; label: string }[] }> {
   const mine = (await allConnections()).filter((c) => c.meta.users.includes(me));
   const byLabel = <T extends { label: string }>(a: T, b: T) => a.label.localeCompare(b.label);
@@ -246,6 +322,7 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
         // time (components/Sharing.tsx shortDate).
         since: c.meta.created_at,
         sharing: c.shares[me]?.accounts ?? {},
+        expires_at: c.shares[me]?.expires_at ?? null,
       }))
       .sort(byLabel),
     // Only the one who blocked sees it: to the other it's simply gone.
@@ -262,29 +339,44 @@ export async function renameConnection(me: string, id: string, label: unknown): 
   await redis().hset(connectionsKey(), { [labelField(id, me)]: encodeText(cleanLabel(label, 'Someone')) });
 }
 
-/** Sets what I share on one connection; an empty set shares nothing. Every
- *  account must be one I can share now. A share on an account I've hidden
- *  stays as it was (paused, not ended): the settings don't show it. */
-export async function setShare(ctx: Ctx, me: string, id: string, accounts: Record<string, unknown>, now: number = Date.now()): Promise<void> {
+/** A change to what I share on one connection. `accounts` replaces the
+ *  accounts and levels ("none" or null for not shared); `expires_at` sets the
+ *  end (an ISO instant ahead, or null for none). Either left out stays as it
+ *  is: an end outlives a change of accounts, and renewing changes no account. */
+export type ShareChange = { accounts?: Record<string, unknown>; expires_at?: unknown };
+
+/** Sets what I share on one connection, and until when; an empty set shares
+ *  nothing. Every account must be one I can share now. A share on an account
+ *  I've hidden stays as it was (paused, not ended): the settings don't show
+ *  it. */
+export async function setShare(ctx: Ctx, me: string, id: string, change: ShareChange, now: number = Date.now()): Promise<void> {
   const c = await connectionOf(me, id);
   if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
-  const [shareable, { hidden }] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx)]);
-  const allowed = new Set(shareable.map((a) => a.id));
-  const clean: Record<string, Level> = {};
-  for (const [acct, level] of Object.entries(c.shares[me]?.accounts ?? {})) if (hidden.has(acct)) clean[acct] = level;
-  for (const [acct, level] of Object.entries(accounts ?? {})) {
-    if (level === null || level === 'none') continue;
-    if (!LEVELS.has(level as Level)) throw new SharingRefused(`Unknown level for ${acct}.`);
-    if (hidden.has(acct) && acct in clean) continue; // paused: kept as it was
-    if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
-    clean[acct] = level as Level;
+  const current = c.shares[me];
+  const expires_at = change.expires_at === undefined ? (current?.expires_at ?? null) : checkEnd(change.expires_at, now);
+  let accounts: Record<string, Level> = current?.accounts ?? {};
+  if (change.accounts !== undefined) {
+    const [shareable, { hidden }] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx)]);
+    const allowed = new Set(shareable.map((a) => a.id));
+    const clean: Record<string, Level> = {};
+    for (const [acct, level] of Object.entries(current?.accounts ?? {})) if (hidden.has(acct)) clean[acct] = level;
+    for (const [acct, level] of Object.entries(change.accounts ?? {})) {
+      if (level === null || level === 'none') continue;
+      if (!isLevel(level)) throw new SharingRefused(`Unknown level for ${acct}.`);
+      if (hidden.has(acct) && acct in clean) continue; // paused: kept as it was
+      if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
+      clean[acct] = level;
+    }
+    accounts = clean;
+  } else if (Object.keys(accounts).length === 0) {
+    throw new SharingRefused('You share nothing with them, so there is nothing to end or renew.');
   }
-  if (Object.keys(clean).length === 0) {
+  if (Object.keys(accounts).length === 0) {
     await redis().hdel(connectionsKey(), shareField(id, me));
     return;
   }
-  const share: Share = { accounts: clean, updated_at: new Date(now).toISOString() };
-  await redis().hset(connectionsKey(), { [shareField(id, me)]: JSON.stringify(share) });
+  const share: Share = { accounts, updated_at: new Date(now).toISOString(), expires_at };
+  await redis().hset(connectionsKey(), { [shareField(id, me)]: storedShare(share) });
 }
 
 /** Removes a connection: every share both ways ends in one write. With
@@ -320,6 +412,8 @@ export async function dropConnectionsOf(userId: string): Promise<number> {
 /** My side of sharing, for the download of my data (lib/user-export.ts). */
 export type MySharing = {
   connections: {
+    /** The connection's id: what my access log's entries are under. */
+    id: string;
     /** What I call them. */
     name: string;
     /** The name I gave when connecting, if any. */
@@ -330,14 +424,18 @@ export type MySharing = {
     shared: { account_id: string; level: Level }[];
     /** When I last changed that, or null when I share nothing. */
     shared_updated_at: string | null;
+    /** When it ends (an ISO time, which may have passed), or null for no end. */
+    shared_until: string | null;
   }[];
   /** People I blocked, by what I called them. */
-  blocked: { name: string }[];
+  blocked: { id: string; name: string }[];
 };
 
 /**
  * My side of every connection: what I call each person, how I introduced
- * myself, when we connected and what I share, and the people I blocked. Never
+ * myself, when we connected, what I share and until when, and the people I
+ * blocked, each with the connection's id, which ties them to my access log
+ * (its own section of the download, lib/access-log.ts). Never
  * the other side's: what they call me, how they introduced themselves and
  * what they share with me are their data, and a blocked connection someone
  * else made is gone as far as I can see (as in myConnections). Throws when
@@ -352,6 +450,7 @@ export async function mySharing(me: string): Promise<MySharing> {
     connections: mine
       .filter((c) => c.meta.status === 'active')
       .map((c) => ({
+        id: c.id,
         name: c.labels[me] ?? 'Someone',
         my_introduction: c.intros[me] ?? null,
         connected_at: c.meta.created_at,
@@ -359,11 +458,12 @@ export async function mySharing(me: string): Promise<MySharing> {
           .map(([account_id, level]) => ({ account_id, level }))
           .sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0)),
         shared_updated_at: c.shares[me]?.updated_at || null,
+        shared_until: c.shares[me]?.expires_at ?? null,
       }))
       .sort(byName),
     blocked: mine
       .filter((c) => c.meta.status === 'blocked' && c.meta.blocked_by === me)
-      .map((c) => ({ name: c.labels[me] ?? 'Someone' }))
+      .map((c) => ({ id: c.id, name: c.labels[me] ?? 'Someone' }))
       .sort(byName),
   };
 }
@@ -418,32 +518,77 @@ export type SharedAccount = {
   debt: boolean;
   transactions?: SharedTxn[];
 };
+/** What someone is shown of one person's share: the projection
+ *  (projectShare). */
+export type ShareView = {
+  accounts: SharedAccount[];
+  /** When the share ends: an ISO instant, or null for no end. */
+  expires_at: string | null;
+};
 /** One connection's shares with me: `label` is what I call them. */
-export type SharedFrom = { connection: string; label: string; accounts: SharedAccount[] };
+export type SharedFrom = ShareView & { connection: string; label: string };
 
 const DEBT_TYPES = new Set(['credit', 'loan']);
 
 /** Everything shared with me, filtered to what each person shares and still
- *  has. Read only; never touches Plaid. */
+ *  has, each with when it ends. Reads only the owners' data, never touches
+ *  Plaid, and records each read in its owner's access log (recordView). */
 export async function sharedWithMe(me: string, now: number = Date.now()): Promise<SharedFrom[]> {
   const out: SharedFrom[] = [];
+  const looks: Promise<void>[] = [];
   for (const c of await allConnections()) {
     if (c.meta.status !== 'active' || !c.meta.users.includes(me)) continue;
-    const owner = other(c, me);
-    const share = c.shares[owner];
-    if (!share) continue;
+    let shown: Projected | null;
     try {
-      const accounts = await fromOwner(owner, share, now);
-      if (accounts) out.push({ connection: c.id, label: c.labels[me] ?? 'Someone', accounts });
+      shown = await projectShare(c, other(c, me), now);
     } catch (err) {
       // One person's unreadable data must not hide what everyone else shares.
       console.error('Shared data could not be read for one connection', err instanceof Error ? err.name : err);
+      continue;
     }
+    if (!shown) continue;
+    out.push({ connection: c.id, label: c.labels[me] ?? 'Someone', ...shown.view });
+    looks.push(recordView(shown.theirs, c, shown.view, now));
   }
+  await Promise.all(looks); // each one is best effort, and never throws
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-async function fromOwner(owner: string, share: Share, now: number): Promise<SharedAccount[] | null> {
+/** My preview of one of my connections: exactly what they are shown of mine
+ *  right now (`view`, or null when they see nothing), from the projection
+ *  their own read uses, without their name for me, and recording nothing.
+ *  `unreadable` when my shared data can't be read: they see nothing then
+ *  either. */
+export type SharePreview = { connection: string; view: ShareView | null; unreadable?: true };
+
+export async function previewShare(me: string, id: string, now: number = Date.now()): Promise<SharePreview> {
+  const c = await connectionOf(me, id);
+  if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
+  try {
+    const shown = await projectShare(c, me, now);
+    return { connection: c.id, view: shown?.view ?? null };
+  } catch (err) {
+    console.error('Shared data could not be read for a preview', err instanceof Error ? err.name : err);
+    return { connection: c.id, view: null, unreadable: true };
+  }
+}
+
+/** A projection, and the owner's Ctx it was read from, which recordView
+ *  needs. Never returned from this module. */
+type Projected = { view: ShareView; theirs: Ctx };
+
+/**
+ * What the other person on connection `c` is shown of `owner`'s share at
+ * `now`: the one projection (see the header). Null when it shows nothing: no
+ * share; an ended one, checked first, before anything of the owner's is read,
+ * so an ended share can't surface even through an error; the owner off the
+ * allowlist or gone; or nothing shared that they still have and can share.
+ * Throws when the owner's data can't be read, and both callers then show
+ * nothing from it.
+ */
+async function projectShare(c: Conn, owner: string, now: number): Promise<Projected | null> {
+  const share = c.shares[owner];
+  if (!share || !shareShowing(share, now)) return null;
   if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
@@ -499,5 +644,22 @@ async function fromOwner(owner: string, share: Share, now: number): Promise<Shar
         : {}),
     });
   }
-  return accounts;
+  return { view: { accounts, expires_at: share.expires_at }, theirs };
+}
+
+/**
+ * Records in the owner's access log (lib/access-log.ts) that the other person
+ * on `c` was just shown `view`: the one write anyone's request makes in
+ * someone else's container, and all it can write there. Under the
+ * connection's own id, the hour, a count, and the accounts and levels the read
+ * returned, none of it taken from the request. Best effort: a failure is
+ * logged, and never fails the read.
+ */
+async function recordView(theirs: Ctx, c: Conn, view: ShareView, now: number): Promise<void> {
+  try {
+    const read = Object.fromEntries(view.accounts.map((a) => [a.id, a.level]));
+    await accessLogStore.update(theirs, c.id, (current) => withView(current, now, read, Date.parse(c.meta.created_at)));
+  } catch (err) {
+    console.error('A look at shared data could not be recorded', err instanceof Error ? err.name : err);
+  }
 }

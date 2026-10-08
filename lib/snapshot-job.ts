@@ -18,6 +18,11 @@
 // container no longer active) is stored as failed without adding one.
 // Entries older than RUNS_KEEP_DAYS are pruned.
 //
+// Each run also prunes the container's sharing access log to the days it keeps
+// (lib/access-log.ts): the nightly pass that holds it to ACCESS_LOG_DAYS even
+// where nobody looks again. It goes first and never throws, so neither costs
+// the other.
+//
 // "snapshot:" keys describe this environment's cron, not the data: exports
 // leave them out and a restore keeps the target's own (lib/export.ts,
 // lib/restore.ts).
@@ -41,6 +46,7 @@ import { computeNetWorth, recordFetch, isRecordable } from './networth';
 import { rememberAccounts } from './last-known';
 import { recordDirectory } from './links';
 import { clearCaches } from './cache';
+import { pruneAccessLog } from './access-log';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
@@ -214,6 +220,7 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
  * charts: on a day the app is not opened this is the only fetch.
  */
 export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reason?: string }> {
+  await pruneAccessLog(ctx);
   const { institutions, netWorth } = await computeNetWorth(ctx);
   const recorded = await recordFetch(ctx, institutions, netWorth);
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };

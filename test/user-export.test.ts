@@ -210,6 +210,9 @@ async function seedPerson() {
     [blockedMe]: JSON.stringify({ users: ['user_blocker', 'user_me'], status: 'blocked', blocked_by: 'user_blocker', created_at: '2026-04-01T00:00:00.000Z' }),
     [`${blockedMe}|label|user_me`]: JSON.stringify('GONE-TO-ME'),
   });
+  // When Sam looked at what I share: my access log, on the storage seam.
+  const { accessLogStore } = await import('@/lib/access-log');
+  await accessLogStore.set(ctx, id, { hours: [{ hour: '2026-05-03T14:00:00.000Z', views: 2, read: { acc_chk: 'balance', manual_house: 'exists' } }] });
 }
 
 /** Someone else, in the same database: none of it may reach the download. */
@@ -420,9 +423,11 @@ describe('everything stored, decrypted, and nothing else', () => {
 
   test('sharing: my side of each connection, never theirs', async () => {
     const doc = await download();
+    const id = connectionId('user_me', 'user_friend');
     expect(doc.sharing).toEqual({
       connections: [
         {
+          id,
           name: 'Sam',
           my_introduction: 'Alex',
           connected_at: '2026-05-01T09:00:00.000Z',
@@ -431,14 +436,35 @@ describe('everything stored, decrypted, and nothing else', () => {
             { account_id: 'manual_house', level: 'exists' },
           ],
           shared_updated_at: '2026-05-02T09:00:00.000Z',
+          shared_until: null,
         },
       ],
-      blocked: [{ name: 'Pest' }],
+      blocked: [{ id: connectionId('user_me', 'user_pest'), name: 'Pest' }],
     });
     const text = JSON.stringify(doc);
     for (const theirs of ['THEIR-NAME-FOR-ME', 'THEIR-INTRODUCTION', 'THEIR_ACCOUNT', 'GONE-TO-ME', 'user_friend', 'user_me']) {
       expect(text).not.toContain(theirs);
     }
+  });
+
+  test('sharing: a share with an end says until when', async () => {
+    const id = connectionId('user_me', 'user_friend');
+    await fake.hset(testKey('connections'), {
+      [`${id}|share|user_me`]: JSON.stringify({ expiring: { acc_chk: 'balance' }, expires_at: '2026-06-01T04:00:00.000Z', updated_at: '2026-05-02T09:00:00.000Z' }),
+    });
+    const [conn] = ((await download()).sharing as any).connections;
+    expect(conn).toMatchObject({ shared: [{ account_id: 'acc_chk', level: 'balance' }], shared_until: '2026-06-01T04:00:00.000Z' });
+  });
+
+  test('sharing: when they looked is my access log, by the connection’s id, never by who they are', async () => {
+    const doc = await download();
+    const id = connectionId('user_me', 'user_friend');
+    expect(doc['sharing-access-log']).toEqual([
+      { id, value: { hours: [{ hour: '2026-05-03T14:00:00.000Z', views: 2, read: { acc_chk: 'balance', manual_house: 'exists' } }] } },
+    ]);
+    // The id ties it to the connection, whose name is mine for them.
+    expect((doc.sharing as any).connections.map((c: any) => c.id)).toContain(id);
+    expect(JSON.stringify(doc['sharing-access-log'])).not.toMatch(/user_|THEIR/);
   });
 
   test('with the shared password there is no sharing, and the file says so', async () => {
@@ -618,7 +644,7 @@ describe('stores built on the storage seam', () => {
     const doc = await download();
     const keys = Object.keys(doc);
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
-    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings', 'fire-plan']);
+    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings', 'fire-plan', 'sharing-access-log']);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
       { id: 'p1', value: { name: 'House', target: 120_000 } },

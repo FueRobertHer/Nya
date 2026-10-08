@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { signedInCtx, containerUnavailable } from '@/lib/data-ctx';
 import { myConnections, removeConnection, renameConnection, setShare, shareableAccounts, SharingRefused } from '@/lib/sharing';
+import { whenTheyLooked } from '@/lib/access-log';
 
-// My connections and what I share on each (lib/sharing.ts). Only with Clerk
-// on: the shared password has one user and nobody to connect with.
+// My connections and what I share on each (lib/sharing.ts), with when each
+// looked (lib/access-log.ts). Only with Clerk on: the shared password has one
+// user and nobody to connect with.
 
 async function handle(fn: () => Promise<NextResponse>, what: string): Promise<NextResponse> {
   try {
@@ -22,22 +24,34 @@ export async function GET() {
     const me = await signedInCtx();
     if (!me) return NextResponse.json({ enabled: false });
     const [mine, accounts] = await Promise.all([myConnections(me.userId), shareableAccounts(me.ctx)]);
-    return NextResponse.json({ enabled: true, ...mine, accounts }, { headers: { 'Cache-Control': 'no-store' } });
+    // Each by what I call them, never by who they are: the log holds only the
+    // connection's id.
+    const looked = await whenTheyLooked(me.ctx, mine.connections);
+    const connections = mine.connections.map((c) => ({ ...c, ...looked.get(c.id) }));
+    return NextResponse.json({ enabled: true, connections, blocked: mine.blocked, accounts }, { headers: { 'Cache-Control': 'no-store' } });
   }, 'read');
 }
 
-/** { id, label?, accounts? }: renames a connection (what I call them) and/or
- *  replaces what I share on it: { "<account id>": "exists" | "balance" | "transactions" | "none" }. */
+/** { id, label?, accounts?, expires_at? }: renames a connection (what I call
+ *  them), replaces what I share on it ({ "<account id>": "exists" | "balance" |
+ *  "transactions" | "none" }), and sets when that ends: an ISO time ahead, or
+ *  null for no end. Whatever is left out stays as it is. */
 export async function PUT(req: Request) {
   return handle(async () => {
     const me = await signedInCtx();
     if (!me) return NextResponse.json({ error: 'Sharing needs accounts (Clerk).' }, { status: 400 });
     const body = await req.json().catch(() => null);
     const valid =
-      body && typeof body.id === 'string' && (body.label !== undefined || body.accounts !== undefined) && (body.accounts === undefined || (body.accounts && typeof body.accounts === 'object'));
-    if (!valid) return NextResponse.json({ error: 'Expected { id, label?, accounts? }' }, { status: 400 });
+      body &&
+      typeof body.id === 'string' &&
+      (body.label !== undefined || body.accounts !== undefined || body.expires_at !== undefined) &&
+      (body.accounts === undefined || (body.accounts && typeof body.accounts === 'object' && !Array.isArray(body.accounts))) &&
+      (body.expires_at === undefined || body.expires_at === null || (typeof body.expires_at === 'string' && body.expires_at.length <= 40));
+    if (!valid) return NextResponse.json({ error: 'Expected { id, label?, accounts?, expires_at? }' }, { status: 400 });
     if (body.label !== undefined) await renameConnection(me.userId, body.id, body.label);
-    if (body.accounts !== undefined) await setShare(me.ctx, me.userId, body.id, body.accounts);
+    if (body.accounts !== undefined || body.expires_at !== undefined) {
+      await setShare(me.ctx, me.userId, body.id, { accounts: body.accounts, expires_at: body.expires_at });
+    }
     return NextResponse.json({ saved: true });
   }, 'save');
 }
