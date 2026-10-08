@@ -542,6 +542,13 @@ describe('payments from Plaid that are not what the plan needs', () => {
     expect(termMonths('10 years')).toBe(120);
     expect(termMonths('360 month')).toBe(360);
     expect(termMonths('15 yr')).toBe(180);
+    // As servicers write it, not only as Plaid's example does.
+    expect(termMonths('30-year')).toBe(360);
+    expect(termMonths('30 years')).toBe(360);
+    expect(termMonths('360 months')).toBe(360);
+    expect(termMonths('30yr')).toBe(360);
+    expect(termMonths('15-Yr Fixed')).toBe(180);
+    expect(termMonths('30 Year')).toBe(360);
     expect(termMonths('thirty')).toBeNull();
     expect(termMonths('700 months')).toBeNull(); // past the horizon
     expect(termMonths(null)).toBeNull();
@@ -582,12 +589,12 @@ describe('payments from Plaid that are not what the plan needs', () => {
       escrowCents: 314154,
       workedOut: { cents: 202657, principal: 425000, months: 360, apr: 3.99 },
     });
-    const { rows, debts, waiting } = planRows([m], { typed: {}, leftOut: {}, withoutAccrued: {} });
+    const { rows, debts, waiting } = planRows([m], { typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
     expect(rows[0].status).toBe('needs-terms');
     expect(waiting).toBe(1);
     expect(debts).toEqual([]);
     // Taking the worked-out figure plans on principal and interest only.
-    const taken = planRows([m], { typed: { m: { minimum: '2026.57' } }, leftOut: {}, withoutAccrued: {} });
+    const taken = planRows([m], { typed: { m: { minimum: '2026.57' } }, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
     expect(taken.debts[0].minimumCents).toBe(202657);
     expect(taken.rows[0].minimum.source).toBe('worked-out');
   });
@@ -602,7 +609,7 @@ describe('payments from Plaid that are not what the plan needs', () => {
         ],
       },
     ])[0];
-    const { debts } = planRows([m, card], { typed: { m: { minimum: '2026.57' } }, leftOut: {}, withoutAccrued: {} });
+    const { debts } = planRows([m, card], { typed: { m: { minimum: '2026.57' } }, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
     const c = comparePlans(debts, { startMonth: START });
     expect(c.avalanche.monthlyCents).toBe(202657 + 6000);
   });
@@ -642,10 +649,10 @@ describe('payments from Plaid that are not what the plan needs', () => {
     const s = studentAt('ins_1', 6227.36);
     expect(s.balanceCents).toBe(6526200);
     expect(s.accruedInterestCents).toBe(622736);
-    const planned = planRows([s], { typed: {}, leftOut: {}, withoutAccrued: {} });
+    const planned = planRows([s], { typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
     expect(planned.rows[0]).toMatchObject({ owedCents: 7148936, accruedIncluded: true });
     expect(planned.debts[0].balanceCents).toBe(7148936);
-    const without = planRows([s], { typed: {}, leftOut: {}, withoutAccrued: { s: true } });
+    const without = planRows([s], { typed: {}, leftOut: {}, withoutAccrued: { s: true }, sharedSplit: {} });
     expect(without.rows[0]).toMatchObject({ owedCents: 6526200, accruedIncluded: false });
     expect(without.debts[0].balanceCents).toBe(6526200);
   });
@@ -669,12 +676,12 @@ describe('payments from Plaid that are not what the plan needs', () => {
   test('a Plaid minimum of $0 on a debt that owes something is needed, never planned as a payment', () => {
     for (const z of [zeroMinimum('loan', 'student'), zeroMinimum('credit', 'credit')]) {
       expect(z).toMatchObject({ minimumHold: 'zero', plaidMinimumCents: 0, defaultMinimumCents: null });
-      const { rows, waiting } = planRows([z], { typed: {}, leftOut: {}, withoutAccrued: {} });
+      const { rows, waiting } = planRows([z], { typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
       expect(rows[0].status).toBe('needs-terms');
       expect(waiting).toBe(1);
     }
     // A typed 0 is the person's own figure, planned as it is (and never clears on its own).
-    const typedZero = planRows([zeroMinimum('loan', 'student')], { typed: { z: { minimum: '0' } }, leftOut: {}, withoutAccrued: {} });
+    const typedZero = planRows([zeroMinimum('loan', 'student')], { typed: { z: { minimum: '0' } }, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
     expect(typedZero.debts[0].minimumCents).toBe(0);
     expect(coversInterest(typedZero.debts[0])).toBe(false);
   });
@@ -698,25 +705,68 @@ describe('payments from Plaid that are not what the plan needs', () => {
     liability: { kind: 'student' as const, apr: 4.9, apr_label: 'Interest rate', minimum_payment: minimum },
   });
 
-  test('student loans at one institution showing the same minimum share one payment, split by balance', () => {
+  const choices = (more: Partial<PlanChoices> = {}): PlanChoices => ({ typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {}, ...more });
+  const GREAT_LAKES = 'ins_116861'; // one of the servicers Plaid names
+
+  test('at a servicer Plaid names, loans showing the same minimum share one payment, split by balance', () => {
     const accounts = debtAccounts([
-      { institution_name: 'Great Lakes', accounts: [loan('a', 8000, 400), loan('b', 7000, 400), loan('c', 9000, 400), loan('d', 6000, 400), loan('e', 3000, 95)] },
-      { institution_name: 'Nelnet', accounts: [loan('f', 5000, 400)] },
+      {
+        institution_name: 'Great Lakes',
+        institution_id: GREAT_LAKES,
+        accounts: [loan('a', 8000, 400), loan('b', 7000, 400), loan('c', 9000, 400), loan('d', 6000, 400), loan('e', 3000, 95)],
+      },
+      { institution_name: 'Nelnet', institution_id: 'ins_9', accounts: [loan('f', 5000, 400)] },
     ]);
     const by = Object.fromEntries(accounts.map((a) => [a.id, a]));
     expect(['a', 'b', 'c', 'd'].map((id) => by[id].defaultMinimumCents)).toEqual([10667, 9333, 12000, 8000]);
-    for (const id of ['a', 'b', 'c', 'd']) expect(by[id].sharedMinimum).toEqual({ totalCents: 40000, loans: 4 });
+    for (const id of ['a', 'b', 'c', 'd']) {
+      expect(by[id].sharedMinimum).toMatchObject({ totalCents: 40000, loans: 4, group: 'a b c d', named: true });
+      expect(by[id].minimumHold).toBeNull();
+    }
+    expect(by.a.sharedMinimum!.shareCents).toBe(10667);
     // A different minimum, or the same one at another institution, is its own.
     expect(by.e).toMatchObject({ defaultMinimumCents: 9500, sharedMinimum: null });
     expect(by.f).toMatchObject({ defaultMinimumCents: 40000, sharedMinimum: null });
     // The plan's monthly total counts the shared payment once.
-    const { debts } = planRows(accounts.filter((a) => a.institution === 'Great Lakes'), { typed: {}, leftOut: {}, withoutAccrued: {} });
+    const { rows, debts } = planRows(accounts.filter((a) => a.institution === 'Great Lakes'), choices());
+    expect(rows.find((r) => r.account.id === 'a')!.shared).toBe('split');
     expect(comparePlans(debts, { startMonth: START }).avalanche.monthlyCents).toBe(40000 + 9500);
   });
 
+  test('anywhere else the same minimum on several loans is asked about, not assumed', () => {
+    for (const institution_id of ['ins_9', null, undefined]) {
+      const accounts = debtAccounts([{ institution_name: 'Nelnet', institution_id, accounts: [loan('a', 8000, 400), loan('b', 7000, 400)] }]);
+      expect(accounts[0]).toMatchObject({ minimumHold: 'shared', defaultMinimumCents: null });
+      expect(accounts[0].sharedMinimum).toMatchObject({ named: false, group: 'a b', totalCents: 40000, shareCents: 21333 });
+      const asked = planRows(accounts, choices());
+      expect(asked.waiting).toBe(2);
+      expect(asked.debts).toEqual([]);
+      expect(asked.rows.map((r) => r.shared)).toEqual(['ask', 'ask']);
+    }
+  });
+
+  test('the answer applies to the whole group: one payment split by balance, or the figure on each', () => {
+    const accounts = debtAccounts([{ institution_name: 'Nelnet', institution_id: 'ins_9', accounts: [loan('a', 8000, 400), loan('b', 7000, 400)] }]);
+    const split = planRows(accounts, choices({ sharedSplit: { 'a b': true } }));
+    expect(split.waiting).toBe(0);
+    expect(split.debts.map((d) => d.minimumCents)).toEqual([21333, 18667]);
+    expect(split.rows.map((r) => r.shared)).toEqual(['split', 'split']);
+    expect(split.rows[0].account.minimumHold).toBeNull();
+    const each = planRows(accounts, choices({ sharedSplit: { 'a b': false } }));
+    expect(each.debts.map((d) => d.minimumCents)).toEqual([40000, 40000]);
+    expect(each.rows.map((r) => [r.shared, r.minimum.source])).toEqual([
+      ['separate', 'plaid'],
+      ['separate', 'plaid'],
+    ]);
+    // An answer for another group changes nothing here.
+    expect(planRows(accounts, choices({ sharedSplit: { 'a c': true } })).waiting).toBe(2);
+  });
+
   test("each loan's own payment can be typed over its share", () => {
-    const accounts = debtAccounts([{ institution_name: 'Great Lakes', accounts: [loan('a', 8000, 400), loan('b', 7000, 400)] }]);
-    const { rows } = planRows(accounts, { typed: { a: { minimum: '400' } }, leftOut: {}, withoutAccrued: {} });
+    const accounts = debtAccounts([
+      { institution_name: 'Great Lakes', institution_id: GREAT_LAKES, accounts: [loan('a', 8000, 400), loan('b', 7000, 400)] },
+    ]);
+    const { rows } = planRows(accounts, choices({ typed: { a: { minimum: '400' } } }));
     expect(rows.find((r) => r.account.id === 'a')!.minimum).toEqual({ value: 40000, source: 'typed', error: null });
     expect(rows.find((r) => r.account.id === 'b')!.minimum.source).toBe('plaid');
   });
@@ -726,7 +776,14 @@ describe('payments from Plaid that are not what the plan needs', () => {
     expect(accounts.every((a) => a.sharedMinimum === null)).toBe(true);
   });
 
-  const card = (last_payment_amount: number | null, last_statement_balance: number | null) =>
+  // By default the last payment came after the last statement, as when a
+  // statement is paid by its due date.
+  const card = (
+    last_payment_amount: number | null,
+    last_statement_balance: number | null,
+    last_payment_date: string | null = '2026-09-25',
+    last_statement_issue_date: string | null = '2026-09-05'
+  ) =>
     debtAccounts([
       {
         institution_name: 'Chase',
@@ -737,7 +794,16 @@ describe('payments from Plaid that are not what the plan needs', () => {
             type: 'credit',
             balance: 1240,
             currency: 'USD',
-            liability: { kind: 'credit', apr: 21.24, apr_label: 'Purchase APR', minimum_payment: 35, last_payment_amount, last_statement_balance },
+            liability: {
+              kind: 'credit',
+              apr: 21.24,
+              apr_label: 'Purchase APR',
+              minimum_payment: 35,
+              last_payment_amount,
+              last_payment_date,
+              last_statement_balance,
+              last_statement_issue_date,
+            },
           },
         ],
       },
@@ -746,13 +812,13 @@ describe('payments from Plaid that are not what the plan needs', () => {
   test('a card paid in full at its last statement starts out of the plan, and can be put in', () => {
     const paid = card(980.5, 980.5);
     expect(paid.paidInFull).toBe(true);
-    const out = planRows([paid], { typed: {}, leftOut: {}, withoutAccrued: {} });
+    const out = planRows([paid], { typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {} });
     expect(out.rows[0].status).toBe('paid-in-full');
     expect(out.debts).toEqual([]);
     expect(out.waiting).toBe(0);
-    const included = planRows([paid], { typed: {}, leftOut: { c: false }, withoutAccrued: {} });
+    const included = planRows([paid], { typed: {}, leftOut: { c: false }, withoutAccrued: {}, sharedSplit: {} });
     expect(included.rows[0].status).toBe('ready');
-    const leftOut = planRows([paid], { typed: {}, leftOut: { c: true }, withoutAccrued: {} });
+    const leftOut = planRows([paid], { typed: {}, leftOut: { c: true }, withoutAccrued: {}, sharedSplit: {} });
     expect(leftOut.rows[0].status).toBe('left-out');
   });
 
@@ -760,8 +826,19 @@ describe('payments from Plaid that are not what the plan needs', () => {
     expect(card(168.25, 1708.77).paidInFull).toBe(false);
     expect(card(null, 980.5).paidInFull).toBe(false);
     expect(card(980.5, null).paidInFull).toBe(false);
-    // Nothing on the statement and nothing paid: no balance was carried.
+    // Nothing on the statement, and a payment since: no balance was carried.
     expect(card(0, 0).paidInFull).toBe(true);
+  });
+
+  test('the payment has to come on or after the statement it covers', () => {
+    // A lump paid before a smaller new statement was on the earlier one: a card
+    // still carrying a balance can do that, so it isn't called paid in full.
+    expect(card(2000, 980.5, '2026-08-28', '2026-09-05').paidInFull).toBe(false);
+    expect(card(980.5, 980.5, '2026-09-05', '2026-09-05').paidInFull).toBe(true);
+    // Without both dates it can't be told, so the card is planned.
+    expect(card(980.5, 980.5, null, '2026-09-05').paidInFull).toBe(false);
+    expect(card(980.5, 980.5, '2026-09-25', null).paidInFull).toBe(false);
+    expect(card(980.5, 980.5, '25/09/2026', '2026-09-05').paidInFull).toBe(false);
   });
 
   // Plaid's example card: four rates, one a 0% special rate on $1,000.
@@ -889,7 +966,7 @@ describe('from accounts to debts', () => {
       account('no-balance', 'credit', null),
     ],
   };
-  const none: PlanChoices = { typed: {}, leftOut: {}, withoutAccrued: {} };
+  const none: PlanChoices = { typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {} };
 
   test('takes the terms Plaid supplies: purchase APR for a card, interest rate and payment for loans', () => {
     const byId = Object.fromEntries(debtAccounts([plaidBank]).map((d) => [d.id, d]));

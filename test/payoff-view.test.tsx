@@ -258,35 +258,80 @@ describe('the payoff planner', () => {
     expect(html).not.toContain('Debt-free');
   });
 
-  test('loans sharing one minimum split it by balance, say so, and can be billed separately', () => {
-    const share = (id: string, balance: number) => ({
-      ...sapphire,
-      account_id: id,
-      name: `Loan ${id}`,
-      mask: null,
-      type: 'loan',
-      subtype: 'student',
-      balance,
-      liability: { kind: 'student' as const, apr: 4.9, apr_label: 'Interest rate', minimum_payment: 400 },
-    });
-    const greatLakes = { institution_name: 'Great Lakes', liabilities: 'on', accounts: [share('a', 8000), share('b', 7000), share('c', 9000), share('d', 6000)] };
+  const share = (id: string, balance: number) => ({
+    ...sapphire,
+    account_id: id,
+    name: `Loan ${id}`,
+    mask: null,
+    type: 'loan',
+    subtype: 'student',
+    balance,
+    liability: { kind: 'student' as const, apr: 4.9, apr_label: 'Interest rate', minimum_payment: 400 },
+  });
+
+  test('at a servicer Plaid names, loans sharing one minimum split it by balance, say why, and can be billed separately', () => {
+    const greatLakes = {
+      institution_name: 'Great Lakes',
+      institution_id: 'ins_116861',
+      liabilities: 'on',
+      accounts: [share('a', 8000), share('b', 7000), share('c', 9000), share('d', 6000)],
+    };
     const html = panel([greatLakes]);
-    expect(html).toContain('Plaid shows one $400.00 payment on 4 student loans at Great Lakes, so it\'s split across them by balance.');
+    expect(html).toContain(
+      "Great Lakes is one of the servicers Plaid says bill one payment across an account's loans and show it on each, so the $400.00 shown on 4 student loans there is split across them by balance."
+    );
     expect(html).toContain('Share of one $400.00 payment on 4 loans');
     expect(html).toContain('value="106.67"');
     expect(html).toContain('Billed separately? Use $400.00 for this loan');
     expect(html).toContain(`On top of the payments below: ${formatMoney(400, 'USD')} a month in all.`);
   });
 
-  test('a card paid in full starts out of the plan, shows no interest, and can be put in', () => {
-    const paid = { ...sapphire, liability: { ...sapphire.liability, last_payment_amount: 980.5, last_statement_balance: 980.5 } };
+  test('anywhere else, the same minimum on several loans is a question for the person, not a split', () => {
+    const nelnet = { institution_name: 'Nelnet', institution_id: 'ins_9', liabilities: 'on', accounts: [share('a', 8000), share('b', 7000)] };
+    const asked = panel([nelnet]);
+    expect(asked).toContain('Add the missing rate or payment for 2 debts below');
+    // Asked once for the group by the headline, not once per loan.
+    expect(asked).toContain('Loan a and Loan b: Plaid shows the same $400.00 minimum on 2 loans at Nelnet. Is it one payment for all of them, or one each?');
+    expect(asked.split('Is it one payment for all of them').length).toBe(2);
+    expect(asked).toContain('One $400.00 payment for both: split it by balance');
+    expect(asked).toContain('Each loan pays $400.00');
+    expect(asked).not.toContain('Share of one');
+
+    const split = panel([nelnet], { sharedSplit: { 'a b': true } });
+    expect(split).toContain('As you said, the $400.00 shown on 2 student loans at Nelnet is one payment');
+    expect(split).toContain("You said the $400.00 shown on these 2 loans is one payment, so it's split by balance.");
+    expect(split).toContain('value="213.33"');
+    expect(split).toContain('Each loan pays $400.00 instead');
+
+    const each = panel([nelnet], { sharedSplit: { 'a b': false } });
+    expect(each).toContain('You said each of these 2 loans pays the $400.00 Plaid shows.');
+    expect(each).toContain('One $400.00 payment for both instead: split it');
+    expect(each).toContain('value="400.00"');
+    expect(each).toContain(`On top of the payments below: ${formatMoney(800, 'USD')} a month in all.`);
+  });
+
+  test('a card paid in full at its last statement starts out of the plan, shows no interest, and can be put in', () => {
+    const paid = {
+      ...sapphire,
+      liability: {
+        ...sapphire.liability,
+        last_payment_amount: 980.5,
+        last_payment_date: '2026-09-25',
+        last_statement_balance: 980.5,
+        last_statement_issue_date: '2026-09-05',
+      },
+    };
     const html = panel([chase([paid])]);
     expect(html).toContain("Paid in full at its last statement: no interest is charged while that continues, so it's left out.");
-    expect(html).toContain('This card is paid in full each month, so no balance is carried to pay off.');
+    expect(html).toContain('This card was paid in full at its last statement, so no balance is being carried to pay off.');
+    expect(html).not.toContain('each month, so');
     expect(html).not.toContain('a month in interest');
     const included = panel([chase([paid])], { leftOut: { sapphire: false } });
     expect(included).toContain("It's planned here as a balance carried, with interest.");
     expect(included).toContain('Debt-free');
+    // Paid before the statement it would cover: planned, with interest.
+    const early = { ...paid, liability: { ...paid.liability, last_payment_date: '2026-08-28' } };
+    expect(panel([chase([early])])).toContain('a month in interest at this balance');
   });
 
   test("a card's rates are blended, and the parts are named", () => {
@@ -303,9 +348,15 @@ describe('the payoff planner', () => {
       },
     };
     const html = panel([chase([card])]);
-    expect(html).toContain('Blended APR from Plaid');
+    // The blend is Nya's figure, worked from Plaid's rates: (12.5 × 1,775.55 + 0 × 1,000) / 2,775.55.
+    expect(html).toContain("Nya's blend of Plaid's rates");
+    expect(html).not.toContain('APR from Plaid');
+    expect(html).toContain('value="7.996"');
     expect(html).toContain('12.5% on $1,775.55 (purchases), 0% on $1,000.00 (a special rate)');
     expect(html).toContain('a promotional rate is taken as lasting');
+    const typedOver = panel([chase([card])], { typed: { sapphire: { apr: '15' } } });
+    expect(typedOver).toContain('Use the blended 7.996%');
+    expect(typedOver).not.toContain("Use Plaid's 7.996%");
   });
 
   test('says which institutions the plan cannot see, by the headline', () => {
@@ -325,6 +376,14 @@ describe('the payoff planner', () => {
   test('payment details not enabled: says how to get them from Plaid', () => {
     const html = panel([chase([{ ...sapphire, liability: undefined }], { liabilities: 'off' })]);
     expect(html).toContain('tap Enable payment details on its card');
+  });
+
+  test('no "Debt-free" beside a card whose balance was not reported', () => {
+    const html = panel([chase([sapphire, { ...sapphire, account_id: 'unknown', name: 'Freedom', balance: null }])]);
+    expect(html).toContain("No balance was reported, so it isn't in the plan.");
+    expect(html).toContain('<div class="total-label">Paid off</div>');
+    expect(html).toContain(', 1 with no balance reported</div>');
+    expect(html).not.toContain('Debt-free');
   });
 
   test('nothing owed is said, not planned, and unknown is not called zero', () => {

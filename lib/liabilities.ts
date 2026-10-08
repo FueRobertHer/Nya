@@ -35,6 +35,10 @@ export type AccountLiability = {
    *  (Plaid's balance_subject_to_apr), where the card reports it. A promotional
    *  0% balance beside a purchase balance is the case it exists for. */
   apr_balances?: { type: string | null; rate: number; balance: number }[];
+  /** Credit: when the last statement was issued (YYYY-MM-DD). A last payment
+   *  covering the statement only shows it was paid in full when it came after
+   *  it: one made before is a payment on an earlier statement. */
+  last_statement_issue_date?: string | null;
   /** Mortgage: the loan as it was made, enough to work out a fixed-rate loan's
    *  principal-and-interest payment (next_monthly_payment can include escrow). */
   origination_principal_amount?: number | null;
@@ -111,6 +115,7 @@ export function normalizeLiabilities(o: LiabilitiesObject | null | undefined): R
       last_statement_balance: num(c.last_statement_balance),
       last_payment_amount: num(c.last_payment_amount),
       last_payment_date: c.last_payment_date ?? null,
+      last_statement_issue_date: typeof c.last_statement_issue_date === 'string' ? c.last_statement_issue_date : null,
       is_overdue: c.is_overdue ?? null,
       // Only when reported, so a card without them keeps the shape it had.
       ...(balances.length > 0 ? { apr_balances: balances } : {}),

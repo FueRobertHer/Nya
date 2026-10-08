@@ -50,6 +50,9 @@ export type PayoffInputs = {
   leftOut: Record<string, boolean>;
   /** Student loans planned without their accrued interest. */
   withoutAccrued: Record<string, boolean>;
+  /** Whether a minimum shown on several loans is one payment (true) or one
+   *  each (false), by group (lib/payoff.ts PlanChoices). */
+  sharedSplit: Record<string, boolean>;
   /** The extra each month as typed, per currency: an amount means nothing in
    *  another currency, so switching currency doesn't carry it over. */
   extra: Record<string, string>;
@@ -62,6 +65,7 @@ export const NO_INPUTS: PayoffInputs = {
   typed: {},
   leftOut: {},
   withoutAccrued: {},
+  sharedSplit: {},
   extra: {},
   strategy: 'avalanche',
   currency: null,
@@ -180,8 +184,9 @@ export function PayoffPanel({
         typed: inputs.typed,
         leftOut: inputs.leftOut,
         withoutAccrued: inputs.withoutAccrued,
+        sharedSplit: inputs.sharedSplit,
       }),
-    [group, inputs.typed, inputs.leftOut, inputs.withoutAccrued]
+    [group, inputs.typed, inputs.leftOut, inputs.withoutAccrued, inputs.sharedSplit]
   );
   const extraText = inputs.extra[key] ?? '';
   const extra = parseCents(extraText);
@@ -223,6 +228,9 @@ export function PayoffPanel({
     });
   const setWithoutAccrued = (id: string, without: boolean) =>
     onChange((prev) => ({ ...prev, withoutAccrued: { ...prev.withoutAccrued, [id]: without } }));
+  // For every loan in the group at once: one payment, or the figure on each.
+  const setSharedSplit = (group: string, split: boolean) =>
+    onChange((prev) => ({ ...prev, sharedSplit: { ...prev.sharedSplit, [group]: split } }));
 
   const owing = rows.filter((r) => r.status !== 'nothing-owed' && r.status !== 'no-balance');
   const noBalance = rows.filter((r) => r.status === 'no-balance').length;
@@ -246,16 +254,18 @@ export function PayoffPanel({
     summary = (
       <p className="empty-note">
         {paidInFull === owing.length
-          ? `${plural(paidInFull, 'This card is', 'These cards are')} paid in full each month, so no balance is carried to pay off. Include one below to plan it as a balance you carry.`
+          ? `${plural(paidInFull, 'This card was', 'These cards were')} paid in full at ${plural(paidInFull, 'its', 'their')} last statement, so no balance is being carried to pay off. Include one below to plan it as a balance you carry.`
           : 'Every debt is left out of the plan. Include one below to plan it.'}
       </p>
     );
   } else if (!comparison) {
     summary = <div className="stale-note">Enter an extra amount of 0 or more to see the plan.</div>;
   } else {
-    // "Debt-free" only when nothing owed is outside this plan: left out, in
-    // another currency, or at an institution the plan can't see.
-    const complete = outside === 0 && groups.length === 1 && !spots.some((s) => s.kind !== 'dated');
+    // "Debt-free" only when nothing owed may be outside this plan: left out,
+    // with no balance reported, in another currency, or at an institution the
+    // plan can't see.
+    const complete =
+      outside === 0 && noBalance === 0 && groups.length === 1 && !spots.some((s) => s.kind !== 'dated');
     summary = (
       <PlanSummary
         comparison={comparison}
@@ -264,6 +274,7 @@ export function PayoffPanel({
         nameOf={nameOf}
         complete={complete}
         outside={outside}
+        noBalance={noBalance}
         only={groups.length > 1 ? currency ?? 'Other' : null}
         extraCents={typeof extra === 'number' ? extra : 0}
         interestNowCents={debts.reduce((sum, d) => sum + firstInterestCents(d), 0)}
@@ -271,13 +282,14 @@ export function PayoffPanel({
     );
   }
 
-  // One payment Plaid shows on several loans, split here: said near the headline
-  // too, since it changes the plan's monthly total.
-  const shared = new Map<string, { institution: string; totalCents: number; loans: number }>();
+  // A minimum shown on several loans and split across them: said near the
+  // headline too, since it changes the plan's monthly total, and with why.
+  const shared = new Map<string, { institution: string; totalCents: number; loans: number; named: boolean }>();
   for (const r of rows) {
     const s = r.account.sharedMinimum;
-    if (!s || r.minimum.source !== 'plaid' || (r.status !== 'ready' && r.status !== 'needs-terms')) continue;
-    shared.set(`${r.account.institution}:${s.totalCents}`, { institution: r.account.institution, ...s });
+    if (!s || r.shared !== 'split' || r.minimum.source !== 'plaid') continue;
+    if (r.status !== 'ready' && r.status !== 'needs-terms') continue;
+    shared.set(s.group, { institution: r.account.institution, totalCents: s.totalCents, loans: s.loans, named: s.named });
   }
 
   return (
@@ -318,10 +330,11 @@ export function PayoffPanel({
           </p>
         )}
         {summary}
-        {[...shared.values()].map((s) => (
-          <p className="panel-note" key={`${s.institution}:${s.totalCents}`}>
-            Plaid shows one {money(s.totalCents)} payment on {s.loans} student loans at {s.institution}, so
-            it&apos;s split across them by balance.
+        {[...shared.entries()].map(([group, s]) => (
+          <p className="panel-note" key={group}>
+            {s.named
+              ? `${s.institution} is one of the servicers Plaid says bill one payment across an account's loans and show it on each, so the ${money(s.totalCents)} shown on ${s.loans} student loans there is split across them by balance.`
+              : `As you said, the ${money(s.totalCents)} shown on ${s.loans} student loans at ${s.institution} is one payment, so it's split across them by balance.`}
           </p>
         ))}
       </section>
@@ -396,6 +409,7 @@ export function PayoffPanel({
             onTerm={(field, value) => setTerm(row.account.id, field, value)}
             onLeftOut={(out) => setLeftOut(row.account.id, out)}
             onAccrued={(without) => setWithoutAccrued(row.account.id, without)}
+            onShared={(split) => row.account.sharedMinimum && setSharedSplit(row.account.sharedMinimum.group, split)}
           />
         ))}
       </section>
@@ -421,6 +435,10 @@ function holdReason(a: DebtAccount, money: (cents: number) => string): string | 
       return `Plaid's ${money(plaid)} is the whole monthly payment and may include escrow, so its principal and interest are needed.`;
     case 'zero':
       return `Plaid shows a ${money(0)} minimum, which usually isn't a real payment.`;
+    case 'shared':
+      return a.sharedMinimum
+        ? `Plaid shows the same ${money(a.sharedMinimum.totalCents)} minimum on ${a.sharedMinimum.loans} loans at ${a.institution}. Is it one payment for all of them, or one each?`
+        : null;
     default:
       return null;
   }
@@ -431,16 +449,24 @@ function Waiting({ rows, waiting, money }: { rows: PlanRow[]; waiting: number; m
   const held = rows.filter(
     (r) => r.status === 'needs-terms' && r.minimum.value === null && !r.minimum.error && r.account.minimumHold
   );
+  // One line per debt, but one per group for a shared minimum: the question
+  // is the group's, and asking it once per loan would only repeat it.
+  const lines = new Map<string, string>();
+  for (const r of held) {
+    const s = r.account.minimumHold === 'shared' ? r.account.sharedMinimum : null;
+    const names = s
+      ? listNames(held.filter((h) => h.account.sharedMinimum?.group === s.group).map((h) => accountName(h.account)))
+      : accountName(r.account);
+    lines.set(s ? s.group : r.account.id, `${names}: ${holdReason(r.account, money)}`);
+  }
   return (
     <div className="stale-note payoff-notes">
       <p>
         Add the missing rate or payment for {waiting === 1 ? '1 debt' : `${waiting} debts`} below, or leave{' '}
         {plural(waiting, 'it', 'them')} out, to see the plan.
       </p>
-      {held.map((r) => (
-        <p key={r.account.id}>
-          {accountName(r.account)}: {holdReason(r.account, money)}
-        </p>
+      {[...lines].map(([key, line]) => (
+        <p key={key}>{line}</p>
       ))}
     </div>
   );
@@ -461,6 +487,7 @@ function PlanSummary({
   nameOf,
   complete,
   outside,
+  noBalance,
   only,
   extraCents,
   interestNowCents,
@@ -473,6 +500,8 @@ function PlanSummary({
   complete: boolean;
   /** Debts left out of the plan (by the person, or paid in full). */
   outside: number;
+  /** Cards and loans with no balance reported, which may owe something. */
+  noBalance: number;
   /** The currency planned, when the debts are in several. */
   only: string | null;
   extraCents: number;
@@ -516,7 +545,11 @@ function PlanSummary({
     );
   }
 
-  const notes = [outside > 0 ? `${outside} left out` : null, only ? `${only} only` : null].filter(Boolean);
+  const notes = [
+    outside > 0 ? `${outside} left out` : null,
+    noBalance > 0 ? `${noBalance} with no balance reported` : null,
+    only ? `${only} only` : null,
+  ].filter(Boolean);
   return (
     <>
       <div className="summary-row">
@@ -669,6 +702,7 @@ function DebtRow({
   onTerm,
   onLeftOut,
   onAccrued,
+  onShared,
 }: {
   row: PlanRow;
   /** What was typed for it, as typed (undefined fields are untouched). */
@@ -678,6 +712,8 @@ function DebtRow({
   /** true leaves it out, false puts it in, undefined goes back to the default. */
   onLeftOut: (out: boolean | undefined) => void;
   onAccrued: (without: boolean) => void;
+  /** For its shared-minimum group: true is one payment for all, false one each. */
+  onShared: (split: boolean) => void;
 }) {
   const { account: a, apr, minimum, status } = row;
   const card = a.type === 'credit';
@@ -809,8 +845,9 @@ function DebtRow({
           </label>
           <TermSource
             term={apr}
-            fromDefault={`${a.plaidAprLabel ?? 'APR'} from Plaid`}
-            restore={plaidApr !== null ? `Use Plaid's ${plaidApr}%` : null}
+            // A blend is Nya's figure, worked from Plaid's rates, not Plaid's own.
+            fromDefault={a.aprParts ? "Nya's blend of Plaid's rates" : `${a.plaidAprLabel ?? 'APR'} from Plaid`}
+            restore={plaidApr !== null ? (a.aprParts ? `Use the blended ${plaidApr}%` : `Use Plaid's ${plaidApr}%`) : null}
             onRestore={() => onTerm('apr', undefined)}
           />
         </div>
@@ -830,13 +867,13 @@ function DebtRow({
           <TermSource
             term={minimum}
             fromDefault={
-              a.sharedMinimum
+              row.shared === 'split' && a.sharedMinimum
                 ? `Share of one ${money(a.sharedMinimum.totalCents)} payment on ${a.sharedMinimum.loans} loans`
                 : a.minimumHold === 'escrow-unknown'
                   ? 'Monthly payment from Plaid, with no escrow'
                   : 'Minimum from Plaid'
             }
-            restore={fallback !== null ? `Use ${a.sharedMinimum ? 'the shared split' : "Plaid's"} ${money(fallback)}` : null}
+            restore={fallback !== null ? `Use ${row.shared === 'split' ? 'the shared split' : "Plaid's"} ${money(fallback)}` : null}
             onRestore={() => onTerm('minimum', undefined)}
           />
         </div>
@@ -886,24 +923,81 @@ function DebtRow({
         </p>
       )}
 
-      {a.sharedMinimum && minimum.source === 'plaid' && (
-        <div className="payoff-hold">
-          <p className="panel-note">
-            Plaid shows the same {money(a.sharedMinimum.totalCents)} minimum on {a.sharedMinimum.loans} loans
-            here. Some servicers bill one payment across all of an account&apos;s loans, so it&apos;s split by
-            balance.
-          </p>
-          <button className="link-btn" onClick={() => onTerm('minimum', cents(a.sharedMinimum!.totalCents))}>
-            Billed separately? Use {money(a.sharedMinimum.totalCents)} for this loan
-          </button>
-        </div>
-      )}
+      {a.sharedMinimum && <SharedNote row={row} money={money} onShared={onShared} onTerm={onTerm} />}
 
       {interestLine}
 
       {/* A card paid in full goes back to starting out; anything else is left out. */}
       <button className="link-btn payoff-leave" onClick={() => onLeftOut(a.paidInFull ? undefined : true)}>
         Leave out of the plan
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A minimum Plaid shows on several loans: why it is split, or the question of
+ * whether it is one payment, and a way to change the answer. Split by default
+ * only at the servicers Plaid names; anywhere else it is asked, since loans can
+ * simply have the same minimum.
+ */
+function SharedNote({
+  row,
+  money,
+  onShared,
+  onTerm,
+}: {
+  row: PlanRow;
+  money: (cents: number) => string;
+  onShared: (split: boolean) => void;
+  onTerm: (field: keyof TypedTerms, value: string | undefined) => void;
+}) {
+  const s = row.account.sharedMinimum!;
+  const total = money(s.totalCents);
+  const all = s.loans === 2 ? 'both' : `all ${s.loans}`;
+  if (row.shared === 'ask') {
+    if (row.minimum.value !== null || row.minimum.error) return null; // typed over: answered for this loan
+    return (
+      <div className="payoff-hold">
+        <p className="panel-note">
+          Plaid shows the same {total} minimum on {s.loans} loans here. Some servicers bill one payment across
+          an account&apos;s loans and show it on each loan; others bill each loan its own. Which is it here?
+        </p>
+        <button className="link-btn" onClick={() => onShared(true)}>
+          One {total} payment for {all}: split it by balance
+        </button>
+        <button className="link-btn" onClick={() => onShared(false)}>
+          Each loan pays {total}
+        </button>
+      </div>
+    );
+  }
+  if (row.minimum.source !== 'plaid') return null;
+  if (row.shared === 'split') {
+    return (
+      <div className="payoff-hold">
+        <p className="panel-note">
+          {s.named
+            ? `Plaid says ${row.account.institution} bills one payment across an account's loans and shows it on each loan, so the ${total} it shows on ${s.loans} loans here is split by balance.`
+            : `You said the ${total} shown on these ${s.loans} loans is one payment, so it's split by balance.`}
+        </p>
+        {s.named ? (
+          <button className="link-btn" onClick={() => onTerm('minimum', (s.totalCents / 100).toFixed(2))}>
+            Billed separately? Use {total} for this loan
+          </button>
+        ) : (
+          <button className="link-btn" onClick={() => onShared(false)}>
+            Each loan pays {total} instead
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="payoff-hold">
+      <p className="panel-note">You said each of these {s.loans} loans pays the {total} Plaid shows.</p>
+      <button className="link-btn" onClick={() => onShared(true)}>
+        One {total} payment for {all} instead: split it
       </button>
     </div>
   );
