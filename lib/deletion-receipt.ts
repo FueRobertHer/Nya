@@ -162,7 +162,7 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
   } else if (r.resumed && !r.includes_earlier_attempt) {
     now.push('An earlier attempt had already begun this deletion, so what was stored wasn’t counted again (part of it may already have been gone). All of it was deleted.');
   } else if (unavailable) {
-    now.push('A figure shown as unavailable couldn’t be counted in time. What it describes was deleted all the same.');
+    now.push('A figure shown as unavailable couldn’t be counted (in time, or at all). What it describes was deleted all the same.');
   }
 
   const b = r.backups;

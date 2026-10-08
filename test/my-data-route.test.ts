@@ -151,6 +151,25 @@ describe('with the shared password', () => {
     expect(said).toEqual(['Data download stopped: transactions could not be read (StateUnreadableError)']);
   });
 
+  test('a stored value of a shape the file can’t be written from: the route’s own 500, nothing sent, a log naming only the error’s class', async () => {
+    await fake.hset(ctxKey('plaid:items'), {
+      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt('t') }),
+    });
+    // Counterparties that aren't a list: the CSV writer can't flatten them,
+    // which the counting pass finds before the first byte.
+    await fake.set(
+      ctxKey('txns:item_a'),
+      await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: { t1: { transaction_id: 't1', account_id: 'a1', date: '2026-01-02', amount: 5, name: 'X', pending: false, counterparties: { name: 'SECRET-PAYEE' }, account_name: 'Checking', institution_name: 'Chase' } } })
+    );
+    const { result: res, said } = await quietly(() => post({ format: 'transactions-csv', password: 'hunter2' }));
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-disposition')).toBeNull();
+    expect(res.headers.get('x-nya-export-bytes')).toBeNull();
+    expect(await res.json()).toEqual({ error: 'The download could not be prepared, so nothing was downloaded. Try again later.' });
+    // Not logged as a download, and nothing from the data in the log.
+    expect(said).toEqual(['Data download failed TypeError']);
+  });
+
   test('the CSVs, and a caveat about the data travelling with them', async () => {
     await fake.hset(ctxKey('plaid:items'), {
       item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt('t') }),

@@ -96,7 +96,7 @@ describe('the receipt', () => {
   test('a figure that couldn’t be counted is unavailable, never zero, and says why', () => {
     const [now] = receiptSections(receipt({ counts: { ...COUNTS, transactions: null } }), US);
     expect(now.lines).toContain('Transactions: unavailable');
-    expect(now.lines.at(-1)).toBe('A figure shown as unavailable couldn’t be counted in time. What it describes was deleted all the same.');
+    expect(now.lines.at(-1)).toBe('A figure shown as unavailable couldn’t be counted (in time, or at all). What it describes was deleted all the same.');
     expect(receiptSections(receipt(), US)[0].lines.some((l) => l.includes('unavailable'))).toBe(false);
   });
 

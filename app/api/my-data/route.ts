@@ -19,6 +19,7 @@ import {
   fileChunks,
   ExportReadError,
   EXPORT_FORMATS,
+  type ExportFile,
   type ExportFormat,
   type UserExport,
 } from '@/lib/user-export';
@@ -98,6 +99,13 @@ function tooMany(retryAfterSeconds: number): NextResponse {
 const limitUnreadable = () =>
   NextResponse.json({ error: 'The download limit could not be checked just now, so nothing was downloaded. Try again in a minute.' }, { status: 503 });
 
+/** Anything but a store that couldn't be read, before a byte is sent: the
+ *  error's class goes to the log, never its message, which could quote data. */
+function notPrepared(err: unknown): NextResponse {
+  console.error('Data download failed', err instanceof Error ? err.name : typeof err);
+  return NextResponse.json({ error: 'The download could not be prepared, so nothing was downloaded. Try again later.' }, { status: 500 });
+}
+
 /** The fresh sign-in, or the response to send instead. `userId` is the
  *  Clerk account (null with the shared password). */
 async function freshSignIn(req: Request, body: Body): Promise<{ userId: string | null } | NextResponse> {
@@ -159,18 +167,27 @@ export async function POST(req: Request) {
       console.error(`Data download stopped: ${err.store} could not be read (${cause})`);
       return NextResponse.json({ error: err.message }, { status: 500 });
     }
-    console.error('Data download failed', err instanceof Error ? err.name : typeof err);
-    return NextResponse.json({ error: 'The download could not be prepared, so nothing was downloaded. Try again later.' }, { status: 500 });
+    return notPrepared(err);
+  }
+
+  // The first pass: the size, with nothing kept (see the header). A writer
+  // that meets a stored value of a shape it doesn't expect throws here, before
+  // anything is sent, and gets the same answer as a document that couldn't be
+  // built.
+  let file: ExportFile;
+  let bytes: number;
+  try {
+    file = exportFile(doc, body.format);
+    bytes = fileByteLength(file);
+  } catch (err) {
+    return notPrepared(err);
   }
 
   // When an email provider exists (#51), tell the owner a download happened,
   // here: when, and which format. Never anything from the file itself.
   console.log(`Data download: ${body.format}`);
 
-  const file = exportFile(doc, body.format);
-  // The first pass: the size, with nothing kept (see the header).
-  const bytes = fileByteLength(file);
-  // The second: the same bytes, streamed.
+  // The second pass: the same bytes, streamed.
   const chunks = fileChunks(file);
   const stream = new ReadableStream<Uint8Array>({
     // Pulled: the next chunk is written only when the browser has taken the
