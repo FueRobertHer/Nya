@@ -30,6 +30,16 @@ export type AccountLiability = {
   escrow_balance?: number | null;
   expected_payoff_date?: string | null;
   outstanding_interest?: number | null;
+  // Read by the payoff planner (lib/payoff.ts), not shown on the Accounts tab.
+  /** Credit: the part of the balance each rate applied to last statement
+   *  (Plaid's balance_subject_to_apr), where the card reports it. A promotional
+   *  0% balance beside a purchase balance is the case it exists for. */
+  apr_balances?: { type: string | null; rate: number; balance: number }[];
+  /** Mortgage: the loan as it was made, enough to work out a fixed-rate loan's
+   *  principal-and-interest payment (next_monthly_payment can include escrow). */
+  origination_principal_amount?: number | null;
+  loan_term?: string | null; // "30 year"
+  interest_rate_type?: string | null; // "fixed" | "variable"
 };
 
 function num(v: unknown): number | null {
@@ -62,6 +72,24 @@ function creditApr(aprs: unknown): { rate: number; label: string } | null {
   return { rate: Math.max(...rates), label: 'Highest APR' };
 }
 
+/**
+ * Each rate with the part of the balance it applied to, for the rates that
+ * report a positive one. Kept apart from creditApr's single figure, which has
+ * to name one rate for the row: the payoff planner blends them instead
+ * (lib/payoff.ts), so a promotional 0% balance isn't charged the purchase APR.
+ */
+function aprBalances(aprs: unknown): { type: string | null; rate: number; balance: number }[] {
+  if (!Array.isArray(aprs)) return [];
+  const out: { type: string | null; rate: number; balance: number }[] = [];
+  for (const a of aprs) {
+    const rate = num(a?.apr_percentage);
+    const balance = num(a?.balance_subject_to_apr);
+    if (rate === null || balance === null || balance <= 0) continue;
+    out.push({ type: typeof a?.apr_type === 'string' ? a.apr_type : null, rate, balance });
+  }
+  return out;
+}
+
 /** { account_id: AccountLiability } across all three liability kinds. */
 export function normalizeLiabilities(o: LiabilitiesObject | null | undefined): Record<
   string,
@@ -73,6 +101,7 @@ export function normalizeLiabilities(o: LiabilitiesObject | null | undefined): R
   for (const c of o.credit ?? []) {
     if (!c?.account_id) continue; // account_id is nullable on CreditCardLiability
     const apr = creditApr(c.aprs);
+    const balances = aprBalances(c.aprs);
     out[c.account_id] = {
       kind: 'credit',
       apr: apr?.rate ?? null,
@@ -83,6 +112,8 @@ export function normalizeLiabilities(o: LiabilitiesObject | null | undefined): R
       last_payment_amount: num(c.last_payment_amount),
       last_payment_date: c.last_payment_date ?? null,
       is_overdue: c.is_overdue ?? null,
+      // Only when reported, so a card without them keeps the shape it had.
+      ...(balances.length > 0 ? { apr_balances: balances } : {}),
     };
   }
 
@@ -120,6 +151,9 @@ export function normalizeLiabilities(o: LiabilitiesObject | null | undefined): R
       is_overdue: num(m.past_due_amount) != null ? (m.past_due_amount as number) > 0 : null,
       maturity_date: m.maturity_date ?? null,
       escrow_balance: num(m.escrow_balance),
+      origination_principal_amount: num(m.origination_principal_amount),
+      loan_term: typeof m.loan_term === 'string' ? m.loan_term : null,
+      interest_rate_type: typeof m.interest_rate?.type === 'string' ? m.interest_rate.type : null,
     };
   }
 
