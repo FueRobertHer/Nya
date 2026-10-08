@@ -2120,6 +2120,8 @@ export default function Dashboard({
                   }))
                 )}
                 loading={txnsLoading}
+                incomplete={txnIncomplete}
+                stopped={stoppedTxns}
               />
             )}
           </>

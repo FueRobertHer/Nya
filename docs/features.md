@@ -93,7 +93,7 @@ An institution that needs re-authenticating keeps the red warning and its **Reco
 
 A related case: an account that disappears from an otherwise successful fetch (a closed account some banks simply stop returning) holds the snapshot for three days, called out under the Home total, and is then accepted as closed. A glitch resolves itself inside that window; a real closure costs a few days of gap rather than a wrong total written permanently.
 
-The same honesty reaches **Activity**. When an institution's transactions couldn't be loaded, or its connection is broken and last synced before a month ended, that month's totals say so under the figures ("Chase hasn't synced since Sep 12, so this month may be missing some of its transactions"). A month that ended before the connection last synced is left alone: nothing it holds is missing.
+The same honesty reaches **Activity**. When an institution's transactions couldn't be loaded, or its connection is broken and last synced before a month ended, that month's totals say so under the figures ("Chase hasn't synced since Sep 12, so this month may be missing some of its transactions"). A month that ended before the connection last synced is left alone: nothing it holds is missing. The month's budgets on the Budgets tab say the same, since spending that is short makes a budget look safer than it is.
 
 ### Connection health
 

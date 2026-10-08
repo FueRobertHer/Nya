@@ -253,3 +253,15 @@ describe("Activity's months say when they may be incomplete", () => {
     expect(joinNames(['A', 'B', 'C'])).toBe('A, B and C');
   });
 });
+
+describe("the Budgets tab's month says so too", () => {
+  test('a gap in this month shows under the budgets, only when there are budgets to total', async () => {
+    const { default: BudgetsTab } = await import('@/components/BudgetsTab');
+    const props = { txns: [], goals: [], accounts: [], loading: false, onSave: async () => true, onSaveGoals: async () => true };
+    const missing = [{ institution_name: 'Chase', coverage: 'missing' as const }];
+    const withBudget = text(renderToStaticMarkup(<BudgetsTab {...props} budgets={{ groceries: 400 }} incomplete={missing} />));
+    expect(withBudget).toContain("Doesn't include Chase: its transactions couldn't be loaded, so this month may be incomplete.");
+    expect(text(renderToStaticMarkup(<BudgetsTab {...props} budgets={{}} incomplete={missing} />))).not.toContain("Doesn't include Chase");
+    expect(text(renderToStaticMarkup(<BudgetsTab {...props} budgets={{ groceries: 400 }} />))).not.toContain('may be incomplete');
+  });
+});
