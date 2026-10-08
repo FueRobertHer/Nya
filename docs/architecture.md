@@ -6,6 +6,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
   - [Storage seam](#storage-seam)
 - [Caching](#caching)
 - [Net-worth history](#net-worth-history)
+  - [Holdings history](#holdings-history)
 - [Containers](#containers)
 - [On-device snapshot and offline use](#on-device-snapshot-and-offline-use)
 - [Tests](#tests)
@@ -97,6 +98,18 @@ The chart draws the whole estimated region dashed and labels it estimated. Some 
 - New links request 730 days of transactions; older Items may only have about 90 days until relinked.
 - Hidden accounts are subtracted when the history is read, not when it is written, which is why hiding is retroactive and unhiding is exact. See [features.md](features.md#hiding-accounts).
 
+### Holdings history
+
+Plaid serves an account's current holdings and two years of investment transactions, but never past holdings, and the transactions carry no prices. So what each investment account held over time, which allocation over time and returns will be built on, exists only from the day Nya starts saving it, and a day it misses can never be filled in. `lib/holdings-history.ts` saves it.
+
+- **What is recorded**: each position of each investment account, with its security (Plaid's security id, ticker, name, type and cash-equivalent flag), quantity, the institution's price and the day that price was current (when the institution says), value, cost basis and currency. An account seen holding nothing is recorded as holding nothing.
+- **When**: on every clean fetch, through the same `recordFetch` as the net-worth snapshot, so by the nightly cron and by every live load. Only an institution whose holdings call answered in that same fetch is recorded: never one whose fetch failed, and never balances recovered from an earlier snapshot. An institution short an account still records the accounts it returned, as their balances are. Hidden accounts are recorded like every other; hiding is applied when it is read.
+- **Days**: keyed by UTC day, like the net-worth layer, and each account's latest observation of a day wins, whichever write lands last.
+- **Never in the snapshot's way**: it runs beside the net-worth write and never throws. A failed write is logged and counted (`holdings_failed`, on the day's outcome in the cron's report and in `GET /api/snapshot-runs`), never part of whether the day was recorded.
+- **Stored** through the storage seam: one compressed, encrypted value per month (`holdings:history`) under a random id, since a month is content and a map store's ids are plaintext, and a small index (`holdings:history:index`) of which id holds which month and the first and last day each account was recorded on. Within a month each security is described once, as last seen that month, and positions name it by number rather than by Plaid's 37-character id, which keeps a month small: a realistic portfolio (4 accounts, 60 positions, every day of a 31-day month) stores about 48,000 characters, about 0.6% of the 8 MiB ceiling, and 1,000 positions about 1,330,000 (16%). A month that would cross the ceiling, at about 6,000 positions held every day, is refused whole and loudly, never trimmed, and the seam warns in the log past 60% of it. `GET /api/storage-usage` does not count these months yet.
+- **Read** strictly, by `GET /api/holdings-history?from=&to=&account_id=&include_hidden=1`: each recorded day's positions, each with its security's description, at most 92 days at a time. Account links are followed as the balance chart follows them, so a re-linked account's positions continue under its current id, and hidden accounts are left out unless asked. `summary=1` reads only the index, for the "Holdings recorded daily since" line under an investment account's chart. Anything stored that can't be read answers 409, never an empty history.
+- **Forgetting** an earlier account removes its positions from every month (and any security only it held), one month at a time, so a forget that stops part way is finished by running it again. Deleting an account deletes both stores with the rest of its container, and exports, restores and the re-encryption pass carry them like every other key.
+
 ## Containers
 
 Every record belongs to a container, stored under `<prefix>:c:<container id>:`. A container is the unit of one person's data: with Clerk each account owns its own, and with the shared password the deployment uses a single one. Every function that reads or writes stored data takes the container, so a key cannot be built for a container nobody resolved. See [operations.md](operations.md#containers) and [authentication.md](authentication.md).
@@ -107,4 +120,4 @@ The dashboard keeps its last-known snapshot in the browser's `localStorage` so t
 
 ## Tests
 
-`bun test` runs quickly with no Redis, Plaid keys or network: storage and the Plaid client are faked. The suite concentrates on the logic where a silent wrong answer is worst: the net-worth history layers and hidden-account subtraction, the backward balance walk, Plaid's investment sign conventions and pagination, liability normalization, the credit/loan sign rule every total depends on, last-known-balance recovery, idle-cash detection, encryption and key rotation, backup and restore, sharing, and the session and proxy gates. Some React components and routes are covered as well. Anything talking to live Plaid is not. The storage seam's contract runs against both the test double and a real Redis (where `redis-server` is installed), and an import-boundary test keeps new code off the Redis client.
+`bun test` runs quickly with no Redis, Plaid keys or network: storage and the Plaid client are faked. The suite concentrates on the logic where a silent wrong answer is worst: the net-worth history layers and hidden-account subtraction, what holdings history records and when (never from a failed or recovered fetch), the backward balance walk, Plaid's investment sign conventions and pagination, liability normalization, the credit/loan sign rule every total depends on, last-known-balance recovery, idle-cash detection, encryption and key rotation, backup and restore, sharing, and the session and proxy gates. Some React components and routes are covered as well. Anything talking to live Plaid is not. The storage seam's contract runs against both the test double and a real Redis (where `redis-server` is installed), and an import-boundary test keeps new code off the Redis client.

@@ -13,7 +13,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 
 ## Backups
 
-Some of what Nya stores exists nowhere else: banks stop serving old transactions after a while, and no bank serves daily balance history at all. A copy is taken every night; take one by hand before any risky change too.
+Some of what Nya stores exists nowhere else: banks stop serving old transactions after a while, and no bank serves daily balance history, or what an investment account held on a past day, at all. A copy is taken every night; take one by hand before any risky change too.
 
 ### Nightly backups
 
