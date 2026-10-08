@@ -35,10 +35,19 @@ function plaidError(response?: { status: number; data: unknown }): Error {
  */
 function printed(v: unknown, seen = new Set<unknown>()): string {
   if (typeof v === 'string') return v;
-  if (v === null || typeof v !== 'object' || seen.has(v)) return String(v);
+  if (v !== null && typeof v === 'object' && seen.has(v)) return '';
+  if (v === null || typeof v !== 'object') return String(v);
   seen.add(v);
   return Object.getOwnPropertyNames(v)
-    .map((k) => `${k}=${printed((v as Record<string, unknown>)[k], seen)}`)
+    .map((k) => {
+      let value: unknown;
+      try {
+        value = (v as Record<string, unknown>)[k];
+      } catch {
+        return '';
+      }
+      return `${k}=${printed(value, seen)}`;
+    })
     .join(' ');
 }
 
@@ -51,7 +60,13 @@ describe('loggable', () => {
     const safe = printed(loggable(err));
     expect(safe).not.toContain(SECRET);
     expect(safe).not.toContain(TOKEN);
-    expect(loggable(err)).toEqual({ name: 'AxiosError', message: 'timeout of 45000ms exceeded', code: 'ECONNABORTED' });
+    expect(loggable(err)).toMatchObject({
+      name: 'AxiosError',
+      message: 'timeout of 45000ms exceeded',
+      code: 'ECONNABORTED',
+      // Which call timed out: without it a timeout says only how long it waited.
+      endpoint: 'POST /accounts/get',
+    });
   });
 
   test("a Plaid error answer keeps Plaid's diagnosis and drops the request", () => {
@@ -122,7 +137,13 @@ describe('no log prints a raw Plaid error', () => {
     });
 
   test('nothing logs `err?.response?.data || err`', () => {
-    const offenders = ['lib', 'app'].flatMap(walk).filter((f) => /console\.\w+\([^)]*response\?\.data\s*\|\|/.test(readFileSync(f, 'utf8')));
+    // Code only: lib/log-safe.ts quotes the old pattern in its header comment.
+    const code = (f: string) =>
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .filter((line) => !/^\s*(\/\/|\*)/.test(line))
+        .join('\n');
+    const offenders = ['lib', 'app'].flatMap(walk).filter((f) => /console\.\w+\([^)]*response\?\.data\s*\|\|/.test(code(f)));
     expect(offenders).toEqual([]);
   });
 });
