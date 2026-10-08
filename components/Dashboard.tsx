@@ -15,6 +15,7 @@ import { instantDay } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
+import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
@@ -445,6 +446,9 @@ export default function Dashboard({
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
+  // The debt payoff planner, opened from the Accounts tab (components/DebtPayoff.tsx).
+  const [payoffOpen, setPayoffOpen] = useState(false);
+  const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
   const [disconnectInput, setDisconnectInput] = useState('');
@@ -1513,6 +1517,13 @@ export default function Dashboard({
                         Sharing
                       </button>
                     )}
+                    {/* Whenever there is a card or loan on screen to plan. */}
+                    {allAccounts.some((a) => isOwedType(a.type)) && (
+                      <button className="secondary" onClick={() => setPayoffOpen(true)}>
+                        <ActionIcon d="M22 17 13.5 8.5l-5 5L2 7M16 17h6v-6" />
+                        Payoff plan
+                      </button>
+                    )}
                     <button className="secondary" onClick={() => setManageMode((m) => !m)} aria-pressed={manageMode}>
                       <ActionIcon d={manageMode ? 'M20 6 9 17l-5-5' : 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'} />
                       {manageMode ? 'Done' : 'Manage'}
@@ -2128,6 +2139,8 @@ export default function Dashboard({
         <TrustLinks />
       </main>
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
+      {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
+      <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">
