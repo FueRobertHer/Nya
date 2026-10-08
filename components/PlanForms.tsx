@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
-import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
+import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 
 type SaveProps = {
   plan: FirePlan;
@@ -101,6 +101,15 @@ export function Choice<T extends string>({ value, options, onChange, label, disa
   );
 }
 
+/** Both ages, refusing a target already passed: it would have Coast FI grow
+ *  money backwards and the simulation retire before today. */
+function ages(age: number | null, targetAge: number | null): { age: number | null; targetAge: number | null } {
+  if (age !== null && targetAge !== null && targetAge < age) {
+    throw new FieldError("Your target age can't be before your age. If you've already stopped working, use your age.");
+  }
+  return { age, targetAge };
+}
+
 export function AboutForm(props: SaveProps) {
   const { plan } = props;
   const [age, setAge] = useState(asText(plan.age));
@@ -131,8 +140,7 @@ export function AboutForm(props: SaveProps) {
         onSave={() =>
           s.save(() => ({
             ...plan,
-            age: readNumber(age, 'Your age', min, max, { integer: true, optional: true }),
-            targetAge: readNumber(target, 'Target age', min, max, { integer: true, optional: true }),
+            ...ages(readNumber(age, 'Your age', min, max, { integer: true, optional: true }), readNumber(target, 'Target age', min, max, { integer: true, optional: true })),
           }))
         }
       />
@@ -146,12 +154,12 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
   spending: {
     title: 'Annual spending',
     field: 'Spending a year',
-    note: 'Nya adds up a year of money out, leaving out transfers between your accounts and loan payments, as the Activity tab does. Type your own if you expect to spend differently once you stop working.',
+    note: "Nya adds up a year of money out, leaving out transfers between your own accounts and card payments (they settle purchases already counted). Unlike the Activity tab it counts loan payments, whose principal is spending until the loan ends, and cash withdrawals, and takes refunds off. Type your own if you expect to spend differently once you stop working, after a mortgage ends, say.",
   },
   savings: {
     title: 'Annual savings',
     field: 'Savings a year',
-    note: 'An estimate: a year of income minus spending. Pre-tax 401(k) contributions and an employer match never reach a bank account, so they are missing here; add them if you type your own.',
+    note: "An estimate: a year of income minus spending, plus what went into workplace plans Nya can see (a 401(k) and the like, employer's match included). Contributions to a workplace plan Nya can't see never reach a bank account, so add them if you type your own.",
   },
   assets: {
     title: 'Invested assets',
@@ -304,7 +312,28 @@ export function AssumptionsForm(props: SaveProps) {
 
 const RULE_ORDER: RuleKind[] = ['constant', 'guardrails', 'floor-ceiling', 'percent', 'vpw'];
 
-export function SimulationForm(props: SaveProps & { fiNumber: number | null; assets: number | null; currency: string | null }) {
+/** What a start choice means for the plan: when it retires, and what the first
+ *  year withdraws. Starting with the FI number withdraws the plan's rate of it
+ *  (your spending, by construction); starting from anything else withdraws
+ *  your spending, at whatever rate that is of the balance (lib/fire/plan.ts). */
+function startConsequence(
+  start: FirePlan['start'],
+  plan: FirePlan,
+  props: { fiNumber: number | null; assets: number | null; spending: number | null; currency: string | null },
+  typed: number
+): string {
+  const money = (n: number) => wholeMoney(n, props.currency);
+  const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
+  if (start === 'fi-number') {
+    return `Retires at your target age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''} with your FI number, withdrawing ${pct(plan.withdrawalRate)} of it: ${spend}.`;
+  }
+  const balance = start === 'assets' ? props.assets : Number.isFinite(typed) && typed > 0 ? typed : null;
+  const rate = props.spending !== null && balance ? props.spending / (1 - plan.taxRate) / balance : null;
+  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your target age with the balance you type`;
+  return `Retires ${when}, spending ${spend}${rate !== null ? `: a ${pct(rate, 1)} withdrawal rate${rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
+}
+
+export function SimulationForm(props: SaveProps & { fiNumber: number | null; assets: number | null; spending: number | null; currency: string | null }) {
   const { plan } = props;
   const [method, setMethod] = useState(plan.method);
   const [rule, setRule] = useState<RuleKind>(plan.rule);
@@ -392,9 +421,7 @@ export function SimulationForm(props: SaveProps & { fiNumber: number | null; ass
           </select>
         </label>
         <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-          {start === 'assets'
-            ? `Retiring today${plan.age !== null ? `, at ${plan.age}` : ''}, with what you have now.`
-            : `Retiring at your target age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''}.`}
+          {startConsequence(start, plan, props, Number(balance))}
         </p>
         {start === 'custom' && (
           <label className="field">
@@ -417,8 +444,8 @@ export function SimulationForm(props: SaveProps & { fiNumber: number | null; ass
           </label>
         </div>
         <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-          {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'} Stocks are
-          the S&amp;P 500 with dividends, bonds 10-year Treasuries. Nya doesn&apos;t look inside your funds yet, so set the mix you hold.
+          {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'} Stocks are{' '}
+          {DATA_STOCKS}, bonds {DATA_BONDS}. Nya doesn&apos;t look inside your funds yet, so set the mix you hold.
         </p>
         <label className="field">
           Rebalancing
@@ -481,6 +508,12 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         <input type="checkbox" checked={adjusted} onChange={(e) => setAdjusted(e.target.checked)} disabled={s.saving} />
         Rises with inflation (Social Security does; many pensions don&apos;t)
       </label>
+      {!adjusted && (
+        <p className="panel-note">
+          Enter what it will pay in today&apos;s dollars. A pension quoted as a future amount is worth less by all the
+          inflation until it starts, so scale it down first; from then on the plan takes inflation off it every year.
+        </p>
+      )}
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         onDone={props.onDone}

@@ -1927,6 +1927,14 @@ button.danger-outline {
   line-height: 1.4;
 }
 
+/* A warning under a figure (an institution that couldn't be read, balances
+   that are old): amber like the dashboard's other stale notes, on its own line. */
+.plan-warning {
+  display: block;
+  margin-top: 3px;
+  color: var(--warn);
+}
+
 /* A quiet text button: big enough to tap, no box around it. */
 button.plan-edit {
   width: auto;
@@ -1956,13 +1964,34 @@ button.plan-edit:disabled {
   margin: 10px 0 4px;
 }
 
-/* The success rate: a figure and what it counts, read as one sentence. */
+/* The success rate: a figure and what it counts, read as one sentence. For a
+   flexible rule a second one, how far spending fell, sits under it. */
+.plan-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .plan-stat {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin-top: 12px;
+}
+
+/* A new answer is being worked out: the last one stays, dimmed, so nothing
+   below it moves. */
+.plan-result-pending {
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+
+.plan-working {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 40px 0;
+  text-align: center;
 }
 
 .plan-stat-value {
@@ -2048,6 +2077,21 @@ button.plan-edit:disabled {
 .plan-grid thead th {
   font-size: 10px;
   white-space: normal;
+}
+
+/* Under a column head, where its historical starts end. */
+.plan-grid-span {
+  display: block;
+  font-weight: 400;
+  text-transform: none;
+}
+
+/* A flexible rule's second figure in a cell: the lowest year's spending. */
+.plan-grid-low {
+  display: block;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 .plan-grid td.plan-grid-cell {

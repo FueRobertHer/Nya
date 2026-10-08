@@ -529,6 +529,39 @@ describe('/api/investment-activity', () => {
     expect(body.txns.map((t: any) => t.investment_transaction_id)).toEqual(['b', 'a']); // newest first
   });
 
+  // The Plan tab's savings (lib/fire/inputs.ts): new money into the account
+  // over the trailing year, not rollovers or dividends.
+  test('reports the trailing year of contributions, from the later of a year ago and what it knows', async () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+    plaid.rows = [
+      row('old', daysAgo(500)), // before the year: not counted
+      row('a', daysAgo(100)),
+      row('b', daysAgo(50), { name: 'Rollover from 401k' }), // moved, not saved
+      row('c', daysAgo(30), { subtype: 'dividend', amount: -20 }), // growth, not saved
+      row('d', daysAgo(10), { amount: -250 }),
+    ];
+    const body = await get();
+    expect(body.contributions_12m).toBe(750);
+    expect(body.contributions_12m_from).toBe(daysAgo(364));
+  });
+
+  test('a shorter record says where it starts, so it is never read as a whole year', async () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+    plaid.rows = [row('a', daysAgo(100))];
+    const body = await get();
+    expect(body.contributions_12m).toBe(500);
+    expect(body.contributions_12m_from).toBe(daysAgo(100));
+  });
+
+  test('an answer cached before the figure existed is not served', async () => {
+    const { writeAccountCache } = await import('@/lib/cache');
+    await writeAccountCache(ctx, 'item1:ira', { txns: [], ytd_contributions: 0, note: null });
+    plaid.rows = [row('a', new Date(Date.now() - 5 * DAY).toISOString().slice(0, 10))];
+    const body = await get();
+    expect(body.from_cache).toBe(false);
+    expect(body.contributions_12m).toBe(500);
+  });
+
   test('during an outage it serves saved rows with a note, and caches nothing', async () => {
     plaid.rows = [row('a', '2026-09-01')];
     // Synced an hour ago, so the route's sync is due and meets the outage.

@@ -2,6 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { FirePlan } from '@/lib/fire/plan';
+import type { AssetAccount, AssetInstitution } from '@/lib/fire/inputs';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -15,8 +16,11 @@ const { getFirePlan, setFirePlan } = await import('@/lib/fire-plan');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
 const { DEFAULT_PLAN, enginePlan, fiView, parsePlan, planYears, startAge } = await import('@/lib/fire/plan');
-const { trailingFlows, investedAssets, TRAILING_DAYS } = await import('@/lib/fire/inputs');
+const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, TRAILING_DAYS } = await import('@/lib/fire/inputs');
+const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
+const { historicalCycles } = await import('@/lib/fire/simulate');
+const { usMarket } = await import('@/lib/fire/us-market');
 
 beforeEach(async () => {
   fake.reset();
@@ -87,6 +91,7 @@ describe('the stored plan’s validation', () => {
     ['a negative expense', { ...DEFAULT_PLAN, expenses: [{ id: 'a', label: 'x', amount: -5, atAge: 60 }] }],
     ['an expense at a fractional age', { ...DEFAULT_PLAN, expenses: [{ id: 'a', label: 'x', amount: 5, atAge: 60.5 }] }],
     ['too many expenses', { ...DEFAULT_PLAN, expenses: Array.from({ length: 11 }, (_, i) => ({ id: `e${i}`, label: 'x', amount: 1, atAge: 60 })) }],
+    ['a target age before the age', { ...DEFAULT_PLAN, age: 40, targetAge: 30 }],
     ['repeated ids', { ...DEFAULT_PLAN, income: [{ id: 'a', label: 'x', amount: 1, fromAge: 60, inflationAdjusted: true }], expenses: [{ id: 'a', label: 'y', amount: 1, atAge: 60 }] }],
   ];
   for (const [name, value] of bad) {
@@ -151,21 +156,37 @@ describe('the engine plan', () => {
     expect(e.startAge).toBe(50);
     expect(e.sim.years).toBe(45); // to age 95
     expect(e.sim.rule).toEqual({ kind: 'constant', rate: 0.04 });
+    expect(e.rate).toBe(0.04);
+    expect(e.rateFrom).toBe('plan');
     expect(e.sim.allocation).toEqual({ stocks: 0.75, bonds: 0.25, cash: 0 });
   });
 
-  test('or with today’s assets at today’s age, or a typed balance', () => {
-    const today = plan({ age: 35, targetAge: 50, start: 'assets' });
+  // The question "could I stop now?" is about what you spend, so starting
+  // from what you have withdraws your spending, at whatever rate that is.
+  test('from today’s assets, or a typed balance, it withdraws your spending, at the rate that implies', () => {
+    const today = plan({ age: 35, targetAge: 50, start: 'assets', taxRate: 0.2 });
     const e = enginePlan(today, fiView(today, measured));
     if ('missing' in e) throw new Error('expected a plan');
     expect(e.sim.startBalance).toBe(600_000);
     expect(e.startAge).toBe(35);
     expect(e.sim.years).toBe(60);
-    const typed = plan({ start: 'custom', startBalance: 750_000, horizon: 40 });
+    expect(e.rateFrom).toBe('spending');
+    // 40,000 to spend after a 20% tax is 50,000 withdrawn: 8.33% of 600,000.
+    expect(e.rate).toBeCloseTo(50_000 / 600_000, 12);
+    expect(e.sim.rule).toEqual({ kind: 'constant', rate: e.rate });
+    const typed = plan({ start: 'custom', startBalance: 750_000, horizon: 40, rule: 'guardrails' });
     const t = enginePlan(typed, fiView(typed, measured));
     if ('missing' in t) throw new Error('expected a plan');
     expect(t.sim.startBalance).toBe(750_000);
     expect(t.sim.years).toBe(40);
+    expect(t.sim.rule).toEqual({ kind: 'guardrails', rate: 40_000 / 750_000 });
+  });
+
+  test('the first year then spends exactly your spending', () => {
+    const p = plan({ start: 'assets', taxRate: 0.15, horizon: 30 });
+    const e = enginePlan(p, fiView(p, measured));
+    if ('missing' in e) throw new Error('expected a plan');
+    expect(historicalCycles(e.sim, usMarket()).firstYearSpending).toBeCloseTo(40_000, 6);
   });
 
   test('says what is missing instead of guessing a balance', () => {
@@ -173,6 +194,11 @@ describe('the engine plan', () => {
     expect(enginePlan(plan(), fiView(plan(), none))).toEqual({ missing: 'spending' });
     const p = plan({ start: 'assets' });
     expect(enginePlan(p, fiView(p, none))).toEqual({ missing: 'assets' });
+    // Assets but no spending: nothing to withdraw.
+    expect(enginePlan(p, fiView(p, { spending: null, savings: null, assets: 100_000 }))).toEqual({ missing: 'spending' });
+    // A typed balance of zero has no rate.
+    const zero = plan({ start: 'custom', startBalance: 0 });
+    expect(enginePlan(zero, fiView(zero, measured))).toEqual({ missing: 'balance' });
   });
 
   test('a plan runs to 95, within 10 to 60 years, or 30 years without an age', () => {
@@ -203,8 +229,14 @@ describe('the engine plan', () => {
       { amount: 24_000, fromYear: 17, inflationAdjusted: true },
       { amount: 10_000, fromYear: 0, inflationAdjusted: false }, // already being paid
     ]);
-    expect(e.sim.oneOffs).toEqual([{ amount: 30_000, year: 10 }]);
-    expect(e.left.expenses.map((x) => x.id)).toEqual(['old', 'late']);
+    // An expense after the plan's end is placed too, as income starting that
+    // late is: the grid's longer columns reach it, the plan itself never does.
+    expect(e.sim.oneOffs).toEqual([
+      { amount: 30_000, year: 10 },
+      { amount: 1, year: 45 },
+    ]);
+    expect(e.left.expenses.map((x) => x.id)).toEqual(['old']);
+    expect(e.beyond.map((x) => x.id)).toEqual(['late']);
     const ageless = plan({ income: p.income });
     const a = enginePlan(ageless, fiView(ageless, measured));
     if ('missing' in a) throw new Error('expected a plan');
@@ -260,28 +292,63 @@ describe('spending and savings from the trailing year', () => {
   const today = '2026-10-06';
   const yearAgo = '2025-10-07'; // the first day of the 365 ending today
 
-  test('counts money out as spending and money in as income, by the Activity tab’s rule', () => {
+  // Replaces the test that kept loan payments and ATM cash out of spending:
+  // for planning, a mortgage or car payment and cash spent are money needed
+  // every year (lib/fire/inputs.ts).
+  test('counts spending, loan payments that are not card payments, cash and bank charges, less refunds', () => {
     const r = trailingFlows(
       [
         txn({ date: yearAgo, amount: 100 }),
         txn({ date: '2026-03-01', amount: -5_000, category: 'income' }),
-        txn({ date: '2026-10-06', amount: 50, pending: true }), // pending rows count, as there
+        txn({ date: '2026-10-06', amount: 50, pending: true }), // pending rows count, as on the Activity tab
+        txn({ date: '2026-05-06', amount: 1_500, category: 'loan payments', subcategory: 'mortgage payment' }),
+        txn({ date: '2026-05-07', amount: 200, category: 'other', transaction_code: 'atm' }),
+        txn({ date: '2026-05-08', amount: 60, category: 'transfer out', subcategory: 'withdrawal' }), // cash, no code
+        txn({ date: '2026-05-09', amount: 12, category: 'other', transaction_code: 'bank charge' }),
+        txn({ date: '2026-05-10', amount: -40, category: 'general merchandise' }), // a refund
         // None of these is spending or income:
         txn({ date: '2026-05-01', amount: 2_000, category: 'transfer out' }),
         txn({ date: '2026-05-02', amount: -2_000, category: 'transfer in' }),
-        txn({ date: '2026-05-03', amount: 900, category: 'loan payments' }),
+        txn({ date: '2026-05-03', amount: 900, category: 'loan payments', subcategory: 'credit card payment' }),
+        txn({ date: '2026-05-06', amount: -1_500, category: 'loan payments', subcategory: 'mortgage payment' }), // the loan's side
         txn({ date: '2026-05-04', amount: 300, category: 'general merchandise', transaction_code: 'transfer' }),
-        txn({ date: '2026-05-05', amount: 200, category: 'other', transaction_code: 'atm' }),
+        txn({ date: '2026-05-05', amount: 400, category: 'loan payments', subcategory: null }), // can't tell: left out, reported
       ],
       today
     )!;
-    expect(r.spending).toBe(150);
+    expect(r.spending).toBe(100 + 50 + 1_500 + 200 + 60 + 12 - 40);
     expect(r.income).toBe(5_000);
-    expect(r.savings).toBe(4_850);
-    expect(r.count).toBe(3);
+    expect(r.savings).toBe(5_000 - 1_882);
+    expect(r.loanPayments).toBe(1_500);
+    expect(r.cash).toBe(260);
+    expect(r.refunds).toBe(40);
+    expect(r.unclearLoans).toBe(400);
+    expect(r.count).toBe(8);
     expect(r.scaled).toBe(false);
     expect(r.days).toBe(TRAILING_DAYS);
     expect(r.from).toBe(yearAgo);
+  });
+
+  test("leaves the Activity tab's own rule as it was", () => {
+    expect(isTransfer(txn({ amount: 1_500, category: 'loan payments', subcategory: 'mortgage payment' }))).toBe(true);
+    expect(isTransfer(txn({ amount: 200, transaction_code: 'atm' }))).toBe(true);
+  });
+
+  test('classifies each kind of row', () => {
+    const flow = (over: Partial<Txn>) => planFlow(txn(over));
+    expect(flow({ amount: 10, category: 'food and drink' })).toBe('spending');
+    expect(flow({ amount: 10, category: 'loan payments', subcategory: 'car payment' })).toBe('loan');
+    expect(flow({ amount: 10, category: 'loan payments', subcategory: 'student loan payment' })).toBe('loan');
+    expect(flow({ amount: 10, category: 'loan payments', subcategory: 'credit card payment' })).toBe('card-payment');
+    expect(flow({ amount: 10, category: 'loan payments', subcategory: null })).toBe('unclear-loan');
+    expect(flow({ amount: -10, category: 'loan payments', subcategory: 'car payment' })).toBe('transfer');
+    expect(flow({ amount: 10, transaction_code: 'atm' })).toBe('cash');
+    // A transfer code wins over the category's "withdrawal".
+    expect(flow({ amount: 10, category: 'transfer out', subcategory: 'withdrawal', transaction_code: 'transfer' })).toBe('transfer');
+    expect(flow({ amount: -10, transaction_code: 'atm' })).toBe('transfer'); // a deposit at an ATM
+    expect(flow({ amount: -10, category: 'income' })).toBe('income');
+    expect(flow({ amount: -10, category: 'rent and utilities' })).toBe('refund');
+    expect(flow({ amount: -10, category: null })).toBe('income'); // no telling: stays income
   });
 
   test('leaves out what is older than a year, or dated after today', () => {
@@ -296,12 +363,22 @@ describe('spending and savings from the trailing year', () => {
     expect(r.spending).toBe(100);
   });
 
-  test('scales a shorter history up to a year, and says so', () => {
+  test('scales any history shorter than a year up to one, and says so', () => {
     // 100 days of history, today included.
     const r = trailingFlows([txn({ date: '2026-06-29', amount: 1_000 }), txn({ date: today, amount: 0 })], today)!;
     expect(r.days).toBe(100);
     expect(r.scaled).toBe(true);
     expect(r.spending).toBeCloseTo(1_000 * 3.65, 9);
+    // Even a few days short.
+    const near = trailingFlows([txn({ date: '2025-10-12', amount: 360 }), txn({ date: today, amount: 0 })], today)!;
+    expect(near.days).toBe(360);
+    expect(near.scaled).toBe(true);
+    expect(near.spending).toBeCloseTo(365, 9);
+  });
+
+  test('refunds never take spending below zero', () => {
+    const r = trailingFlows([txn({ date: yearAgo, amount: 10 }), txn({ date: today, amount: -50, category: 'general merchandise' })], today)!;
+    expect(r.spending).toBe(0);
   });
 
   test('gives no figure from under four weeks of history, or from transfers alone', () => {
@@ -315,45 +392,112 @@ describe('spending and savings from the trailing year', () => {
     expect(r.currency).toBe('USD');
     expect(r.mixedCurrency).toBe(true);
   });
+
+  test("reads which institutions couldn't be read from the transactions' notes", () => {
+    expect(unreadTransactions(['Chase: needs to be reconnected', 'Could not load transactions.'])).toEqual([
+      { institution: 'Chase', reason: 'needs to be reconnected' },
+      { institution: null, reason: 'Could not load transactions.' },
+    ]);
+  });
 });
 
 describe('invested assets', () => {
-  const acct = (over: Partial<Parameters<typeof investedAssets>[0][number]>) => ({
+  const acct = (over: Partial<AssetAccount> = {}): AssetAccount => ({
     account_id: `a${++seq}`,
     name: 'Account',
-    institution: 'Broker',
     type: 'investment',
     balance: 1_000,
     currency: 'USD',
+    ...over,
+  });
+  const inst = (accounts: AssetAccount[], over: Partial<AssetInstitution> = {}): AssetInstitution => ({
+    name: 'Broker',
+    item_id: 'item-1',
+    error: false,
+    staleAsOf: null,
+    staleAsOfAt: null,
+    missing: 0,
+    accounts,
     ...over,
   });
 
   test('sums investment accounts that are not hidden, never debts', () => {
     const r = investedAssets(
       [
-        acct({ balance: 100_000 }),
-        acct({ type: 'brokerage', balance: 50_000 }),
-        acct({ balance: 999_999, hidden: true }),
-        acct({ type: 'depository', balance: 20_000 }),
-        acct({ type: 'credit', balance: 5_000 }),
-        acct({ type: 'loan', balance: 300_000 }),
+        inst([
+          acct({ balance: 100_000 }),
+          acct({ type: 'brokerage', balance: 50_000 }),
+          acct({ balance: 999_999, hidden: true }),
+          acct({ type: 'depository', balance: 20_000 }),
+          acct({ type: 'credit', balance: 5_000 }),
+          acct({ type: 'loan', balance: 300_000 }),
+        ]),
       ],
       false
     );
     expect(r.total).toBe(150_000);
     expect(r.accounts).toHaveLength(2);
+    expect(r.accounts[0].institution).toBe('Broker');
+    expect(r.caveats).toEqual([]);
   });
 
   test('counts checking and savings when asked', () => {
-    expect(investedAssets([acct({ balance: 100_000 }), acct({ type: 'depository', balance: 20_000 })], true).total).toBe(120_000);
+    expect(investedAssets([inst([acct({ balance: 100_000 }), acct({ type: 'depository', balance: 20_000 })])], true).total).toBe(120_000);
   });
 
   test('an account without a balance is counted as unknown, not as zero', () => {
-    const r = investedAssets([acct({ balance: null }), acct({ balance: 5 })], false);
+    const r = investedAssets([inst([acct({ balance: null }), acct({ balance: 5 })])], false);
     expect(r.total).toBe(5);
     expect(r.unknown).toBe(1);
-    expect(investedAssets([acct({ balance: null })], false).total).toBeNull();
+    expect(investedAssets([inst([acct({ balance: null })])], false).total).toBeNull();
     expect(investedAssets([], false).total).toBeNull();
+  });
+
+  test('names an institution that failed with nothing recovered, unless what it holds would not count', () => {
+    const r = investedAssets([inst([acct({ balance: 10 })]), inst([], { name: 'Fidelity', error: true })], false);
+    expect(r.total).toBe(10);
+    expect(r.caveats).toEqual([{ kind: 'unreachable', institution: 'Fidelity' }]);
+    // Known to hold only a card: it can't make invested assets short.
+    expect(investedAssets([inst([acct({ type: 'credit', balance: null })], { name: 'Amex', error: true })], false).caveats).toEqual([]);
+  });
+
+  test('names balances recovered from an earlier day, with the day, and accounts that could not be shown', () => {
+    const r = investedAssets(
+      [
+        inst([acct({ balance: 10 })], { name: 'Vanguard', error: true, staleAsOf: '2026-10-03', staleAsOfAt: '2026-10-03T13:00:00Z' }),
+        inst([acct({ balance: 20 })], { name: 'Schwab', missing: 2 }),
+      ],
+      false
+    );
+    expect(r.total).toBe(30);
+    expect(r.caveats).toEqual([
+      { kind: 'stale', institution: 'Vanguard', asOf: '2026-10-03', at: '2026-10-03T13:00:00Z' },
+      { kind: 'missing', institution: 'Schwab', count: 2 },
+    ]);
+  });
+});
+
+describe('workplace plan contributions', () => {
+  test('are counted for workplace plans only, by subtype', () => {
+    for (const s of ['401k', '403B', '457b', 'roth 401k', 'thrift savings plan', 'simple ira', '401a']) expect(isWorkplacePlan(s)).toBe(true);
+    for (const s of ['ira', 'roth', 'brokerage', 'hsa', 'sep ira', '529', null]) expect(isWorkplacePlan(s)).toBe(false);
+  });
+
+  test('are summed, with plans measured over less than a year, or not at all, named', () => {
+    const w = workplaceSavings(
+      [
+        { account_id: 'a', name: '401(k)', institution: 'Fidelity', amount: 12_000, from: '2025-10-07', note: null },
+        { account_id: 'b', name: '403(b)', institution: 'TIAA', amount: 3_000, from: '2026-04-01', note: null },
+        { account_id: 'c', name: 'TSP', institution: 'TSP', amount: null, from: null, note: null },
+        { account_id: 'd', name: '457(b)', institution: 'Empower', amount: 500, from: '2025-10-07', note: 'Could not fetch investment activity; showing saved activity' },
+      ],
+      '2025-10-07'
+    );
+    expect(w.total).toBe(15_500);
+    expect(w.measured).toEqual(['Fidelity 401(k)', 'TIAA 403(b)', 'Empower 457(b)']);
+    expect(w.partial).toEqual([{ name: 'TIAA 403(b)', from: '2026-04-01' }]);
+    expect(w.unmeasured).toEqual(['TSP TSP']);
+    expect(w.problems).toEqual([{ name: 'Empower 457(b)', note: 'Could not fetch investment activity; showing saved activity' }]);
   });
 });
 

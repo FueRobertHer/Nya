@@ -48,8 +48,10 @@ export async function GET(req: Request) {
     // an empty answer under the real account's field. (The cache key carries a
     // version, so payloads with an older meaning are not reachable.)
     const cacheField = `${item_id}:${account_id}`;
-    const cached = await readAccountCache(ctx, cacheField);
-    if (cached) return NextResponse.json({ ...cached, from_cache: true });
+    const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
+    // An entry cached before contributions_12m existed is a miss, so the Plan
+    // tab never reads the field's absence as "nothing contributed".
+    if (cached && 'contributions_12m' in cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const sync = await syncInvestments(ctx, item);
     // Newest first, explicitly: the store has no order of its own.
@@ -93,6 +95,17 @@ export async function GET(req: Request) {
     const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
     const flows_to = flowsKnown ? cov!.through : null;
 
+    // The trailing year's contributions, for the Plan tab's savings
+    // (lib/fire/inputs.ts): new money only, not rollovers, from the later of a
+    // year ago and the first day the store has verified, said with that day so
+    // a shorter span is never read as a whole year. Null where the flows aren't
+    // known, for the same reasons as the line above.
+    const yearAgo = new Date(Date.now() - 364 * 86_400_000).toISOString().slice(0, 10);
+    const contributions_12m_from = flows_from ? (flows_from > yearAgo ? flows_from : yearAgo) : null;
+    const contributions_12m = contributions_12m_from
+      ? sum(mine.filter((t) => t.date >= contributions_12m_from && isContribution(t, counted)))
+      : null;
+
     // Said in full here so the client can print it as is. A fetch failure
     // serves what is stored (and says so only if there is any); a storage
     // problem serves what was just fetched. Both can happen at once.
@@ -108,6 +121,8 @@ export async function GET(req: Request) {
       flows,
       flows_from,
       flows_to,
+      contributions_12m,
+      contributions_12m_from,
       note,
     };
 

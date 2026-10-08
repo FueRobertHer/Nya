@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { realReturn } from '@/lib/fire/derive';
 import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, yearsToTarget } from '@/lib/fire/fi';
-import { makeMarket, type Market } from '@/lib/fire/market';
+import { makeMarket, monthLabel, type Market } from '@/lib/fire/market';
 import { usMarket } from '@/lib/fire/us-market';
 import { seededRandom } from '@/lib/fire/random';
 import {
@@ -499,9 +499,24 @@ describe('the grid', () => {
     expect(mc[0].successRate).toBe(monteCarlo(p, us, { runs: 1500 }).successRate);
   });
 
-  test('VPW has no rate to vary', () => {
-    const cells = successGrid('historical', plan({ rule: { kind: 'vpw', expectedReturn: 0.04 } }), us, [0.04], [30]);
-    expect(cells[0].successRate).toBeNull();
+  test('VPW has no rate to vary: one cell per length, whatever rates are asked for', () => {
+    const cells = successGrid('historical', plan({ rule: { kind: 'vpw', expectedReturn: 0.04 } }), us, [0.03, 0.04], [20, 30]);
+    expect(cells.map((c) => [c.rate, c.years])).toEqual([[null, 20], [null, 30]]);
+    expect(cells[1].successRate).toBe(1);
+    expect(cells[1].lowestSpendingShare!).toBeGreaterThan(0);
+  });
+
+  // A 60-year plan can only start up to 1963, a 50-year one up to 1973: each
+  // column says where its starts end.
+  test('historical cells say which starts they cover; Monte Carlo cells have no dates', () => {
+    const cells = successGrid('historical', plan(), us, [0.04], [30, 50, 60]);
+    expect(cells.map((c) => [c.firstStart, c.lastStart, c.paths])).toEqual([
+      ['1871-01', '1993-06', 1470],
+      ['1871-01', '1973-06', 1230],
+      ['1871-01', '1963-06', 1110],
+    ]);
+    const [mc] = successGrid('monte-carlo', plan(), us, [0.04], [30], { runs: 100 });
+    expect([mc.firstStart, mc.lastStart]).toEqual([null, null]);
   });
 
   test('a flexible rule’s cells say how far spending fell', () => {
@@ -509,6 +524,80 @@ describe('the grid', () => {
     expect(cell.successRate).toBe(1);
     expect(cell.lowestSpendingShare!).toBeGreaterThan(0);
     expect(cell.lowestSpendingShare!).toBeLessThan(1);
+  });
+});
+
+describe('the flexible rules, on the real history', () => {
+  const us = usMarket();
+  const random = seededRandom(31);
+  const pick = <T>(xs: readonly T[]) => xs[Math.floor(random() * xs.length)];
+  /** One stretch of the history, so a historical run is exactly one path. */
+  const window = (years: number) => {
+    const start = Math.floor(random() * (us.months - years * 12 + 1));
+    const end = start + years * 12;
+    return makeMarket(monthLabel(us, start), us.stocks.slice(start, end), us.bonds.slice(start, end), us.inflation.slice(start, end));
+  };
+
+  test('VPW never runs out, still holds money in its last year, and ends at exactly zero', () => {
+    for (let i = 0; i < 60; i++) {
+      const years = 10 + Math.floor(random() * 51);
+      const r = historicalCycles(
+        plan({ years, rule: { kind: 'vpw', expectedReturn: random() * 0.06 }, rebalance: pick(['annual', 'monthly', 'none'] as const), fee: random() * 0.01 }),
+        window(years)
+      );
+      expect(r.paths).toBe(1);
+      expect(r.successRate).toBe(1);
+      expect(r.balance.p50[years - 1]).toBeGreaterThan(0);
+      expect(r.ending.p50).toBe(0);
+    }
+    // With a tax on withdrawals the last withdrawal is grossed up and back,
+    // which can leave a rounding error, never a real amount.
+    const taxed = historicalCycles(plan({ rule: { kind: 'vpw', expectedReturn: 0.03 }, taxRate: 0.25 }), us);
+    expect(taxed.successRate).toBe(1);
+    expect(taxed.ending.p90).toBeLessThan(1e-6);
+  });
+
+  test('percent of portfolio never runs out, and never reaches zero, at any rate, mix or method', () => {
+    for (let i = 0; i < 30; i++) {
+      const stocks = Math.floor(random() * 11);
+      const bonds = Math.floor(random() * (11 - stocks));
+      const r = simulate(
+        pick(['historical', 'monte-carlo'] as const),
+        plan({
+          years: 10 + Math.floor(random() * 51),
+          allocation: { stocks: stocks / 10, bonds: bonds / 10, cash: (10 - stocks - bonds) / 10 },
+          rebalance: pick(['annual', 'monthly', 'none'] as const),
+          fee: random() * 0.02,
+          taxRate: random() * 0.4,
+          rule: { kind: 'percent', rate: 0.01 + random() * 0.14 },
+        }),
+        us,
+        { runs: 300, seed: i }
+      );
+      expect(r.successRate).toBe(1);
+      expect(Math.min(...r.balance.p10)).toBeGreaterThan(0);
+    }
+  });
+
+  // Guyton and Klinger drop the capital preservation rule for the last 15
+  // years: there, the only way the withdrawal falls is the skipped raise.
+  test('guardrails never cut in the final 15 years', () => {
+    for (let i = 0; i < 2_000; i++) {
+      const years = 16 + Math.floor(random() * 45);
+      const s = state({
+        year: years - 1 - Math.floor(random() * 15), // 15 or fewer years left
+        years,
+        balance: 1 + random() * 2_000_000,
+        previous: random() * 200_000,
+        lastNominalReturn: random() * 0.6 - 0.3,
+        lastInflation: random() * 0.2 - 0.05,
+      });
+      const rate = 0.02 + random() * 0.06;
+      const w = guytonKlinger(rate, s);
+      expect(w).toBeGreaterThanOrEqual((s.previous / (1 + Math.max(0, s.lastInflation))) * (1 - 1e-12));
+    }
+    // The same overspending state with 16 years left is cut.
+    expect(guytonKlinger(0.04, state({ year: 14, years: 30, previous: 80_000, balance: 1_000_000 }))).toBeCloseTo(72_000, 9);
   });
 });
 

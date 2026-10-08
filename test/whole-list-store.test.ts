@@ -106,6 +106,27 @@ describe('before a load has succeeded', () => {
     });
   }
 
+  test('says how to try again: Refresh by default, or what the screen offers instead', async () => {
+    const failing = (async () => new Response('{}', { status: 500 })) as unknown as typeof fetch;
+    const make = (reloadHint?: string) =>
+      createWholeListStore<Budgets>({
+        url: '/api/budgets',
+        field: 'budgets',
+        noun: 'budgets',
+        empty: {},
+        isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+        onChange: () => {},
+        fetch: failing,
+        reloadHint,
+      });
+    const plain = make();
+    await plain.load();
+    expect(plain.get().error).toBe('Budgets could not be loaded. Editing is paused until they are; press Refresh to try again.');
+    const own = make('use Try again below');
+    await own.load();
+    expect(own.get().error).toBe('Budgets could not be loaded. Editing is paused until they are; use Try again below.');
+  });
+
   test('a response of the wrong shape is an error, not an empty list', async () => {
     const server = fakeServer({});
     const store = createWholeListStore<Budgets>({

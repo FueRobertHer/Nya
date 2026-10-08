@@ -233,6 +233,9 @@ export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string } 
       expenses,
     };
     if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('a custom start needs startBalance');
+    // A target in the past would have Coast FI grow money backwards in time and
+    // the simulation retire before today.
+    if (plan.age !== null && plan.targetAge !== null && plan.targetAge < plan.age) throw new Invalid('targetAge must not be before age');
     return { plan };
   } catch (err) {
     if (err instanceof Invalid) return { error: err.message };
@@ -316,15 +319,15 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
   };
 }
 
-/** The rule as the engine takes it. */
-export function ruleSpec(plan: FirePlan): RuleSpec {
+/** The rule as the engine takes it, starting at `rate` (VPW has none). */
+export function ruleSpec(plan: FirePlan, rate: number = plan.withdrawalRate): RuleSpec {
   switch (plan.rule) {
     case 'constant':
     case 'percent':
     case 'guardrails':
-      return { kind: plan.rule, rate: plan.withdrawalRate };
+      return { kind: plan.rule, rate };
     case 'floor-ceiling':
-      return { kind: 'floor-ceiling', rate: plan.withdrawalRate, floor: plan.floor, ceiling: plan.ceiling };
+      return { kind: 'floor-ceiling', rate, floor: plan.floor, ceiling: plan.ceiling };
     case 'vpw':
       return { kind: 'vpw', expectedReturn: vpwExpectedReturn(allocationOf(plan)) };
   }
@@ -352,17 +355,34 @@ export function planYears(plan: FirePlan): number {
 export type EnginePlan = {
   sim: SimPlan;
   startAge: number | null;
+  /** The rate the rule starts at, and where it came from: the plan's own
+   *  withdrawal rate (starting with the FI number), or your spending as a
+   *  share of what you start with (starting from your invested assets or a
+   *  typed balance). VPW sets its own share and ignores it. */
+  rate: number;
+  rateFrom: 'plan' | 'spending';
   /** Income and expenses that could not be placed: no age to place them by,
-   *  or an expense dated before the plan starts or after it ends. */
+   *  or an expense dated before the plan starts. */
   left: { income: PlanIncome[]; expenses: PlanExpense[] };
+  /** One-off expenses dated after the plan's own end. They are in the engine
+   *  plan like any other, so a longer column of the grid counts them (as it
+   *  counts income starting that late); the plan itself never reaches them. */
+  beyond: PlanExpense[];
 };
 
+export type Missing = 'spending' | 'assets' | 'balance';
+
 /**
- * The plan as the engine runs it, or why it can't run: the start balance
- * needs the FI number (and so the spending), the invested assets, or a typed
- * balance, by the plan's start choice.
+ * The plan as the engine runs it, or what it needs first.
+ *
+ * Starting with the FI number, the first year withdraws the plan's rate of
+ * it, which is your spending (grossed up for tax) by construction. Starting
+ * from what you have now, or a balance you type, the question is whether
+ * what you SPEND would have lasted, so the first year withdraws your
+ * spending, grossed up for tax, and the rate is what that is of the balance
+ * (a 10% rate is said as 10%, not quietly replaced by the plan's 4%).
  */
-export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing: string } {
+export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing: Missing } {
   let startBalance: number | null;
   if (plan.start === 'fi-number') startBalance = view.fiNumber;
   else if (plan.start === 'assets') startBalance = view.assets.value;
@@ -370,9 +390,19 @@ export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing
   if (startBalance === null) {
     return { missing: plan.start === 'fi-number' ? 'spending' : plan.start === 'assets' ? 'assets' : 'balance' };
   }
+  let rate = plan.withdrawalRate;
+  let rateFrom: EnginePlan['rateFrom'] = 'plan';
+  if (plan.start !== 'fi-number') {
+    const spending = view.spending.value;
+    if (spending === null) return { missing: 'spending' };
+    if (!(startBalance > 0)) return { missing: plan.start === 'assets' ? 'assets' : 'balance' };
+    rate = spending / (1 - plan.taxRate) / startBalance;
+    rateFrom = 'spending';
+  }
   const years = planYears(plan);
   const age = startAge(plan);
   const left: EnginePlan['left'] = { income: [], expenses: [] };
+  const beyond: PlanExpense[] = [];
   const income: SimPlan['income'] = [];
   for (const s of plan.income) {
     if (age === null) left.income.push(s);
@@ -381,8 +411,12 @@ export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing
   const oneOffs: SimPlan['oneOffs'] = [];
   for (const e of plan.expenses) {
     const year = age === null ? -1 : e.atAge - age;
-    if (year < 0 || year >= years) left.expenses.push(e);
-    else oneOffs.push({ amount: e.amount, year });
+    if (year < 0) {
+      left.expenses.push(e);
+      continue;
+    }
+    oneOffs.push({ amount: e.amount, year });
+    if (year >= years) beyond.push(e);
   }
   return {
     sim: {
@@ -392,12 +426,15 @@ export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing
       rebalance: plan.rebalance,
       fee: plan.fee,
       taxRate: plan.taxRate,
-      rule: ruleSpec(plan),
+      rule: ruleSpec(plan, rate),
       income,
       oneOffs,
       cashRealReturn: CASH_REAL_RETURN,
     },
     startAge: age,
+    rate,
+    rateFrom,
+    beyond,
     left,
   };
 }

@@ -513,9 +513,13 @@ function monteCarloSource(market: Market, opts: MonteCarloOptions): PathSource &
     fail('blocks must be whole years, no longer than the history');
   }
   // Every run draws blocks for the longest plan, whatever this plan's length,
-  // so a 30-year run is the first 30 years of the same 60-year run: a plan
-  // that ran out within 30 years also runs out within 40, and the grid's
-  // horizons stay consistent with one another.
+  // so a 30-year run is the first 30 years of the same 60-year run. For a rule
+  // that ignores the plan's length (constant, percent of portfolio, floor and
+  // ceiling), a run that ran out within 30 years also runs out within 40, so
+  // the grid's longer columns never read safer. Guardrails (no cuts in the
+  // last 15 years) and VPW (its share depends on the years left) withdraw
+  // differently at different lengths, so their columns can differ slightly
+  // either way.
   const blocks = Math.ceil((MAX_YEARS * 12) / blockMonths);
   const random = seededRandom(seed);
   const starts = new Int32Array(runs * blocks);
@@ -569,23 +573,28 @@ export function simulate(method: Method, plan: SimPlan, market: Market, opts: Mo
 }
 
 export type GridCell = {
-  rate: number;
+  /** Null for VPW, which has no rate to vary: one cell per length. */
+  rate: number | null;
   years: number;
-  /** Null when the rule has no rate to vary (VPW). */
-  successRate: number | null;
+  successRate: number;
   /** The lowest year's spending as a share of the first year's, among plans
    *  that lasted: how far a flexible rule cut spending. Null when none lasted
    *  or the first year spent nothing. */
   lowestSpendingShare: number | null;
   paths: number;
+  /** The first and last start month of a historical column (a longer plan
+   *  has fewer starts, ending earlier); null for Monte Carlo. */
+  firstStart: string | null;
+  lastStart: string | null;
 };
 
 /**
  * The plan at each withdrawal rate and length: the success-rate grid. Each
- * cell keeps everything else (balance, allocation, income, one-offs past the
- * shorter lengths are simply never reached) and changes only the rule's rate
- * and the plan's length. Monte Carlo cells share a seed, so every cell of a
- * row is judged on the same runs.
+ * cell keeps everything else (balance, allocation, income and one-offs, which
+ * a shorter length may never reach) and changes only the rule's rate and the
+ * plan's length. A rule without a rate (VPW) gets one cell per length, with
+ * `rate` null. Monte Carlo cells share a seed, so every cell of a column is
+ * judged on the same runs.
  */
 export function successGrid(
   method: Method,
@@ -598,12 +607,14 @@ export function successGrid(
   const cells: GridCell[] = [];
   for (const years of horizons) {
     const source = method === 'historical' ? historicalSource(market, years) : monteCarloSource(market, opts);
-    for (const rate of rates) {
-      const rule = withRate(plan.rule, rate);
-      if (!rule) {
-        cells.push({ rate, years, successRate: null, lowestSpendingShare: null, paths: source.count });
-        continue;
-      }
+    const span = {
+      firstStart: method === 'historical' ? source.label(0) : null,
+      lastStart: method === 'historical' ? source.label(source.count - 1) : null,
+    };
+    const variants: { rate: number | null; rule: RuleSpec }[] = withRate(plan.rule, 0)
+      ? rates.map((rate) => ({ rate, rule: withRate(plan.rule, rate) as RuleSpec }))
+      : [{ rate: null, rule: plan.rule }];
+    for (const { rate, rule } of variants) {
       const run = runPaths({ ...plan, years, rule }, market, source, false);
       let lasted = 0;
       let lowest = Infinity;
@@ -618,6 +629,7 @@ export function successGrid(
         successRate: lasted / source.count,
         lowestSpendingShare: lasted > 0 && run.firstYearSpending > 0 ? lowest / run.firstYearSpending : null,
         paths: source.count,
+        ...span,
       });
     }
   }

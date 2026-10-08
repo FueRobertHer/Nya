@@ -39,6 +39,25 @@ export function successText(rate: number, digits = 0): string {
   return `${v}%`;
 }
 
+/** Progress toward a target, by the same rule: under the target never reads
+ *  "100%" (0.996 is ">99%"); at or past it, the true share ("150%"). */
+export function progressText(p: number): string {
+  return p >= 1 ? `${Math.round(p * 100)}%` : successText(p);
+}
+
+/** "Oct 9, 2025" from "2025-10-09", a calendar day shown as it is. */
+export function dayName(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** What the market history is, said the same way everywhere. Shiller's
+ *  stock series is the S&P Composite, which is the S&P 500 from its launch in
+ *  1957, and his long rate is the 10-year Treasury from 1953, government bond
+ *  yields before that (lib/fire/derive.ts). */
+export const DATA_STOCKS = 'the S&P Composite (the S&P 500 since 1957) with dividends reinvested';
+export const DATA_BONDS = 'long-term US government bonds (10-year Treasuries since 1953)';
+
 /** "Nov 1965" from "1965-11". */
 export function monthName(ym: string): string {
   const [y, m] = ym.split('-').map(Number);

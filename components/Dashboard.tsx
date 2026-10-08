@@ -27,18 +27,9 @@ import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance'
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
-import dynamic from 'next/dynamic';
-
-// The Plan tab carries the projection engine and 44 KB of market history, so
-// it is loaded only when the tab is opened (and never on the server).
-const PlanTab = dynamic(() => import('./PlanTab'), {
-  ssr: false,
-  loading: () => (
-    <div className="card">
-      <div className="spinner" role="status" aria-label="Loading" />
-    </div>
-  ),
-});
+// The Plan tab carries the projection engine, so its code is loaded only when
+// the tab is opened, and a failure to load or run it stays on that tab.
+import PlanTabLoader from './PlanTabLoader';
 
 type Account = {
   account_id: string;
@@ -2094,21 +2085,30 @@ export default function Dashboard({
             )}
 
             {tab === 'plan' && (
-              <PlanTab
+              <PlanTabLoader
                 txns={txns}
                 txnsLoading={txnsLoading}
-                // Hidden accounts too: the tab leaves them out itself.
-                accounts={institutions.flatMap((i) =>
-                  i.accounts.map((a) => ({
+                txnNotes={txnNotes}
+                // With what went wrong at each, so a figure that may be short
+                // says so; hidden accounts too, which the tab leaves out itself.
+                institutions={institutions.map((i) => ({
+                  name: i.institution_name,
+                  item_id: i.manual ? null : i.item_id,
+                  error: !!i.error || i.needs_reauth,
+                  staleAsOf: i.stale_as_of ?? null,
+                  staleAsOfAt: i.stale_as_of_at ?? null,
+                  missing: (i.stale_missing ?? 0) + (i.unconfirmed_missing ?? 0),
+                  accounts: i.accounts.map((a) => ({
                     account_id: a.account_id,
                     name: a.name,
-                    institution: i.institution_name,
                     type: a.type,
+                    subtype: a.subtype,
                     balance: a.balance,
                     currency: a.currency,
                     hidden: a.hidden,
-                  }))
-                )}
+                  })),
+                }))}
+                balancesAsOf={asOf}
                 currency={accountCurrency}
               />
             )}
