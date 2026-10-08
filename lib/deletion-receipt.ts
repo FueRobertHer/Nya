@@ -47,6 +47,16 @@ export type BackupRetention = { kept: false } | { kept: true; keep_days: number;
  */
 export const BACKUP_DATE_MARGIN_DAYS = 1;
 
+/**
+ * The most days a nightly backup can keep a copy of data deleted now, while
+ * the nightly backup keeps running: backupRetention()'s max_days (lib/backup.ts)
+ * and the margin above. The receipt dates by it and the public pages
+ * (app/security, app/privacy) state it, so the two always say the same.
+ */
+export function backupDaysAtMost(retention: { max_days: number }): number {
+  return retention.max_days + BACKUP_DATE_MARGIN_DAYS;
+}
+
 export type DeletionReceipt = {
   /** When it finished: an ISO time. */
   deleted_at: string;
@@ -91,7 +101,7 @@ export function buildDeletionReceipt(input: {
               kept: true,
               keep_days: retention.keep_days,
               min_kept: retention.min_kept,
-              until: new Date(input.deleted_at.getTime() + (retention.max_days + BACKUP_DATE_MARGIN_DAYS) * 86_400_000).toISOString(),
+              until: new Date(input.deleted_at.getTime() + backupDaysAtMost(retention) * 86_400_000).toISOString(),
               stopped: input.stopped,
             },
   };

@@ -14,6 +14,8 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 
 Log in, then click **Connect an Account**. Click it again for each additional institution. Each one is added to your dashboard with a running net worth total.
 
+Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside **Connect an account** and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
+
 ### More accounts at an institution you already have
 
 To add (or remove) accounts at an institution that's already connected, tap **Manage** on the Accounts tab, then **Add or remove accounts** on its card. This opens Plaid's account picker on the connection you already have, so it stays one connection: no duplicate accounts, and no second connection for Plaid to bill.

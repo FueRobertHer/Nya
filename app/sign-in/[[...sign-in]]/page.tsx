@@ -4,6 +4,7 @@ import { clerkEnabled } from '@/lib/auth-mode';
 import { demoUsers } from '@/lib/demo';
 import { Brand } from '@/components/Brand';
 import { ForgetDevice } from '@/components/ForgetDevice';
+import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 import DeletionReceiptNotice from '@/components/DeletionReceipt';
 
 // Clerk's sign-in (lib/auth-mode.ts). Without Clerk keys the app signs in with
@@ -38,6 +39,8 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         </div>
       )}
       <SignIn />
+      <CoverageNote />
+      <TrustLinks />
     </main>
   );
 }
