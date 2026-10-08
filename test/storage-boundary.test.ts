@@ -1,14 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { EXACT, PREFIXES } from '@/lib/key-families';
 
 // The storage boundary (Postgres migration plan, Phase 1): only the Redis
 // implementations reach Redis. Everything else goes through a store, and a new
 // store is declared through the storage seam (lib/repo.ts), so it can later run
-// on another backend without its callers changing. Read from the source of
-// lib/, app/, components/, scripts/ and proxy.ts.
+// on another backend without its callers changing. Read from every source file
+// but tests and dependencies.
 
 const ROOT = join(import.meta.dir, '..');
+
+/** What to do instead, for every failure here. */
+const USE_THE_SEAM =
+  'Build stores on the storage seam instead: declare one with defineValueStore or defineMapStore (lib/repo.ts), ' +
+  'import its module in lib/stores.ts, and call its methods. If the seam lacks an operation you need, add a named, ' +
+  'tested method to lib/repo.ts. See docs/architecture.md, "Storage seam".';
 
 /** Reaching Redis directly: its client, or a primitive that reads and writes
  *  whatever key it is handed. By module (relative to the root, no extension). */
@@ -20,7 +27,7 @@ const ACCESS: Record<string, string[]> = {
 const CLIENT = '@upstash/redis';
 
 /** Where Redis is reached by design: the client's own module, and the seam. */
-const IMPLEMENTATION = ['lib/storage.ts', 'lib/repo.ts', 'lib/stored-json.ts'];
+const IMPLEMENTATION = ['lib/storage.ts', 'lib/repo.ts'];
 
 /**
  * Files that reached Redis directly before the seam existed. This list only
@@ -57,10 +64,65 @@ const LEGACY = [
   'lib/sessions.ts',
   'lib/sharing.ts',
   'lib/snapshot-job.ts',
+  'lib/stored-json.ts',
   'lib/transactions.ts',
   'lib/vanished.ts',
   'scripts/move-data.ts',
   'scripts/restore.ts',
+];
+
+/**
+ * The key families stored the old way (lib/key-families.ts), as they were when
+ * the seam arrived. A new key family is a store declared through the seam, never
+ * a new entry on those lists: that would bring back raw Redis calls inside a
+ * LEGACY file. Like LEGACY, these only shrink, as stores move behind the seam.
+ */
+const FROZEN_EXACT = [
+  'account-links',
+  'account-links:dismissed',
+  'account-links:lock',
+  'accounts:directory',
+  'accounts:meta',
+  'accounts:vanished',
+  'budgets',
+  'connections',
+  'containers',
+  'goals',
+  'grants',
+  'hidden:accounts',
+  'history:accounts',
+  'history:accounts:est',
+  'history:accounts:est:ext',
+  'history:accounts:est:flat',
+  'history:accounts:est:flatd',
+  'history:accounts:partial',
+  'history:backfill-done',
+  'history:backfill-pending',
+  'history:net-worth',
+  'history:net-worth:est',
+  'manual:accounts',
+  'owners',
+  'plaid:items',
+  'plaid:new-accounts',
+  'txn-category-carry',
+  'txn-category-overrides',
+  'txn-vendor-renames',
+];
+const FROZEN_PREFIXES = [
+  'backups:',
+  'cache:',
+  'crypto:',
+  'history:forgetting:',
+  'invites:',
+  'invtxns-lock:',
+  'invtxns:',
+  'move:',
+  'ratelimit:',
+  'sessions:',
+  'snapshot:',
+  'txns-blocked:',
+  'txns-unsaved:',
+  'txns:',
 ];
 
 const rel = (path: string) => relative(ROOT, path).replaceAll('\\', '/');
@@ -95,7 +157,16 @@ function takenBy(clause: string): string[] {
   return out;
 }
 
-const scanners = { ts: new Bun.Transpiler({ loader: 'ts' }), tsx: new Bun.Transpiler({ loader: 'tsx' }) };
+const scanners = {
+  ts: new Bun.Transpiler({ loader: 'ts' }),
+  tsx: new Bun.Transpiler({ loader: 'tsx' }),
+  js: new Bun.Transpiler({ loader: 'js' }),
+  jsx: new Bun.Transpiler({ loader: 'jsx' }),
+};
+const scannerFor = (file: string) => {
+  const ext = /\.([cm]?)([jt]sx?)$/.exec(file)?.[2] ?? 'ts';
+  return scanners[ext as keyof typeof scanners];
+};
 
 /**
  * How a file reaches Redis directly, one line per way; empty if it does not.
@@ -125,7 +196,7 @@ function accessIn(file: string, source: string): string[] {
     check(m[3], m[1] ? m[1].split(',').map((p) => p.trim().split(/\s*:\s*/)[0]).filter(Boolean) : ['*']);
   }
   const counted = new Map<string, number>();
-  for (const i of scanners[file.endsWith('.tsx') ? 'tsx' : 'ts'].scanImports(source)) {
+  for (const i of scannerFor(file).scanImports(source)) {
     const to = target(file, i.path);
     counted.set(to, (counted.get(to) ?? 0) + 1);
   }
@@ -135,32 +206,31 @@ function accessIn(file: string, source: string): string[] {
   return found;
 }
 
-const files: string[] = [join(ROOT, 'proxy.ts')];
+// Every source file, JavaScript included, wherever it sits: a new top-level
+// directory or a root file is read too. Not tests, which use the test doubles.
+const files: string[] = [];
 const walk = (dir: string) => {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
-    if (name === 'node_modules' || name.startsWith('.')) continue;
+    if (name === 'node_modules' || name === 'test' || name.startsWith('.')) continue;
     if (statSync(path).isDirectory()) walk(path);
-    else if (/\.tsx?$/.test(name)) files.push(path);
+    else if (/\.[cm]?[jt]sx?$/.test(name)) files.push(path);
   }
 };
-for (const dir of ['lib', 'app', 'components', 'scripts']) walk(join(ROOT, dir));
+walk(ROOT);
 const sources = files.map((path) => ({ file: rel(path), path, source: readFileSync(path, 'utf8') }));
 
 describe('reaching Redis', () => {
   const reaching = sources.map((s) => ({ file: s.file, access: accessIn(s.path, s.source) })).filter((s) => s.access.length > 0);
 
   test('is left to the Redis implementations and the files listed as legacy', () => {
-    expect(sources.length).toBeGreaterThan(100); // the walk found the code
+    // The walk found the code, from the root down, JavaScript included.
+    expect(sources.length).toBeGreaterThan(100);
+    for (const f of ['proxy.ts', 'next.config.js', 'lib/repo.ts', 'app/api/budgets/route.ts']) expect(files.map(rel)).toContain(f);
     const outside = reaching.filter((r) => !IMPLEMENTATION.includes(r.file) && !LEGACY.includes(r.file));
     expect(
       outside.map((r) => `${r.file}: ${r.access.join('; ')}`),
-      [
-        'These files reach Redis directly. Build stores on the storage seam instead: declare one with',
-        'defineValueStore or defineMapStore (lib/repo.ts), import its module in lib/stores.ts, and call',
-        'its methods. If the seam lacks an operation you need, add a named, tested method to lib/repo.ts.',
-        'Do not add a file to LEGACY in this test: that list only shrinks. See docs/architecture.md, "Storage seam".',
-      ].join(' ')
+      `These files reach Redis directly. ${USE_THE_SEAM} Do not add a file to LEGACY in this test: that list only shrinks.`
     ).toEqual([]);
   });
 
@@ -199,10 +269,45 @@ describe('reaching Redis', () => {
       ['lib/sub/a.ts', `import { redis } from './storage';`, []], // lib/sub/storage is another module
       // A form the patterns miss is still counted, so it fails rather than passes.
       ['lib/a.ts', `import{redis}from'./storage';`, ['an import of lib/storage this test cannot read']],
+      // JavaScript too, anywhere in the tree.
+      ['instrumentation.js', `const { redis } = require('./lib/storage');`, ['redis from ./lib/storage']],
+      ['tools/seed.mjs', `import { rawRedis } from '../lib/storage.ts';`, ['rawRedis from ../lib/storage.ts']],
     ];
     for (const [file, source, expected] of cases) {
       expect([source, accessIn(join(ROOT, file), source)]).toEqual([source, expected]);
     }
+  });
+});
+
+describe('the key families stored the old way', () => {
+  const exact = Object.keys(EXACT);
+  const prefixes = PREFIXES.map(([p]) => p);
+
+  test('gain no entry: a new key family is a store declared through the seam', () => {
+    const message =
+      'New key families come through the storage seam, never as a new entry in lib/key-families.ts written with raw ' +
+      `Redis calls (not even inside a LEGACY file). ${USE_THE_SEAM}`;
+    expect(
+      exact.filter((k) => !FROZEN_EXACT.includes(k)),
+      message
+    ).toEqual([]);
+    expect(
+      prefixes.filter((p) => !FROZEN_PREFIXES.includes(p)),
+      message
+    ).toEqual([]);
+  });
+
+  test('only shrink: an entry that came off comes off the frozen list here too', () => {
+    const message = 'These came off lib/key-families.ts (their stores moved behind the seam): take them off the frozen lists in this test.';
+    expect(
+      FROZEN_EXACT.filter((k) => !exact.includes(k)),
+      message
+    ).toEqual([]);
+    expect(
+      FROZEN_PREFIXES.filter((p) => !prefixes.includes(p)),
+      message
+    ).toEqual([]);
+    for (const frozen of [FROZEN_EXACT, FROZEN_PREFIXES]) expect(frozen).toEqual([...new Set(frozen)].sort());
   });
 });
 
