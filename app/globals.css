@@ -1981,6 +1981,7 @@ button.danger-outline {
 
 .panel-note a {
   color: var(--accent);
+}
 
 /* --- security and privacy pages (app/security, app/privacy), the links to
    them and the bank coverage note (components/InfoPage.tsx, TrustLinks.tsx) --- */
