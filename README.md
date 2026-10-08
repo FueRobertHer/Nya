@@ -11,7 +11,7 @@ A personal finance tracker built with Next.js and React. It connects to your fin
 Four tabs, mobile-first, with bottom navigation:
 
 - **Home**: net worth with a 30-day delta and a scrubbable over-time chart (daily snapshots plus an estimated backfill), and insights and alerts: budgets over or approaching their limit, low balances, uninvested cash sitting in a brokerage, upcoming recurring bills and payments due, spending pace against last month, and the biggest purchase.
-- **Accounts**: a per-institution balance sheet. Tap an account for its own balance history. Holdings show gain or loss against cost basis, and money that isn't actually invested (a settlement fund, a sweep account) is marked and flagged once it is large enough to be worth placing. Credit cards and loans show their APR, minimum payment and due date. Investment accounts show the last year of activity and this year's contributions, with rollovers counted separately from money saved. Any account can be **hidden** (still syncing, no longer counted), and institutions Plaid can't reach can be tracked as **manual accounts**.
+- **Accounts**: a per-institution balance sheet. Tap an account for its own balance history. Holdings show gain or loss against cost basis, and money that isn't actually invested (a settlement fund, a sweep account) is marked and flagged once it is large enough to be worth placing. Credit cards and loans show their APR, minimum payment and due date, and a **payoff plan** works out when they're paid off and the interest that costs, highest rate first (avalanche) or smallest balance first (snowball), against paying only the minimums. Investment accounts show the last year of activity and this year's contributions, with rollovers counted separately from money saved. Any account can be **hidden** (still syncing, no longer counted), and institutions Plaid can't reach can be tracked as **manual accounts**.
 - **Activity**: twelve months of transactions with a monthly breakdown (trend columns, money in, out and net, top categories) and search. Recategorize a transaction or rename a vendor; both are manual overrides that persist, and a rename applies to every transaction from that merchant. Transfers and loan payments are left out of the totals, and a pending charge is de-duplicated against its posted version.
 - **Budgets**: monthly budgets per spending category with severity meters, savings goals tracked against a linked account's live balance, and recurring-bill detection with estimated next charge dates.
 
@@ -95,7 +95,7 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 | Guide | What is in it |
 | --- | --- |
 | [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, preview deployments. |
-| [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down. |
+| [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, the debt payoff plan, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down. |
 | [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion, sharing, demo accounts. |
 | [Architecture](docs/architecture.md) | Storage and encryption, caching, how net-worth history is recorded and reconstructed, containers. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move. |
@@ -114,4 +114,4 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 - Push notifications (web push) for budget alerts and upcoming bills.
 - Goal target dates with required-monthly-savings math.
 - Real FX conversion, so mixed-currency totals can be summed rather than only flagged.
-- Debt payoff planning on top of the liabilities data: interest paid per month, avalanche against snowball ordering, and a debt-free date on the net-worth chart.
+- A debt-free date on the net-worth chart, from the payoff plan.

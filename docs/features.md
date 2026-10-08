@@ -5,6 +5,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Connecting accounts](#connecting-accounts)
 - [Removing an institution and adding it back](#removing-an-institution-and-adding-it-back)
 - [Payment details](#payment-details)
+- [Debt payoff plan](#debt-payoff-plan)
 - [Hiding accounts](#hiding-accounts)
 - [When an institution can't be reached](#when-an-institution-cant-be-reached)
 - [Manual accounts](#manual-accounts)
@@ -59,6 +60,29 @@ Credit cards and loans show what they actually cost: purchase APR, minimum payme
 This comes from Plaid's Liabilities product, which has to be enabled on an institution before it will return anything. Newly connected institutions get it automatically. Institutions you linked before this existed don't, so they show an **Enable payment details** button on their card: tap it, log back in through Plaid, and the terms appear.
 
 That button goes through Link's *update mode*, which re-authenticates the institution you already have rather than adding a second one: the item keeps its id, and its stored transaction history survives. Not every institution supports the product; where it isn't supported the button says so rather than failing silently, and where there's simply nothing to report (no cards or loans) no button appears at all.
+
+## Debt payoff plan
+
+**Payoff plan** on the Accounts tab (shown whenever a credit card or loan is on screen) works out when your cards and loans are paid off and what that costs in interest, paying a steady amount each month.
+
+Each debt starts from its balance and the terms Plaid supplies: the purchase APR for a card (its highest rate when it reports no purchase APR), the interest rate for a student loan or mortgage, and the minimum payment (a mortgage's scheduled monthly payment). Every figure says whether it came from Plaid or was typed. Manual accounts have no terms, and neither do cards and loans at an institution without [payment details](#payment-details) or loans Plaid doesn't cover (auto and personal loans), so you type the rate and payment from a statement. You can also type over anything Plaid supplied, and go back to Plaid's figure. The plan waits until every debt has both, or has been left out of it: it never assumes a rate. Hidden accounts aren't included, and a card or loan with nothing owed is listed but not planned. Each debt also shows roughly what it costs in interest a month at its current balance.
+
+Add an extra amount each month and pick an order:
+
+- **Avalanche** pays the highest rate first, which costs the least interest.
+- **Snowball** pays the smallest balance first, which clears debts sooner and can cost more.
+
+Either way the total paid stays the same every month: each debt gets its own payment, the rest goes to the debt at the front, and when a debt is paid off its payment moves on to the next one. Both are shown beside **minimums only**, where each debt gets just its own payment and that payment stops once it's paid off: the debt-free month, the total interest, the interest and time saved against minimums only, the order the debts are cleared in with each one's month and interest, and a chart of what is owed over time.
+
+How the numbers are worked out:
+
+- Interest is charged monthly at the APR / 12 on what is owed and rounded to the cent, and everything is counted in cents, so what is paid always equals what was owed plus the interest, to the cent. Card issuers charge interest daily, which comes to slightly more, so a card's real interest runs a little higher than shown.
+- Payments stay at today's amounts. A card's required minimum usually falls with the balance, so paying only what is required takes longer still. New charges, fees and promotional rates aren't modelled. The first payment is a month from now.
+- A payment that doesn't cover a debt's interest never pays it off, and the planner says so on that debt. A plan that hasn't cleared everything within 50 years is reported as never paying off rather than given a date, and minimums only then has no total to measure savings against.
+- A mortgage payment from Plaid can include escrow (taxes and insurance), which doesn't pay down the loan. If yours does, type just the principal and interest.
+- Debts in different currencies are planned one currency at a time: nothing is converted between currencies.
+
+Nothing you type is saved, on the server or on the device. It lasts until the app is reloaded.
 
 ## Hiding accounts
 
