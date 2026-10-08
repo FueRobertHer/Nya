@@ -67,7 +67,12 @@ export function splitScoped(key: string): { container: ContainerId | null; key: 
 }
 
 /** Stores that belong to the whole environment (see kEnv in lib/storage.ts),
- *  so never appear inside a container. */
+ *  so never appear inside a container. "ratelimit:" is the rate limits that
+ *  count by address, before anyone is known: the login's (lib/rate-limit.ts)
+ *  and the demo sign-in's (app/api/demo/sign-in). A limit on something a person
+ *  does once signed in (downloading their data) is a counter store on the
+ *  storage seam, inside their container, never under this prefix
+ *  (test/rate-limit-keys.test.ts checks every rate-limit key the code builds). */
 export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:'] as const;
 
 export function isEnvWide(key: string): boolean {

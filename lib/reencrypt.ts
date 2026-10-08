@@ -44,6 +44,7 @@ import { createHash } from 'node:crypto';
 import { rawRedis, envPrefix } from './storage';
 import { splitScoped, isEnvWide } from './containers';
 import { declaredStore } from './stores';
+import type { Store } from './repo';
 import { listedKind, type Kind } from './key-families';
 import {
   activeKeyForReencryption,
@@ -64,6 +65,9 @@ import {
 // the old way: lib/key-families.ts.
 export type { Kind } from './key-families';
 
+/** How each shape of store the seam declares keeps its values. */
+const SEAM_KINDS: Record<Store['kind'], Kind> = { value: 'string', map: 'hash', counter: 'plain' };
+
 /** How a key (without the environment prefix) is stored, or null if it is
  *  neither on the lists nor a declared store's. */
 export function classify(key: string): Kind | null {
@@ -74,12 +78,12 @@ export function classify(key: string): Kind | null {
   if (!scoped.container) return listedKind(key);
   if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
   // Then a store declared through the seam: a value store is one string of
-  // ciphertext, a map store a hash of it. Only inside a container, where the
-  // seam keeps everything; the same name outside one was built wrongly, so it
-  // is reported. The seam refuses a name the lists claim, so this changes
-  // nothing on them.
+  // ciphertext, a map store a hash of it, a counter store a plain integer.
+  // Only inside a container, where the seam keeps everything; the same name
+  // outside one was built wrongly, so it is reported. The seam refuses a name
+  // the lists claim, so this changes nothing on them.
   const store = declaredStore(scoped.key);
-  return listedKind(scoped.key) ?? (store === null ? null : store.kind === 'value' ? 'string' : 'hash');
+  return listedKind(scoped.key) ?? (store === null ? null : SEAM_KINDS[store.kind]);
 }
 
 // The compare-and-set scripts. The value read is compared by SHA-1, so an

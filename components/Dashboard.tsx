@@ -10,9 +10,13 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
+import DownloadMyData from './DownloadMyData';
 import { instantDay } from '@/lib/local-date';
+import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
+import DebtPayoff from './DebtPayoff';
+import { CoverageNote, TrustLinks } from './TrustLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
@@ -28,6 +32,9 @@ import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance'
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
+// The Plan tab carries the projection engine, so its code is loaded only when
+// the tab is opened, and a failure to load or run it stays on that tab.
+import PlanTabLoader from './PlanTabLoader';
 
 type Account = {
   account_id: string;
@@ -156,7 +163,7 @@ const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
   { value: 'other', label: 'Other (property, crypto)' },
 ];
 
-type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
+type Tab = 'home' | 'accounts' | 'activity' | 'budgets' | 'plan';
 
 // Last-known dashboard snapshot, kept on-device so the app paints instantly on
 // open (and shows something useful offline) while fresh data loads. Cleared on
@@ -341,6 +348,11 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
       <path d="M12 12V3M12 12l6.4 6.4" />
     </svg>
   ),
+  plan: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />
+    </svg>
+  ),
 };
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -348,6 +360,7 @@ const TAB_LABELS: Record<Tab, string> = {
   accounts: 'Accounts',
   activity: 'Activity',
   budgets: 'Budgets',
+  plan: 'Plan',
 };
 
 export default function Dashboard({
@@ -434,6 +447,9 @@ export default function Dashboard({
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
+  // The debt payoff planner, opened from the Accounts tab (components/DebtPayoff.tsx).
+  const [payoffOpen, setPayoffOpen] = useState(false);
+  const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
   const [disconnectInput, setDisconnectInput] = useState('');
@@ -1352,6 +1368,7 @@ export default function Dashboard({
               <button onClick={startConnect} disabled={connecting}>
                 {connecting ? 'Starting…' : 'Connect an account'}
               </button>
+              <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
                   entry point for someone whose bank Plaid doesn't support at all. */}
@@ -1487,6 +1504,7 @@ export default function Dashboard({
                   <button onClick={startConnect} disabled={connecting}>
                     {connecting ? 'Starting…' : 'Connect an account'}
                   </button>
+                  <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
                   <div className="action-row">
@@ -1498,6 +1516,13 @@ export default function Dashboard({
                       <button className="secondary" onClick={() => setSharingOpen(true)}>
                         <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
                         Sharing
+                      </button>
+                    )}
+                    {/* Whenever there is a card or loan on screen to plan. */}
+                    {allAccounts.some((a) => isOwedType(a.type)) && (
+                      <button className="secondary" onClick={() => setPayoffOpen(true)}>
+                        <ActionIcon d="M22 17 13.5 8.5l-5 5L2 7M16 17h6v-6" />
+                        Payoff plan
                       </button>
                     )}
                     <button className="secondary" onClick={() => setManageMode((m) => !m)} aria-pressed={manageMode}>
@@ -2035,6 +2060,11 @@ export default function Dashboard({
                   </div>
                 )}
 
+                {/* Download my data, with the rest of the account upkeep
+                    behind Manage accounts; after the accounts, so it doesn't
+                    push them down. It asks for a fresh sign-in itself. */}
+                {manageMode && <DownloadMyData clerk={clerk} />}
+
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
@@ -2081,14 +2111,47 @@ export default function Dashboard({
                 loading={txnsLoading}
               />
             )}
+
+            {tab === 'plan' && (
+              <PlanTabLoader
+                txns={txns}
+                txnsLoading={txnsLoading}
+                txnNotes={txnNotes}
+                // With what went wrong at each, so a figure that may be short
+                // says so; hidden accounts too, which the tab leaves out itself.
+                institutions={institutions.map((i) => ({
+                  name: i.institution_name,
+                  item_id: i.manual ? null : i.item_id,
+                  error: !!i.error || i.needs_reauth,
+                  staleAsOf: i.stale_as_of ?? null,
+                  staleAsOfAt: i.stale_as_of_at ?? null,
+                  missing: (i.stale_missing ?? 0) + (i.unconfirmed_missing ?? 0),
+                  accounts: i.accounts.map((a) => ({
+                    account_id: a.account_id,
+                    name: a.name,
+                    type: a.type,
+                    subtype: a.subtype,
+                    balance: a.balance,
+                    currency: a.currency,
+                    hidden: a.hidden,
+                  })),
+                }))}
+                balancesAsOf={asOf}
+                currency={accountCurrency}
+              />
+            )}
           </>
         )}
+        {/* At the foot of every tab: how the data is protected, and who can read it. */}
+        <TrustLinks />
       </main>
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
+      {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
+      <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">
-          {(['home', 'accounts', 'activity', 'budgets'] as const).map((t) => (
+          {(['home', 'accounts', 'activity', 'budgets', 'plan'] as const).map((t) => (
             <button
               key={t}
               className={tab === t ? 'active' : ''}
@@ -2287,9 +2350,20 @@ export default function Dashboard({
         {shownDisconnectTarget && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya. You can
-              reconnect it later. Type <strong>{shownDisconnectTarget.institution_name}</strong> below to
-              confirm.
+              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
+              connection at Plaid. You can reconnect it later. Type{' '}
+              <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
+            </p>
+            {/* What Plaid itself keeps is beyond a disconnect's reach (the
+                deletion receipt says the same, lib/deletion-receipt.ts): say
+                where people can see and delete it. */}
+            <p className="panel-note">
+              Plaid keeps its own records of what it collected, under its own privacy policy. See and delete
+              them at the{' '}
+              <a href={PLAID_PORTAL} target="_blank" rel="noreferrer">
+                Plaid Portal
+              </a>
+              .
             </p>
             <label className="field" style={{ marginTop: 12 }}>
               Institution name

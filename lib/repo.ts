@@ -18,6 +18,16 @@
 //                     accounts). In Redis, one hash with a field per id; in a
 //                     table, a row per id.
 //
+// And one for the service's own bookkeeping:
+//
+//   defineCounterStore  a count per container in a fixed window that starts
+//                       with its first count and ends on its own (a rate
+//                       limit, such as downloads of my data). Not the
+//                       person's data, so never encrypted or exported. In
+//                       Redis, one integer key with an expiry, counted in
+//                       Lua; in a table, a row with the count and the end of
+//                       its window.
+//
 // CONTAINERS ONLY, by design. Every store keeps its data inside a container (kc
 // in lib/storage.ts), so deleting the account deletes it with the rest
 // (lib/account-deletion.ts sweeps the container's prefix). There is no
@@ -42,7 +52,8 @@
 //
 // then import that module in lib/stores.ts, the catalogue that everything
 // walking every store reads: the key inventory in lib/reencrypt.ts, and the
-// person's data download once there is one. The name is the key family, so a
+// person's data download (lib/user-export.ts), where each store declared
+// exportable is a section of its own. The name is the key family, so a
 // declared store is in the key inventory by construction.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with
@@ -272,7 +283,28 @@ export type MapStore<T> = Declared & {
   has(ctx: Ctx, id: string): Promise<boolean>;
 };
 
-export type Store = ValueStore<unknown> | MapStore<unknown>;
+/** A counter store's window as it stands. */
+export type CounterWindow = {
+  /** Counted so far in this window: 0 when none is running. */
+  count: number;
+  /** Seconds until this window ends: 0 when none is running, else at least 1. */
+  secondsLeft: number;
+};
+
+export type CounterStore = Declared & {
+  readonly kind: 'counter';
+  /** How long a window lasts, from its first count. */
+  readonly windowSeconds: number;
+  /** Strict: the window as it stands. Counts nothing. Throws if the count
+   *  cannot be read, so a limit built on it fails closed. */
+  read(ctx: Ctx): Promise<CounterWindow>;
+  /** Counts one, atomically, starting a window if none is running, and answers
+   *  the window with this one counted. Two callers racing never get the same
+   *  count, so the count is what decides. Throws if it cannot count. */
+  take(ctx: Ctx): Promise<CounterWindow>;
+};
+
+export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore;
 
 /**
  * Reads fields exactly: each as "v" followed by its stored text, or "" where
@@ -300,6 +332,49 @@ local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if (cur and redis.sha1hex(cur) or '') ~= ARGV[2] then return 0 end
 if ARGV[3] == '' then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.call('HSET', KEYS[1], ARGV[1], ARGV[3]) end
 return 1`;
+
+/** The error a counter store's take answers for a stored count that is not
+ *  one, so it can be told from storage failing. */
+const NOT_A_COUNT = 'ERR nya: the stored count is not a count';
+
+/**
+ * A counter store's window, read: its count (prefixed "v", so the client parses
+ * nothing and the text is checked as stored) and its seconds left, or "" and 0
+ * when no window is running. A count with no expiry (written by hand, or
+ * restored from a copy taken in its last second, which records none) is given
+ * a whole window here, so a limit can never stay shut for good; this is the one
+ * write a read makes, and it only ever ends a window.
+ */
+export const COUNTER_READ = `-- nya:repo-counter-read
+local n = redis.call('GET', KEYS[1])
+if not n then return {'', 0} end
+local ttl = redis.call('TTL', KEYS[1])
+if ttl == -1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {'v' .. n, ttl}`;
+
+/**
+ * Counts one in a counter store, in one step: refuses, writing nothing, if what
+ * is there is not a count as INCR writes one (digits, no sign or leading zero),
+ * then INCR, then a window of ARGV[1] seconds if the count has no expiry, which
+ * a first count never has. A TTL of 0 is under a second left: that window is
+ * still running, and is not given a fresh one. Answers the count and its
+ * seconds left.
+ */
+export const COUNTER_TAKE = `-- nya:repo-counter-take
+local cur = redis.call('GET', KEYS[1])
+if cur and cur ~= '0' and not string.match(cur, '^[1-9]%d*$') then
+  return redis.error_reply('${NOT_A_COUNT}')
+end
+local n = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {n, ttl}`;
 
 /** Fields read per READ_ENTRIES call, well inside Lua's limit for unpack. */
 const READ_BATCH = 1000;
@@ -616,6 +691,67 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     },
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
+    },
+  });
+}
+
+export type CounterOptions = {
+  /** What it holds, plural, for messages: "Your saved {what} could not be
+   *  read" (a count that is not one). */
+  what: string;
+  /** How long a window lasts, from its first count: a whole number of seconds. */
+  windowSeconds: number;
+};
+
+/** A count as COUNTER_READ answers it: digits only, as INCR writes them. */
+const COUNT = /^v(0|[1-9][0-9]*)$/;
+
+/**
+ * Declares a counter store: a count per container in a fixed window (see TWO
+ * SHAPES above). The service's bookkeeping, so never exportable: it is left out
+ * of the person's data download. Values are plain integers, which the
+ * re-encryption pass knows (classify() in lib/reencrypt.ts).
+ */
+export function defineCounterStore(name: string, opts: CounterOptions): CounterStore {
+  const { what, windowSeconds } = opts;
+  if (!Number.isInteger(windowSeconds) || windowSeconds < 1) {
+    throw new Error(`The window of "${name}" must be a whole number of seconds, 1 or more.`);
+  }
+  const key = (ctx: Ctx) => storeKey(ctx, name);
+  /** The window from a script's answer, checked: anything else says the
+   *  count cannot be used, never that nothing was counted. */
+  const windowOf = (answer: unknown, counted: boolean): CounterWindow => {
+    if (!Array.isArray(answer) || answer.length !== 2 || !Number.isInteger(Number(answer[1]))) {
+      throw new Error(`repo: unexpected answer counting ${name}`);
+    }
+    const [raw, ttl] = [answer[0], Number(answer[1])];
+    if (!counted && raw === '') return { count: 0, secondsLeft: 0 };
+    const count = counted ? Number(raw) : typeof raw === 'string' && COUNT.test(raw) ? Number(raw.slice(1)) : NaN;
+    // Damaged (not a count, or a count no INCR wrote): unreadable, and thrown,
+    // so a limit built on it stays shut rather than open. The window's expiry
+    // still ends it.
+    if (!Number.isSafeInteger(count) || count < (counted ? 1 : 0)) throw new UnreadableValueError(what, false);
+    return { count, secondsLeft: Math.max(1, ttl) };
+  };
+  return declare<CounterStore>({
+    kind: 'counter',
+    name,
+    what,
+    exportable: false,
+    windowSeconds,
+    async read(ctx) {
+      return windowOf(await redis().eval(COUNTER_READ, [key(ctx)], [String(windowSeconds)]), false);
+    },
+    async take(ctx) {
+      let answer: unknown;
+      try {
+        answer = await redis().eval(COUNTER_TAKE, [key(ctx)], [String(windowSeconds)]);
+      } catch (err) {
+        // The script's refusal of a damaged count blames it, as read does.
+        if (err instanceof Error && err.message.includes(NOT_A_COUNT)) throw new UnreadableValueError(what, false, err);
+        throw err;
+      }
+      return windowOf(answer, true);
     },
   });
 }

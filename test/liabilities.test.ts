@@ -81,6 +81,7 @@ describe('normalizeLiabilities', () => {
             minimum_payment_amount: 35,
             next_payment_due_date: '2026-09-15',
             last_statement_balance: 410,
+            last_statement_issue_date: '2026-08-20',
             last_payment_amount: 100,
             last_payment_date: '2026-08-01',
             is_overdue: false,
@@ -95,6 +96,7 @@ describe('normalizeLiabilities', () => {
       minimum_payment: 35,
       next_due_date: '2026-09-15',
       last_statement_balance: 410,
+      last_statement_issue_date: '2026-08-20',
       last_payment_amount: 100,
       last_payment_date: '2026-08-01',
       is_overdue: false,
@@ -159,6 +161,65 @@ describe('normalizeLiabilities', () => {
     // Absent is "unknown", not "not overdue" -- a false would render a
     // reassurance the data doesn't support.
     expect(mortgage(null).is_overdue).toBeNull();
+  });
+
+  // Plaid's own example card (LiabilitiesGetResponse in its API spec): four rates,
+  // one a 0% special rate on $1,000.
+  test("keeps what each of a card's rates applied to, for the payoff planner's blend", () => {
+    const out = normalizeLiabilities(
+      obj({
+        credit: [
+          {
+            account_id: 'card',
+            aprs: [
+              { apr_percentage: 15.24, apr_type: 'balance_transfer_apr', balance_subject_to_apr: 1562.32, interest_charge_amount: 130.22 },
+              { apr_percentage: 27.95, apr_type: 'cash_apr', balance_subject_to_apr: 56.22, interest_charge_amount: 14.81 },
+              { apr_percentage: 12.5, apr_type: 'purchase_apr', balance_subject_to_apr: 157.01, interest_charge_amount: 25.66 },
+              { apr_percentage: 0, apr_type: 'special', balance_subject_to_apr: 1000, interest_charge_amount: 0 },
+              { apr_percentage: 21, apr_type: 'purchase_apr', balance_subject_to_apr: null },
+              { apr_percentage: 9, apr_type: 'special', balance_subject_to_apr: 0 },
+            ],
+          },
+          { account_id: 'plain', aprs: [{ apr_type: 'purchase_apr', apr_percentage: 21.24 }] },
+        ],
+      })
+    );
+    expect(out['card'].apr_balances).toEqual([
+      { type: 'balance_transfer_apr', rate: 15.24, balance: 1562.32 },
+      { type: 'cash_apr', rate: 27.95, balance: 56.22 },
+      { type: 'purchase_apr', rate: 12.5, balance: 157.01 },
+      { type: 'special', rate: 0, balance: 1000 },
+    ]);
+    // The row's single rate is unchanged: still the purchase APR.
+    expect(out['card'].apr).toBe(12.5);
+    // A card that reports no balances per rate carries no field at all.
+    expect('apr_balances' in out['plain']).toBe(false);
+  });
+
+  test("keeps a mortgage's original amount, term and rate type", () => {
+    const out = normalizeLiabilities(
+      obj({
+        mortgage: [
+          {
+            account_id: 'm',
+            interest_rate: { percentage: 3.99, type: 'fixed' },
+            loan_term: '30 year',
+            origination_principal_amount: 425000,
+            next_monthly_payment: 3141.54,
+            escrow_balance: 3141.54,
+          },
+        ],
+      })
+    );
+    expect(out['m']).toMatchObject({
+      origination_principal_amount: 425000,
+      loan_term: '30 year',
+      interest_rate_type: 'fixed',
+      minimum_payment: 3141.54,
+      escrow_balance: 3141.54,
+    });
+    const bare = normalizeLiabilities(obj({ mortgage: [{ account_id: 'm', loan_term: 30 }] }))['m'];
+    expect(bare).toMatchObject({ origination_principal_amount: null, loan_term: null, interest_rate_type: null });
   });
 
   test('survives a mortgage with no interest_rate object', () => {

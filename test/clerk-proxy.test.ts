@@ -73,6 +73,36 @@ describe('with Clerk on', () => {
     }
   });
 
+  test('so do the security and privacy pages, and the password login (which sends people to sign-in)', async () => {
+    for (const path of ['/security', '/privacy', '/login']) {
+      const res = await call(path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    }
+    expect((await call('/security/x')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fsecurity%2Fx');
+  });
+
+  test("pages get the policy, with Clerk's host from the publishable key; the API gets none", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = `pk_live_${btoa('clerk.nya.example.com$').replace(/=+$/, '')}`;
+    for (const path of ['/sign-in', '/security']) {
+      const policy = (await call(path)).headers.get('content-security-policy-report-only');
+      expect(policy).toContain('https://clerk.nya.example.com');
+      expect(policy).toContain('https://challenges.cloudflare.com');
+    }
+    clerk.signedIn = 'user_owner';
+    const page = await call('/');
+    expect(page.status).toBe(200);
+    const policy = page.headers.get('content-security-policy-report-only')!;
+    expect(page.headers.get('x-middleware-request-x-nonce')).toBe(/'nonce-([^']+)'/.exec(policy)![1]);
+    const api = await call('/api/net-worth');
+    expect(api.status).toBe(200);
+    expect(api.headers.get('content-security-policy-report-only')).toBeNull();
+    expect(api.headers.get('content-security-policy')).toBeNull();
+    // A browser sent to an /api/ path that does not exist gets the HTML 404 page, so the policy too.
+    const nav = await proxy(new NextRequest('https://nya.test/api/nope', { headers: { accept: 'text/html' } }), {} as any);
+    expect(nav.headers.get('content-security-policy-report-only')).toContain("'strict-dynamic'");
+  });
+
   test('an allowed account gets in', async () => {
     clerk.signedIn = 'user_partner';
     expect((await call('/')).status).toBe(200);
