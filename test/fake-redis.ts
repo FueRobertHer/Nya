@@ -514,7 +514,8 @@ export class FakeRedis {
     }
     if (name === '-- nya:repo-update-entry') {
       if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
-      if ((this.hashes.get(keys[0])?.get(args[0]) ?? '') !== args[1]) return 0;
+      const cur = this.hashes.get(keys[0])?.get(args[0]);
+      if ((cur === undefined ? '' : sha1(cur)) !== args[1]) return 0;
       if (args[2] === '') this.hdelNow(keys[0], [args[0]]);
       else this.hash(keys[0]).set(args[0], args[2]);
       return 1;

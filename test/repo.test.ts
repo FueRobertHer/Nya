@@ -36,9 +36,12 @@ const {
   forgetDeclaredStore,
   StoredDataUnreadableError,
   UnreadableEntriesError,
+  UnreadableValueError,
+  StoreRefusedError,
   UpdateConflictError,
   StoredValueTooLargeError,
   READ_ENTRIES,
+  UPDATE_ENTRY,
 } = await import('@/lib/repo');
 const { declaredStores, declaredStore } = await import('@/lib/stores');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
@@ -97,13 +100,15 @@ const notesKey = (ctx = A) => ctxKey('seam-contract-notes', ctx);
 const NOTE: Note = { text: 'groceries', amount: 82.13 };
 const RENT: Note = { text: 'rent', amount: 1200 };
 
-/** Stored values whose own content is damaged, each in a different way. */
-const DAMAGED: [string, () => Promise<string>][] = [
-  ['not ciphertext', async () => 'not-ciphertext-but-long-enough-to-be-tried'],
-  ['not JSON once decrypted', () => encrypt('not json')],
-  ['the wrong shape once decrypted', () => encrypt('{"not":"the shape"}')],
-  ['plaintext JSON, never encrypted', async () => '{"text":"plain","amount":1}'],
-  ['a bare number', async () => '12345'],
+/** Stored values that cannot be used, each in a different way: their bytes
+ *  damaged ('unreadable', which may be removed), or intact but not understood
+ *  ('unrecognised', which never may). */
+const FLAWED: [string, 'unreadable' | 'unrecognised', () => Promise<string>][] = [
+  ['not ciphertext', 'unreadable', async () => 'not-ciphertext-but-long-enough-to-be-tried'],
+  ['plaintext JSON, never encrypted', 'unreadable', async () => '{"text":"plain","amount":1}'],
+  ['a bare number', 'unreadable', async () => '12345'],
+  ['not JSON once decrypted', 'unrecognised', () => encrypt('not json')],
+  ['the wrong shape once decrypted', 'unrecognised', () => encrypt('{"not":"the shape"}')],
 ];
 
 /** A ciphertext with one character of its body changed, still valid base64:
@@ -180,12 +185,15 @@ function contract(b: Backend) {
       expect(await b.raw.get(listKey())).not.toContain('groceries');
     });
 
-    for (const [how, make] of DAMAGED) {
-      test(`${how}: an error, never null, and a save over it is refused, leaving it as it was`, async () => {
+    for (const [how, flaw, make] of FLAWED) {
+      test(`${how}: ${flaw}, never null, and a save over it is refused, leaving it as it was`, async () => {
         const stored = await make();
         await b.raw.set(listKey(), stored);
-        await expect(list.get(A)).rejects.toBeInstanceOf(StoredDataUnreadableError);
-        await expect(list.set(A, [NOTE])).rejects.toBeInstanceOf(StoredDataUnreadableError);
+        const err = await list.get(A).catch((e) => e);
+        expect(err).toBeInstanceOf(UnreadableValueError);
+        expect(err).toBeInstanceOf(StoredDataUnreadableError); // routes answer it as they do today
+        expect(err.unrecognised).toBe(flaw === 'unrecognised'); // intact: never offered for removal
+        await expect(list.set(A, [NOTE])).rejects.toBeInstanceOf(UnreadableValueError);
         expect(await b.raw.get(listKey())).toBe(stored);
       });
     }
@@ -260,7 +268,7 @@ function contract(b: Backend) {
     test('never saved: an empty map, no entry, none counted', async () => {
       expect((await notes.getAll(A)).size).toBe(0);
       expect((await notes.getAllLenient(A)).size).toBe(0);
-      expect(await notes.getAllReport(A)).toEqual({ entries: new Map(), unreadable: [] });
+      expect(await notes.getAllReport(A)).toEqual({ entries: new Map(), unreadable: [], unrecognised: [] });
       expect(await notes.get(A, 'n1')).toBeNull();
       expect((await notes.getMany(A, ['n1', 'n2'])).size).toBe(0);
       expect(await notes.count(A)).toBe(0);
@@ -371,16 +379,17 @@ function contract(b: Backend) {
       expect(stored.n1).not.toContain('groceries');
     });
 
-    const damagedEntries: [string, () => Promise<string>][] = [
-      ...DAMAGED,
-      ['empty', async () => ''],
+    const flawedEntries: [string, 'unreadable' | 'unrecognised', () => Promise<string>][] = [
+      ...FLAWED,
+      ['empty', 'unreadable', async () => ''],
       // The client reads this text as null: a get() that took it for "no
       // entry" would disagree with has() and count().
-      ['the JSON literal null', async () => 'null'],
+      ['the JSON literal null', 'unreadable', async () => 'null'],
     ];
-    for (const [how, make] of damagedEntries) {
-      test(`one entry ${how}: strict reads name it, the report lists it, the lenient read leaves out only it`, async () => {
+    for (const [how, flaw, make] of flawedEntries) {
+      test(`one entry ${how}: strict reads name it as ${flaw}, so does the report, and the lenient read leaves out only it`, async () => {
         const stored = await make();
+        const named = flaw === 'unreadable' ? { unreadable: ['n2'], unrecognised: [] } : { unreadable: [], unrecognised: ['n2'] };
         await notes.setMany(A, [
           ['n1', NOTE],
           ['n3', RENT],
@@ -390,7 +399,7 @@ function contract(b: Backend) {
           const err = await read().catch((e) => e);
           expect(err).toBeInstanceOf(UnreadableEntriesError);
           expect(err).toBeInstanceOf(StoredDataUnreadableError); // routes answer it as they do today
-          expect(err.ids).toEqual(['n2']);
+          expect({ unreadable: err.unreadable, unrecognised: err.unrecognised }).toEqual(named);
           expect(err.message).not.toContain('n2'); // ids stay out of logs
         }
         expect(await notes.get(A, 'n1')).toEqual(NOTE);
@@ -403,7 +412,7 @@ function contract(b: Backend) {
           ['n1', NOTE],
           ['n3', RENT],
         ]);
-        expect(report.unreadable).toEqual(['n2']);
+        expect({ unreadable: report.unreadable, unrecognised: report.unrecognised }).toEqual(named);
         expect([...(await notes.getAllLenient(A))]).toEqual([
           ['n1', NOTE],
           ['n3', RENT],
@@ -427,19 +436,53 @@ function contract(b: Backend) {
       });
     }
 
-    test('every damaged entry is named, so they can be removed once the person agrees', async () => {
+    test('every entry it cannot use is named, and only the damaged ones are for removing', async () => {
       await notes.setMany(A, [
         ['n1', NOTE],
         ['n3', RENT],
       ]);
       await b.raw.hset(notesKey(), 'n4', 'damaged');
-      await b.raw.hset(notesKey(), 'n2', await encrypt('{"not":"the shape"}'));
+      await b.raw.hset(notesKey(), 'n6', '12345');
+      await b.raw.hset(notesKey(), 'n2', await encrypt('{"not":"the shape"}')); // intact, a shape this code lacks
       const err = await notes.getAll(A).catch((e) => e);
-      expect(err.ids).toEqual(['n2', 'n4']);
-      const { unreadable } = await notes.getAllReport(A);
-      expect(unreadable).toEqual(['n2', 'n4']);
-      await notes.remove(A, ...unreadable);
-      expect([...(await notes.getAll(A)).keys()]).toEqual(['n1', 'n3']);
+      expect([err.unreadable, err.unrecognised]).toEqual([['n4', 'n6'], ['n2']]);
+      const report = await notes.getAllReport(A);
+      expect([report.unreadable, report.unrecognised]).toEqual([['n4', 'n6'], ['n2']]);
+      // What a repair offers, once the person agrees: the damaged entries only.
+      await notes.remove(A, ...report.unreadable);
+      expect(await notes.getAllReport(A)).toEqual({
+        entries: new Map([
+          ['n1', NOTE],
+          ['n3', RENT],
+        ]),
+        unreadable: [],
+        unrecognised: ['n2'], // still there, for a fix in the code
+      });
+      expect(await b.raw.hget(notesKey(), 'n2')).not.toBeNull();
+    });
+
+    test('a value that fails to decompress is a deployment problem: thrown as it is, never reported or left out', async () => {
+      await bigNotes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', RENT],
+      ]);
+      const working = globalThis.DecompressionStream;
+      globalThis.DecompressionStream = class {
+        constructor() {
+          throw new Error('decompression is unavailable');
+        }
+      } as never;
+      try {
+        for (const read of [() => bigNotes.getAll(A), () => bigNotes.getAllReport(A), () => bigNotes.getAllLenient(A), () => bigNotes.get(A, 'n1')]) {
+          expect((await notBlamed(read)).message).toBe('decompression is unavailable');
+        }
+      } finally {
+        globalThis.DecompressionStream = working;
+      }
+      expect([...(await bigNotes.getAll(A))]).toEqual([
+        ['n1', NOTE],
+        ['n2', RENT],
+      ]);
     });
 
     test('a value that would not read back is refused, and a batch holding one is written not at all', async () => {
@@ -570,9 +613,36 @@ function contract(b: Backend) {
         })
         .catch((e) => e);
       expect(err).toBeInstanceOf(UpdateConflictError);
+      expect(err).toBeInstanceOf(StoreRefusedError);
+      expect(err.status).toBe(409); // what a route answers, with the message
       expect(err.message).toBe('Your saved test notes kept changing while this change was being saved, so it was not made. Try again.');
       expect(runs).toBe(5);
       expect(await notes.get(A, 'n1')).toEqual({ text: 'theirs', amount: 5 });
+    });
+
+    test('its write carries a hash of what it read, never the old value itself', async () => {
+      // A value near the size ceiling must not cross it by travelling twice.
+      await bigNotes.set(A, 'n1', { text: 'a long note '.repeat(400), amount: 1 });
+      const old = (await b.raw.hget(ctxKey('seam-contract-big-notes'), 'n1'))!;
+      const scripts: unknown[][] = [];
+      const inner = client as Record<string, unknown>;
+      client = new Proxy(inner, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (prop === 'eval') return (...args: unknown[]) => (scripts.push(args), (value as (...a: unknown[]) => unknown)(...args));
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      try {
+        await bigNotes.update(A, 'n1', (cur) => ({ ...cur!, amount: 2 }));
+      } finally {
+        client = inner;
+      }
+      const write = scripts.find(([script]) => script === UPDATE_ENTRY)!;
+      const sent = JSON.stringify(write);
+      expect(sent).not.toContain(old);
+      expect((write[2] as string[])[1]).toBe(new Bun.CryptoHasher('sha1').update(old).digest('hex'));
+      expect(await bigNotes.get(A, 'n1')).toEqual({ text: 'a long note '.repeat(400), amount: 2 });
     });
 
     test('a storage failure on its write is an error, and nothing changes', async () => {
@@ -635,6 +705,8 @@ function contract(b: Backend) {
       for (const write of writes) {
         const { result, logged } = await quietly(write);
         expect(result).toBeInstanceOf(StoredValueTooLargeError);
+        expect(result).toBeInstanceOf(StoreRefusedError);
+        expect((result as InstanceType<typeof StoreRefusedError>).status).toBe(413);
         expect((result as Error).message).toMatch(/^Your test notes are too large to save \(\d+ characters stored, over the limit of 600\), so nothing was changed\.$/);
         expect(logged).toContain('repo: refusing to save seam-contract-');
         expect(logged).not.toContain('groceries');
@@ -704,21 +776,37 @@ function contract(b: Backend) {
       expect(await notes.get(A, 'n1')).toEqual(NOTE);
     });
 
-    test('a failed decrypt is damage under a data key, but not under k0, whose key could have changed', async () => {
-      // Under k0 (no master), one tampered value: it could equally be a changed
-      // PLAID_ENCRYPTION_KEY, so it is thrown, never reported or dropped.
-      await notes.set(A, 'n1', NOTE);
+    test('a failed decrypt is damage under a data key, and under k0 only when another k0 value in the read decrypts', async () => {
+      // Under k0 (no master), a tampered value on its own could as well be a
+      // changed PLAID_ENCRYPTION_KEY, so it is thrown, never reported or left out.
       await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));
-      for (const read of [() => notes.getAll(A), () => notes.getAllLenient(A), () => notes.getAllReport(A)]) {
+      await b.raw.set(listKey(), tampered(await encrypt(JSON.stringify([RENT]))));
+      for (const read of [
+        () => notes.getAll(A),
+        () => notes.getAllLenient(A),
+        () => notes.getAllReport(A),
+        () => notes.get(A, 'n2'),
+        () => notes.update(A, 'n2', () => NOTE),
+        () => list.get(A),
+      ]) {
         expect(await notBlamed(read)).toBeInstanceOf(DecryptFailedError);
       }
+      // Beside a k0 value that decrypts, which shows the key is right, it is damage.
+      await notes.set(A, 'n1', NOTE);
+      expect(await notes.getAllReport(A)).toEqual({ entries: new Map([['n1', NOTE]]), unreadable: ['n2'], unrecognised: [] });
+      expect([...(await notes.getAllLenient(A)).keys()]).toEqual(['n1']);
+      expect((await notes.getMany(A, ['n1', 'n2']).catch((e) => e)).unreadable).toEqual(['n2']);
+      // Read on its own, nothing shows it, so it is still thrown.
+      expect(await notBlamed(() => notes.get(A, 'n2'))).toBeInstanceOf(DecryptFailedError);
+
       // Under a data key, whose id commits to the key, it can only be damage.
+      await notes.remove(A, 'n1');
       process.env.MASTER_KEY = MASTER;
       forgetActiveKey();
       await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));
       expect(await b.raw.hget(notesKey(), 'n2')).toStartWith('v2.k1-');
       expect((await notes.getAllReport(A)).unreadable).toEqual(['n2']);
-      expect([...(await notes.getAllLenient(A)).keys()]).toEqual(['n1']);
+      expect((await notes.get(A, 'n2').catch((e) => e)).unreadable).toEqual(['n2']);
     });
   });
 
@@ -760,16 +848,21 @@ function contract(b: Backend) {
       expect(await tags2.update(A, 't1', (cur) => ({ ...cur!, color: 'blue' }))).toEqual({ name: 'a', color: 'blue' });
       // ...and a write is always the current shape, even one upgrade would fix.
       await expect(tags2.set(A, 't3', { name: 'c' } as V2)).rejects.toBeInstanceOf(TypeError);
-      // Neither shape is still damage.
+      // Neither shape is unrecognised: intact, so never offered for removal.
       await b.raw.hset(ctxKey('seam-contract-tags'), 't9', await encrypt('{"other":1}'));
-      expect((await tags2.getAllReport(A)).unreadable).toEqual(['t9']);
+      const report = await tags2.getAllReport(A);
+      expect([report.unreadable, report.unrecognised]).toEqual([[], ['t9']]);
     });
 
-    test('without an upgrade, a stricter isValid makes every older value damaged', async () => {
+    test('without an upgrade, a stricter isValid leaves every older value unrecognised, never offered for removal', async () => {
       const tags1 = defineMapStore<V1>('seam-contract-tags', { what: 'tags', isValid: isV1, exportable: true });
       await tags1.set(A, 't1', { name: 'a' });
       const tags2 = defineMapStore<V2>('seam-contract-tags', { what: 'tags', isValid: isV2, exportable: true });
-      expect((await tags2.getAllReport(A)).unreadable).toEqual(['t1']);
+      const report = await tags2.getAllReport(A);
+      expect([report.unreadable, report.unrecognised]).toEqual([[], ['t1']]);
+      // The data is intact: the release that adds the upgrade reads it.
+      const tags3 = defineMapStore<V2>('seam-contract-tags', { what: 'tags', isValid: isV2, exportable: true, upgrade: upgradeTag });
+      expect(await tags3.get(A, 't1')).toEqual({ name: 'a', color: 'gray' });
     });
 
     test('an upgrade that throws is a bug, raised as it is, never blamed on the data', async () => {
@@ -1091,14 +1184,15 @@ describe('the catalogue', () => {
   });
 
   // Read from the source, so a store whose module nothing has loaded yet is
-  // still found: every source file but tests and dependencies.
+  // still found: every source file but the tests (the top-level test/ only: an
+  // app/api/test/ route is code) and dependencies.
   const root = join(import.meta.dir, '..');
   const rel = (path: string) => relative(root, path).replaceAll('\\', '/');
   const files: string[] = [];
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
-      if (name === 'node_modules' || name === 'test' || name.startsWith('.')) continue;
+      if (name === 'node_modules' || name.startsWith('.') || path === import.meta.dir) continue;
       if (statSync(path).isDirectory()) walk(path);
       else if (/\.(?:[cm]?[jt]sx?)$/.test(name) && !name.endsWith('.d.ts')) files.push(path);
     }

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { EXACT, PREFIXES } from '@/lib/key-families';
+import { keyNamesIn } from './key-names';
 
 // The storage boundary (Postgres migration plan, Phase 1): only the Redis
 // implementations reach Redis. Everything else goes through a store, and a new
@@ -125,6 +126,76 @@ const FROZEN_PREFIXES = [
   'txns:',
 ];
 
+/**
+ * Every key name the code builds (test/key-names.ts: a templated name is its
+ * fixed start and "x"), as when the seam arrived. A new store under a family
+ * already listed (a "snapshot:access-log" hash added to lib/sharing.ts, say)
+ * changes no list, so the names are frozen too. A store declared through the
+ * seam builds its key in lib/repo.ts from its declared name, so it never adds
+ * one. Like LEGACY, this only shrinks.
+ */
+const FROZEN_KEY_NAMES = [
+  'account-links',
+  'account-links:dismissed',
+  'account-links:lock',
+  'accounts:directory',
+  'accounts:meta',
+  'accounts:vanished',
+  'backups:status',
+  'budgets',
+  'cache:inv-activity:v4',
+  'cache:net-worth',
+  'cache:transactions',
+  'connections',
+  'containers',
+  'crypto:active',
+  'crypto:keys',
+  'crypto:master',
+  'crypto:rotation',
+  'crypto:rotation-lock',
+  'goals',
+  'hidden:accounts',
+  'history:accounts',
+  'history:accounts:est',
+  'history:accounts:est:ext',
+  'history:accounts:est:flat',
+  'history:accounts:est:flatd',
+  'history:accounts:partial',
+  'history:backfill-done',
+  'history:backfill-pending',
+  'history:forgetting:x',
+  'history:net-worth',
+  'history:net-worth:est',
+  'invites:x',
+  'invtxns-lock:x',
+  'invtxns:',
+  'invtxns:x',
+  'manual:accounts',
+  'move:copied',
+  'move:lock',
+  'move:retired',
+  'move:tmp:x',
+  'owners',
+  'plaid:items',
+  'plaid:new-accounts',
+  'ratelimit:demo:x',
+  'ratelimit:login:x',
+  'sessions:epoch',
+  'sessions:legacy-cutoff',
+  'snapshot:item-usage',
+  'snapshot:lock',
+  'snapshot:runs',
+  'snapshot:taken',
+  'txn-category-carry',
+  'txn-category-overrides',
+  'txn-vendor-renames',
+  'txns-blocked:',
+  'txns-blocked:x',
+  'txns-unsaved:x',
+  'txns:',
+  'txns:x',
+];
+
 const rel = (path: string) => relative(ROOT, path).replaceAll('\\', '/');
 
 /** The source with comments blanked (offsets kept) and strings kept, as in
@@ -207,12 +278,13 @@ function accessIn(file: string, source: string): string[] {
 }
 
 // Every source file, JavaScript included, wherever it sits: a new top-level
-// directory or a root file is read too. Not tests, which use the test doubles.
+// directory or a root file is read too. Not the tests in test/, which use the
+// test doubles; any other directory called test (an app/api/test/ route) is code.
 const files: string[] = [];
 const walk = (dir: string) => {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
-    if (name === 'node_modules' || name === 'test' || name.startsWith('.')) continue;
+    if (name === 'node_modules' || name.startsWith('.') || path === import.meta.dir) continue;
     if (statSync(path).isDirectory()) walk(path);
     else if (/\.[cm]?[jt]sx?$/.test(name)) files.push(path);
   }
@@ -308,6 +380,26 @@ describe('the key families stored the old way', () => {
       message
     ).toEqual([]);
     for (const frozen of [FROZEN_EXACT, FROZEN_PREFIXES]) expect(frozen).toEqual([...new Set(frozen)].sort());
+  });
+});
+
+describe('the key names the code builds', () => {
+  const { names } = keyNamesIn(ROOT, files);
+
+  test('gain none: a new store, even under a listed family, is declared through the seam', () => {
+    expect(
+      [...names].filter(([name]) => !FROZEN_KEY_NAMES.includes(name)).map(([name, at]) => `${[...at].join(', ')}: ${name}`),
+      `These files build a key name the code did not build before. New key families come through the storage seam, never ` +
+        `as a key built by hand, even under a prefix lib/key-families.ts already lists. ${USE_THE_SEAM}`
+    ).toEqual([]);
+  });
+
+  test('only shrink: a name no longer built comes off the frozen list here too', () => {
+    expect(
+      FROZEN_KEY_NAMES.filter((name) => !names.has(name)),
+      'The code no longer builds these (their stores moved behind the seam, or are gone): take them off FROZEN_KEY_NAMES in this test.'
+    ).toEqual([]);
+    expect(FROZEN_KEY_NAMES).toEqual([...new Set(FROZEN_KEY_NAMES)].sort());
   });
 });
 

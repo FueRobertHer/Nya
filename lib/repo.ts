@@ -45,27 +45,29 @@
 // person's data download once there is one. The name is the key family, so a
 // declared store is in the key inventory by construction.
 //
-// READS ARE STRICT unless the method's name says otherwise:
-//   - never saved                      -> null, or an empty map
-//   - its own content damaged (not
-//     ciphertext, damaged JSON, a value
-//     its isValid rejects)             -> StoredDataUnreadableError; for a map
-//                                         store UnreadableEntriesError, which
-//                                         names the ids
-//   - this deployment cannot read it
-//     (no master key, a key missing
-//     from the key store, storage
-//     unreachable)                     -> that error, as it is
-// A failure is never "empty": a caller that writes, deletes or records history
-// on the answer must not mistake one for the other (the bug lib/stored-json.ts
-// exists for). Nor is a deployment problem ever blamed on the data: only
-// damaged entries are reported as unreadable, offered for removal, or left out.
-//   MapStore.getAllReport names the damaged ids instead of throwing, so a route
-// can show what it read and offer to remove the rest. Remove them only once the
-// person confirms.
-//   MapStore.getAllLenient is the one lenient read: it leaves damaged entries
-// out (anything else still throws). It is only for conveniences that nothing
-// writes, deletes or records on; say so where it is called.
+// READS ARE STRICT unless the method's name says otherwise. A read answers with
+// what is stored, or says exactly why it cannot:
+//   - never saved: null, or an empty map;
+//   - UNREADABLE: the stored bytes are damaged (not ciphertext, or ciphertext
+//     that fails to authenticate). Nothing readable is lost by removing it;
+//   - UNRECOGNISED: it decrypts intact, but this code does not understand it
+//     (not JSON, or a shape isValid rejects even after upgrade). A bug to fix
+//     with upgrade, never data to delete;
+//   - this deployment cannot read it (no master key or the wrong one, a key
+//     missing from the key store, decompression failing, storage unreachable):
+//     that error, as it is. It says nothing about the data.
+// Strict reads throw StoredDataUnreadableError for the middle two: for a map
+// store UnreadableEntriesError, which names the ids of each, for a value store
+// UnreadableValueError. A failure is never "empty": a caller that writes,
+// deletes or records history on the answer must not mistake one for the other
+// (the bug lib/stored-json.ts exists for).
+//   ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR REMOVAL, and only once the
+// person confirms. MapStore.getAllReport names both kinds instead of throwing,
+// so a route can show what it read, offer to remove the unreadable ids, and
+// report the unrecognised ones as a problem to fix.
+//   MapStore.getAllLenient is the one lenient read: it leaves out what it cannot
+// use (a deployment problem still throws). It is only for conveniences that
+// nothing writes, deletes or records on; say so where it is called.
 //
 // WRITES NEVER BUILD ON A FAILED READ. A value store refuses to replace a value
 // it cannot read. A map store writes the entries it is given and nothing else,
@@ -75,6 +77,12 @@
 // will read back (after a JSON round trip) and written exactly as checked, so a
 // store never holds what its own reads reject. A write too large for one
 // request (the ceiling in lib/blob.ts) is refused whole, never trimmed.
+//
+// IN A ROUTE: ContainerError -> containerUnavailable() (503), as everywhere;
+// StoredDataUnreadableError -> 409 with { error: err.message, unreadable: true }
+// (and, from UnreadableEntriesError, its unreadable and unrecognised ids);
+// StoreRefusedError (UpdateConflictError, StoredValueTooLargeError) -> err.status
+// (409, 413) with { error: err.message }; anything else -> a generic 500.
 //
 // EVOLVING A STORE'S SHAPE. Every value ever stored must keep reading: values
 // are rewritten only when saved, and a restored backup brings old ones back. So
@@ -109,23 +117,27 @@
 // AN OPERATION THE SEAM LACKS is added here as a named method with its own
 // contract test (and its Lua, if it must be atomic), never as raw key access.
 
+import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import { isEnvWide, type Ctx } from './containers';
-import { encrypt, DecryptFailedError, MalformedCiphertextError } from './crypto';
+import { encrypt, formatOf, DecryptFailedError, MalformedCiphertextError } from './crypto';
 import { StoredDataUnreadableError } from './stored-json';
-import { decodeJsonBlob, encodeJsonText, maxBlobChars, blobWarnChars } from './blob';
+import { decryptJsonText, encodeJsonText, maxBlobChars, blobWarnChars } from './blob';
 import { listedKind } from './key-families';
 import { isExcluded } from './export';
 
 export { StoredDataUnreadableError, describeUnreadable } from './stored-json';
 
-/** Entries of a map store whose own content is damaged. `ids` names them, in id
- *  order, so a route can offer to remove them; never in the message, which
- *  reaches logs. */
+/** Entries of a map store that cannot be used, by their own doing (see READS
+ *  above). `unreadable`: their bytes are damaged, so a route may offer to remove
+ *  them once the person confirms. `unrecognised`: they decrypt intact but this
+ *  code does not understand them; never offered for removal. Both in id order,
+ *  never in the message, which reaches logs. */
 export class UnreadableEntriesError extends StoredDataUnreadableError {
   constructor(
     what: string,
-    readonly ids: string[],
+    readonly unreadable: string[],
+    readonly unrecognised: string[],
     cause?: unknown
   ) {
     super(what, cause);
@@ -133,24 +145,49 @@ export class UnreadableEntriesError extends StoredDataUnreadableError {
   }
 }
 
-/** update() gave up: the entry kept changing under it. Nothing it computed was
- *  written. */
-export class UpdateConflictError extends Error {
+/** A value store's value that cannot be used, by its own doing. `unrecognised`
+ *  is true when it decrypts intact but this code does not understand it, so it
+ *  must never be offered for removal; false when its bytes are damaged. */
+export class UnreadableValueError extends StoredDataUnreadableError {
+  constructor(
+    what: string,
+    readonly unrecognised: boolean,
+    cause?: unknown
+  ) {
+    super(what, cause);
+    this.name = 'UnreadableValueError';
+  }
+}
+
+/** A write the seam refused, with nothing written. `status` is what a route
+ *  answers with, with the message as the error. */
+export class StoreRefusedError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = 'StoreRefusedError';
+  }
+}
+
+/** update() gave up: the entry kept changing under it. 409: try again. */
+export class UpdateConflictError extends StoreRefusedError {
   constructor(readonly what: string) {
-    super(`Your saved ${what} kept changing while this change was being saved, so it was not made. Try again.`);
+    super(`Your saved ${what} kept changing while this change was being saved, so it was not made. Try again.`, 409);
     this.name = 'UpdateConflictError';
   }
 }
 
-/** A write refused because what it stores would not fit in one request
- *  (lib/blob.ts). Nothing was written, and nothing was trimmed to fit. */
-export class StoredValueTooLargeError extends Error {
+/** A write whose request would not fit the ceiling in lib/blob.ts. 413:
+ *  nothing was written, and nothing was trimmed to fit. */
+export class StoredValueTooLargeError extends StoreRefusedError {
   constructor(
     readonly what: string,
     readonly chars: number,
     readonly limit: number
   ) {
-    super(`Your ${what} are too large to save (${chars} characters stored, over the limit of ${limit}), so nothing was changed.`);
+    super(`Your ${what} are too large to save (${chars} characters stored, over the limit of ${limit}), so nothing was changed.`, 413);
     this.name = 'StoredValueTooLargeError';
   }
 }
@@ -160,7 +197,7 @@ export type StoreOptions<T> = {
    *  {what} could not be read, so they were left untouched." */
   what: string;
   /** The current shape. A stored value that fails it (after upgrade) is
-   *  damaged; a value that would fail it is refused before it is written. */
+   *  unrecognised; a value that would fail it is refused before it is written. */
   isValid: (v: unknown) => v is T;
   /** Whether the contents will belong in the person's own data download: true
    *  for what they entered or what describes their money, false for secrets
@@ -201,13 +238,13 @@ export type MapStore<T> = Declared & {
   getMany(ctx: Ctx, ids: Iterable<string>): Promise<Map<string, T>>;
   /** Strict. Every entry, in id order: empty if none was ever saved. */
   getAll(ctx: Ctx): Promise<Map<string, T>>;
-  /** Strict about everything but damaged entries, which it names instead of
-   *  throwing: the readable entries in id order, and the damaged ids. For a
-   *  route that shows what it read and offers to remove the rest. */
-  getAllReport(ctx: Ctx): Promise<{ entries: Map<string, T>; unreadable: string[] }>;
-  /** LENIENT. Every entry but the damaged ones, in id order. Only for
-   *  conveniences that nothing writes, deletes or records on. A deployment
-   *  problem still throws. */
+  /** Strict about deployment problems, but names the entries it cannot use
+   *  instead of throwing: the readable entries in id order, the unreadable ids
+   *  (which may be offered for removal) and the unrecognised ones (which may
+   *  not). For a route that shows what it read and helps repair the rest. */
+  getAllReport(ctx: Ctx): Promise<{ entries: Map<string, T>; unreadable: string[]; unrecognised: string[] }>;
+  /** LENIENT. Every entry it can use, in id order. Only for conveniences that
+   *  nothing writes, deletes or records on. A deployment problem still throws. */
   getAllLenient(ctx: Ctx): Promise<Map<string, T>>;
   /** Writes one entry, replacing any under the same id, without reading it. */
   set(ctx: Ctx, id: string, value: T): Promise<void>;
@@ -216,9 +253,10 @@ export type MapStore<T> = Declared & {
   setMany(ctx: Ctx, entries: Iterable<readonly [string, T]>): Promise<void>;
   /** Changes one entry safely when other writers may change it too: reads it
    *  (strictly), computes the new value with `fn` (null deletes it), and writes
-   *  only if the entry is still what was read, else runs `fn` again on what is
-   *  there now, a few times before UpdateConflictError. `fn` may therefore run
-   *  more than once: it should only compute. Returns what was written. */
+   *  only if the entry is still what was read, else waits a moment and runs `fn`
+   *  again on what is there now, a few times before UpdateConflictError. `fn`
+   *  may therefore run more than once: it should only compute. Returns what was
+   *  written. */
   update(ctx: Ctx, id: string, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null>;
   /** Deletes entries, readable or not. Ids with no entry are ignored. */
   remove(ctx: Ctx, ...ids: string[]): Promise<void>;
@@ -246,12 +284,14 @@ return values`;
 
 /**
  * Writes one field (or deletes it, given "") only if it still holds what was
- * read, "" meaning it had none: the seam never stores "", and update() stops
- * at a damaged entry before it gets here. Compared whole, as in lib/history.ts:
- * every write encrypts with a fresh IV, so any rewrite in between differs.
+ * read: compared by SHA-1, as CAS_HASH in lib/reencrypt.ts does, so a large
+ * value is not sent back with its replacement. "" stands for "had none": the
+ * seam never stores "", and update() stops at an unusable entry before it gets
+ * here. Every write encrypts with a fresh IV, so any rewrite in between differs.
  */
 export const UPDATE_ENTRY = `-- nya:repo-update-entry
-if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if (cur and redis.sha1hex(cur) or '') ~= ARGV[2] then return 0 end
 if ARGV[3] == '' then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.call('HSET', KEYS[1], ARGV[1], ARGV[3]) end
 return 1`;
 
@@ -259,6 +299,13 @@ return 1`;
 const READ_BATCH = 1000;
 /** Tries before update() gives up on an entry that keeps changing. */
 const UPDATE_ATTEMPTS = 5;
+/** Characters of SHA-1 hex an update sends beside its new value. */
+const SHA1_HEX = 40;
+
+const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
+/** A short, random pause before another try, longer each time, so writers that
+ *  just collided do not collide again in step. */
+const pause = (attempt: number) => new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 20 * attempt));
 
 // The registry of declared stores, by name. Read through lib/stores.ts, which
 // loads every declaring module first.
@@ -321,38 +368,52 @@ function storeKey(ctx: Ctx, name: string): string {
 
 type Codec<T> = Pick<StoreOptions<T>, 'what' | 'isValid' | 'upgrade' | 'compress'>;
 
-/**
- * Whether a failure to read a value is the value's own damage. Anything else
- * means this deployment cannot read it: MasterKeyError (no master key, or one
- * that does not open the data key), UnknownKeyError (a key the key store
- * lacks), storage unreachable. So is a failed decrypt under k0: unlike a data
- * key, PLAID_ENCRYPTION_KEY does not commit to its key, so a changed key fails
- * every k0 value exactly as damage would.
- */
-function isDamage(err: unknown): boolean {
-  return (
-    err instanceof SyntaxError ||
-    err instanceof MalformedCiphertextError ||
-    (err instanceof DecryptFailedError && err.keyId !== 'k0')
-  );
+/** A stored value read back, or why it cannot be used by its own doing (see
+ *  READS above). `k0` marks a failed decrypt under k0, which counts as damage
+ *  only when another k0 value in the same read decrypts (see decodeAll). */
+type Decoded<T> = { ok: true; value: T } | { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown; k0: boolean };
+
+/** Whether a value is under k0 (PLAID_ENCRYPTION_KEY), from its header. */
+function underK0(stored: unknown): boolean {
+  try {
+    return typeof stored === 'string' && formatOf(stored).keyId === 'k0';
+  } catch {
+    return false;
+  }
 }
 
-/** A stored value read back. Damage is thrown as `unreadable` makes it, any
- *  other failure as it is. */
-async function decode<T>(c: Codec<T>, stored: unknown, unreadable: (cause: unknown) => Error): Promise<T> {
+/**
+ * Reads a stored value back. Throws only what says nothing about the value: a
+ * deployment that cannot read it (MasterKeyError for no master key or one that
+ * does not open the data key, UnknownKeyError for a key the key store lacks,
+ * decompression failing, storage unreachable) or a throwing upgrade (a bug).
+ * Damaged bytes are not ciphertext, or ciphertext that fails to authenticate
+ * under a data key, whose id commits to its key. Under k0 the same failure
+ * could as well be a changed PLAID_ENCRYPTION_KEY, which does not commit to its
+ * key, so it is marked for the caller to settle.
+ */
+async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
+  const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown, k0 = false): Decoded<T> => ({ ok: false, flaw, cause, k0 });
   // The client JSON-parses what it can on the way out, so anything but
   // non-empty text was never written by the seam.
-  if (typeof stored !== 'string' || stored === '') throw unreadable(new Error('stored value is not encrypted text'));
-  let parsed: unknown;
+  if (typeof stored !== 'string' || stored === '') return flawed('unreadable', new Error('stored value is not encrypted text'));
+  let text: string;
   try {
-    parsed = await decodeJsonBlob(stored); // compressed or not
+    text = await decryptJsonText(stored); // compressed or not
   } catch (err) {
-    if (isDamage(err)) throw unreadable(err);
+    if (err instanceof MalformedCiphertextError) return flawed('unreadable', err);
+    if (err instanceof DecryptFailedError) return flawed('unreadable', err, err.keyId === 'k0');
     throw err;
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return flawed('unrecognised', err);
+  }
   const value = c.upgrade ? c.upgrade(parsed) : parsed;
-  if (!c.isValid(value)) throw unreadable(new Error('stored value has the wrong shape'));
-  return value;
+  if (!c.isValid(value)) return flawed('unrecognised', new Error('stored value has a shape this code does not recognise'));
+  return { ok: true, value };
 }
 
 /** The JSON a value is stored as, refused (a bug in the caller, not damaged
@@ -397,7 +458,10 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     // client parses) is never saved, as in lib/stored-json.ts. The seam writes
     // neither, and replacing one loses nothing.
     if (stored === null || stored === undefined || stored === '') return null;
-    return decode(codec, stored, (cause) => new StoredDataUnreadableError(what, cause));
+    const d = await decode(codec, stored);
+    if (d.ok) return d.value;
+    if (d.k0) throw d.cause; // nothing else in this read shows whether k0 is right
+    throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
   };
 
   return declare<ValueStore<T>>({
@@ -424,7 +488,6 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
   const codec: Codec<T> = { what: opts.what, isValid: opts.isValid, upgrade: opts.upgrade, compress: opts.compress };
   const { what } = codec;
   const key = (ctx: Ctx) => storeKey(ctx, name);
-  const damaged = (id: string) => (cause: unknown) => new UnreadableEntriesError(what, [id], cause);
 
   /** Each field's stored text, exactly, or null where there is none. */
   const readFields = async (ctx: Ctx, ids: string[]): Promise<(string | null)[]> => {
@@ -440,36 +503,34 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     return out;
   };
 
-  /** Entries decoded, in the order given: the readable ones, and the ids whose
-   *  own content is damaged. A deployment problem is thrown: it says nothing
-   *  about the entries, so none is reported or left out for it. */
+  /** Entries decoded, in the order given: the usable ones, and the ids of the
+   *  unreadable and the unrecognised. A deployment problem is thrown: it says
+   *  nothing about the entries, so none is reported or left out for it. */
   const decodeAll = async (entries: (readonly [string, unknown])[]) => {
-    type Decoded = { id: string; ok: true; value: T } | { id: string; ok: false; damage: UnreadableEntriesError };
-    const results = await Promise.all(
-      entries.map(async ([id, stored]): Promise<Decoded> => {
-        try {
-          return { id, ok: true, value: await decode(codec, stored, damaged(id)) };
-        } catch (err) {
-          if (err instanceof UnreadableEntriesError) return { id, ok: false, damage: err };
-          throw err;
-        }
-      })
-    );
+    const results = await Promise.all(entries.map(async ([id, stored]) => ({ id, stored, d: await decode(codec, stored) })));
+    // A failed decrypt under k0 is damage only if another k0 value in this read
+    // decrypted, which proves PLAID_ENCRYPTION_KEY right (AES-GCM cannot
+    // authenticate under a wrong key); with none to show it, it is thrown.
+    const k0Works = results.some(({ stored, d }) => (d.ok || d.flaw === 'unrecognised') && underK0(stored));
     const values = new Map<string, T>();
     const unreadable: string[] = [];
+    const unrecognised: string[] = [];
     let cause: unknown;
-    for (const r of results) {
-      if (r.ok) values.set(r.id, r.value);
+    for (const { id, d } of results) {
+      if (d.ok) values.set(id, d.value);
+      else if (d.k0 && !k0Works) throw d.cause;
       else {
-        unreadable.push(r.id);
-        cause ??= r.damage.cause;
+        (d.flaw === 'unreadable' ? unreadable : unrecognised).push(id);
+        cause ??= d.cause;
       }
     }
-    return { values, unreadable: unreadable.sort(), cause };
+    return { values, unreadable: unreadable.sort(), unrecognised: unrecognised.sort(), cause };
   };
 
   const strict = (r: Awaited<ReturnType<typeof decodeAll>>) => {
-    if (r.unreadable.length > 0) throw new UnreadableEntriesError(what, r.unreadable, r.cause);
+    if (r.unreadable.length > 0 || r.unrecognised.length > 0) {
+      throw new UnreadableEntriesError(what, r.unreadable, r.unrecognised, r.cause);
+    }
     return r.values;
   };
 
@@ -504,16 +565,26 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     checkId(what, id);
     for (let attempt = 1; ; attempt++) {
       const [stored] = await readFields(ctx, [id]);
-      const current = stored === null ? null : await decode(codec, stored, damaged(id));
+      let current: T | null = null;
+      if (stored !== null) {
+        const d = await decode(codec, stored);
+        if (!d.ok) {
+          if (d.k0) throw d.cause; // nothing else in this read shows whether k0 is right
+          throw new UnreadableEntriesError(what, d.flaw === 'unreadable' ? [id] : [], d.flaw === 'unrecognised' ? [id] : [], d.cause);
+        }
+        current = d.value;
+      }
       const next = await fn(current);
       if (next === null && stored === null) return null; // nothing there, nothing to write
       let written = ''; // deletes it
       if (next !== null) {
         written = await encode(codec, serialize(codec, next));
-        checkSize(name, what, ctx, id.length + written.length);
+        checkSize(name, what, ctx, id.length + SHA1_HEX + written.length);
       }
-      if (Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, stored ?? '', written])) === 1) return next;
+      const seen = stored === null ? '' : sha1(stored);
+      if (Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, seen, written])) === 1) return next;
       if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
+      await pause(attempt);
     }
   };
 
@@ -528,8 +599,8 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     getMany,
     getAll: async (ctx) => strict(await readAll(ctx)),
     async getAllReport(ctx) {
-      const { values, unreadable } = await readAll(ctx);
-      return { entries: values, unreadable };
+      const { values, unreadable, unrecognised } = await readAll(ctx);
+      return { entries: values, unreadable, unrecognised };
     },
     getAllLenient: async (ctx) => (await readAll(ctx)).values,
     set: (ctx, id, value) => setMany(ctx, [[id, value]]),
