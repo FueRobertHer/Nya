@@ -3,13 +3,15 @@
 // What Nya keeps about the health of each bank connection (#51): one entry per
 // connection, under Plaid's item_id (a provider's own opaque id, already the
 // field name of every per-connection store), in three stores on the storage
-// seam (lib/repo.ts). Each has one writer, so "last write wins" never costs
-// one the others' change (see WHO WINS in lib/repo.ts):
+// seam (lib/repo.ts). Each is written by one function and only removed
+// anywhere else, so "last write wins" never costs one the others' change (see
+// WHO WINS in lib/repo.ts):
 //
 //   connection-warnings  Plaid's early warning that the connection is going to
 //                        end, from the verified webhook
 //                        (lib/connection-health.ts). Removed when the
-//                        connection is repaired or removed.
+//                        connection is repaired or removed, or the warning
+//                        lapses.
 //   connection-syncs     when the connection last answered cleanly: every load
 //                        that fetched it, and the daily snapshot.
 //   connection-notices   the email bookkeeping for a break: when it began, and

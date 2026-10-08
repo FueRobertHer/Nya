@@ -7,6 +7,9 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Payment details](#payment-details)
 - [Hiding accounts](#hiding-accounts)
 - [When an institution can't be reached](#when-an-institution-cant-be-reached)
+  - [Connection health](#connection-health)
+  - [Reconnect soon](#reconnect-soon)
+  - [Email notices](#email-notices)
 - [Manual accounts](#manual-accounts)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 
@@ -26,7 +29,7 @@ When Plaid notices new accounts at a connected institution (it needs webhooks, b
 
 Removing an account in the picker stops Nya receiving new data for it. Its balance history and stored transactions are kept, as they are when you disconnect a whole institution. Recorded past totals don't change, but the estimated part of the chart (before Nya started recording) is rebuilt from the accounts connected now whenever an account is added, so a removed account drops out of those estimates then. Chase doesn't let accounts be removed this way; hide the account, or disconnect Chase, instead.
 
-If Plaid Link asks you to reconnect an institution (shown as a **Reconnect** button on its card), the bank's credentials or MFA changed on their end. Click it and log back in through Plaid to fix it; there is no need to disconnect and relink from scratch.
+If Plaid Link asks you to reconnect an institution (shown as a **Reconnect** button on its card), the bank's credentials or MFA changed on their end. Click it and log back in through Plaid to fix it; there is no need to disconnect and relink from scratch. The [Connection health](#connection-health) card says which institutions need this, and why.
 
 In `sandbox` mode, Plaid Link shows fake test institutions. Search for any name (for example "Chase") and log in with username `user_good` and password `pass_good`.
 
@@ -82,13 +85,54 @@ That's not cosmetic. Dropping a failed institution from the total silently under
 
 Two stores back this. Balances come from the most recent daily snapshot, which is only recorded on days when **every** institution answered. Alongside it, each institution's account list is recorded every time **that** institution answers, so a card you closed drops out on the next successful load rather than lingering. Those two have different conditions, so they drift, and an account can be in one and not the other. When that happens the card can't show every row, and it says so: *"2 accounts couldn't be shown, so this total is incomplete."* That matters because a missing row is usually a missing debt, and a missing debt makes net worth look better than it is. Everything is scoped per institution, so one bank's problems never affect another's recovery.
 
-If the balances are older than **35 days** the card stops showing them and names the date instead. An institution broken for months shouldn't quietly revert to zero, and it shouldn't drag a months-old figure into today's total either. Any institution that can't be reached and can't be recovered is called out under the Home total, so a total that's missing a whole bank never looks complete.
+If the balances are older than **35 days** the card stops showing them and names the date instead. An institution broken for months shouldn't quietly revert to zero, and it shouldn't drag a months-old figure into today's total either. Any institution that can't be reached and can't be recovered is called out under the Home total by name, with when it was last seen ("Chase needs reconnecting, last seen Sep 12, and isn't counted in this total"), so a total that's missing a whole bank never looks complete. The other notes under the total name their institutions too, rather than only counting them.
 
 Recovered balances are **display-only**. They're never written to the net-worth history, and no snapshot is recorded on a day when any institution failed, so a stale figure can never be mistaken for a measured one in the chart. The consequence is a real gap: if a connection stays broken through the end of the day, that day gets no point at all and nothing back-fills it later. That's deliberate, because a fabricated flat line in the real history layer would be permanent: nothing ever rewrites a past date.
 
 An institution that needs re-authenticating keeps the red warning and its **Reconnect** button, and only says the balances are dated. The softer amber note is reserved for failures that usually clear on their own, so a dead connection can't hide behind plausible-looking numbers.
 
 A related case: an account that disappears from an otherwise successful fetch (a closed account some banks simply stop returning) holds the snapshot for three days, called out under the Home total, and is then accepted as closed. A glitch resolves itself inside that window; a real closure costs a few days of gap rather than a wrong total written permanently.
+
+The same honesty reaches **Activity**. When an institution's transactions couldn't be loaded, or its connection is broken and last synced before a month ended, that month's totals say so under the figures ("Chase hasn't synced since Sep 12, so this month may be missing some of its transactions"). A month that ended before the connection last synced is left alone: nothing it holds is missing.
+
+### Connection health
+
+On the Accounts tab, the **Connection health** card lists every linked institution in one place. It stays collapsed to one line while everything works and opens on its own when something doesn't. For each institution it shows:
+
+- its state: working, reconnect soon (with the date), needs reconnecting, not updating (an outage or a temporary error), needs connecting again, no open accounts, or missing accounts;
+- when it last synced, as a date. Every load that reaches the institution and the daily snapshot record it;
+- whose side the problem is on: your sign-in at the bank, the bank, Plaid, or Nya itself. A broken link looks like a Nya problem from the outside, so it says which;
+- which accounts are affected, and how much of your net worth is shown from last known balances rather than measured now, labeled as such. Accounts with nothing to recover are named as not counted;
+- the one thing to do about it.
+
+Plaid's error codes decide the state, in one mapping (`lib/connection-state.ts`), and the action follows from it:
+
+| What happened | Plaid's codes, for example | What to do |
+| --- | --- | --- |
+| Your sign-in needs redoing: a changed password, a new security step, a consent that ran out | `ITEM_LOGIN_REQUIRED`, `INVALID_CREDENTIALS`, `ACCESS_NOT_GRANTED`; `ITEM_LOCKED` and `USER_SETUP_REQUIRED` need something done at the bank first | **Reconnect**, which goes through Plaid's update mode: it keeps the connection and its history, and takes a minute. |
+| The bank or Plaid is having trouble | `INSTITUTION_DOWN`, `INSTITUTION_NOT_RESPONDING`, `INTERNAL_SERVER_ERROR`, rate limits, no answer at all | Nothing: it usually recovers on its own. |
+| The connection is gone and can't be repaired | `USER_PERMISSION_REVOKED`, `ITEM_NOT_FOUND`, `INVALID_ACCESS_TOKEN` | **Remove** it and connect the bank again. The new accounts get new ids, and [linking them to the old ones](#removing-an-institution-and-adding-it-back) carries the history over. Where Plaid can't reach the institution any more (`ITEM_NOT_SUPPORTED`, `INSTITUTION_NO_LONGER_SUPPORTED`), connecting again won't help, so only removal is offered; the history is kept. |
+| Accounts were closed at the bank | `NO_ACCOUNTS`, or an account missing from an otherwise good answer | If you closed them, remove the connection (history is kept) or, for one missing account, nothing: it is counted as closed after three days. If not, check with **Add or remove accounts**. |
+
+A code Plaid adds later reads as "not updating" with the code shown, never as a guess at one of the others. The **Reconnect** button on an institution's card follows the same mapping, so the card and the health view always agree.
+
+### Reconnect soon
+
+Plaid warns about a week ahead when a working connection is going to end: `PENDING_EXPIRATION` when the consent the bank gave runs out (with the time it does), and `PENDING_DISCONNECT` when the bank is ending connections, for example while it moves to a new connection method (with no time; Plaid says it sends it seven days ahead, so the date shown is an estimate, said as "around"). Nya records each warning for its connection, encrypted, and the institution's card shows a **Reconnect soon** badge with the date and a **Reconnect** button. Three days before the date, Home raises it too. Some banks' consent has an end date Plaid reports on every fetch; within a week of it, the card says Reconnect soon even when no webhook arrived (webhooks need `PLAID_WEBHOOK_URL`, [below](#keeping-plaid-costs-down)).
+
+Reconnecting through update mode clears the warning, and so does Plaid's `LOGIN_REPAIRED` (a repair made in another app) or removing the connection. A warning a repair outran, such as one Plaid delivered again afterwards, ends by itself once the connection answers past the date it named, or Plaid reports the consent renewed.
+
+### Email notices
+
+When a connection breaks, the daily snapshot sends one email, and one reminder a week later if it is still broken. Nothing more: an email every day is an email nobody reads. A break begins at the first daily run that finds it and ends at the first run that finds the connection working again, or when you reconnect or remove it; the next break gets its own email.
+
+- **What is worth an email:** a sign-in to redo, a connection to remove and make again, a bank reporting no open accounts, and Plaid's warning that a connection will end. An outage needs nothing from you, so it is emailed only once it has lasted three days since the connection last answered. A missing account settles itself within three days and is not emailed.
+- **One email per run**, naming each connection that needs you and what to do, with a link that opens the Connection health card (`APP_URL/?view=connections`).
+- **Never twice.** Each break is recorded before its email goes and marked sent only once the email service accepts it, so a run again (the catch-up two hours later, or a cron delivered twice) sends nothing new, and a failed send is tried again by the next run. Each email also carries an idempotency key, so a retry after an answer that never arrived isn't delivered twice.
+- **What an email says:** the institution's name, what to do, and for a connection about to end, around which day. Never a balance, an amount or an account number.
+- **Who gets it:** with Clerk, the primary email address of the account that owns the data, once Clerk has verified it. With the shared password, `NOTIFY_EMAIL`, and only for the deployment's own data.
+
+Email is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `MAIL_FROM` ([deployment.md](deployment.md#email-notices)). Without them nothing is sent, the log says so once, and the Connection health card is the only place a broken connection shows.
 
 ## Manual accounts
 

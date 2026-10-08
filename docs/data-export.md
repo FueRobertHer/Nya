@@ -33,7 +33,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 
 **Never written down.** The stores are read and decrypted in memory, and the file's text is written out a piece at a time as it streams to your browser, never held whole on the server. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. The download itself is not encrypted, so keep the file somewhere safe.
 
-**Not built yet.** Protecting the file with a passphrase of your own (today it is plain JSON or CSV), an OFX file for the money apps that import those, and an email telling you a download happened (#51): there is no email provider yet, and the route marks where that email is sent once there is.
+**Not built yet.** Protecting the file with a passphrase of your own (today it is plain JSON or CSV), an OFX file for the money apps that import those, and an email telling you a download happened (#51): Nya can send email now (the notices about bank connections, `lib/mail.ts`), but a download doesn't send one yet, and the route marks where it would.
 
 ## What is not in it
 
@@ -41,7 +41,7 @@ The JSON file lists these itself, under `not_included`.
 
 - **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
 - **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
-- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
+- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure), and how each bank connection is doing: when it last answered, Plaid's warnings that it will end, and the emails sent about a problem with it. They are about running the app, not about you.
 - **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
 - **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves.
 - **Unused invite links.** They work for 72 hours and are then gone.
@@ -284,7 +284,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: today only `download-count`, the counter behind the five downloads an hour. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out, as the app's machinery: `download-count`, the counter behind the five downloads an hour, and `connection-warnings`, `connection-syncs` and `connection-notices`, how each bank connection is doing (#51). |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only.
 
