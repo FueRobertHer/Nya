@@ -169,7 +169,7 @@ Until the Plaid client started stripping the request from its errors (`lib/plaid
 
 If logs from before that change still exist (Vercel's own runtime logs, or a log drain with longer retention):
 
-- Rotate the Plaid secret: in the Plaid dashboard, under Team Settings > Keys, generate a new secret for the environment, set `PLAID_SECRET` to it in Vercel, redeploy, then delete the old one.
+- Rotate the Plaid secret: on the Plaid dashboard's Keys page, generate a new secret for the environment, set `PLAID_SECRET` to it in Vercel, redeploy, then delete the old one.
 - An access token alone is of no use without the client id and the secret, so rotating the secret covers the tokens too. To also replace a token, Plaid's `/item/access_token/invalidate` returns a new one for an Item; Nya has no tool for it yet.
 - Delete or shorten the retention of the old logs where you can.
 

@@ -51,9 +51,16 @@ export function scrubPlaidError(err: unknown): unknown {
   return err;
 }
 
-/** An axios instance whose failures come out scrubbed. Response interceptors
- *  see every failure of a request, timeouts and network errors included. */
+/**
+ * An axios instance whose failures come out scrubbed. Response interceptors see
+ * every failure of a request, timeouts and network errors included, once the
+ * request runs through axios's promise chain. With no request interceptor,
+ * axios takes a synchronous path on which a request cancelled before it starts
+ * throws without passing them, so a pass-through request interceptor keeps
+ * every request on the chain.
+ */
 export function scrubbing(instance: AxiosInstance): AxiosInstance {
+  instance.interceptors.request.use((config) => config);
   instance.interceptors.response.use(undefined, (err: unknown) => Promise.reject(scrubPlaidError(err)));
   return instance;
 }

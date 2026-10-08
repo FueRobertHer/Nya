@@ -35,7 +35,9 @@ let server: ReturnType<typeof Bun.serve>;
 const configuration = () =>
   new Configuration({
     basePath: `http://127.0.0.1:${server.port}`,
-    baseOptions: { headers: { 'PLAID-CLIENT-ID': 'client-id', 'PLAID-SECRET': SECRET }, timeout: 300 },
+    // Generous, so the calls that must answer never flake on a slow runner; the
+    // timeout test sets its own short one.
+    baseOptions: { headers: { 'PLAID-CLIENT-ID': 'client-id', 'PLAID-SECRET': SECRET }, timeout: 10_000 },
   });
 
 beforeAll(() => {
@@ -92,10 +94,22 @@ describe('the Plaid client throws errors without the request', () => {
 
   test('a timeout, which has no answer, loses the request too', async () => {
     const err: any = await makePlaidClient(configuration())
-      .transactionsSync({ access_token: TOKEN })
+      .transactionsSync({ access_token: TOKEN }, { timeout: 200 })
       .catch((e: unknown) => e);
     expect(err.code).toBe('ECONNABORTED');
     expect(err.response).toBeUndefined();
+    const text = everything(err);
+    expect(text).not.toContain(SECRET);
+    expect(text).not.toContain(TOKEN);
+  });
+
+  test('a request cancelled before it starts loses the request too', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const err: any = await makePlaidClient(configuration())
+      .accountsGet({ access_token: TOKEN }, { signal: controller.signal })
+      .catch((e: unknown) => e);
+    expect(err).toBeDefined();
     const text = everything(err);
     expect(text).not.toContain(SECRET);
     expect(text).not.toContain(TOKEN);
@@ -127,15 +141,29 @@ describe('every Plaid client goes through the scrubber', () => {
       return statSync(p).isDirectory() ? (name === 'node_modules' ? [] : walk(p)) : /\.(ts|tsx)$/.test(name) ? [p] : [];
     });
 
-  test('no code outside lib/plaid-scrub.ts constructs a PlaidApi', () => {
+  // Any way to get a working client from the SDK: the class, its factory or its
+  // functional form, under any name. A type-only import is harmless.
+  const CLIENT_EXPORTS = /\b(PlaidApi|PlaidApiFactory|PlaidApiFp)\b/;
+
+  test('no code outside lib/plaid-scrub.ts can make its own Plaid client', () => {
+    const root = join(import.meta.dir, '..');
     const offenders = ['lib', 'app', 'components', 'scripts']
-      .flatMap(walk)
+      .flatMap((d) => walk(join(root, d)))
       .filter((f) => !f.endsWith(join('lib', 'plaid-scrub.ts')))
-      .filter((f) => /new\s+PlaidApi\s*\(/.test(readFileSync(f, 'utf8')));
+      .filter((f) => {
+        const imports = readFileSync(f, 'utf8').match(/import\s+(type\s+)?\{[^}]*\}\s+from\s+['"]plaid['"]/g) ?? [];
+        return imports.some((line) => {
+          if (/^import\s+type\b/.test(line)) return false;
+          // Names imported as values (not marked `type` inside the braces).
+          const names = line.slice(line.indexOf('{') + 1, line.indexOf('}')).split(',');
+          return names.some((n) => !/^\s*type\s/.test(n) && CLIENT_EXPORTS.test(n));
+        });
+      });
     expect(offenders).toEqual([]);
   });
 
   test('lib/plaid.ts builds its client with makePlaidClient', () => {
-    expect(readFileSync('lib/plaid.ts', 'utf8')).toMatch(/export const plaidClient = makePlaidClient\(/);
+    const source = readFileSync(join(import.meta.dir, '..', 'lib', 'plaid.ts'), 'utf8');
+    expect(source).toMatch(/export const plaidClient = makePlaidClient\(/);
   });
 });
