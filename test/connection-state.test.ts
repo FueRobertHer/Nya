@@ -8,6 +8,7 @@ import {
   healthOf,
   isoTime,
   mergeWarning,
+  reconnectFixes,
   utcDaysBetween,
   warningFromWebhook,
   warningLapsed,
@@ -52,6 +53,8 @@ describe("Plaid's error codes, by family", () => {
     [['ITEM_NOT_SUPPORTED', 'MFA_NOT_SUPPORTED'], 'unsupported', 'bank'],
     [['INSTITUTION_NO_LONGER_SUPPORTED'], 'unsupported', 'plaid'],
     [['NO_ACCOUNTS'], 'no_accounts', 'bank'],
+    [['PENDING_EXPIRATION'], 'consent_ending', 'bank'],
+    [['PENDING_DISCONNECT'], 'disconnect_pending', 'bank'],
   ];
 
   test('each family gets its cause, and the side it is on', () => {
@@ -112,6 +115,15 @@ describe('the health of one connection', () => {
 
   test('a failed fetch wins over a warning that it would fail: it already has', () => {
     expect(healthOf(failed('ITEM_LOGIN_REQUIRED'), warning(), at(-1), NOW).state).toBe('needs_reauth');
+    // Even when the failure's own code is the warning: the end has come.
+    expect(healthOf(failed('PENDING_EXPIRATION'), null, at(-1), NOW)).toMatchObject({ state: 'needs_reauth', cause: 'login', action: 'reconnect', code: 'PENDING_EXPIRATION' });
+  });
+
+  test('a reconnect fixes the sign-in family and an end that has come, and nothing else', () => {
+    for (const cause of ['login', 'access', 'locked', 'bank_action', 'consent_ending', 'disconnect_pending'] as Cause[]) expect([cause, reconnectFixes(cause)]).toEqual([cause, true]);
+    for (const cause of ['ok', 'institution_down', 'provider', 'unreachable', 'credentials', 'unknown', 'revoked', 'gone', 'token', 'unsupported', 'no_accounts', 'vanished'] as Cause[]) {
+      expect([cause, reconnectFixes(cause)]).toEqual([cause, false]);
+    }
   });
 
   test('a failure from a payload older than the classification reads as unknown', () => {

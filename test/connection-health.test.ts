@@ -298,6 +298,16 @@ describe('a fetch that fails says why (lib/networth.ts)', () => {
     }
   });
 
+  test("Plaid's warning, as a code, is a warning on a call that answered and a reconnect on one that failed", async () => {
+    plaid['token-item_x'] = () => ({ data: { item: { error: { error_code: 'PENDING_EXPIRATION', error_type: 'ITEM_ERROR' } }, accounts: [account('a1')] } });
+    const answered = await fetchInstitution(await stored('item_x'));
+    expect(answered).toMatchObject({ error: null, needs_reauth: false });
+    expect(answered.accounts).toHaveLength(1);
+    fails('token-item_x', 'PENDING_EXPIRATION');
+    const failedCall = await fetchInstitution(await stored('item_x'));
+    expect(failedCall).toMatchObject({ needs_reauth: true, error: 'This account needs to be reconnected' });
+  });
+
   test('a 200 that carries a sign-in error on the Item is that failure', async () => {
     plaid['token-item_x'] = () => ({ data: { item: { error: { error_code: 'ITEM_LOCKED', error_type: 'ITEM_ERROR' } }, accounts: [account('a1')] } });
     const inst = await fetchInstitution(await stored('item_x'));

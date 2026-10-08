@@ -14,7 +14,7 @@ import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
 import { loadVanishedInputs, applyVanished } from './vanished';
 import { recordSnapshot, recordPartialAccounts } from './history';
-import { CAUSES, classifyFailure, isoTime, type ConnectionHealth, type Failure } from './connection-state';
+import { CAUSES, classifyFailure, isoTime, reconnectFixes, type ConnectionHealth, type Failure } from './connection-state';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -177,7 +177,7 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
     // timeout, the network) has no response.
     const data = err?.response?.data;
     result.failure = classifyFailure({ code: data?.error_code, type: data?.error_type, responded: err?.response !== undefined });
-    result.needs_reauth = CAUSES[result.failure.cause].state === 'needs_reauth';
+    result.needs_reauth = reconnectFixes(result.failure.cause);
     result.error = result.needs_reauth ? 'This account needs to be reconnected' : 'Could not fetch balances';
     // Balances failed -- holdings would fail identically (same access token/item), skip the extra call.
     return result;

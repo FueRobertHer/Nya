@@ -155,7 +155,22 @@ const CODES: Readonly<Record<string, readonly [Cause, Side]>> = {
   MFA_NOT_SUPPORTED: ['unsupported', 'bank'],
   INSTITUTION_NO_LONGER_SUPPORTED: ['unsupported', 'plaid'],
   NO_ACCOUNTS: ['no_accounts', 'bank'],
+  // Plaid's warnings that a working connection will end (the webhooks
+  // lib/connection-health.ts records), should one ever come as a code on a
+  // call. On a call that answered they are a warning, never a failure.
+  PENDING_EXPIRATION: ['consent_ending', 'bank'],
+  PENDING_DISCONNECT: ['disconnect_pending', 'bank'],
 };
+
+/**
+ * Whether signing in again through update mode is what fixes a call that
+ * failed for this cause: the sign-in family, and a warned-of end that has
+ * already arrived. lib/networth.ts shows the Reconnect button on it.
+ */
+export function reconnectFixes(cause: Cause): boolean {
+  const state = (Object.hasOwn(CAUSES, cause) ? CAUSES[cause] : CAUSES.unknown).state;
+  return state === 'needs_reauth' || state === 'reconnect_soon';
+}
 
 /** Plaid's error types whose every code means Plaid itself is busy or failing. */
 const PROVIDER_TYPES = new Set(['RATE_LIMIT_EXCEEDED', 'API_ERROR']);
@@ -307,7 +322,10 @@ export function healthOf(inst: HealthInput, warning: ConnectionWarning | null, l
   if (inst.error) {
     // A payload from before failures were classified has none: unknown.
     const f = inst.failure ?? { cause: 'unknown', side: 'unknown', code: null };
-    const h = health(f.cause, f.side, lastOkAt);
+    // A call that failed has stopped already, whatever end it was warned of:
+    // it needs reconnecting now.
+    const cause: Cause = Object.hasOwn(CAUSES, f.cause) && CAUSES[f.cause].state === 'reconnect_soon' ? 'login' : f.cause;
+    const h = health(cause, f.side, lastOkAt);
     return f.code ? { ...h, code: f.code } : h;
   }
   const ends: { at: string; estimated: boolean; cause: Cause }[] = [];
