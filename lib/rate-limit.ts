@@ -18,6 +18,7 @@
 
 import { redis, kc, kEnv } from './storage';
 import type { Ctx } from './containers';
+import { DOWNLOADS_PER_WINDOW, DOWNLOAD_WINDOW_SECONDS } from './download-limit';
 
 // ---- Wrong passwords ----
 
@@ -66,16 +67,17 @@ export async function clearWrongPasswords(req: Request): Promise<void> {
 
 // ---- Downloads of my data ----
 
-export const DOWNLOADS_PER_WINDOW = 5;
-export const DOWNLOAD_WINDOW_SECONDS = 60 * 60;
+// The numbers live where the page can read them too (lib/download-limit.ts).
+export { DOWNLOADS_PER_WINDOW, DOWNLOAD_WINDOW_SECONDS };
 
 const downloadsKey = (ctx: Ctx) => kc(ctx, 'ratelimit:downloads');
 
 export type DownloadAllowance = { ok: true } | { ok: false; retryAfterSeconds: number };
 
-/** Seconds until a window ends, from a TTL reply: the whole window when the
- *  counter has no expiry (it gets one when next counted). */
-const secondsLeft = (ttl: unknown) => (Number(ttl) > 0 ? Number(ttl) : DOWNLOAD_WINDOW_SECONDS);
+/** Seconds until a window ends, from a TTL reply: what is left (at least a
+ *  second: 0 means under one), or the whole window when the counter has no
+ *  expiry (-1, given one when next counted) or is gone (-2). */
+const secondsLeft = (ttl: unknown) => (Number(ttl) >= 0 ? Math.max(1, Number(ttl)) : DOWNLOAD_WINDOW_SECONDS);
 
 /**
  * Whether another download fits in this window, without counting one. Asked
@@ -103,7 +105,9 @@ export async function downloadAllowed(ctx: Ctx): Promise<DownloadAllowance> {
 export async function takeDownload(ctx: Ctx): Promise<DownloadAllowance> {
   const key = downloadsKey(ctx);
   const [count, ttl] = (await redis().pipeline().incr(key).ttl(key).exec()) as [unknown, unknown];
-  if (!(Number(ttl) > 0)) await redis().expire(key, DOWNLOAD_WINDOW_SECONDS);
+  // Only a counter with no expiry at all (-1). A TTL of 0 is under a second
+  // left: that window is ending, and must not be given a fresh hour.
+  if (Number(ttl) < 0) await redis().expire(key, DOWNLOAD_WINDOW_SECONDS);
   if (Number(count) <= DOWNLOADS_PER_WINDOW) return { ok: true };
   return { ok: false, retryAfterSeconds: secondsLeft(ttl) };
 }

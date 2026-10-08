@@ -55,7 +55,7 @@ import { readHistoryForExport, type StoredPoint } from './history';
 import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
-import { csvRow, type CsvValue } from './csv';
+import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 
 export const EXPORT_FORMAT = 'nya-export';
 export const EXPORT_VERSION = 1;
@@ -614,11 +614,12 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     )
     .sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(a.investment_transaction_id, b.investment_transaction_id));
 
-  const notes: string[] = [];
+  // A Set: two connections to the same bank, both behind, are one caveat.
+  const notes = new Set<string>();
   for (const s of data.stores) {
     if (!s.behind) continue;
     const name = items.get(s.item_id)?.institution_name ?? 'one institution';
-    notes.push(
+    notes.add(
       `Nya could not save the newest transactions from ${name} (a storage limit, or a write that failed), so ones the app showed recently may be missing from this file. They are saved again once a sync can store them.`
     );
   }
@@ -629,7 +630,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     exported_at: now.toISOString(),
     documentation: EXPORT_DOCUMENTATION,
     not_included: notIncluded(data.people),
-    notes,
+    notes: [...notes],
     institutions: data.items
       .map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' }))
       .sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
@@ -693,12 +694,42 @@ function* gathered(pieces: Iterable<string>): Generator<string> {
   if (buffer) yield buffer;
 }
 
+/** Which objects are laid out over several lines, by where each sits in the
+ *  document: the keys and indexes that lead to it. */
+export type JsonLayout = (path: readonly (string | number)[]) => boolean;
+
+/** Every object over several lines: the text of JSON.stringify(value, null, 2). */
+export const EVERY_OBJECT: JsonLayout = () => true;
+
 /**
- * A JSON value as pretty-printed text, a piece at a time: exactly the text of
- * JSON.stringify(value, null, 2), without ever holding all of it, so a long
- * history doesn't become one string the size of the file.
+ * The download's layout: one record per line. The document and each of its
+ * sections are laid out a field per line and every list an entry per line,
+ * while each record (an institution, an account, a transaction, one day's
+ * balance, a link) takes one line of its own. The two records that hold long
+ * lists themselves (one account's history, one earlier account's carried
+ * categories) are laid out too, so their lists run an entry per line.
+ *
+ * Readable in a text editor at about the size of compact JSON. Indenting every
+ * field cost 38% more (146 MB against 106 MB for an account with 60,000
+ * transactions and ten years of history) and several times the time to write,
+ * which a slow connection pays again.
  */
-export function* jsonPieces(value: unknown, indent = ''): Generator<string> {
+export const ONE_RECORD_PER_LINE: JsonLayout = (path) =>
+  path.length <= 1 ||
+  (path.length === 2 && path[0] === 'account_history') ||
+  (path.length === 3 && path[0] === 'account_links' && path[1] === 'carried_categories');
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) && typeof (value as { toJSON?: unknown }).toJSON !== 'function';
+
+/**
+ * A JSON value as text, a piece at a time, without ever holding all of it, so
+ * a long history doesn't become one string the size of the file. Lists are
+ * written an entry per line; an object `layout` doesn't lay out is written on
+ * one line, as JSON.stringify writes it. Whatever the layout, the text parses
+ * to exactly what JSON.stringify(value) does.
+ */
+export function* jsonPieces(value: unknown, layout: JsonLayout = EVERY_OBJECT, path: (string | number)[] = [], indent = ''): Generator<string> {
   if (Array.isArray(value)) {
     if (value.length === 0) {
       yield '[]';
@@ -710,13 +741,17 @@ export function* jsonPieces(value: unknown, indent = ''): Generator<string> {
       yield inner;
       // As JSON.stringify writes them: nothing representable in an array is null.
       const v = value[i];
-      yield* jsonPieces(v === undefined || typeof v === 'function' || typeof v === 'symbol' ? null : v, inner);
+      yield* jsonPieces(v === undefined || typeof v === 'function' || typeof v === 'symbol' ? null : v, layout, [...path, i], inner);
       yield i < value.length - 1 ? ',\n' : '\n';
     }
     yield `${indent}]`;
     return;
   }
-  if (value !== null && typeof value === 'object' && typeof (value as { toJSON?: unknown }).toJSON !== 'function') {
+  if (isPlainObject(value)) {
+    if (!layout(path)) {
+      yield JSON.stringify(value);
+      return;
+    }
     const entries = Object.entries(value).filter(([, v]) => v !== undefined && typeof v !== 'function' && typeof v !== 'symbol');
     if (entries.length === 0) {
       yield '{}';
@@ -726,7 +761,7 @@ export function* jsonPieces(value: unknown, indent = ''): Generator<string> {
     yield '{\n';
     for (let i = 0; i < entries.length; i++) {
       yield `${inner}${JSON.stringify(entries[i][0])}: `;
-      yield* jsonPieces(entries[i][1], inner);
+      yield* jsonPieces(entries[i][1], layout, [...path, entries[i][0]], inner);
       yield i < entries.length - 1 ? ',\n' : '\n';
     }
     yield `${indent}}`;
@@ -845,7 +880,7 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
 
 /** transactions.csv: one row per stored transaction, newest first. */
 export function* transactionsCsv(doc: UserExport): Generator<string> {
-  yield csvRow(TRANSACTION_COLUMNS);
+  yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   for (const t of doc.transactions) yield csvRow(transactionRow(t));
 }
 
@@ -869,7 +904,7 @@ export const BALANCE_COLUMNS = [
  * ("account" rows), oldest day first, the total before the accounts.
  */
 export function* balancesCsv(doc: UserExport): Generator<string> {
-  yield csvRow(BALANCE_COLUMNS);
+  yield UTF8_BOM + csvRow(BALANCE_COLUMNS);
   const about = new Map<string, { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean }>();
   for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden });
   for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: null, hidden: m.hidden });
@@ -904,14 +939,36 @@ export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
       return {
         filename: `nya-data-${day}.json`,
         contentType: 'application/json; charset=utf-8',
-        pieces: () => gathered((function* () {
-          yield* jsonPieces(doc);
-          yield '\n';
-        })()),
+        pieces: () =>
+          gathered(
+            (function* () {
+              yield* jsonPieces(doc, ONE_RECORD_PER_LINE);
+              yield '\n';
+            })()
+          ),
       };
     case 'transactions-csv':
       return { filename: `nya-transactions-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(transactionsCsv(doc)) };
     case 'balances-csv':
       return { filename: `nya-balances-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(balancesCsv(doc)) };
   }
+}
+
+/** The file as UTF-8 bytes, a chunk at a time: what the route streams. */
+export function* fileChunks(file: ExportFile): Generator<Uint8Array> {
+  const encoder = new TextEncoder();
+  for (const piece of file.pieces()) yield encoder.encode(piece);
+}
+
+/**
+ * How many bytes the file is, from a pass over it that keeps none of them.
+ * The route sends the count ahead of the body, so the page can tell a whole
+ * file from one cut short. The document is wholly in memory before this pass,
+ * and the writers depend on nothing else, so the pass that streams it
+ * afterwards writes exactly the same bytes (test/user-export.test.ts checks).
+ */
+export function fileByteLength(file: ExportFile): number {
+  let bytes = 0;
+  for (const chunk of fileChunks(file)) bytes += chunk.byteLength;
+  return bytes;
 }

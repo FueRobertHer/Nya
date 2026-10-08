@@ -76,7 +76,12 @@ describe('with the shared password', () => {
     expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="nya-data-\d{4}-\d{2}-\d{2}\.json"$/);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-    const doc = JSON.parse(await res.text());
+    // The size goes ahead of the body, twice (one survives an edge that
+    // compresses), and it is what arrives: the page checks it before saving.
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(res.headers.get('content-length')).toBe(String(body.byteLength));
+    expect(res.headers.get('x-nya-export-bytes')).toBe(String(body.byteLength));
+    const doc = JSON.parse(new TextDecoder().decode(body));
     expect(doc).toMatchObject({ format: 'nya-export', version: 1, sharing: null, budgets: [{ category: 'Food', monthly_amount: 400 }] });
     expect(doc.manual_accounts.map((m: { name: string }) => m.name)).toEqual(['Piggy bank']);
     // The log says a download happened, and nothing of what was in it.
@@ -162,7 +167,11 @@ describe('with the shared password', () => {
     const notes = JSON.parse(decodeURIComponent(res.headers.get('x-nya-export-notes')!));
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain('Chase');
-    const rows = parseCsv(await res.text());
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(res.headers.get('x-nya-export-bytes')).toBe(String(body.byteLength));
+    // UTF-8 with a byte order mark (EF BB BF), for Excel.
+    expect([...body.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const rows = parseCsv(new TextDecoder('utf-8', { ignoreBOM: true }).decode(body));
     expect(rows).toHaveLength(2);
   });
 

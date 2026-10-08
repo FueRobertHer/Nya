@@ -11,7 +11,17 @@ import {
   takeDownload,
   DOWNLOADS_PER_WINDOW,
 } from '@/lib/rate-limit';
-import { collectUserData, buildUserExport, exportFile, ExportReadError, EXPORT_FORMATS, type ExportFormat, type UserExport } from '@/lib/user-export';
+import {
+  collectUserData,
+  buildUserExport,
+  exportFile,
+  fileByteLength,
+  fileChunks,
+  ExportReadError,
+  EXPORT_FORMATS,
+  type ExportFormat,
+  type UserExport,
+} from '@/lib/user-export';
 
 // Download my data (lib/user-export.ts): everything Nya stores about the
 // person signed in, decrypted, as one file streamed to the browser. It is
@@ -41,10 +51,19 @@ import { collectUserData, buildUserExport, exportFile, ExportReadError, EXPORT_F
 // a store that can't be read is a 500 naming it, never a file that is quietly
 // short. Logs carry the kind of store and the error's class, never data, ids
 // or institution names.
+//
+// A WHOLE FILE OR NONE. The file is written twice from the document already
+// in memory: once to count its bytes, keeping none of them, then again to
+// stream it. The count goes ahead of the body, as Content-Length and as
+// X-Nya-Export-Bytes (which survives an edge that compresses the response and
+// rewrites the length), and the page saves nothing unless that many bytes
+// arrived. A stream the platform ends cleanly part way (the time limit, an
+// instance recycled) would otherwise look like a whole file.
 
-// Decrypting a large transaction history takes seconds, not minutes; this
-// leaves room for a slow database without letting a stuck read run on.
-export const maxDuration = 60;
+// The time streaming takes counts against this, and a large account's file
+// over a slow connection takes minutes: the same allowance as the operator
+// export and the nightly backup.
+export const maxDuration = 300;
 
 /** How recent a Clerk sign-in must be (see the header). */
 const FRESH = 'strict' as const;
@@ -149,24 +168,28 @@ export async function POST(req: Request) {
   console.log(`Data download: ${body.format}`);
 
   const file = exportFile(doc, body.format);
-  const pieces = file.pieces()[Symbol.iterator]();
-  const encoder = new TextEncoder();
+  // The first pass: the size, with nothing kept (see the header).
+  const bytes = fileByteLength(file);
+  // The second: the same bytes, streamed.
+  const chunks = fileChunks(file);
   const stream = new ReadableStream<Uint8Array>({
-    // Pulled: the next piece is written only when the browser has taken the
-    // last, so a slow connection never makes the whole file sit in memory twice.
+    // Pulled: the next chunk is written only when the browser has taken the
+    // last, so a slow connection never makes the whole file sit in memory.
     pull(controller) {
-      const next = pieces.next();
+      const next = chunks.next();
       if (next.done) controller.close();
-      else controller.enqueue(encoder.encode(next.value));
+      else controller.enqueue(next.value);
     },
     cancel() {
-      pieces.return?.(undefined);
+      chunks.return(undefined);
     },
   });
 
   const headers: Record<string, string> = {
     'Content-Type': file.contentType,
     'Content-Disposition': `attachment; filename="${file.filename}"`,
+    'Content-Length': String(bytes),
+    'X-Nya-Export-Bytes': String(bytes),
     // Financial data: no intermediary or browser cache may keep a copy.
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',

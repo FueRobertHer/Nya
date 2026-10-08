@@ -1,7 +1,9 @@
 // A small RFC 4180 reader for the tests, to show what a spreadsheet gets back
-// from the CSV files the download of my data writes (lib/csv.ts).
+// from the CSV files the download of my data writes (lib/csv.ts). A leading
+// byte order mark is dropped, as spreadsheets drop it.
 
 export function parseCsv(text: string): string[][] {
+  if (text.startsWith('\uFEFF')) text = text.slice(1);
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';

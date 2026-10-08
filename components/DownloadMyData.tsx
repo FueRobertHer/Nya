@@ -10,22 +10,42 @@
 // again once that is done. With the shared password, the password is asked
 // for here and sent with the request.
 //
-// WHOLE FILES ONLY. The response is read to its end before anything is saved,
-// so a connection cut part way leaves nothing behind rather than a file that
-// looks complete and isn't. Saved through a short-lived object URL, revoked
-// once the browser has the file; nothing is kept in the page's storage.
+// WHOLE FILES ONLY. The server says how many bytes the file is before
+// sending it (X-Nya-Export-Bytes), and the page counts what arrives: nothing
+// is saved unless the two agree. A connection cut part way, or a stream the
+// platform ends early without an error, leaves nothing behind rather than a
+// file that looks complete and isn't. Saved through a short-lived object URL,
+// revoked once the browser has the file; nothing is kept in the page's
+// storage. Named with the viewer's own date, not the server's UTC one.
 
 import { useState } from 'react';
 import { useReverification } from '@clerk/nextjs';
 import { isReverificationCancelledError } from '@clerk/nextjs/errors';
+import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
+import { localDate } from '@/lib/local-date';
 
 export type Format = 'json' | 'transactions-csv' | 'balances-csv';
 
-export const FORMATS: { value: Format; label: string; note: string }[] = [
-  { value: 'json', label: 'Everything (JSON)', note: 'Accounts, balance history, transactions, budgets, goals, links and sharing settings, in one file.' },
-  { value: 'transactions-csv', label: 'Transactions (CSV)', note: 'Every stored transaction, one per row, for a spreadsheet.' },
-  { value: 'balances-csv', label: 'Balance history (CSV)', note: 'Net worth and each account’s balance, day by day.' },
-];
+/** The formats, described. `sharing`: whether there is sharing to include
+ *  (with Clerk; with the shared password there are no people to share with). */
+export function formatsFor(sharing: boolean): { value: Format; label: string; note: string }[] {
+  return [
+    {
+      value: 'json',
+      label: 'Everything (JSON)',
+      note: `Accounts, balance history, transactions, investment transactions, budgets, goals${sharing ? ', account links and sharing settings' : ' and account links'}, in one file.`,
+    },
+    {
+      value: 'transactions-csv',
+      label: 'Transactions (CSV)',
+      note: 'Every stored bank and card transaction, one per row, for a spreadsheet. Investment transactions are in the JSON file only.',
+    },
+    { value: 'balances-csv', label: 'Balance history (CSV)', note: 'Net worth and each account’s balance, day by day.' },
+  ];
+}
+
+/** What a page that can't tell the whole file arrived says, and saves nothing. */
+export const CUT_OFF = 'The download was cut off part way, so nothing was saved. Try again.';
 
 /** How the file is laid out, field by field. */
 export const FORMAT_GUIDE = 'https://github.com/FueRobertHer/Nya/blob/main/docs/data-export.md';
@@ -36,7 +56,7 @@ export type Phase =
   | { kind: 'confirming' }
   /** The server is reading and decrypting everything. */
   | { kind: 'preparing' }
-  | { kind: 'receiving'; bytes: number }
+  | { kind: 'receiving'; bytes: number; total: number }
   | { kind: 'done'; filename: string; bytes: number; notes: string[] }
   | { kind: 'error'; message: string };
 
@@ -49,9 +69,12 @@ function isHint(v: unknown): v is Hint {
   return !!e && e.type === 'forbidden' && e.reason === 'reverification-error';
 }
 
-function filenameOf(disposition: string | null, format: Format): string {
-  const named = /filename="([^"]+)"/.exec(disposition ?? '')?.[1];
-  return named ?? `nya-${format === 'json' ? 'data' : format.replace('-csv', '')}.${format === 'json' ? 'json' : 'csv'}`;
+/** The file's name, with the viewer's own date: the server's is the UTC day,
+ *  which is tomorrow from a US evening on. */
+export function localFilename(format: Format, now: Date = new Date()): string {
+  const day = localDate(now);
+  if (format === 'json') return `nya-data-${day}.json`;
+  return `nya-${format === 'transactions-csv' ? 'transactions' : 'balances'}-${day}.csv`;
 }
 
 function notesOf(header: string | null): string[] {
@@ -71,9 +94,10 @@ export function formatBytes(n: number): string {
 }
 
 /**
- * One request for the file, read to its end. Never a Response: Clerk's hook
- * reads a Response as JSON, which the file is not. A hint is handed back as it
- * came, for the hook to act on.
+ * One request for the file, read to its end and checked against the size the
+ * server announced. Never a Response: Clerk's hook reads a Response as JSON,
+ * which the file is not. A hint is handed back as it came, for the hook to act
+ * on.
  */
 export async function requestFile(format: Format, password: string | null, setPhase: (p: Phase) => void): Promise<Outcome> {
   setPhase({ kind: 'preparing' });
@@ -95,11 +119,16 @@ export async function requestFile(format: Format, password: string | null, setPh
     }
     return { ok: false, error: typeof data?.error === 'string' ? data.error : 'The download didn’t work. Try again.' };
   }
-  const filename = filenameOf(res.headers.get('content-disposition'), format);
+  // Without the size there is no telling a whole file from part of one.
+  const declared = res.headers.get('x-nya-export-bytes');
+  const reader = res.body?.getReader();
+  if (declared === null || !/^\d+$/.test(declared) || !reader) {
+    await reader?.cancel().catch(() => {});
+    return { ok: false, error: CUT_OFF };
+  }
+  const total = Number(declared);
   const notes = notesOf(res.headers.get('x-nya-export-notes'));
   const type = res.headers.get('content-type') ?? 'application/octet-stream';
-  const reader = res.body?.getReader();
-  if (!reader) return { ok: true, blob: await res.blob(), filename, notes };
   const parts: Uint8Array[] = [];
   let bytes = 0;
   try {
@@ -108,12 +137,14 @@ export async function requestFile(format: Format, password: string | null, setPh
       if (done) break;
       parts.push(value);
       bytes += value.length;
-      setPhase({ kind: 'receiving', bytes });
+      setPhase({ kind: 'receiving', bytes, total });
     }
   } catch {
-    return { ok: false, error: 'The download was cut off part way, so nothing was saved. Try again.' };
+    return { ok: false, error: CUT_OFF };
   }
-  return { ok: true, blob: new Blob(parts as BlobPart[], { type }), filename, notes };
+  // Ended without an error, but short (or long): not the file that was sent.
+  if (bytes !== total) return { ok: false, error: CUT_OFF };
+  return { ok: true, blob: new Blob(parts as BlobPart[], { type }), filename: localFilename(format), notes };
 }
 
 /** Hands the file to the browser to save. */
@@ -211,24 +242,27 @@ export function DownloadMyDataView({
   onDownload: () => void;
 }) {
   const busy = phase.kind === 'confirming' || phase.kind === 'preparing' || phase.kind === 'receiving';
+  // With the shared password there are no people, so no sharing to include.
+  const sharing = !needsPassword;
   return (
     <div className="card download-card">
       <div className="inst-header">
         <div className="inst-name">Download my data</div>
       </div>
       <p className="panel-note">
-        A copy of everything Nya keeps for you: your accounts and their balance history (recorded and estimated days
-        marked), every transaction with your own categories and merchant names, budgets, goals, account links and what
-        you share. The file isn’t encrypted, so keep it somewhere safe.
+        A copy of what Nya keeps for you: your accounts and their balance history (recorded and estimated days marked),
+        every transaction with your own categories and merchant names, investment transactions, budgets, goals and
+        account links{sharing ? ', and what you share' : ''}. The file isn’t encrypted, so keep it somewhere safe.
       </p>
       <p className="panel-note">
-        Left out: the access tokens Nya uses to reach your banks through Plaid. They are credentials, not your data,
-        and they only work for Nya.
+        Left out: the access tokens Nya uses to reach your banks through Plaid (credentials, not your data, and they
+        only work for Nya), and the app’s own machinery, such as caches and counters. The file lists everything it
+        leaves out, and why.
       </p>
 
       <fieldset className="download-formats" disabled={busy}>
         <legend className="section-label">Format</legend>
-        {FORMATS.map((f) => (
+        {formatsFor(sharing).map((f) => (
           <label key={f.value} className="download-format">
             <input type="radio" name="download-format" value={f.value} checked={format === f.value} onChange={() => onFormat(f.value)} />
             <span>
@@ -266,14 +300,18 @@ export function DownloadMyDataView({
         {phase.kind === 'preparing' && (
           <p className="panel-note">Preparing your file. Everything is read and decrypted first, so this can take a few seconds.</p>
         )}
-        {phase.kind === 'receiving' && <p className="panel-note">Downloading… {formatBytes(phase.bytes)}</p>}
+        {phase.kind === 'receiving' && (
+          <p className="panel-note">
+            Downloading… {formatBytes(phase.bytes)} of {formatBytes(phase.total)}
+          </p>
+        )}
         {phase.kind === 'done' && (
           <>
             <p className="status-note">
               Saved {phase.filename} ({formatBytes(phase.bytes)}).
             </p>
-            {phase.notes.map((n) => (
-              <p key={n} className="stale-note">
+            {phase.notes.map((n, i) => (
+              <p key={i} className="stale-note">
                 {n}
               </p>
             ))}
@@ -283,7 +321,7 @@ export function DownloadMyDataView({
       </div>
 
       <p className="panel-note">
-        Up to 5 downloads an hour.{' '}
+        Up to {DOWNLOADS_PER_WINDOW} downloads an hour.{' '}
         <a href={FORMAT_GUIDE} target="_blank" rel="noreferrer">
           What each field means
         </a>

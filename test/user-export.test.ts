@@ -22,6 +22,9 @@ const {
   buildUserExport,
   exportFile,
   jsonPieces,
+  fileByteLength,
+  fileChunks,
+  ONE_RECORD_PER_LINE,
   ExportReadError,
   STORED_KEYS,
   storedKeyListed,
@@ -546,6 +549,15 @@ describe('caveats', () => {
     expect(doc.notes[0]).toContain('Chase');
   });
 
+  test('two connections to the same bank, both behind, are one caveat', async () => {
+    await fake.hset(ctxKey('plaid:items'), {
+      item_c: JSON.stringify({ item_id: 'item_c', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t') }),
+    });
+    await fake.set(ctxKey('txns-unsaved:item_a'), '2026-10-01T00:00:00.000Z');
+    await fake.set(ctxKey('txns-blocked:item_c'), JSON.stringify({ at: '2026-10-01T00:00:00.000Z', chars: 9e9 }));
+    expect((await download()).notes).toHaveLength(1);
+  });
+
   test('a part named like a core one can’t replace it', async () => {
     const data = await collectUserData({ ctx, userId: 'user_me' });
     expect(() => buildUserExport({ ...data, sections: [['accounts', []]] }, NOW)).toThrow('called accounts');
@@ -553,23 +565,62 @@ describe('caveats', () => {
 });
 
 describe('writing it out', () => {
-  test('JSON a piece at a time is exactly JSON.stringify’s, and reads back whole', async () => {
+  test('JSON a piece at a time, fully laid out, is exactly JSON.stringify’s', async () => {
     const doc = await download();
     expect([...jsonPieces(doc)].join('')).toBe(JSON.stringify(doc, null, 2));
     for (const odd of [[], {}, [[]], { a: undefined, b: [undefined, 1] }, null, 'x', 0, [{ a: { b: [] } }]]) {
       expect([...jsonPieces(odd)].join('')).toBe(JSON.stringify(odd, null, 2));
+      // Any layout reads back as the same value.
+      expect(JSON.parse([...jsonPieces(odd, ONE_RECORD_PER_LINE)].join(''))).toEqual(JSON.parse(JSON.stringify(odd)));
     }
+  });
+
+  test('the JSON file: one record per line, and it reads back whole', async () => {
+    const doc = await download();
     const file = exportFile(doc, 'json');
     expect(file.filename).toBe('nya-data-2026-10-06.json');
     expect(file.contentType).toBe('application/json; charset=utf-8');
-    expect(JSON.parse([...file.pieces()].join(''))).toEqual(JSON.parse(JSON.stringify(doc)));
+    const text = [...file.pieces()].join('');
+    expect(JSON.parse(text)).toEqual(JSON.parse(JSON.stringify(doc)));
+    const lines = text.split('\n');
+    // The document and its sections are laid out, a field per line.
+    expect(lines[0]).toBe('{');
+    expect(lines).toContain('  "format": "nya-export",');
+    expect(lines).toContain('  "transactions": [');
+    // Each record takes one line of its own: a transaction, an account, a day's total.
+    for (const t of doc.transactions) expect(lines).toContain(`    ${JSON.stringify(t)}${t === doc.transactions.at(-1) ? '' : ','}`);
+    for (const a of doc.accounts) expect(lines.some((l) => l.trim().replace(/,$/, '') === JSON.stringify(a))).toBe(true);
+    expect(lines).toContain(`      ${JSON.stringify(doc.net_worth_history.points[0])},`);
+    // One account's history is laid out too, its days one per line.
+    const chk = doc.account_history.find((h) => h.account_id === 'acc_chk')!;
+    expect(lines).toContain(`      "account_id": "acc_chk",`);
+    expect(lines).toContain(`        ${JSON.stringify(chk.points[0])},`);
+    expect(text.endsWith('}\n')).toBe(true);
+  });
+
+  test('the size is counted from a pass that keeps nothing, and the pass streamed after writes exactly that', async () => {
+    const doc = await download();
+    for (const format of ['json', 'transactions-csv', 'balances-csv'] as const) {
+      const file = exportFile(doc, format);
+      const announced = fileByteLength(file);
+      const first = Buffer.concat([...fileChunks(file)]);
+      const second = Buffer.concat([...fileChunks(file)]);
+      expect(first.byteLength).toBe(announced);
+      // Byte for byte the same file, however many times it is written.
+      expect(second.equals(first)).toBe(true);
+      // ignoreBOM keeps the CSVs' byte order mark, which a default decoder drops.
+      expect(new TextDecoder('utf-8', { ignoreBOM: true }).decode(first)).toBe([...file.pieces()].join(''));
+    }
   });
 
   test('transactions.csv: one row per stored transaction, guarded against formulas', async () => {
     const doc = await download();
     const file = exportFile(doc, 'transactions-csv');
     expect(file.filename).toBe('nya-transactions-2026-10-06.csv');
-    const [header, ...rows] = parseCsv([...file.pieces()].join(''));
+    const text = [...file.pieces()].join('');
+    // A byte order mark first, so Excel reads it as UTF-8.
+    expect(text.startsWith('\uFEFFdate,account_name,')).toBe(true);
+    const [header, ...rows] = parseCsv(text);
     expect(header).toEqual([...TRANSACTION_COLUMNS]);
     expect(rows).toHaveLength(doc.transactions.length);
     const col = (row: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => row[TRANSACTION_COLUMNS.indexOf(name)];
@@ -594,7 +645,9 @@ describe('writing it out', () => {
     const doc = await download();
     const file = exportFile(doc, 'balances-csv');
     expect(file.filename).toBe('nya-balances-2026-10-06.csv');
-    const [header, ...rows] = parseCsv([...file.pieces()].join(''));
+    const text = [...file.pieces()].join('');
+    expect(text.startsWith('\uFEFFdate,record,')).toBe(true);
+    const [header, ...rows] = parseCsv(text);
     expect(header).toEqual([...BALANCE_COLUMNS]);
     const totals = rows.filter((r) => r[1] === 'net_worth');
     expect(totals.map((r) => [r[0], r[6], r[8]])).toEqual([

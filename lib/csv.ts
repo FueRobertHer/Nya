@@ -6,7 +6,13 @@
 //
 // RFC 4180: every record ends in CRLF, and a field holding a comma, a double
 // quote, a CR or an LF is enclosed in double quotes, with each double quote
-// inside it doubled. Nothing else is quoted. UTF-8, with no byte order mark.
+// inside it doubled. Nothing else is quoted.
+//
+// UTF-8, starting with a byte order mark (UTF8_BOM). These files are offered
+// for a spreadsheet, and Excel on Windows reads a CSV without one in the
+// system's old code page, garbling every accented or non-Latin merchant name.
+// Spreadsheets and most CSV readers drop the mark; a script reading the file
+// as plain UTF-8 may need to (Python's "utf-8-sig" does).
 //
 // THE GUARD. A spreadsheet that opens a CSV runs a cell starting with =, +, -
 // or @ as a formula, and a leading tab or carriage return can smuggle one in
@@ -18,6 +24,9 @@
 // as JavaScript writes one, counts.
 
 export type CsvValue = string | number | boolean | null | undefined;
+
+/** What a CSV file starts with (see the header). */
+export const UTF8_BOM = '\uFEFF';
 
 /** Starts a cell a spreadsheet may run as a formula. */
 const FORMULA_START = /^[=+\-@\t\r]/;

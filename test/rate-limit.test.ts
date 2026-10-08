@@ -55,6 +55,15 @@ describe('downloads of my data, per container', () => {
     expect(fake.ttls.get(ctxKey('ratelimit:downloads'))).toBe(DOWNLOAD_WINDOW_SECONDS);
   });
 
+  test('a window under a second from ending is left to end, not given a fresh hour', async () => {
+    for (let i = 0; i < DOWNLOADS_PER_WINDOW; i++) await takeDownload(TEST_CTX);
+    // TTL answers 0 for under a second left.
+    fake.ttls.set(ctxKey('ratelimit:downloads'), 0);
+    expect(await takeDownload(TEST_CTX)).toEqual({ ok: false, retryAfterSeconds: 1 });
+    expect(fake.ttls.get(ctxKey('ratelimit:downloads'))).toBe(0);
+    expect(await downloadAllowed(TEST_CTX)).toEqual({ ok: false, retryAfterSeconds: 1 });
+  });
+
   test('the time left is the counter’s own', async () => {
     for (let i = 0; i < DOWNLOADS_PER_WINDOW; i++) await takeDownload(TEST_CTX);
     fake.ttls.set(ctxKey('ratelimit:downloads'), 120);
