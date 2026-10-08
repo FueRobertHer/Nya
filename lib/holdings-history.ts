@@ -271,10 +271,13 @@ const isKeyId = (v: unknown): v is string => typeof v === 'string' && v !== '' &
 /**
  * What one answer of /investments/holdings/get says, in the shape it is
  * recorded in. Pure, and total: it never throws, whatever the answer holds. An
- * investment account the balances listed is recorded holding nothing when no
- * position names it, so a day it held nothing reads as that and not as a day
- * it went unrecorded. A position naming no account or no security is left out:
- * it could not be put anywhere.
+ * investment account the balances listed is recorded with no positions when
+ * none names it, so a day Plaid reported nothing for it reads as that, not as
+ * a day nobody looked. That says nothing about its balance: money an
+ * institution does not list as a position (cash, often) has no position, and
+ * the balance recorded beside it (lib/history.ts) is what it was worth. A
+ * position naming no account or no security is left out: it could not be put
+ * anywhere.
  */
 export function observeHoldings(
   answer: { holdings?: unknown; securities?: unknown },
@@ -696,6 +699,7 @@ export async function readHoldingsRange(ctx: Ctx, from: string, to: string, opts
 /** STRICT. One month's recorded days (YYYY-MM), as readHoldingsRange. */
 export async function readHoldingsMonth(ctx: Ctx, month: string, opts: ReadOptions = {}): Promise<HoldingsDay[]> {
   if (!MONTH.test(month)) throw new TypeError('holdings-history: a month is YYYY-MM');
+  // Bounds, not dates: no month has a day after its 31st.
   return readHoldingsRange(ctx, `${month}-01`, `${month}-31`, opts);
 }
 

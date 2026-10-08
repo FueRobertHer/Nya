@@ -55,8 +55,8 @@ const {
 const { recordFetch } = await import('@/lib/networth');
 const { getHistory } = await import('@/lib/history');
 const { snapshotData, runSnapshots, readRun } = await import('@/lib/snapshot-job');
-const { encrypt } = await import('@/lib/crypto');
-const { encodeJsonText } = await import('@/lib/blob');
+const { encrypt, decrypt } = await import('@/lib/crypto');
+const { encodeJsonText, decryptJsonText } = await import('@/lib/blob');
 const { saveItem } = await import('@/lib/storage');
 const { UnreadableEntriesError, StoredDataUnreadableError } = await import('@/lib/repo');
 const { classify } = await import('@/lib/reencrypt');
@@ -409,6 +409,27 @@ describe('recording', () => {
     expect(await readHoldingsSpan(ctx, { accountId: 'acct_3' })).toEqual({ first: '2026-10-07', last: '2026-10-07' });
   });
 
+  test("a lost note of an account's days is a warning, its positions still count, and the next day finds its first day", async () => {
+    const seen = (q: number) => [broker(['acct_1'], [hold('acct_1', 'vti', { quantity: q })], [sec('vti')])];
+    const evalOrig = fake.eval.bind(fake);
+    let indexWrites = 0;
+    fake.eval = (async (script: string, keys: string[], args: string[]) => {
+      // The index's first write claims the month; its second notes the days.
+      if (script.startsWith('-- nya:repo-update-entry') && keys[0] === INDEX && ++indexWrites === 2) throw new Error('down');
+      return evalOrig(script, keys, args);
+    }) as typeof fake.eval;
+    try {
+      expect(await recordHoldings(ctx, seen(1), at('2026-10-05T13:00:00Z'))).toEqual({ recorded: 1, failed: 0 });
+    } finally {
+      fake.eval = evalOrig;
+    }
+    expect(warnings.some((w) => String(w[0]).includes('could not be noted'))).toBe(true);
+    expect((await readHoldingsMonth(ctx, '2026-10')).map((d) => d.date)).toEqual(['2026-10-05']);
+    expect(await readHoldingsSpan(ctx)).toEqual({ first: null, last: null });
+    await recordHoldings(ctx, seen(2), at('2026-10-06T13:00:00Z'));
+    expect(await readHoldingsSpan(ctx, { accountId: 'acct_1' })).toEqual({ first: '2026-10-05', last: '2026-10-06' });
+  });
+
   test('hidden accounts are recorded like every other, and left out on read when asked', async () => {
     await recordHoldings(ctx, [broker(['acct_shown', 'acct_hidden'], [hold('acct_shown', 'vti'), hold('acct_hidden', 'vti')], [sec('vti')])], at('2026-10-07T13:00:00Z'));
     const all = await readHoldingsRange(ctx, '2026-10-07', '2026-10-07');
@@ -606,7 +627,7 @@ describe('forgetting an account', () => {
     ]);
     // Nothing anywhere names it, or the security only it held.
     for (const [, stored] of storedMonths()) {
-      const value = JSON.parse(await (await import('@/lib/blob')).decryptJsonText(stored));
+      const value = JSON.parse(await decryptJsonText(stored));
       expect(JSON.stringify(value)).not.toContain('acct_gone');
       expect(JSON.stringify(value)).not.toContain('only_gone');
     }
@@ -642,14 +663,14 @@ describe('forgetting an account', () => {
 
   test('a damaged month is left as it is and reported; an unrecognised one stops it', async () => {
     await twoMonths();
-    const index = JSON.parse(await (await import('@/lib/crypto')).decrypt((await fake.hget<string>(INDEX, 'index'))!));
+    const index = JSON.parse(await decrypt((await fake.hget<string>(INDEX, 'index'))!));
     await fake.hset(HISTORY, { [index.months['2026-09']]: 'damaged' });
     expect(await forgetAccountHoldings(ctx, 'acct_gone')).toEqual({ changed: 2, unreadableMonths: ['2026-09'] });
     expect(await fake.hget<string>(HISTORY, index.months['2026-09'])).toBe('damaged');
 
     fake.reset();
     await twoMonths();
-    const again = JSON.parse(await (await import('@/lib/crypto')).decrypt((await fake.hget<string>(INDEX, 'index'))!));
+    const again = JSON.parse(await decrypt((await fake.hget<string>(INDEX, 'index'))!));
     const unknown = await encodeJsonText(JSON.stringify({ v: 9 }));
     await fake.hset(HISTORY, { [again.months['2026-09']]: unknown });
     const err = await forgetAccountHoldings(ctx, 'acct_gone').catch((e) => e);
