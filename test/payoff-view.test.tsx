@@ -64,6 +64,8 @@ describe('the payoff planner', () => {
     expect(html).toContain(formatMoney(plan.interestCents! / 100, 'USD'));
     // One debt and no extra: nothing to roll over, so nothing is saved.
     expect(html).toContain('The same as paying only the minimums.');
+    // What it costs right now: $4,210.55 at 21.24% / 12.
+    expect(html).toContain('About $74.53 a month in interest at this balance.');
   });
 
   test('opens in the drawer as "Payoff plan"', () => {

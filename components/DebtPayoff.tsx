@@ -580,12 +580,15 @@ function DebtRow({
           loan. If it does here, type just the principal and interest.
         </p>
       )}
-      {debt && !coversInterest(debt) && (
-        <div className="stale-note">
-          {money(debt.minimumCents)} a month doesn&apos;t cover the interest (about{' '}
-          {money(firstInterestCents(debt))} a month), so on its own it never pays this off.
-        </div>
-      )}
+      {debt &&
+        (coversInterest(debt) ? (
+          <div className="payoff-sub">About {money(firstInterestCents(debt))} a month in interest at this balance.</div>
+        ) : (
+          <div className="stale-note">
+            {money(debt.minimumCents)} a month doesn&apos;t cover the interest (about{' '}
+            {money(firstInterestCents(debt))} a month), so on its own it never pays this off.
+          </div>
+        ))}
       <button className="link-btn payoff-leave" onClick={() => onLeftOut(true)}>
         Leave out of the plan
       </button>
