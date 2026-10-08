@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import PlanTab, { EventsCard, FiCard, GridCard, SimulationCard, assetCaveatLines, unreadText, windowText } from '@/components/PlanTab';
+import PlanTab, { EventsCard, FiCard, GridCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import PlanFanChart from '@/components/PlanFanChart';
 import PlanGrid from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
@@ -247,10 +247,10 @@ describe('the caveat sentences', () => {
 
 describe('the simulation card', () => {
   const us = usMarket();
-  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean } = {}) => {
+  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome } = {}) => {
     const view = fiView(p, m);
     const engine = enginePlan(p, view);
-    const outcome = 'sim' in engine && !opts.noOutcome ? { result: simulate(p.method, engine.sim, us) } : null;
+    const outcome = opts.outcome ?? ('sim' in engine && !opts.noOutcome ? { result: simulate(p.method, engine.sim, us) } : null);
     return renderToStaticMarkup(
       <SimulationCard
         plan={p}
@@ -262,11 +262,12 @@ describe('the simulation card', () => {
         currency="USD"
         editable
         onMethod={noop}
+        onRetry={noop}
         open={noop}
       />
     );
   };
-  const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean } = {}) => text(render(p, m, opts));
+  const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome } = {}) => text(render(p, m, opts));
 
   test('the success rate with its definition, the hypothetical framing, the worst years and the assumptions', () => {
     const t = read(plan({ targetAge: 65, horizon: 30 }));
@@ -320,6 +321,16 @@ describe('the simulation card', () => {
     expect(read(plan({ horizon: 30 }), measured, { noOutcome: true })).toContain('Working it out');
   });
 
+  test('a simulation that could not be run says so and offers to try again; a refused plan says why', () => {
+    const t = read(plan({ horizon: 30 }), measured, { outcome: { error: 'Failed to load chunk', unavailable: true } });
+    expect(t).toContain("The simulation couldn't be loaded. It needs a connection the first time it runs after an update.");
+    expect(t).toContain('Try again');
+    expect(t).not.toContain("This plan can't be simulated");
+    const refused = read(plan({ horizon: 30 }), measured, { outcome: { error: 'a plan runs 1 to 60 years' } });
+    expect(refused).toContain("This plan can't be simulated: a plan runs 1 to 60 years.");
+    expect(refused).not.toContain('Try again');
+  });
+
   test('explains what is missing instead of simulating nothing', () => {
     expect(read(plan(), { spending: null, savings: null, assets: null })).toContain('withdraws your annual spending, so it needs it');
     expect(read(plan({ start: 'assets' }), { spending: 40_000, savings: null, assets: null })).toContain('none to count yet');
@@ -357,6 +368,41 @@ describe('the grid', () => {
     // A cell still being worked out says so rather than showing a number.
     expect(html).toContain('4% for 40 years: working it out');
     expect(html).not.toContain('plan-grid-low');
+  });
+
+  test('a cell that could not be worked out says so, rather than waiting forever', () => {
+    const html = renderToStaticMarkup(
+      <PlanGrid
+        cells={[cell(0.04, 30, 0.97)]}
+        failed={[{ rate: 0.05, years: 30 }]}
+        rates={[0.04, 0.05]}
+        horizons={[30]}
+        current={{ rate: 0.04, years: 30 }}
+        flexible={false}
+        pathsNoun="starts"
+      />
+    );
+    expect(html).toContain("5% for 30 years: couldn&#x27;t be worked out");
+    expect(html).not.toContain('working it out');
+    const p = plan({ horizon: 30 });
+    const t = text(
+      renderToStaticMarkup(
+        <GridCard
+          plan={p}
+          cells={[cell(0.04, 30, 0.97)]}
+          failed={[{ rate: 0.05, years: 30 }]}
+          unavailable
+          onRetry={noop}
+          rates={[0.04, 0.05]}
+          years={[30]}
+          current={{ rate: 0.04, years: 30 }}
+          startBalance={1_000_000}
+          money={money}
+        />
+      )
+    );
+    expect(t).toContain("One cell couldn't be worked out: the simulation couldn't be loaded, which needs a connection the first time after an update.");
+    expect(t).toContain('Try again');
   });
 
   test("a flexible rule's cells carry how far spending fell", () => {

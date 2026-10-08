@@ -21,7 +21,10 @@ export type PlanJob =
 export type PlanJobResult =
   | { ok: true; kind: 'simulate'; result: SimResult }
   | { ok: true; kind: 'grid-cell'; cell: GridCell }
-  | { ok: false; error: string };
+  /** The engine refused the plan; or, with `unavailable`, the job couldn't be
+   *  run at all (its code failed to load: offline, say), which says nothing
+   *  about the plan. */
+  | { ok: false; error: string; unavailable?: true };
 
 /** A job and the id its answer is matched to. */
 export type PlanMessage = { id: number; job: PlanJob };

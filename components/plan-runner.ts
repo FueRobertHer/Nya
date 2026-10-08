@@ -6,7 +6,10 @@
 // load: offline before it was ever fetched, say), the same jobs run on the
 // page instead, one per task, so the tab still works, just less smoothly.
 // Jobs already sent to a worker that fails are run on the page too: none is
-// lost, and none is answered twice.
+// lost, and none is answered twice. If the page can't run them either (the
+// engine's code failed to load as well), the answer says the job was
+// unavailable, so the tab can say so and offer to try again rather than
+// wait for an answer that will never come.
 //
 // No React here, so the switching can be tested on its own.
 
@@ -53,7 +56,7 @@ export function createPlanRunner(opts: {
             }
             opts
               .runHere(job)
-              .catch((err): PlanJobResult => ({ ok: false, error: err instanceof Error ? err.message : String(err) }))
+              .catch((err): PlanJobResult => ({ ok: false, error: err instanceof Error ? err.message : String(err), unavailable: true }))
               .then(resolve)
               .finally(done);
           }, 0);

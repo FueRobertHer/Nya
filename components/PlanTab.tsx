@@ -28,7 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { Sheet } from './Sheet';
 import PlanFanChart from './PlanFanChart';
-import PlanGrid from './PlanGrid';
+import PlanGrid, { type FailedCell } from './PlanGrid';
 import { AboutForm, AssumptionsForm, Choice, ExpenseForm, FigureForm, IncomeForm, SimulationForm, type FigureKind } from './PlanForms';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
 import {
@@ -124,7 +124,10 @@ const FIGURE_TITLES: Record<FigureKind, string> = {
   assets: 'Invested assets',
 };
 
-export type Outcome = { result: SimResult } | { error: string };
+/** The simulation's answer: its result, or why there is none. `unavailable`
+ *  means it couldn't be run at all (its code failed to load), not that the
+ *  plan was refused. */
+export type Outcome = { result: SimResult } | { error: string; unavailable?: boolean };
 
 /** "your last 12 months of transactions (Oct 9, 2025 to Oct 8, 2026)", or how
  *  much shorter it was, scaled up. */
@@ -313,6 +316,17 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     },
     []
   );
+  // Trying again, after the simulation couldn't be run, starts a new runner
+  // and with it a new worker. This effect comes before the ones that run
+  // jobs, so the old runner is gone before they ask for one; their cleanups,
+  // which run before any effect, have already stopped listening to it.
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (attempt === 0) return;
+    runnerRef.current?.dispose();
+    runnerRef.current = null;
+  }, [attempt]);
+  const retry = () => setAttempt((n) => n + 1);
 
   // The simulation, recomputed only when what it runs on changes. While a new
   // answer is worked out the last one stays, dimmed, so nothing jumps.
@@ -320,23 +334,36 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   simRef.current = sim;
   const methodRef = useRef(plan.method);
   methodRef.current = plan.method;
+  const simRunKey = simKey ? `${attempt}:${simKey}` : null;
   const [main, setMain] = useState<{ key: string; outcome: Outcome } | null>(null);
   useEffect(() => {
     const s = simRef.current;
-    if (!simKey || !s) return;
+    if (!simRunKey || !s) return;
     let live = true;
     void runner()
       .run({ kind: 'simulate', method: methodRef.current, plan: s })
       .then((r) => {
         if (!live) return;
-        setMain({ key: simKey, outcome: r.ok && r.kind === 'simulate' ? { result: r.result } : { error: r.ok ? 'an unexpected answer' : r.error } });
+        setMain({
+          key: simRunKey,
+          outcome: r.ok
+            ? r.kind === 'simulate'
+              ? { result: r.result }
+              : { error: 'an unexpected answer' }
+            : { error: r.error, unavailable: r.unavailable === true },
+        });
       });
     return () => {
       live = false;
     };
-    // simKey stands for plan.method and sim, which are new objects each render.
+    // simRunKey stands for plan.method and sim, which are new objects each
+    // render, and the attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simKey]);
+  }, [simRunKey]);
+  const pending = !!simRunKey && main?.key !== simRunKey;
+  // While a new answer is worked out the last result stays, dimmed; an old
+  // failure doesn't.
+  const outcome = main && !(pending && 'error' in main.outcome) ? main.outcome : null;
 
   // The grid, one cell per job, filling in as the answers arrive.
   const vpw = plan.rule === 'vpw';
@@ -346,32 +373,38 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
     [vpw, ownRate]
   );
   const gridYears = useMemo(() => withOwn(GRID_YEARS, sim?.years ?? 30), [sim?.years]);
-  const gridKey = sim ? JSON.stringify([simKey, gridRates, gridYears]) : null;
-  const [grid, setGrid] = useState<{ key: string; cells: GridCell[] } | null>(null);
+  const gridKey = sim ? JSON.stringify([attempt, simKey, gridRates, gridYears]) : null;
+  const [grid, setGrid] = useState<{ key: string; cells: GridCell[]; failed: FailedCell[]; unavailable: boolean } | null>(null);
   useEffect(() => {
     const s = simRef.current;
     if (!gridKey || !s) return;
     let live = true;
     const cells: GridCell[] = [];
+    const failed: FailedCell[] = [];
+    let unavailable = false;
     const method = methodRef.current;
     for (const years of gridYears) {
       for (const rate of gridRates) {
         void runner()
           .run({ kind: 'grid-cell', method, plan: s, rate, years })
           .then((r) => {
-            if (!live || !r.ok || r.kind !== 'grid-cell') return;
-            cells.push(r.cell);
-            setGrid({ key: gridKey, cells: cells.slice() });
+            if (!live) return;
+            if (r.ok && r.kind === 'grid-cell') cells.push(r.cell);
+            else {
+              failed.push({ rate, years });
+              if (!r.ok && r.unavailable) unavailable = true;
+            }
+            setGrid({ key: gridKey, cells: cells.slice(), failed: failed.slice(), unavailable });
           });
       }
     }
     return () => {
       live = false;
     };
-    // gridKey stands for everything the grid is computed from.
+    // gridKey stands for everything the grid is computed from, and the attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridKey]);
-  const gridCells = grid && grid.key === gridKey ? grid.cells : null;
+  const shownGrid = grid && grid.key === gridKey ? grid : null;
 
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [opened, setOpened] = useState(0);
@@ -427,19 +460,23 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         plan={plan}
         view={view}
         engine={engine}
-        outcome={main?.outcome ?? null}
-        pending={!!simKey && main?.key !== simKey}
+        outcome={outcome}
+        pending={pending}
         money={money}
         currency={displayCurrency}
         editable={editable}
         onMethod={(method) => void store.save({ ...plan, method })}
+        onRetry={retry}
         open={open}
       />
 
       {'sim' in engine && (
         <GridCard
           plan={plan}
-          cells={gridCells}
+          cells={shownGrid?.cells ?? null}
+          failed={shownGrid?.failed ?? []}
+          unavailable={shownGrid?.unavailable ?? false}
+          onRetry={retry}
           rates={gridRates}
           years={gridYears}
           current={{ rate: vpw ? null : engine.rate, years: engine.sim.years }}
@@ -760,6 +797,7 @@ export function SimulationCard({
   currency,
   editable,
   onMethod,
+  onRetry,
   open,
 }: {
   plan: FirePlan;
@@ -773,6 +811,8 @@ export function SimulationCard({
   currency: string | null;
   editable: boolean;
   onMethod: (m: FirePlan['method']) => void;
+  /** Runs it again, when it couldn't be run at all. */
+  onRetry: () => void;
   open: (s: SheetState) => void;
 }) {
   const header = (
@@ -844,7 +884,19 @@ export function SimulationCard({
       <div className="card">
         {header}
         <p className="panel-note">{setup}</p>
-        <p className="empty-note">This plan can&apos;t be simulated: {outcome.error}.</p>
+        {outcome.unavailable ? (
+          <>
+            <p className="empty-note">
+              The simulation couldn&apos;t be loaded. It needs a connection the first time it runs after an update. The figures
+              above don&apos;t depend on it.
+            </p>
+            <button className="secondary" style={{ marginTop: 12 }} onClick={onRetry}>
+              Try again
+            </button>
+          </>
+        ) : (
+          <p className="empty-note">This plan can&apos;t be simulated: {outcome.error}.</p>
+        )}
       </div>
     );
   }
@@ -955,6 +1007,9 @@ export function SimulationCard({
 export function GridCard({
   plan,
   cells,
+  failed = [],
+  unavailable = false,
+  onRetry,
   rates,
   years,
   current,
@@ -963,6 +1018,11 @@ export function GridCard({
 }: {
   plan: FirePlan;
   cells: GridCell[] | null;
+  /** Cells that couldn't be worked out, and whether that was because the
+   *  simulation couldn't be loaded. */
+  failed?: FailedCell[];
+  unavailable?: boolean;
+  onRetry?: () => void;
   rates: (number | null)[];
   years: number[];
   current: { rate: number | null; years: number };
@@ -992,7 +1052,20 @@ export function GridCard({
         {flexible ? " This rule lasts by cutting spending, so each cell's second line is the lowest year's spending, as a share of the first year's, in the worst one that lasted." : ''}{' '}
         Your plan is outlined.
       </p>
-      <PlanGrid cells={cells} rates={rates} horizons={years} current={current} flexible={flexible} pathsNoun={noun} />
+      <PlanGrid cells={cells} failed={failed} rates={rates} horizons={years} current={current} flexible={flexible} pathsNoun={noun} />
+      {failed.length > 0 && (
+        <>
+          <p className="empty-note">
+            {failed.length === 1 ? 'One cell' : `${failed.length} cells`} couldn&apos;t be worked out
+            {unavailable ? ": the simulation couldn't be loaded, which needs a connection the first time after an update" : ''}.
+          </p>
+          {onRetry && (
+            <button className="secondary" style={{ marginTop: 12 }} onClick={onRetry}>
+              Try again
+            </button>
+          )}
+        </>
+      )}
       {plan.method === 'historical' ? (
         <p className="plan-definition">
           Each length starts in every month that leaves all of it inside the data, so a longer one has fewer, earlier starts

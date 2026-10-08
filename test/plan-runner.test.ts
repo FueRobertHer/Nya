@@ -110,6 +110,22 @@ describe('the runner', () => {
     expect(worker.posted).toHaveLength(1);
   });
 
+  test('a job the page cannot run either is answered as unavailable, not left waiting', async () => {
+    const worker = new FakeWorker();
+    worker.answer = false;
+    const runner = createPlanRunner({
+      startWorker: () => worker,
+      runHere: async () => {
+        throw new Error('Failed to load chunk');
+      },
+    });
+    const waiting = runner.run(job);
+    worker.fail();
+    expect(await waiting).toEqual({ ok: false, error: 'Failed to load chunk', unavailable: true });
+    // A plan the engine refuses is not "unavailable": it would fail anywhere.
+    expect(runPlanJob({ ...job, plan: { ...plan, years: 0 } }, usMarket())).not.toHaveProperty('unavailable');
+  });
+
   test('stopping answers waiting jobs, and refuses new ones', async () => {
     const worker = new FakeWorker();
     worker.answer = false;

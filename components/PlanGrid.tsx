@@ -19,8 +19,12 @@
 import type { GridCell } from '@/lib/fire/simulate';
 import { pct, successText } from './plan-text';
 
+/** A cell that couldn't be worked out. */
+export type FailedCell = { rate: number | null; years: number };
+
 export default function PlanGrid({
   cells,
+  failed = [],
   rates,
   horizons,
   current,
@@ -29,6 +33,8 @@ export default function PlanGrid({
 }: {
   /** Null, or missing some cells, while it is still being worked out. */
   cells: GridCell[] | null;
+  /** Cells that couldn't be worked out: shown as such, not as pending. */
+  failed?: FailedCell[];
   /** The rows: rates, or [null] for a rule without one (VPW). */
   rates: (number | null)[];
   horizons: number[];
@@ -42,6 +48,8 @@ export default function PlanGrid({
   const at = (rate: number | null, years: number) =>
     cells?.find((c) => (rate === null ? c.rate === null : c.rate !== null && Math.abs(c.rate - rate) < 1e-9) && c.years === years) ?? null;
   const column = (years: number) => cells?.find((c) => c.years === years) ?? null;
+  const sameRate = (a: number | null, b: number | null) => (a === null ? b === null : b !== null && Math.abs(a - b) < 1e-9);
+  const didFail = (rate: number | null, years: number) => failed.some((f) => f.years === years && sameRate(f.rate, rate));
   const rateLabel = (rate: number | null) => (rate === null ? 'VPW' : pct(rate));
   const one = pathsNoun.replace(/s$/, '');
 
@@ -50,7 +58,10 @@ export default function PlanGrid({
     const own = years === current.years && (rate === null ? current.rate === null : current.rate !== null && Math.abs(rate - current.rate) < 1e-9);
     let title = `${rateLabel(rate)} for ${years} years: working it out`;
     let body: React.ReactNode = '…';
-    if (c) {
+    if (!c && didFail(rate, years)) {
+      title = `${rateLabel(rate)} for ${years} years: couldn't be worked out`;
+      body = '--';
+    } else if (c) {
       const low = c.lowestSpendingShare;
       title =
         `${rateLabel(rate)} for ${years} years: ${successText(c.successRate, 1)} of ${c.paths.toLocaleString()} ${pathsNoun} lasted` +
