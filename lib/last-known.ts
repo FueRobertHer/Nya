@@ -142,8 +142,10 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
  *
  *  `strict` throws instead, on a failed read or any unreadable record, for a
  *  caller that writes on the strength of the answer (lib/links.ts
- *  liveAccountIds). */
-async function recallByItem(ctx: Ctx, strict = false): Promise<Record<string, RememberedAccount[]>> {
+ *  liveAccountIds). `tidy` (the default) also deletes the fields left in the
+ *  old shape; a reader that must change nothing passes false (the download
+ *  of my data, and the count an account deletion takes for its receipt). */
+async function recallByItem(ctx: Ctx, strict = false, tidy = true): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
     map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH(ctx));
@@ -180,7 +182,7 @@ async function recallByItem(ctx: Ctx, strict = false): Promise<Record<string, Re
     })
   );
 
-  if (legacy.length > 0) {
+  if (tidy && legacy.length > 0) {
     try {
       await redis().hdel(ACCOUNT_META_HASH(ctx), ...legacy);
     } catch {
@@ -231,13 +233,21 @@ export async function rememberedIdsForItem(ctx: Ctx, item_id: string): Promise<s
  * rememberedIdsForItem (lib/vanished.ts). Upstash is HTTP, so per-Item reads
  * cost a round trip each on the uncached dashboard path.
  */
-export async function rememberedIdsByItem(ctx: Ctx, strict = false): Promise<Record<string, string[]>> {
-  const byItem = await recallByItem(ctx, strict);
+export async function rememberedIdsByItem(ctx: Ctx, strict = false, tidy = true): Promise<Record<string, string[]>> {
+  const byItem = await recallByItem(ctx, strict, tidy);
   const out: Record<string, string[]> = {};
   for (const [item_id, accounts] of Object.entries(byItem)) {
     out[item_id] = accounts.map((a) => a.account_id);
   }
   return out;
+}
+
+/** Every Item's remembered accounts, whole, for the download of my data
+ *  (lib/user-export.ts). Strict: throws on a failed read or any record that
+ *  can't be read, rather than leaving that Item's accounts out. And it only
+ *  reads: a field in the old shape is left where it is. */
+export async function rememberedAccountsByItem(ctx: Ctx): Promise<Record<string, RememberedAccount[]>> {
+  return recallByItem(ctx, true, false);
 }
 
 /**

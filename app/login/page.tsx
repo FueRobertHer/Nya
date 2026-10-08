@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');
@@ -46,6 +47,8 @@ export default function LoginPage() {
         </button>
         {error && <div className="error">{error}</div>}
       </form>
+      <CoverageNote />
+      <TrustLinks />
     </main>
   );
 }

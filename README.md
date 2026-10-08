@@ -2,7 +2,7 @@
 
 <img src="public/icons/icon-512.png" width="100"/>
 
-A personal finance tracker built with Next.js and React. It connects to your financial accounts through Plaid (banks, brokerages, credit cards, loans) and keeps a running net worth, a year of transactions, budgets and savings goals, and works out when you could be financially independent and how a retirement would have lasted. It runs on Bun, deploys to Vercel, stores everything encrypted in Upstash Redis, and installs on your phone as a PWA.
+A personal finance tracker built with Next.js and React. It connects to your financial accounts at US institutions through Plaid (banks, brokerages, credit cards, loans) and keeps a running net worth, a year of transactions, budgets and savings goals, and works out when you could be financially independent and how a retirement would have lasted. It runs on Bun, deploys to Vercel, encrypts your financial data before storing it in Upstash Redis (dates, ids and a few names stay plain text; see [Architecture](docs/architecture.md#storage-and-encryption)), and installs on your phone as a PWA.
 
 **[Try the live demo](https://nya-git-preview-fueroberthers-projects.vercel.app/?_vercel_share=hsOPuA6Qvofd4jxnrQVjuqXhPVkNqykh)** and sign in with one of the two **demo accounts** (Alex or Sam). It runs against Plaid's sandbox on its own database, so every account and balance you see there is fake. Everyone who tries the demo shares those accounts, so anything you add is visible to other visitors. See [Demo accounts](docs/authentication.md#demo-accounts-preview-only) and [Preview deployments](docs/deployment.md#preview-deployments) for how it is wired.
 
@@ -19,6 +19,10 @@ Five tabs, mobile-first, with bottom navigation:
 Amounts are shown in the currency they carry. Totals (net worth, month totals, budgets, recurring bills) are labelled with your most common currency and say so when a period or your accounts mix currencies: nothing is converted between currencies. The header's refresh button bypasses the cache and re-reads from Plaid.
 
 More than one person can use a deployment: sign in with Clerk and each account gets its own data, with optional read-only sharing between people who connect. Otherwise a single shared password protects the app. See [docs/authentication.md](docs/authentication.md).
+
+Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
+
+Two pages anyone can open without signing in, `/security` and `/privacy`, say in plain language how the data is protected, who can read what (whoever runs the deployment included), how long things are kept, and how to delete it. Every response carries security headers, and every page a Content-Security-Policy; see [Security headers](docs/deployment.md#security-headers-and-the-content-security-policy).
 
 ## Screenshots
 
@@ -95,9 +99,10 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 
 | Guide | What is in it |
 | --- | --- |
-| [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, preview deployments. |
+| [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, security headers and the Content-Security-Policy, preview deployments. |
 | [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down, planning (the FI figures, the simulator, its data and its limits). |
-| [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion, sharing, demo accounts. |
+| [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion and its receipt, sharing, demo accounts. |
+| [Downloading your data](docs/data-export.md) | Getting everything Nya stores about you: the JSON and CSV formats field by field, what is left out, and how it differs from the operator backup. |
 | [Architecture](docs/architecture.md) | Storage and encryption, the storage seam new stores are built on, caching, how net-worth history is recorded and reconstructed, containers. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move. |
 
@@ -110,6 +115,8 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 - **Offline is read-only last-known data.** The PWA opens with the last snapshot from `localStorage`, but refreshing, linking, transactions and the Plan tab's saved assumptions need a network connection.
 - **The shared password is one secret for everyone who has it.** Use Clerk for more than one person.
 - **Plan results are hypothetical.** They come from US market history only, with taxes as one flat rate and the stock and bond mix you set (Nya doesn't look inside funds). The data is Shiller's, whose page states no license terms: check before any paid use. See [Planning](docs/features.md#limits).
+- **Bank connections are US only.** Both link-token routes ask Plaid for US institutions. Anything else is tracked as a manual account, in US dollars: manual accounts take no other currency yet.
+- **Not encrypted end to end.** Whoever runs a deployment holds the keys, so they can read its data; the encryption protects the database and the backups when they are taken without the keys. `/security` lists exactly who can read what.
 
 ## Ideas
 

@@ -565,6 +565,98 @@ export async function getAccountHistory(ctx: Ctx,
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
+/** One day of a stored series, as the download of my data gives it. */
+export type StoredPoint = { date: string; value: number; estimated: boolean };
+
+/**
+ * Every stored balance, for the download of my data (lib/user-export.ts): the
+ * net-worth totals and each account's own series, recorded and estimated
+ * points marked. One point per day per series, by the precedence the app
+ * reads them with: for the totals a recorded one wins over an estimate
+ * (getHistory); for an account a partial measurement, then the recorded map,
+ * then the extension, then the estimate (getAccountHistory, which this must
+ * keep agreeing with; test/user-export.test.ts checks that it does).
+ *
+ * Nothing the chart adds on read: no hidden account is subtracted (stored
+ * totals include hidden accounts, lib/hidden.ts), no estimate between two
+ * recorded days is replaced by a line (bridgeInteriorEstimates), and no
+ * earlier id is joined to the account it was linked to (the download lists
+ * the links). The flat balances behind estimated totals are not read: they
+ * are balances of the day backfill ran, copied onto past days, not a history
+ * of those accounts (see ACCOUNTS_EST_FLAT_BY_DATE).
+ *
+ * Strict where the chart is lenient: a layer that can't be read, or any
+ * value in it that can't be decrypted, isn't a number or isn't a map of
+ * balances, throws, where the chart would drop the point. An estimated total
+ * on a day that also has a recorded one is superseded and not read.
+ */
+export async function readHistoryForExport(ctx: Ctx): Promise<{ totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> }> {
+  const [real, est, realAcc, partialAcc, estAcc, extAcc] = await Promise.all(
+    [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx)].map(
+      async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {}
+    )
+  );
+
+  const total = async (blob: string): Promise<number> => {
+    const text = await decrypt(String(blob));
+    // Number('') is 0: an empty value is damage, not a zero net worth.
+    const value = text.trim() === '' ? NaN : Number(text);
+    if (!Number.isFinite(value)) throw new Error('A stored net-worth total is not a number');
+    return value;
+  };
+  const totals = await Promise.all([
+    ...Object.entries(real).map(async ([date, blob]): Promise<StoredPoint> => ({ date, value: await total(blob), estimated: false })),
+    ...Object.entries(est)
+      .filter(([date]) => !Object.hasOwn(real, date))
+      .map(async ([date, blob]): Promise<StoredPoint> => ({ date, value: await total(blob), estimated: true })),
+  ]);
+
+  const maps = async (layer: Record<string, string>) =>
+    new Map(
+      await Promise.all(
+        Object.entries(layer).map(async ([date, blob]) => {
+          const map = JSON.parse(await decrypt(String(blob))) as unknown;
+          if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error('A stored balance map has an unexpected shape');
+          return [date, map as Record<string, unknown>] as const;
+        })
+      )
+    );
+  const [realMaps, partialMaps, estMaps, extMaps] = await Promise.all([realAcc, partialAcc, estAcc, extAcc].map(maps));
+  // A value that isn't a finite number is no balance, as getAccountHistory reads it.
+  const num = (map: Record<string, unknown> | undefined, id: string): number | null => {
+    const v = map && Object.hasOwn(map, id) ? map[id] : undefined;
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  };
+
+  const accounts = new Map<string, StoredPoint[]>();
+  const dates = new Set([...realMaps.keys(), ...partialMaps.keys(), ...estMaps.keys(), ...extMaps.keys()]);
+  for (const date of dates) {
+    const [partial, recorded, ext, estimate] = [partialMaps.get(date), realMaps.get(date), extMaps.get(date), estMaps.get(date)];
+    const ids = new Set([partial, recorded, ext, estimate].flatMap((m) => Object.keys(m ?? {})));
+    for (const id of ids) {
+      let point: StoredPoint | null = null;
+      const measured = num(partial, id);
+      if (measured !== null) point = { date, value: measured, estimated: false };
+      else if (recorded) {
+        // A recorded map that doesn't name the account says it wasn't there
+        // that day: no estimate stands in for it.
+        const value = num(recorded, id);
+        point = value === null ? null : { date, value, estimated: false };
+      } else {
+        const value = num(ext, id) ?? num(estimate, id);
+        point = value === null ? null : { date, value, estimated: true };
+      }
+      if (!point) continue;
+      const series = accounts.get(id) ?? [];
+      series.push(point);
+      accounts.set(id, series);
+    }
+  }
+  const byDate = (a: StoredPoint, b: StoredPoint) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  for (const series of accounts.values()) series.sort(byDate);
+  return { totals: totals.sort(byDate), accounts };
+}
+
 // The backfill flag makes /api/backfill idempotent; linking a new institution
 // clears it. It stores a schema number rather than '1' so that changing HOW the
 // estimated layer is built forces a recompute: the client's "thin history"

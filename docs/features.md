@@ -15,6 +15,8 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 
 Log in, then click **Connect an Account**. Click it again for each additional institution. Each one is added to your dashboard with a running net worth total.
 
+Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside **Connect an account** and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
+
 ### More accounts at an institution you already have
 
 To add (or remove) accounts at an institution that's already connected, tap **Manage** on the Accounts tab, then **Add or remove accounts** on its card. This opens Plaid's account picker on the connection you already have, so it stays one connection: no duplicate accounts, and no second connection for Plaid to bill.
@@ -51,7 +53,9 @@ After you disconnect an institution, Nya keeps each of its accounts' balance his
 - Unlink a linked account first.
 - An account of an institution that is still connected (a card you closed, say) is listed there once you disconnect the institution.
 
-Forget can't reach copies made before it: a backup you downloaded (see [operations.md](operations.md#backups)) still has the account, and restoring that backup brings it back. A goal that pointed at the account keeps pointing at it (as an account id only) until you change the goal.
+Forget can't reach copies made before it: a backup you downloaded (see [operations.md](operations.md#backups)) still has the account, and restoring that backup brings it back, and a file from [Download my data](data-export.md) still lists it. A goal that pointed at the account keeps pointing at it (as an account id only) until you change the goal.
+
+Disconnecting ends the connection at Plaid as well as in Nya, but it can't reach the records Plaid keeps itself, under its own privacy policy. The confirmation links to the [Plaid Portal](https://my.plaid.com), where you can see and delete them.
 
 ## Payment details
 

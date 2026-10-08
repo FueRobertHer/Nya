@@ -33,6 +33,7 @@ mock.module('@/lib/storage', () => ({ ...storageMock(fake), redis: () => client,
 const {
   defineValueStore,
   defineMapStore,
+  defineCounterStore,
   forgetDeclaredStore,
   StoredDataUnreadableError,
   UnreadableEntriesError,
@@ -42,6 +43,8 @@ const {
   StoredValueTooLargeError,
   READ_ENTRIES,
   UPDATE_ENTRY,
+  COUNTER_READ,
+  COUNTER_TAKE,
 } = await import('@/lib/repo');
 const { declaredStores, declaredStore } = await import('@/lib/stores');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
@@ -88,8 +91,10 @@ const list = defineValueStore<Note[]>('seam-contract-list', { what: 'test notes'
 const notes = defineMapStore<Note>('seam-contract-notes', { what: 'test notes', isValid: isNote, exportable: false });
 const bigList = defineValueStore<Note[]>('seam-contract-big-list', { what: 'test notes', isValid: isNotes, exportable: true, compress: true });
 const bigNotes = defineMapStore<Note>('seam-contract-big-notes', { what: 'test notes', isValid: isNote, exportable: true, compress: true });
+const WINDOW = 600;
+const counter = defineCounterStore('seam-contract-counter', { what: 'test counts', windowSeconds: WINDOW });
 afterAll(() => {
-  for (const s of [list, notes, bigList, bigNotes]) forgetDeclaredStore(s.name);
+  for (const s of [list, notes, bigList, bigNotes, counter]) forgetDeclaredStore(s.name);
   client = recordedFake;
 });
 
@@ -97,6 +102,7 @@ const A = TEST_CTX;
 const B = { container: '3f0b8c1e-6d2a-4b5c-9e7f-0a1b2c3d4e5f' } as typeof TEST_CTX;
 const listKey = (ctx = A) => ctxKey('seam-contract-list', ctx);
 const notesKey = (ctx = A) => ctxKey('seam-contract-notes', ctx);
+const counterKey = (ctx = A) => ctxKey('seam-contract-counter', ctx);
 const NOTE: Note = { text: 'groceries', amount: 82.13 };
 const RENT: Note = { text: 'rent', amount: 1200 };
 
@@ -156,6 +162,9 @@ type Backend = {
     hset(key: string, field: string, value: string): Promise<void>;
     hgetall(key: string): Promise<Record<string, string>>;
     type(key: string): Promise<string>;
+    /** Seconds left: -1 with no expiry, -2 with no key, as Redis answers. */
+    ttl(key: string): Promise<number>;
+    expire(key: string, seconds: number): Promise<void>;
   };
   /** Makes the next command of this name fail, as an unreachable server would. */
   failNext(command: string): void;
@@ -830,6 +839,78 @@ function contract(b: Backend) {
     });
   });
 
+  describe('a counter store', () => {
+    test('never counted reads as no window, and writes nothing', async () => {
+      expect(await counter.read(A)).toEqual({ count: 0, secondsLeft: 0 });
+      expect(await b.raw.type(counterKey())).toBe('none');
+    });
+
+    test('the first count starts a window, later ones count in it without moving its end', async () => {
+      expect(await counter.take(A)).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.get(counterKey())).toBe('1');
+      expect(await b.raw.ttl(counterKey())).toBe(WINDOW);
+      // A window part way through keeps its end.
+      await b.raw.expire(counterKey(), 100);
+      const second = await counter.take(A);
+      expect(second.count).toBe(2);
+      expect(second.secondsLeft).toBeGreaterThan(90);
+      expect(second.secondsLeft).toBeLessThanOrEqual(100);
+      const read = await counter.read(A);
+      expect(read.count).toBe(2);
+      expect(read.secondsLeft).toBeLessThanOrEqual(100);
+      expect(await b.raw.ttl(counterKey())).toBeLessThanOrEqual(100);
+    });
+
+    test('counts racing each other are each counted once', async () => {
+      const counts = await Promise.all(Array.from({ length: 25 }, () => counter.take(A)));
+      expect(counts.map((c) => c.count).sort((x, y) => x - y)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+      expect((await counter.read(A)).count).toBe(25);
+    });
+
+    test('a count left without an end (written by hand, or restored from its last second) is given a window, never kept shut', async () => {
+      await b.raw.set(counterKey(), '7');
+      expect(await b.raw.ttl(counterKey())).toBe(-1);
+      expect(await counter.read(A)).toEqual({ count: 7, secondsLeft: WINDOW });
+      expect(await b.raw.ttl(counterKey())).toBe(WINDOW);
+      await b.raw.set(counterKey(), '7');
+      expect(await counter.take(A)).toEqual({ count: 8, secondsLeft: WINDOW });
+      expect(await b.raw.ttl(counterKey())).toBe(WINDOW);
+    });
+
+    test('each container counts on its own', async () => {
+      await counter.take(A);
+      await counter.take(A);
+      expect(await counter.read(B)).toEqual({ count: 0, secondsLeft: 0 });
+      expect(await counter.take(B)).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect((await counter.read(A)).count).toBe(2);
+    });
+
+    test('a count that is not one is damaged: an error, never no count, and left as it is', async () => {
+      for (const damaged of ['abc', '-3', '1.5', '007', '']) {
+        await b.raw.set(counterKey(), damaged);
+        for (const op of [() => counter.read(A), () => counter.take(A)]) {
+          const err = await op().catch((e) => e);
+          expect([damaged, err instanceof UnreadableValueError, err.unrecognised]).toEqual([damaged, true, false]);
+        }
+        expect(await b.raw.get(counterKey())).toBe(damaged);
+      }
+    });
+
+    test('storage failing is an error, never no count', async () => {
+      await counter.take(A);
+      b.failNext('eval');
+      expect((await notBlamed(() => counter.read(A))).message).toContain('armed failure');
+      b.failNext('eval');
+      expect((await notBlamed(() => counter.take(A))).message).toContain('armed failure');
+      expect((await counter.read(A)).count).toBe(1);
+    });
+
+    test('each operation is one atomic step', async () => {
+      expect(await sentBy(() => counter.read(A))).toEqual(['eval']);
+      expect(await sentBy(() => counter.take(A))).toEqual(['eval']);
+    });
+  });
+
   describe("evolving a store's shape", () => {
     type V1 = { name: string };
     type V2 = { name: string; color: string };
@@ -920,6 +1001,8 @@ describe('the seam, on the test double', () => {
       hset: async (key, field, value) => void fake.hashes.set(key, new Map(fake.hashes.get(key)).set(field, value)),
       hgetall: async (key) => Object.fromEntries(fake.hashes.get(key) ?? []),
       type: async (key) => (fake.strings.has(key) ? 'string' : fake.hashes.has(key) ? 'hash' : 'none'),
+      ttl: async (key) => (fake.strings.has(key) || fake.hashes.has(key) ? (fake.ttls.get(key) ?? -1) : -2),
+      expire: async (key, seconds) => void fake.ttls.set(key, seconds),
     },
     failNext: (command) => fake.failNext(command as FakeCommand),
     sent: () => fakeSent,
@@ -1021,6 +1104,8 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
       hset: async (key, field, value) => void (await send('HSET', [key, field, value])),
       hgetall: async (key) => (await send('HGETALL', [key])) as Record<string, string>,
       type: async (key) => String(await send('TYPE', [key])),
+      ttl: async (key) => Number(await send('TTL', [key])),
+      expire: async (key, seconds) => void (await send('EXPIRE', [key, String(seconds)])),
     },
     failNext: (command) => upstash.failNext(command),
     sent: () => upstash.sent,
@@ -1140,10 +1225,14 @@ describe('the key inventory', () => {
     expect(classify(`${c}txns:item-1`)).toBe('string');
     expect(classify(`${c}plaid:items`)).toBe('items');
     expect(classify(`${c}snapshot:runs`)).toBe('plain');
+    const stored = { value: 'string', map: 'hash', counter: 'plain' } as const;
     for (const store of declaredStores()) {
       expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, false]);
-      expect(classify(`${c}${store.name}`)).toBe(store.kind === 'value' ? 'string' : 'hash');
+      expect(classify(`${c}${store.name}`)).toBe(stored[store.kind]);
     }
+    // A counter is a plain integer, which the re-encryption pass leaves alone.
+    expect(classify(`${c}seam-contract-counter`)).toBe('plain');
+    expect(classify('seam-contract-counter')).toBeNull();
   });
 
   test('a name that is not a plain key family, or that something else claims, is refused, and nothing is declared', () => {
@@ -1195,6 +1284,7 @@ describe('the catalogue', () => {
     expect(ours.map((s) => [s.name, s.kind, s.what, s.exportable])).toEqual([
       ['seam-contract-big-list', 'value', 'test notes', true],
       ['seam-contract-big-notes', 'map', 'test notes', true],
+      ['seam-contract-counter', 'counter', 'test counts', false],
       ['seam-contract-list', 'value', 'test notes', true],
       ['seam-contract-notes', 'map', 'test notes', false],
     ]);
@@ -1227,12 +1317,12 @@ describe('the catalogue', () => {
       (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m)
     );
 
-  /** The name each call of defineValueStore or defineMapStore declares, or
-   *  null where it is not spelled out as a string. Imports, types and other
-   *  mentions are not calls. */
+  /** The name each call of defineValueStore, defineMapStore or
+   *  defineCounterStore declares, or null where it is not spelled out as a
+   *  string. Imports, types and other mentions are not calls. */
   function declarationsIn(src: string): (string | null)[] {
     const out: (string | null)[] = [];
-    for (const m of src.matchAll(/\bdefine(?:Value|Map)Store\b/g)) {
+    for (const m of src.matchAll(/\bdefine(?:Value|Map|Counter)Store\b/g)) {
       let i = m.index! + m[0].length;
       const skipSpace = () => {
         while (/\s/.test(src[i] ?? '')) i++;
@@ -1258,7 +1348,7 @@ describe('the catalogue', () => {
     return out;
   }
   /** Renaming defineMapStore on import would hide its declarations from the scan. */
-  const aliases = (src: string) => [...src.matchAll(/\bdefine(?:Value|Map)Store\s+as\b/g)].length;
+  const aliases = (src: string) => [...src.matchAll(/\bdefine(?:Value|Map|Counter)Store\s+as\b/g)].length;
 
   const sources = files.filter((f) => rel(f) !== 'lib/repo.ts').map((f) => ({ file: rel(f), src: code(f) }));
   const declarations = sources.flatMap(({ file, src }) => declarationsIn(src).map((name) => ({ file, name })));
@@ -1274,9 +1364,11 @@ describe('the catalogue', () => {
       );
       const c = defineMapStore(name, opts);
       type T = ReturnType<typeof defineMapStore>;
+      export const d = defineCounterStore('sends', { what: 'sends', windowSeconds: 60 });
     `.replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
-    expect(declarationsIn(sample)).toEqual(['rules', 'settings', null]);
+    expect(declarationsIn(sample)).toEqual(['rules', 'settings', null, 'sends']);
     expect(aliases(`import { defineMapStore as declareMap } from './repo';`)).toBe(1);
+    expect(aliases(`import { defineCounterStore as counter } from './repo';`)).toBe(1);
     expect(aliases(sample)).toBe(0);
     expect(files.some((f) => rel(f) === 'proxy.ts')).toBe(true); // the walk reaches the root
   });
