@@ -382,9 +382,10 @@ export function ReconnectSoonNote({
 }) {
   const h = inst.health;
   if (inst.manual || !h || h.state !== 'reconnect_soon') return null;
+  const by = h.ends_at ? ` · ${h.ends_estimated ? 'about ' : ''}${localDay(h.ends_at)}` : '';
   return (
     <div className="reconnect-soon">
-      <span className="health-badge health-warn">Reconnect soon</span>
+      <span className="health-badge health-warn">Reconnect soon{by}</span>
       <p className="stale-note">{endsText(h, now)}. Reconnect before then to keep it syncing.</p>
       <div className="card-actions">
         <button onClick={() => onReconnect(inst.item_id)} disabled={connecting}>

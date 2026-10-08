@@ -136,7 +136,9 @@ describe('the Reconnect soon note on a card', () => {
   test('the badge, the date and a Reconnect button, only while Plaid says it will end', () => {
     const soon = { item_id: 'item_chase', health: health('consent_ending', { ends_at: '2026-10-15T12:00:00.000Z' }) };
     const html = renderToStaticMarkup(<ReconnectSoonNote inst={soon} connecting={false} onReconnect={noop} now={now} />);
-    expect(text(html)).toContain('Reconnect soon Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.');
+    expect(text(html)).toContain('Reconnect soon · Oct 15 Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.');
+    const about = { item_id: 'item_amex', health: health('disconnect_pending', { ends_at: '2026-10-15T12:00:00.000Z', ends_estimated: true }) };
+    expect(text(renderToStaticMarkup(<ReconnectSoonNote inst={about} connecting={false} onReconnect={noop} now={now} />))).toContain('Reconnect soon · about Oct 15 Plaid says this connection ends around Oct 15.');
     expect(buttons(html)).toEqual(['Reconnect']);
     for (const other of [health('ok'), health('login'), undefined]) {
       expect(renderToStaticMarkup(<ReconnectSoonNote inst={{ item_id: 'x', health: other }} connecting={false} onReconnect={noop} now={now} />)).toBe('');
