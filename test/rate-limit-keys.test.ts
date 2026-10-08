@@ -2,16 +2,19 @@ import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Every rate-limit key the code builds, read from the source, and where each
-// one lives. A limit counted by address, before anyone is known, belongs to
-// the environment (kEnv): it must be on ENV_WIDE_PREFIXES, so that a copy
-// built inside a container by mistake is reported by the re-encryption pass
-// (classify) instead of passing for that container's own. A limit on what a
-// signed-in person does belongs to their container (kc) and must not be on
-// that list, or the container's own counter would be reported instead.
+// Every rate limit the code keeps, and where each one lives. A limit counted
+// by address, before anyone is known, belongs to the environment: a key built
+// by hand (kEnv), read here from the source, which must be on
+// ENV_WIDE_PREFIXES, so that a copy built inside a container by mistake is
+// reported by the re-encryption pass (classify) instead of passing for that
+// container's own. A limit on what a signed-in person does belongs to their
+// container, as a counter store on the storage seam (lib/repo.ts), never as a
+// key built by hand: the seam keeps it inside the container, and refuses a
+// name on that list.
 
 const { classify } = await import('@/lib/reencrypt');
 const { isEnvWide } = await import('@/lib/containers');
+const { declaredStores } = await import('@/lib/stores');
 
 const ROOT = join(import.meta.dir, '..');
 const CONTAINER = '6f1e2d3c-4b5a-4c6d-9e8f-7a6b5c4d3e2f';
@@ -25,8 +28,8 @@ function sources(dir: string): string[] {
 
 type Built = { file: string; builder: string; name: string; sample: string };
 
-// kEnv(`ratelimit:login:${ip}`) or kc(ctx, 'ratelimit:downloads'): the literal
-// part of the name, and whether more follows it.
+// kEnv(`ratelimit:login:${ip}`), or kc(ctx, 'ratelimit:...') if anything ever
+// built one: the literal part of the name, and whether more follows it.
 const BUILT = /\b(kEnv|kc)\(([^()'"`]*?,)?\s*(['"`])(ratelimit:[^'"`$]*)(\$\{)?/g;
 const LITERAL = /(['"`])(ratelimit:[^'"`$]*)/g;
 
@@ -52,9 +55,7 @@ for (const file of [...sources('lib'), ...sources('app'), ...sources('scripts'),
 
 describe('every rate-limit key the code builds, and where it lives', () => {
   test('the scan finds them, and nothing builds one another way', () => {
-    expect(built.map((b) => `${b.builder} ${b.name}`).sort()).toEqual(
-      expect.arrayContaining(['kEnv ratelimit:demo:', 'kEnv ratelimit:login:', 'kc ratelimit:downloads'])
-    );
+    expect(built.map((b) => `${b.builder} ${b.name}`).sort()).toEqual(['kEnv ratelimit:demo:', 'kEnv ratelimit:login:']);
     expect(elsewhere).toEqual([]);
   });
 
@@ -69,12 +70,18 @@ describe('every rate-limit key the code builds, and where it lives', () => {
     }
   });
 
-  test('a limit on what a signed-in person does is their container’s', () => {
-    const own = built.filter((b) => b.builder === 'kc');
-    expect(own.length).toBeGreaterThanOrEqual(1);
-    for (const b of own) {
-      expect({ at: b.file, key: b.sample, envWide: isEnvWide(b.sample) }).toEqual({ at: b.file, key: b.sample, envWide: false });
-      expect({ at: b.file, key: b.sample, inside: classify(`c:${CONTAINER}:${b.sample}`) }).toEqual({ at: b.file, key: b.sample, inside: 'plain' });
+  test('a limit on what a signed-in person does is a counter store on the seam, in their container', () => {
+    // None is a key built by hand inside a container.
+    expect(built.filter((b) => b.builder === 'kc')).toEqual([]);
+    const counters = declaredStores().filter((s) => s.kind === 'counter');
+    expect(counters.map((s) => s.name)).toContain('download-count');
+    for (const s of counters) {
+      expect({ store: s.name, envWide: isEnvWide(s.name), exportable: s.exportable }).toEqual({ store: s.name, envWide: false, exportable: false });
+      expect({ store: s.name, inside: classify(`c:${CONTAINER}:${s.name}`), outside: classify(s.name) }).toEqual({
+        store: s.name,
+        inside: 'plain',
+        outside: null,
+      });
     }
   });
 });

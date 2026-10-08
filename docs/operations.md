@@ -7,6 +7,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Backups](#backups)
 - [Restoring a backup](#restoring-a-backup)
 - [Encryption keys](#encryption-keys)
+- [Plaid secrets in older logs](#plaid-secrets-in-older-logs)
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
 
@@ -51,7 +52,7 @@ Not everything in it is encrypted, so still treat the file as private: dates, ac
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
-Caches and rate-limit counters (login attempts, and each account's data downloads) are left out on purpose. Avoid running it around 13:00 UTC, when the daily snapshot writes.
+Caches and the login's rate-limit counters are left out on purpose. Each account's count of data downloads is a store on the storage seam, so it is kept like the rest, with its expiry. Avoid running it around 13:00 UTC, when the daily snapshot writes.
 
 ## Restoring a backup
 
@@ -163,6 +164,16 @@ That's all. Twenty-four hours later the app removes the old locks by itself; unt
 - **Preview** has its own key store (it is a separate database). If it shares the master key, rotate it separately, or scope `MASTER_KEY` to Production only.
 - **Backups** taken before a rotation still need the old key.
 - **What this does not do:** someone who already has a copy of the database or a backup *and* the old key can still read that copy, and the data keys in it don't change. After a real leak, the data keys need replacing too, which comes with the re-encryption pass.
+
+## Plaid secrets in older logs
+
+Until the Plaid client started stripping the request from its errors (`lib/plaid-scrub.ts`), a failed Plaid call could print that request into the deployment's logs: the `PLAID-SECRET` header and, for most calls, the Item's access token. It happened whenever a route logged the whole error, which the disconnect path did on every failed removal (an Item already revoked at Plaid fails that way) and the dashboard routes did on a timeout.
+
+If logs from before that change still exist (Vercel's own runtime logs, or a log drain with longer retention):
+
+- Rotate the Plaid secret: on the Plaid dashboard's Keys page, generate a new secret for the environment, set `PLAID_SECRET` to it in Vercel, redeploy, then delete the old one.
+- An access token alone is of no use without the client id and the secret, so rotating the secret covers the tokens too. To also replace a token, Plaid's `/item/access_token/invalidate` returns a new one for an Item; Nya has no tool for it yet.
+- Delete or shorten the retention of the old logs where you can.
 
 ## Containers
 

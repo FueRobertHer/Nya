@@ -107,6 +107,18 @@ export class MalformedCiphertextError extends Error {
   }
 }
 
+/** A value in a format this code does not know, though a later version might
+ *  write it: another version tag, or a flag added after this code. Still a
+ *  MalformedCiphertextError to every caller that does not tell them apart; the
+ *  storage seam (lib/repo.ts) does, so a rollback never treats such a value as
+ *  damaged. */
+export class UnsupportedFormatError extends MalformedCiphertextError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedFormatError';
+  }
+}
+
 /** The key is right but authentication failed: the value, its header, or its
  *  context does not match what was encrypted. */
 export class DecryptFailedError extends Error {
@@ -631,9 +643,8 @@ function parse(payload: string): Parsed {
   const parts = payload.split('.');
   // Named only when it looks like a version tag; anything else is not quoted.
   if (parts[0] !== 'v2') {
-    throw new MalformedCiphertextError(
-      /^v[0-9]{1,3}$/.test(parts[0]) ? `Unsupported encryption format "${parts[0]}".` : 'Unrecognised encrypted value.'
-    );
+    if (/^v[0-9]{1,3}$/.test(parts[0])) throw new UnsupportedFormatError(`Unsupported encryption format "${parts[0]}".`);
+    throw new MalformedCiphertextError('Unrecognised encrypted value.');
   }
   if (parts.length !== 4) throw new MalformedCiphertextError('Encrypted value does not have four parts.');
   const [, keyId, flags, body] = parts;
@@ -641,7 +652,7 @@ function parse(payload: string): Parsed {
   if (!FLAGS.test(flags)) throw new MalformedCiphertextError('Encrypted value has invalid flags.');
   if (flags !== '-') {
     for (const f of flags) {
-      if (!KNOWN_FLAGS.has(f)) throw new MalformedCiphertextError(`Encrypted value uses unknown flag "${f}".`);
+      if (!KNOWN_FLAGS.has(f)) throw new UnsupportedFormatError(`Encrypted value uses unknown flag "${f}".`);
     }
     if ([...new Set(flags)].sort().join('') !== flags) {
       throw new MalformedCiphertextError('Encrypted value has flags out of order or repeated.');

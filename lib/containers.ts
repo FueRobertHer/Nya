@@ -67,25 +67,13 @@ export function splitScoped(key: string): { container: ContainerId | null; key: 
 }
 
 /** Stores that belong to the whole environment (see kEnv in lib/storage.ts),
- *  so never appear inside a container. Of the rate limits, those that count
- *  by address, before anyone is known, are environment-wide: the login's
- *  (lib/rate-limit.ts) and the demo sign-in's (app/api/demo/sign-in). A limit
- *  on something a person does once signed in (downloading their data,
- *  lib/rate-limit.ts) lives in their container, under the same "ratelimit:"
- *  prefix, which exports leave out and restores keep where it is. A new
- *  environment-wide limit goes on this list (test/rate-limit-keys.test.ts
- *  checks every one the code builds). */
-export const ENV_WIDE_PREFIXES = [
-  'crypto:',
-  'containers',
-  'ratelimit:login:',
-  'ratelimit:demo:',
-  'backups:',
-  'owners',
-  'grants',
-  'connections',
-  'invites:',
-] as const;
+ *  so never appear inside a container. "ratelimit:" is the rate limits that
+ *  count by address, before anyone is known: the login's (lib/rate-limit.ts)
+ *  and the demo sign-in's (app/api/demo/sign-in). A limit on something a person
+ *  does once signed in (downloading their data) is a counter store on the
+ *  storage seam, inside their container, never under this prefix
+ *  (test/rate-limit-keys.test.ts checks every rate-limit key the code builds). */
+export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:'] as const;
 
 export function isEnvWide(key: string): boolean {
   return ENV_WIDE_PREFIXES.some((p) => key === p || (p.endsWith(':') && key.startsWith(p)));

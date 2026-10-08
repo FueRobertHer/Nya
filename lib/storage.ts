@@ -130,8 +130,8 @@ export function containerPrefix(ctx: Ctx): string {
  *   - the container registry (lib/containers.ts), which can't live inside one;
  *   - the rate limiters that count by address, before anyone is known: the
  *     login's (lib/rate-limit.ts) and the demo sign-in's
- *     (app/api/demo/sign-in); a limit on what a signed-in person does lives
- *     in their container instead (kc);
+ *     (app/api/demo/sign-in); a limit on what a signed-in person does is a
+ *     counter store on the storage seam (lib/repo.ts), in their container;
  *   - the cutoff for sessions from before sessions named a container
  *     (lib/sessions.ts);
  *   - the nightly backup's last outcome (lib/backup.ts);

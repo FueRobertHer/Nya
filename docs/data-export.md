@@ -278,7 +278,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `account-links`, `account-links:dismissed` | `account_links.links`, `account_links.declined_suggestions` |
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
-| `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:`, `ratelimit:` | Left out: the app's machinery |
+| `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:`, `download-count` (a counter store on the storage seam) | Left out: the app's machinery |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only.
 

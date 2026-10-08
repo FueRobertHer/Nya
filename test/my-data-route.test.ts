@@ -97,7 +97,7 @@ describe('with the shared password', () => {
     // Counted with the login's wrong passwords, per IP.
     expect(Number(await fake.get(testKey(`ratelimit:login:${IP}`)))).toBe(3);
     // Nothing was downloaded, so no download was counted.
-    expect(await fake.get(ctxKey('ratelimit:downloads'))).toBeNull();
+    expect(await fake.get(ctxKey('download-count'))).toBeNull();
   });
 
   test('after the login’s limit of wrong passwords, even the right one waits', async () => {
@@ -128,13 +128,13 @@ describe('with the shared password', () => {
   });
 
   test('turned away for the limit before the password is even checked', async () => {
-    await fake.set(ctxKey('ratelimit:downloads'), String(DOWNLOADS_PER_WINDOW));
+    await fake.set(ctxKey('download-count'), String(DOWNLOADS_PER_WINDOW));
     expect((await post({ format: 'json', password: 'nope' })).status).toBe(429);
     expect(await fake.get(testKey(`ratelimit:login:${IP}`))).toBeNull();
   });
 
   test('a limit that can’t be read stops the download', async () => {
-    fake.failNext('get');
+    fake.failNext('eval');
     const res = await post({ format: 'json', password: 'hunter2' });
     expect(res.status).toBe(503);
   });
@@ -229,7 +229,7 @@ describe('with Clerk', () => {
     const res = await post({ format: 'json' });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ clerk_error: { type: 'forbidden', reason: 'reverification-error', metadata: { reverification: 'strict' } } });
-    expect(await fake.get(ctxKey('ratelimit:downloads'))).toBeNull();
+    expect(await fake.get(ctxKey('download-count'))).toBeNull();
     // Once confirmed, the same request goes through.
     clerk.reverified = true;
     expect((await quietly(() => post({ format: 'json' }))).result.status).toBe(200);

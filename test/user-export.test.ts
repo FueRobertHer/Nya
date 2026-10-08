@@ -186,7 +186,7 @@ async function seedPerson() {
   await fake.hset(ctxKey('snapshot:taken'), { '2026-01-03': '2026-01-03T13:00:00.000Z' });
   await fake.set(ctxKey('history:backfill-done'), '5');
   await fake.set(ctxKey('sessions:epoch'), '3');
-  await fake.set(ctxKey('ratelimit:downloads'), '1');
+  await fake.set(ctxKey('download-count'), '1'); // the download limit's counter, on the seam
 
   // Sharing: my side of one connection, one person I blocked, one who blocked me.
   const id = connectionId('user_me', 'user_friend');

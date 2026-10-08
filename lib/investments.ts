@@ -9,6 +9,8 @@
 // Fetching and storing live in lib/invstore.ts; this module is the pure rules
 // for what a transaction means, plus the helpers the store shares.
 
+import { loggable } from './log-safe';
+
 export type InvestmentTxn = {
   investment_transaction_id: string;
   account_id: string;
@@ -473,6 +475,6 @@ export function classifyFetchError(err: any): { note: string; pending: boolean }
   if (code === 'PRODUCTS_NOT_SUPPORTED' || code === 'NO_INVESTMENT_ACCOUNTS') {
     return { note: 'Investment activity is not available here', pending: false };
   }
-  console.error(err?.response?.data || err);
+  console.error(loggable(err));
   return { note: 'Could not fetch investment activity', pending: false };
 }

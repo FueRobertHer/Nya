@@ -1,5 +1,6 @@
 // lib/plaid.ts
-import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
+import { Configuration, PlaidEnvironments } from 'plaid';
+import { makePlaidClient } from './plaid-scrub';
 
 const PLAID_CLIENT_ID = process.env.PLAID_CLIENT_ID;
 const PLAID_SECRET = process.env.PLAID_SECRET;
@@ -52,4 +53,6 @@ const configuration = new Configuration({
   },
 });
 
-export const plaidClient = new PlaidApi(configuration);
+// Built through makePlaidClient so a failed call never throws an error that
+// still holds the request, secret and access token included (lib/plaid-scrub.ts).
+export const plaidClient = makePlaidClient(configuration);

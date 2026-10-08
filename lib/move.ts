@@ -93,7 +93,6 @@ export const NOT_MOVED_PREFIXES = [
   'txn-category-carry', // new since the move (#46): the old release never wrote it
   'account-links:lock', // a request's lock, seconds long
   'plaid:new-accounts', // new since the move: a webhook's prompt flag (lib/new-accounts.ts)
-  'ratelimit:', // new since the move: the data-download counter, an hour at most (lib/rate-limit.ts)
 ] as const;
 
 export function isMoved(key: string): boolean {

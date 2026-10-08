@@ -144,7 +144,6 @@ export const STORED_KEYS: readonly (readonly [key: string, where: string])[] = [
   ['sessions:', 'left out: the sign-out-everywhere counter'],
   ['snapshot:', 'left out: the scheduled snapshot’s log, lock and timings, and its checks on connections'],
   ['move:', 'left out: the record of a one-time data move'],
-  ['ratelimit:', 'left out: rate-limit counters'],
 ];
 
 /** Whether STORED_KEYS says what happens to a key. */
