@@ -16,6 +16,8 @@
 // One line per declaring module, in alphabetical order, like:
 //   import './rules';
 
+import './fire-plan';
+
 import { storesDeclaredSoFar, type Store } from './repo';
 
 /** Every declared store, in name order. */

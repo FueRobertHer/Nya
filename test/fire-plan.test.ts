@@ -10,12 +10,14 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { encrypt } = await import('@/lib/crypto');
-const { StoredDataUnreadableError } = await import('@/lib/stored-json');
-const { getFirePlan, setFirePlan } = await import('@/lib/fire-plan');
+const { encrypt, decrypt } = await import('@/lib/crypto');
+const { StoredDataUnreadableError, readEncryptedJson, writeEncryptedJson } = await import('@/lib/stored-json');
+const { UnreadableValueError } = await import('@/lib/repo');
+const { firePlanStore } = await import('@/lib/fire-plan');
+const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
-const { DEFAULT_PLAN, enginePlan, fiView, parsePlan, planYears, startAge } = await import('@/lib/fire/plan');
+const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, startAge, upgradePlan } = await import('@/lib/fire/plan');
 const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, TRAILING_DAYS } = await import('@/lib/fire/inputs');
 const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
@@ -99,6 +101,67 @@ describe('the stored plan’s validation', () => {
       expect('error' in parsePlan(value)).toBe(true);
     });
   }
+});
+
+// A stored plan is checked for its shape, not today's ranges and rules: a
+// release that narrows a range, or adds a rule, must not make plans saved
+// under an earlier one unreadable. A save is still held to all of them.
+describe('a stored plan', () => {
+  const outOfRange: [string, unknown][] = [
+    ['a withdrawal rate as a percent', { ...DEFAULT_PLAN, withdrawalRate: 4 }],
+    ['a tax rate over 60%', { ...DEFAULT_PLAN, taxRate: 0.7 }],
+    ['an age out of range', { ...DEFAULT_PLAN, age: 12 }],
+    ['absurd spending', { ...DEFAULT_PLAN, spending: 1e12 }],
+    ['a horizon over 60 years', { ...DEFAULT_PLAN, horizon: 61 }],
+    ['an allocation over 100%', { ...DEFAULT_PLAN, stocksPct: 80, bondsPct: 30 }],
+    ['a floor over 1', { ...DEFAULT_PLAN, floor: 1.1 }],
+    ['a custom start with no balance', { ...DEFAULT_PLAN, start: 'custom', startBalance: null }],
+    ['a target age before the age', { ...DEFAULT_PLAN, age: 40, targetAge: 30 }],
+    ['too many incomes', { ...DEFAULT_PLAN, income: Array.from({ length: 6 }, (_, i) => ({ id: `i${i}`, label: 'x', amount: 1, fromAge: 60, inflationAdjusted: true })) }],
+    ['a long label', { ...DEFAULT_PLAN, expenses: [{ id: 'a', label: 'x'.repeat(61), amount: 1, atAge: 60 }] }],
+    ['an id in another form', { ...DEFAULT_PLAN, expenses: [{ id: 'a b', label: 'x', amount: 1, atAge: 60 }] }],
+    ['repeated ids', { ...DEFAULT_PLAN, income: [{ id: 'a', label: 'x', amount: 1, fromAge: 60, inflationAdjusted: true }], expenses: [{ id: 'a', label: 'y', amount: 1, atAge: 60 }] }],
+  ];
+  for (const [name, value] of outOfRange) {
+    test(`with ${name} still reads, though a save refuses it`, () => {
+      expect(isFirePlan(value)).toBe(true);
+      expect('error' in parsePlan(value)).toBe(true);
+    });
+  }
+
+  const notAPlan: [string, unknown][] = [
+    ['not an object', 'plan'],
+    ['a list', []],
+    ['null', null],
+    ['a later version', { ...DEFAULT_PLAN, version: 2 }],
+    ['an unknown field', { ...DEFAULT_PLAN, extra: 1 }],
+    ['a missing field', (() => { const { fee: _, ...rest } = DEFAULT_PLAN; return rest; })()],
+    ['an age as text', { ...DEFAULT_PLAN, age: '35' }],
+    ['a fractional age', { ...DEFAULT_PLAN, age: 35.5 }],
+    ['infinite assets', { ...DEFAULT_PLAN, assets: Infinity }],
+    ['an unknown rule', { ...DEFAULT_PLAN, rule: 'yolo' }],
+    ['an unknown rebalancing', { ...DEFAULT_PLAN, rebalance: 'daily' }],
+    ['a boolean as text', { ...DEFAULT_PLAN, includeCash: 'yes' }],
+    ['an income with an extra field', { ...DEFAULT_PLAN, income: [{ id: 'a', label: 'x', amount: 1, fromAge: 60, inflationAdjusted: true, note: 'x' }] }],
+    ['an expense label that is not text', { ...DEFAULT_PLAN, expenses: [{ id: 'a', label: 5, amount: 1, atAge: 60 }] }],
+  ];
+  for (const [name, value] of notAPlan) {
+    test(`is not ${name}`, () => {
+      expect(isFirePlan(value)).toBe(false);
+    });
+  }
+
+  test('saved without a field added since, is given its default; anything else is left as it is', () => {
+    const full = plan({ age: 40, spending: 50_000 });
+    const { fee: _fee, income: _income, ...old } = full;
+    const upgraded = upgradePlan(JSON.parse(JSON.stringify(old))) as FirePlan;
+    expect(upgraded).toEqual({ ...full, fee: DEFAULT_PLAN.fee, income: [] });
+    expect(upgraded.income).not.toBe(DEFAULT_PLAN.income); // a copy, never the defaults themselves
+    expect(isFirePlan(upgraded)).toBe(true);
+    // A current plan, a later version's and anything that is not a plan are
+    // returned unchanged, never thrown on.
+    for (const v of [full, { ...full, version: 2 }, { spending: 1 }, null, 'plan', 5, [], undefined]) expect(upgradePlan(v)).toBe(v);
+  });
 });
 
 describe('the FI view', () => {
@@ -503,31 +566,75 @@ describe('workplace plan contributions', () => {
 
 describe('the store', () => {
   const saved = plan({ age: 40, spending: 50_000 });
+  const stored = async () => JSON.parse(await decrypt(String(await fake.get(ctxKey('fire-plan')))));
 
-  test('never saved reads as null, and a plan round-trips', async () => {
-    expect(await getFirePlan(TEST_CTX)).toBeNull();
-    await setFirePlan(TEST_CTX, saved);
-    expect(await getFirePlan(TEST_CTX)).toEqual(saved);
+  test('is declared on the storage seam, under the name it always had, and in the data download', () => {
+    expect(firePlanStore.name).toBe('fire-plan');
+    expect(firePlanStore.kind).toBe('value');
+    expect(declaredStore('fire-plan')).toBe(firePlanStore);
+    expect(firePlanStore.exportable).toBe(true);
+  });
+
+  test('never saved reads as null, and a plan round-trips, encrypted', async () => {
+    expect(await firePlanStore.get(TEST_CTX)).toBeNull();
+    await firePlanStore.set(TEST_CTX, saved);
+    expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
     // Encrypted: nothing of the plan is readable in the database.
     expect(String(await fake.get(ctxKey('fire-plan')))).not.toContain('50000');
   });
 
-  test('a value that cannot be read, or is not a plan, is reported, never read as none', async () => {
+  test('a plan saved before the store moved onto the seam reads back unchanged, and the old reader reads the new', async () => {
+    // Exactly as the store saved it before: lib/stored-json.ts, under the same key.
+    await writeEncryptedJson(ctxKey('fire-plan'), 'plan assumptions', saved, isFirePlan);
+    expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
+    expect(await (await route.GET()).json()).toEqual({ plan: saved });
+    // And what the seam saves, the release before it reads: a rollback loses nothing.
+    await firePlanStore.set(TEST_CTX, plan({ age: 41 }));
+    expect(await readEncryptedJson(ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(plan({ age: 41 }));
+  });
+
+  test('a plan saved without a field added since reads with its default, and the next save stores every field', async () => {
+    const { ceiling: _, ...old } = saved;
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(old)));
+    const read = await firePlanStore.get(TEST_CTX);
+    expect(read).toEqual({ ...saved, ceiling: DEFAULT_PLAN.ceiling });
+    await firePlanStore.set(TEST_CTX, read!);
+    expect(Object.keys(await stored()).sort()).toEqual(Object.keys(DEFAULT_PLAN).sort());
+  });
+
+  test('a plan outside today’s ranges or rules still reads; a save is held to them', async () => {
+    const old = { ...saved, withdrawalRate: 0.2, horizon: 61, targetAge: 30 };
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(old)));
+    expect(await firePlanStore.get(TEST_CTX)).toEqual(old);
+    const res = await route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify({ plan: old }) }));
+    expect(res.status).toBe(400);
+    expect(await stored()).toEqual(old);
+  });
+
+  test('damaged bytes are unreadable, a later release’s plan is not understood, and neither reads as none', async () => {
     await fake.set(ctxKey('fire-plan'), 'not-ciphertext-at-all-but-long-enough');
-    await expect(getFirePlan(TEST_CTX)).rejects.toBeInstanceOf(StoredDataUnreadableError);
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...saved, version: 9 })));
-    await expect(getFirePlan(TEST_CTX)).rejects.toBeInstanceOf(StoredDataUnreadableError);
+    const damaged = await firePlanStore.get(TEST_CTX).catch((e: unknown) => e);
+    expect(damaged).toBeInstanceOf(UnreadableValueError);
+    expect((damaged as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(false);
+    // Intact, but not understood: never offered for removal.
+    for (const later of [{ ...saved, version: 9 }, { ...saved, goal: 'travel' }]) {
+      await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(later)));
+      const e = await firePlanStore.get(TEST_CTX).catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(StoredDataUnreadableError);
+      expect((e as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);
+    }
   });
 
   test('saving over an unreadable value is refused, and it is left as it was', async () => {
     await fake.set(ctxKey('fire-plan'), 'unreadable-but-recoverable');
-    await expect(setFirePlan(TEST_CTX, saved)).rejects.toBeInstanceOf(StoredDataUnreadableError);
+    await expect(firePlanStore.set(TEST_CTX, saved)).rejects.toBeInstanceOf(StoredDataUnreadableError);
     expect(await fake.get<string>(ctxKey('fire-plan'))).toBe('unreadable-but-recoverable');
   });
 
-  test('is on the key inventory as a string of ciphertext', () => {
-    expect(classify('fire-plan')).toBe('string');
+  test('is on the key inventory as a string of ciphertext, inside a container only', () => {
     expect(classify(ctxKey('fire-plan').replace(/^[^:]+:(?=c:)/, ''))).toBe('string');
+    // Outside a container the name was built wrongly, so it is reported.
+    expect(classify('fire-plan')).toBeNull();
   });
 });
 
@@ -575,5 +682,19 @@ describe('the route', () => {
     const res = await quiet(() => route.GET());
     expect(res.status).toBe(500);
     expect((await res.json()).unreadable).toBeUndefined();
+  });
+
+  test('a plan too large to store is refused whole, with the seam’s reason, and nothing is written', async () => {
+    const before = process.env.MAX_TXN_BLOB_CHARS;
+    process.env.MAX_TXN_BLOB_CHARS = '100';
+    try {
+      const res = await quiet(() => put({ plan: plan({ age: 30 }) }));
+      expect(res.status).toBe(413);
+      expect((await res.json()).error).toContain('too large to save');
+      expect(await fake.get(ctxKey('fire-plan'))).toBeNull();
+    } finally {
+      if (before === undefined) delete process.env.MAX_TXN_BLOB_CHARS;
+      else process.env.MAX_TXN_BLOB_CHARS = before;
+    }
   });
 });

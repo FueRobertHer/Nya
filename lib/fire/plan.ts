@@ -9,11 +9,15 @@
 // OVERRIDE: null means "use what Nya measures", so a plan saved in March
 // follows the spending of April instead of freezing March's figure.
 //
-// parsePlan is the one validator: the API route runs every PUT through it,
-// and the store's reader uses it to recognise a stored value. Strict on
-// purpose: every field must be present, of its type and in its range, and
-// nothing else may be. Imports no data and no storage, so the route and the
-// browser can both use it.
+// Two checks, on purpose. parsePlan is what a save must meet: the API route
+// runs every PUT through it, and the forms run every edit through it. Every
+// field must be present, of its type and in today's range, the rules between
+// fields must hold, and nothing else may be there. isFirePlan is what a
+// stored plan must be to read back (lib/fire-plan.ts): the same shape and
+// types, but none of the ranges or rules, which a later release may change; a
+// plan saved under one release must never become unreadable under the next.
+// upgradePlan fills in a field added since a plan was saved. Imports no data
+// and no storage, so the route and the browser can both use it.
 
 import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, yearsToTarget } from './fi';
 import { vpwExpectedReturn, type RuleKind, type RuleSpec } from './rules';
@@ -172,70 +176,89 @@ function exactKeys(v: unknown, keys: readonly string[], field: string): Record<s
   return o;
 }
 
-/** A clean copy of a plan, or why it is not one. */
-export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string } {
+/** A clean copy of a plan, or why it is not one. `input` checks everything a
+ *  save must meet; otherwise only the shape and types, as a stored plan is
+ *  checked (see the top of this file). */
+function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string } {
+  // Ranges and rules between fields apply to input only.
+  const n = (v: unknown, field: string, min: number, max: number) => num(v, field, input ? min : -Infinity, input ? max : Infinity);
+  const whole = (v: unknown, field: string, min: number, max: number) => int(v, field, input ? min : -Infinity, input ? max : Infinity);
+  const text = (v: unknown, field: string) => {
+    if (input) return label(v, field);
+    if (typeof v !== 'string') throw new Invalid(`${field} must be text`);
+    return v;
+  };
+  const key = (v: unknown, field: string) => {
+    if (input) return id(v, field);
+    if (typeof v !== 'string') throw new Invalid(`${field} must be an id`);
+    return v;
+  };
+  const list = (v: unknown, field: string, max: number): unknown[] => {
+    if (!Array.isArray(v) || (input && v.length > max)) throw new Invalid(`${field} must be a list of at most ${max}`);
+    return v;
+  };
   try {
     const o = exactKeys(raw, KEYS, 'plan');
     if (o.version !== 1) throw new Invalid('version must be 1');
     const [ageMin, ageMax] = LIMITS.age;
-    const stocksPct = int(o.stocksPct, 'stocksPct', 0, 100);
-    const bondsPct = int(o.bondsPct, 'bondsPct', 0, 100);
-    if (stocksPct + bondsPct > 100) throw new Invalid('stocksPct and bondsPct add up to more than 100');
-    const floor = num(o.floor, 'floor', ...LIMITS.floor);
-    const ceiling = num(o.ceiling, 'ceiling', ...LIMITS.ceiling);
-    if (!Array.isArray(o.income) || o.income.length > LIMITS.incomes) throw new Invalid(`income must be a list of at most ${LIMITS.incomes}`);
-    if (!Array.isArray(o.expenses) || o.expenses.length > LIMITS.expenses) throw new Invalid(`expenses must be a list of at most ${LIMITS.expenses}`);
-    const income = o.income.map((x, i): PlanIncome => {
+    const stocksPct = whole(o.stocksPct, 'stocksPct', 0, 100);
+    const bondsPct = whole(o.bondsPct, 'bondsPct', 0, 100);
+    if (input && stocksPct + bondsPct > 100) throw new Invalid('stocksPct and bondsPct add up to more than 100');
+    const floor = n(o.floor, 'floor', ...LIMITS.floor);
+    const ceiling = n(o.ceiling, 'ceiling', ...LIMITS.ceiling);
+    const income = list(o.income, 'income', LIMITS.incomes).map((x, i): PlanIncome => {
       const e = exactKeys(x, ['id', 'label', 'amount', 'fromAge', 'inflationAdjusted'], `income[${i}]`);
       return {
-        id: id(e.id, `income[${i}].id`),
-        label: label(e.label, `income[${i}].label`),
-        amount: num(e.amount, `income[${i}].amount`, 0, LIMITS.money),
-        fromAge: int(e.fromAge, `income[${i}].fromAge`, ...LIMITS.eventAge),
+        id: key(e.id, `income[${i}].id`),
+        label: text(e.label, `income[${i}].label`),
+        amount: n(e.amount, `income[${i}].amount`, 0, LIMITS.money),
+        fromAge: whole(e.fromAge, `income[${i}].fromAge`, ...LIMITS.eventAge),
         inflationAdjusted: bool(e.inflationAdjusted, `income[${i}].inflationAdjusted`),
       };
     });
-    const expenses = o.expenses.map((x, i): PlanExpense => {
+    const expenses = list(o.expenses, 'expenses', LIMITS.expenses).map((x, i): PlanExpense => {
       const e = exactKeys(x, ['id', 'label', 'amount', 'atAge'], `expenses[${i}]`);
       return {
-        id: id(e.id, `expenses[${i}].id`),
-        label: label(e.label, `expenses[${i}].label`),
-        amount: num(e.amount, `expenses[${i}].amount`, 0, LIMITS.money * 10),
-        atAge: int(e.atAge, `expenses[${i}].atAge`, ...LIMITS.eventAge),
+        id: key(e.id, `expenses[${i}].id`),
+        label: text(e.label, `expenses[${i}].label`),
+        amount: n(e.amount, `expenses[${i}].amount`, 0, LIMITS.money * 10),
+        atAge: whole(e.atAge, `expenses[${i}].atAge`, ...LIMITS.eventAge),
       };
     });
     const ids = [...income, ...expenses].map((x) => x.id);
-    if (new Set(ids).size !== ids.length) throw new Invalid('income and expense ids must be unique');
+    if (input && new Set(ids).size !== ids.length) throw new Invalid('income and expense ids must be unique');
     const plan: FirePlan = {
       version: 1,
-      age: orNull(o.age, (v) => int(v, 'age', ageMin, ageMax)),
-      targetAge: orNull(o.targetAge, (v) => int(v, 'targetAge', ageMin, ageMax)),
-      spending: orNull(o.spending, (v) => num(v, 'spending', 0, LIMITS.money)),
-      savings: orNull(o.savings, (v) => num(v, 'savings', -LIMITS.money, LIMITS.money)),
-      assets: orNull(o.assets, (v) => num(v, 'assets', 0, LIMITS.balance)),
+      age: orNull(o.age, (v) => whole(v, 'age', ageMin, ageMax)),
+      targetAge: orNull(o.targetAge, (v) => whole(v, 'targetAge', ageMin, ageMax)),
+      spending: orNull(o.spending, (v) => n(v, 'spending', 0, LIMITS.money)),
+      savings: orNull(o.savings, (v) => n(v, 'savings', -LIMITS.money, LIMITS.money)),
+      assets: orNull(o.assets, (v) => n(v, 'assets', 0, LIMITS.balance)),
       includeCash: bool(o.includeCash, 'includeCash'),
-      withdrawalRate: num(o.withdrawalRate, 'withdrawalRate', ...LIMITS.withdrawalRate),
-      realReturn: num(o.realReturn, 'realReturn', ...LIMITS.realReturn),
-      taxRate: num(o.taxRate, 'taxRate', ...LIMITS.taxRate),
-      partTimeIncome: num(o.partTimeIncome, 'partTimeIncome', 0, LIMITS.money),
+      withdrawalRate: n(o.withdrawalRate, 'withdrawalRate', ...LIMITS.withdrawalRate),
+      realReturn: n(o.realReturn, 'realReturn', ...LIMITS.realReturn),
+      taxRate: n(o.taxRate, 'taxRate', ...LIMITS.taxRate),
+      partTimeIncome: n(o.partTimeIncome, 'partTimeIncome', 0, LIMITS.money),
       method: oneOf(o.method, 'method', METHODS),
       rule: oneOf(o.rule, 'rule', RULES),
       start: oneOf(o.start, 'start', STARTS),
-      startBalance: orNull(o.startBalance, (v) => num(v, 'startBalance', 0, LIMITS.balance)),
-      horizon: orNull(o.horizon, (v) => int(v, 'horizon', ...LIMITS.horizon)),
+      startBalance: orNull(o.startBalance, (v) => n(v, 'startBalance', 0, LIMITS.balance)),
+      horizon: orNull(o.horizon, (v) => whole(v, 'horizon', ...LIMITS.horizon)),
       stocksPct,
       bondsPct,
       rebalance: oneOf(o.rebalance, 'rebalance', REBALANCES),
-      fee: num(o.fee, 'fee', ...LIMITS.fee),
+      fee: n(o.fee, 'fee', ...LIMITS.fee),
       floor,
       ceiling,
       income,
       expenses,
     };
-    if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('a custom start needs startBalance');
-    // A target in the past would have Coast FI grow money backwards in time and
-    // the simulation retire before today.
-    if (plan.age !== null && plan.targetAge !== null && plan.targetAge < plan.age) throw new Invalid('targetAge must not be before age');
+    if (input) {
+      if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('a custom start needs startBalance');
+      // A target in the past would have Coast FI grow money backwards in time
+      // and the simulation retire before today.
+      if (plan.age !== null && plan.targetAge !== null && plan.targetAge < plan.age) throw new Invalid('targetAge must not be before age');
+    }
     return { plan };
   } catch (err) {
     if (err instanceof Invalid) return { error: err.message };
@@ -243,9 +266,41 @@ export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string } 
   }
 }
 
-/** Whether a value is a valid stored plan. */
+/** A clean copy of a plan to save, or why it can't be saved: every field in
+ *  today's range, and the rules between fields. */
+export function parsePlan(raw: unknown): { plan: FirePlan } | { error: string } {
+  return readPlan(raw, true);
+}
+
+/** Whether a value is a plan as stored: the current shape and types (after
+ *  upgradePlan), whatever ranges and rules applied when it was saved. A value
+ *  this fails is one this code doesn't understand: a later release's, say. */
 export function isFirePlan(v: unknown): v is FirePlan {
-  return 'plan' in parsePlan(v);
+  return 'plan' in readPlan(v, false);
+}
+
+/**
+ * A stored plan in the current shape, for the store's reads (lib/fire-plan.ts).
+ * Fills in any field the plan was saved without, from DEFAULT_PLAN: a field
+ * added since it was saved. Anything else, a later version's plan among them
+ * (a release rolled back reading what a newer one saved), is returned as it
+ * is, for isFirePlan to reject, so the store reports it as not understood,
+ * never as damaged. Never throws.
+ *
+ * Adding a field: give it a DEFAULT_PLAN value that keeps an older plan
+ * meaning what it meant (or fill it in here); a field added to an income or
+ * expense item needs its default here too. Changing what a field means bumps
+ * the version, and this turns each older version into the current one.
+ */
+export function upgradePlan(stored: unknown): unknown {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored;
+  const o = stored as Record<string, unknown>;
+  if (o.version !== 1) return stored;
+  const missing = KEYS.filter((k) => !Object.prototype.hasOwnProperty.call(o, k));
+  if (missing.length === 0) return stored;
+  const filled: Record<string, unknown> = { ...o };
+  for (const k of missing) filled[k] = structuredClone(DEFAULT_PLAN[k]);
+  return filled;
 }
 
 /** What Nya measured, for the inputs a plan can override. Null when there is
