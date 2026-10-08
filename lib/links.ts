@@ -34,6 +34,7 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
 import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
+import { forgetAccountHoldings } from './holdings-history';
 import { forgetCarried, pruneOrphanOverrides } from './overrides';
 import { storedAccountIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
@@ -539,25 +540,32 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
 
 /**
  * Forgets an earlier account for good, at the user's request: its balances
- * in every per-account layer, its directory entry (name, mask, institution),
- * the categories recorded to carry across a re-link, dismissed offers that
- * name it, leftover remembered records naming it, and its hidden entry. The
- * past net-worth totals stay as they were (they were the user's net worth on
- * those dates); a hidden account is folded out of them first, so the chart
- * shows them as it did while it was hidden (lib/history.ts foldHiddenAccount).
+ * in every per-account layer, its positions in holdings history, its
+ * directory entry (name, mask, institution), the categories recorded to carry
+ * across a re-link, dismissed offers that name it, leftover remembered records
+ * naming it, and its hidden entry. The past net-worth totals stay as they were
+ * (they were the user's net worth on those dates); a hidden account is folded
+ * out of them first, so the chart shows them as it did while it was hidden
+ * (lib/history.ts foldHiddenAccount).
  *
  * Refused (ForgetRefused) unless it is forgettable right now, re-checked here
  * from fresh, strict reads; an account known only from balances is also
  * checked against every stored Item's transaction and investment stores.
- * Balances go before the name, so a failure part way leaves it listed, and
- * running it again finishes. Call inside withLinksLock.
+ * Balances and positions go before the name, so a failure part way leaves it
+ * listed, and running it again finishes. Call inside withLinksLock.
  *
  * A backfill or snapshot running beside it isn't locked out: both write each
  * breakdown before its total, which is the order a fold is safe against
  * (foldHiddenAccount). A backfill that fetched before the institution was
  * disconnected sees it gone before writing, and writes nothing.
+ *
+ * `unreadableDates` are days of balances, and `unreadableHoldingsMonths`
+ * months of holdings history, too damaged for anyone to read: left as they are.
  */
-export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadableDates: string[] }> {
+export async function forgetEarlierAccount(
+  ctx: Ctx,
+  id: string
+): Promise<{ changed: number; unreadableDates: string[]; unreadableHoldingsMonths: string[] }> {
   const [inputs, hidden, items] = await Promise.all([
     liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
     getHiddenAccounts(ctx),
@@ -594,6 +602,8 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
     await setAccountHidden(ctx, id, '', false);
   }
   const result = await forgetAccountBalances(ctx, id);
+  // And what it held, from every month of holdings history.
+  const holdings = await forgetAccountHoldings(ctx, id);
   const dismissed = Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey(ctx))) ?? {}).filter(
     (k) => k.startsWith(`${id}>`) || k.endsWith(`>${id}`)
   );
@@ -601,8 +611,10 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   await forgetCarried(ctx, id);
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
-  // read before the pass above could have written the account back.
+  // read before the pass above could have written the account back, and a
+  // recording of holdings already under way could have too.
   await forgetAccountBalances(ctx, id, { today: true });
+  const lateHoldings = await forgetAccountHoldings(ctx, id, { recent: true });
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.
@@ -610,7 +622,8 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   // Categories of its transactions that nothing can show any more (a failed
   // disconnect-time cleanup would otherwise leave them for good).
   await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
-  return result;
+  const unreadableHoldingsMonths = [...new Set([...holdings.unreadableMonths, ...lateHoldings.unreadableMonths])].sort();
+  return { ...result, unreadableHoldingsMonths };
 }
 
 /** Whether "None of these" is offered for an earlier account right now. */

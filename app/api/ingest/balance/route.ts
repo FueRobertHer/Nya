@@ -133,8 +133,8 @@ export async function POST(req: Request) {
         // published response shape. True means the TOTAL landed: a failed
         // per-account write doesn't report the chart as un-updated when the point
         // is in it. (A partly failed read still records the accounts that
-        // answered, but that isn't what this field is about.)
-        const recorded = (await recordFetch(ctx, institutions, netWorth)) !== null;
+        // answered, and their holdings, but that isn't what this field is about.)
+        const recorded = (await recordFetch(ctx, institutions, netWorth)).date !== null;
         // Record how to draw these accounts, as /api/snapshot does: this read may
         // be the only clean one of the day, and an account it learned about would
         // otherwise sit in the snapshot with nothing to render it from.

@@ -6,7 +6,10 @@
 // nothing. At most CONCURRENCY run at once.
 //
 // Each run's outcome is kept in its container at "snapshot:runs", a hash of
-// date -> {status, reason?, at, attempts}, and read back by /api/snapshot-runs.
+// date -> {status, reason?, at, attempts, holdings_failed?}, and read back by
+// /api/snapshot-runs. `holdings_failed` counts the accounts whose positions
+// could not be written to holdings history (lib/holdings-history.ts): counted
+// beside the outcome, never part of it, since the snapshot is the net worth.
 // A run is marked "running" before it starts, so one the platform killed
 // shows as that rather than as nothing. A container already recorded for the
 // date is not run again (checked again once its lock is held, and a recorded
@@ -74,10 +77,15 @@ export type RunStatus = 'recorded' | 'empty' | 'unclean' | 'failed';
 /** What is stored: a finished run's status, or "running" (started, not yet
  *  finished, or killed) or "deferred" (not started in time). */
 export type StoredStatus = RunStatus | 'running' | 'deferred';
-export type RunRecord = { status: StoredStatus; reason?: string; at: string; attempts: number };
+export type RunRecord = { status: StoredStatus; reason?: string; at: string; attempts: number; holdings_failed?: number };
+
+/** What one container's snapshot came to. `holdings_failed`, when set, counts
+ *  the accounts whose positions could not be written to holdings history:
+ *  beside the status, which it never changes. */
+export type WorkOutcome = { status: RunStatus; reason?: string; holdings_failed?: number };
 
 export type ContainerOutcome = { container: ContainerId } & (
-  | { status: RunStatus; reason?: string; ms: number }
+  | (WorkOutcome & { ms: number })
   | { status: 'already' } // recorded earlier for this date
   | { status: 'running' } // being run by another invocation
   | { status: 'skipped'; reason: string } // not run, and nothing written
@@ -145,7 +153,13 @@ function parseRun(value: unknown): RunRecord | null {
   }
   if (!r || typeof r !== 'object' || !STORED.has(r.status)) return null;
   if (typeof r.at !== 'string' || !Number.isSafeInteger(r.attempts)) return null;
-  return { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}), at: r.at, attempts: r.attempts };
+  return {
+    status: r.status,
+    ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
+    at: r.at,
+    attempts: r.attempts,
+    ...(Number.isSafeInteger(r.holdings_failed) && r.holdings_failed > 0 ? { holdings_failed: r.holdings_failed } : {}),
+  };
 }
 
 export async function readRun(ctx: Ctx, date: string): Promise<RunRecord | null> {
@@ -179,14 +193,20 @@ async function writeRun(
   status: StoredStatus,
   reason: string | undefined,
   now: number,
-  opts: { onlyIfNew?: boolean } = {}
+  opts: { onlyIfNew?: boolean; holdingsFailed?: number } = {}
 ): Promise<void> {
   try {
     const prev = await readRun(ctx, date);
     if (prev?.status === 'recorded' && status !== 'recorded') return;
     if (prev && opts.onlyIfNew) return;
     const attempts = (prev?.attempts ?? 0) + (status === 'running' ? 1 : 0);
-    const record: RunRecord = { status, ...(reason ? { reason } : {}), at: new Date(now).toISOString(), attempts };
+    const record: RunRecord = {
+      status,
+      ...(reason ? { reason } : {}),
+      at: new Date(now).toISOString(),
+      attempts,
+      ...(opts.holdingsFailed ? { holdings_failed: opts.holdingsFailed } : {}),
+    };
     await redis().hset(runsKey(ctx), { [date]: JSON.stringify(record) });
   } catch (err) {
     console.error('Snapshot: the outcome could not be recorded.', reasonOf(err));
@@ -211,13 +231,16 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
  * The snapshot itself, for one container, from that container's data. The
  * same rule as the dashboard: only a clean, non-empty read records a total. A
  * partly failed one still records the accounts that answered, for their own
- * charts: on a day the app is not opened this is the only fetch.
+ * charts: on a day the app is not opened this is the only fetch. Positions go
+ * to holdings history the same way (recordFetch), and a failed holdings write
+ * is only counted beside the status.
  */
-export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reason?: string }> {
+export async function snapshotData(ctx: Ctx): Promise<WorkOutcome> {
   const { institutions, netWorth } = await computeNetWorth(ctx);
-  const recorded = await recordFetch(ctx, institutions, netWorth);
+  const { date: recorded, holdings } = await recordFetch(ctx, institutions, netWorth);
+  const counted = holdings.failed > 0 ? { holdings_failed: holdings.failed } : {};
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
-  if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.' };
+  if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.', ...counted };
 
   // Record how to draw these accounts, alongside the balances. On a day the
   // app is never opened this is the only clean fetch there is, so without it
@@ -227,8 +250,8 @@ export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reaso
   await rememberAccounts(ctx, institutions);
   await recordDirectory(ctx, institutions);
   await clearCaches(ctx); // cached payloads now have yesterday's history
-  if (recorded === null) return { status: 'failed', reason: 'The snapshot could not be written.' };
-  return { status: 'recorded' };
+  if (recorded === null) return { status: 'failed', reason: 'The snapshot could not be written.', ...counted };
+  return { status: 'recorded', ...counted };
 }
 
 export type RunOptions = {
@@ -237,7 +260,7 @@ export type RunOptions = {
   startedAt?: number;
   /** For tests. */
   clock?: () => number;
-  work?: (ctx: Ctx) => Promise<{ status: RunStatus; reason?: string }>;
+  work?: (ctx: Ctx) => Promise<WorkOutcome>;
   concurrency?: number;
   budgetMs?: number;
 };
@@ -260,7 +283,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     const t0 = clock();
     const token = randomUUID();
     let locked = false;
-    let outcome: { status: RunStatus; reason?: string };
+    let outcome: WorkOutcome;
     try {
       if ((await readRun(ctx, date))?.status === 'recorded') return { container, status: 'already' };
       if (clock() - started > budget) {
@@ -284,7 +307,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       console.error(`Snapshot failed for container ${container}:`, reasonOf(err));
       outcome = { status: 'failed', reason: reasonOf(err) };
     }
-    await writeRun(ctx, date, outcome.status, outcome.reason, clock(), { onlyIfNew: !locked });
+    await writeRun(ctx, date, outcome.status, outcome.reason, clock(), { onlyIfNew: !locked, holdingsFailed: outcome.holdings_failed });
     if (locked) await release(ctx, token);
     return { container, ...outcome, ms: clock() - t0 };
   };

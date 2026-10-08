@@ -132,11 +132,17 @@ export default function AccountLinks({
       if (body.action === 'forget') {
         const j = await res.json().catch(() => ({}));
         const n = Number(j.unreadable_days) || 0;
-        if (n > 0) {
+        const m = Number(j.unreadable_holdings_months) || 0;
+        const damaged = [
+          n > 0 ? `${n} day${n === 1 ? '' : 's'} of history` : null,
+          m > 0 ? `${m} month${m === 1 ? '' : 's'} of holdings history` : null,
+        ].filter(Boolean);
+        if (damaged.length > 0) {
+          const one = n + m === 1;
           setNotice(
-            `Forgotten. ${n} day${n === 1 ? '' : 's'} of history ${n === 1 ? 'is' : 'are'} damaged and can't be read, so ${
-              n === 1 ? 'it was' : 'they were'
-            } left as ${n === 1 ? 'it was' : 'they were'}.`
+            `Forgotten. ${damaged.join(' and ')} ${one ? 'is' : 'are'} damaged and can't be read, so ${
+              one ? 'it was' : 'they were'
+            } left as ${one ? 'it was' : 'they were'}.`
           );
         }
       }

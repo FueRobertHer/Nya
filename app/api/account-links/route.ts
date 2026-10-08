@@ -213,15 +213,22 @@ export async function POST(req: Request) {
     const to = id(body?.to);
     const action = body?.action;
 
-    // Forget an earlier account for good: its balances, name and carried
-    // categories (lib/links.ts forgetEarlierAccount re-checks it may).
+    // Forget an earlier account for good: its balances, holdings history, name
+    // and carried categories (lib/links.ts forgetEarlierAccount re-checks it may).
     if (action === 'forget') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
       return await locked(ctx, async () => {
         try {
-          const { unreadableDates } = await forgetEarlierAccount(ctx, old);
-          // Days whose records are damaged beyond reading, left as they are.
-          return NextResponse.json({ forgotten: true, unreadable_days: unreadableDates.length });
+          const { unreadableDates, unreadableHoldingsMonths } = await forgetEarlierAccount(ctx, old);
+          // Days (and months of holdings history) whose records are damaged
+          // beyond reading, left as they are. The months only when there are
+          // any, so the usual answer is what it always was.
+          const months = unreadableHoldingsMonths.length;
+          return NextResponse.json({
+            forgotten: true,
+            unreadable_days: unreadableDates.length,
+            ...(months > 0 ? { unreadable_holdings_months: months } : {}),
+          });
         } finally {
           // Even a forget that stopped part way changed totals: a payload
           // cached before it (or while it ran) must not outlive it.
