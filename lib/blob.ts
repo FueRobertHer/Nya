@@ -86,7 +86,13 @@ function base64ToBytes(b64: string): Uint8Array {
 
 /** JSON, gzipped, base64-wrapped and encrypted: what a store writes. */
 export async function encodeJsonBlob(value: unknown): Promise<string> {
-  return encrypt(bytesToBase64(await gzipString(JSON.stringify(value))));
+  return encodeJsonText(JSON.stringify(value));
+}
+
+/** The same for JSON text already serialized, so a writer that checked that
+ *  text (lib/repo.ts) stores exactly what it checked. */
+export async function encodeJsonText(json: string): Promise<string> {
+  return encrypt(bytesToBase64(await gzipString(json)));
 }
 
 /** The reverse. Throws on anything it can't decrypt or parse; the caller
@@ -103,4 +109,23 @@ export async function decodeJsonBlob<T>(blob: string): Promise<T> {
     json = inner;
   }
   return JSON.parse(json) as T;
+}
+
+/** Base64 of the first bytes of every gzip stream (1f 8b 08). No JSON text can
+ *  start with it: JSON starts with a brace, a bracket, a quote, a digit, a minus
+ *  sign, a space or t, f or n. */
+const GZIP_BASE64 = 'H4sI';
+
+/**
+ * The JSON text a blob holds, compressed or not, for a store whose blobs were
+ * all written by encodeJsonText or as encrypted JSON (lib/repo.ts). Text that
+ * starts like gzip is decompressed, and a failure to decompress is thrown as it
+ * is: decryption has already authenticated the bytes, so it is never the data's
+ * fault (memory, or a runtime without the API). decodeJsonBlob instead retries
+ * whatever it cannot decompress as JSON, which would turn such a failure into a
+ * parse error that looks like damaged data.
+ */
+export async function decryptJsonText(blob: string): Promise<string> {
+  const inner = await decrypt(blob);
+  return inner.startsWith(GZIP_BASE64) ? gunzipToString(base64ToBytes(inner)) : inner;
 }

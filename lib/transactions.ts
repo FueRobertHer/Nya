@@ -23,6 +23,7 @@ import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { redis, kc, type StoredItem } from './storage';
 import type { Ctx } from './containers';
+import { loggable } from './log-safe';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -698,7 +699,7 @@ async function syncItem(ctx: Ctx,
           note: `${item.institution_name}: transactions are still syncing — try again in a minute`,
         };
       }
-      console.error(err?.response?.data || err);
+      console.error(loggable(err));
       return { state: null, note: `${item.institution_name}: could not fetch transactions` };
     }
 

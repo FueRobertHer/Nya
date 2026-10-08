@@ -10,6 +10,7 @@ import {
 } from '@/lib/investments';
 import { syncInvestments } from '@/lib/invstore';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
+import { loggable } from '@/lib/log-safe';
 
 // Recent buys, sells, dividends and fees for one investment account, plus what
 // the holder has put in this year and the per-day flows behind the chart's
@@ -137,7 +138,7 @@ export async function GET(req: Request) {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to fetch investment activity' }, { status: 500 });
   }
 }

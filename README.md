@@ -98,7 +98,7 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 | [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, preview deployments. |
 | [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, hiding accounts, unreachable institutions, manual accounts and scripted balances, keeping Plaid costs down, planning (the FI figures, the simulator, its data and its limits). |
 | [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion, sharing, demo accounts. |
-| [Architecture](docs/architecture.md) | Storage and encryption, caching, how net-worth history is recorded and reconstructed, containers. |
+| [Architecture](docs/architecture.md) | Storage and encryption, the storage seam new stores are built on, caching, how net-worth history is recorded and reconstructed, containers. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move. |
 
 ## Limitations

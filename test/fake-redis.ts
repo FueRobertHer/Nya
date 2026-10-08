@@ -18,6 +18,8 @@ export type FakeCommand =
   | 'hdel'
   | 'hkeys'
   | 'hgetall'
+  | 'hlen'
+  | 'hexists'
   | 'expire'
   | 'scan'
   | 'hscan'
@@ -191,6 +193,21 @@ export class FakeRedis {
     const h = this.hashes.get(key);
     if (!h || h.size === 0) return null; // Upstash returns null, not {}
     return Object.fromEntries([...h].map(([f, v]) => [f, this.out(v)])) as T;
+  }
+
+  /** Fields in a hash; 0 for a missing key. A string there is Redis's
+   *  WRONGTYPE, as for strlen. */
+  async hlen(key: string): Promise<number> {
+    this.gate('hlen');
+    if (this.strings.has(key)) throw new Error('WRONGTYPE');
+    return this.hashes.get(key)?.size ?? 0;
+  }
+
+  /** 1 if the hash has the field, else 0: a number, as Upstash answers. */
+  async hexists(key: string, field: string): Promise<number> {
+    this.gate('hexists');
+    if (this.strings.has(key)) throw new Error('WRONGTYPE');
+    return this.hashes.get(key)?.has(field) ? 1 : 0;
   }
 
   async expire(key: string, seconds: number): Promise<void> {
@@ -484,6 +501,23 @@ export class FakeRedis {
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
+      return 1;
+    }
+    // The storage seam's (lib/repo.ts). A string at the key is Redis's
+    // WRONGTYPE, as HMGET and HGET answer it.
+    if (name === '-- nya:repo-read-entries') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      return args.map((field) => {
+        const value = this.hashes.get(keys[0])?.get(field);
+        return value === undefined ? '' : `v${value}`;
+      });
+    }
+    if (name === '-- nya:repo-update-entry') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const cur = this.hashes.get(keys[0])?.get(args[0]);
+      if ((cur === undefined ? '' : sha1(cur)) !== args[1]) return 0;
+      if (args[2] === '') this.hdelNow(keys[0], [args[0]]);
+      else this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
     throw new Error(`FakeRedis: unknown script ${name}`);
