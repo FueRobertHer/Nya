@@ -459,9 +459,13 @@ export function scheduledPaymentCents(principal: number, apr: number, months: nu
   return Math.round(((r * principal) / (1 - Math.pow(1 + r, -months))) * 100);
 }
 
-/** A loan term as Plaid gives it ("30 year", "360 month") in months, or null. */
+/**
+ * A loan term in months, or null. Plaid's example is "30 year", but the field
+ * comes from the servicer as written, so "30-year", "30 years", "30yr" and
+ * "360 months" are read too.
+ */
 export function termMonths(term: string | null | undefined): number | null {
-  const m = typeof term === 'string' ? /^\s*(\d+)\s*(year|yr|month|mo)s?\b/i.exec(term) : null;
+  const m = typeof term === 'string' ? /^\s*(\d+)[\s-]*(year|yr|month|mo)s?\b/i.exec(term) : null;
   if (!m) return null;
   const months = /^y/i.test(m[2]) ? Number(m[1]) * 12 : Number(m[1]);
   return months > 0 && months <= HORIZON_MONTHS ? months : null;
@@ -490,7 +494,9 @@ export type DebtAccountInput = {
     apr_label: string | null;
     minimum_payment: number | null;
     last_statement_balance?: number | null;
+    last_statement_issue_date?: string | null;
     last_payment_amount?: number | null;
+    last_payment_date?: string | null;
     outstanding_interest?: number | null;
     escrow_balance?: number | null;
     apr_balances?: { type: string | null; rate: number; balance: number }[];
@@ -551,7 +557,11 @@ export type MinimumHold =
   /** Plaid shows $0, which is more often a reporting artifact than a payment:
    *  autopay at some servicers (Plaid names Navient and Firstmark), nothing due
    *  this cycle, or a deferment. */
-  | 'zero';
+  | 'zero'
+  /** Student loans showing the same minimum at a servicer Plaid doesn't name
+   *  as billing one payment across loans: whether it is one payment or one
+   *  each is the person's to say (PlanChoices.sharedSplit). */
+  | 'shared';
 
 export type DebtAccount = {
   id: string;
@@ -596,10 +606,13 @@ export type DebtAccount = {
   /**
    * One minimum Plaid shows on two or more student loans at this institution.
    * Plaid documents that some servicers bill one payment across all of an
-   * account's loans and show it on each loan, so it is split across them by
-   * balance rather than counted once per loan.
+   * account's loans and show it on each loan, and names them (`named`): there
+   * it is split across the loans by balance (`shareCents` is this loan's part)
+   * rather than counted once per loan. Elsewhere the same figure on several
+   * loans may be either, so the payment is held until the person says which,
+   * for the whole group at once (`group`).
    */
-  sharedMinimum: { totalCents: number; loans: number } | null;
+  sharedMinimum: { totalCents: number; loans: number; shareCents: number; group: string; named: boolean } | null;
   /** A fixed-rate mortgage's principal-and-interest payment worked out from its
    *  original amount, term and rate: offered when the payment is needed, never
    *  assumed. */
@@ -607,9 +620,9 @@ export type DebtAccount = {
   /** A mortgage's escrow balance as reported, in cents, for the reason shown. */
   escrowCents: number | null;
   /**
-   * A card whose last payment covered its last statement: paid in full, so no
-   * interest is charged while that continues. It starts out of the plan, and
-   * the person can put it in.
+   * A card whose last payment covered its last statement and came on or after
+   * it: paid in full at that statement, so no interest is charged while that
+   * continues. It starts out of the plan, and the person can put it in.
    */
   paidInFull: boolean;
   /** Why Plaid has no terms for it at all, or null when it has a record (which
@@ -629,6 +642,11 @@ const SALLIE_MAE = 'ins_116944';
 
 function finite(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/** A YYYY-MM-DD date, which then compares correctly as a string. */
+function isDay(d: unknown): d is string {
+  return typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
 /**
@@ -681,8 +699,23 @@ function toDebtAccount(inst: DebtInstitutionInput, a: DebtAccountInput): DebtAcc
     if (isCents(cents)) workedOut = { cents, principal: original, months, apr: rate };
   }
 
+  // Paid in full: the last payment covered the last statement and came on or
+  // after it. A payment before the statement was on an earlier one, and a
+  // card carrying a balance can make a large one of those and still revolve.
+  // Without both dates it can't be told, so the card is planned with interest.
   const lastPayment = finite(l?.last_payment_amount);
   const lastStatement = finite(l?.last_statement_balance);
+  const paidOn = isDay(l?.last_payment_date) ? l!.last_payment_date! : null;
+  const issuedOn = isDay(l?.last_statement_issue_date) ? l!.last_statement_issue_date! : null;
+  const paidInFull =
+    kind === 'credit' &&
+    lastPayment !== null &&
+    lastStatement !== null &&
+    lastStatement >= 0 &&
+    lastPayment >= lastStatement &&
+    paidOn !== null &&
+    issuedOn !== null &&
+    paidOn >= issuedOn;
 
   return {
     id: a.account_id,
@@ -705,8 +738,7 @@ function toDebtAccount(inst: DebtInstitutionInput, a: DebtAccountInput): DebtAcc
     sharedMinimum: null,
     workedOut,
     escrowCents: escrow === null ? null : toCents(escrow),
-    paidInFull:
-      kind === 'credit' && lastPayment !== null && lastStatement !== null && lastStatement >= 0 && lastPayment >= lastStatement,
+    paidInFull,
     noTerms: l
       ? null
       : inst.manual
@@ -728,11 +760,14 @@ function toDebtAccount(inst: DebtInstitutionInput, a: DebtAccountInput): DebtAcc
  * One institution's student loans that show the same minimum: Plaid documents
  * that some servicers (Great Lakes, Firstmark and others) bill one payment
  * across all of an account's loans and show that payment on each loan. Counted
- * once per loan, four loans sharing $400 would be planned at $1,600 a month. So
- * the payment is split across them by balance; the person can type each loan's
- * own payment if they are billed separately.
+ * once per loan, four loans sharing $400 would be planned at $1,600 a month.
+ * At the servicers Plaid names, the payment is split across them by balance
+ * (the person can type each loan's own payment if they are billed
+ * separately). Anywhere else a matching figure may just be loans with the same
+ * minimum, so the payment is held until the person says which it is.
  */
-function splitSharedMinimums(accounts: DebtAccount[]): void {
+function splitSharedMinimums(accounts: DebtAccount[], institutionId: string | null | undefined): void {
+  const named = !!institutionId && SHARED_MINIMUM_SERVICERS.has(institutionId);
   const byMinimum = new Map<number, DebtAccount[]>();
   for (const a of accounts) {
     const m = a.defaultMinimumCents;
@@ -746,12 +781,31 @@ function splitSharedMinimums(accounts: DebtAccount[]): void {
       total,
       loans.map((l) => l.balanceCents!)
     );
+    // The loans themselves name the group, so a choice made for it applies
+    // to exactly these loans, and lapses if one of them stops matching.
+    const group = loans
+      .map((l) => l.id)
+      .sort()
+      .join(' ');
     loans.forEach((l, i) => {
-      l.defaultMinimumCents = shares[i];
-      l.sharedMinimum = { totalCents: total, loans: loans.length };
+      l.sharedMinimum = { totalCents: total, loans: loans.length, shareCents: shares[i], group, named };
+      if (named) {
+        l.defaultMinimumCents = shares[i];
+      } else {
+        l.defaultMinimumCents = null;
+        l.minimumHold = 'shared';
+      }
     });
   }
 }
+
+/**
+ * The servicers Plaid names as showing one minimum, due across all of an
+ * account's loans, on each loan (StudentLoan.minimum_payment_amount in Plaid's
+ * API reference): Great Lakes, Firstmark, Commonbond Firstmark Services,
+ * Granite State and the Oklahoma Student Loan Authority.
+ */
+const SHARED_MINIMUM_SERVICERS = new Set(['ins_116861', 'ins_116295', 'ins_116950', 'ins_116308', 'ins_116945']);
 
 /**
  * Every credit and loan account that isn't hidden, with the terms Plaid supplies
@@ -762,7 +816,7 @@ export function debtAccounts(institutions: DebtInstitutionInput[]): DebtAccount[
   const out: DebtAccount[] = [];
   for (const inst of institutions) {
     const here = inst.accounts.filter((a) => !a.hidden && isOwedType(a.type)).map((a) => toDebtAccount(inst, a));
-    splitSharedMinimums(here);
+    splitSharedMinimums(here, inst.institution_id);
     out.push(...here);
   }
   return out.sort(
@@ -925,6 +979,8 @@ export type RowStatus =
   | 'no-balance';
 
 export type PlanRow = {
+  /** The account as planned: its default payment and hold reflect what the
+   *  person said about a shared minimum (PlanChoices.sharedSplit). */
   account: DebtAccount;
   /** What is planned as owed, in cents: the balance, plus a student loan's
    *  accrued interest unless the person left it out. */
@@ -934,6 +990,13 @@ export type PlanRow = {
   apr: Term;
   minimum: Term;
   status: RowStatus;
+  /**
+   * For a loan in a shared-minimum group: whether the shared figure is split
+   * across the loans ('split': a servicer Plaid names, or the person said it is
+   * one payment), paid on each ('separate'), or still the person's to say
+   * ('ask'). Null outside such a group.
+   */
+  shared: 'split' | 'separate' | 'ask' | null;
 };
 
 /** What the person has chosen in the planner, beyond the terms. */
@@ -944,6 +1007,10 @@ export type PlanChoices = {
   leftOut: Record<string, boolean>;
   /** Student loans planned on the balance alone, without their accrued interest. */
   withoutAccrued: Record<string, boolean>;
+  /** By shared-minimum group (DebtAccount.sharedMinimum.group): true when the
+   *  figure is one payment for all of them, false when each loan pays it.
+   *  Asked only where Plaid doesn't name the servicer. */
+  sharedSplit: Record<string, boolean>;
 };
 
 /**
@@ -959,7 +1026,16 @@ export function planRows(
   const rows: PlanRow[] = [];
   const debts: Debt[] = [];
   let waiting = 0;
-  for (const account of accounts) {
+  for (const reported of accounts) {
+    // A shared minimum the person has answered for: one payment split by
+    // balance, or the figure on each loan. Either way it is no longer held.
+    const s = reported.sharedMinimum;
+    const answer = s && !s.named ? choices.sharedSplit[s.group] : undefined;
+    const account: DebtAccount =
+      s && answer !== undefined
+        ? { ...reported, minimumHold: null, defaultMinimumCents: answer ? s.shareCents : s.totalCents }
+        : reported;
+    const shared = !s ? null : s.named || answer === true ? 'split' : answer === false ? 'separate' : 'ask';
     const t = choices.typed[account.id] ?? {};
     const apr = resolveApr(account.plaidApr, t.apr);
     const minimum = resolveMinimum(account, t.minimum);
@@ -979,7 +1055,7 @@ export function planRows(
     // Every term is in range by now (the balance just above, the rest in
     // resolveApr and resolveMinimum), so simulate never throws on these.
     if (status === 'ready') debts.push({ id: account.id, balanceCents: owed!, apr: apr.value!, minimumCents: minimum.value! });
-    rows.push({ account, owedCents: owed, accruedIncluded, apr, minimum, status });
+    rows.push({ account, owedCents: owed, accruedIncluded, apr, minimum, status, shared });
   }
   return { rows, debts, waiting };
 }
