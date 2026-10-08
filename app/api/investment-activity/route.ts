@@ -50,9 +50,9 @@ export async function GET(req: Request) {
     // version, so payloads with an older meaning are not reachable.)
     const cacheField = `${item_id}:${account_id}`;
     const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
-    // An entry cached before contributions_12m existed is a miss, so the Plan
-    // tab never reads the field's absence as "nothing contributed".
-    if (cached && 'contributions_12m' in cached) return NextResponse.json({ ...cached, from_cache: true });
+    // An entry cached before the Plan tab's fields existed is a miss, so the
+    // tab never reads their absence as "nothing contributed" or "a whole year".
+    if (cached && 'contributions_12m_rows' in cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const sync = await syncInvestments(ctx, item);
     // Newest first, explicitly: the store has no order of its own.
@@ -98,13 +98,23 @@ export async function GET(req: Request) {
 
     // The trailing year's contributions, for the Plan tab's savings
     // (lib/fire/inputs.ts): new money only, not rollovers, from the later of a
-    // year ago and the first day the store has verified, said with that day so
-    // a shorter span is never read as a whole year. Null where the flows aren't
-    // known, for the same reasons as the line above.
+    // year ago and the first day the store has verified. Whether that cut the
+    // year short is said here, in contributions_12m_partial, decided against
+    // the verified coverage (not the oldest row: a plan with no activity for a
+    // while is still covered) and on the coverage's own UTC days, so the tab
+    // never compares one of these days with its own. Each contribution is
+    // listed too, so the tab can leave out one that a transfer from a bank
+    // account paid for, which its income minus spending already counts. Null
+    // where the flows aren't known, for the same reasons as the line above.
     const yearAgo = new Date(Date.now() - 364 * 86_400_000).toISOString().slice(0, 10);
-    const contributions_12m_from = flows_from ? (flows_from > yearAgo ? flows_from : yearAgo) : null;
-    const contributions_12m = contributions_12m_from
-      ? sum(mine.filter((t) => t.date >= contributions_12m_from && isContribution(t, counted)))
+    const contributions_12m_from = flowsKnown ? (cov!.from > yearAgo ? cov!.from : yearAgo) : null;
+    const contributions_12m_partial = flowsKnown ? cov!.from > yearAgo : null;
+    const contributed = contributions_12m_from
+      ? mine.filter((t) => t.date >= contributions_12m_from && isContribution(t, counted))
+      : null;
+    const contributions_12m = contributed ? sum(contributed) : null;
+    const contributions_12m_rows = contributed
+      ? contributed.map((t) => ({ date: t.date, amount: contributedAmount(t, counted) })).reverse() // oldest first
       : null;
 
     // Said in full here so the client can print it as is. A fetch failure
@@ -124,6 +134,8 @@ export async function GET(req: Request) {
       flows_to,
       contributions_12m,
       contributions_12m_from,
+      contributions_12m_partial,
+      contributions_12m_rows,
       note,
     };
 

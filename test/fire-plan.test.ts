@@ -2,7 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { FirePlan } from '@/lib/fire/plan';
-import type { AssetAccount, AssetInstitution } from '@/lib/fire/inputs';
+import type { AssetAccount, AssetInstitution, PlanContributions } from '@/lib/fire/inputs';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -18,7 +18,7 @@ const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
 const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, startAge, upgradePlan } = await import('@/lib/fire/plan');
-const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, TRAILING_DAYS } = await import('@/lib/fire/inputs');
+const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
 const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
 const { historicalCycles } = await import('@/lib/fire/simulate');
@@ -49,6 +49,13 @@ describe('the stored plan’s validation', () => {
       expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 60 }],
     });
     expect(parsePlan(JSON.parse(JSON.stringify(full)))).toEqual({ plan: full });
+  });
+
+  test('the plans paid from a bank are account ids, each once', () => {
+    const r = parsePlan(plan({ bankFunded: ['acc_1', 'manual_9bcb3f0c-5760', 'acc_1'] }));
+    expect('plan' in r && r.plan.bankFunded).toEqual(['acc_1', 'manual_9bcb3f0c-5760']);
+    expect('error' in parsePlan(plan({ bankFunded: ['has space'] }))).toBe(true);
+    expect('error' in parsePlan(plan({ bankFunded: Array.from({ length: 21 }, (_, i) => `a${i}`) }))).toBe(true);
   });
 
   test('labels are trimmed', () => {
@@ -376,6 +383,7 @@ describe('spending and savings from the trailing year', () => {
         txn({ date: '2026-05-06', amount: -1_500, category: 'loan payments', subcategory: 'mortgage payment' }), // the loan's side
         txn({ date: '2026-05-04', amount: 300, category: 'general merchandise', transaction_code: 'transfer' }),
         txn({ date: '2026-05-05', amount: 400, category: 'loan payments', subcategory: null }), // can't tell: left out, reported
+        txn({ date: '2026-05-05', amount: 70, category: 'loan payments', subcategory: 'other payment' }), // a store card, maybe: the same
       ],
       today
     )!;
@@ -385,7 +393,8 @@ describe('spending and savings from the trailing year', () => {
     expect(r.loanPayments).toBe(1_500);
     expect(r.cash).toBe(260);
     expect(r.refunds).toBe(40);
-    expect(r.unclearLoans).toBe(400);
+    expect(r.largestRefund).toEqual({ amount: 40, date: '2026-05-10', name: 'Shop' });
+    expect(r.unclearLoans).toBe(470);
     expect(r.count).toBe(8);
     expect(r.scaled).toBe(false);
     expect(r.days).toBe(TRAILING_DAYS);
@@ -400,18 +409,45 @@ describe('spending and savings from the trailing year', () => {
   test('classifies each kind of row', () => {
     const flow = (over: Partial<Txn>) => planFlow(txn(over));
     expect(flow({ amount: 10, category: 'food and drink' })).toBe('spending');
-    expect(flow({ amount: 10, category: 'loan payments', subcategory: 'car payment' })).toBe('loan');
-    expect(flow({ amount: 10, category: 'loan payments', subcategory: 'student loan payment' })).toBe('loan');
+    for (const sub of ['mortgage payment', 'car payment', 'student loan payment', 'personal loan payment']) {
+      expect(flow({ amount: 10, category: 'loan payments', subcategory: sub })).toBe('loan');
+    }
     expect(flow({ amount: 10, category: 'loan payments', subcategory: 'credit card payment' })).toBe('card-payment');
+    // Anything else under loan payments can't be told from a card payoff.
     expect(flow({ amount: 10, category: 'loan payments', subcategory: null })).toBe('unclear-loan');
+    expect(flow({ amount: 10, category: 'loan payments', subcategory: 'other payment' })).toBe('unclear-loan');
     expect(flow({ amount: -10, category: 'loan payments', subcategory: 'car payment' })).toBe('transfer');
+    // Paying a card off is never spending, whatever it was recategorized as;
+    // the card's side of it is a transfer.
+    expect(flow({ amount: 10, category: 'general merchandise', subcategory: 'credit card payment' })).toBe('card-payment');
+    expect(flow({ amount: -10, category: 'loan payments', subcategory: 'credit card payment' })).toBe('transfer');
     expect(flow({ amount: 10, transaction_code: 'atm' })).toBe('cash');
     // A transfer code wins over the category's "withdrawal".
     expect(flow({ amount: 10, category: 'transfer out', subcategory: 'withdrawal', transaction_code: 'transfer' })).toBe('transfer');
     expect(flow({ amount: -10, transaction_code: 'atm' })).toBe('transfer'); // a deposit at an ATM
     expect(flow({ amount: -10, category: 'income' })).toBe('income');
+    // Money back is a refund only in a spending category.
     expect(flow({ amount: -10, category: 'rent and utilities' })).toBe('refund');
+    expect(flow({ amount: -10, category: 'general services' })).toBe('refund');
+    expect(flow({ amount: -10, category: 'transfer in' })).toBe('transfer');
+    expect(flow({ amount: -10, category: 'other' })).toBe('income');
     expect(flow({ amount: -10, category: null })).toBe('income'); // no telling: stays income
+  });
+
+  // Recategorizing replaces the category but keeps Plaid's detail
+  // (app/api/transactions/route.ts), so a card payoff filed by Plaid as a
+  // transfer and moved to "loan payments" still says "account transfer".
+  test('a card payoff recategorized as a loan payment is left out and named, never counted twice', () => {
+    const r = trailingFlows(
+      [
+        txn({ date: yearAgo, amount: 1_000, category: 'general merchandise' }), // bought on the card
+        txn({ date: '2026-05-01', amount: 1_000, category: 'loan payments', subcategory: 'account transfer' }), // the payoff
+      ],
+      today
+    )!;
+    expect(r.spending).toBe(1_000);
+    expect(r.loanPayments).toBe(0);
+    expect(r.unclearLoans).toBe(1_000);
   });
 
   test('leaves out what is older than a year, or dated after today', () => {
@@ -437,6 +473,23 @@ describe('spending and savings from the trailing year', () => {
     expect(near.days).toBe(360);
     expect(near.scaled).toBe(true);
     expect(near.spending).toBeCloseTo(365, 9);
+  });
+
+  test('only money back in a spending category is a refund, and the largest is named', () => {
+    const r = trailingFlows(
+      [
+        txn({ date: yearAgo, amount: 3_000, category: 'rent and utilities' }),
+        txn({ date: '2026-02-01', amount: -1_500, category: 'rent and utilities', name: 'Deposit returned' }), // odd, but shown
+        txn({ date: '2026-03-01', amount: -25, category: 'food and drink' }),
+        txn({ date: '2026-04-01', amount: -900, category: 'other' }), // not a spending category: income
+        txn({ date: '2026-04-02', amount: -800, category: 'transfer in' }), // a transfer
+      ],
+      today
+    )!;
+    expect(r.refunds).toBe(1_525);
+    expect(r.spending).toBe(3_000 - 1_525);
+    expect(r.income).toBe(900);
+    expect(r.largestRefund).toEqual({ amount: 1_500, date: '2026-02-01', name: 'Deposit returned' });
   });
 
   test('refunds never take spending below zero', () => {
@@ -546,21 +599,104 @@ describe('workplace plan contributions', () => {
     for (const s of ['ira', 'roth', 'brokerage', 'hsa', 'sep ira', '529', null]) expect(isWorkplacePlan(s)).toBe(false);
   });
 
-  test('are summed, with plans measured over less than a year, or not at all, named', () => {
+  const plan = (over: Partial<PlanContributions> & Pick<PlanContributions, 'account_id' | 'name' | 'institution'>): PlanContributions => ({
+    amount: 0,
+    from: '2025-10-07',
+    partial: false,
+    rows: [],
+    note: null,
+    ...over,
+  });
+  const none = { transfersOut: [], fromBank: [] };
+
+  test('are summed, with plans measured over less than a year (as the route says), or not at all, named', () => {
     const w = workplaceSavings(
       [
-        { account_id: 'a', name: '401(k)', institution: 'Fidelity', amount: 12_000, from: '2025-10-07', note: null },
-        { account_id: 'b', name: '403(b)', institution: 'TIAA', amount: 3_000, from: '2026-04-01', note: null },
-        { account_id: 'c', name: 'TSP', institution: 'TSP', amount: null, from: null, note: null },
-        { account_id: 'd', name: '457(b)', institution: 'Empower', amount: 500, from: '2025-10-07', note: 'Could not fetch investment activity; showing saved activity' },
+        plan({ account_id: 'a', name: '401(k)', institution: 'Fidelity', amount: 12_000 }),
+        plan({ account_id: 'b', name: '403(b)', institution: 'TIAA', amount: 3_000, from: '2026-04-01', partial: true }),
+        plan({ account_id: 'c', name: 'TSP', institution: 'TSP', amount: null, from: null }),
+        plan({ account_id: 'd', name: '457(b)', institution: 'Empower', amount: 500, note: 'Could not fetch investment activity; showing saved activity' }),
+        // A later day than the viewer's year ago, but the route says covered: not partial.
+        plan({ account_id: 'e', name: '401(a)', institution: 'Vanguard', amount: 100, from: '2025-10-08' }),
       ],
-      '2025-10-07'
+      none
     );
-    expect(w.total).toBe(15_500);
-    expect(w.measured).toEqual(['Fidelity 401(k)', 'TIAA 403(b)', 'Empower 457(b)']);
+    expect(w.total).toBe(15_600);
+    expect(w.measured).toEqual(['Fidelity 401(k)', 'TIAA 403(b)', 'Empower 457(b)', 'Vanguard 401(a)']);
     expect(w.partial).toEqual([{ name: 'TIAA 403(b)', from: '2026-04-01' }]);
     expect(w.unmeasured).toEqual(['TSP TSP']);
     expect(w.problems).toEqual([{ name: 'Empower 457(b)', note: 'Could not fetch investment activity; showing saved activity' }]);
+  });
+
+  // A Solo 401(k) paid from checking: the transfer out already counts as
+  // saved in income minus spending, so the contribution isn't added again.
+  test('a contribution a transfer out of the bank paid for is not added again, and each transfer pays for one at most', () => {
+    const w = workplaceSavings(
+      [
+        plan({
+          account_id: 'solo',
+          name: 'Solo 401(k)',
+          institution: 'Vanguard',
+          amount: 20_500,
+          rows: [
+            { date: '2026-03-02', amount: 10_000 }, // paid by the transfer on Feb 27
+            { date: '2026-03-20', amount: 10_000 }, // no transfer near it: added
+            { date: '2026-06-01', amount: 500 },
+          ],
+        }),
+        plan({ account_id: 'k', name: '401(k)', institution: 'Fidelity', amount: 500, rows: [{ date: '2026-06-02', amount: 500 }] }),
+      ],
+      {
+        transfersOut: [
+          { date: '2026-02-27', amount: 10_000 },
+          { date: '2026-06-03', amount: 500.4 }, // within a dollar: pays for the first of the two
+          { date: '2026-04-10', amount: 10_000 }, // three weeks after: no match
+        ],
+        fromBank: [],
+      }
+    );
+    expect(w.matched).toEqual([{ name: 'Vanguard Solo 401(k)', amount: 10_500 }]);
+    expect(w.added).toEqual([
+      { name: 'Vanguard Solo 401(k)', amount: 10_000 },
+      { name: 'Fidelity 401(k)', amount: 500 },
+    ]);
+    expect(w.total).toBe(10_500);
+  });
+
+  test('match by amount within a dollar or 1%, and by day within a few days', () => {
+    const one = (transfer: { date: string; amount: number }) =>
+      workplaceSavings([plan({ account_id: 'a', name: 'x', institution: 'y', amount: 2_000, rows: [{ date: '2026-06-10', amount: 2_000 }] })], {
+        transfersOut: [transfer],
+        fromBank: [],
+      }).total;
+    expect(one({ date: '2026-06-10', amount: 2_019 })).toBe(0); // within 1%
+    expect(one({ date: '2026-06-10', amount: 2_030 })).toBe(2_000); // not
+    expect(one({ date: `2026-06-${10 + MATCH_DAYS}`, amount: 2_000 })).toBe(0);
+    expect(one({ date: `2026-06-${11 + MATCH_DAYS}`, amount: 2_000 })).toBe(2_000);
+  });
+
+  test('a plan paid from the bank adds nothing, and is named', () => {
+    const w = workplaceSavings([plan({ account_id: 'solo', name: 'Solo 401(k)', institution: 'Vanguard', amount: 20_000, rows: [{ date: '2026-03-01', amount: 20_000 }] })], {
+      transfersOut: [],
+      fromBank: ['solo'],
+    });
+    expect(w.total).toBe(0);
+    expect(w.fromBank).toEqual(['Vanguard Solo 401(k)']);
+    expect(w.added).toEqual([]);
+  });
+
+  test('transfers out are money moved out of your accounts over the year, and nothing else', () => {
+    const out = transfersOut(
+      [
+        txn({ date: '2026-03-01', amount: 10_000, category: 'transfer out', subcategory: 'investment and retirement funds' }),
+        txn({ date: '2026-03-02', amount: 50, category: 'food and drink' }), // spending
+        txn({ date: '2026-03-03', amount: -10_000, category: 'transfer in' }), // money in
+        txn({ date: '2026-03-04', amount: 900, category: 'loan payments', subcategory: 'credit card payment' }), // a card payoff
+        txn({ date: '2025-01-01', amount: 7_000, category: 'transfer out' }), // older than a year
+      ],
+      '2026-10-06'
+    );
+    expect(out).toEqual([{ date: '2026-03-01', amount: 10_000 }]);
   });
 });
 
@@ -600,6 +736,14 @@ describe('the store', () => {
     expect(read).toEqual({ ...saved, ceiling: DEFAULT_PLAN.ceiling });
     await firePlanStore.set(TEST_CTX, read!);
     expect(Object.keys(await stored()).sort()).toEqual(Object.keys(DEFAULT_PLAN).sort());
+  });
+
+  // Through the store's upgrade hook: a plan saved before the switch existed
+  // takes every workplace plan as paid through payroll, as it always did.
+  test('a plan saved before the payroll switch existed reads with every plan paid through payroll', async () => {
+    const { bankFunded: _, ...old } = saved;
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(old)));
+    expect(await firePlanStore.get(TEST_CTX)).toEqual({ ...saved, bankFunded: [] });
   });
 
   test('a plan outside today’s ranges or rules still reads; a save is held to them', async () => {

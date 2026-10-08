@@ -78,6 +78,11 @@ export type FirePlan = {
   ceiling: number;
   income: PlanIncome[];
   expenses: PlanExpense[];
+  /** Workplace plans (account ids) the person pays into from a bank account,
+   *  with "Paid through payroll" turned off: their contributions are already
+   *  counted as saved by income minus spending, so they aren't added again.
+   *  Every other workplace plan is taken as paid through payroll. */
+  bankFunded: string[];
 };
 
 export const DEFAULT_PLAN: FirePlan = {
@@ -105,6 +110,7 @@ export const DEFAULT_PLAN: FirePlan = {
   ceiling: 1.25,
   income: [],
   expenses: [],
+  bankFunded: [],
 };
 
 /** A plan with no age runs this long. */
@@ -128,6 +134,7 @@ export const LIMITS = {
   expenses: 10,
   label: 60,
   id: 40,
+  bankFunded: 20,
 } as const;
 
 const METHODS: readonly Method[] = ['historical', 'monte-carlo'];
@@ -227,6 +234,15 @@ function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: s
     });
     const ids = [...income, ...expenses].map((x) => x.id);
     if (input && new Set(ids).size !== ids.length) throw new Invalid('income and expense ids must be unique');
+    // Account ids, as Plaid and manual accounts make them; repeats dropped.
+    const bankFunded = [
+      ...new Set(
+        list(o.bankFunded, 'bankFunded', LIMITS.bankFunded).map((v, i) => {
+          if (typeof v !== 'string' || (input && !/^[A-Za-z0-9_.:-]{1,100}$/.test(v))) throw new Invalid(`bankFunded[${i}] must be an account id`);
+          return v;
+        })
+      ),
+    ];
     const plan: FirePlan = {
       version: 1,
       age: orNull(o.age, (v) => whole(v, 'age', ageMin, ageMax)),
@@ -252,6 +268,7 @@ function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: s
       ceiling,
       income,
       expenses,
+      bankFunded,
     };
     if (input) {
       if (plan.start === 'custom' && plan.startBalance === null) throw new Invalid('a custom start needs startBalance');

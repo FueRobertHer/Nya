@@ -51,15 +51,16 @@ import {
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { instantDay, localDate } from '@/lib/local-date';
 import {
-  TRAILING_DAYS,
   investedAssets,
   isWorkplacePlan,
   trailingFlows,
+  transfersOut,
   unreadTransactions,
   workplaceSavings,
   type AssetCaveat,
   type AssetInstitution,
   type InvestedAssets,
+  type Payment,
   type PlanContributions,
   type TrailingFlows,
   type UnreadTransactions,
@@ -179,16 +180,22 @@ export function assetCaveatLines(caveats: AssetCaveat[]): string[] {
   return lines;
 }
 
-/** One workplace plan contributions request per account, as the Accounts tab
- *  makes when an account is opened. Null until every answer is in. */
-function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContributions[] | null {
-  const plans = institutions.flatMap((i) =>
+/** The workplace plans whose contributions are measured: linked (not manual)
+ *  and not hidden. */
+function workplacePlansOf(institutions: AssetInstitution[]) {
+  return institutions.flatMap((i) =>
     i.item_id
       ? i.accounts
           .filter((a) => !a.hidden && isWorkplacePlan(a.subtype))
           .map((a) => ({ item_id: i.item_id as string, account_id: a.account_id, name: a.name, institution: i.name }))
       : []
   );
+}
+
+/** One workplace plan contributions request per account, as the Accounts tab
+ *  makes when an account is opened. Null until every answer is in. */
+function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContributions[] | null {
+  const plans = workplacePlansOf(institutions);
   const key = plans.map((p) => `${p.item_id}:${p.account_id}`).join(',');
   const plansRef = useRef(plans);
   plansRef.current = plans;
@@ -199,18 +206,24 @@ function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContri
     Promise.all(
       wanted.map(async (p): Promise<PlanContributions> => {
         const base = { account_id: p.account_id, name: p.name, institution: p.institution };
+        const none = { ...base, amount: null, from: null, partial: false, rows: [], note: null };
         try {
           const res = await fetch(`/api/investment-activity?id=${encodeURIComponent(p.account_id)}&item_id=${encodeURIComponent(p.item_id)}`);
-          if (!res.ok) return { ...base, amount: null, from: null, note: null };
+          if (!res.ok) return none;
           const data = await res.json();
+          const rows: unknown = data?.contributions_12m_rows;
           return {
             ...base,
             amount: typeof data?.contributions_12m === 'number' ? data.contributions_12m : null,
             from: typeof data?.contributions_12m_from === 'string' ? data.contributions_12m_from : null,
+            partial: data?.contributions_12m_partial === true,
+            rows: Array.isArray(rows)
+              ? rows.filter((r): r is Payment => typeof r?.date === 'string' && typeof r?.amount === 'number' && Number.isFinite(r.amount))
+              : [],
             note: typeof data?.note === 'string' ? data.note : null,
           };
         } catch {
-          return { ...base, amount: null, from: null, note: null };
+          return none;
         }
       })
     ).then((answers) => {
@@ -269,11 +282,13 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
   const assets = useMemo(() => investedAssets(institutions, plan.includeCash), [institutions, plan.includeCash]);
   const contributions = useWorkplaceContributions(institutions);
-  const yearAgo = useMemo(() => {
-    const [y, m, d] = today.split('-').map(Number);
-    return new Date(Date.UTC(y, m - 1, d) - (TRAILING_DAYS - 1) * 86_400_000).toISOString().slice(0, 10);
-  }, [today]);
-  const workplace = useMemo(() => (contributions ? workplaceSavings(contributions, yearAgo) : null), [contributions, yearAgo]);
+  // Payments out of the bank that may have paid for a contribution, so it
+  // isn't counted twice (lib/fire/inputs.ts workplaceSavings).
+  const bankOut = useMemo(() => (txns ? transfersOut(txns, today) : []), [txns, today]);
+  const workplace = useMemo(
+    () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, fromBank: plan.bankFunded }) : null),
+    [contributions, bankOut, plan.bankFunded]
+  );
   const view = fiView(plan, {
     spending: flows?.spending ?? null,
     savings: flows ? flows.savings + (workplace?.total ?? 0) : null,
@@ -531,6 +546,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
             }
             measuredText={flows ? `from ${windowText(flows)}` : ''}
             assetsFor={(includeCash) => investedAssets(institutions, includeCash)}
+            workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
           />
         )}
         {shownSheet?.kind === 'income' && <IncomeForm key={opened} {...formProps} item={shownSheet.item} />}
@@ -635,11 +651,20 @@ export function FiCard({
     const parts: string[] = [];
     if (flows.loanPayments > 0) parts.push(`${money(flows.loanPayments)} of loan payments (principal counts as spending until the loan ends)`);
     if (flows.cash > 0) parts.push(`${money(flows.cash)} of cash withdrawals`);
+    // Refunds are taken off, so the total and the largest are said: an odd
+    // large one (a deposit returned, an insurance payout) can be seen.
+    const big = flows.largestRefund;
+    const refunds =
+      flows.refunds > 0
+        ? `, less ${money(flows.refunds)} of refunds${big ? ` (the largest, ${money(big.amount)} from ${big.name} on ${dayName(big.date)})` : ''}`
+        : '';
     spendingNote = (
       <Notes
-        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${flows.refunds > 0 ? `, less ${money(flows.refunds)} of refunds` : ''}.`}
+        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.`}
         warnings={[
-          flows.unclearLoans > 0 ? `${money(flows.unclearLoans)} of loan payments Plaid gave no detail for isn't counted: it may be card payments, which settle spending already counted.` : null,
+          flows.unclearLoans > 0
+            ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
+            : null,
           unreadText(unread, 'low'),
         ]}
       />
@@ -651,7 +676,11 @@ export function FiCard({
   if (savings.source === 'typed') savingsNote = 'typed by you';
   else if (!flows) savingsNote = txnsLoading ? 'loading your transactions…' : 'needs a year of transactions';
   else {
-    const plans = workplace && workplace.measured.length ? ` plus ${money(workplace.total)} contributed to ${names(workplace.measured)}` : '';
+    // What was added for workplace plans, and what wasn't, so it is never
+    // counted twice (lib/fire/inputs.ts workplaceSavings).
+    const added = workplace?.added ?? [];
+    const fromBank = workplace?.fromBank ?? [];
+    const plans = added.length ? `, plus ${money(workplace!.total)} paid into ${names(workplace!.measured)} through payroll` : '';
     savingsNote = (
       <Notes
         source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plans}.`}
@@ -659,6 +688,15 @@ export function FiCard({
           workplaceCount === null ? 'Checking contributions to workplace plans…' : null,
           workplaceCount === 0
             ? "Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data."
+            : null,
+          ...(workplace?.matched ?? []).map(
+            (m) => `${money(m.amount)} paid into ${m.name} matched transfers out of your accounts, which already count as saved, so it isn't added again.`
+          ),
+          fromBank.length
+            ? `${names(fromBank)} ${fromBank.length === 1 ? 'is' : 'are'} set as paid from your bank, so nothing paid into ${fromBank.length === 1 ? 'it' : 'them'} is added again.`
+            : null,
+          added.length
+            ? `If you pay into ${added.length === 1 ? 'it' : 'one of them'} from your bank account, turn off "Paid through payroll" for it under Edit, or it counts twice.`
             : null,
           ...(workplace?.partial ?? []).map((p) => `${p.name} is counted from ${dayName(p.from)}, when Nya's record of it starts.`),
           workplace && workplace.unmeasured.length ? `Contributions to ${names(workplace.unmeasured)} couldn't be measured, so this figure may be low.` : null,

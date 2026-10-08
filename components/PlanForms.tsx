@@ -178,6 +178,9 @@ export function FigureForm(
     currency: string | null;
     /** Invested assets with or without cash, so the total follows the box as it is ticked. */
     assetsFor?: (includeCash: boolean) => { total: number | null; accounts: CountedAccount[] };
+    /** Savings: the workplace plans whose contributions are added, each with
+     *  its "Paid through payroll" switch. */
+    workplacePlans?: { account_id: string; label: string }[];
   }
 ) {
   const { plan, kind } = props;
@@ -185,6 +188,15 @@ export function FigureForm(
   const [mode, setMode] = useState<'measured' | 'typed'>(typedNow === null && props.measured !== null ? 'measured' : 'typed');
   const [text, setText] = useState(asText(typedNow ?? (props.measured === null ? null : Math.round(props.measured))));
   const [includeCash, setIncludeCash] = useState(plan.includeCash);
+  const [fromBank, setFromBank] = useState<string[]>(plan.bankFunded);
+  const plans = kind === 'savings' ? (props.workplacePlans ?? []) : [];
+  // The plans switched off here, plus any switched off before that isn't
+  // listed now (hidden, or disconnected for a while), as long as they fit.
+  const bankFunded = () => {
+    const listed = new Set(plans.map((p) => p.account_id));
+    const off = plans.filter((p) => fromBank.includes(p.account_id)).map((p) => p.account_id);
+    return [...off, ...plan.bankFunded.filter((id) => !listed.has(id))].slice(0, LIMITS.bankFunded);
+  };
   const s = useSave(props);
   const t = FIGURE_TEXT[kind];
   const live = kind === 'assets' && props.assetsFor ? props.assetsFor(includeCash) : null;
@@ -243,6 +255,28 @@ export function FigureForm(
           )}
         </>
       )}
+      {plans.length > 0 && (
+        <>
+          <p className="panel-note">
+            Nya&apos;s figure adds what went into these workplace plans, taken as paid from your pay before it reaches a
+            bank. Turn &quot;Paid through payroll&quot; off for a plan you pay into from your bank account (a Solo 401(k),
+            say): those payments already count as saved, so adding them would count them twice.
+          </p>
+          {plans.map((p) => (
+            <label key={p.account_id} className="plan-check">
+              <input
+                type="checkbox"
+                checked={!fromBank.includes(p.account_id)}
+                onChange={(e) =>
+                  setFromBank((ids) => (e.target.checked ? ids.filter((id) => id !== p.account_id) : [...ids, p.account_id]))
+                }
+                disabled={s.saving}
+              />
+              {p.label}: paid through payroll
+            </label>
+          ))}
+        </>
+      )}
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         onDone={props.onDone}
@@ -253,6 +287,7 @@ export function FigureForm(
             ...plan,
             [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
             includeCash: kind === 'assets' ? includeCash : plan.includeCash,
+            bankFunded: kind === 'savings' ? bankFunded() : plan.bankFunded,
           }))
         }
       />

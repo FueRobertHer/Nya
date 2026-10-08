@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PlanTab, { EventsCard, FiCard, GridCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import PlanFanChart from '@/components/PlanFanChart';
+import { FigureForm } from '@/components/PlanForms';
 import PlanGrid from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
 import { dayName, monthName, pct, progressText, successText, wholeMoney } from '@/components/plan-text';
@@ -21,6 +22,7 @@ const flows: TrailingFlows = {
   cash: 0,
   refunds: 0,
   unclearLoans: 0,
+  largestRefund: null,
   from: '2025-10-07',
   to: '2026-10-06',
   days: 365,
@@ -42,7 +44,7 @@ const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   mixedCurrency: false,
   ...over,
 });
-const noPlans: WorkplaceSavings = { total: 0, measured: [], partial: [], problems: [], unmeasured: [] };
+const noPlans: WorkplaceSavings = { total: 0, measured: [], added: [], matched: [], fromBank: [], partial: [], problems: [], unmeasured: [] };
 
 /** Markup as text, tags dropped and entities decoded, for reading sentences. */
 const text = (html: string) =>
@@ -50,6 +52,7 @@ const text = (html: string) =>
     .replace(/<[^>]+>/g, ' ')
     .replace(/&#x27;|&#39;/g, "'")
     .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
     .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ');
 
@@ -137,12 +140,14 @@ describe('the FI card', () => {
     expect(t).toContain('25% of the way');
   });
 
-  test('says what the spending includes beyond the Activity tab: loan payments, cash, refunds taken off', () => {
-    const t = card(plan(), { f: { ...flows, loanPayments: 18_000, cash: 1_200, refunds: 300, unclearLoans: 400 } });
+  test('says what the spending includes beyond the Activity tab: loan payments, cash, refunds taken off with the largest', () => {
+    const t = card(plan(), {
+      f: { ...flows, loanPayments: 18_000, cash: 1_200, refunds: 1_800, largestRefund: { amount: 1_500, date: '2026-02-01', name: 'Acme Rentals' }, unclearLoans: 400 },
+    });
     expect(t).toContain(
-      'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $300 of refunds.'
+      'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
     );
-    expect(t).toContain("$400 of loan payments Plaid gave no detail for isn't counted");
+    expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
   });
 
   test('a figure that may be short says so, beside it and on the FI number, naming the institution', () => {
@@ -177,18 +182,24 @@ describe('the FI card', () => {
     expect(t).toContain('Invested assets may be low');
   });
 
-  test('savings add what went into workplace plans, and say what could not be measured', () => {
+  test('savings say what was added for workplace plans, what was not and why, and what could not be measured', () => {
     const t = card(plan(), {
-      workplaceCount: 2,
+      workplaceCount: 4,
       workplace: {
+        ...noPlans,
         total: 12_000,
         measured: ['Fidelity 401(k)'],
+        added: [{ name: 'Fidelity 401(k)', amount: 12_000 }],
+        matched: [{ name: 'Vanguard Solo 401(k)', amount: 10_000 }],
+        fromBank: ['Schwab SEP'],
         partial: [{ name: 'Fidelity 401(k)', from: '2026-04-01' }],
-        problems: [],
         unmeasured: ['TSP TSP'],
       },
     });
-    expect(t).toContain('plus $12,000 contributed to Fidelity 401(k).');
+    expect(t).toContain('over the same 12 months, plus $12,000 paid into Fidelity 401(k) through payroll.');
+    expect(t).toContain('$10,000 paid into Vanguard Solo 401(k) matched transfers out of your accounts, which already count as saved, so it isn\'t added again.');
+    expect(t).toContain('Schwab SEP is set as paid from your bank, so nothing paid into it is added again.');
+    expect(t).toContain('If you pay into it from your bank account, turn off "Paid through payroll" for it under Edit, or it counts twice.');
     expect(t).toContain('Fidelity 401(k) is counted from Apr 1, 2026');
     expect(t).toContain("Contributions to TSP TSP couldn't be measured, so this figure may be low.");
     expect(card(plan(), { workplace: null, workplaceCount: null })).toContain('Checking contributions to workplace plans');
@@ -465,6 +476,33 @@ describe('income and one-offs', () => {
     const aged = plan({ ...p, targetAge: 50, horizon: 5 });
     const late = text(renderToStaticMarkup(<EventsCard plan={aged} engine={enginePlan(aged, fiView(aged, measured))} money={money} editable open={noop} />));
     expect(late).toContain("Roof $30,000 at age 60. After the plan ends at 55: only the grid's longer columns reach it.");
+  });
+});
+
+describe('the savings sheet', () => {
+  test('gives each workplace plan a "Paid through payroll" switch, on unless the plan says otherwise, and says when to turn it off', () => {
+    const html = renderToStaticMarkup(
+      <FigureForm
+        plan={plan({ bankFunded: ['solo'] })}
+        onSave={async () => true}
+        onDone={noop}
+        editable
+        kind="savings"
+        measured={30_000}
+        measuredText="from your last 12 months"
+        currency="USD"
+        workplacePlans={[
+          { account_id: 'k', label: 'Fidelity 401(k)' },
+          { account_id: 'solo', label: 'Vanguard Solo 401(k)' },
+        ]}
+      />
+    );
+    const t = text(html);
+    expect(t).toContain('Turn "Paid through payroll" off for a plan you pay into from your bank account');
+    expect(t).toContain('Fidelity 401(k): paid through payroll');
+    expect(t).toContain('Vanguard Solo 401(k): paid through payroll');
+    // Checked for the 401(k), not for the plan set as paid from the bank.
+    expect(html.match(/<input type="checkbox"[^>]*>/g)!.map((i) => i.includes('checked'))).toEqual([true, false]);
   });
 });
 

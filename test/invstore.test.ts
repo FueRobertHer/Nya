@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
@@ -543,19 +543,74 @@ describe('/api/investment-activity', () => {
     const body = await get();
     expect(body.contributions_12m).toBe(750);
     expect(body.contributions_12m_from).toBe(daysAgo(364));
+    expect(body.contributions_12m_partial).toBe(false);
+    // Each one, oldest first, so the tab can leave out one a bank transfer paid for.
+    expect(body.contributions_12m_rows).toEqual([
+      { date: daysAgo(100), amount: 500 },
+      { date: daysAgo(10), amount: 250 },
+    ]);
   });
 
-  test('a shorter record says where it starts, so it is never read as a whole year', async () => {
+  // Whether the year was cut short is decided against the verified coverage,
+  // not the account's oldest row: an account with little activity is still
+  // covered for the whole year.
+  test('says when its record cuts the year short, and only then', async () => {
     const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
     plaid.rows = [row('a', daysAgo(100))];
-    const body = await get();
-    expect(body.contributions_12m).toBe(500);
-    expect(body.contributions_12m_from).toBe(daysAgo(100));
+    const quiet = await get();
+    expect(quiet.contributions_12m).toBe(500);
+    expect(quiet.contributions_12m_from).toBe(daysAgo(364));
+    expect(quiet.contributions_12m_partial).toBe(false);
+
+    // A record that starts 100 days ago (the sync is fresh, so it stays so).
+    const state = await readInvStore(ctx, 'item1');
+    state.coverage.ira = { from: daysAgo(100), through: state.coverage.ira.through };
+    await fake.set(key, await encodeJsonBlob(state));
+    const { clearCaches } = await import('@/lib/cache');
+    await clearCaches(ctx);
+    const short = await get();
+    expect(short.from_cache).toBe(false);
+    expect(short.contributions_12m_partial).toBe(true);
+    expect(short.contributions_12m_from).toBe(daysAgo(100));
   });
 
-  test('an answer cached before the figure existed is not served', async () => {
+  // 8pm on Oct 8 in California is already Oct 9 in UTC: the route's "a year
+  // ago" is a day later than the viewer's. The route decides, so a plan
+  // covered all year is never called partial in the evening.
+  test('an evening in the Americas never makes a covered year read as partial', async () => {
+    setSystemTime(new Date('2026-10-09T03:00:00Z'));
+    try {
+      plaid.rows = [row('a', '2026-09-01')];
+      const body = await get();
+      expect(body.contributions_12m_from).toBe('2025-10-10');
+      expect(body.contributions_12m_partial).toBe(false);
+      // As the Plan tab reads it, on its own day (Oct 8), with no date compared.
+      const { workplaceSavings } = await import('@/lib/fire/inputs');
+      const w = workplaceSavings(
+        [
+          {
+            account_id: 'ira',
+            name: '401(k)',
+            institution: 'Fidelity',
+            amount: body.contributions_12m,
+            from: body.contributions_12m_from,
+            partial: body.contributions_12m_partial,
+            rows: body.contributions_12m_rows,
+            note: body.note,
+          },
+        ],
+        { transfersOut: [], fromBank: [] }
+      );
+      expect(w.partial).toEqual([]);
+      expect(w.total).toBe(500);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('an answer cached before the figures existed is not served', async () => {
     const { writeAccountCache } = await import('@/lib/cache');
-    await writeAccountCache(ctx, 'item1:ira', { txns: [], ytd_contributions: 0, note: null });
+    await writeAccountCache(ctx, 'item1:ira', { txns: [], ytd_contributions: 0, contributions_12m: 0, contributions_12m_from: null, note: null });
     plaid.rows = [row('a', new Date(Date.now() - 5 * DAY).toISOString().slice(0, 10))];
     const body = await get();
     expect(body.from_cache).toBe(false);

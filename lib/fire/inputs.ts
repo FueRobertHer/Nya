@@ -11,18 +11,25 @@
 // spending twice; but a mortgage, car or student loan payment, or cash taken
 // out and spent, is money the person needs every year, and nothing else
 // counts it. So here (planFlow):
-//   - a payment on a loan that isn't a card counts as spending. Its principal
-//     is really saving, but it is spending until the loan ends, which is the
-//     year a plan starting today has to fund; the label says so.
-//   - a card payment still doesn't count: it settles purchases already
-//     counted on the card. A loan payment Plaid gives no detail for can't be
-//     told from one, so it is left out and reported, never guessed.
+//   - a payment Plaid's detail says is on a mortgage, car, student or
+//     personal loan counts as spending. Its principal is really saving, but
+//     it is spending until the loan ends, which is the year a plan starting
+//     today has to fund; the label says so.
+//   - a card payment never counts, whatever the row has been recategorized
+//     as: it settles purchases already counted on the card. Anything else
+//     filed under loan payments (no detail, Plaid's "other payment", which can
+//     be a store card, or a row recategorized there whose detail says
+//     something else, a card payoff among them) can't be told from one, so it
+//     is left out and reported, never guessed.
 //   - the loan account's side of a payment (money in, negative) stays out, so
 //     a payment from a linked checking account to a linked loan counts once.
 //   - cash withdrawals count (an ATM, or Plaid's "withdrawal" with no code),
 //     and so do bank charges, which the Activity rule files with transfers.
-//   - refunds (money back outside income) are taken off spending rather than
-//     counted as income, which would overstate both.
+//   - money back in a spending category (a refund) is taken off spending
+//     rather than counted as income, which would overstate both. Only in a
+//     spending category: money in under income, a transfer or anything else
+//     is never a refund. The total, and the largest one, are shown beside
+//     spending, so an odd large one (a deposit returned) can be seen.
 // Pending rows count, as they do on the Activity tab; a pending row whose
 // posted row has arrived was already dropped by /api/transactions
 // (lib/transactions.ts supersededPendingIds), so nothing counts twice.
@@ -32,7 +39,10 @@
 // usually comes out of a paycheck before it reaches a bank, measured from
 // Nya's verified investment transactions. Contributions to brokerages and
 // IRAs are not added: they are usually paid from a bank account, where
-// income minus spending has already counted them.
+// income minus spending has already counted them. Nothing is counted twice:
+// a contribution that a transfer out of a bank account paid for (the same
+// amount within days) is not added, and neither is anything paid into a plan
+// the person says they fund from their bank ("Paid through payroll" off).
 //
 // INVESTED ASSETS are the balances of investment accounts (and, if asked,
 // checking and savings), not hidden, as the Accounts tab shows them, with
@@ -65,14 +75,38 @@ export type PlanFlow =
   /** Between your own accounts. */
   | 'transfer';
 
+/** Plaid's details (its personal finance category, humanized) for a payment
+ *  on a loan that isn't a card: the only loan payments counted as spending. */
+const LOAN_DETAILS = new Set(['mortgage payment', 'car payment', 'student loan payment', 'personal loan payment']);
+/** Plaid's detail for paying a card off. */
+const CARD_PAYMENT = 'credit card payment';
+/** The categories money is spent in (Plaid's personal finance categories,
+ *  humanized): money back in one of them is a refund. Not income, transfers,
+ *  loan payments or "other". */
+const SPENDING_CATEGORIES = new Set([
+  'food and drink',
+  'general merchandise',
+  'general services',
+  'entertainment',
+  'personal care',
+  'medical',
+  'travel',
+  'transportation',
+  'rent and utilities',
+  'home improvement',
+  'bank fees',
+]);
+
 /** How one transaction counts for planning (see the top of this file). */
 export function planFlow(t: Txn): PlanFlow {
   const category = t.category ?? null;
+  // Plaid's own detail: a recategorized row keeps it (only the category is
+  // replaced), so it still says what the row really was.
   const sub = (t.subcategory ?? '').toLowerCase();
+  if (sub === CARD_PAYMENT) return t.amount > 0 ? 'card-payment' : 'transfer';
   if (category === 'loan payments') {
     if (t.amount <= 0) return 'transfer'; // the loan's side of a payment
-    if (sub === 'credit card payment') return 'card-payment';
-    return sub ? 'loan' : 'unclear-loan';
+    return LOAN_DETAILS.has(sub) ? 'loan' : 'unclear-loan';
   }
   if (t.amount > 0) {
     // Plaid's transaction code, where the institution reports one, is the
@@ -85,9 +119,9 @@ export function planFlow(t: Txn): PlanFlow {
   if (isTransfer(t)) return 'transfer';
   if (category === 'income') return 'income';
   if (t.amount > 0) return 'spending';
-  // Money in that isn't income or a transfer is money back on something
-  // bought. With no category at all there is no telling: it stays income.
-  return category === null ? 'income' : 'refund';
+  // Money in: back on something bought only in a spending category. Anything
+  // else (no category, "other") stays income, as it always was.
+  return category !== null && SPENDING_CATEGORIES.has(category) ? 'refund' : 'income';
 }
 
 export type TrailingFlows = {
@@ -104,6 +138,9 @@ export type TrailingFlows = {
   refunds: number;
   /** Loan payments NOT counted because they can't be told from card payments. */
   unclearLoans: number;
+  /** The largest single refund taken off, as it was (not scaled), so an odd
+   *  large one can be seen. */
+  largestRefund: { amount: number; date: string; name: string } | null;
   /** The earliest transaction in the window, and today. */
   from: string;
   to: string;
@@ -145,12 +182,16 @@ export function trailingFlows(txns: Txn[], today: string): TrailingFlows | null 
   let count = 0;
   let earliest = end;
   const counted: Txn[] = [];
+  let largestRefund: TrailingFlows['largestRefund'] = null;
   for (const t of txns) {
     const d = dayNumber(t.date);
     if (!(d >= start && d <= end)) continue; // also skips a malformed date
     if (d < earliest) earliest = d;
     const flow = planFlow(t);
     sums[flow] += t.amount;
+    if (flow === 'refund' && (largestRefund === null || -t.amount > largestRefund.amount)) {
+      largestRefund = { amount: -t.amount, date: t.date, name: t.name };
+    }
     if (flow === 'transfer' || flow === 'card-payment' || flow === 'unclear-loan') continue;
     count++;
     counted.push(t);
@@ -170,6 +211,7 @@ export function trailingFlows(txns: Txn[], today: string): TrailingFlows | null 
     cash: sums.cash * scale,
     refunds: -sums.refund * scale,
     unclearLoans: sums['unclear-loan'] * scale,
+    largestRefund,
     from: isoDay(earliest),
     to: today,
     days,
@@ -308,8 +350,11 @@ export function isWorkplacePlan(subtype: string | null | undefined): boolean {
   return WORKPLACE_PLAN_SUBTYPES.has((subtype ?? '').toLowerCase());
 }
 
+/** One payment into a plan, or out of a bank account: its day and amount. */
+export type Payment = { date: string; amount: number };
+
 /** One workplace plan's contributions over the trailing year, as
- *  /api/investment-activity measured them (contributions_12m). */
+ *  /api/investment-activity measured them (contributions_12m and friends). */
 export type PlanContributions = {
   account_id: string;
   name: string;
@@ -320,15 +365,29 @@ export type PlanContributions = {
   /** The first day the amount covers: a year ago, or later when Nya's
    *  verified activity starts later. */
   from: string | null;
+  /** The route found its verified record starts after the trailing year's
+   *  first day, so the amount covers less than a year. Decided there, on the
+   *  record's own days, never by comparing one of its days with the
+   *  viewer's (an evening in the Americas is already tomorrow in UTC). */
+  partial: boolean;
+  /** Each contribution the amount sums, to tell which a bank transfer paid for. */
+  rows: Payment[];
   /** A problem reading its activity (lib/invstore.ts), shown as is. */
   note: string | null;
 };
 
 export type WorkplaceSavings = {
-  /** What was measured, summed. */
+  /** What is added to savings, summed. */
   total: number;
-  /** Plans measured, by "institution name". */
+  /** Plans whose contributions were added, by "institution name", with how much. */
   measured: string[];
+  added: { name: string; amount: number }[];
+  /** Contributions that a transfer out of a bank account paid for, by plan:
+   *  already counted as saved, so not added again. */
+  matched: { name: string; amount: number }[];
+  /** Plans the person pays from a bank account ("Paid through payroll" off):
+   *  nothing of theirs is added. */
+  fromBank: string[];
   /** Plans measured over less than the whole year, with the day they start. */
   partial: { name: string; from: string }[];
   /** Plans measured, but whose activity was read with a problem: may be short. */
@@ -337,20 +396,70 @@ export type WorkplaceSavings = {
   unmeasured: string[];
 };
 
-/** The trailing year's contributions to workplace plans, summed, with what
- *  is short named. `yearAgo` is the first day of the trailing year. */
-export function workplaceSavings(plans: PlanContributions[], yearAgo: string): WorkplaceSavings {
-  const out: WorkplaceSavings = { total: 0, measured: [], partial: [], problems: [], unmeasured: [] };
+/** A transfer out pays for a contribution when the amounts agree to within a
+ *  dollar or 1%, whichever is more, and the days to within this many. */
+export const MATCH_DAYS = 5;
+const sameAmount = (a: number, b: number) => Math.abs(a - b) <= Math.max(1, 0.01 * Math.max(a, b));
+
+/** Money moved out of your accounts over the trailing year (planFlow
+ *  "transfer", money out): where a payment into a plan from a bank account
+ *  shows on the bank's side. */
+export function transfersOut(txns: Txn[], today: string): Payment[] {
+  const end = dayNumber(today);
+  const start = end - (TRAILING_DAYS - 1);
+  return txns
+    .filter((t) => {
+      const d = dayNumber(t.date);
+      return d >= start && d <= end && t.amount > 0 && planFlow(t) === 'transfer';
+    })
+    .map((t) => ({ date: t.date, amount: t.amount }));
+}
+
+/**
+ * The trailing year's contributions to workplace plans, as added to savings,
+ * with what was left out and what is short named. A contribution that a
+ * transfer out of a bank account paid for (see MATCH_DAYS) is not added, and
+ * each transfer pays for one contribution at most, across every plan; nothing
+ * paid into a plan in `fromBank` is added at all.
+ */
+export function workplaceSavings(plans: PlanContributions[], bank: { transfersOut: Payment[]; fromBank: string[] }): WorkplaceSavings {
+  const out: WorkplaceSavings = { total: 0, measured: [], added: [], matched: [], fromBank: [], partial: [], problems: [], unmeasured: [] };
+  const used = new Set<number>();
+  const transfers = bank.transfersOut.map((t, i) => ({ ...t, i, day: dayNumber(t.date) }));
   for (const p of plans) {
     const label = `${p.institution} ${p.name}`;
+    if (bank.fromBank.includes(p.account_id)) {
+      out.fromBank.push(label);
+      continue;
+    }
     if (p.amount === null || !Number.isFinite(p.amount)) {
       out.unmeasured.push(label);
       continue;
     }
-    out.total += Math.max(0, p.amount);
-    out.measured.push(label);
+    let added = 0;
+    let matched = 0;
+    if (p.rows.length === 0) added = Math.max(0, p.amount);
+    for (const row of p.rows) {
+      if (!(row.amount > 0)) continue;
+      const day = dayNumber(row.date);
+      let best: (typeof transfers)[number] | null = null;
+      for (const t of transfers) {
+        if (used.has(t.i) || !sameAmount(row.amount, t.amount) || !(Math.abs(t.day - day) <= MATCH_DAYS)) continue;
+        if (!best || Math.abs(t.day - day) < Math.abs(best.day - day)) best = t;
+      }
+      if (best) {
+        used.add(best.i);
+        matched += row.amount;
+      } else added += row.amount;
+    }
+    out.total += added;
+    if (added > 0) {
+      out.measured.push(label);
+      out.added.push({ name: label, amount: added });
+    }
+    if (matched > 0) out.matched.push({ name: label, amount: matched });
     if (p.note) out.problems.push({ name: label, note: p.note });
-    if (p.from && p.from > yearAgo) out.partial.push({ name: label, from: p.from });
+    if (p.partial && p.from) out.partial.push({ name: label, from: p.from });
   }
   return out;
 }
