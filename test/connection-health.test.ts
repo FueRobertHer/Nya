@@ -12,6 +12,7 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // What Plaid answers, by access token. Every call the routes here can make is
 // stubbed, since mock.module is process-wide.
 const plaid: Record<string, () => unknown> = {};
+const txnFails = new Set<string>();
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     accountsGet: async (req: any) => {
@@ -22,9 +23,12 @@ mock.module('@/lib/plaid', () => ({
     investmentsHoldingsGet: async () => ({ data: { holdings: [], securities: [] } }),
     liabilitiesGet: async () => ({ data: { liabilities: {} } }),
     itemRemove: async () => ({ data: {} }),
-    transactionsSync: async () => ({
-      data: { added: [], modified: [], removed: [], accounts: [], next_cursor: 'c', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' },
-    }),
+    transactionsSync: async (req: any) => {
+      if (txnFails.has(req.access_token)) throw { response: { data: { error_code: 'ITEM_LOGIN_REQUIRED' } } };
+      return {
+        data: { added: [], modified: [], removed: [], accounts: [], next_cursor: 'c', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' },
+      };
+    },
   },
 }));
 
@@ -84,6 +88,7 @@ const quiet = { error: console.error, warn: console.warn, log: console.log };
 beforeEach(async () => {
   fake.reset();
   for (const k of Object.keys(plaid)) delete plaid[k];
+  txnFails.clear();
   forgetEpochs();
   console.error = () => {};
   console.warn = () => {};
@@ -314,4 +319,15 @@ describe('a fetch that fails says why (lib/networth.ts)', () => {
     answers('token-item_x');
     expect((await fetchInstitution(await stored('item_x'))).consent_expires_at).toBeNull();
   });
+});
+
+test("Activity is told which institutions' transactions this load is missing, and such a load is never cached", async () => {
+  await link('item_chase');
+  txnFails.add(await link('item_amex', 'Amex'));
+  const { body } = await route('transactions', 'GET', undefined, '?refresh=1');
+  expect(body.incomplete).toEqual([{ institution_name: 'Amex', coverage: 'missing' }]);
+  expect(await readCache(ctx, CacheKey.Transactions)).toBeNull();
+  txnFails.clear();
+  const clean = await route('transactions', 'GET', undefined, '?refresh=1');
+  expect(clean.body.incomplete).toEqual([]);
 });

@@ -302,6 +302,19 @@ describe('hard stops leave the stored blob alone', () => {
 
     expect(res.note).toContain('needs to be reconnected');
     expect(await fake.get<string>(ctxKey('txns:item_a'))).toBe(stored as string);
+    // None of its rows came back, which Activity's month totals say (#51).
+    expect(res.txns).toEqual([]);
+    expect(res.coverage).toBe('missing');
+  });
+
+  test('says how much of the history it returned: all, or older rows still arriving', async () => {
+    pages = [{ added: [txn()] }];
+    expect((await syncItemTransactions(ctx, ITEM)).coverage).toBe('complete');
+    calls = [];
+    pages = Array.from({ length: 50 }, (_, i) => ({ added: [txn({ transaction_id: `p${i}` })], has_more: true, next_cursor: `c${i}` }));
+    const importing = await syncItemTransactions(ctx, ITEM);
+    expect(importing.note).toContain('still importing older transactions');
+    expect(importing.coverage).toBe('importing');
   });
 });
 

@@ -2149,3 +2149,74 @@ button.danger-outline {
 .auth-wrap .trust-links {
   margin: 0;
 }
+
+/* --- connection health (#51): the health card on the Accounts tab, and the
+   "Reconnect soon" note on an institution's card --- */
+
+/* The collapsed card's summary, in amber while something needs attention. */
+.health-attention {
+  color: var(--warn);
+}
+
+.health-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.health-row {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.health-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.health-text {
+  margin: 6px 0 4px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.health-affected {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* A state at a glance, shaped like the Manual badge: amber for a deadline or
+   something that clears on its own, red for what only the person can fix. */
+.health-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.health-up {
+  color: var(--up);
+}
+
+.health-warn {
+  color: var(--warn);
+}
+
+.health-down {
+  color: var(--down);
+}
+
+.reconnect-soon {
+  margin-top: 12px;
+}
+
+.reconnect-soon .stale-note {
+  margin-top: 8px;
+}
