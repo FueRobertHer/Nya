@@ -62,7 +62,11 @@ const { UnreadableEntriesError, StoredDataUnreadableError } = await import('@/li
 const { classify } = await import('@/lib/reencrypt');
 const { exportLines } = await import('@/lib/export');
 const { verifyArchive, restoreArchive } = await import('@/lib/restore');
-const { recordDirectory, forgetEarlierAccount } = await import('@/lib/links');
+const { recordDirectory, forgetEarlierAccount, linkAccounts } = await import('@/lib/links');
+const { setAccountHidden } = await import('@/lib/hidden');
+const { forgetEpochs } = await import('@/lib/sessions');
+const historyRoute = await import('@/app/api/holdings-history/route');
+const netWorthRoute = await import('@/app/api/net-worth/route');
 
 const HISTORY = ctxKey('holdings:history');
 const INDEX = ctxKey('holdings:history:index');
@@ -117,6 +121,9 @@ const origWarn = console.warn;
 const saved = { ...process.env };
 beforeEach(() => {
   fake.reset();
+  // The default ceiling, whatever a file run before this one left set
+  // (test/transactions.test.ts lowers it for the whole run).
+  delete process.env.MAX_TXN_BLOB_CHARS;
   Object.assign(plaid, { accounts: [], holdings: [], securities: [], accountsFail: false, holdingsFail: false });
   errors.length = 0;
   warnings.length = 0;
@@ -754,5 +761,122 @@ describe('backups and the key inventory', () => {
     const keys = [...(fake as any).hashes.keys(), ...(fake as any).strings.keys()];
     expect(keys.sort()).toEqual([HISTORY, INDEX].sort());
     for (const key of keys) expect(key.startsWith(ctxKey(''))).toBe(true);
+  });
+});
+
+describe('GET /api/holdings-history', () => {
+  const get = async (query = '') => {
+    const res = await historyRoute.GET(new Request(`http://x/api/holdings-history${query}`));
+    return { status: res.status, body: await res.json() };
+  };
+  const today = () => new Date().toISOString().slice(0, 10);
+  beforeEach(async () => {
+    forgetEpochs();
+    await registerTestContainer(fake);
+  });
+  const recordToday = (ids: string[]) =>
+    recordHoldings(ctx, [broker(ids, ids.map((id) => hold(id, 'vti')), [sec('vti')])]);
+
+  test('the last 31 days by default, each position with its description', async () => {
+    await recordToday(['acct_1']);
+    const { status, body } = await get();
+    expect(status).toBe(200);
+    expect(body.to).toBe(today());
+    expect(Date.parse(body.to) - Date.parse(body.from)).toBe(30 * 86_400_000);
+    expect([body.first_recorded, body.last_recorded]).toEqual([today(), today()]);
+    expect(body.dates).toHaveLength(1);
+    expect(body.dates[0].accounts[0]).toMatchObject({ account_id: 'acct_1', recorded_as: 'acct_1' });
+    expect(body.dates[0].accounts[0].positions[0]).toMatchObject({ security_id: 'vti', ticker: 'VTI', quantity: 10, value: 1000, currency: 'USD' });
+  });
+
+  test('a range and an account narrow it; hidden accounts are left out unless asked', async () => {
+    await recordToday(['acct_1', 'acct_2']);
+    await setAccountHidden(ctx, 'acct_2', 'investment', true);
+    const ids = (body: any) => body.dates.flatMap((d: any) => d.accounts.map((a: any) => a.account_id));
+    expect(ids((await get()).body)).toEqual(['acct_1']);
+    expect(ids((await get('?include_hidden=1')).body)).toEqual(['acct_1', 'acct_2']);
+    expect(ids((await get('?account_id=acct_2')).body)).toEqual([]);
+    expect(ids((await get('?account_id=acct_2&include_hidden=1')).body)).toEqual(['acct_2']);
+    expect((await get(`?from=2020-01-01&to=2020-01-31`)).body.dates).toEqual([]);
+  });
+
+  test("follows a link, so an earlier id's positions continue under the current one", async () => {
+    await recordHoldings(ctx, [broker(['acct_old'], [hold('acct_old', 'vti')], [sec('vti')])], Date.now() - 2 * 86_400_000);
+    await recordToday(['acct_new']);
+    await linkAccounts(ctx, 'acct_old', 'acct_new', { old_last: 'x' });
+    const { body } = await get('?account_id=acct_new');
+    expect(body.dates.map((d: any) => d.accounts.map((a: any) => `${a.account_id}<${a.recorded_as}`))).toEqual([['acct_new<acct_old'], ['acct_new<acct_new']]);
+    expect(body.first_recorded).toBe(new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10));
+  });
+
+  test('a summary is read from the index alone', async () => {
+    await recordToday(['acct_1']);
+    const [[id]] = storedMonths();
+    await fake.hset(HISTORY, { [id]: 'damaged' });
+    expect(await get('?summary=1&account_id=acct_1')).toEqual({ status: 200, body: { first_recorded: today(), last_recorded: today() } });
+    expect(await get('?summary=1&account_id=acct_unknown')).toEqual({ status: 200, body: { first_recorded: null, last_recorded: null } });
+  });
+
+  test('what cannot be read is a 409 naming it, never an empty history', async () => {
+    await recordToday(['acct_1']);
+    const [[id]] = storedMonths();
+    await fake.hset(HISTORY, { [id]: 'damaged' });
+    expect(await get()).toEqual({
+      status: 409,
+      body: { error: 'Your saved holdings records could not be read, so they were left untouched.', unreadable: true, unreadable_ids: [id], unrecognised_ids: [] },
+    });
+  });
+
+  test('every input is checked', async () => {
+    for (const query of [
+      '?from=2026-02-30',
+      '?from=yesterday',
+      '?to=2026-1-01',
+      '?from=2026-10-08&to=2026-10-07',
+      '?from=2026-01-01&to=2026-04-03', // 93 days
+      '?include_hidden=yes',
+      '?summary=true',
+      `?account_id=${'a'.repeat(101)}`,
+      '?account_id=',
+      '?from=2026-10-01&from=2026-10-02',
+    ]) {
+      const { status, body } = await get(query);
+      expect([query, status, typeof body.error]).toEqual([query, 400, 'string']);
+    }
+    expect((await get('?from=2026-01-01&to=2026-04-02')).status).toBe(200); // 92 days
+  });
+
+  test('a range too large for one answer is refused, never cut short', async () => {
+    const securities = Array.from({ length: 2000 }, (_, i) => sec(`s${i}`));
+    const holdings = securities.map((s) => hold('acct_big', s.security_id));
+    for (let d = 1; d <= 7; d++) await recordHoldings(ctx, [broker(['acct_big'], holdings, securities)], at(`2026-10-0${d}T13:00:00Z`));
+    const { status, body } = await get('?from=2026-10-01&to=2026-10-07');
+    expect(status).toBe(400);
+    expect(body.error).toContain('14000 positions');
+    expect((await get('?from=2026-10-01&to=2026-10-06')).status).toBe(200);
+  });
+
+  test('no container to read from is a 503', async () => {
+    fake.reset();
+    forgetEpochs();
+    expect((await get()).status).toBe(503);
+  });
+});
+
+describe('a live load of the dashboard', () => {
+  test('records the positions it fetched, and never sends the raw holdings answer', async () => {
+    forgetEpochs();
+    await registerTestContainer(fake);
+    await saveItem(ctx, { item_id: 'item_b', institution_name: 'Broker', encrypted_access_token: await encrypt('tok') });
+    plaid.accounts = [{ account_id: 'acct_ira', name: 'IRA', type: 'investment', subtype: 'ira', balances: { current: 1000, iso_currency_code: 'USD' } }];
+    plaid.holdings = [hold('acct_ira', 'vti')];
+    plaid.securities = [sec('vti')];
+    const res = await netWorthRoute.GET(new Request('http://x/api/net-worth?refresh=1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.institutions[0].holdings).toHaveLength(1);
+    expect('holdings_observed' in body.institutions[0]).toBe(false);
+    const today = new Date().toISOString().slice(0, 10);
+    expect((await readHoldingsRange(ctx, today, today))[0].accounts.map((a) => a.account_id)).toEqual(['acct_ira']);
   });
 });
