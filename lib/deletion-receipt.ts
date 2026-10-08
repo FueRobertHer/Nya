@@ -202,3 +202,11 @@ export function receiptText(r: DeletionReceipt, opts: ReceiptFormat = {}): strin
   const body = receiptSections(r, opts).map((s) => [s.title, ...s.lines.map((l) => `- ${l}`)].join('\n'));
   return [`Nya account deletion receipt`, `Deleted ${when}`, ...body].join('\n\n') + '\n';
 }
+
+/** The receipt's file name, dated by the viewer's calendar like the text in
+ *  it: the UTC day is already tomorrow from a US evening on. */
+export function receiptFilename(r: DeletionReceipt, opts: ReceiptFormat = {}): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: opts.timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(r.deleted_at));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  return `nya-deletion-receipt-${part('year')}-${part('month')}-${part('day')}.txt`;
+}

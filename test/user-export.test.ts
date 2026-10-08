@@ -301,17 +301,34 @@ describe('everything stored, decrypted, and nothing else', () => {
     });
     expect(byId.acc_card).toMatchObject({ type: 'credit', credit_limit: 5000, hidden: true, hidden_at: '2026-03-01T00:00:00.000Z', latest_balance: { balance: 500, date: '2026-01-03' } });
     expect(byId.acc_brk).toMatchObject({ item_id: 'item_b', institution_name: 'Fidelity', connected: true, name: 'Brokerage', mask: '9999', type: 'investment', latest_balance: null });
-    // An earlier account, its institution disconnected: still named.
-    expect(byId.acc_old).toMatchObject({ item_id: 'item_gone', institution_name: 'Chase', connected: false, name: 'Old Checking', mask: '0000', first_seen: '2024-01-01' });
+    // An earlier account, its institution disconnected: still named. Its
+    // directory entry predates the provider field: those are Plaid's.
+    expect(byId.acc_old).toMatchObject({ provider: 'plaid', item_id: 'item_gone', institution_name: 'Chase', connected: false, name: 'Old Checking', mask: '0000', first_seen: '2024-01-01' });
     // Known only from its balance history, or a declined offer: its id, honestly nothing more.
-    expect(byId.acc_ghost).toMatchObject({ connected: false, name: null, institution_name: null, latest_balance: { balance: 3, date: '2026-01-03' } });
-    expect(byId.acc_x).toMatchObject({ name: null, connected: false });
+    expect(byId.acc_ghost).toMatchObject({ provider: null, connected: false, name: null, institution_name: null, latest_balance: { balance: 3, date: '2026-01-03' } });
+    expect(byId.acc_x).toMatchObject({ provider: null, name: null, connected: false });
     // Manual accounts are listed apart, once.
     expect(byId.manual_house).toBeUndefined();
     expect(doc.manual_accounts).toEqual([
       { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null },
     ]);
     expect(doc.hidden_accounts).toEqual([{ account_id: 'acc_card', type: 'credit', hidden_at: '2026-03-01T00:00:00.000Z' }]);
+  });
+
+  test('an account only a goal, a share or history still names is listed too, and says only what is known', async () => {
+    await fake.set(ctxKey('goals'), await enc([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_forgotten' }]));
+    const id = connectionId('user_me', 'user_friend');
+    await fake.hset(testKey('connections'), {
+      [`${id}|share|user_me`]: JSON.stringify({ accounts: { acc_chk: 'balance', acc_shared_gone: 'balance' }, updated_at: '2026-05-02T09:00:00.000Z' }),
+    });
+    // A manual account since removed: its balance history stays.
+    await fake.hset(ctxKey('history:accounts'), { '2026-01-02': await enc({ acc_chk: 1600.5, acc_card: 500, manual_boat: 9000 }) });
+    const byId = Object.fromEntries((await download()).accounts.map((a) => [a.account_id, a]));
+    const unknown = { provider: null, item_id: null, institution_name: null, connected: false, name: null, type: null };
+    expect(byId.acc_forgotten).toMatchObject(unknown);
+    expect(byId.acc_shared_gone).toMatchObject(unknown);
+    // Its id says what kind it was, and nothing more is known.
+    expect(byId.manual_boat).toMatchObject({ ...unknown, provider: 'manual', latest_balance: { balance: 9000, date: '2026-01-02' } });
   });
 
   test('transactions: every stored field, with my own edits beside the bank’s', async () => {
@@ -439,7 +456,8 @@ describe('everything stored, decrypted, and nothing else', () => {
     expect(text).not.toContain('25000.25');
   });
 
-  test('reading changes nothing', async () => {
+  test('reading changes nothing, not even a remembered record of the old shape the app would tidy away', async () => {
+    await fake.hset(ctxKey('accounts:meta'), { acc_legacy: await enc({ item_id: 'item_gone', type: 'depository', name: 'Old' }) });
     const before = JSON.stringify([...fake.strings, ...[...fake.hashes].map(([k, h]) => [k, [...h]])]);
     await download();
     expect(JSON.stringify([...fake.strings, ...[...fake.hashes].map(([k, h]) => [k, [...h]])])).toBe(before);

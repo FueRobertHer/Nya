@@ -5,10 +5,13 @@
 // and old copies pruned. Without it the only copy outside the database is
 // whatever export was last downloaded by hand.
 //
-// The archive stays ciphertext (lib/export.ts rule 1): a stolen backup is
-// useless without MASTER_KEY and PLAID_ENCRYPTION_KEY, which are not in it.
-// It is still financial data, so the store is private: a blob is read only
-// with the store's token, never by its bare URL.
+// The archive keeps every value as stored (lib/export.ts rule 1): what is
+// encrypted stays ciphertext, unreadable without MASTER_KEY and
+// PLAID_ENCRYPTION_KEY, which are not in it. Not everything is encrypted:
+// dates, account and transaction ids, bank names and the merchant names a
+// person renamed are plain text in the database, so in the archive too
+// (docs/operations.md). It is financial data either way, so the store is
+// private: a blob is read only with the store's token, never by its bare URL.
 //
 // One archive per environment per run, holding every container (a restore
 // replaces the environment; see lib/restore.ts). Named by the time it was

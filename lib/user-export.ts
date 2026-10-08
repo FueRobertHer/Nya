@@ -44,6 +44,7 @@ import {
   getLinks,
   effectiveLinks,
   resolveId,
+  PROVIDER,
   type DirectoryEntry,
   type Link,
 } from './links';
@@ -174,10 +175,23 @@ export type ExportSection = {
   /** What it is, for "Your ___ could not be read". */
   what: string;
   read: (src: ExportSource) => Promise<unknown>;
+  /** The account ids what it read names, so that `accounts` lists each one
+   *  (a goal can still point at an account since forgotten). */
+  mentions?: (value: unknown) => Iterable<unknown>;
 };
 
+/** An entry of SECTIONS, typed by what it reads. */
+function section<T>(s: {
+  key: string;
+  what: string;
+  read: (src: ExportSource) => Promise<T>;
+  mentions?: (value: T) => Iterable<unknown>;
+}): ExportSection {
+  return s as ExportSection;
+}
+
 export const SECTIONS: readonly ExportSection[] = [
-  {
+  section({
     key: 'budgets',
     what: 'budgets',
     // Monthly, per spending category.
@@ -185,19 +199,21 @@ export const SECTIONS: readonly ExportSection[] = [
       Object.entries(await getBudgets(ctx))
         .map(([category, monthly_amount]) => ({ category, monthly_amount }))
         .sort((a, b) => a.category.localeCompare(b.category)),
-  },
-  {
+  }),
+  section({
     key: 'goals',
     what: 'goals',
     read: async ({ ctx }) =>
       (await getGoals(ctx)).map((g) => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id ?? null })),
-  },
-  {
+    mentions: (goals) => goals.map((g) => g.account_id),
+  }),
+  section({
     key: 'sharing',
     what: 'sharing settings',
     // Null with the shared password: there is nobody to share with.
     read: async ({ userId }) => (userId ? mySharing(userId) : null),
-  },
+    mentions: (sharing) => sharing?.connections.flatMap((c) => c.shared.map((s) => s.account_id)) ?? [],
+  }),
 ];
 
 // ---- Reading ----
@@ -295,7 +311,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       read('categories', () => readOverridesStrict(ctx)),
       read('merchant names', () => readRenamesStrict(ctx)),
       read('account links', () => getLinks(ctx)),
-      read('account links', () => liveAccountIds(ctx, { strict: true })),
+      read('account links', () => liveAccountIds(ctx, { strict: true, readOnly: true })),
       read('account links', () => readDeclined(ctx)),
       read('categories', () => readCarriedStrict(ctx)),
       read('balance history', () => readHistoryForExport(ctx)),
@@ -329,7 +345,9 @@ export type ExportInstitution = { item_id: string; institution_name: string; ins
 
 export type ExportAccount = {
   account_id: string;
-  provider: string;
+  /** "plaid"; "manual" for a manual account since removed, known now only
+   *  by what still names it; null when nothing stored says. */
+  provider: string | null;
   item_id: string | null;
   institution_name: string | null;
   institution_id: string | null;
@@ -445,7 +463,7 @@ function carriedRow(key: string, account_id: string) {
 }
 
 /** Every account id the file mentions anywhere, so `accounts` can name each
- *  one (manual ones are in `manual_accounts`). */
+ *  one (manual ones are in `manual_accounts`), the SECTIONS' included. */
 function mentionedAccountIds(data: UserData): Set<string> {
   const ids = new Set<string>();
   const add = (id: unknown) => {
@@ -472,6 +490,8 @@ function mentionedAccountIds(data: UserData): Set<string> {
     add(d.account_id);
   }
   for (const id of data.carried.keys()) add(id);
+  const read = new Map(data.sections);
+  for (const s of SECTIONS) if (s.mentions && read.has(s.key)) for (const id of s.mentions(read.get(s.key))) add(id);
   return ids;
 }
 
@@ -558,8 +578,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       const h = hidden.get(id);
       return {
         account_id: id,
-        // Plaid is the only provider; the directory records it on newer entries.
-        provider: d?.provider ?? 'plaid',
+        // The directory records it (older entries without it are Plaid's), and
+        // every other record here is Plaid's. A removed manual account's id
+        // names its kind; an id nothing describes is unknown, not a guess.
+        provider: isManualId(id) ? 'manual' : d ? (d.provider ?? PROVIDER) : m || s || v || r ? PROVIDER : null,
         item_id,
         institution_name: item?.institution_name ?? d?.institution_name ?? r?.institution_name ?? null,
         institution_id: item?.institution_id ?? d?.institution_id ?? null,

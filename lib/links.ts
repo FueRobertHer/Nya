@@ -725,10 +725,12 @@ export async function directoryParts(ctx: Ctx, ids: string[]): Promise<Record<st
  * to PAUSE links whose old id is live again, so an empty set errs toward
  * following links: it can hide more, never reveal. A caller that WRITES on the
  * answer (Unhide clears every id it finds) passes strict, and fails instead.
+ * A caller that must change nothing (the download of my data) passes
+ * readOnly, which leaves old-shaped remembered records where they are.
  */
-export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean } = {}): Promise<Set<string>> {
+export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean; readOnly?: boolean } = {}): Promise<Set<string>> {
   try {
-    const [byItem, items] = await Promise.all([rememberedIdsByItem(ctx, opts.strict), getItems(ctx)]);
+    const [byItem, items] = await Promise.all([rememberedIdsByItem(ctx, opts.strict, !opts.readOnly), getItems(ctx)]);
     const stored = new Set(items.map((i) => i.item_id));
     return new Set(Object.entries(byItem).flatMap(([item_id, ids]) => (stored.has(item_id) ? ids : [])));
   } catch (err) {

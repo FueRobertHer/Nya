@@ -23,13 +23,17 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
 
-**Five downloads an hour**, per account. A sixth is refused with how long to wait.
+**Five downloads an hour**, per account. A sixth is refused with how long to wait. The number is `DOWNLOADS_PER_WINDOW` in `lib/download-limit.ts`, which both the limit and the card's text read.
 
-**All or nothing.** Every store is read before the first byte is sent. If any part can't be read (a value that won't decrypt, a database error), nothing is downloaded and the error says which part, rather than handing over a file that looks complete and isn't. The page reads the whole response before saving it, so a connection cut part way leaves no file behind.
+**All or nothing.** Every store is read before the first byte is sent. If any part can't be read (a value that won't decrypt, a database error), nothing is downloaded and the error says which part, rather than handing over a file that looks complete and isn't.
 
-**Never written down.** The file is built in memory and streamed to your browser. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. The download itself is not encrypted, so keep the file somewhere safe.
+**A whole file or none.** Before sending anything, the route writes the file out once only to count its bytes, keeping none of them, then streams it, and says how many bytes to expect twice: `Content-Length`, and `X-Nya-Export-Bytes`, the same number, which is the one the page checks (a proxy that compresses the response changes or drops `Content-Length`, and leaves this one alone). The page counts what arrives and saves the file only when that count is there and matches; otherwise it saves nothing and says the download was cut off, to try again. So a connection that drops part way, or a response ended early by the platform or a proxy, never leaves a short file that looks whole. The route may run for up to 300 seconds, for a large file over a slow connection.
 
-No email is sent when a download happens yet: there is no email provider. When one exists (#51), the route marks where to send it.
+**How big.** About 1.7 KB of JSON per transaction, and about 0.6 KB in the transactions CSV; history adds little. An account with 60,000 transactions and ten years of daily balances for 20 accounts comes to about 106 MB of JSON, 34 MB of transactions CSV and 7 MB of balance history CSV.
+
+**Never written down.** The stores are read and decrypted in memory, and the file's text is written out a piece at a time as it streams to your browser, never held whole on the server. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. The download itself is not encrypted, so keep the file somewhere safe.
+
+**Not built yet.** Protecting the file with a passphrase of your own (today it is plain JSON or CSV), an OFX file for the money apps that import those, and an email telling you a download happened (#51): there is no email provider yet, and the route marks where that email is sent once there is.
 
 ## What is not in it
 
@@ -47,13 +51,13 @@ The JSON file lists these itself, under `not_included`.
 - **Amounts** are plain numbers in the account's currency. Nothing is converted between currencies.
 - **Transaction signs** follow Plaid: positive is money leaving the account (a purchase), negative is money coming in (a refund, a paycheck). Investment transactions are the same: positive when cash is debited (a buy).
 - **Balances** of credit cards and loans are positive amounts owed. Net worth adds every other account and subtracts those.
-- **Dates.** History is kept per UTC day (`YYYY-MM-DD`). Times (`..._at`, `datetime`) are ISO 8601 instants in UTC.
+- **Dates.** History is kept per UTC day (`YYYY-MM-DD`). Times (`..._at`, `datetime`) are ISO 8601 instants in UTC, except `investment_transactions[].seen_at`, which is a UTC day. `first_seen` and `last_seen` are days too.
 - **`null`** means not known or never stored, never zero. A time Nya never recorded is `null`, not a made-up date.
 - **Ids** are Plaid's (`account_id`, `item_id` for a connection, `transaction_id`) or Nya's own (`manual_...` for manual accounts). They tie the parts of the file together.
 
 ## The JSON file
 
-One object, pretty-printed, UTF-8. Its top-level fields, in order:
+One object, UTF-8, laid out to be read: each top-level field starts a line, its lists run an entry per line, and each record (an account, a transaction, one day's balance) is on a line of its own, with everything it holds. Any JSON reader reads it the same as any other layout. Indenting every field as well would make the file about a third bigger, and much slower to write. Its top-level fields, in order:
 
 | Field | What it is |
 | --- | --- |
@@ -64,7 +68,7 @@ One object, pretty-printed, UTF-8. Its top-level fields, in order:
 | `not_included` | What the file leaves out, and why ([above](#what-is-not-in-it)). |
 | `notes` | Caveats about this download, if any: for example that the newest transactions from an institution could not be saved, so they may be missing. Usually empty. |
 | `institutions` | Your linked connections. |
-| `accounts` | Every linked account the file mentions anywhere. |
+| `accounts` | Every account the file mentions anywhere, apart from the manual accounts you have now. |
 | `manual_accounts` | Accounts you track by hand. |
 | `hidden_accounts` | Accounts you hid. |
 | `net_worth_history` | Your net worth by day. |
@@ -90,12 +94,12 @@ One object, pretty-printed, UTF-8. Its top-level fields, in order:
 
 ### `accounts[]`
 
-Every linked account the file mentions anywhere: connected ones, earlier ones whose institution you disconnected (kept for their history), and any id known only from its balance history or a link. Each detail comes from the freshest record that has it: what the last good balance fetch remembered, then the directory of every account seen, then the transaction store, then the investment store.
+Every account the file mentions anywhere, apart from the manual accounts you have now (those are in `manual_accounts`): connected ones, earlier ones whose institution you disconnected (kept for their history), and any id known only from its balance history, a link, a declined offer, a goal or something you share. Each detail comes from the freshest record that has it: what the last good balance fetch remembered, then the directory of every account seen, then the transaction store, then the investment store.
 
 | Field | Meaning |
 | --- | --- |
-| `account_id` | Plaid's id for the account. |
-| `provider` | `"plaid"`. |
+| `account_id` | Plaid's id for the account, or Nya's (`manual_...`) for a manual account you removed. |
+| `provider` | `"plaid"`; `"manual"` for a manual account you removed, which only its history (or a goal or share naming it) still mentions; `null` when nothing stored says. |
 | `item_id` | The connection it belongs to, or `null` if unknown. |
 | `institution_name`, `institution_id` | Its bank. |
 | `connected` | Whether its connection is still linked. |
@@ -224,7 +228,7 @@ Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `accou
 
 ## The CSV files
 
-Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, without a byte order mark: if accented letters look wrong in Excel, open the file with Data, From Text/CSV, and choose UTF-8.
+Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, starting with a byte order mark (the bytes `EF BB BF`), which is how Excel on Windows knows the file is UTF-8 and shows accented and non-Latin merchant names as they are. Spreadsheets and most CSV readers skip the mark; in Python, open the file with `encoding="utf-8-sig"`.
 
 **Formula guard.** A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, and a leading tab or carriage return can smuggle one in too. Merchant names and bank descriptions come from outside, so any cell that starts with one of those and isn't a number gets a `'` in front of it, which makes the spreadsheet treat it as text. The `'` is not part of the data (the JSON file has the value as stored). Negative amounts are numbers and are left alone.
 
@@ -286,7 +290,7 @@ There are two exports, and they are kept apart on purpose (#55): one that did bo
 | --- | --- | --- |
 | For | You, to keep or take elsewhere | Whoever runs Nya, to recover from losing the database |
 | Covers | One person | The whole environment, every person |
-| Values | Decrypted, in documented fields | Ciphertext, byte for byte; useless without the keys |
+| Values | Decrypted, in documented fields | Encrypted, byte for byte as stored, and unreadable without the keys; dates, account and transaction ids, bank names and the merchant names you renamed are in plain text ([operations.md](operations.md#taking-a-backup-by-hand)) |
 | Formats | JSON, CSV | NDJSON of raw database keys, with a checksum |
 | Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records) |
 | Restores | Not yet: an import is planned (#43) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
@@ -296,4 +300,4 @@ Deleting your account deletes your data now, and the nightly backups expire it l
 
 ## Adding a store
 
-A new store that stands alone (nothing else needs to read it to build the file) is one entry in `SECTIONS` in `lib/user-export.ts`: its key in the file, its name for errors, and a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape. Add its key to `STORED_KEYS` and a section to this page. Once the storage seam (`lib/repo.ts`) lets a store declare itself exportable, `SECTIONS` is extended from those declarations instead, as the comment there describes. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.
+A new store that stands alone (nothing else needs to read it to build the file) is one entry in `SECTIONS` in `lib/user-export.ts`: its key in the file, its name for errors, a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape, and, if it names accounts, which ids it names, so `accounts` lists them. Add its key to `STORED_KEYS` and a section to this page. Once the storage seam (`lib/repo.ts`) lets a store declare itself exportable, `SECTIONS` is extended from those declarations instead, as the comment there describes. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.

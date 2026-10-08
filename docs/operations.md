@@ -14,7 +14,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 
 Some of what Nya stores exists nowhere else: banks stop serving old transactions after a while, and no bank serves daily balance history at all. A copy is taken every night; take one by hand before any risky change too.
 
-These are the operator's copies of the whole environment, kept encrypted, for recovery. A person's own copy of their data, decrypted, is a different thing they download themselves: see [data-export.md](data-export.md).
+These are the operator's copies of the whole environment, for recovery, with every value kept as stored: what is encrypted in the database stays encrypted, and what is plain text there (dates, ids, bank names, renamed merchant names; see below) is plain text in the copy. A person's own copy of their data, decrypted, is a different thing they download themselves: see [data-export.md](data-export.md).
 
 ### Nightly backups
 

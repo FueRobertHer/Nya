@@ -6,7 +6,7 @@ mock.module('@clerk/nextjs', () => ({
   useReverification: (fetcher: unknown) => fetcher,
 }));
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { buildDeletionReceipt, mergeCounts, receiptText, receiptSections, asDeletionReceipt, PLAID_PORTAL } = await import('@/lib/deletion-receipt');
+const { buildDeletionReceipt, mergeCounts, receiptText, receiptSections, receiptFilename, asDeletionReceipt, PLAID_PORTAL } = await import('@/lib/deletion-receipt');
 const { DeletionReceiptView } = await import('@/components/DeletionReceipt');
 const { DeleteAccountView } = await import('@/components/DeleteAccount');
 
@@ -36,6 +36,14 @@ const receipt = (over: Partial<Parameters<typeof buildDeletionReceipt>[0]> = {})
   });
 
 describe('the receipt', () => {
+  test('its file is named by the viewer’s own day, like the dates in it', () => {
+    // 03:30 UTC on October 7 is still the evening of October 6 in California.
+    const late = receipt({ deleted_at: new Date('2026-10-07T03:30:00.000Z') });
+    expect(receiptFilename(late, { timeZone: 'America/Los_Angeles' })).toBe('nya-deletion-receipt-2026-10-06.txt');
+    expect(receiptText(late, { locale: 'en-US', timeZone: 'America/Los_Angeles' })).toContain('Deleted October 6, 2026');
+    expect(receiptFilename(late, { timeZone: 'UTC' })).toBe('nya-deletion-receipt-2026-10-07.txt');
+  });
+
   test('what was deleted now, what expires later and when, and what stays and why', () => {
     expect(receiptText(receipt(), US)).toBe(
       [

@@ -17,6 +17,7 @@ import {
   mergeCounts,
   receiptSections,
   receiptText,
+  receiptFilename,
   PLAID_PORTAL,
   type DeletionCounts,
   type DeletionReceipt,
@@ -131,7 +132,7 @@ export function DeletionReceiptView({
     const url = URL.createObjectURL(new Blob([text()], { type: 'text/plain;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `nya-deletion-receipt-${receipt.deleted_at.slice(0, 10)}.txt`;
+    a.download = receiptFilename(receipt, format);
     document.body.appendChild(a);
     a.click();
     a.remove();
