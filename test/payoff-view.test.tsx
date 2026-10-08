@@ -100,6 +100,14 @@ describe('the payoff planner', () => {
     expect(html).toContain('value=""');
     expect(html).toContain("Use Plaid's 21.24%");
     expect(html).toContain('Add the missing rate or payment for 1 debt below');
+    // Plaid does have a figure, so the row doesn't claim it has none.
+    expect(html).not.toContain('no usable figure');
+  });
+
+  test('a card whose record lacks a rate says Plaid has none, and keeps the minimum it has', () => {
+    const html = panel([chase([{ ...sapphire, liability: { ...sapphire.liability, apr: null, apr_label: null } }])]);
+    expect(html).toContain('Plaid has no usable figure for this one.');
+    expect(html).toContain('Minimum from Plaid');
   });
 
   test('a debt can be left out, and the rest is planned without waiting on it', () => {
@@ -157,9 +165,10 @@ describe('the payoff planner', () => {
     expect(panel([chase([mortgage])], { typed: { home: { minimum: '1712' } } })).not.toContain('can include escrow');
   });
 
-  test("a recovered balance shows the day it's from", () => {
-    const html = panel([chase([sapphire], { stale_as_of: '2026-08-07' })]);
+  test("a recovered balance shows the day it's from, and why its terms are missing", () => {
+    const html = panel([chase([{ ...sapphire, liability: undefined }], { stale_as_of: '2026-08-07', liabilities: 'unavailable' })]);
     expect(html).toContain('balance from Aug 7');
+    expect(html).toContain("This institution couldn't be reached");
   });
 
   test('payment details not enabled: says how to get them from Plaid', () => {

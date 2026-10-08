@@ -450,6 +450,9 @@ export type DebtInstitutionInput = {
 export type NoTermsReason =
   /** Typed by hand: there is no bank connection to ask. */
   | 'manual'
+  /** The institution couldn't be reached, and its balances were recovered
+   *  (lib/last-known.ts): recovered accounts carry no terms. */
+  | 'unreachable'
   /** Plaid's liabilities product isn't on for the institution; it can be enabled. */
   | 'not-enabled'
   /** Enabled, and Plaid is still fetching. */
@@ -525,11 +528,13 @@ export function debtAccounts(institutions: DebtInstitutionInput[]): DebtAccount[
           ? null
           : inst.manual
             ? 'manual'
-            : inst.liabilities === 'off'
-              ? 'not-enabled'
-              : inst.liabilities === 'loading'
-                ? 'loading'
-                : 'not-reported',
+            : inst.stale_as_of
+              ? 'unreachable'
+              : inst.liabilities === 'off'
+                ? 'not-enabled'
+                : inst.liabilities === 'loading'
+                  ? 'loading'
+                  : 'not-reported',
         staleAsOf: inst.stale_as_of ?? null,
         staleAsOfAt: inst.stale_as_of ? inst.stale_as_of_at ?? null : null,
         updatedAt: inst.manual ? a.updated_at ?? null : null,

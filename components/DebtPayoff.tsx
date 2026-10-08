@@ -439,6 +439,8 @@ function PlanDetail({
 
 const NO_TERMS_HINT: Record<NonNullable<DebtAccount['noTerms']>, string> = {
   manual: 'A manual account has no terms from a bank: type them from a statement.',
+  unreachable:
+    "This institution couldn't be reached, so Plaid's terms aren't here right now. Type them from a statement, or refresh later.",
   'not-enabled':
     "Payment details aren't enabled for this institution. Type them here, or tap Enable payment details on its card.",
   loading: 'Payment details are still importing from this institution. Type them here, or check back soon.',
@@ -519,7 +521,12 @@ function DebtRow({
       : null;
   const aprText = typed.apr ?? (plaidApr !== null ? String(plaidApr) : '');
   const minimumText = typed.minimum ?? (plaidMinimum !== null ? (plaidMinimum / 100).toFixed(2) : '');
-  const needed = (apr.value === null && !apr.error) || (minimum.value === null && !minimum.error);
+  // Why a term is needed, said only where Plaid has nothing usable for it. A
+  // field the person cleared shows "Needed" with Plaid's figure a tap away
+  // instead (TermSource).
+  const noPlaid =
+    (apr.value === null && !apr.error && plaidApr === null) ||
+    (minimum.value === null && !minimum.error && plaidMinimum === null);
   const debt: Debt | null =
     status === 'ready' ? { id: a.id, balanceCents: a.owedCents!, apr: apr.value!, minimumCents: minimum.value! } : null;
 
@@ -569,9 +576,9 @@ function DebtRow({
           />
         </div>
       </div>
-      {needed && (
+      {noPlaid && (
         <p className="panel-note">
-          {a.noTerms ? NO_TERMS_HINT[a.noTerms] : "Plaid doesn't report this for the account. Type it from a statement."}
+          {a.noTerms ? NO_TERMS_HINT[a.noTerms] : 'Plaid has no usable figure for this one. Type it from a statement.'}
         </p>
       )}
       {a.kind === 'mortgage' && minimum.source === 'plaid' && (

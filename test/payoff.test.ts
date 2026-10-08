@@ -554,6 +554,15 @@ describe('from accounts to debts', () => {
     expect(at(undefined)).toBe('not-reported'); // a payload cached before the field existed
   });
 
+  test("an unreachable institution's recovered accounts have no terms because it couldn't be asked", () => {
+    // lib/last-known.ts recovers balances only, and the failed fetch leaves
+    // liabilities 'unavailable': that is not Plaid lacking the terms.
+    const [d] = debtAccounts([
+      { institution_name: 'Bank', liabilities: 'unavailable', stale_as_of: '2026-08-07', accounts: [account('x', 'credit', 10, { liability: undefined })] },
+    ]);
+    expect(d.noTerms).toBe('unreachable');
+  });
+
   test('manual credit and loan accounts have no terms and are planned in USD', () => {
     const manual: ManualAccount[] = [
       { account_id: 'manual_1', name: 'Auto Loan', institution_name: 'Alliant', type: 'loan', subtype: 'auto', balance: 8420, updated_at: '2026-08-02T17:02:00.000Z' },
