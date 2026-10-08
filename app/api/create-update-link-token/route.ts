@@ -5,6 +5,7 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { webhookUrlFor } from '@/lib/webhook-url';
+import { loggable } from '@/lib/log-safe';
 
 export async function POST(req: Request) {
   try {
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     // In update mode the institution is already fixed, so asking for a product
     // it doesn't support fails here -- after the user has already tapped the
     // button. Say which thing went wrong rather than "couldn't reconnect".

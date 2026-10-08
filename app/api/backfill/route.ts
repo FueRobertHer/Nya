@@ -21,6 +21,7 @@ import {
   markBackfillDone,
 } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
+import { loggable } from '@/lib/log-safe';
 
 // Reconstructs up to a year of ESTIMATED history from transaction data, the same
 // trick Monarch/Copilot use. Plaid has no historical balances, but it has
@@ -311,7 +312,7 @@ export async function POST() {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Backfill failed' }, { status: 500 });
   }
 }

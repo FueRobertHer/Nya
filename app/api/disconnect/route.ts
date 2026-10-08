@@ -3,6 +3,7 @@ import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
 import { MANUAL_ITEM_PREFIX } from '@/lib/manual';
 import { disconnectItem } from '@/lib/disconnect-item';
+import { loggable } from '@/lib/log-safe';
 
 export async function POST(req: Request) {
   try {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
   }
 }

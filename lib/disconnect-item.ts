@@ -15,6 +15,7 @@ import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
 import type { Ctx } from './containers';
+import { loggable } from './log-safe';
 
 /**
  * `item` is the stored Item, or undefined when only a stale id is being
@@ -32,7 +33,7 @@ export async function disconnectItem(
     } catch (err) {
       // If Plaid-side removal fails (e.g. already revoked), still remove
       // our local record so the broken entry doesn't linger.
-      console.error('Plaid item removal failed, removing local record anyway', err);
+      console.error('Plaid item removal failed, removing local record anyway', loggable(err));
     }
   }
 

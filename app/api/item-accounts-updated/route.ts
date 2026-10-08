@@ -8,6 +8,7 @@ import { vanishedSince, forgetVanishedIds } from '@/lib/vanished';
 import { clearNewAccounts } from '@/lib/new-accounts';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
+import { loggable } from '@/lib/log-safe';
 
 // Called by the client after Link's account picker (update mode with account
 // selection) succeeds on an existing Item. The access token is unchanged, so
@@ -84,7 +85,7 @@ export async function POST(req: Request) {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to update accounts' }, { status: 500 });
   }
 }

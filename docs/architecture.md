@@ -17,6 +17,8 @@ Encryption is layered. Data is encrypted with **data keys** that the app generat
 
 The protection is against someone who obtains the database or a backup without the keys. It does not protect against someone with access to the Vercel environment, which holds both the master key and the database credentials.
 
+Logs leave out what a request carried. A failed Plaid call throws an error that holds the request it was making (the Plaid secret in its headers, an access token in its body), and printing it copies both into the deployment's logs. The Plaid client is built so its errors never carry the request (`lib/plaid-scrub.ts`): the endpoint, the method and Plaid's answer stay, the headers, body and raw request go. Routes also log errors through `loggable()` (`lib/log-safe.ts`), which keeps the endpoint, Plaid's error code, reason and request id, the status and the stack, for anything that reaches a log some other way. Logs written before this change may hold the Plaid secret and access tokens: see [operations.md](operations.md).
+
 Each institution's stored transaction and investment history is one compressed, encrypted blob, refused (never trimmed) past a size ceiling (`MAX_TXN_BLOB_CHARS`, 8,388,608 characters by default). Trimming would drop the oldest rows, which are exactly the ones no bank will serve again. `GET /api/storage-usage` measures every stored blob, per institution and in total, with the ceiling, the container they belong to, blobs left behind by a disconnected institution, and the size a blocked institution was refused at. A refusal's log line names the container too. Nothing enforces a quota yet; these are the numbers one would read (`lib/blob-sizes.ts`).
 
 ## Caching
