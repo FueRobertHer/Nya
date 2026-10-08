@@ -127,73 +127,77 @@ const FROZEN_PREFIXES = [
 ];
 
 /**
- * Every key name the code builds (test/key-names.ts: a templated name is its
- * fixed start and "x"), as when the seam arrived. A new store under a family
- * already listed (a "snapshot:access-log" hash added to lib/sharing.ts, say)
- * changes no list, so the names are frozen too. A store declared through the
- * seam builds its key in lib/repo.ts from its declared name, so it never adds
- * one. Like LEGACY, this only shrinks.
+ * Every key name the code builds, with the file that builds it
+ * (test/key-names.ts: a templated name is its fixed start and "x"), as when
+ * the seam arrived. A new store under a family already listed (a
+ * "snapshot:access-log" hash added to lib/sharing.ts, say) changes no list,
+ * and a second file building from an existing template (txns:${...}) adds no
+ * new name, so each name is frozen with its files. A store declared through
+ * the seam builds its key in lib/repo.ts from its declared name, so it never
+ * adds one. Like LEGACY, this only shrinks.
  */
 const FROZEN_KEY_NAMES = [
-  'account-links',
-  'account-links:dismissed',
-  'account-links:lock',
-  'accounts:directory',
-  'accounts:meta',
-  'accounts:vanished',
-  'backups:status',
-  'budgets',
-  'cache:inv-activity:v4',
-  'cache:net-worth',
-  'cache:transactions',
-  'connections',
-  'containers',
-  'crypto:active',
-  'crypto:keys',
-  'crypto:master',
-  'crypto:rotation',
-  'crypto:rotation-lock',
-  'goals',
-  'hidden:accounts',
-  'history:accounts',
-  'history:accounts:est',
-  'history:accounts:est:ext',
-  'history:accounts:est:flat',
-  'history:accounts:est:flatd',
-  'history:accounts:partial',
-  'history:backfill-done',
-  'history:backfill-pending',
-  'history:forgetting:x',
-  'history:net-worth',
-  'history:net-worth:est',
-  'invites:x',
-  'invtxns-lock:x',
-  'invtxns:',
-  'invtxns:x',
-  'manual:accounts',
-  'move:copied',
-  'move:lock',
-  'move:retired',
-  'move:tmp:x',
-  'owners',
-  'plaid:items',
-  'plaid:new-accounts',
-  'ratelimit:demo:x',
-  'ratelimit:login:x',
-  'sessions:epoch',
-  'sessions:legacy-cutoff',
-  'snapshot:item-usage',
-  'snapshot:lock',
-  'snapshot:runs',
-  'snapshot:taken',
-  'txn-category-carry',
-  'txn-category-overrides',
-  'txn-vendor-renames',
-  'txns-blocked:',
-  'txns-blocked:x',
-  'txns-unsaved:x',
-  'txns:',
-  'txns:x',
+  'account-links in lib/link-core.ts',
+  'account-links:dismissed in lib/links.ts',
+  'account-links:lock in lib/links.ts',
+  'accounts:directory in lib/links.ts',
+  'accounts:meta in lib/last-known.ts',
+  'accounts:vanished in lib/vanished.ts',
+  'backups:status in lib/backup.ts',
+  'budgets in lib/budgets.ts',
+  'cache:inv-activity:v4 in lib/cache.ts',
+  'cache:net-worth in lib/cache.ts',
+  'cache:transactions in lib/cache.ts',
+  'connections in lib/sharing.ts',
+  'containers in lib/containers.ts',
+  'containers in lib/restore.ts',
+  'crypto:active in lib/crypto.ts',
+  'crypto:keys in lib/crypto.ts',
+  'crypto:master in lib/crypto.ts',
+  'crypto:rotation in lib/crypto.ts',
+  'crypto:rotation-lock in lib/crypto.ts',
+  'goals in lib/goals.ts',
+  'hidden:accounts in lib/hidden.ts',
+  'history:accounts in lib/history.ts',
+  'history:accounts:est in lib/history.ts',
+  'history:accounts:est:ext in lib/history.ts',
+  'history:accounts:est:flat in lib/history.ts',
+  'history:accounts:est:flatd in lib/history.ts',
+  'history:accounts:partial in lib/history.ts',
+  'history:backfill-done in lib/history.ts',
+  'history:backfill-pending in lib/history.ts',
+  'history:forgetting:x in lib/history.ts',
+  'history:net-worth in lib/history.ts',
+  'history:net-worth:est in lib/history.ts',
+  'invites:x in lib/sharing.ts',
+  'invtxns-lock:x in lib/invstore.ts',
+  'invtxns: in lib/blob-sizes.ts',
+  'invtxns:x in lib/invstore.ts',
+  'manual:accounts in lib/manual.ts',
+  'move:copied in lib/move.ts',
+  'move:lock in lib/move.ts',
+  'move:retired in lib/move.ts',
+  'move:tmp:x in lib/move.ts',
+  'owners in lib/admin-items.ts',
+  'owners in lib/owners.ts',
+  'plaid:items in lib/storage.ts',
+  'plaid:new-accounts in lib/new-accounts.ts',
+  'ratelimit:demo:x in app/api/demo/sign-in/route.ts',
+  'ratelimit:login:x in app/api/login/route.ts',
+  'sessions:epoch in lib/sessions.ts',
+  'sessions:legacy-cutoff in lib/sessions.ts',
+  'snapshot:item-usage in lib/item-usage.ts',
+  'snapshot:lock in lib/snapshot-job.ts',
+  'snapshot:runs in lib/snapshot-job.ts',
+  'snapshot:taken in lib/history.ts',
+  'txn-category-carry in lib/overrides.ts',
+  'txn-category-overrides in lib/overrides.ts',
+  'txn-vendor-renames in lib/renames.ts',
+  'txns-blocked: in lib/blob-sizes.ts',
+  'txns-blocked:x in lib/transactions.ts',
+  'txns-unsaved:x in lib/transactions.ts',
+  'txns: in lib/blob-sizes.ts',
+  'txns:x in lib/transactions.ts',
 ];
 
 const rel = (path: string) => relative(ROOT, path).replaceAll('\\', '/');
@@ -385,18 +389,19 @@ describe('the key families stored the old way', () => {
 
 describe('the key names the code builds', () => {
   const { names } = keyNamesIn(ROOT, files);
+  const built = [...names].flatMap(([name, at]) => [...at].map((file) => `${name} in ${file}`)).sort();
 
-  test('gain none: a new store, even under a listed family, is declared through the seam', () => {
+  test('gain none, nor a new file building one: a new store is declared through the seam', () => {
     expect(
-      [...names].filter(([name]) => !FROZEN_KEY_NAMES.includes(name)).map(([name, at]) => `${[...at].join(', ')}: ${name}`),
-      `These files build a key name the code did not build before. New key families come through the storage seam, never ` +
-        `as a key built by hand, even under a prefix lib/key-families.ts already lists. ${USE_THE_SEAM}`
+      built.filter((pair) => !FROZEN_KEY_NAMES.includes(pair)),
+      `These files build a key the code did not build there before. New key families come through the storage seam, never ` +
+        `as a key built by hand, even under a prefix or template the code already uses. ${USE_THE_SEAM}`
     ).toEqual([]);
   });
 
-  test('only shrink: a name no longer built comes off the frozen list here too', () => {
+  test('only shrink: a name a file no longer builds comes off the frozen list here too', () => {
     expect(
-      FROZEN_KEY_NAMES.filter((name) => !names.has(name)),
+      FROZEN_KEY_NAMES.filter((pair) => !built.includes(pair)),
       'The code no longer builds these (their stores moved behind the seam, or are gone): take them off FROZEN_KEY_NAMES in this test.'
     ).toEqual([]);
     expect(FROZEN_KEY_NAMES).toEqual([...new Set(FROZEN_KEY_NAMES)].sort());

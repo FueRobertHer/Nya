@@ -100,16 +100,33 @@ const notesKey = (ctx = A) => ctxKey('seam-contract-notes', ctx);
 const NOTE: Note = { text: 'groceries', amount: 82.13 };
 const RENT: Note = { text: 'rent', amount: 1200 };
 
+/** A well-formed ciphertext body, for values whose header is what a test is about. */
+const BODY = 'A'.repeat(40);
+
 /** Stored values that cannot be used, each in a different way: their bytes
- *  damaged ('unreadable', which may be removed), or intact but not understood
- *  ('unrecognised', which never may). */
+ *  damaged ('unreadable', which may be removed), or intact as far as this code
+ *  can tell but not understood ('unrecognised', which never may). */
 const FLAWED: [string, 'unreadable' | 'unrecognised', () => Promise<string>][] = [
   ['not ciphertext', 'unreadable', async () => 'not-ciphertext-but-long-enough-to-be-tried'],
   ['plaintext JSON, never encrypted', 'unreadable', async () => '{"text":"plain","amount":1}'],
   ['a bare number', 'unreadable', async () => '12345'],
+  ['a header that is no format at all', 'unreadable', async () => `x2.k9-0badc0de.-.${BODY}`],
   ['not JSON once decrypted', 'unrecognised', () => encrypt('not json')],
   ['the wrong shape once decrypted', 'unrecognised', () => encrypt('{"not":"the shape"}')],
+  // What a later version may write: after a rollback, never offered for removal.
+  ['a later format version', 'unrecognised', async () => `v3.k9-0badc0de.-.${BODY}`],
+  ['a flag this version does not know', 'unrecognised', async () => `v2.k9-0badc0de.z.${BODY}`],
+  ['bound to a context', 'unrecognised', async () => `v2.k9-0badc0de.c.${BODY}`],
 ];
+
+/** A k0 value (v1) as written under another PLAID_ENCRYPTION_KEY: intact, but
+ *  not under the key this process has, as after the key was replaced. */
+async function underAnotherK0(plain: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+  return Buffer.concat([iv, sealed]).toString('base64');
+}
 
 /** A ciphertext with one character of its body changed, still valid base64:
  *  authentic no more, so it fails to decrypt. */
@@ -776,31 +793,34 @@ function contract(b: Backend) {
       expect(await notes.get(A, 'n1')).toEqual(NOTE);
     });
 
-    test('a failed decrypt is damage under a data key, and under k0 only when another k0 value in the read decrypts', async () => {
-      // Under k0 (no master), a tampered value on its own could as well be a
-      // changed PLAID_ENCRYPTION_KEY, so it is thrown, never reported or left out.
-      await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));
-      await b.raw.set(listKey(), tampered(await encrypt(JSON.stringify([RENT]))));
+    test('a failed decrypt is damage under a data key, never under k0, whose key could have been replaced', async () => {
+      // Values written before PLAID_ENCRYPTION_KEY was replaced, beside one
+      // written after: the new one reads, which proves nothing about the old
+      // ones (the old key still reads them). Thrown by every read, never
+      // reported, offered for removal or left out.
+      await b.raw.hset(notesKey(), 'n1', await underAnotherK0(JSON.stringify(NOTE)));
+      await b.raw.hset(notesKey(), 'n2', await underAnotherK0(JSON.stringify(RENT)));
+      await b.raw.set(listKey(), await underAnotherK0(JSON.stringify([RENT])));
+      await notes.set(A, 'n3', NOTE); // under the key this deployment has now
       for (const read of [
         () => notes.getAll(A),
         () => notes.getAllLenient(A),
         () => notes.getAllReport(A),
-        () => notes.get(A, 'n2'),
-        () => notes.update(A, 'n2', () => NOTE),
+        () => notes.get(A, 'n1'),
+        () => notes.getMany(A, ['n1', 'n3']),
+        () => notes.update(A, 'n1', () => NOTE),
         () => list.get(A),
       ]) {
         expect(await notBlamed(read)).toBeInstanceOf(DecryptFailedError);
       }
-      // Beside a k0 value that decrypts, which shows the key is right, it is damage.
-      await notes.set(A, 'n1', NOTE);
-      expect(await notes.getAllReport(A)).toEqual({ entries: new Map([['n1', NOTE]]), unreadable: ['n2'], unrecognised: [] });
-      expect([...(await notes.getAllLenient(A)).keys()]).toEqual(['n1']);
-      expect((await notes.getMany(A, ['n1', 'n2']).catch((e) => e)).unreadable).toEqual(['n2']);
-      // Read on its own, nothing shows it, so it is still thrown.
-      expect(await notBlamed(() => notes.get(A, 'n2'))).toBeInstanceOf(DecryptFailedError);
+      expect(await notes.get(A, 'n3')).toEqual(NOTE);
+      // A tampered k0 value looks exactly the same, so it is thrown too.
+      await notes.remove(A, 'n1', 'n2');
+      await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));
+      expect(await notBlamed(() => notes.getAllReport(A))).toBeInstanceOf(DecryptFailedError);
 
       // Under a data key, whose id commits to the key, it can only be damage.
-      await notes.remove(A, 'n1');
+      await notes.remove(A, 'n2', 'n3');
       process.env.MASTER_KEY = MASTER;
       forgetActiveKey();
       await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));

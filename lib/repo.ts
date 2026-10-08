@@ -49,13 +49,19 @@
 // what is stored, or says exactly why it cannot:
 //   - never saved: null, or an empty map;
 //   - UNREADABLE: the stored bytes are damaged (not ciphertext, or ciphertext
-//     that fails to authenticate). Nothing readable is lost by removing it;
-//   - UNRECOGNISED: it decrypts intact, but this code does not understand it
-//     (not JSON, or a shape isValid rejects even after upgrade). A bug to fix
-//     with upgrade, never data to delete;
+//     that fails to authenticate under a data key). Nothing readable is lost
+//     by removing it;
+//   - UNRECOGNISED: as far as this code can tell it is intact, but it does not
+//     understand it: not JSON, a shape isValid rejects even after upgrade, or a
+//     format a later version may write (another version tag or flag, or a value
+//     bound to a context). A bug to fix, or a release to roll forward to, never
+//     data to delete;
 //   - this deployment cannot read it (no master key or the wrong one, a key
-//     missing from the key store, decompression failing, storage unreachable):
-//     that error, as it is. It says nothing about the data.
+//     missing from the key store, a failed decrypt under k0, decompression
+//     failing, storage unreachable): that error, as it is. It says nothing
+//     about the data. k0 (PLAID_ENCRYPTION_KEY) does not commit to its key, so
+//     a replaced key fails every value written before it exactly as damage
+//     would, even beside values written after it that read fine.
 // Strict reads throw StoredDataUnreadableError for the middle two: for a map
 // store UnreadableEntriesError, which names the ids of each, for a value store
 // UnreadableValueError. A failure is never "empty": a caller that writes,
@@ -120,7 +126,7 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import { isEnvWide, type Ctx } from './containers';
-import { encrypt, formatOf, DecryptFailedError, MalformedCiphertextError } from './crypto';
+import { encrypt, formatOf, DecryptFailedError, MalformedCiphertextError, UnsupportedFormatError } from './crypto';
 import { StoredDataUnreadableError } from './stored-json';
 import { decryptJsonText, encodeJsonText, maxBlobChars, blobWarnChars } from './blob';
 import { listedKind } from './key-families';
@@ -369,40 +375,42 @@ function storeKey(ctx: Ctx, name: string): string {
 type Codec<T> = Pick<StoreOptions<T>, 'what' | 'isValid' | 'upgrade' | 'compress'>;
 
 /** A stored value read back, or why it cannot be used by its own doing (see
- *  READS above). `k0` marks a failed decrypt under k0, which counts as damage
- *  only when another k0 value in the same read decrypts (see decodeAll). */
-type Decoded<T> = { ok: true; value: T } | { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown; k0: boolean };
-
-/** Whether a value is under k0 (PLAID_ENCRYPTION_KEY), from its header. */
-function underK0(stored: unknown): boolean {
-  try {
-    return typeof stored === 'string' && formatOf(stored).keyId === 'k0';
-  } catch {
-    return false;
-  }
-}
+ *  READS above). */
+type Decoded<T> = { ok: true; value: T } | { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown };
 
 /**
  * Reads a stored value back. Throws only what says nothing about the value: a
  * deployment that cannot read it (MasterKeyError for no master key or one that
- * does not open the data key, UnknownKeyError for a key the key store lacks,
- * decompression failing, storage unreachable) or a throwing upgrade (a bug).
- * Damaged bytes are not ciphertext, or ciphertext that fails to authenticate
- * under a data key, whose id commits to its key. Under k0 the same failure
- * could as well be a changed PLAID_ENCRYPTION_KEY, which does not commit to its
- * key, so it is marked for the caller to settle.
+ * does not open the data key, UnknownKeyError for a key the key store lacks, a
+ * failed decrypt under k0, decompression failing, storage unreachable) or a
+ * throwing upgrade (a bug). Damaged bytes are not ciphertext, or ciphertext
+ * that fails to authenticate under a data key, whose id commits to its key.
+ * Under k0 the same failure could as well be a replaced PLAID_ENCRYPTION_KEY,
+ * and no other value can settle which (values written under a new k0 decrypt
+ * beside old ones that cannot), so it is always thrown.
  */
 async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
-  const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown, k0 = false): Decoded<T> => ({ ok: false, flaw, cause, k0 });
+  const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown): Decoded<T> => ({ ok: false, flaw, cause });
   // The client JSON-parses what it can on the way out, so anything but
   // non-empty text was never written by the seam.
   if (typeof stored !== 'string' || stored === '') return flawed('unreadable', new Error('stored value is not encrypted text'));
+  // What a later version may write (a version tag or flag this code does not
+  // know, or a value bound to a context, which this code never passes) is
+  // intact as far as this code can tell, so a rollback never offers it for
+  // removal.
+  try {
+    if (formatOf(stored).flags.includes('c')) return flawed('unrecognised', new Error('stored value is bound to a context'));
+  } catch (err) {
+    if (err instanceof UnsupportedFormatError) return flawed('unrecognised', err);
+    if (err instanceof MalformedCiphertextError) return flawed('unreadable', err);
+    throw err;
+  }
   let text: string;
   try {
     text = await decryptJsonText(stored); // compressed or not
   } catch (err) {
-    if (err instanceof MalformedCiphertextError) return flawed('unreadable', err);
-    if (err instanceof DecryptFailedError) return flawed('unreadable', err, err.keyId === 'k0');
+    if (err instanceof MalformedCiphertextError) return flawed('unreadable', err); // not base64, or too short
+    if (err instanceof DecryptFailedError && err.keyId !== 'k0') return flawed('unreadable', err);
     throw err;
   }
   let parsed: unknown;
@@ -460,7 +468,6 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     if (stored === null || stored === undefined || stored === '') return null;
     const d = await decode(codec, stored);
     if (d.ok) return d.value;
-    if (d.k0) throw d.cause; // nothing else in this read shows whether k0 is right
     throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
   };
 
@@ -507,18 +514,13 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
    *  unreadable and the unrecognised. A deployment problem is thrown: it says
    *  nothing about the entries, so none is reported or left out for it. */
   const decodeAll = async (entries: (readonly [string, unknown])[]) => {
-    const results = await Promise.all(entries.map(async ([id, stored]) => ({ id, stored, d: await decode(codec, stored) })));
-    // A failed decrypt under k0 is damage only if another k0 value in this read
-    // decrypted, which proves PLAID_ENCRYPTION_KEY right (AES-GCM cannot
-    // authenticate under a wrong key); with none to show it, it is thrown.
-    const k0Works = results.some(({ stored, d }) => (d.ok || d.flaw === 'unrecognised') && underK0(stored));
+    const results = await Promise.all(entries.map(async ([id, stored]) => ({ id, d: await decode(codec, stored) })));
     const values = new Map<string, T>();
     const unreadable: string[] = [];
     const unrecognised: string[] = [];
     let cause: unknown;
     for (const { id, d } of results) {
       if (d.ok) values.set(id, d.value);
-      else if (d.k0 && !k0Works) throw d.cause;
       else {
         (d.flaw === 'unreadable' ? unreadable : unrecognised).push(id);
         cause ??= d.cause;
@@ -569,7 +571,6 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       if (stored !== null) {
         const d = await decode(codec, stored);
         if (!d.ok) {
-          if (d.k0) throw d.cause; // nothing else in this read shows whether k0 is right
           throw new UnreadableEntriesError(what, d.flaw === 'unreadable' ? [id] : [], d.flaw === 'unrecognised' ? [id] : [], d.cause);
         }
         current = d.value;
