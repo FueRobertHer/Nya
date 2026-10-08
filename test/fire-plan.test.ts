@@ -51,11 +51,23 @@ describe('the stored plan’s validation', () => {
     expect(parsePlan(JSON.parse(JSON.stringify(full)))).toEqual({ plan: full });
   });
 
-  test('the plans paid from a bank are account ids, each once', () => {
-    const r = parsePlan(plan({ bankFunded: ['acc_1', 'manual_9bcb3f0c-5760', 'acc_1'] }));
-    expect('plan' in r && r.plan.bankFunded).toEqual(['acc_1', 'manual_9bcb3f0c-5760']);
-    expect('error' in parsePlan(plan({ bankFunded: ['has space'] }))).toBe(true);
-    expect('error' in parsePlan(plan({ bankFunded: Array.from({ length: 21 }, (_, i) => `a${i}`) }))).toBe(true);
+  test('how each workplace plan is paid into is kept by account id, the last said for each', () => {
+    const r = parsePlan(
+      plan({
+        planFunding: [
+          { account_id: 'acc_1', paidFrom: 'bank' },
+          { account_id: 'manual_9bcb3f0c-5760', paidFrom: 'payroll' },
+          { account_id: 'acc_1', paidFrom: 'payroll' },
+        ],
+      })
+    );
+    expect('plan' in r && r.plan.planFunding).toEqual([
+      { account_id: 'manual_9bcb3f0c-5760', paidFrom: 'payroll' },
+      { account_id: 'acc_1', paidFrom: 'payroll' },
+    ]);
+    expect('error' in parsePlan(plan({ planFunding: [{ account_id: 'has space', paidFrom: 'bank' }] }))).toBe(true);
+    expect('error' in parsePlan(plan({ planFunding: [{ account_id: 'a', paidFrom: 'sometimes' } as never] }))).toBe(true);
+    expect('error' in parsePlan(plan({ planFunding: Array.from({ length: 21 }, (_, i) => ({ account_id: `a${i}`, paidFrom: 'bank' as const })) }))).toBe(true);
   });
 
   test('labels are trimmed', () => {
@@ -184,8 +196,8 @@ describe('a stored plan', () => {
     expect(r.plan.age).toBe(40); // what was fine is kept
     expect(r.fixed).toEqual([
       { field: 'allocation' },
-      { field: 'income', item: 'Pension' },
-      { field: 'expenses', item: 'Roof' },
+      { field: 'income', item: { label: 'Pension', amount: 2e7, age: 65 } },
+      { field: 'expenses', item: { label: 'Roof', amount: 1, age: 60 } },
       { field: 'withdrawalRate' },
       { field: 'horizon' },
       { field: 'targetAge' },
@@ -677,10 +689,12 @@ describe('workplace plan contributions', () => {
     from: '2025-10-07',
     partial: false,
     rows: [],
+    activityFrom: null,
     note: null,
     ...over,
   });
-  const none = { transfersOut: [], fromBank: [] };
+  const none = { transfersOut: [], funding: [] };
+  const added = (w: ReturnType<typeof workplaceSavings>) => w.plans.map((x) => [x.name, x.added]);
 
   test('are summed, with plans measured over less than a year (as the route says), or not at all, named', () => {
     const w = workplaceSavings(
@@ -691,19 +705,29 @@ describe('workplace plan contributions', () => {
         plan({ account_id: 'd', name: '457(b)', institution: 'Empower', amount: 500, note: 'Could not fetch investment activity; showing saved activity' }),
         // A later day than the viewer's year ago, but the route says covered: not partial.
         plan({ account_id: 'e', name: '401(a)', institution: 'Vanguard', amount: 100, from: '2025-10-08' }),
+        // Covered all year, but the institution's activity starts in March: said.
+        plan({ account_id: 'f', name: '401(k)', institution: 'Schwab', amount: 0, activityFrom: '2026-03-03' }),
       ],
       none
     );
     expect(w.total).toBe(15_600);
-    expect(w.measured).toEqual(['Fidelity 401(k)', 'TIAA 403(b)', 'Empower 457(b)', 'Vanguard 401(a)']);
+    expect(added(w)).toEqual([
+      ['Fidelity 401(k)', 12_000],
+      ['TIAA 403(b)', 3_000],
+      ['Empower 457(b)', 500],
+      ['Vanguard 401(a)', 100],
+      ['Schwab 401(k)', 0],
+    ]);
     expect(w.partial).toEqual([{ name: 'TIAA 403(b)', from: '2026-04-01' }]);
+    expect(w.shortHistory).toEqual([{ name: 'Schwab 401(k)', from: '2026-03-03' }]);
     expect(w.unmeasured).toEqual(['TSP TSP']);
     expect(w.problems).toEqual([{ name: 'Empower 457(b)', note: 'Could not fetch investment activity; showing saved activity' }]);
   });
 
-  // A Solo 401(k) paid from checking: the transfer out already counts as
-  // saved in income minus spending, so the contribution isn't added again.
-  test('a contribution a transfer out of the bank paid for is not added again, and each transfer pays for one at most', () => {
+  // A Solo 401(k) paid from checking, not set: the transfer out already
+  // counts as saved in income minus spending, so the contribution isn't
+  // added again.
+  test('for a plan not set, a contribution a transfer to retirement funds paid for is not added again, and each transfer pays for one at most', () => {
     const w = workplaceSavings(
       [
         plan({
@@ -725,22 +749,69 @@ describe('workplace plan contributions', () => {
           { date: '2026-06-03', amount: 500.4 }, // within a dollar: pays for the first of the two
           { date: '2026-04-10', amount: 10_000 }, // three weeks after: no match
         ],
-        fromBank: [],
+        funding: [],
       }
     );
-    expect(w.matched).toEqual([{ name: 'Vanguard Solo 401(k)', amount: 10_500 }]);
-    expect(w.added).toEqual([
-      { name: 'Vanguard Solo 401(k)', amount: 10_000 },
-      { name: 'Fidelity 401(k)', amount: 500 },
+    expect(w.plans).toEqual([
+      // What counted is named: how many, and the largest.
+      { name: 'Vanguard Solo 401(k)', paidFrom: null, added: 10_000, count: 1, largest: { date: '2026-03-20', amount: 10_000 }, matched: 10_500 },
+      { name: 'Fidelity 401(k)', paidFrom: null, added: 500, count: 1, largest: { date: '2026-06-02', amount: 500 }, matched: 0 },
     ]);
     expect(w.total).toBe(10_500);
+  });
+
+  // One transfer the plan records as a deferral and an employer share.
+  test('a transfer recorded as several contributions on one day is matched by their sum', () => {
+    const w = workplaceSavings(
+      [
+        plan({
+          account_id: 'solo',
+          name: 'Solo 401(k)',
+          institution: 'Vanguard',
+          amount: 6_500,
+          rows: [
+            { date: '2026-04-02', amount: 5_000 },
+            { date: '2026-04-02', amount: 1_500 },
+          ],
+        }),
+      ],
+      { transfersOut: [{ date: '2026-03-31', amount: 6_500 }], funding: [] }
+    );
+    expect(w.total).toBe(0);
+    expect(w.plans[0].matched).toBe(6_500);
+  });
+
+  // A payday that moves $500 to savings and defers $500 to the 401(k): the
+  // move to savings never paid for the contribution. Only transfers Plaid
+  // details as investment and retirement funds are matched, and a plan set
+  // as paid through payroll is never matched at all.
+  test('only transfers to investment and retirement funds are matched, and only for a plan not set', () => {
+    const rows = [
+      { date: '2026-05-01', amount: 500 },
+      { date: '2026-05-15', amount: 500 },
+    ];
+    const k = plan({ account_id: 'k', name: '401(k)', institution: 'Fidelity', amount: 1_000, rows });
+    const toSavings = transfersOut(
+      [
+        txn({ date: '2026-05-01', amount: 500, category: 'transfer out', subcategory: 'savings' }),
+        txn({ date: '2026-05-15', amount: 500, category: 'transfer out', subcategory: 'account transfer' }),
+      ],
+      '2026-10-06'
+    );
+    expect(toSavings).toEqual([]);
+    expect(workplaceSavings([k], { transfersOut: toSavings, funding: [] }).total).toBe(1_000);
+    const toRetirement = [{ date: '2026-05-01', amount: 500 }];
+    expect(workplaceSavings([k], { transfersOut: toRetirement, funding: [] }).total).toBe(500);
+    const payroll = workplaceSavings([k], { transfersOut: toRetirement, funding: [{ account_id: 'k', paidFrom: 'payroll' }] });
+    expect(payroll.total).toBe(1_000);
+    expect(payroll.plans[0]).toMatchObject({ paidFrom: 'payroll', matched: 0, count: 2 });
   });
 
   test('match by amount within a dollar or 1%, and by day within a few days', () => {
     const one = (transfer: { date: string; amount: number }) =>
       workplaceSavings([plan({ account_id: 'a', name: 'x', institution: 'y', amount: 2_000, rows: [{ date: '2026-06-10', amount: 2_000 }] })], {
         transfersOut: [transfer],
-        fromBank: [],
+        funding: [],
       }).total;
     expect(one({ date: '2026-06-10', amount: 2_019 })).toBe(0); // within 1%
     expect(one({ date: '2026-06-10', amount: 2_030 })).toBe(2_000); // not
@@ -748,24 +819,27 @@ describe('workplace plan contributions', () => {
     expect(one({ date: `2026-06-${11 + MATCH_DAYS}`, amount: 2_000 })).toBe(2_000);
   });
 
-  test('a plan paid from the bank adds nothing, and is named', () => {
+  test('a plan set as paid from the bank adds nothing, and is named', () => {
     const w = workplaceSavings([plan({ account_id: 'solo', name: 'Solo 401(k)', institution: 'Vanguard', amount: 20_000, rows: [{ date: '2026-03-01', amount: 20_000 }] })], {
       transfersOut: [],
-      fromBank: ['solo'],
+      funding: [{ account_id: 'solo', paidFrom: 'bank' }],
     });
     expect(w.total).toBe(0);
     expect(w.fromBank).toEqual(['Vanguard Solo 401(k)']);
-    expect(w.added).toEqual([]);
+    expect(w.plans).toEqual([]);
   });
 
-  test('transfers out are money moved out of your accounts over the year, and nothing else', () => {
+  test('transfers out are moves to investment and retirement funds over the year, and nothing else', () => {
     const out = transfersOut(
       [
         txn({ date: '2026-03-01', amount: 10_000, category: 'transfer out', subcategory: 'investment and retirement funds' }),
         txn({ date: '2026-03-02', amount: 50, category: 'food and drink' }), // spending
-        txn({ date: '2026-03-03', amount: -10_000, category: 'transfer in' }), // money in
+        txn({ date: '2026-03-03', amount: -10_000, category: 'transfer in', subcategory: 'investment and retirement funds' }), // money in
         txn({ date: '2026-03-04', amount: 900, category: 'loan payments', subcategory: 'credit card payment' }), // a card payoff
-        txn({ date: '2025-01-01', amount: 7_000, category: 'transfer out' }), // older than a year
+        txn({ date: '2026-03-05', amount: 700, category: 'transfer out', subcategory: 'savings' }), // to savings: never a contribution
+        // Recategorized as spending: it counts as spent, so it never paid for a contribution here.
+        txn({ date: '2026-03-06', amount: 300, category: 'general services', subcategory: 'investment and retirement funds' }),
+        txn({ date: '2025-01-01', amount: 7_000, category: 'transfer out', subcategory: 'investment and retirement funds' }), // older than a year
       ],
       '2026-10-06'
     );
@@ -811,12 +885,27 @@ describe('the store', () => {
     expect(Object.keys(await stored()).sort()).toEqual(Object.keys(DEFAULT_PLAN).sort());
   });
 
-  // Through the store's upgrade hook: a plan saved before the switch existed
-  // takes every workplace plan as paid through payroll, as it always did.
-  test('a plan saved before the payroll switch existed reads with every plan paid through payroll', async () => {
-    const { bankFunded: _, ...old } = saved;
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(old)));
-    expect(await firePlanStore.get(TEST_CTX)).toEqual({ ...saved, bankFunded: [] });
+  // Through the store's upgrade hook: before any switch every plan was
+  // matched, which is "not set" now; the two-way switch's list of plans paid
+  // from a bank is "bank" for each.
+  test('plans saved before the three-way switch read with what they meant', async () => {
+    const { planFunding: _, ...older } = saved;
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(older)));
+    expect(await firePlanStore.get(TEST_CTX)).toEqual({ ...saved, planFunding: [] });
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo', 'acc_sep'] })));
+    const read = await firePlanStore.get(TEST_CTX);
+    expect(read).toEqual({
+      ...saved,
+      planFunding: [
+        { account_id: 'acc_solo', paidFrom: 'bank' },
+        { account_id: 'acc_sep', paidFrom: 'bank' },
+      ],
+    });
+    // The next save stores the new field, and not the old one.
+    await firePlanStore.set(TEST_CTX, read!);
+    expect(await stored()).not.toHaveProperty('bankFunded');
+    // A list that isn't one of ids is left for the reader to refuse, not guessed at.
+    expect(upgradePlan({ ...older, bankFunded: [5] })).toEqual({ ...older, bankFunded: [5] });
   });
 
   test('a plan outside today’s ranges or rules still reads; a save is held to them', async () => {

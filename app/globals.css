@@ -2616,3 +2616,13 @@ button.plan-edit:disabled {
 .plan-save-error {
   margin: 0 0 12px;
 }
+
+/* A workplace plan's name over its three-way setting, in the savings sheet. */
+.plan-funding {
+  margin-top: 12px;
+}
+
+.plan-funding-name {
+  font-size: 13px;
+  margin-bottom: 6px;
+}

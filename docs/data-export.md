@@ -247,7 +247,7 @@ The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never sa
 | `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
 | `income[]` | `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
 | `expenses[]` | `id`, `label`, `amount`, `atAge`. |
-| `bankFunded[]` | The account ids of workplace plans you pay into from a bank account ("Paid through payroll" turned off). |
+| `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
 
 ## The CSV files
 
