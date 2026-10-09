@@ -43,11 +43,11 @@
 //   - enough of them to be a pattern: 4 for weekly and twice a month, 3 for
 //     most, 2 for twice a year and yearly (two years of history hold a yearly
 //     charge twice at most);
-//   - a consistent amount: the fitting charges of the last year (at least the
-//     last two) lie within 25% of their median, or within 5 units of the
-//     currency for a small subscription whose tax moves by cents, forgiving
-//     the one farthest out among five or more (a bonus paycheck, a prorated
-//     first bill). This is the rule that keeps a store visited every week from
+//   - a consistent amount: the largest and smallest of the fitting charges
+//     of the last year (at least the last two) differ by at most 25% of their
+//     median, or 5 units of the currency for a small subscription whose tax
+//     moves by cents, forgiving the one farthest out among five or more (a
+//     bonus paycheck, a prorated first bill). This is the rule that keeps a store visited every week from
 //     being called a bill: its timing may be weekly, its amounts are not.
 // Evidence comes from a window before the merchant's latest charge (half a
 // year for weekly, a year for most, longer for twice a year and yearly), so a
