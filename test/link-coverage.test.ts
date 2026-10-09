@@ -536,6 +536,19 @@ describe('one connection per login, whichever way it was made', () => {
   // there brings in what they need (holdings for an investment account, and
   // Transactions, started on first use, for a checking account), where a second
   // Item would duplicate any account both share.
+  test('a checking account added to a brokerage connection through the picker brings its transactions', async () => {
+    await addItem('item_fid', 'Fidelity', [k401()], { billed: false, txns: [bankRow('c1', 'acct_cma')] });
+    await transactions();
+    expect(plaid.syncCalls).toHaveLength(0);
+    // "Add accounts to existing connection", then the picker adds the cash account.
+    const picker = await route('create-update-link-token', 'POST', { item_id: 'item_fid', select_accounts: true });
+    plaid.accounts['token-item_fid'] = [k401(), checking('acct_cma')];
+    const updated = await route('item-accounts-updated', 'POST', { item_id: 'item_fid', opened_at: picker.body.opened_at });
+    expect(updated.body).toEqual({ added: 1, removed: 0 });
+    expect((await transactions()).body.transactions.map((t: any) => t.transaction_id)).toEqual(['c1']);
+    expect(plaid.syncCalls).toEqual([{ token: 'token-item_fid', cursor: undefined, options: { days_requested: 730 } }]);
+  });
+
   test('a brokerage connection is found for the bank option, and the other way round', () => {
     const items = [
       { item_id: 'item_fid', institution_name: 'Fidelity', institution_id: 'ins_12' },
