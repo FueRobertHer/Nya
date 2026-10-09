@@ -248,9 +248,11 @@ function hasLong(node: OfxNode): boolean {
 }
 
 /** The node as plain data, for the raw record: a leaf's value, an aggregate's
- *  fields by name (a name repeated becomes a list). */
+ *  fields by name (a name repeated becomes a list). An account number (a
+ *  transfer's other account, BANKACCTTO or CCACCTTO) keeps only its last four
+ *  characters, as the statement's own does: Nya never keeps a whole one. */
 export function plainOf(node: OfxNode): unknown {
-  if (node.kind === 'leaf') return node.value;
+  if (node.kind === 'leaf') return node.name === 'ACCTID' ? accountMask(node.value) : node.value;
   const out: Record<string, unknown> = {};
   const repeated = new Set<string>();
   for (const c of node.children) {

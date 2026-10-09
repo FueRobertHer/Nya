@@ -306,6 +306,13 @@ describe('OFX that isn’t tidy', () => {
     expect(ready(swallowed).records[0]).toMatchObject({ source_id: 'A2', description: 'Still found' });
   });
 
+  test('a transfer’s other account keeps only its last four characters in the raw record', () => {
+    const text = stmt(trn('<TRNTYPE>XFER<DTPOSTED>20260903<TRNAMT>-500.00<FITID>X1<NAME>To savings<BANKACCTTO><BANKID>325081403<ACCTID>000987654321<ACCTTYPE>SAVINGS</BANKACCTTO>'));
+    const [r] = ready(text).records;
+    expect((r.raw as any).BANKACCTTO).toEqual({ BANKID: '325081403', ACCTID: '4321', ACCTTYPE: 'SAVINGS' });
+    expect(JSON.stringify(r.raw)).not.toContain('987654321');
+  });
+
   test('a stray "<" in a value, comments, CDATA and a transaction’s own currency', () => {
     const text = stmt(
       trn('<TRNTYPE>DEBIT<DTPOSTED>20260903<TRNAMT>-4.50<FITID>B1<NAME>A < B <!-- a comment -->Shop') +
