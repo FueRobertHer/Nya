@@ -1021,17 +1021,21 @@ describe('records of showings', () => {
     const pairFields = async () => Object.keys((await fake.hgetall(testKey('connections'))) ?? {}).filter((f) => f.startsWith(pair));
     const records = async () => Object.keys((await fake.hgetall(ctxKey('sharing-access-log'))) ?? {});
 
+    // Assertions about what a hooked step saw are made after, never inside the
+    // hook: code that called the hooked command could catch them.
+
     test('the removal runs between the count’s read and its write', async () => {
       const { sharedWithMe } = await import('@/lib/sharing');
       await share({ acct_joint: 'balance' });
       const realEval = fake.eval.bind(fake);
+      let removed = 0;
       (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
         const answer = await realEval(script, keys, args);
         // Between the count's read and its write: the whole removal runs, and
         // finds no record yet to delete.
         if (script.startsWith('-- nya:repo-read-entries') && keys[0] === ctxKey('sharing-access-log')) {
           delete (fake as any).eval;
-          expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+          removed = (await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status;
         }
         return answer;
       };
@@ -1040,33 +1044,103 @@ describe('records of showings', () => {
       } finally {
         delete (fake as any).eval;
       }
+      expect(removed).toBe(200);
       expect(await records()).toEqual([]);
       expect(await pairFields()).toEqual([]);
     });
 
-    test('a removal that stops before it reads the log id: the showing that wrote takes back its record and the log field', async () => {
-      const { sharedWithMe, removeConnection } = await import('@/lib/sharing');
+    test('a showing that takes itself back before the removal reads the log id leaves neither person’s record behind', async () => {
+      const { sharedWithMe } = await import('@/lib/sharing');
+      const partnerCtx = await containerOf('user_partner');
+      await saveManualAccount(partnerCtx, {
+        account_id: 'manual_bike',
+        name: 'Bike',
+        institution_name: 'Manual',
+        type: 'other',
+        subtype: null,
+        balance: 800,
+        updated_at: new Date().toISOString(),
+      } as any);
       await share({ acct_joint: 'balance' });
+      expect((await as('user_partner', () => route('connections', 'PUT', { id: pair, accounts: { manual_bike: 'balance' } }))).status).toBe(200);
+      // Each has been shown the other's once: a record on each side.
+      await sharedWithMe('user_owner');
+      await sharedWithMe('user_partner');
+      const recordsIn = async (ctx: any) => Object.keys((await fake.hgetall(ctxKey('sharing-access-log', ctx))) ?? {});
+      expect([(await recordsIn(TEST_CTX)).length, (await recordsIn(partnerCtx)).length]).toEqual([1, 1]);
+      // The partner's next showing has read the connection, and waits to count.
       const realEval = fake.eval.bind(fake);
+      let counting!: () => void;
+      const atCount = new Promise<void>((r) => (counting = r));
+      let resume!: () => void;
+      const mayCount = new Promise<void>((r) => (resume = r));
       (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
-        const answer = await realEval(script, keys, args);
-        if (script.startsWith('-- nya:repo-update-entry') && keys[0] === ctxKey('sharing-access-log')) {
+        if (script.startsWith('-- nya:repo-read-entries') && keys[0] === ctxKey('sharing-access-log')) {
           delete (fake as any).eval;
-          // Written. Now a removal deletes the connection, and fails to read its log id.
-          fake.failNext('hget');
-          await quietly(() => removeConnection('user_owner', pair));
-          expect(await pairFields()).toEqual([`${pair}|log`]);
-          expect(await records()).toHaveLength(1);
+          counting();
+          await mayCount;
         }
-        return answer;
+        return realEval(script, keys, args);
       };
+      const showing = sharedWithMe('user_partner');
+      await atCount;
+      // The removal deletes the connection; before it reads the log id, the
+      // showing counts, finds the connection gone, and takes back its count
+      // and the log field.
+      const realHget = fake.hget.bind(fake);
+      (fake as any).hget = async (key: string, field: string) => {
+        if (key === testKey('connections') && field === `${pair}|log`) {
+          delete (fake as any).hget;
+          resume();
+          await showing;
+        }
+        return realHget(key, field);
+      };
+      let removed = 0;
       try {
-        expect(await sharedWithMe('user_partner')).toHaveLength(1);
+        removed = (await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status;
       } finally {
         delete (fake as any).eval;
+        delete (fake as any).hget;
       }
-      expect(await records()).toEqual([]);
+      expect(removed).toBe(200);
+      expect([await recordsIn(TEST_CTX), await recordsIn(partnerCtx)]).toEqual([[], []]);
       expect(await pairFields()).toEqual([]);
+    });
+
+    test('a link accepted while the removal runs keeps the new connection, with its own log id', async () => {
+      const { sharedWithMe } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      await sharedWithMe('user_partner');
+      const old = (await logIdOf())!;
+      const token = await invite('user_owner'); // made earlier, not used yet
+      const realHget = fake.hget.bind(fake);
+      let accepted = 0;
+      let fresh: string | null = null;
+      (fake as any).hget = async (key: string, field: string) => {
+        if (key === testKey('connections') && field === `${pair}|log`) {
+          delete (fake as any).hget;
+          // The connection is gone, its log id not read yet: the partner accepts the link.
+          await Bun.sleep(2); // a later moment to connect at
+          accepted = (await accept('user_partner', token)).status;
+          fresh = await logIdOf();
+          clerk.signedIn = 'user_owner';
+        }
+        return realHget(key, field);
+      };
+      let removed = 0;
+      try {
+        removed = (await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status;
+      } finally {
+        delete (fake as any).hget;
+      }
+      expect([removed, accepted]).toEqual([200, 200]);
+      expect(fresh).toMatch(/^[0-9a-f]{32}$/);
+      expect(fresh).not.toBe(old);
+      // The new connection is there, with its own log id; the old record is gone.
+      expect((await connectionsOf('user_owner')).connections.map((c: any) => c.id)).toEqual([pair]);
+      expect(await logIdOf()).toBe(fresh);
+      expect(await accessLogStore.get(TEST_CTX, old)).toBeNull();
     });
 
     test('from before records: the first showing, whole, just before the removal deletes the connection', async () => {
@@ -1074,23 +1148,24 @@ describe('records of showings', () => {
       await share({ acct_joint: 'balance' });
       await fake.hdel(testKey('connections'), `${pair}|log`);
       const realHdel = fake.hdel.bind(fake);
-      let ran = false;
+      let seen: { shown: number; records: number } | null = null;
       (fake as any).hdel = async (key: string, ...fields: string[]) => {
-        if (!ran && key === testKey('connections') && fields.includes(pair)) {
-          ran = true;
+        if (!seen && key === testKey('connections') && fields.includes(pair)) {
           // The removal has read the connection, with no log id yet. Now the
           // partner's whole read, count and check run before it deletes anything.
-          expect(await sharedWithMe('user_partner')).toHaveLength(1);
-          expect(await records()).toHaveLength(1);
+          const shown = (await sharedWithMe('user_partner')).length;
+          seen = { shown, records: (await records()).length };
         }
         return realHdel(key, ...fields);
       };
+      let removed = 0;
       try {
-        expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+        removed = (await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status;
       } finally {
         delete (fake as any).hdel;
       }
-      expect(ran).toBe(true);
+      expect(removed).toBe(200);
+      expect(seen as unknown).toEqual({ shown: 1, records: 1 });
       expect(await records()).toEqual([]);
       expect(await pairFields()).toEqual([]);
     });
@@ -1100,12 +1175,11 @@ describe('records of showings', () => {
       await share({ acct_joint: 'balance' });
       await fake.hdel(testKey('connections'), `${pair}|log`);
       const realHsetnx = (fake as any).hsetnx.bind(fake);
-      let ran = false;
+      let removed = 0;
       (fake as any).hsetnx = async (key: string, field: string, value: string) => {
-        if (!ran) {
-          ran = true;
+        if (!removed) {
           // The partner's read has the connection; the whole removal runs before its log id is set.
-          expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+          removed = (await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status;
         }
         return realHsetnx(key, field, value);
       };
@@ -1114,7 +1188,61 @@ describe('records of showings', () => {
       } finally {
         delete (fake as any).hsetnx;
       }
-      expect(ran).toBe(true);
+      expect(removed).toBe(200);
+      expect(await records()).toEqual([]);
+      expect(await pairFields()).toEqual([]);
+    });
+
+    test('from before records: a removal that can’t read the log id, and the showing that set it takes back its count and the field', async () => {
+      const { sharedWithMe, removeConnection } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      await fake.hdel(testKey('connections'), `${pair}|log`);
+      // The removal has read the connection, with no log id yet, and waits to delete it.
+      let deleting!: () => void;
+      const atDelete = new Promise<void>((r) => (deleting = r));
+      let goRemoval!: () => void;
+      const mayDelete = new Promise<void>((r) => (goRemoval = r));
+      const realHdel = fake.hdel.bind(fake);
+      (fake as any).hdel = async (key: string, ...fields: string[]) => {
+        if (key === testKey('connections') && fields.includes(pair)) {
+          delete (fake as any).hdel;
+          deleting();
+          await mayDelete;
+          fake.failNext('hget'); // and it won't be able to read the log id after
+        }
+        return realHdel(key, ...fields);
+      };
+      const removal = quietly(() => removeConnection('user_owner', pair));
+      await atDelete;
+      // The showing sets the log id while the connection is still there, and waits to count.
+      let counting!: () => void;
+      const atCount = new Promise<void>((r) => (counting = r));
+      let goShowing!: () => void;
+      const mayCount = new Promise<void>((r) => (goShowing = r));
+      const realEval = fake.eval.bind(fake);
+      (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
+        if (script.startsWith('-- nya:repo-read-entries') && keys[0] === ctxKey('sharing-access-log')) {
+          delete (fake as any).eval;
+          counting();
+          await mayCount;
+        }
+        return realEval(script, keys, args);
+      };
+      const showing = sharedWithMe('user_partner');
+      try {
+        await atCount;
+        const set = await logIdOf();
+        goRemoval();
+        await removal;
+        const leftByRemoval = await pairFields();
+        goShowing();
+        expect(await showing).toHaveLength(1);
+        expect(set).toMatch(/^[0-9a-f]{32}$/);
+        expect(leftByRemoval).toEqual([`${pair}|log`]); // all the removal could do
+      } finally {
+        delete (fake as any).hdel;
+        delete (fake as any).eval;
+      }
       expect(await records()).toEqual([]);
       expect(await pairFields()).toEqual([]);
     });
@@ -1125,13 +1253,14 @@ describe('records of showings', () => {
       await fake.hdel(testKey('connections'), `${pair}|log`);
       const realHsetnx = (fake as any).hsetnx.bind(fake);
       let fresh = '';
+      let removed = 0;
       (fake as any).hsetnx = async (key: string, field: string, value: string) => {
         if (!fresh) {
           // Removed, and connected again, while this showing was under way.
-          expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+          removed = (await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status;
           await Bun.sleep(2); // a later moment to connect at
           await connect('user_partner', 'user_owner');
-          fresh = (await logIdOf())!;
+          fresh = (await logIdOf()) ?? 'none';
         }
         return realHsetnx(key, field, value);
       };
@@ -1140,6 +1269,8 @@ describe('records of showings', () => {
       } finally {
         delete (fake as any).hsetnx;
       }
+      expect(removed).toBe(200);
+      expect(fresh).toMatch(/^[0-9a-f]{32}$/);
       // Nothing under the new connection's log id, which is untouched.
       expect(await records()).toEqual([]);
       expect(await logIdOf()).toBe(fresh);
@@ -1221,11 +1352,15 @@ describe('records of showings', () => {
     expect(await damagedOf('user_owner')).toEqual({ damaged: [], maybe_connected: true });
     await quietly(() => pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds()));
     expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([logId]);
-    // Removing them starts again: the field goes with the connection, and the record the next night.
+    // Removing them starts again: the record goes the next night, and the
+    // field, whose id can't be known, is left for connecting again to replace.
     expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
-    expect(await logIdOf()).toBeNull();
+    expect(await fake.hget<string>(testKey('connections'), `${pair}|log`)).toBe('not json');
+    expect((await connectionsOf('user_owner')).connections).toEqual([]);
     await pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds());
     expect(await fake.hgetall(ctxKey('sharing-access-log'))).toBeNull();
+    await connect('user_partner', 'user_owner');
+    expect(await logIdOf()).toMatch(/^[0-9a-f]{32}$/);
   });
 
   describe('the nightly pass', () => {

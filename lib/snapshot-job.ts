@@ -33,9 +33,9 @@
 // (lib/sharing.ts nightlyLogIds, one per run, so a connection field that
 // can't be read is logged once a run). It goes first in the container's run,
 // before the snapshot, so it is over before the emails start; it takes on no
-// more after PRUNE_BUDGET_MS, and never throws, so it costs the snapshot
-// nothing but that time, and the emails at most that much of theirs, never
-// the run past MAIL_DEADLINE_MS or maxDuration.
+// more after PRUNE_BUDGET_MS, which comes off the start budget, and never
+// throws, so it costs the snapshot nothing but that time and the emails none
+// of theirs: the run ends by when it would without it.
 //
 // "snapshot:" keys describe this environment's cron, not the data: exports
 // leave them out and a restore keeps the target's own (lib/export.ts,
@@ -72,6 +72,10 @@ import { MAIL_BUDGET_MS, prepareNotices, sendNotices, type PendingNotices, type 
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
+/** How long the nightly pass over a container's records of showings may go
+ *  on taking on more (lib/access-log.ts pruneAccessLog): what is left waits
+ *  for the next night. It comes off START_BUDGET_MS, below. */
+export const PRUNE_BUDGET_MS = 3_000;
 /**
  * No container is started later than this after the request began. The route
  * may run 300 s (maxDuration), and one container's run can take two Plaid
@@ -80,17 +84,15 @@ export const REGISTRY_RETRY_MS = 1000;
  * that took up to 10 s, a 1 s wait, then up to 45 s: lib/rate-limit-retry.ts),
  * so about 101 s at worst, and the rest is margin for the database: the
  * snapshot, the day's positions for holdings history (a few round trips per
- * container, beside the snapshot), the connections' records, and the nightly
- * pass over the records of showings (PRUNE_BUDGET_MS at most). One not
- * started is deferred to the catch-up run. The emails about connections are
- * not in it: they go once every container has run, within MAIL_DEADLINE_MS.
+ * container, beside the snapshot) and the connections' records. Each run
+ * begins with the nightly pass over the records of showings, which may take
+ * PRUNE_BUDGET_MS, so that comes off the 180 s: the last container still ends
+ * by when it would without the pass, and the margin before MAIL_DEADLINE_MS
+ * is what it was. One not started is deferred to the catch-up run. The emails
+ * about connections are not in it: they go once every container has run,
+ * within MAIL_DEADLINE_MS.
  */
-export const START_BUDGET_MS = 180_000;
-/** How long the nightly pass over a container's records of showings may go
- *  on taking on more (lib/access-log.ts pruneAccessLog): what is left waits
- *  for the next night. With START_BUDGET_MS and the slowest Plaid calls it
- *  still leaves the run within MAIL_DEADLINE_MS. */
-export const PRUNE_BUDGET_MS = 3_000;
+export const START_BUDGET_MS = 180_000 - PRUNE_BUDGET_MS;
 /**
  * The emails about connections (lib/connection-notices.ts) are all over by
  * this long after the request began. Each one is started only if finding whom

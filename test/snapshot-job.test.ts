@@ -62,8 +62,9 @@ describe('the records of showings, pruned in each container’s run', () => {
     }
     expect(await accessLogStore.get({ container: A }, 'e'.repeat(32))).toBeNull();
     expect(await accessLogStore.get({ container: B }, 'e'.repeat(32))).toEqual(record);
-    // Its time comes out of the margin the start budget leaves, inside the emails' deadline.
-    expect(START_BUDGET_MS + 101_000 + PRUNE_BUDGET_MS).toBeLessThan(MAIL_DEADLINE_MS);
+    // Its time comes off the start budget, so the last container ends when it would without it.
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS).toBe(180_000);
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS + 101_000).toBeLessThan(MAIL_DEADLINE_MS);
   });
 });
 

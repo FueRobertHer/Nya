@@ -488,36 +488,59 @@ const isLogField = (field: string) => {
  * Deletes a connection's records of showings on both sides, by its log id,
  * without reading them: they live exactly as long as the connection. One of
  * the two writes this module makes in someone else's container. Runs once the
- * connection's other fields are gone, and reads its log field only then, so
- * it knows the id even when the connection's first showing set it meanwhile,
- * and deletes the field, then the records. A showing recorded after that
- * takes itself back (recordShowing). Never throws, since the connection is
- * already gone: a container that can't be reached now (being deleted, or
- * restored), or a delete that fails, is left to the nightly pass, which
- * deletes every record whose connection has ended (lib/access-log.ts
- * pruneAccessLog). So is a damaged log field, whose id can't be known.
+ * connection's other fields are gone, and deletes the records under every log
+ * id the removal knows: the one it read with the connection (c.log), which is
+ * only ever this connection's, and the one stored now, read only now, so it
+ * knows the id even when the connection's first showing set it meanwhile.
+ * That one is taken only while no newer connection between the same two
+ * exists (a link accepted meanwhile), so a new connection's log id and
+ * records are never touched. The log field goes only while it still holds
+ * one of those ids (DELETE_LOG_IF); one that can't be read is left for a new
+ * connection between the two to replace, since nothing can be found by it. A
+ * showing recorded after this takes itself back (recordShowing). Never
+ * throws, since the connection is already gone: a container that can't be
+ * reached now (being deleted, or restored), or a delete that fails, is left
+ * to the nightly pass, which deletes every record whose connection has ended
+ * (lib/access-log.ts pruneAccessLog). So are records under a log id that
+ * can't be read.
  */
 async function forgetShowings(c: Conn): Promise<void> {
-  let log: LogRef | null;
+  const ids = new Set<string>(c.log && c.log !== 'damaged' ? [c.log.id] : []);
   try {
-    log = parseLog(await redis().hget(connectionsKey(), logField(c.id)));
-    await redis().hdel(connectionsKey(), logField(c.id));
+    // The log field first, then the connection's record, as in logFor: a
+    // newer connection would have written both at once.
+    const now = parseLog(await redis().hget(connectionsKey(), logField(c.id)));
+    if (now && !newerConnection(await redis().hget(connectionsKey(), c.id), c)) ids.add(now.id);
   } catch (err) {
-    console.error('Sharing: a connection’s log id could not be read or deleted with it; the nightly pass deletes its records', err instanceof Error ? err.name : err);
-    return;
+    console.error('Sharing: a connection’s log id could not be read as it ended; the nightly pass deletes what it leaves', err instanceof Error ? err.name : err);
   }
-  if (!log) return;
-  const id = log.id;
+  for (const id of ids) {
+    try {
+      await deleteLogIf(c.id, id);
+    } catch (err) {
+      console.error('Sharing: a connection’s log id could not be deleted with it', err instanceof Error ? err.name : err);
+    }
+  }
+  if (ids.size === 0) return;
   await Promise.all(
     c.meta.users.map(async (user) => {
       try {
         const ctx = await theirCtx(user);
-        if (ctx) await accessLogStore.remove(ctx, id);
+        if (ctx) await accessLogStore.remove(ctx, ...ids);
       } catch (err) {
         console.error('Sharing: a record of showings could not be deleted with its connection; the nightly pass will', err instanceof Error ? err.name : err);
       }
     })
   );
+}
+
+/** Whether a stored connection record is another connection than `c`, made
+ *  since between the same two (a different time it was made), or one that
+ *  can't be read, which could be: either way not `c`'s to end. None at all,
+ *  or `c`'s own (blocked, say), is not. */
+function newerConnection(raw: unknown, c: Conn): boolean {
+  if (raw === null || raw === undefined) return false;
+  return parseMeta(raw)?.created_at !== c.meta.created_at;
 }
 
 /** What the nightly pass goes by (connectionLogIds), read from the
