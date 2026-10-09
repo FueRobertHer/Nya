@@ -99,6 +99,10 @@ export type SeriesAccountSpan = {
    *  holdings index, and the balances of the days read); null if never. */
   first: string | null;
   last: string | null;
+  /** On some day added, money in it no position explained was counted as
+   *  unclassified (`unlisted`): kept by hand, a balance beyond its
+   *  positions, or a day its positions didn't come. */
+  unlisted: boolean;
 };
 
 /** "Known since before anything": for an account whose directory entry
@@ -168,6 +172,8 @@ export function seriesBuilder(input: SeriesInput) {
   // The accounts no longer shown that were recorded, or expected, on a day
   // added: the only ones worth naming.
   const earlier = new Set<string>();
+  // The accounts whose unlisted money was counted as unclassified.
+  const unlistedIn = new Set<string>();
   let previous: string | null = null;
 
   function add(day: SeriesDayIn, balances: ReadonlyMap<string, number>): void {
@@ -221,6 +227,8 @@ export function seriesBuilder(input: SeriesInput) {
 
     for (const inst of institutions) noteRecorded(inst.accounts[0].account_id, day.date);
     const alloc = allocate({ institutions, holdings, settings: input.settings, currency: input.currency });
+    const unlisted = alloc.gaps.filter((g) => g.split === null && isMoney(g.amount));
+    for (const g of unlisted) unlistedIn.add(g.account_id);
     const classes: Partial<Record<Slot, number>> = {};
     for (const s of SLOTS) if (isMoney(alloc.classes[s])) classes[s] = alloc.classes[s];
     const otherCurrencies: Record<string, number> = {};
@@ -229,7 +237,7 @@ export function seriesBuilder(input: SeriesInput) {
       date: day.date,
       classes,
       total: alloc.total,
-      unlisted: alloc.gaps.filter((g) => g.split === null).reduce((sum, g) => sum + g.amount, 0),
+      unlisted: unlisted.reduce((sum, g) => sum + g.amount, 0),
       missing: missing.sort(),
       otherCurrencies,
       noCurrency,
@@ -248,6 +256,7 @@ export function seriesBuilder(input: SeriesInput) {
         shown: shown.has(account_id),
         first: spans.get(account_id)?.first ?? null,
         last: spans.get(account_id)?.last ?? null,
+        unlisted: unlistedIn.has(account_id),
       }));
     },
   };

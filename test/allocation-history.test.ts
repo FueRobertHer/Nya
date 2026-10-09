@@ -148,8 +148,8 @@ describe('allocation over time', () => {
       ['2026-10-03', []],
     ]);
     expect(body.accounts).toEqual([
-      { account_id: 'a', shown: true, first: '2026-09-30', last: '2026-10-03', label: null },
-      { account_id: 'b', shown: true, first: '2026-09-30', last: '2026-10-03', label: null },
+      { account_id: 'a', shown: true, first: '2026-09-30', last: '2026-10-03', unlisted: false, label: null },
+      { account_id: 'b', shown: true, first: '2026-09-30', last: '2026-10-03', unlisted: false, label: null },
     ]);
   });
 
@@ -220,7 +220,7 @@ describe('an institution that stops answering', () => {
       ]);
       // The last day, which the readout opens on, is never complete.
       expect(body.days.at(-1).missing).toEqual(['k401']);
-      expect(body.accounts.find((a: any) => a.account_id === 'k401')).toEqual({ account_id: 'k401', shown: true, first: '2026-10-01', last: '2026-10-02', label: null });
+      expect(body.accounts.find((a: any) => a.account_id === 'k401')).toEqual({ account_id: 'k401', shown: true, first: '2026-10-01', last: '2026-10-02', unlisted: false, label: null });
     });
   }
 
@@ -274,7 +274,7 @@ describe('an institution that stops answering', () => {
       // Gone after its last day: not missing.
       ['2026-10-06', { bonds: 100_000 }, [], 0],
     ]);
-    expect(body.accounts.find((a: any) => a.account_id === 'old')).toEqual({ account_id: 'old', shown: false, first: '2026-10-01', last: '2026-10-03', label: 'Rollover IRA at Schwab' });
+    expect(body.accounts.find((a: any) => a.account_id === 'old')).toEqual({ account_id: 'old', shown: false, first: '2026-10-01', last: '2026-10-03', unlisted: false, label: 'Rollover IRA at Schwab' });
   });
 });
 
@@ -286,6 +286,10 @@ describe('each day counted by today’s rules', () => {
     const plain = await ask({ from: '2026-10-01', to: '2026-10-01', currency: 'USD', accounts: list });
     // As the current view: "Unclassified 67%", not "100% US stocks".
     expect(plain.body.days[0]).toMatchObject({ classes: { 'us-stocks': 100_000, unclassified: 200_000 }, total: 300_000, unlisted: 200_000, missing: [] });
+    expect(plain.body.accounts.map((a: any) => [a.account_id, a.unlisted])).toEqual([
+      ['brk', false],
+      ['manual_401k', true],
+    ]);
     await allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [], accounts: [{ account_id: 'manual_401k', split: { 'us-stocks': 50, bonds: 50 } }], target: null });
     const split = await ask({ from: '2026-10-01', to: '2026-10-01', currency: 'USD', accounts: list });
     expect(split.body.days[0]).toMatchObject({ classes: { 'us-stocks': 200_000, bonds: 100_000 }, unlisted: 0 });

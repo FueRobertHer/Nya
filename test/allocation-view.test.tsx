@@ -388,7 +388,14 @@ describe('the mix over time', () => {
     ['b', 'IRA at Fidelity'],
     ['k', '401(k) at Fidelity'],
   ]);
-  const span = (account_id: string, first: string | null, last: string | null, shown = true, label: string | null = null): HistoryAccount => ({ account_id, shown, first, last, label });
+  const span = (account_id: string, first: string | null, last: string | null, shown = true, label: string | null = null, unlisted = false): HistoryAccount => ({
+    account_id,
+    shown,
+    first,
+    last,
+    label,
+    unlisted,
+  });
   const answer = (days: SeriesDay[], over: Partial<HistoryAnswer> = {}): HistoryAnswer => ({
     currency: 'USD',
     first_recorded: days[0]?.date ?? null,
@@ -449,8 +456,12 @@ describe('the mix over time', () => {
       day('2026-10-02', { 'us-stocks': 100 }, { missing: ['gone'] }),
       day('2026-10-03', { 'us-stocks': 100 }),
     ];
-    const t = text(body(days, { accounts: [span('gone', '2026-10-01', '2026-10-03', false, 'Rollover IRA at Schwab')], unreadable_days: ['2026-09-30'] }));
-    expect(t).toContain("Unclassified includes money no position explains: an account tracked by hand, a balance beyond its positions, or an account whose positions didn't come that day.");
+    const t = text(body(days, { accounts: [span('gone', '2026-10-01', '2026-10-03', false, 'Rollover IRA at Schwab'), span('b', '2026-10-01', '2026-10-03', true, null, true)], unreadable_days: ['2026-09-30'] }));
+    expect(t).toContain(
+      "Unclassified includes money no position explains, in IRA at Fidelity: an account kept by hand, a balance beyond its positions, or a day an account's positions didn't come."
+    );
+    // The day's own figure says how much of it no position explains.
+    expect(t).toContain('Oct 1, 2026 67% US stocks, 33% unclassified $50 of it in no position $150');
     expect(t).toContain("Rollover IRA at Schwab isn't linked now, so on the days it was recorded it is counted from its positions alone.");
     expect(t).toContain('Leaves out Rollover IRA at Schwab (not recorded that day)');
     expect(t).toContain("Positions with no currency in an account that isn't linked now are left out: its currency isn't known.");

@@ -422,7 +422,7 @@ describe('allocation over time', () => {
     const s = allocationSeries([day('2026-10-03', { a: [pos('VTI', 110)] }), day('2026-10-01', { a: [pos('VTI', 100), pos('BND', 50)] })], input({ shown: shown('a') }));
     expect(s.days.map((d) => d.date)).toEqual(['2026-10-01', '2026-10-03']);
     expect(s.days[0]).toEqual({ date: '2026-10-01', classes: { 'us-stocks': 100, bonds: 50 }, total: 150, unlisted: 0, missing: [], otherCurrencies: {}, noCurrency: 0, unpriced: 0 });
-    expect(s.accounts).toEqual([{ account_id: 'a', shown: true, first: '2026-10-01', last: '2026-10-03' }]);
+    expect(s.accounts).toEqual([{ account_id: 'a', shown: true, first: '2026-10-01', last: '2026-10-03', unlisted: false }]);
     // Nothing recorded is no point at all.
     expect(allocationSeries([], input()).days).toEqual([]);
   });
@@ -451,7 +451,7 @@ describe('allocation over time', () => {
       ['2026-10-05', ['b']],
       ['2026-10-08', ['b']],
     ]);
-    expect(s.accounts.find((a) => a.account_id === 'b')).toEqual({ account_id: 'b', shown: true, first: '2026-10-01', last: '2026-10-02' });
+    expect(s.accounts.find((a) => a.account_id === 'b')).toEqual({ account_id: 'b', shown: true, first: '2026-10-01', last: '2026-10-02', unlisted: false });
   });
 
   test('before it was first recorded, only once the directory knew it, or the index has it from before the range', () => {
@@ -472,6 +472,11 @@ describe('allocation over time', () => {
   test('a balance alone is a record: the account counts by it, and isn’t missing', () => {
     const s = allocationSeries([day('2026-10-01', { a: [pos('VTI', 100)] }, { a: 100, m: 50 }), day('2026-10-02', { a: [pos('VTI', 100)] }, { a: 100 })], input({ shown: [...shown('a'), { account_id: 'm', currency: 'USD', manual: true }] }));
     expect(s.days[0]).toMatchObject({ classes: { 'us-stocks': 100, unclassified: 50 }, unlisted: 50, missing: [] });
+    // Named as an account whose unlisted money was counted as unclassified.
+    expect(s.accounts.map((a) => [a.account_id, a.unlisted])).toEqual([
+      ['a', false],
+      ['m', true],
+    ]);
     // Not recorded on the 2nd, after it was on the 1st.
     expect(s.days[1].missing).toEqual(['m']);
   });
@@ -496,8 +501,8 @@ describe('allocation over time', () => {
       ['2026-10-04', { 'us-stocks': 1 }, [], 0],
     ]);
     expect(s.accounts).toEqual([
-      { account_id: 'a', shown: true, first: '2026-10-01', last: '2026-10-04' },
-      { account_id: 'gone', shown: false, first: '2026-10-01', last: '2026-10-03' },
+      { account_id: 'a', shown: true, first: '2026-10-01', last: '2026-10-04', unlisted: false },
+      { account_id: 'gone', shown: false, first: '2026-10-01', last: '2026-10-03', unlisted: false },
     ]);
   });
 

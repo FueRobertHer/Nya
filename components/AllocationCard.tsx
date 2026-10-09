@@ -1153,7 +1153,9 @@ export function HistoryBody({ state, accountNames, onRetry }: { state: HistorySt
         } counted from ${gone.length === 1 ? 'its' : 'their'} positions alone.`;
   const other = [...new Set(days.flatMap((d) => Object.keys(d.otherCurrencies)))].sort();
   const noCurrency = days.some((d) => isMoney(d.noCurrency));
-  const unlisted = days.some((d) => isMoney(d.unlisted));
+  // The accounts whose money no position explained was counted as
+  // unclassified, named as the allocation above names today's.
+  const unlistedIn = answer.accounts.filter((a) => a.unlisted).map((a) => nameOf(a.account_id));
   const shownFrom = days[0].date > answer.first_recorded ? days[0].date : null;
   return (
     <>
@@ -1165,10 +1167,10 @@ export function HistoryBody({ state, accountNames, onRetry }: { state: HistorySt
       <AllocationHistoryChart days={days} currency={answer.currency} answer={answer} nameOf={nameOf} />
       {behindNote && <div className="as-of stale">{behindNote}</div>}
       {markedNote && <div className="as-of stale">{markedNote}</div>}
-      {unlisted && (
+      {unlistedIn.length > 0 && (
         <p className="panel-note">
-          Unclassified includes money no position explains: an account tracked by hand, a balance beyond its positions, or an account whose positions didn&apos;t
-          come that day. The allocation above names today&apos;s.
+          Unclassified includes money no position explains, in {names(unlistedIn)}: an account kept by hand, a balance beyond its positions, or a day an
+          account&apos;s positions didn&apos;t come.
         </p>
       )}
       {goneNote && <p className="panel-note">{goneNote}</p>}
@@ -1267,6 +1269,7 @@ export function AllocationHistoryChart({
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
           {dayName(day.date)} · {wholeMoney(day.total, currency)} counted
+          {isMoney(day.unlisted) ? `, ${wholeMoney(day.unlisted, currency)} of it in no position` : ''}
           {day.missing.length ? ` · leaves out ${missingOn(day, answer, nameOf)}` : ''}
         </span>
       </div>
@@ -1348,6 +1351,7 @@ export function AllocationHistoryChart({
                 <td>{dayName(d.date)}</td>
                 <td>
                   {dayMixText(d)}
+                  {isMoney(d.unlisted) && <div className="alloc-sub">{wholeMoney(d.unlisted, currency)} of it in no position</div>}
                   {d.missing.length > 0 && <div className="alloc-sub">Leaves out {missingOn(d, answer, nameOf)}</div>}
                 </td>
                 <td className="num">{compactMoney(d.total, currency)}</td>
