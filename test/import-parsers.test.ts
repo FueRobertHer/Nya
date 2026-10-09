@@ -1082,3 +1082,22 @@ describe('a FITID is not trusted blindly', () => {
     expect(countOutcomes(matchRows([...again, ...posted], [corrected]))).toEqual({ new: 1, present: 1, repeated: 0, conflict: 0 });
   });
 });
+
+describe('reading a CSV file again as its mapping changes', () => {
+  test('from the table already read, only the first rows’ records, with the dates’ order found from every row', () => {
+    // Twenty rows whose dates fit both orders, then one that fits only day first.
+    const lines = Array.from({ length: 20 }, (_, i) => `0${(i % 9) + 1}/02/2026,Row ${i},-1.00`);
+    const text = ['Date,Description,Amount', ...lines, '13/02/2026,Late,-2.00'].join('\n');
+    const table = readCsvTable(text);
+    if ('error' in table) throw new Error(table.error);
+    const options = { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' as const } };
+    const head = readImport(text, { format: 'csv', options, thisYear: YEAR, table, limit: 5 });
+    if (head.status !== 'ready') throw new Error(head.status);
+    expect(head.records).toHaveLength(5);
+    expect(head.read).toMatchObject({ date_order: 'dmy', order_open: false });
+    expect(head.records[0].date).toBe('2026-02-01');
+    // Read in full from the same table, the same answer for every row.
+    const all = readImport(text, { format: 'csv', options, thisYear: YEAR, table });
+    expect(all.status === 'ready' ? all.records.length : all.status).toBe(21);
+  });
+});

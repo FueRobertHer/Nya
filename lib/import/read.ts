@@ -163,6 +163,18 @@ function summary(table: CsvTable): CsvSummary {
   };
 }
 
+/** What a table's columns say about how their dates and amounts are written,
+ *  worked out once per table and column: the sheet reads a file again on
+ *  every tap of its mapping step, always from the same table, and a column
+ *  of 10,000 dates takes longer to scan than the rest of a tap. */
+const columnCache = new WeakMap<CsvTable, Map<string, unknown>>();
+function cached<T>(table: CsvTable, key: string, make: () => T): T {
+  let found = columnCache.get(table);
+  if (!found) columnCache.set(table, (found = new Map()));
+  if (!found.has(key)) found.set(key, make());
+  return found.get(key) as T;
+}
+
 /** The order to read numeric dates in (see the header): the file's own when
  *  its dates settle it, else the person's, or a question when they gave none. */
 function orderOf(detection: DateDetection, chosen: DateOrder | undefined): { open: boolean; order: DateOrder | null; ask: boolean } {
@@ -244,18 +256,19 @@ export function readImport(
   const table = opts.table ?? readCsvTable(text, { delimiter: o.csv?.delimiter, header_line: o.csv?.header_line });
   if ('error' in table) return { status: 'error', format, error: table.error };
   if (table.too_many) return tooMany(format);
-  const sample = summary(table);
+  const sample = cached(table, 'summary', () => summary(table));
   if (!o.csv) return { status: 'mapping', format, table: sample, guess: guessColumns(table.header), problem: null };
   const problem = columnsProblem(o.csv.columns, table.header);
   if (problem) return { status: 'mapping', format, table: sample, guess: guessColumns(table.header), problem };
   const { columns } = o.csv;
-  const dates = columnValues(table, columns.date);
-  const detection = detectDateOrder(dates, opts.thisYear);
+  const dates = cached(table, `dates ${columns.date}`, () => columnValues(table, columns.date));
+  const detection = cached(table, `order ${columns.date} ${opts.thisYear}`, () => detectDateOrder(dates, opts.thisYear));
   const order = orderOf(detection, o.date_order);
   if (order.ask) return { status: 'date_order', format, detection, examples: dates.slice(0, 3).map((d) => shown(d, 40)), table: sample };
-  const amounts = [columns.amount, columns.debit, columns.credit].flatMap((at) => columnValues(table, at));
+  const amountColumns = [columns.amount, columns.debit, columns.credit];
   // Semicolons separate fields where commas mark decimals.
-  const decimal = o.decimal ?? detectDecimalMark(amounts) ?? (table.delimiter === ';' ? ',' : '.');
+  const found = cached(table, `decimal ${amountColumns.join(' ')}`, () => detectDecimalMark(amountColumns.flatMap((at) => columnValues(table, at))));
+  const decimal = o.decimal ?? found ?? (table.delimiter === ';' ? ',' : '.');
   const date_order = order.order;
   const rows = opts.limit === undefined ? table : { ...table, rows: table.rows.slice(0, opts.limit) };
   const read = csvRecords(rows, { columns, sign: o.csv.sign, decimal, date_order }, opts.thisYear);
@@ -273,7 +286,7 @@ export function readImport(
       date_order,
       dates_ordered: detection.ambiguous || detection.mixed || detection.order !== null,
       order_open: order.open,
-      date_style: dateStyle(dates, date_order, opts.thisYear),
+      date_style: cached(table, `style ${columns.date} ${date_order} ${opts.thisYear}`, () => dateStyle(dates, date_order, opts.thisYear)),
       decimal,
       reversed_hint: false,
       table: sample,

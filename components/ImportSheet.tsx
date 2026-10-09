@@ -15,14 +15,23 @@
 //   3. The preview, from the server against the account's own rows: how many
 //      are new, already there or listed twice, the lines that can't be read
 //      and why, the first rows as they will be read, the dates covered and
-//      the currency, and for an OFX statement its balance, offered only when
-//      it is today's or yesterday's. Then an explicit Import.
+//      the currency (changeable for a file that doesn't say one), the order
+//      of the dates when the file leaves it open, and for an OFX statement its
+//      balance, offered only when it is today's or yesterday's. Rows whose
+//      bank id (FITID) is on another transaction already here are listed with
+//      both versions and a choice for each: import as new, replace the stored
+//      one, or skip (lib/import/match.ts). Then an explicit Import.
 //
 // Nothing is stored until Import. The file is sent for the preview and again
 // for the import, and read again each time, so what is imported is what the
 // server reads, matched against the account as it is at that moment.
+//
+// A LARGE CSV FILE stays quick to map: the file is split into its table once
+// for a separator and header line, each tap reads only the first rows for
+// the list it shows, and the count of rows read is worked out a moment after
+// the taps stop, never once per tap.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import type { SheetInstitution } from './ManualTxnSheet';
 import { formatMoney, signedMoney } from '@/lib/format';
@@ -35,7 +44,7 @@ import { readImport, type CsvSummary, type ImportOptions, type ReadResult, type 
 import { normalizeRecords } from '@/lib/import/normalize';
 import { DATE_ORDER_NAMES, DATE_STYLE_NAMES, type DateOrder, type DateStyle } from '@/lib/import/dates';
 import { DECIMAL_NAMES, type DecimalMark } from '@/lib/import/amounts';
-import { columnsFromNames, DELIMITER_NAMES, DELIMITERS, guessColumns, readCsvTable, splitCsv, type CsvColumns, type CsvSign, type Delimiter } from '@/lib/import/csv';
+import { columnsFromNames, DELIMITER_NAMES, DELIMITERS, guessColumns, readCsvTable, splitCsv, type CsvColumns, type CsvSign, type CsvTable, type Delimiter } from '@/lib/import/csv';
 
 /** What the sheet is open on: an account (from its row), or none yet. */
 export type ImportTarget = { account_id: string | null };
@@ -47,39 +56,89 @@ export type ImportSummary = {
   format: FileFormat | null;
   file_name: string | null;
   imported_at: string | null;
-  counts: { imported: number; present: number; repeated: number; unreadable: number } | null;
+  counts: { imported: number; present: number; repeated: number; unreadable: number; replaced?: number; skipped?: number } | null;
   first_date: string | null;
   last_date: string | null;
   currency: string | null;
   statement: string | null;
   balance_update: { from: number; to: number; as_of: string } | null;
+  /** Rows kept for it when an earlier import was undone. */
+  taken_over?: number;
   rows_now: number | null;
   edited_now: number | null;
   moved_now: number | null;
 };
 
+/** What undoing an import would do (app/api/import ?undo=, lib/import/commit.ts undoPlan). */
+export type UndoPlan = {
+  record: 'ok' | 'unreadable';
+  remove: number;
+  edited: number;
+  moved: number;
+  kept: { import_id: string; file_name: string | null; imported_at: string; count: number }[];
+  restore: number;
+  incomplete: boolean;
+};
+
 /** How the account's last file was read (lib/import/store.ts ImportSettings). */
 type Settings = {
   csv?: { columns: Record<string, string>; sign: CsvSign; decimal: DecimalMark | null; date_order: DateOrder | null; delimiter: string; currency: string } | null;
-  ofx?: { flip: boolean } | null;
+  ofx?: { flip: boolean; currency?: string } | null;
   qif?: { date_order: DateOrder | null; decimal: DecimalMark | null; flip: boolean; currency: string } | null;
 };
 
-type Outcome = 'new' | 'present' | 'repeated';
+type Outcome = 'new' | 'present' | 'repeated' | 'replace' | 'skip' | 'conflict';
+
+/** What to do with a row whose bank id is on another transaction here. */
+export type ConflictChoice = 'new' | 'replace' | 'skip';
+/** The person's choices: for every conflict, and for each by its index. */
+export type Choices = { all?: ConflictChoice; each: Record<string, ConflictChoice> };
+const NO_CHOICES: Choices = { each: {} };
+
+/** A row whose bank id is on another transaction here (lib/import/commit.ts ImportConflict). */
+export type Conflict = {
+  index: number;
+  line: number | null;
+  row_id: string;
+  differs: { name: boolean; amount: boolean; date: boolean };
+  suggested: 'new' | null;
+  /** What the preview applied: the choice sent, else the suggestion. */
+  choice: ConflictChoice | null;
+  file: { date: string; name: string; amount: number; currency: string };
+  stored: { date: string; name: string; amount: number; currency: string };
+};
+
+type Counts = { new: number; present: number; repeated: number; replaced: number; skipped: number; conflicts: number; unreadable: number };
 
 /** The server's preview (app/api/import previewOf). */
 export type Preview = {
   format: FileFormat;
   encoding: string;
   statement: StatementInfo | null;
-  read: { date_order: DateOrder | null; dates_ordered: boolean; date_style?: DateStyle | null; decimal: DecimalMark | null; delimiter?: Delimiter; header_line?: number; skipped?: number };
-  counts: { new: number; present: number; repeated: number; unreadable: number };
+  read: {
+    date_order: DateOrder | null;
+    dates_ordered: boolean;
+    order_open?: boolean;
+    date_style?: DateStyle | null;
+    decimal: DecimalMark | null;
+    delimiter?: Delimiter;
+    header_line?: number;
+    skipped?: number;
+  };
+  counts: Counts;
   rows: { line: number | null; date: string; name: string; amount: number; currency: string; category: string | null; note: string | null; outcome: Outcome }[];
   problems: { line: number; reason: string }[];
   more_problems: number;
+  conflicts: Conflict[];
+  more_conflicts: number;
+  shared_ids: { line: number | null; with_line: number | null }[];
+  more_shared_ids: number;
+  kinds: { transfers: number; atm: number; payments: number; fees: number };
   first_date: string | null;
   last_date: string | null;
   currency: string | null;
+  /** Where the currency came from: the file, the person, or the default. */
+  currency_from: 'file' | 'chosen' | 'default';
   other_currencies: { currency: string; count: number }[];
   totals: { out: number; in: number };
   shortened: number;
@@ -88,7 +147,17 @@ export type Preview = {
   balance: { amount: number; as_of: string | null; from: number; refusal: string | null } | null;
 };
 
-type Done = { imported: number; present: number; repeated: number; unreadable: number; balance_updated: boolean; balance?: number; balance_error?: string };
+type Done = {
+  imported: number;
+  present: number;
+  repeated: number;
+  unreadable: number;
+  replaced?: number;
+  skipped?: number;
+  balance_updated: boolean;
+  balance?: number;
+  balance_error?: string;
+};
 
 export type Picked = { name: string; blob: Blob; text: string; encoding: string; format: FileFormat };
 type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'preview' | 'done';
@@ -102,7 +171,54 @@ const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fm
 /** As the Activity tab shows an amount: money in signed plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 
-const OUTCOME_TEXT: Record<Outcome, string> = { new: 'new', present: 'already there', repeated: 'listed twice in the file' };
+const OUTCOME_TEXT: Record<Outcome, string> = {
+  new: 'new',
+  present: 'already there',
+  repeated: 'listed twice in the file',
+  replace: 'replaces the one already there',
+  skip: 'skipped',
+  conflict: 'its bank id is on another transaction here',
+};
+
+/** The choice that applies to a conflict, as the server works it out
+ *  (lib/import/commit.ts choiceFor). */
+const choiceOf = (choices: Choices, c: Pick<Conflict, 'index' | 'suggested'>): ConflictChoice | null => choices.each[String(c.index)] ?? choices.all ?? c.suggested;
+
+/** The choices as a request carries them. */
+const wire = (choices: Choices) => ({ ...(choices.all ? { all: choices.all } : {}), ...(Object.keys(choices.each).length > 0 ? { each: choices.each } : {}) });
+
+const BUCKET: Record<ConflictChoice, keyof Counts> = { new: 'new', replace: 'replaced', skip: 'skipped' };
+
+/** The preview's counts with the choices made since it was asked for: the
+ *  listed conflicts moved from what the preview applied to what applies now.
+ *  A choice for every conflict asks for the preview again, so the unlisted
+ *  ones are always counted by the server. */
+export function countsWith(p: Pick<Preview, 'counts' | 'conflicts'>, choices: Choices): Counts {
+  const counts = { ...p.counts };
+  for (const c of p.conflicts) {
+    const now = choiceOf(choices, c);
+    if (now === c.choice) continue;
+    counts[c.choice ? BUCKET[c.choice] : 'conflicts']--;
+    counts[now ? BUCKET[now] : 'conflicts']++;
+  }
+  return counts;
+}
+
+/** What the file marked its rows as, in a sentence, or null. */
+export function kindsText(k: Preview['kinds']): string | null {
+  const moved = [
+    k.transfers > 0 ? plural(k.transfers, 'transfer') : null,
+    k.atm > 0 ? plural(k.atm, 'ATM withdrawal') : null,
+    k.payments > 0 ? plural(k.payments, 'card or loan payment') : null,
+  ].filter((x): x is string => !!x);
+  const parts: string[] = [];
+  if (moved.length > 0) {
+    const list = moved.length === 1 ? moved[0] : `${moved.slice(0, -1).join(', ')} and ${moved[moved.length - 1]}`;
+    parts.push(`The file marks ${list}: like a linked bank’s, they count as neither spending nor income.`);
+  }
+  if (k.fees > 0) parts.push(`${plural(k.fees, 'bank fee')} ${k.fees === 1 ? 'counts' : 'count'} as spending.`);
+  return parts.length > 0 ? parts.join(' ') : null;
+}
 
 /** A first mapping for a header: the columns its names make plain
  *  (guessColumns), and for the date, the description and the amount, which
@@ -148,6 +264,13 @@ function balanceRefusal(why: string, account: string): string {
   }
 }
 
+/** Rows read for the mapping step's list as each answer changes: the list
+ *  shows five, so a few more than that. */
+const LIVE_ROWS = 20;
+/** How long the mapping step waits after the last tap before counting every
+ *  row, so a run of taps reads the file once. */
+const COUNT_AFTER_MS = 300;
+
 async function postForm(meta: Record<string, unknown>, file: Picked): Promise<{ res: Response; data: any }> {
   const form = new FormData();
   form.set('file', file.blob, file.name);
@@ -192,7 +315,12 @@ export default function ImportSheet({
   const [setBalance, setSetBalance] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [undoing, setUndoing] = useState<ImportSummary | null>(null);
+  const [undoPlan, setUndoPlan] = useState<{ plan: UndoPlan | null; error: string } | null>(null);
   const [notice, setNotice] = useState('');
+  // The choices for conflicts made in the preview, and those the preview on
+  // screen was asked with (countsWith works out the difference).
+  const [choices, setChoices] = useState<Choices>(NO_CHOICES);
+  const [sentChoices, setSentChoices] = useState<Choices>(NO_CHOICES);
 
   const account = accounts.find((a) => a.account_id === accountId) ?? null;
   const thisYear = new Date().getFullYear();
@@ -231,26 +359,41 @@ export default function ImportSheet({
     setSetBalance(false);
     setAcknowledged(false);
     setUndoing(null);
+    setUndoPlan(null);
     setNotice('');
     setPast(null);
+    setChoices(NO_CHOICES);
+    setSentChoices(NO_CHOICES);
     const start = target.account_id ?? accounts[0]?.account_id ?? '';
     setAccountId(start);
     void loadPast(start);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
 
-  /** The file read with these answers, in the browser. */
-  const read = useMemo<ReadResult | null>(() => (file ? readImport(file.text, { format: file.format, options, thisYear }) : null), [file, options, thisYear]);
+  /** A CSV file as a table, split once for each separator and header line:
+   *  the costly part of reading it, which a tap on a column doesn't change. */
+  const csvTable = useMemo<CsvTable | { error: string } | null>(
+    () => (file?.format === 'csv' ? readCsvTable(file.text, { delimiter: options.csv?.delimiter, header_line: options.csv?.header_line }) : null),
+    [file, options.csv?.delimiter, options.csv?.header_line]
+  );
+  /** The file read with these answers, in the browser: for a CSV file, only
+   *  its first rows (CsvMapping counts the rest). */
+  const read = useMemo<ReadResult | null>(
+    () => (file ? readImport(file.text, { format: file.format, options, thisYear, ...(csvTable ? { table: csvTable, limit: LIVE_ROWS } : {}) }) : null),
+    [file, options, thisYear, csvTable]
+  );
 
-  /** Asks the server for the preview, with these answers. */
-  async function requestPreview(next: ImportOptions, picked: Picked | null = file) {
+  /** Asks the server for the preview, with these answers and choices. */
+  async function requestPreview(next: ImportOptions, picked: Picked | null = file, chosen: Choices = NO_CHOICES) {
     if (!picked || !account) return;
     setBusy(true);
     setError('');
     try {
-      const { res, data } = await postForm({ action: 'preview', account_id: account.account_id, options: next }, picked);
+      const { res, data } = await postForm({ action: 'preview', account_id: account.account_id, options: { ...next, conflicts: wire(chosen) } }, picked);
       if (res.ok && data?.preview) {
         setPreview(data.preview);
+        setChoices(chosen);
+        setSentChoices(chosen);
         setSetBalance(false);
         setAcknowledged(false);
         setStep('preview');
@@ -311,7 +454,9 @@ export default function ImportSheet({
       const s = past?.settings ?? null;
       let next: ImportOptions = {};
       let remembered = false;
-      if (picked.format === 'ofx' && s?.ofx?.flip) next = { flip: true };
+      // An OFX statement's own currency wins on the server; the remembered one
+      // is for a file that doesn't say.
+      if (picked.format === 'ofx' && s?.ofx) next = { ...(s.ofx.flip ? { flip: true } : {}), ...(s.ofx.currency ? { currency: s.ofx.currency } : {}) };
       if (picked.format === 'qif' && s?.qif) {
         next = { flip: s.qif.flip || undefined, currency: s.qif.currency, ...(s.qif.date_order ? { date_order: s.qif.date_order } : {}), ...(s.qif.decimal ? { decimal: s.qif.decimal } : {}) };
       }
@@ -347,7 +492,7 @@ export default function ImportSheet({
         {
           action: 'import',
           account_id: account.account_id,
-          options,
+          options: { ...options, conflicts: wire(choices) },
           acknowledge_account: acknowledged,
           ...(setBalance && b && !b.refusal ? { balance: { from: b.from, to: b.amount } } : {}),
         },
@@ -360,12 +505,32 @@ export default function ImportSheet({
         void loadPast(account.account_id);
         return;
       }
+      if (res.status === 409 && data?.needs === 'conflicts') {
+        // The account changed since the preview: show it as it is now.
+        await requestPreview(options, file, choices);
+        setError(data.error);
+        return;
+      }
       setError(data?.error ?? 'The file couldn’t be imported. Please try again.');
     } catch {
       setError('Could not reach the server, so it may not have been imported. Check the list of imports before trying again.');
       void loadPast(account.account_id);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Asks what undoing an import would do, for its confirmation. */
+  async function askUndo(item: ImportSummary) {
+    if (!account) return;
+    setUndoing(item);
+    setUndoPlan(null);
+    try {
+      const res = await fetch(`/api/import?account_id=${encodeURIComponent(account.account_id)}&undo=${encodeURIComponent(item.id)}`);
+      const data = await res.json().catch(() => null);
+      setUndoPlan(res.ok && data?.undo ? { plan: data.undo, error: '' } : { plan: null, error: data?.error ?? 'What undoing it would do couldn’t be worked out. Please try again.' });
+    } catch {
+      setUndoPlan({ plan: null, error: 'Could not reach the server.' });
     }
   }
 
@@ -381,8 +546,12 @@ export default function ImportSheet({
       });
       const data = await res.json().catch(() => null);
       if (res.ok) {
-        setNotice(`Undone: ${plural(data?.removed ?? 0, 'transaction')} removed.`);
+        const parts = [`${plural(data?.removed ?? 0, 'transaction')} removed`];
+        if (data?.kept > 0) parts.push(`${data.kept.toLocaleString()} kept for a later import`);
+        if (data?.restored > 0) parts.push(`${data.restored.toLocaleString()} put back as ${data.restored === 1 ? 'it was' : 'they were'}`);
+        setNotice(`Undone: ${parts.join(', ')}.`);
         setUndoing(null);
+        setUndoPlan(null);
         onImported({ balanceChanged: false });
       } else setError(data?.error ?? 'The import couldn’t be undone. Please try again.');
     } catch {
@@ -400,7 +569,16 @@ export default function ImportSheet({
     setPreview(null);
     setDone(null);
     setError('');
+    setChoices(NO_CHOICES);
+    setSentChoices(NO_CHOICES);
     setStep('pick');
+  }
+
+  /** Reads the file again with other answers: the preview's conflicts may
+   *  change with them, so their choices start over. */
+  function reread(next: ImportOptions) {
+    setOptions(next);
+    void requestPreview(next);
   }
 
   if (!shown) return null;
@@ -461,8 +639,12 @@ export default function ImportSheet({
             account={name}
             busy={busy}
             undoing={undoing}
-            onUndo={(i) => setUndoing(i)}
-            onKeep={() => setUndoing(null)}
+            plan={undoPlan}
+            onUndo={(i) => void askUndo(i)}
+            onKeep={() => {
+              setUndoing(null);
+              setUndoPlan(null);
+            }}
             onConfirm={(i) => void undo(i)}
           />
         </>
@@ -508,6 +690,7 @@ export default function ImportSheet({
         <CsvMapping
           file={file}
           read={read}
+          table={csvTable}
           options={options}
           setOptions={setOptions}
           account={name}
@@ -529,11 +712,13 @@ export default function ImportSheet({
           onSetBalance={setSetBalance}
           acknowledged={acknowledged}
           onAcknowledge={setAcknowledged}
-          onFlip={(flip) => {
-            const next = { ...options, flip: flip || undefined };
-            setOptions(next);
-            void requestPreview(next);
-          }}
+          choices={choices}
+          sentChoices={sentChoices}
+          onChoose={(index, choice) => setChoices({ ...choices, each: { ...choices.each, [String(index)]: choice } })}
+          onChooseAll={(choice) => void requestPreview(options, file, { all: choice, each: {} })}
+          onFlip={(flip) => reread({ ...options, flip: flip || undefined })}
+          onCurrency={(currency) => reread({ ...options, currency })}
+          onDateOrder={(date_order) => reread({ ...options, date_order })}
           onImport={() => void importNow()}
           onBack={() => (file.format === 'csv' ? setStep('mapping') : chooseAgain())}
         />
@@ -542,11 +727,17 @@ export default function ImportSheet({
       {step === 'done' && done && (
         <>
           <p className="import-headline">
-            {done.imported > 0 ? `${plural(done.imported, 'transaction')} imported into ${name}` : `Nothing new: everything in this file is already in ${name}`}
+            {done.imported > 0
+              ? `${plural(done.imported, 'transaction')} imported into ${name}`
+              : done.replaced
+                ? `${plural(done.replaced, 'transaction')} in ${name} updated from this file`
+                : `Nothing new: everything in this file is already in ${name}`}
           </p>
           <p className="panel-note">
             {[
+              done.imported > 0 && done.replaced ? `${done.replaced.toLocaleString()} updated from the file` : null,
               done.present > 0 ? `${done.present.toLocaleString()} already there` : null,
+              done.skipped ? `${done.skipped.toLocaleString()} skipped` : null,
               done.repeated > 0 ? `${done.repeated.toLocaleString()} listed twice in the file` : null,
               done.unreadable > 0 ? `${plural(done.unreadable, 'line')} not read` : null,
             ]
@@ -559,8 +750,11 @@ export default function ImportSheet({
             </p>
           )}
           {done.balance_error && <div className="error">The rows were imported, but {done.balance_error}</div>}
-          {done.imported > 0 && (
-            <p className="panel-note">They show on the Activity tab and count like any transaction. If this was the wrong file, undo it below.</p>
+          {(done.imported > 0 || !!done.replaced) && (
+            <p className="panel-note">
+              They show on the Activity tab. A transfer, a card payment or cash taken out that the file marks as one counts as neither spending nor income, as a
+              linked bank’s does; every other row counts as spending or income until you give it a category. If this was the wrong file, undo it below.
+            </p>
           )}
           <PastImports
             past={past}
@@ -568,8 +762,12 @@ export default function ImportSheet({
             account={name}
             busy={busy}
             undoing={undoing}
-            onUndo={(i) => setUndoing(i)}
-            onKeep={() => setUndoing(null)}
+            plan={undoPlan}
+            onUndo={(i) => void askUndo(i)}
+            onKeep={() => {
+              setUndoing(null);
+              setUndoPlan(null);
+            }}
             onConfirm={(i) => void undo(i)}
           />
           {error && <div className="error">{error}</div>}
@@ -627,10 +825,14 @@ const ROLE_LABELS: Record<'date' | 'description' | 'amount' | 'debit' | 'credit'
 };
 
 /** The mapping step for a CSV file: which column is which, how its amounts
- *  and dates are written, and the first rows as they read with that. */
+ *  and dates are written, and the first rows as they read with that. `read`
+ *  holds only the first rows' records (the sheet reads no more per tap);
+ *  `table` is the whole file as a table, which every row is counted from a
+ *  moment after the taps stop. */
 export function CsvMapping({
   file,
   read,
+  table: fullTable = null,
   options,
   setOptions,
   account,
@@ -640,6 +842,7 @@ export function CsvMapping({
 }: {
   file: Picked;
   read: ReadResult | null;
+  table?: CsvTable | { error: string } | null;
   options: ImportOptions;
   setOptions: (o: ImportOptions) => void;
   account: string;
@@ -667,8 +870,27 @@ export function CsvMapping({
     set({ columns: next });
   };
   const today = localDate();
+  const thisYear = new Date().getFullYear();
   const currency = options.currency && isCurrencyCode(options.currency) ? options.currency : DEFAULT_CURRENCY;
   const live = useMemo(() => (read?.status === 'ready' ? normalizeRecords(read.records, { today, currency }) : null), [read, today, currency]);
+  // Every row counted once the taps stop: what the list's note says, and
+  // what a run of taps never waits for.
+  const countKey = JSON.stringify([options, currency, today]);
+  const [counted, setCounted] = useState<{ key: string; rows: number; unreadable: number } | null>(null);
+  const ready = read?.status === 'ready';
+  useEffect(() => {
+    if (!ready || !fullTable || 'error' in fullTable) return;
+    const timer = setTimeout(() => {
+      const all = readImport(file.text, { format: 'csv', options, thisYear, table: fullTable });
+      if (all.status !== 'ready') return;
+      const n = normalizeRecords(all.records, { today, currency });
+      setCounted({ key: countKey, rows: n.rows.length, unreadable: all.problems.length + n.problems.length });
+    }, COUNT_AFTER_MS);
+    return () => clearTimeout(timer);
+    // countKey stands for options, currency and today.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countKey, ready, fullTable, file.text, thisYear]);
+  const counts = counted?.key === countKey ? counted : null;
   // The first lines of the file, for choosing where the column names are.
   const lines = useMemo(() => splitCsv(file.text, table?.delimiter ?? ',', Math.max(12, (table?.skipped ?? 0) + 6)).rows, [file.text, table?.delimiter, table?.skipped]);
   if (!table) {
@@ -691,7 +913,8 @@ export function CsvMapping({
       </select>
     </label>
   );
-  const unreadable = read?.status === 'ready' ? read.problems.length + (live?.problems.length ?? 0) : 0;
+  const orderOpen = read?.status === 'date_order' || (read?.status === 'ready' && read.read.order_open);
+  const settled = read?.status === 'ready' && !read.read.order_open && read.read.date_order ? read.read.date_order : null;
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
@@ -798,7 +1021,12 @@ export function CsvMapping({
             );
           })}
         </div>
-        {(read?.status === 'date_order' || (read?.status === 'ready' && read.read.dates_ordered)) && <DateOrderQuestion read={read} options={options} onChange={setOptions} />}
+        {orderOpen && <DateOrderQuestion read={read} options={options} onChange={setOptions} />}
+        {settled && (
+          <p className="panel-note" style={{ marginTop: 0 }}>
+            Dates are read as {DATE_ORDER_NAMES[settled]}: some of this file’s dates only fit that order.
+          </p>
+        )}
         {read?.status === 'ready' && !read.read.dates_ordered && read.read.date_style && (
           <p className="panel-note" style={{ marginTop: 0 }}>
             Dates are read as {DATE_STYLE_NAMES[read.read.date_style]}.
@@ -814,7 +1042,7 @@ export function CsvMapping({
             How the first rows read
           </p>
           {live.rows.length === 0 ? (
-            <p className="empty-note">No row reads as a transaction with these columns.</p>
+            <p className="empty-note">None of the first rows reads as a transaction with these columns.</p>
           ) : (
             <ul className="import-rows">
               {live.rows.slice(0, 5).map((r) => (
@@ -833,9 +1061,11 @@ export function CsvMapping({
             </ul>
           )}
           <p className="panel-note">
-            {plural(live.rows.length, 'row')} read
-            {unreadable > 0 ? `, ${plural(unreadable, 'line')} can’t be (the next step lists them)` : ''}
-            {table.skipped > 0 ? `. ${plural(table.skipped, 'line')} above the column names skipped` : ''}.
+            {counts
+              ? `${plural(counts.rows, 'row')} read${counts.unreadable > 0 ? `, ${plural(counts.unreadable, 'line')} can’t be (the next step lists them)` : ''}`
+              : 'Counting the rows'}
+            {table.skipped > 0 ? `. ${plural(table.skipped, 'line')} above the column names skipped` : ''}
+            {counts || table.skipped > 0 ? '.' : '…'}
           </p>
         </>
       )}
@@ -861,7 +1091,13 @@ export function PreviewView({
   onSetBalance,
   acknowledged,
   onAcknowledge,
+  choices = NO_CHOICES,
+  sentChoices = NO_CHOICES,
+  onChoose = () => {},
+  onChooseAll = () => {},
   onFlip,
+  onCurrency = () => {},
+  onDateOrder = () => {},
   onImport,
   onBack,
 }: {
@@ -875,19 +1111,30 @@ export function PreviewView({
   onSetBalance: (v: boolean) => void;
   acknowledged: boolean;
   onAcknowledge: (v: boolean) => void;
+  /** The choices for conflicts made here, and those the preview was asked with. */
+  choices?: Choices;
+  sentChoices?: Choices;
+  onChoose?: (index: number, choice: ConflictChoice) => void;
+  onChooseAll?: (choice: ConflictChoice) => void;
   onFlip: (flip: boolean) => void;
+  onCurrency?: (currency: string) => void;
+  onDateOrder?: (order: DateOrder) => void;
   onImport: () => void;
   onBack: () => void;
 }) {
   const [allProblems, setAllProblems] = useState(false);
+  const [currencyText, setCurrencyText] = useState<string | null>(null);
   const name = account?.name ?? 'the account';
   const owed = account ? isOwedType(account.type) : false;
-  const c = p.counts;
+  // The preview was counted with the choices sent; the ones made since move
+  // the listed conflicts between the counts.
+  const c = sentChoices === choices ? p.counts : countsWith(p, choices);
   const range = fmtRange(p.first_date, p.last_date);
   const b = p.balance;
   const offered = !!b && !b.refusal;
   const blocked = !!p.account_mismatch && !acknowledged;
-  const canImport = c.new > 0 || (setBalance && offered);
+  const unanswered = c.conflicts;
+  const canImport = (c.new > 0 || c.replaced > 0 || (setBalance && offered)) && unanswered === 0;
   const shownProblems = allProblems ? p.problems : p.problems.slice(0, 5);
   const readAs = [
     FORMAT_NAMES[p.format],
@@ -896,14 +1143,31 @@ export function PreviewView({
     p.read.date_style ? `dates ${DATE_STYLE_NAMES[p.read.date_style]}` : null,
     p.read.decimal === ',' ? 'decimal comma' : null,
   ].filter(Boolean);
+  // A file that doesn't say its currency: what it is read in, and a way to
+  // change it (a CSV file's is chosen with its columns).
+  const currencyChoice = p.format !== 'csv' && p.currency_from !== 'file';
+  const kinds = kindsText(p.kinds);
+  const importLabel =
+    c.new > 0 && c.replaced > 0
+      ? `Import ${plural(c.new, 'transaction')}, update ${c.replaced.toLocaleString()}`
+      : c.new > 0
+        ? `Import ${plural(c.new, 'transaction')}`
+        : c.replaced > 0
+          ? `Update ${plural(c.replaced, 'transaction')}`
+          : setBalance && offered
+            ? 'Set the balance'
+            : 'Nothing to import';
   return (
     <>
       <p className="import-headline" style={{ marginTop: 0 }}>
-        {c.new > 0 ? `${plural(c.new, 'new transaction')}` : `Nothing new to import into ${name}`}
+        {c.new > 0 ? `${plural(c.new, 'new transaction')}` : c.replaced > 0 ? `${plural(c.replaced, 'transaction')} to update` : `Nothing new to import into ${name}`}
       </p>
       <p className="panel-note" style={{ marginTop: 4 }}>
         {[
+          c.new > 0 && c.replaced > 0 ? `${c.replaced.toLocaleString()} to update` : null,
           c.present > 0 ? `${c.present.toLocaleString()} already in ${name}` : null,
+          unanswered > 0 ? `${plural(unanswered, 'bank id')} to decide` : null,
+          c.skipped > 0 ? `${c.skipped.toLocaleString()} skipped` : null,
           c.repeated > 0 ? `${c.repeated.toLocaleString()} listed twice in the file` : null,
           c.unreadable > 0 ? `${plural(c.unreadable, 'line')} can’t be read` : null,
         ]
@@ -914,21 +1178,71 @@ export function PreviewView({
         {range ? `${range}` : 'No dates'}
         {p.currency ? ` · in ${p.currency}` : ''}
       </p>
-      {c.new > 0 && p.currency && (
+      {c.new > 0 && p.currency && sentChoices === choices && (
         <p className="panel-note" style={{ marginTop: 2 }}>
           New: {formatMoney(p.totals.out, p.currency)} out, {formatMoney(p.totals.in, p.currency)} in
         </p>
       )}
       <p className="panel-note">Read as {readAs.join(', ')}.</p>
+      {currencyChoice &&
+        (currencyText === null ? (
+          <p className="panel-note">
+            Amounts are read in {p.currency ?? DEFAULT_CURRENCY}
+            {p.currency_from === 'default' ? ': this file doesn’t say its currency' : ', as chosen for this account'}.{' '}
+            <button className="link-btn" disabled={busy} onClick={() => setCurrencyText(p.currency ?? DEFAULT_CURRENCY)}>
+              Change
+            </button>
+          </p>
+        ) : (
+          <div className="quick-add-pair import-currency">
+            <label className="field">
+              Currency of every row
+              <input
+                value={currencyText}
+                onChange={(e) => setCurrencyText(e.target.value.toUpperCase().slice(0, 3))}
+                maxLength={3}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={busy}
+              />
+            </label>
+            <button
+              className="secondary"
+              disabled={busy || !isCurrencyCode(currencyText)}
+              onClick={() => {
+                onCurrency(currencyText);
+                setCurrencyText(null);
+              }}
+            >
+              Use
+            </button>
+          </div>
+        ))}
+      {p.format === 'qif' && p.read.order_open && p.read.date_order && (
+        <DateOrderQuestion read={null} options={{ ...options, date_order: p.read.date_order }} onChange={(o) => o.date_order && onDateOrder(o.date_order)} />
+      )}
       {p.other_currencies.length > 0 && (
         <p className="panel-note">
           {p.other_currencies.map((o) => `${plural(o.count, 'row')} in ${o.currency}`).join(', ')}: shown in their own currency, never added into totals in{' '}
           {p.currency}.
         </p>
       )}
+      {kinds && <p className="panel-note">{kinds}</p>}
       {p.shortened > 0 && (
         <p className="panel-note">
           {plural(p.shortened, 'description')} longer than a transaction’s can be {p.shortened === 1 ? 'was' : 'were'} shortened; the full text is kept with the import.
+        </p>
+      )}
+      {p.shared_ids.length > 0 && (
+        <p className="panel-note">
+          {p.shared_ids
+            .slice(0, 3)
+            .map((s) => `line ${s.line ?? '?'} shares its bank id with line ${s.with_line ?? '?'}`)
+            .join('; ')
+            .replace(/^l/, 'L')}
+          {p.shared_ids.length + p.more_shared_ids > 3 ? `, and ${(p.shared_ids.length + p.more_shared_ids - 3).toLocaleString()} more` : ''}: they aren’t alike, so each is
+          imported as a transaction of its own.
         </p>
       )}
       {p.warnings.map((w) => (
@@ -954,6 +1268,10 @@ export function PreviewView({
         </label>
       )}
 
+      {p.conflicts.length > 0 && (
+        <ConflictList conflicts={p.conflicts} more={p.more_conflicts} choices={choices} account={name} busy={busy} onChoose={onChoose} onChooseAll={onChooseAll} />
+      )}
+
       <p className="section-label" style={{ marginTop: 16 }}>
         The first rows, as they will be read
       </p>
@@ -962,7 +1280,7 @@ export function PreviewView({
       ) : (
         <ul className="import-rows">
           {p.rows.map((r, i) => (
-            <li key={`${r.line}-${i}`} className={r.outcome === 'new' ? undefined : 'import-row-skipped'}>
+            <li key={`${r.line}-${i}`} className={r.outcome === 'new' || r.outcome === 'replace' ? undefined : 'import-row-skipped'}>
               <div className="import-row-text">
                 <div className="import-row-name">{r.name}</div>
                 <div className="import-row-meta">
@@ -1018,27 +1336,122 @@ export function PreviewView({
         {offered ? ' unless you tick the box' : ''}. You can undo an import from this sheet.
       </p>
 
+      {unanswered > 0 && <p className="stale-note">Choose what to do with {unanswered === 1 ? 'the transaction' : `the ${unanswered.toLocaleString()} transactions`} above whose bank id is already here, then import.</p>}
       {error && <div className="error">{error}</div>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onBack} disabled={busy}>
           {file.format === 'csv' ? 'Columns' : 'Another file'}
         </button>
         <button onClick={onImport} disabled={busy || !canImport || blocked}>
-          {busy ? 'Importing…' : c.new > 0 ? `Import ${plural(c.new, 'transaction')}` : setBalance && offered ? 'Set the balance' : 'Nothing to import'}
+          {busy ? 'Importing…' : importLabel}
         </button>
       </div>
     </>
   );
 }
 
+const CHOICE_LABELS: Record<ConflictChoice, string> = { new: 'Import as new', replace: 'Replace', skip: 'Skip' };
+
+/** What differs between a file's row and the stored one, in words. */
+function differsText(d: Conflict['differs']): string {
+  const list = [d.name ? 'payee' : null, d.amount ? 'amount' : null, d.date ? 'date' : null].filter((x): x is string => !!x);
+  if (list.length === 0) return 'nothing else differs';
+  return `the ${list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`} ${list.length === 1 ? 'differs' : 'differ'}`;
+}
+
+/** Rows whose bank id (FITID) is on another transaction here, each with both
+ *  versions and the person's choice (lib/import/match.ts). */
+export function ConflictList({
+  conflicts,
+  more,
+  choices,
+  account,
+  busy,
+  onChoose,
+  onChooseAll,
+}: {
+  conflicts: Conflict[];
+  more: number;
+  choices: Choices;
+  account: string;
+  busy: boolean;
+  onChoose: (index: number, choice: ConflictChoice) => void;
+  onChooseAll: (choice: ConflictChoice) => void;
+}) {
+  const total = conflicts.length + more;
+  return (
+    <>
+      <p className="section-label" style={{ marginTop: 16 }}>
+        Bank ids already used in {account}
+      </p>
+      <p className="panel-note" style={{ marginTop: 0 }}>
+        {total === 1 ? 'This row has' : `These ${total.toLocaleString()} rows have`} the bank’s id (FITID) of a transaction already in {account}, but{' '}
+        {total === 1 ? 'doesn’t' : 'don’t'} match it. Some banks number each download from 1 again, and some keep a pending charge’s id when it posts at another
+        amount. Import a row as a new transaction, replace the one already here with the file’s version, or skip it.
+      </p>
+      {total > 1 && (
+        <div className="import-choices" role="group" aria-label="For every row">
+          {(['new', 'replace', 'skip'] as ConflictChoice[]).map((choice) => (
+            <button key={choice} className="secondary" disabled={busy} aria-pressed={choices.all === choice && Object.keys(choices.each).length === 0} onClick={() => onChooseAll(choice)}>
+              {choice === 'new' ? 'All as new' : choice === 'replace' ? 'Replace all' : 'Skip all'}
+            </button>
+          ))}
+        </div>
+      )}
+      <ul className="import-rows import-conflicts">
+        {conflicts.map((c) => {
+          const chosen = choiceOf(choices, c);
+          return (
+            <li key={c.index}>
+              <div className="import-row-text">
+                <div className="import-row-meta">In the file{c.line ? ` (line ${c.line})` : ''}</div>
+                <div className="import-conflict-version">
+                  <span className="import-row-name">{c.file.name}</span>
+                  <span className={`import-row-amount${c.file.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(c.file.amount, c.file.currency)}</span>
+                </div>
+                <div className="import-row-meta">{fmtDay(c.file.date)}</div>
+                <div className="import-row-meta" style={{ marginTop: 6 }}>
+                  Already in {account}
+                </div>
+                <div className="import-conflict-version">
+                  <span className="import-row-name">{c.stored.name}</span>
+                  <span className={`import-row-amount${c.stored.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(c.stored.amount, c.stored.currency)}</span>
+                </div>
+                <div className="import-row-meta">
+                  {fmtDay(c.stored.date)} · {differsText(c.differs)}
+                  {chosen === null ? ' · choose one' : ''}
+                </div>
+                <div className="import-choices" role="group" aria-label={`What to do with ${c.file.name}`}>
+                  {(['new', 'replace', 'skip'] as ConflictChoice[]).map((choice) => (
+                    <button key={choice} className="secondary" disabled={busy} aria-pressed={chosen === choice} onClick={() => onChoose(c.index, choice)}>
+                      {CHOICE_LABELS[choice]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {more > 0 && (
+        <p className="panel-note">
+          {plural(more, 'more row')} like these {more === 1 ? 'isn’t' : 'aren’t'} listed, and {more === 1 ? 'follows' : 'follow'} the choice for every row above.
+        </p>
+      )}
+    </>
+  );
+}
+
 /** An account's past imports, newest first, each with Undo and its
- *  confirmation, which says what will go. */
+ *  confirmation, which says what will go, what stays and why (the server's
+ *  plan for it, asked for when Undo is tapped). */
 export function PastImports({
   past,
   error,
   account,
   busy,
   undoing,
+  plan = null,
   onUndo,
   onKeep,
   onConfirm,
@@ -1048,6 +1461,8 @@ export function PastImports({
   account: string;
   busy: boolean;
   undoing: ImportSummary | null;
+  /** What undoing `undoing` would do, once known, or why it isn't. */
+  plan?: { plan: UndoPlan | null; error: string } | null;
   onUndo: (i: ImportSummary) => void;
   onKeep: () => void;
   onConfirm: (i: ImportSummary) => void;
@@ -1064,6 +1479,7 @@ export function PastImports({
           const title = i.file_name ?? (i.format ? `${FORMAT_NAMES[i.format]} file` : 'An import');
           const range = fmtRange(i.first_date, i.last_date);
           const rows = i.rows_now;
+          const takenOver = i.taken_over ?? 0;
           const confirming = undoing?.id === i.id;
           return (
             <li key={i.id}>
@@ -1079,12 +1495,18 @@ export function PastImports({
                 {[
                   i.imported_at ? `Imported ${instantDay(i.imported_at) ?? i.imported_at.slice(0, 10)}` : null,
                   i.counts ? `${plural(i.counts.imported, 'transaction')} added` : null,
+                  i.counts?.replaced ? `${i.counts.replaced.toLocaleString()} updated` : null,
                   range,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
               </div>
-              {rows !== null && i.counts && rows !== i.counts.imported && (
+              {takenOver > 0 && (
+                <div className="import-row-meta">
+                  {plural(takenOver, 'transaction')} an earlier import added {takenOver === 1 ? 'is' : 'are'} kept for this one, since that one was undone.
+                </div>
+              )}
+              {rows !== null && i.counts && rows !== i.counts.imported + takenOver && (
                 <div className="import-row-meta">{rows === 0 ? 'None of them is left.' : `${rows.toLocaleString()} still stored.`}</div>
               )}
               {i.record === 'unreadable' && <div className="import-row-meta">Its record can’t be read; Undo still takes its transactions out.</div>}
@@ -1095,21 +1517,22 @@ export function PastImports({
               )}
               {confirming && (
                 <div className="import-confirm">
-                  <p className="panel-note" style={{ marginTop: 6 }}>
-                    {rows === null
-                      ? 'Remove every transaction this import added? Some accounts’ transactions can’t be read now, so how many isn’t known.'
-                      : rows === 0
-                        ? 'None of its transactions is left. Undo removes its record.'
-                        : `Remove the ${plural(rows, 'transaction')} this import added?`}
-                    {i.edited_now ? ` ${i.edited_now.toLocaleString()} of them ${i.edited_now === 1 ? 'was' : 'were'} changed since, and ${i.edited_now === 1 ? 'goes' : 'go'} too.` : ''}
-                    {i.moved_now ? ` ${i.moved_now.toLocaleString()} ${i.moved_now === 1 ? 'is' : 'are'} on another account now, and ${i.moved_now === 1 ? 'goes' : 'go'} too.` : ''}{' '}
-                    Any you excluded are forgotten with them. The balance stays as it is. This can’t be undone.
-                  </p>
+                  {!plan ? (
+                    <p className="panel-note" style={{ marginTop: 6 }}>
+                      Working out what undoing it would do…
+                    </p>
+                  ) : plan.error || !plan.plan ? (
+                    <div className="error">{plan.error}</div>
+                  ) : (
+                    <p className="panel-note" style={{ marginTop: 6 }}>
+                      {undoText(plan.plan)} Any you excluded are forgotten with them. The balance stays as it is. This can’t be undone.
+                    </p>
+                  )}
                   <div className="button-pair" style={{ marginTop: 8 }}>
                     <button className="secondary" onClick={onKeep} disabled={busy}>
                       Keep it
                     </button>
-                    <button className="danger" onClick={() => onConfirm(i)} disabled={busy}>
+                    <button className="danger" onClick={() => onConfirm(i)} disabled={busy || !plan?.plan}>
                       {busy ? 'Undoing…' : 'Undo import'}
                     </button>
                   </div>
@@ -1121,4 +1544,24 @@ export function PastImports({
       </ul>
     </>
   );
+}
+
+/** What an undo will do, in sentences, for its confirmation. */
+export function undoText(p: UndoPlan): string {
+  const parts: string[] = [];
+  if (p.remove === 0 && p.kept.length === 0 && p.restore === 0) parts.push('None of its transactions is left. Undo removes its record.');
+  else if (p.remove > 0) parts.push(`Remove the ${plural(p.remove, 'transaction')} this import added?`);
+  else parts.push('Undo this import?');
+  if (p.edited > 0) parts.push(`${p.edited.toLocaleString()} of them ${p.edited === 1 ? 'was' : 'were'} changed since, and ${p.edited === 1 ? 'goes' : 'go'} too.`);
+  if (p.moved > 0) parts.push(`${p.moved.toLocaleString()} ${p.moved === 1 ? 'is' : 'are'} on another account now, and ${p.moved === 1 ? 'goes' : 'go'} too.`);
+  for (const k of p.kept) {
+    const file = k.file_name ?? 'a later import';
+    parts.push(
+      `${plural(k.count, 'more transaction')} it added ${k.count === 1 ? 'stays' : 'stay'}: ${file}, imported later, found ${k.count === 1 ? 'it' : 'them'} here and didn’t add ${k.count === 1 ? 'it' : 'them'} again, so ${k.count === 1 ? 'it is' : 'they are'} kept for that import, whose Undo takes ${k.count === 1 ? 'it' : 'them'} out.`
+    );
+  }
+  if (p.restore > 0) parts.push(`${plural(p.restore, 'transaction')} it updated from its file ${p.restore === 1 ? 'goes' : 'go'} back to how ${p.restore === 1 ? 'it was' : 'they were'}.`);
+  if (p.record === 'unreadable') parts.push('Its record can’t be read, and goes too.');
+  if (p.incomplete) parts.push('Some accounts’ transactions can’t be read now: any of its transactions there stay.');
+  return parts.join(' ');
 }
