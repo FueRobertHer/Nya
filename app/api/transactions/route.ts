@@ -11,6 +11,11 @@ import { loggable } from '@/lib/log-safe';
 type TransactionsPayload = {
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
+  // The institutions whose rows are not all here, by name: none at all this
+  // time (`missing`), or older ones still arriving (`importing`). Activity
+  // says so under every month it totals (#51). Empty on any payload that is
+  // cached, since only a payload without notes is.
+  incomplete?: { institution_name: string; coverage: 'missing' | 'importing' }[];
   as_of: string;
 };
 
@@ -71,8 +76,12 @@ export async function GET(req: Request) {
       if (renamed) t.name = renamed;
     }
     const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
+    // Every one of these comes with a note, so a payload holding any is never cached.
+    const incomplete = results.flatMap((r, i) =>
+      r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
+    );
 
-    const payload: TransactionsPayload = { transactions, notes, as_of: new Date().toISOString() };
+    const payload: TransactionsPayload = { transactions, notes, incomplete, as_of: new Date().toISOString() };
 
     // Same rule as net-worth: only cache clean payloads, so syncing/reauth
     // institutions get re-checked on the next load instead of hiding for

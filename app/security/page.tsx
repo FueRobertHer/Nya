@@ -5,6 +5,7 @@ import { cspMode, type CspMode } from '@/lib/security-headers';
 import { masterKeyConfigured } from '@/lib/crypto';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
+import { sendsEmail } from '@/lib/notice-recipients';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -17,9 +18,10 @@ export const metadata: Metadata = {
 // test/public-pages.test.tsx holds the page to them and to the plan's list of
 // things never to promise. Reads no stored data. From the environment it reads
 // only how the Content-Security-Policy is sent, whether a master key is set
-// (lib/crypto.ts) and how backups are kept (lib/backup.ts backupRetention, the
-// rule the deletion receipt uses too), since each changes what is true of this
-// copy.
+// (lib/crypto.ts), how backups are kept (lib/backup.ts backupRetention, the
+// rule the deletion receipt uses too) and whether this copy sends email
+// (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
+// write to), since each changes what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -30,7 +32,7 @@ const POLICY: Record<CspMode, string> = {
   off: `Pages can also carry a Content-Security-Policy, under which ${LIMITS}. This copy of Nya has it switched off.`,
 };
 
-const whoCanRead = (envelope: boolean, backups: BackupRetention): [string, string][] => [
+const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean): [string, string][] => [
   [
     'The operator, who runs this copy of Nya',
     `Everything, in practice. The ${envelope ? 'master key' : 'key'} and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.`,
@@ -48,6 +50,14 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention): [string, strin
     'Clerk, the sign-in service',
     'Your email address and your sign-in activity, and your name and picture if you sign in with Google or another account. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs. Only when this copy of Nya uses Clerk accounts rather than a shared password.',
   ],
+  ...(mail
+    ? ([
+        [
+          'Resend, the email service',
+          'Your email address and the emails Nya sends you about your bank connections: which bank needs you and what to do, never a balance, an amount or an account number.',
+        ],
+      ] as [string, string][])
+    : []),
   [
     'People you share with',
     'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions. They can never change anything.',
@@ -64,7 +74,8 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
       <p>
         These values are encrypted with AES-256-GCM before they are written to the database: the tokens that connect
         your banks through Plaid, balances, net-worth history, transactions, budgets, goals, the categories you set and
-        the names you give merchants, manual accounts, and the short-lived copies of what the dashboard last showed.
+        the names you give merchants, manual accounts, how each bank connection is doing, and the short-lived copies of
+        what the dashboard last showed.
         Some details around them are not; they are listed below.
       </p>
       {envelope ? (
@@ -150,6 +161,7 @@ function DeletedInBackups({ backups }: { backups: BackupRetention }): ReactNode 
 export default function SecurityPage() {
   const envelope = masterKeyConfigured();
   const backups = backupRetention();
+  const mail = sendsEmail();
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -206,7 +218,7 @@ export default function SecurityPage() {
             </tr>
           </thead>
           <tbody>
-            {whoCanRead(envelope, backups).map(([who, what]) => (
+            {whoCanRead(envelope, backups, mail).map(([who, what]) => (
               <tr key={who}>
                 <th scope="row">{who}</th>
                 <td>{what}</td>

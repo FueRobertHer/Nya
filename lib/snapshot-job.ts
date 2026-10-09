@@ -39,6 +39,12 @@
 // If the registry cannot be read it is tried once more, then the cron fails
 // loudly. It never falls back to a default container or to unscoped keys.
 //
+// The emails about bank connections (#51) go once every container has run:
+// each container's run decides what is due about its own connections, and
+// they are sent together afterwards, within a deadline of their own
+// (MAIL_DEADLINE_MS), so a fault many containers share is seen before anybody
+// is written to (lib/connection-notices.ts).
+//
 // Deferred: spreading the runs across a window. The job takes the date it is
 // for (scheduledFor), which is the seam that needs.
 
@@ -49,6 +55,7 @@ import { computeNetWorth, recordFetch, isRecordable } from './networth';
 import { rememberAccounts } from './last-known';
 import { recordDirectory } from './links';
 import { clearCaches } from './cache';
+import { MAIL_BUDGET_MS, prepareNotices, sendNotices, type PendingNotices, type SendOptions } from './connection-notices';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
@@ -58,10 +65,25 @@ export const REGISTRY_RETRY_MS = 1000;
  * calls in series at up to 45 s each (balances, then holdings and liabilities
  * together). A rate-limited balance call adds at most one more try (a 429
  * that took up to 10 s, a 1 s wait, then up to 45 s: lib/rate-limit-retry.ts),
- * so about 101 s at worst, and the rest is margin for the database. One not
- * started is deferred to the catch-up run.
+ * so about 101 s at worst, and the rest is margin for the database: the
+ * snapshot, the day's positions for holdings history (a few round trips per
+ * container, beside the snapshot) and the connections' records. One not
+ * started is deferred to the catch-up run. The emails about connections are
+ * not in it: they go once every container has run, within MAIL_DEADLINE_MS.
  */
 export const START_BUDGET_MS = 180_000;
+/**
+ * The emails about connections (lib/connection-notices.ts) are all over by
+ * this long after the request began. Each one is started only if finding whom
+ * to write to and the send can both end by then, each with a short timeout of
+ * its own, so however slow the email service, mail never pushes the run past
+ * maxDuration: what doesn't fit waits for the next run, unmarked. They also
+ * get no more than MAIL_BUDGET_MS in all. Whatever the containers' runs take
+ * (Plaid, the snapshot, holdings history, a catch-up run again for positions)
+ * only starts the emails later, so it can shorten their time, never extend
+ * the run past this.
+ */
+export const MAIL_DEADLINE_MS = 285_000;
 /** How long a run holds its container's lock: the route's maxDuration, so a
  *  run the platform killed releases it by the catch-up run. The lock holds a
  *  token only its taker releases, so a run that outlives it (anywhere the
@@ -248,10 +270,23 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
  * to holdings history the same way (recordFetch), and a failed holdings write
  * is only counted beside the status.
  */
-export async function snapshotData(ctx: Ctx): Promise<WorkOutcome> {
+export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[]): Promise<WorkOutcome> {
   const { institutions, netWorth } = await computeNetWorth(ctx);
   const { date: recorded, holdings } = await recordFetch(ctx, institutions, netWorth);
   const counted = holdings.failed > 0 ? { holdings_failed: holdings.failed } : {};
+  // Each connection's last good sync, and what is due about a connection that
+  // broke or will end soon (lib/connection-notices.ts), whose email goes into
+  // the run's outbox, sent once every container has run. After the snapshot
+  // and its positions are recorded, and before the returns below: an unclean
+  // run is exactly when a connection is broken. It never costs the snapshot:
+  // a failure is logged, and the next run tries again.
+  try {
+    const pending = await prepareNotices(ctx, institutions);
+    if (outbox) outbox.push(pending);
+    else await sendNotices([pending]);
+  } catch (err) {
+    console.error(`Connection notices failed for container ${ctx.container}:`, reasonOf(err));
+  }
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
   if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.', ...counted };
 
@@ -273,9 +308,13 @@ export type RunOptions = {
   startedAt?: number;
   /** For tests. */
   clock?: () => number;
-  work?: (ctx: Ctx) => Promise<WorkOutcome>;
+  /** The container's run; whatever it puts in the outbox is emailed once
+   *  every container has run. */
+  work?: (ctx: Ctx, outbox: PendingNotices[]) => Promise<WorkOutcome>;
   concurrency?: number;
   budgetMs?: number;
+  /** For tests: how the emails reach Resend and whom they go to. */
+  mail?: Omit<SendOptions, 'clock' | 'deadline'>;
 };
 
 /** Runs every container in the registry for the date (see the header). */
@@ -285,6 +324,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
   const budget = opts.budgetMs ?? START_BUDGET_MS;
   const date = opts.scheduledFor;
   const started = opts.startedAt ?? clock();
+  const outbox: PendingNotices[] = [];
 
   const one = async (c: Registry[number]): Promise<ContainerOutcome> => {
     const container = c.id;
@@ -327,7 +367,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       // may have started since.
       await recheck(container);
       await writeRun(ctx, date, 'running', undefined, clock());
-      outcome = await work(ctx);
+      outcome = await work(ctx, outbox);
     } catch (err) {
       console.error(`Snapshot failed for container ${container}:`, reasonOf(err));
       outcome = { status: 'failed', reason: reasonOf(err) };
@@ -339,6 +379,13 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
   };
 
   const results = await inPool(registry, opts.concurrency ?? CONCURRENCY, one);
+  // The emails, once every container has run: a fault many containers share is
+  // seen before anybody is written to, and mail has a deadline of its own,
+  // never the snapshots' time (lib/connection-notices.ts).
+  if (outbox.length > 0) {
+    const deadline = Math.min(started + MAIL_DEADLINE_MS, clock() + MAIL_BUDGET_MS);
+    await sendNotices(outbox, { ...opts.mail, clock, deadline }).catch((err) => console.error('Connection notices: the emails could not be sent.', reasonOf(err)));
+  }
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };
 }
 

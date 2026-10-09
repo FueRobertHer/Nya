@@ -183,8 +183,9 @@ export async function POST(req: Request) {
     return notPrepared(err);
   }
 
-  // When an email provider exists (#51), tell the owner a download happened,
-  // here: when, and which format. Never anything from the file itself.
+  // Tell the owner a download happened, here, once that email is built: Nya
+  // can send email now (lib/mail.ts, #51). When, and which format; never
+  // anything from the file itself.
   console.log(`Data download: ${body.format}`);
 
   // The second pass: the same bytes, streamed.
