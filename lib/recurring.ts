@@ -47,8 +47,9 @@
 //     of the last year (at least the last two) differ by at most 25% of their
 //     median, or 5 units of the currency for a small subscription whose tax
 //     moves by cents, forgiving the one farthest out among five or more (a
-//     bonus paycheck, a prorated first bill). This is the rule that keeps a store visited every week from
-//     being called a bill: its timing may be weekly, its amounts are not.
+//     bonus paycheck, a prorated first bill). This is the rule that keeps a
+//     store visited every week from being called a bill: its timing may be
+//     weekly, its amounts are not.
 // Evidence comes from a window before the merchant's latest charge (half a
 // year for weekly, a year for most, longer for twice a year and yearly), so a
 // bill is judged on what it has recently been. Where the window spans a change
