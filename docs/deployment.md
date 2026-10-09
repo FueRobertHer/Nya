@@ -133,8 +133,15 @@ A release from before this one has no such check, and calls for every connection
 
 1. Deploy with `PLAID_BROKERAGE_LINK` unset. Only **Connect a bank or card** shows, and the route refuses a brokerage link token.
 2. Leave it a week or so, through the daily snapshots. Connect one bank in that time, and check in the Upstash console that its record in `<prefix>:c:<id>:plaid:items` carries `"transactions_billed":true`: the link recorded what Plaid bills.
-3. Set `PLAID_BROKERAGE_LINK=1` on Production (and Preview, to try it there first) and redeploy. Any other value counts as off.
-4. Connect a real 401(k) or IRA, and a brokerage account, with the new option. Each one's record should carry `"transactions_billed":false`: Plaid isn't billing Transactions on it. Its card on the Accounts tab shows its holdings and no error, and nothing on the Activity tab names it as failing.
+3. On a Preview deployment with `PLAID_ENV=sandbox`, set `PLAID_BROKERAGE_LINK=1`, connect a Sandbox brokerage with the new option, and check what nothing in Plaid's reference states: that update mode takes `additional_consented_products`, which **Allow transactions** relies on (a connection's card offers it once its first transactions call answered `ADDITIONAL_CONSENT_REQUIRED`). Signed in, run this in the browser console with the connection's id (its `item_id` in the `/api/net-worth` response):
+
+   ```js
+   await (await fetch('/api/create-update-link-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: '<item_id>', allow_transactions: true }) })).json()
+   ```
+
+   It must answer with a `link_token`, and the function log must not show an error just before it: that would be Plaid refusing the field, and the button falling back to a plain update that asks for nothing. Where a card does offer **Allow transactions**, press it too: Link must ask for consent to transactions, and the next load brings them in. Until this holds, keep the option off in Production.
+4. Set `PLAID_BROKERAGE_LINK=1` on Production and redeploy. Any other value counts as off.
+5. Connect a real 401(k) or IRA, and a brokerage account, with the new option. Each one's record should carry `"transactions_billed":false`: Plaid isn't billing Transactions on it. Its card on the Accounts tab shows its holdings and no error, and nothing on the Activity tab names it as failing.
 
 From then on, never roll back to a release from before this one: see [operations.md](operations.md#rolling-back-once-the-brokerage-option-is-on). Turning the option off again hides the button and refuses new brokerage link tokens; connections already made with it keep working.
 

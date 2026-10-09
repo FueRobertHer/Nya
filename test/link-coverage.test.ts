@@ -545,17 +545,20 @@ describe('transactions from an Item without Transactions', () => {
     }
   });
 
-  test('a successful Reconnect forgets a refusal, so the next load asks Plaid again', async () => {
+  test('"Allow transactions" asks for the consent missing, and once given, the next load asks Plaid again', async () => {
     await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'ADDITIONAL_CONSENT_REQUIRED' });
     await transactions();
     expect(plaid.syncCalls).toHaveLength(1);
-    // The Reconnect asks for the consent missing (and nothing else of Transactions).
-    const token = await route('create-update-link-token', 'POST', { item_id: 'item_ret' });
+    // The action's token: update mode asking for consent to Transactions, and
+    // nothing else of it (no product, no options).
+    const token = await route('create-update-link-token', 'POST', { item_id: 'item_ret', allow_transactions: true });
     expect(token.status).toBe(200);
-    expect(plaid.linkRequests.at(-1)).toMatchObject({ access_token: 'token-item_ret', additional_consented_products: ['transactions'] });
-    expect(plaid.linkRequests.at(-1).products).toBeUndefined();
-    expect(plaid.linkRequests.at(-1).transactions).toBeUndefined();
-    // Consent given: the reconnect is recorded, and the refusal forgotten.
+    expect(plaid.linkRequests).toHaveLength(1);
+    expect(plaid.linkRequests[0]).toMatchObject({ access_token: 'token-item_ret', additional_consented_products: ['transactions'] });
+    expect(plaid.linkRequests[0].products).toBeUndefined();
+    expect(plaid.linkRequests[0].transactions).toBeUndefined();
+    // Consent given: update mode succeeded, which the client records as for
+    // a Reconnect, and the refusal is forgotten.
     plaid.txns['token-item_ret'] = [bankRow('c1', 'acct_cash')];
     expect((await route('item-reconnected', 'POST', { item_id: 'item_ret' })).status).toBe(200);
     const res = await transactions(false);
@@ -567,22 +570,29 @@ describe('transactions from an Item without Transactions', () => {
     expect((await readStoredTxns(ctx, 'item_ret')).map((t) => t.transaction_id)).toEqual(['c1']);
   });
 
-  test("consent is asked for only on a plain Reconnect after a consent refusal, and the Reconnect works if Plaid won't take it", async () => {
-    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'PRODUCTS_NOT_SUPPORTED' });
+  test('only "Allow transactions" asks for consent: never a Reconnect, payment details or the picker', async () => {
     await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: false, txns: 'ADDITIONAL_CONSENT_REQUIRED' });
     await transactions();
     plaid.linkRequests.length = 0;
-    // Plaid doesn't provide them: no consent would change that.
-    await route('create-update-link-token', 'POST', { item_id: 'item_ret' });
-    // Payment details and the account picker are flows of their own.
+    // A Reconnect only repairs a sign-in, even after a consent refusal.
+    await route('create-update-link-token', 'POST', { item_id: 'item_fid' });
     await route('create-update-link-token', 'POST', { item_id: 'item_fid', add_liabilities: true });
     await route('create-update-link-token', 'POST', { item_id: 'item_fid', select_accounts: true });
+    expect(plaid.linkRequests).toHaveLength(3);
     for (const req of plaid.linkRequests) expect(req.additional_consented_products).toBeUndefined();
-    // Plaid refusing the field: the Reconnect still opens, without it.
-    plaid.linkRequests.length = 0;
+    // One change at a time.
+    for (const other of [{ add_liabilities: true }, { select_accounts: true }]) {
+      expect((await route('create-update-link-token', 'POST', { item_id: 'item_fid', allow_transactions: true, ...other })).status).toBe(400);
+    }
+    expect(plaid.linkRequests).toHaveLength(3);
+  });
+
+  test('if Plaid refuses the consent field, "Allow transactions" still opens Link, with one plain token', async () => {
+    await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: false, txns: 'ADDITIONAL_CONSENT_REQUIRED' });
     plaid.refuseConsentField = true;
-    const res = await quietly(() => route('create-update-link-token', 'POST', { item_id: 'item_fid' }));
+    const res = await quietly(() => route('create-update-link-token', 'POST', { item_id: 'item_fid', allow_transactions: true }));
     expect(res.status).toBe(200);
+    expect(res.body.link_token).toBe('link-token');
     expect(plaid.linkRequests.map((r) => r.additional_consented_products)).toEqual([['transactions'], undefined]);
   });
 

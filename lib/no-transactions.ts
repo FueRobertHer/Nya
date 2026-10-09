@@ -65,6 +65,12 @@ export function quietItemIds(view: NoTransactionsView): Set<string> {
   return new Set(view.without.flatMap((w) => (BY_DESIGN.has(w.reason) && w.item_id ? [w.item_id] : [])));
 }
 
+/** The connections whose transactions the person didn't allow, by id: their
+ *  card on the Accounts tab offers "Allow transactions". */
+export function unallowedItemIds(view: NoTransactionsView): Set<string> {
+  return new Set(view.without.flatMap((w) => (w.reason === 'no_consent' && w.item_id ? [w.item_id] : [])));
+}
+
 /** Whether every connection brings in no transactions (for whatever reason),
  *  as far as the payload says. */
 function noneBringTransactions(view: NoTransactionsView): boolean {
@@ -83,7 +89,8 @@ export function refusedNames(view: NoTransactionsView): string[] {
 }
 
 /** The connections holding a bank account or card whose transactions the
- *  person didn't allow Nya to see: reconnecting and allowing them fixes it. */
+ *  person didn't allow Nya to see: allowing them (the card's "Allow
+ *  transactions") fixes it. */
 export function unallowedNames(view: NoTransactionsView): string[] {
   return namesFor(view, 'no_consent');
 }
@@ -108,7 +115,8 @@ export type NoSpending = { lead: string; remedy: string };
  *     accounts is a bank account or card";
  *   - a bank account or card is there and its transactions don't come in:
  *     whose, and why (not allowed, or Plaid doesn't provide them), with the
- *     way to bring them in: reconnect and allow them, or another bank or card.
+ *     way to bring them in: Allow transactions on its card, or another bank or
+ *     card.
  * Null when some connection does bring transactions in (they say the rest),
  * when there are rows anyway (withoutNote names the connections then), with
  * nothing connected, or before the transactions have loaded (`connections`
@@ -123,7 +131,7 @@ export function noSpending(view: NoTransactionsView, rows: number): NoSpending |
     const remedies: string[] = [];
     if (unallowed.length > 0) {
       leads.push(`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}`);
-      remedies.push(`reconnect ${joinNames(unallowed)} and allow transactions`);
+      remedies.push('choose Allow transactions on the Accounts tab');
     }
     if (refused.length > 0) {
       leads.push(`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}`);
@@ -154,10 +162,9 @@ export function withoutNote(view: NoTransactionsView, rows: number): string | nu
   return `${joinNames(names)} ${one ? 'holds' : 'hold'} no bank account or card, so no transactions come from ${one ? 'it' : 'them'}.`;
 }
 
-/** How to bring in the transactions the person didn't allow. */
-function allowThem(names: string[]): string {
-  return `To bring them in, reconnect ${joinNames(names)} and allow transactions.`;
-}
+/** How to bring in the transactions the person didn't allow: the action on
+ *  each such connection's card (components/Dashboard.tsx). */
+const ALLOW_THEM = 'To bring them in, choose Allow transactions on the Accounts tab.';
 
 /** Under a month's totals (Activity, budgets, Home's spending insights): each
  *  bank account or card whose transactions the month lacks, and why. Empty
@@ -171,7 +178,7 @@ export function missingMonthNotes(view: NoTransactionsView): string[] {
       : []),
     ...(unallowed.length > 0
       ? [
-          `Doesn't include the bank or card accounts at ${joinNames(unallowed)}: you didn't allow Nya to see their transactions, so this month may be incomplete. ${allowThem(unallowed)}`,
+          `Doesn't include the bank or card accounts at ${joinNames(unallowed)}: you didn't allow Nya to see their transactions, so this month may be incomplete. ${ALLOW_THEM}`,
         ]
       : []),
   ];
@@ -185,7 +192,7 @@ export function missingEmptyNotes(view: NoTransactionsView): string[] {
   return [
     ...(refused.length > 0 ? [`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}, so they can't be shown.`] : []),
     ...(unallowed.length > 0
-      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, so they can't be shown. ${allowThem(unallowed)}`]
+      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, so they can't be shown. ${ALLOW_THEM}`]
       : []),
   ];
 }
@@ -200,7 +207,7 @@ export function missingFigureNotes(view: NoTransactionsView, what: 'low' | 'off'
   return [
     ...(refused.length > 0 ? [`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}, ${consequence}.`] : []),
     ...(unallowed.length > 0
-      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, ${consequence}. ${allowThem(unallowed)}`]
+      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, ${consequence}. ${ALLOW_THEM}`]
       : []),
   ];
 }

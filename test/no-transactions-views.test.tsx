@@ -19,6 +19,7 @@ import {
   noSpending,
   noTransactionsView,
   quietItemIds,
+  unallowedItemIds,
   withoutNote,
   type NoTransactionsView,
 } from '@/lib/no-transactions';
@@ -68,7 +69,7 @@ const refusedOnly: NoTransactionsView = {
 const refusedBeside: NoTransactionsView = { without: [{ institution_name: 'Acme CU', reason: 'refused' }], connections: 2 };
 /** A bank that brings transactions, beside one whose transactions weren't allowed. */
 const unallowedBeside: NoTransactionsView = { without: [{ institution_name: 'Fidelity', reason: 'no_consent' }], connections: 2 };
-const ALLOW = 'To bring them in, reconnect Fidelity and allow transactions.';
+const ALLOW = 'To bring them in, choose Allow transactions on the Accounts tab.';
 
 const INVESTMENTS_LEAD = 'Your connected accounts are investment accounts';
 
@@ -168,13 +169,13 @@ describe('what /api/transactions says about them', () => {
     const only: NoTransactionsView = { without: [{ institution_name: 'Fidelity', reason: 'no_consent' }], connections: 1 };
     expect(noSpending(only, 0)).toEqual({
       lead: "You didn't allow Nya to see transactions from the bank or card accounts at Fidelity",
-      remedy: 'reconnect Fidelity and allow transactions',
+      remedy: 'choose Allow transactions on the Accounts tab',
     });
     // Both causes at once: each said, each with its way on.
     const both: NoTransactionsView = { without: [...unallowedBeside.without, ...refusedBeside.without], connections: 2 };
     expect(noSpending(both, 0)).toEqual({
       lead: "You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, and Plaid doesn't provide transactions for the bank or card accounts at Acme CU",
-      remedy: 'reconnect Fidelity and allow transactions, or connect another bank or card',
+      remedy: 'choose Allow transactions on the Accounts tab, or connect another bank or card',
     });
     expect(missingWhat(both)).toBe("transactions Plaid doesn't provide or you didn't allow");
     expect(missingMonthNotes(both)).toHaveLength(2);
@@ -471,6 +472,42 @@ describe('a connection whose sign-in lapsed', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
     expect(dashboard).toContain('stoppedConnections(institutions, quietItemIds(txnWithout))');
     expect(dashboard).toMatch(/<Insights[^>]*withoutTransactions=\{txnWithout\}/);
+  });
+});
+
+describe('the "Allow transactions" action', () => {
+  // The dashboard needs Clerk and Plaid Link to render, so its wiring is read
+  // from the source, as test/connect-buttons-view.test.tsx does; the route it
+  // calls is tested in test/link-coverage.test.ts.
+  const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
+
+  test('offered on each connection whose transactions were not allowed, by id', () => {
+    const view: NoTransactionsView = {
+      without: [
+        { item_id: 'item_fid', institution_name: 'Fidelity', reason: 'no_consent' },
+        { item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused' },
+        { item_id: 'item_emp', institution_name: 'Empower', reason: 'investment_accounts' },
+        { institution_name: 'Old payload', reason: 'no_consent' },
+      ],
+      connections: 5,
+    };
+    expect([...unallowedItemIds(view)]).toEqual(['item_fid']);
+    expect(dashboard).toContain('const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);');
+    expect(dashboard).toMatch(
+      /\{unallowedIds\.has\(inst\.item_id\) && \(\s*<button\s+className="secondary"\s+onClick=\{\(\) => startAllowTransactions\(inst\.item_id\)\}\s+disabled=\{connecting\}[^>]*>\s*Allow transactions\s*<\/button>/
+    );
+  });
+
+  test('it asks for the consent token, opens update mode, and its success is recorded and reloads the transactions', () => {
+    const start = dashboard.slice(dashboard.indexOf('const startAllowTransactions = useCallback'), dashboard.indexOf('const startEnableLiabilities = useCallback'));
+    expect(start).toContain("body: JSON.stringify({ item_id, allow_transactions: true }),");
+    expect(start).toContain('reconnectingItemRef.current = item_id;');
+    expect(start).toContain("setLinkMode('update');");
+    expect(start).toContain('} finally {\n      setConnecting(false);');
+    // Update mode's success: the server forgets the refusal, then both reload.
+    const success = dashboard.slice(dashboard.indexOf("if (linkMode === 'update') {"), dashboard.indexOf("if (linkMode === 'accounts') {"));
+    expect(success).toContain("fetch('/api/item-reconnected'");
+    expect(success).toContain('if (txns !== null) loadTransactions(true);');
   });
 });
 

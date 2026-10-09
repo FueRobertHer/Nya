@@ -40,9 +40,10 @@
 // these accounts, or the person didn't consent to sharing them) is remembered
 // for REFUSAL_RECHECK_DAYS in the Item's own transaction state, with the bank
 // accounts and cards it was about, so it is not asked again on every load, but
-// is at once for an account added since, and after a successful Reconnect
-// (lib/transactions.ts forgetRefusal), which for a consent refusal asks for
-// that consent again (app/api/create-update-link-token).
+// is at once for an account added since, and after update mode succeeds on
+// the Item (lib/transactions.ts forgetRefusal): a Reconnect, or for a consent
+// refusal the card's "Allow transactions", which asks for that consent
+// (app/api/create-update-link-token).
 //
 // Whether Plaid bills Transactions is read from /item/get's `billed_products`
 // when the Item is linked (app/api/exchange-public-token) and kept on its
@@ -146,8 +147,8 @@ export function transactionAccountIds(accounts: readonly { account_id?: unknown;
  *   refused              it holds one, and Plaid doesn't provide Transactions
  *                        for it, so that account's spending is not known;
  *   no_consent           it holds one, and the person didn't consent to
- *                        sharing its transactions: reconnecting and allowing
- *                        it brings them in.
+ *                        sharing its transactions: allowing them (the card's
+ *                        "Allow transactions") brings them in.
  * The first two never bring transactions in, whatever the connection's
  * health; the last two leave spending that exists unknown.
  */
@@ -159,7 +160,8 @@ export function noTransactionsReason(types: readonly unknown[]): 'investment_acc
 }
 
 /** Plaid's answer to a first call when the person never consented to sharing
- *  transactions: update mode asking for that consent resolves it. */
+ *  transactions: update mode asking for that consent should resolve it
+ *  (app/api/create-update-link-token, to be confirmed in Sandbox). */
 export const CONSENT_REQUIRED = 'ADDITIONAL_CONSENT_REQUIRED';
 
 /** What a remembered refusal says about the Item: no consent, or Plaid not

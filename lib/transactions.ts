@@ -301,24 +301,10 @@ function parseBlocked(raw: string): BlockedMarker | null {
 }
 
 /**
- * The refusal remembered for an Item (refusalStands in lib/item-products.ts),
- * or null when there is none. Lenient: for the Reconnect link token, which
- * asks for consent to Transactions again after a consent refusal; a read that
- * fails only leaves that out, and the Reconnect works as ever.
- */
-export async function rememberedRefusal(ctx: Ctx, item_id: string): Promise<Refusal | null> {
-  try {
-    return (await readState(ctx, item_id)).refused ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Forgets a remembered refusal once the person has reconnected the Item
- * (app/api/item-reconnected): a consent given again, or a sign-in that changed
- * what Plaid offers, is asked about on the next load rather than up to
- * REFUSAL_RECHECK_DAYS later. Only a state holding nothing but the refusal
+ * Forgets a remembered refusal once the person has been through update mode
+ * on the Item, a Reconnect or "Allow transactions" (app/api/item-reconnected):
+ * a consent given, or a sign-in that changed what Plaid offers, is asked about
+ * on the next load rather than up to REFUSAL_RECHECK_DAYS later. Only a state holding nothing but the refusal
  * (never synced, no rows) is removed. A read that fails removes nothing: the
  * refusal stands until it lapses.
  */

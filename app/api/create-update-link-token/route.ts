@@ -5,17 +5,15 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { webhookUrlFor } from '@/lib/webhook-url';
-import { rememberedRefusal } from '@/lib/transactions';
-import { CONSENT_REQUIRED } from '@/lib/item-products';
 import { loggable } from '@/lib/log-safe';
 
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
-    const { item_id, add_liabilities, select_accounts } = await req.json();
-    // Two different flows, each with its own Link screen: asking for both at
-    // once would leave it to Plaid which one the user sees.
-    if (add_liabilities && select_accounts) {
+    const { item_id, add_liabilities, select_accounts, allow_transactions } = await req.json();
+    // Different flows, each with its own Link screen: asking for two at once
+    // would leave it to Plaid which one the user sees.
+    if ([add_liabilities, select_accounts, allow_transactions].filter(Boolean).length > 1) {
       return NextResponse.json({ error: 'Choose one change at a time' }, { status: 400 });
     }
     const items = await getItems(ctx);
@@ -41,12 +39,16 @@ export async function POST(req: Request) {
     // reuses this Item instead of creating a second one, which Plaid would bill
     // separately and which would mean signing in again.
     //
-    // A plain Reconnect of an Item whose first transactions call Plaid refused
-    // for want of consent also asks for that consent, as Plaid's way to give
-    // it is update mode with the product in additional_consented_products.
-    // Consent alone bills nothing (lib/item-products.ts): the sync's own check
-    // still decides any first call. Should Plaid refuse the token for it, the
-    // Reconnect goes ahead without it rather than failing.
+    // `allow_transactions` is the "Allow transactions" action on a connection
+    // whose first transactions call Plaid refused for want of consent
+    // (lib/no-transactions.ts, no_consent): update mode that asks for consent
+    // to Transactions, by listing it in additional_consented_products. That
+    // Plaid collects consent this way in update mode is to be confirmed in
+    // Sandbox (docs/deployment.md); should it refuse the token for the field,
+    // one plain update-mode token is made instead, so the button still opens
+    // Link. Consent alone bills nothing (lib/item-products.ts): the sync's own
+    // check still decides any first call. Kept apart from Reconnect, which
+    // only repairs a sign-in, so a login repair never carries the field.
     const request = {
       user: { client_user_id: ctx.container }, // as in create-link-token
       client_name: 'Nya',
@@ -59,9 +61,8 @@ export async function POST(req: Request) {
       // configured picks it up when it is reconnected.
       ...(webhookUrlFor(ctx) ? { webhook: webhookUrlFor(ctx) } : {}),
     };
-    const askConsent = !add_liabilities && !select_accounts && (await rememberedRefusal(ctx, item.item_id))?.code === CONSENT_REQUIRED;
     let response;
-    if (askConsent) {
+    if (allow_transactions) {
       try {
         response = await plaidClient.linkTokenCreate({ ...request, additional_consented_products: [Products.Transactions] });
       } catch (err) {
