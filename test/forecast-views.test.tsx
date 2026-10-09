@@ -103,6 +103,15 @@ describe('the forecast', () => {
     expect(t).toContain('Warns below $100.00');
   });
 
+  test('with pay expected today, the lowest is the balance now, not an estimate', () => {
+    const pay = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, -2000, { name: 'Payroll', category: 'income' })));
+    const t = card({ series: pay });
+    expect(t).toContain('$900.00 lowest, now ');
+    expect(t).not.toContain('lowest, now (estimated)');
+    const overdrawn = card({ series: pay, institutions: [chase({ accounts: [{ account_id: 'chk', name: 'Checking', type: 'depository', balance: -40, currency: 'USD' }] })] });
+    expect(overdrawn).toContain('Below zero now.');
+  });
+
   test('the ranges, 30 days chosen first', () => {
     const html = renderToStaticMarkup(<ForecastCard institutions={[chase()]} series={series()} planned={EMPTY_PLANNED} today={TODAY} />);
     expect(html).toContain('aria-pressed="true">30 days</button>');

@@ -2,12 +2,13 @@
 
 // The cash forecast as a line (lib/forecast.ts), in the house style of
 // MonthFlowChart and NetWorthChart: dependency-free inline SVG, a readout row
-// above the plot instead of a floating tooltip, scrubbed by pointer. The line
-// is dashed throughout, as the net-worth chart draws its estimated stretch:
-// every point on it is an estimate. Zero and the low-balance warning are
-// drawn when the line comes near them, and the lowest point is marked. With
-// a what-if, its line is drawn over the forecast's in the warning colour,
-// with a legend, and the readout gives both.
+// above the plot instead of a floating tooltip, scrubbed by pointer. It starts
+// at the balance now, then each day's end. The line is dashed throughout, as
+// the net-worth chart draws its estimated stretch: every point after the first
+// is an estimate. Zero and the low-balance warning are drawn when the line
+// comes near them, and the lowest point is marked. With a what-if, its line is
+// drawn over the forecast's in the warning colour, with a legend, and the
+// readout gives both.
 
 import { useMemo, useRef, useState } from 'react';
 import type { Forecast } from '@/lib/forecast';
@@ -52,9 +53,12 @@ export default function ForecastChart({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
 
+  // Point 0 is now; point i is the end of day i - 1.
+  const points = (f: Forecast) => [f.start, ...f.days.map((d) => d.balance)];
+
   const geo = useMemo(() => {
     const series = [forecast, ...(whatIf ? [whatIf] : [])];
-    const values = series.flatMap((f) => f.days.map((d) => d.balance));
+    const values = series.flatMap(points);
     let lo = Math.min(...values);
     let hi = Math.max(...values);
     // Zero, and the warning, are drawn only when the line comes within a
@@ -74,10 +78,10 @@ export default function ForecastChart({
     const pad = (hi - lo || Math.max(Math.abs(hi), 1)) * 0.08;
     const bottom = lo - pad;
     const top = hi + pad;
-    const n = forecast.days.length;
+    const n = forecast.days.length + 1;
     const x = (i: number) => PAD_LEFT + (n <= 1 ? 0 : (i / (n - 1)) * (W - PAD_LEFT - PAD_RIGHT));
     const y = (v: number) => PAD_TOP + (1 - (v - bottom) / (top - bottom)) * (H - PAD_TOP - PAD_BOTTOM);
-    const path = (f: Forecast) => f.days.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.balance).toFixed(1)}`).join('');
+    const path = (f: Forecast) => points(f).map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
     return {
       x,
       y,
@@ -90,22 +94,29 @@ export default function ForecastChart({
   }, [forecast, whatIf, threshold]);
 
   const { x, y, ticks, main, alt, showZero, showThreshold } = geo;
-  const shownLow = (whatIf ?? forecast).lowest;
-  const lowIndex = forecast.days.findIndex((d) => d.date === shownLow.date);
+  const shown = whatIf ?? forecast;
+  const shownLow = shown.lowest;
+  const today = forecast.days[0].date;
+  // Now, when the lowest is the balance before anything expected today.
+  const lowIndex = shownLow.date === today && shownLow.balance === shown.start ? 0 : shown.days.findIndex((d) => d.date === shownLow.date) + 1;
+  const lowWhen = lowIndex === 0 ? 'now' : shownLow.date === today ? 'today' : `on ${fmtDay(shownLow.date)}`;
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const px = ((clientX - rect.left) / rect.width) * W;
-    const n = forecast.days.length;
+    const n = forecast.days.length + 1;
     const i = Math.round(((px - PAD_LEFT) / (W - PAD_LEFT - PAD_RIGHT)) * (n - 1));
     setActive(Math.max(0, Math.min(n - 1, i)));
   }
 
   const i = active;
-  const day = i === null ? null : forecast.days[i];
-  const altDay = i === null || !whatIf ? null : whatIf.days[i];
+  // The scrubbed point: now (0), or a day's end.
+  const day = i === null || i === 0 ? null : forecast.days[i - 1];
+  const altDay = i === null || i === 0 || !whatIf ? null : whatIf.days[i - 1];
+  const value = i === null ? null : i === 0 ? forecast.start : day!.balance;
+  const altValue = i === null || !whatIf ? null : i === 0 ? whatIf.start : altDay!.balance;
   const moves = day ? [...day.events, ...(altDay ? altDay.events.filter((e) => e.source === 'what-if') : [])] : [];
   const last = forecast.days[forecast.days.length - 1];
   const tone = (v: number) => (v < 0 ? 'var(--down)' : v < threshold ? 'var(--warn)' : undefined);
@@ -125,15 +136,13 @@ export default function ForecastChart({
         </div>
       )}
       <div className="chart-readout chart-readout-stable">
-        {day ? (
+        {value !== null ? (
           <>
-            <span className="chart-readout-value" style={{ color: tone(altDay?.balance ?? day.balance) }}>
-              {formatMoney(altDay?.balance ?? day.balance, currency)}
+            <span className="chart-readout-value" style={{ color: tone(altValue ?? value) }}>
+              {formatMoney(altValue ?? value, currency)}
             </span>
-            {altDay && <span className="chart-readout-date">without it {formatMoney(day.balance, currency)}</span>}
-            <span className="chart-readout-date">
-              {i === 0 ? 'today' : fmtDay(day.date)}, estimated
-            </span>
+            {altValue !== null && altValue !== value && <span className="chart-readout-date">without it {formatMoney(value, currency)}</span>}
+            <span className="chart-readout-date">{i === 0 ? 'now' : `${i === 1 ? 'end of today' : fmtDay(day!.date)}, estimated`}</span>
           </>
         ) : (
           <>
@@ -141,7 +150,8 @@ export default function ForecastChart({
               {formatMoney(shownLow.balance, currency)}
             </span>
             <span className="chart-readout-date">
-              lowest, {shownLow.date === forecast.days[0].date ? 'today' : `on ${fmtDay(shownLow.date)}`} (estimated)
+              lowest, {lowWhen}
+              {lowIndex === 0 ? '' : ' (estimated)'}
             </span>
           </>
         )}
@@ -152,7 +162,7 @@ export default function ForecastChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Estimated cash balance from ${formatMoney(forecast.days[0].balance, currency)} today to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} on ${fmtDay(shownLow.date)}.`}
+        aria-label={`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -176,16 +186,16 @@ export default function ForecastChart({
         {lowIndex >= 0 && (
           <circle cx={x(lowIndex)} cy={y(shownLow.balance)} r={4} fill={tone(shownLow.balance) ?? 'var(--accent)'} stroke="var(--card)" strokeWidth={2} />
         )}
-        {i !== null && (
+        {i !== null && value !== null && (
           <>
             <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="#3a4150" strokeWidth={1} />
-            <circle cx={x(i)} cy={y(day!.balance)} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
-            {altDay && <circle cx={x(i)} cy={y(altDay.balance)} r={4} fill="var(--warn)" stroke="var(--card)" strokeWidth={2} />}
+            <circle cx={x(i)} cy={y(value)} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
+            {altValue !== null && <circle cx={x(i)} cy={y(altValue)} r={4} fill="var(--warn)" stroke="var(--card)" strokeWidth={2} />}
           </>
         )}
 
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 6}>
-          Today
+          Now
         </text>
         <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 6} textAnchor="end">
           {fmtDay(last.date)}
@@ -198,7 +208,9 @@ export default function ForecastChart({
           ? moves.length > 0
             ? moves.map((e) => `${e.name} ${signedMoney(e.amount, currency)}`).join(' · ')
             : 'Nothing expected that day'
-          : 'Slide along the line to read a day'}
+          : i === 0
+            ? 'The balance now, before anything expected today'
+            : 'Slide along the line to read a day'}
       </div>
     </div>
   );

@@ -192,21 +192,25 @@ export type ForecastDay = {
 };
 
 export type Forecast = {
+  /** The balance now, before anything expected today: the one figure in it
+   *  that isn't an estimate. */
   start: number;
-  /** Today first (after today's events), then each day through the range. */
+  /** The end of each day: today first (after today's events), then each day
+   *  through the range. */
   days: ForecastDay[];
-  /** The lowest end-of-day balance, and the first day it is reached. */
+  /** The lowest balance, now or at a day's end, and the first day it is
+   *  reached: today when it is now (a paycheck expected today hasn't come). */
   lowest: { date: string; balance: number };
   /** The balance on the last day. */
   end: number;
-  /** The first day the balance is below zero, or null. */
+  /** The first day the balance is below zero (today when it is now), or null. */
   belowZero: string | null;
   /** The first day it is below the warning (when that is above zero), or null. */
   belowThreshold: string | null;
 };
 
-/** The forecast from `start` on `today` through `range` days on, day by day,
- *  in whole cents. Events outside those days are ignored. */
+/** The forecast from `start` now, on `today`, through `range` days on, day by
+ *  day, in whole cents. Events outside those days are ignored. */
 export function buildForecast(start: number, events: readonly ForecastEvent[], today: string, range: number, threshold = 0): Forecast {
   const byDay = new Map<string, ForecastEvent[]>();
   for (const e of events) {
@@ -218,9 +222,10 @@ export function buildForecast(start: number, events: readonly ForecastEvent[], t
   const thresholdCents = toCents(threshold);
   let cents = startCents;
   const days: ForecastDay[] = [];
-  let lowest = { date: today, cents: Infinity };
-  let belowZero: string | null = null;
-  let belowThreshold: string | null = null;
+  // Now counts: what is expected today may not have happened yet.
+  let lowest = { date: today, cents: startCents };
+  let belowZero: string | null = startCents < 0 ? today : null;
+  let belowThreshold: string | null = thresholdCents > 0 && startCents < thresholdCents ? today : null;
   for (let i = 0; i <= range; i++) {
     const date = addDays(today, i);
     const todays = byDay.get(date) ?? [];

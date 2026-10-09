@@ -130,6 +130,18 @@ describe('day by day', () => {
     expect(f.belowZero).toBeNull();
   });
 
+  test('the balance now counts: a paycheck expected today has not come yet', () => {
+    const f = buildForecast(100, [ev('2026-10-09', 2000), ev('2026-10-10', -50)], '2026-10-09', 30);
+    expect(f.start).toBe(100);
+    expect(f.days[0].balance).toBe(2100);
+    expect(f.lowest).toEqual({ date: '2026-10-09', balance: 100 });
+    // Overdrawn now: below zero today, whatever comes in later.
+    const over = buildForecast(-20, [ev('2026-10-09', 500)], '2026-10-09', 30, 100);
+    expect(over.belowZero).toBe('2026-10-09');
+    expect(over.belowThreshold).toBe('2026-10-09');
+    expect(over.lowest).toEqual({ date: '2026-10-09', balance: -20 });
+  });
+
   test('the warning: the first day below it, apart from below zero', () => {
     const f = buildForecast(300, [ev('2026-10-12', -250), ev('2026-10-20', -100)], '2026-10-09', 30, 100);
     expect(f.belowThreshold).toBe('2026-10-12');

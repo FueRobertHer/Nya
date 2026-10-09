@@ -144,10 +144,11 @@ export default function ForecastCard({
   }
 
   const low = forecast.lowest;
+  const when = (date: string) => (date === today ? 'today' : `on ${fmtDay(date)}`);
   const warning = forecast.belowZero
-    ? { tone: 'down', text: `Drops below zero on ${fmtDay(forecast.belowZero)}.` }
+    ? { tone: 'down', text: forecast.belowZero === today && forecast.start < 0 ? 'Below zero now.' : `Drops below zero ${when(forecast.belowZero)}.` }
     : forecast.belowThreshold
-      ? { tone: 'warn', text: `Below ${formatMoney(threshold, position.currency)} from ${fmtDay(forecast.belowThreshold)}.` }
+      ? { tone: 'warn', text: `Below ${formatMoney(threshold, position.currency)} ${forecast.belowThreshold === today ? 'today' : `from ${fmtDay(forecast.belowThreshold)}`}.` }
       : null;
   const moved = whatIf ? whatIf.lowest.balance - low.balance : 0;
 
@@ -267,9 +268,11 @@ export default function ForecastCard({
                 ? ', the same as without it.'
                 : `, ${formatMoney(Math.abs(moved), position.currency)} lower than ${formatMoney(low.balance, position.currency)} without it.`}
             </p>
-            {whatIf.belowZero && !forecast.belowZero && <p className="error">With it, the balance drops below zero on {fmtDay(whatIf.belowZero)}.</p>}
+            {whatIf.belowZero && !forecast.belowZero && <p className="error">With it, the balance drops below zero {when(whatIf.belowZero)}.</p>}
             {!whatIf.belowZero && whatIf.belowThreshold && !forecast.belowThreshold && (
-              <p className="stale-note">With it, the balance is below {formatMoney(threshold, position.currency)} from {fmtDay(whatIf.belowThreshold)}.</p>
+              <p className="stale-note">
+                With it, the balance is below {formatMoney(threshold, position.currency)} {whatIf.belowThreshold === today ? 'today' : `from ${fmtDay(whatIf.belowThreshold)}`}.
+              </p>
             )}
             <ForecastChart forecast={forecast} whatIf={whatIf} currency={position.currency} threshold={threshold} />
           </>
