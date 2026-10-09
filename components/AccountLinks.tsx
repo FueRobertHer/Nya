@@ -73,6 +73,21 @@ export function refusalText(action: string | undefined, body: { error?: unknown 
   return action === 'forget' ? 'Could not forget that account' : 'Could not update the link';
 }
 
+/** What to say after a forget left damaged records as they were: days of
+ *  balance history, and holdings history that could have held the account.
+ *  Null when nothing was. */
+export function forgottenNotice(body: { unreadable_days?: unknown; damaged_holdings?: unknown }): string | null {
+  const n = Number(body.unreadable_days) || 0;
+  const damaged = [n > 0 ? `${n} day${n === 1 ? '' : 's'} of history` : null, body.damaged_holdings === true ? 'some holdings history' : null].filter(
+    (s): s is string => s !== null
+  );
+  if (damaged.length === 0) return null;
+  const one = damaged.length === 1 && n <= 1;
+  const what = damaged.join(' and ');
+  const them = one ? 'it was' : 'they were';
+  return `Forgotten. ${what.charAt(0).toUpperCase()}${what.slice(1)} ${one ? 'is' : 'are'} damaged and can't be read, so ${them} left as ${them}.`;
+}
+
 function fmtDay(iso: string | null): string {
   if (!iso) return 'unknown';
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -122,23 +137,17 @@ export default function AccountLinks({
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setError(refusalText(body.action, j));
-        // A forget that stopped part way may have changed some things already.
-        if (body.action === 'forget' && res.status >= 500) {
+        // A forget that stopped part way may have changed some things already
+        // (a 409 too: a record that kept changing, say).
+        if (body.action === 'forget' && (res.status === 409 || res.status >= 500)) {
           await load();
           onChanged();
         }
         return;
       }
       if (body.action === 'forget') {
-        const j = await res.json().catch(() => ({}));
-        const n = Number(j.unreadable_days) || 0;
-        if (n > 0) {
-          setNotice(
-            `Forgotten. ${n} day${n === 1 ? '' : 's'} of history ${n === 1 ? 'is' : 'are'} damaged and can't be read, so ${
-              n === 1 ? 'it was' : 'they were'
-            } left as ${n === 1 ? 'it was' : 'they were'}.`
-          );
-        }
+        const notice = forgottenNotice(await res.json().catch(() => ({})));
+        if (notice) setNotice(notice);
       }
       setPreview(null);
       // A pick may no longer be offered (Not this one removes it), so the

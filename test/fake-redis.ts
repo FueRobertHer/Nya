@@ -70,6 +70,9 @@ export class FakeRedis {
   strings = new Map<string, string>();
   hashes = new Map<string, Hash>();
   ttls = new Map<string, number>();
+  /** Hash fields planted as raw bytes (hsetBytes): the bytes Redis would hold,
+   *  beside the text the client reads, while the field still holds that text. */
+  private rawFields = new Map<string, Map<string, { text: string; bytes: Uint8Array }>>();
   /** Commands issued since the last reset. Lets a test assert that a path
    *  which should cost nothing actually touches Redis zero times. */
   ops = 0;
@@ -81,6 +84,32 @@ export class FakeRedis {
     let h = this.hashes.get(key);
     if (!h) this.hashes.set(key, (h = new Map()));
     return h;
+  }
+
+  /**
+   * Plants raw bytes in a hash field, as `redis-cli -x HSET` would: the client
+   * reads them decoded as UTF-8, with U+FFFD for any sequence that isn't, as
+   * Upstash's client (and Bun's) decodes every answer, while a script sees the
+   * bytes themselves (redis.sha1hex hashes those). Not a client command:
+   * nothing is counted or can be armed to fail.
+   */
+  hsetBytes(key: string, field: string, bytes: Uint8Array): void {
+    const text = new TextDecoder().decode(bytes);
+    this.hash(key).set(field, text);
+    let raw = this.rawFields.get(key);
+    if (!raw) this.rawFields.set(key, (raw = new Map()));
+    raw.set(field, { text, bytes: new Uint8Array(bytes) });
+  }
+
+  /** Redis's SHA-1 of a field's stored bytes (redis.sha1hex): of the raw
+   *  bytes planted there while the field still holds them, else of its text. */
+  storedSha1(key: string, field: string): string | null {
+    const value = this.hashes.get(key)?.get(field);
+    if (value === undefined) return null;
+    const raw = this.rawFields.get(key)?.get(field);
+    return createHash('sha1')
+      .update(raw && raw.text === value ? raw.bytes : Buffer.from(value, 'utf8'))
+      .digest('hex');
   }
 
   /**
@@ -529,10 +558,16 @@ export class FakeRedis {
         return value === undefined ? '' : `v${value}`;
       });
     }
+    // Hashing what is stored as Redis does: the bytes, where raw ones were
+    // planted (hsetBytes).
+    if (name === '-- nya:repo-read-entry-hashed') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.hashes.get(keys[0])?.get(args[0]);
+      return value === undefined ? ['', ''] : [`v${value}`, `v${this.storedSha1(keys[0], args[0])}`];
+    }
     if (name === '-- nya:repo-update-entry') {
       if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
-      const cur = this.hashes.get(keys[0])?.get(args[0]);
-      if ((cur === undefined ? '' : sha1(cur)) !== args[1]) return 0;
+      if ((this.storedSha1(keys[0], args[0]) ?? '') !== args[1]) return 0;
       if (args[2] === '') this.hdelNow(keys[0], [args[0]]);
       else this.hash(keys[0]).set(args[0], args[2]);
       return 1;
@@ -563,6 +598,7 @@ export class FakeRedis {
     this.strings.clear();
     this.hashes.clear();
     this.ttls.clear();
+    this.rawFields.clear();
     this.failing.clear();
     this.ops = 0;
     this.pipelines = 0;

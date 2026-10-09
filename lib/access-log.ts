@@ -211,10 +211,25 @@ export async function clearUnreadableAccessLog(ctx: Ctx, id: string): Promise<bo
  * after the records, so a record is only ever judged by connections read after
  * it was: a new connection's log id is saved before anything is written under
  * it. Never throws: a failure is logged, and the next night tries again.
+ *
+ * `until` (by the wall clock) bounds the time it takes: once it has passed,
+ * nothing more is taken on (no further step, and no further record), and
+ * what is left waits for the next night (lib/snapshot-job.ts PRUNE_BUDGET_MS).
  */
-export async function pruneAccessLog(ctx: Ctx, now: number, live: (ctx: Ctx) => Promise<ReadonlySet<string> | null>): Promise<void> {
+export async function pruneAccessLog(
+  ctx: Ctx,
+  now: number,
+  live: (ctx: Ctx) => Promise<ReadonlySet<string> | null>,
+  opts: { until?: number } = {}
+): Promise<void> {
+  const late = () => {
+    if (opts.until === undefined || Date.now() < opts.until) return false;
+    console.error('Sharing: the nightly pass over the records of showings stopped at its time limit; the next night goes on');
+    return true;
+  };
   try {
     const report = await accessLogStore.getAllReport(ctx);
+    if (late()) return;
     const known = await live(ctx);
     if (known) {
       const ended = [...report.entries.keys(), ...report.unreadable, ...report.unrecognised].filter((id) => !known.has(id));
@@ -223,6 +238,7 @@ export async function pruneAccessLog(ctx: Ctx, now: number, live: (ctx: Ctx) => 
     }
     for (const [id, log] of report.entries) {
       if (keptShowings(log, now).length === log.shown.length) continue;
+      if (late()) return;
       try {
         await accessLogStore.update(ctx, id, (current) => {
           if (!current) return null;

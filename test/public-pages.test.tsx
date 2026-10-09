@@ -74,6 +74,22 @@ function backupsAre(state: 'none' | 'kept' | 'invalid', keep?: string) {
   else delete process.env.BACKUP_KEEP_DAYS;
 }
 
+/** Whether this copy sends email: with the shared password, both of Resend's
+ *  settings and NOTIFY_EMAIL to write to, or none of them. */
+function mailIs(on: boolean) {
+  delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  delete process.env.CLERK_SECRET_KEY;
+  if (on) {
+    process.env.RESEND_API_KEY = 're_placeholder';
+    process.env.MAIL_FROM = 'Nya <alerts@example.com>';
+    process.env.NOTIFY_EMAIL = 'me@example.com';
+  } else {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.MAIL_FROM;
+    delete process.env.NOTIFY_EMAIL;
+  }
+}
+
 describe('never promised', () => {
   // The plan's "What not to promise", overclaims about what is encrypted, and
   // marketing words besides.
@@ -108,12 +124,15 @@ describe('never promised', () => {
   test('neither page makes a claim the plan rules out, however this copy is set up', () => {
     for (const master of [undefined, MASTER]) {
       for (const backups of ['none', 'kept', 'invalid'] as const) {
-        process.env = { ...saved };
-        if (master) process.env.MASTER_KEY = master;
-        else delete process.env.MASTER_KEY;
-        backupsAre(backups);
-        for (const page of [security(), privacy()]) {
-          for (const claim of RULED_OUT) expect(page).not.toMatch(claim);
+        for (const mail of [false, true]) {
+          process.env = { ...saved };
+          if (master) process.env.MASTER_KEY = master;
+          else delete process.env.MASTER_KEY;
+          backupsAre(backups);
+          mailIs(mail);
+          for (const page of [security(), privacy()]) {
+            for (const claim of RULED_OUT) expect(page).not.toMatch(claim);
+          }
         }
       }
     }
@@ -183,7 +202,7 @@ describe('the security page', () => {
 
   test('sharing: what is encrypted, what is plain text, and who reads the records of when it was shown', () => {
     const page = security();
-    expect(page).toContain('manual accounts, the records of when shared accounts were shown, and the short-lived copies');
+    expect(page).toContain('manual accounts, how each bank connection is doing, the records of when shared accounts were shown, and the short-lived copies');
     expect(page).toContain(
       'which accounts each of you shares at which level and until when, and for each connection a random id, which its records of when shared accounts were shown are kept under, and when those records began (what they record is encrypted), never the balances or transactions themselves.'
     );
@@ -433,5 +452,57 @@ describe('getting to them', () => {
     expect(buttons.length).toBeGreaterThan(0);
     for (const after of buttons) expect(after.slice(0, 200)).toMatch(/^\s*<\/button>\s*<CoverageNote \/>/);
     expect(dashboard).toContain('<TrustLinks />');
+  });
+});
+
+describe('email, on both pages, as this copy is set up (#51)', () => {
+  test('with mail off: no email provider is named, and the pages say so', () => {
+    mailIs(false);
+    const priv = privacy();
+    expect(priv).toContain('and no email provider, since this copy of Nya sends no email of its own.');
+    expect(priv).not.toContain('Resend');
+    expect(priv).not.toContain('Emails Nya sent you');
+    expect(security()).not.toContain('Resend');
+  });
+
+  test('with mail on: Resend is named, with what it sees, and never an amount', () => {
+    mailIs(true);
+    const priv = privacy();
+    expect(priv).toContain('Resend Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later.');
+    expect(priv).toContain('never a balance, an amount or an account number');
+    expect(priv).toContain('Not used yet: no billing provider, since Nya charges nothing yet.');
+    expect(priv).not.toContain('no email provider');
+    expect(priv).toContain('Emails Nya sent you In your inbox, and with the email service under its own policy.');
+    const sec = security();
+    expect(sec).toContain('Resend, the email service Your email address and the emails Nya sends you about your bank connections');
+    expect(sec).toContain('never a balance, an amount or an account number');
+  });
+
+  test('half a setting is no setting: the pages follow lib/mail.ts', () => {
+    mailIs(false);
+    process.env.RESEND_API_KEY = 're_placeholder';
+    expect(privacy()).toContain('no email provider');
+  });
+
+  // Review nit: mail set up with nobody to write to sends nothing, so names
+  // nothing (lib/notice-recipients.ts sendsEmail).
+  test('with mail set up but nobody it may write to, no email provider is named either', () => {
+    mailIs(true);
+    delete process.env.NOTIFY_EMAIL;
+    expect(privacy()).toContain('and no email provider, since this copy of Nya sends no email of its own.');
+    expect(privacy()).not.toContain('Resend');
+    expect(security()).not.toContain('Resend');
+    // With Clerk, each account's own verified address is written to.
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    expect(privacy()).toContain('Resend Sends the emails about your bank connections');
+    expect(security()).toContain('Resend, the email service');
+  });
+
+  test('the record of how each connection is doing is in the retention table, and among what is encrypted', () => {
+    expect(privacy()).toContain('How each bank connection is doing When it last answered, Plaid’s warnings that it is going to end');
+    expect(privacy()).toContain('until the connection is removed.');
+    expect(privacy()).toContain('Encrypted, and in your download.');
+    expect(security()).toContain('how each bank connection is doing');
   });
 });

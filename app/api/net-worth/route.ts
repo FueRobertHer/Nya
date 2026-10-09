@@ -14,6 +14,7 @@ import { applyHidden } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
+import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
 import { loggable } from '@/lib/log-safe';
 
 type NetWorthPayload = {
@@ -55,6 +56,21 @@ function withNewAccounts(institutions: InstitutionResult[], items: Set<string>):
 }
 
 /**
+ * Each connection's health (lib/connection-health.ts), applied to the response
+ * and never stored in the cache, for the same reason as new_accounts_available:
+ * Plaid's warning arrives by webhook, and a load in flight when it lands would
+ * freeze the old answer for the cache's TTL. `health_unavailable` says the
+ * warnings and sync times could not be read, so the view doesn't present an
+ * unknown as healthy.
+ */
+function healthFields(institutions: InstitutionResult[], reads: HealthReads | null, answeredAt: string) {
+  return {
+    institutions: withHealth(institutions, reads, answeredAt),
+    ...(reads === null ? { health_unavailable: true } : {}),
+  };
+}
+
+/**
  * Starts a promise now, to be awaited later, without risking an unhandled
  * rejection in between.
  *
@@ -82,13 +98,15 @@ export async function GET(req: Request) {
     // whichever one we take rather than adding a round trip to the end of it.
     const stalePromise = eager(staleFlag(ctx));
     const newAccountsPromise = itemsWithNewAccounts(ctx); // never throws: a failed read is "none"
+    const healthPromise = readHealthForDisplay(ctx); // never throws: a failed read is null, and said
 
     if (!refresh) {
       const cached = await readCache<NetWorthPayload>(ctx, CacheKey.NetWorth);
       if (cached) {
         return NextResponse.json({
           ...cached,
-          institutions: withNewAccounts(cached.institutions, await newAccountsPromise),
+          // A cached payload holds only institutions that answered, when it was made.
+          ...healthFields(withNewAccounts(cached.institutions, await newAccountsPromise), await healthPromise, cached.as_of),
           ...(await stalePromise),
           from_cache: true,
         });
@@ -108,6 +126,8 @@ export async function GET(req: Request) {
     const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
 
     const { institutions, netWorth } = await computeNetWorth(ctx);
+    // When the institutions that answered did: their last good sync.
+    const answeredAt = new Date().toISOString();
 
     // Record today's snapshot only when every institution answered cleanly and at
     // least one is linked: a partial fetch would chart an artificial dip, and zero
@@ -123,7 +143,8 @@ export async function GET(req: Request) {
     // second clock read, so the point charted below is labelled with the day
     // actually written even if the request straddles UTC midnight. When it didn't
     // land, the accounts that did answer are still recorded for their own charts.
-    const snapshotDate = await recordFetch(ctx, institutions, netWorth);
+    // Their positions go into holdings history the same way (lib/holdings-history.ts).
+    const { date: snapshotDate } = await recordFetch(ctx, institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so a
     // later failure can still draw its card. Per institution, not gated on
@@ -133,6 +154,9 @@ export async function GET(req: Request) {
     // institution's accounts can be matched to the ones they replace. Awaited
     // before responding so it overlaps the reads below. It never throws.
     const directoryWrite = recordDirectory(ctx, institutions);
+    // And when each connection last answered, for the connection health view
+    // and the daily notices (lib/connection-health.ts). It never throws.
+    const syncWrite = recordSyncs(ctx, institutions, Date.parse(answeredAt));
 
     // Everything from here down is display-only. `visibleNetWorth` excludes hidden
     // accounts and is what ships as `netWorth`: the client never gets the true
@@ -156,10 +180,15 @@ export async function GET(req: Request) {
 
     const { hidden, forClient: hiddenList } = await hiddenPromise;
     await directoryWrite;
+    await syncWrite;
     // Plaid's cross-Item account identity is for matching on the server only
     // (lib/links.ts); it has no business in the payload, the cache or the
-    // browser's localStorage.
-    for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
+    // browser's localStorage. Nor has the raw holdings answer recorded above:
+    // the payload carries the holdings already, in the shape the client reads.
+    for (const inst of institutions) {
+      delete inst.holdings_observed;
+      for (const a of inst.accounts) delete a.persistent_account_id;
+    }
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
@@ -193,7 +222,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       ...payload,
-      institutions: withNewAccounts(payload.institutions, await newAccountsPromise),
+      ...healthFields(withNewAccounts(payload.institutions, await newAccountsPromise), await healthPromise, answeredAt),
       ...(await stalePromise),
       from_cache: false,
     });

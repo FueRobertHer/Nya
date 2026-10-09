@@ -245,6 +245,23 @@ describe('clearing a damaged record', () => {
 });
 
 describe('the nightly pass', () => {
+  test('takes on nothing more once its time is up, says so, and the next night goes on', async () => {
+    const old = at(T - (ACCESS_LOG_DAYS + 1) * DAY);
+    await accessLogStore.setMany(ctx, [
+      ['ended', log(at(T))],
+      ['old', log(old, at(T))],
+    ]);
+    let asked = false;
+    const live = async () => ((asked = true), new Set(['old']));
+    const { logged } = await quietly(() => pruneAccessLog(ctx, T, live, { until: Date.now() - 1 }));
+    expect(logged.map((l) => l[0])).toEqual(['Sharing: the nightly pass over the records of showings stopped at its time limit; the next night goes on']);
+    expect(asked).toBe(false);
+    expect([...(await accessLogStore.getAll(ctx)).keys()]).toEqual(['ended', 'old']); // nothing done
+    // With time left: all of it.
+    expect((await quietly(() => pruneAccessLog(ctx, T, live, { until: Date.now() + 60_000 }))).logged).toEqual([]);
+    expect([...(await accessLogStore.getAll(ctx))]).toEqual([['old', log(at(T))]]);
+  });
+
   test('drops what is no longer kept, and the records with nothing left', async () => {
     const old = at(T - (ACCESS_LOG_DAYS + 1) * DAY);
     const recent = at(T - DAY, 2);

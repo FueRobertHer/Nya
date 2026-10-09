@@ -5,6 +5,7 @@ import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
+import { sendsEmail } from '@/lib/notice-recipients';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -17,7 +18,9 @@ export const metadata: Metadata = {
 // makes it true today and, where some of it is still to come, what is not
 // built yet. Reads no stored data: what it says of backups comes from
 // backupRetention() (lib/backup.ts, environment only), the rule the deletion
-// receipt dates by, so the two never disagree.
+// receipt dates by, so the two never disagree, and whether it names an email
+// provider from sendsEmail() (lib/notice-recipients.ts): mail set up, and
+// someone it may write to, which is whether this copy sends email at all.
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
@@ -92,7 +95,7 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   },
 ];
 
-const processors = (backups: BackupRetention): [string, string][] => [
+const processors = (backups: BackupRetention, mail: boolean): [string, string][] => [
   [
     'Vercel',
     `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'} Handles every request and response, and keeps the app’s logs.`,
@@ -109,6 +112,14 @@ const processors = (backups: BackupRetention): [string, string][] => [
     'Clerk',
     'Signs you in, when this copy of Nya uses accounts rather than a shared password. Holds your email address and sign-in activity, and your name and picture if you sign in with Google or another account, and may email you sign-in codes and invitations. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs.',
   ],
+  ...(mail
+    ? ([
+        [
+          'Resend',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. Sees your email address and each email, which names the bank and what to do, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
+        ],
+      ] as [string, string][])
+    : []),
 ];
 
 /** How long the records of showings on a connection last (lib/access-log.ts),
@@ -128,8 +139,15 @@ function backupsRow(backups: BackupRetention): string {
   return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
 }
 
-const retention = (backups: BackupRetention): [string, string][] => [
+const retention = (backups: BackupRetention, mail: boolean): [string, string][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
+  [
+    'How each bank connection is doing',
+    'When it last answered, Plaid’s warnings that it is going to end, and the record of a problem with it (when it began, what it was, and when you were emailed about it): until the connection is removed. The warnings and the problem records go sooner, once the connection works again. Encrypted, and in your download.',
+  ],
+  ...(mail
+    ? ([['Emails Nya sent you', 'In your inbox, and with the email service under its own policy. Deleting your account does not reach them.']] as [string, string][])
+    : []),
   [
     'A bank you disconnect',
     'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
@@ -156,6 +174,7 @@ const retention = (backups: BackupRetention): [string, string][] => [
 
 export default function PrivacyPage() {
   const backups = backupRetention();
+  const mail = sendsEmail();
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
@@ -182,7 +201,7 @@ export default function PrivacyPage() {
       <InfoSection title="Who processes your data">
         <table className="info-table">
           <tbody>
-            {processors(backups).map(([name, what]) => (
+            {processors(backups, mail).map(([name, what]) => (
               <tr key={name}>
                 <th scope="row">{name}</th>
                 <td>{what}</td>
@@ -191,8 +210,9 @@ export default function PrivacyPage() {
           </tbody>
         </table>
         <p>
-          Not used yet: no billing provider, since Nya charges nothing yet, and no email provider, since Nya itself sends
-          no email.
+          {mail
+            ? 'Not used yet: no billing provider, since Nya charges nothing yet.'
+            : 'Not used yet: no billing provider, since Nya charges nothing yet, and no email provider, since this copy of Nya sends no email of its own.'}
         </p>
       </InfoSection>
 
@@ -205,7 +225,7 @@ export default function PrivacyPage() {
             </tr>
           </thead>
           <tbody>
-            {retention(backups).map(([what, howLong]) => (
+            {retention(backups, mail).map(([what, howLong]) => (
               <tr key={what}>
                 <th scope="row">{what}</th>
                 <td>{howLong}</td>

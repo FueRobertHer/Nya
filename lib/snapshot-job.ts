@@ -6,14 +6,22 @@
 // nothing. At most CONCURRENCY run at once.
 //
 // Each run's outcome is kept in its container at "snapshot:runs", a hash of
-// date -> {status, reason?, at, attempts}, and read back by /api/snapshot-runs.
+// date -> {status, reason?, at, attempts, holdings_failed?}, and read back by
+// /api/snapshot-runs. `holdings_failed` counts the accounts whose positions
+// could not be written to holdings history (lib/holdings-history.ts): counted
+// beside the outcome, never part of it, since the snapshot is the net worth.
 // A run is marked "running" before it starts, so one the platform killed
 // shows as that rather than as nothing. A container already recorded for the
 // date is not run again (checked again once its lock is held, and a recorded
-// day is never overwritten), and one being run elsewhere (a second delivery
-// of the cron) is left to it, so the catch-up cron (/api/snapshot/catchup)
-// only does the containers that failed, came back unclean, were deferred, or
-// had nothing linked (in case something was linked since; no Plaid calls).
+// day is never overwritten by a worse outcome), and one being run elsewhere
+// (a second delivery of the cron) is left to it, so the catch-up cron
+// (/api/snapshot/catchup) only does the containers that failed, came back
+// unclean, were deferred, or had nothing linked (in case something was linked
+// since; no Plaid calls), and those recorded with `holdings_failed`: a day's
+// positions can't be fetched later, so the catch-up runs the day again for
+// them. That fetch is the free one a dashboard load makes (Plaid bills
+// holdings per Item per month), and the day's total it records again is as
+// measured as the first.
 // `attempts` counts the runs started; a run refused before starting (its
 // container no longer active) is stored as failed without adding one.
 // Entries older than RUNS_KEEP_DAYS are pruned.
@@ -23,8 +31,11 @@
 // shown again, and deletes those whose connection has ended, going by the
 // connections as they are when each container's records have been read
 // (lib/sharing.ts nightlyLogIds, one per run, so a connection field that
-// can't be read is logged once a run). It goes first and never throws, so
-// neither costs the other.
+// can't be read is logged once a run). It goes first in the container's run,
+// before the snapshot, so it is over before the emails start; it takes on no
+// more after PRUNE_BUDGET_MS, and never throws, so it costs the snapshot
+// nothing but that time, and the emails at most that much of theirs, never
+// the run past MAIL_DEADLINE_MS or maxDuration.
 //
 // "snapshot:" keys describe this environment's cron, not the data: exports
 // leave them out and a restore keeps the target's own (lib/export.ts,
@@ -39,6 +50,12 @@
 // If the registry cannot be read it is tried once more, then the cron fails
 // loudly. It never falls back to a default container or to unscoped keys.
 //
+// The emails about bank connections (#51) go once every container has run:
+// each container's run decides what is due about its own connections, and
+// they are sent together afterwards, within a deadline of their own
+// (MAIL_DEADLINE_MS), so a fault many containers share is seen before anybody
+// is written to (lib/connection-notices.ts).
+//
 // Deferred: spreading the runs across a window. The job takes the date it is
 // for (scheduledFor), which is the seam that needs.
 
@@ -51,6 +68,7 @@ import { recordDirectory } from './links';
 import { clearCaches } from './cache';
 import { pruneAccessLog } from './access-log';
 import { nightlyLogIds } from './sharing';
+import { MAIL_BUDGET_MS, prepareNotices, sendNotices, type PendingNotices, type SendOptions } from './connection-notices';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
@@ -60,10 +78,31 @@ export const REGISTRY_RETRY_MS = 1000;
  * calls in series at up to 45 s each (balances, then holdings and liabilities
  * together). A rate-limited balance call adds at most one more try (a 429
  * that took up to 10 s, a 1 s wait, then up to 45 s: lib/rate-limit-retry.ts),
- * so about 101 s at worst, and the rest is margin for the database. One not
- * started is deferred to the catch-up run.
+ * so about 101 s at worst, and the rest is margin for the database: the
+ * snapshot, the day's positions for holdings history (a few round trips per
+ * container, beside the snapshot), the connections' records, and the nightly
+ * pass over the records of showings (PRUNE_BUDGET_MS at most). One not
+ * started is deferred to the catch-up run. The emails about connections are
+ * not in it: they go once every container has run, within MAIL_DEADLINE_MS.
  */
 export const START_BUDGET_MS = 180_000;
+/** How long the nightly pass over a container's records of showings may go
+ *  on taking on more (lib/access-log.ts pruneAccessLog): what is left waits
+ *  for the next night. With START_BUDGET_MS and the slowest Plaid calls it
+ *  still leaves the run within MAIL_DEADLINE_MS. */
+export const PRUNE_BUDGET_MS = 3_000;
+/**
+ * The emails about connections (lib/connection-notices.ts) are all over by
+ * this long after the request began. Each one is started only if finding whom
+ * to write to and the send can both end by then, each with a short timeout of
+ * its own, so however slow the email service, mail never pushes the run past
+ * maxDuration: what doesn't fit waits for the next run, unmarked. They also
+ * get no more than MAIL_BUDGET_MS in all. Whatever the containers' runs take
+ * (Plaid, the snapshot, holdings history, a catch-up run again for positions)
+ * only starts the emails later, so it can shorten their time, never extend
+ * the run past this.
+ */
+export const MAIL_DEADLINE_MS = 285_000;
 /** How long a run holds its container's lock: the route's maxDuration, so a
  *  run the platform killed releases it by the catch-up run. The lock holds a
  *  token only its taker releases, so a run that outlives it (anywhere the
@@ -84,11 +123,18 @@ export type RunStatus = 'recorded' | 'empty' | 'unclean' | 'failed';
 /** What is stored: a finished run's status, or "running" (started, not yet
  *  finished, or killed) or "deferred" (not started in time). */
 export type StoredStatus = RunStatus | 'running' | 'deferred';
-export type RunRecord = { status: StoredStatus; reason?: string; at: string; attempts: number };
+export type RunRecord = { status: StoredStatus; reason?: string; at: string; attempts: number; holdings_failed?: number };
+
+/** What one container's snapshot came to. `holdings_failed`, when set, counts
+ *  the accounts whose positions could not be written to holdings history:
+ *  beside the status, which it never changes. */
+export type WorkOutcome = { status: RunStatus; reason?: string; holdings_failed?: number };
 
 export type ContainerOutcome = { container: ContainerId } & (
-  | { status: RunStatus; reason?: string; ms: number }
-  | { status: 'already' } // recorded earlier for this date
+  | (WorkOutcome & { ms: number })
+  // Recorded earlier for this date. With holdings_failed: run again for its
+  // positions, which still could not all be written.
+  | { status: 'already'; holdings_failed?: number }
   | { status: 'running' } // being run by another invocation
   | { status: 'skipped'; reason: string } // not run, and nothing written
   | { status: 'deferred' } // not started in time; the catch-up run does it
@@ -155,11 +201,23 @@ function parseRun(value: unknown): RunRecord | null {
   }
   if (!r || typeof r !== 'object' || !STORED.has(r.status)) return null;
   if (typeof r.at !== 'string' || !Number.isSafeInteger(r.attempts)) return null;
-  return { status: r.status, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}), at: r.at, attempts: r.attempts };
+  return {
+    status: r.status,
+    ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
+    at: r.at,
+    attempts: r.attempts,
+    ...(Number.isSafeInteger(r.holdings_failed) && r.holdings_failed > 0 ? { holdings_failed: r.holdings_failed } : {}),
+  };
 }
 
 export async function readRun(ctx: Ctx, date: string): Promise<RunRecord | null> {
   return parseRun(await redis().hget(runsKey(ctx), date));
+}
+
+/** Whether the date needs no run: recorded, positions and all. A day recorded
+ *  with `holdings_failed` is run again for them (see the header). */
+function finished(run: RunRecord | null): boolean {
+  return run?.status === 'recorded' && !run.holdings_failed;
 }
 
 /** The container's recorded runs, newest first. An unreadable entry is left
@@ -189,14 +247,20 @@ async function writeRun(
   status: StoredStatus,
   reason: string | undefined,
   now: number,
-  opts: { onlyIfNew?: boolean } = {}
+  opts: { onlyIfNew?: boolean; holdingsFailed?: number } = {}
 ): Promise<void> {
   try {
     const prev = await readRun(ctx, date);
     if (prev?.status === 'recorded' && status !== 'recorded') return;
     if (prev && opts.onlyIfNew) return;
     const attempts = (prev?.attempts ?? 0) + (status === 'running' ? 1 : 0);
-    const record: RunRecord = { status, ...(reason ? { reason } : {}), at: new Date(now).toISOString(), attempts };
+    const record: RunRecord = {
+      status,
+      ...(reason ? { reason } : {}),
+      at: new Date(now).toISOString(),
+      attempts,
+      ...(opts.holdingsFailed ? { holdings_failed: opts.holdingsFailed } : {}),
+    };
     await redis().hset(runsKey(ctx), { [date]: JSON.stringify(record) });
   } catch (err) {
     console.error('Snapshot: the outcome could not be recorded.', reasonOf(err));
@@ -221,14 +285,32 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
  * The snapshot itself, for one container, from that container's data. The
  * same rule as the dashboard: only a clean, non-empty read records a total. A
  * partly failed one still records the accounts that answered, for their own
- * charts: on a day the app is not opened this is the only fetch.
+ * charts: on a day the app is not opened this is the only fetch. Positions go
+ * to holdings history the same way (recordFetch), and a failed holdings write
+ * is only counted beside the status.
  */
-export async function snapshotData(ctx: Ctx, live = nightlyLogIds()): Promise<{ status: RunStatus; reason?: string }> {
-  await pruneAccessLog(ctx, Date.now(), live);
+export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = nightlyLogIds()): Promise<WorkOutcome> {
+  // The records of showings first (see the header): never throws, and stops
+  // taking on more after PRUNE_BUDGET_MS.
+  await pruneAccessLog(ctx, Date.now(), live, { until: Date.now() + PRUNE_BUDGET_MS });
   const { institutions, netWorth } = await computeNetWorth(ctx);
-  const recorded = await recordFetch(ctx, institutions, netWorth);
+  const { date: recorded, holdings } = await recordFetch(ctx, institutions, netWorth);
+  const counted = holdings.failed > 0 ? { holdings_failed: holdings.failed } : {};
+  // Each connection's last good sync, and what is due about a connection that
+  // broke or will end soon (lib/connection-notices.ts), whose email goes into
+  // the run's outbox, sent once every container has run. After the snapshot
+  // and its positions are recorded, and before the returns below: an unclean
+  // run is exactly when a connection is broken. It never costs the snapshot:
+  // a failure is logged, and the next run tries again.
+  try {
+    const pending = await prepareNotices(ctx, institutions);
+    if (outbox) outbox.push(pending);
+    else await sendNotices([pending]);
+  } catch (err) {
+    console.error(`Connection notices failed for container ${ctx.container}:`, reasonOf(err));
+  }
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
-  if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.' };
+  if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.', ...counted };
 
   // Record how to draw these accounts, alongside the balances. On a day the
   // app is never opened this is the only clean fetch there is, so without it
@@ -238,8 +320,8 @@ export async function snapshotData(ctx: Ctx, live = nightlyLogIds()): Promise<{ 
   await rememberAccounts(ctx, institutions);
   await recordDirectory(ctx, institutions);
   await clearCaches(ctx); // cached payloads now have yesterday's history
-  if (recorded === null) return { status: 'failed', reason: 'The snapshot could not be written.' };
-  return { status: 'recorded' };
+  if (recorded === null) return { status: 'failed', reason: 'The snapshot could not be written.', ...counted };
+  return { status: 'recorded', ...counted };
 }
 
 export type RunOptions = {
@@ -248,19 +330,24 @@ export type RunOptions = {
   startedAt?: number;
   /** For tests. */
   clock?: () => number;
-  work?: (ctx: Ctx) => Promise<{ status: RunStatus; reason?: string }>;
+  /** The container's run; whatever it puts in the outbox is emailed once
+   *  every container has run. */
+  work?: (ctx: Ctx, outbox: PendingNotices[]) => Promise<WorkOutcome>;
   concurrency?: number;
   budgetMs?: number;
+  /** For tests: how the emails reach Resend and whom they go to. */
+  mail?: Omit<SendOptions, 'clock' | 'deadline'>;
 };
 
 /** Runs every container in the registry for the date (see the header). */
 export async function runSnapshots(registry: Registry, opts: RunOptions): Promise<SnapshotReport> {
   const clock = opts.clock ?? Date.now;
   const live = nightlyLogIds();
-  const work = opts.work ?? ((ctx: Ctx) => snapshotData(ctx, live));
+  const work = opts.work ?? ((ctx: Ctx, outbox: PendingNotices[]) => snapshotData(ctx, outbox, live));
   const budget = opts.budgetMs ?? START_BUDGET_MS;
   const date = opts.scheduledFor;
   const started = opts.startedAt ?? clock();
+  const outbox: PendingNotices[] = [];
 
   const one = async (c: Registry[number]): Promise<ContainerOutcome> => {
     const container = c.id;
@@ -272,10 +359,21 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     const t0 = clock();
     const token = randomUUID();
     let locked = false;
-    let outcome: { status: RunStatus; reason?: string };
+    let outcome: WorkOutcome;
+    // The date's record as last read. A day recorded already is run again
+    // only for its positions, and is reported as recorded whatever that run
+    // comes to: a worse outcome never replaces its record (writeRun).
+    let prior: RunRecord | null = null;
+    const already = (run: RunRecord): ContainerOutcome => ({
+      container,
+      status: 'already',
+      ...(run.holdings_failed ? { holdings_failed: run.holdings_failed } : {}),
+    });
     try {
-      if ((await readRun(ctx, date))?.status === 'recorded') return { container, status: 'already' };
+      prior = await readRun(ctx, date);
+      if (finished(prior)) return { container, status: 'already' };
       if (clock() - started > budget) {
+        if (prior?.status === 'recorded') return already(prior);
         await writeRun(ctx, date, 'deferred', undefined, clock(), { onlyIfNew: true });
         return { container, status: 'deferred' };
       }
@@ -283,7 +381,8 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       if (!locked) return { container, status: 'running' };
       // With the lock held: another run may have finished between the check
       // above and taking the lock.
-      if ((await readRun(ctx, date))?.status === 'recorded') {
+      prior = await readRun(ctx, date);
+      if (finished(prior)) {
         await release(ctx, token);
         return { container, status: 'already' };
       }
@@ -291,17 +390,25 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       // may have started since.
       await recheck(container);
       await writeRun(ctx, date, 'running', undefined, clock());
-      outcome = await work(ctx);
+      outcome = await work(ctx, outbox);
     } catch (err) {
       console.error(`Snapshot failed for container ${container}:`, reasonOf(err));
       outcome = { status: 'failed', reason: reasonOf(err) };
     }
-    await writeRun(ctx, date, outcome.status, outcome.reason, clock(), { onlyIfNew: !locked });
+    await writeRun(ctx, date, outcome.status, outcome.reason, clock(), { onlyIfNew: !locked, holdingsFailed: outcome.holdings_failed });
     if (locked) await release(ctx, token);
+    if (prior?.status === 'recorded' && outcome.status !== 'recorded') return already(prior);
     return { container, ...outcome, ms: clock() - t0 };
   };
 
   const results = await inPool(registry, opts.concurrency ?? CONCURRENCY, one);
+  // The emails, once every container has run: a fault many containers share is
+  // seen before anybody is written to, and mail has a deadline of its own,
+  // never the snapshots' time (lib/connection-notices.ts).
+  if (outbox.length > 0) {
+    const deadline = Math.min(started + MAIL_DEADLINE_MS, clock() + MAIL_BUDGET_MS);
+    await sendNotices(outbox, { ...opts.mail, clock, deadline }).catch((err) => console.error('Connection notices: the emails could not be sent.', reasonOf(err)));
+  }
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };
 }
 

@@ -42,6 +42,23 @@ const PUBLIC_PAGES: ReadonlySet<string> = new Set(['/login', '/security', '/priv
 // script tags). Only this proxy sets them: whatever a request brings is dropped.
 const NONCE_CARRIERS = ['x-nonce', 'content-security-policy', 'content-security-policy-report-only'];
 
+// Where to come back to after signing in with Clerk: this path and its query,
+// so the link in a notice email (/?view=connections, lib/connection-notices.ts)
+// still opens the Connection health card for someone signed out. Only a path
+// on this site: one starting "//" or with a backslash could be read as another
+// host.
+function returnPath(req: NextRequest): string | null {
+  const { pathname, search } = req.nextUrl;
+  if (!pathname.startsWith('/') || pathname.startsWith('//') || pathname.includes('\\')) return null;
+  const path = `${pathname}${search}`;
+  return path === '/' ? null : path;
+}
+
+// The one place the password login sends someone back to, besides Home: the
+// Connection health card, from a notice email's link. Only a flag is passed,
+// never a path, so the login page can't be made to redirect anywhere else.
+const forConnections = (req: NextRequest) => req.nextUrl.pathname === '/' && req.nextUrl.searchParams.get('view') === 'connections';
+
 // Lets a request through. A page also gets its Content-Security-Policy
 // (lib/security-headers.ts), in the mode CSP_MODE sets, with a nonce made for
 // this request alone and passed on in the request headers as well: Next.js
@@ -84,9 +101,11 @@ const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) =
   const { userId } = await auth();
   if (!userId) {
     if (path.startsWith('/api/')) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    // Back to where they were going once signed in (an invite link, say).
+    // Back to where they were going once signed in (an invite link, or the
+    // Connection health card from a notice email), query and all.
     const signIn = new URL('/sign-in', req.url);
-    if (path !== '/') signIn.searchParams.set('redirect_url', path);
+    const back = returnPath(req);
+    if (back) signIn.searchParams.set('redirect_url', back);
     return NextResponse.redirect(signIn);
   }
   if (!(await clerkUserAllowed(userId))) {
@@ -119,7 +138,11 @@ async function passwordProxy(req: NextRequest) {
     if (req.nextUrl.pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.redirect(new URL('/login', req.url));
+    // The login page goes Home once signed in, or to the Connection health
+    // card when that is where this request was going: nothing else is passed.
+    const login = new URL('/login', req.url);
+    if (forConnections(req)) login.searchParams.set('view', 'connections');
+    return NextResponse.redirect(login);
   }
 
   return pass(req);

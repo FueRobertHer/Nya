@@ -18,7 +18,9 @@
 //   import './rules';
 
 import './access-log';
+import './connection-records';
 import './fire-plan';
+import './holdings-history';
 import './rate-limit';
 
 import { storesDeclaredSoFar, type Store } from './repo';

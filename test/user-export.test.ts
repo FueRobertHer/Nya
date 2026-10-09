@@ -738,7 +738,15 @@ describe('stores built on the storage seam', () => {
     const keys = Object.keys(doc);
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     // Not the records of showings: "sharing" has them (covers).
-    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings', 'fire-plan']);
+    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'connection-notices',
+      'connection-syncs',
+      'connection-warnings',
+      'export-test-plans',
+      'export-test-settings',
+      'fire-plan',
+      'holdings:history',
+    ]);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
       { id: 'p1', value: { name: 'House', target: 120_000 } },
@@ -748,8 +756,10 @@ describe('stores built on the storage seam', () => {
     const text = JSON.stringify(doc);
     expect(text).not.toContain('SECRET-NOT-EXPORTED');
     expect(text).not.toContain('OTHER-PERSON-PLAN');
-    // The download limit's own counter is bookkeeping, never part of it.
+    // The download limit's own counter is bookkeeping, never part of it, and
+    // so is the holdings history's index (each month names itself).
     expect(keys).not.toContain('download-count');
+    expect(keys).not.toContain('holdings:history:index');
     // In the file as written, too, one entry per line.
     const written = [...exportFile(doc, 'json').pieces()].join('');
     expect(JSON.parse(written)['export-test-plans']).toEqual(doc['export-test-plans']);
@@ -805,6 +815,25 @@ describe('stores built on the storage seam', () => {
     const { planFunding: _, ...older } = plan;
     await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
     expect((await download())['fire-plan']).toEqual(plan);
+  });
+
+  // Review: the record of the emails Nya sent about the person's own bank
+  // connections, Plaid's warnings about them and when each last answered are
+  // about that person, and /privacy names them, so they are in the download.
+  test('how each bank connection is doing is in it: the notices, the warnings and the last syncs', async () => {
+    const { noticesStore, warningsStore, syncsStore } = await import('@/lib/connection-records');
+    const notice = { episode: 'e1', since: '2026-10-01T13:00:00.000Z', state: 'needs_reauth' as const, side: 'you' as const, notified_at: '2026-10-01T13:00:00.000Z', reminded_at: null, told: ['needs_reauth' as const] };
+    const warning = { kind: 'pending_disconnect' as const, received_at: '2026-10-02T00:00:00.000Z', ends_at: '2026-10-09T00:00:00.000Z', ends_estimated: true, reason: 'INSTITUTION_MIGRATION' };
+    await noticesStore.set(ctx, 'item_chase', notice);
+    await warningsStore.set(ctx, 'item_amex', warning);
+    await syncsStore.set(ctx, 'item_amex', { at: '2026-10-08T13:00:00.000Z' });
+    await noticesStore.set(OTHER, 'item_other', { ...notice, episode: 'OTHER-PERSON-EPISODE' });
+    const doc = await download();
+    expect(doc['connection-notices']).toEqual([{ id: 'item_chase', value: notice }]);
+    expect(doc['connection-warnings']).toEqual([{ id: 'item_amex', value: warning }]);
+    expect(doc['connection-syncs']).toEqual([{ id: 'item_amex', value: { at: '2026-10-08T13:00:00.000Z' } }]);
+    expect(JSON.stringify(doc)).not.toContain('OTHER-PERSON-EPISODE');
+    expect(doc.not_included.join(' ')).not.toContain('how each bank connection is doing');
   });
 
   test('no store on the seam is named like a part of the file already there', async () => {

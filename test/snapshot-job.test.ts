@@ -40,6 +40,33 @@ afterEach(() => {
   console.error = errors;
 });
 
+describe('the records of showings, pruned in each container’s run', () => {
+  test('first, before the snapshot, never failing it, and with the emails still sent after every container', async () => {
+    const { accessLogStore, slotOf } = await import('@/lib/access-log');
+    const { PRUNE_BUDGET_MS, START_BUDGET_MS, MAIL_DEADLINE_MS } = await import('@/lib/snapshot-job');
+    const registry = await register([[A, 'active'], [B, 'active']]);
+    // Records whose connections have ended (there are none), in both containers.
+    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { a: 'balance' as const } }] };
+    for (const container of [A, B]) await accessLogStore.set({ container }, 'e'.repeat(32), record);
+    // B's records can't even be reached: its run goes on as if they weren't there.
+    const hgetall = fake.hgetall.bind(fake);
+    (fake as any).hgetall = (key: string) => (key === kc({ container: B }, 'sharing-access-log') ? Promise.reject(new Error('down')) : hgetall(key));
+    try {
+      const report = await runSnapshots(registry, { scheduledFor: DATE });
+      expect(report.results.map((r) => [r.container, r.status])).toEqual([
+        [A, 'empty'],
+        [B, 'empty'],
+      ]);
+    } finally {
+      delete (fake as any).hgetall;
+    }
+    expect(await accessLogStore.get({ container: A }, 'e'.repeat(32))).toBeNull();
+    expect(await accessLogStore.get({ container: B }, 'e'.repeat(32))).toEqual(record);
+    // Its time comes out of the margin the start budget leaves, inside the emails' deadline.
+    expect(START_BUDGET_MS + 101_000 + PRUNE_BUDGET_MS).toBeLessThan(MAIL_DEADLINE_MS);
+  });
+});
+
 describe('the fan-out', () => {
   test('one container failing costs the others nothing, and each outcome is kept', async () => {
     const registry = await register([[A, 'active'], [B, 'active'], [C, 'active']]);
@@ -169,6 +196,60 @@ describe('the fan-out', () => {
       work: async () => ({ status: 'recorded' }),
     });
     expect(report.results.map((r) => r.status)).toEqual(['failed', 'recorded']);
+  });
+});
+
+// A day's positions can't be fetched later (lib/holdings-history.ts), so a
+// day recorded while its holdings write failed is the catch-up's to finish.
+describe('a day recorded with positions that could not be written', () => {
+  const failedOnce = async () => {
+    const registry = await register([[A, 'active']]);
+    await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded', holdings_failed: 2 }) });
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2, attempts: 1 });
+    return registry;
+  };
+
+  test('is run again by the catch-up, and a clean run clears the count', async () => {
+    const registry = await failedOnce();
+    let ran = 0;
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => (ran++, { status: 'recorded' }) });
+    expect(ran).toBe(1);
+    expect(report.results).toEqual([{ container: A, status: 'recorded', ms: expect.any(Number) }]);
+    const run = await readRun({ container: A }, DATE);
+    expect(run).toMatchObject({ status: 'recorded', attempts: 1 });
+    expect(run).not.toHaveProperty('holdings_failed');
+    // Done: not run a third time.
+    const third = await runSnapshots(registry, { scheduledFor: DATE, work: async () => (ran++, { status: 'recorded' }) });
+    expect([ran, third.results[0].status]).toEqual([1, 'already']);
+  });
+
+  test('a run again that still fails some is counted again', async () => {
+    const registry = await failedOnce();
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded', holdings_failed: 1 }) });
+    expect(report.results).toEqual([{ container: A, status: 'recorded', holdings_failed: 1, ms: expect.any(Number) }]);
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 1 });
+  });
+
+  test('a run again that comes back worse keeps the day as recorded, and says so', async () => {
+    for (const work of [async () => ({ status: 'unclean', reason: 'Not every account could be read.' }) as const, async () => Promise.reject(new Error('Plaid is down'))]) {
+      fake.reset();
+      const registry = await failedOnce();
+      const report = await runSnapshots(registry, { scheduledFor: DATE, work });
+      expect(report.results).toEqual([{ container: A, status: 'already', holdings_failed: 2 }]);
+      expect(report.failed).toBe(0);
+      expect(nothingSnapshotted(report)).toBe(false);
+      expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2, attempts: 1 });
+      expect(await fake.get(kc({ container: A }, 'snapshot:lock'))).toBeNull();
+    }
+  });
+
+  test('past the start budget it waits for the next run, and is reported as recorded', async () => {
+    const registry = await failedOnce();
+    let ran = 0;
+    const report = await runSnapshots(registry, { scheduledFor: DATE, budgetMs: -1, work: async () => (ran++, { status: 'recorded' }) });
+    expect(ran).toBe(0);
+    expect(report.results).toEqual([{ container: A, status: 'already', holdings_failed: 2 }]);
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2 });
   });
 });
 

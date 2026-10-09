@@ -65,6 +65,15 @@ describe('with Clerk on', () => {
     expect((await call('/api/net-worth')).status).toBe(401);
   });
 
+  // Review should-fix 1: a notice email's link, opened signed out, still ends
+  // on the Connection health card once signed in.
+  test('signed out, where they were going comes back once signed in, query and all', async () => {
+    expect((await call('/?view=connections')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2F%3Fview%3Dconnections');
+    expect((await call('/connect/abc?x=1')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fconnect%2Fabc%3Fx%3D1');
+    // Never a path that could be read as another site.
+    expect((await call('//evil.example/x')).headers.get('location')).toBe('https://nya.test/sign-in');
+  });
+
   test('sign-in and the not-allowed page stay open', async () => {
     for (const path of ['/sign-in', '/sign-in/factor-one', '/not-allowed']) {
       const res = await call(path);
