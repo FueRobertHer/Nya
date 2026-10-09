@@ -612,12 +612,14 @@ export async function forgetEarlierAccount(
   }
 
   // What it held, from every month of holdings history. First, as the one
-  // step that stops for what is stored (an unrecognised record that may hold
-  // the account), so a forget it stops has changed nothing. An account known
-  // not to be an investment account holds no positions, so holdings records
-  // that can't be read never hold its forget back.
+  // step that stops for what is stored (a record this version does not
+  // recognise that may hold the account), so a forget it stops has changed
+  // nothing. An account known not to be an investment account never had
+  // positions: holdings records are not read for it at all, so nothing in
+  // them, not even a record no one can read, holds its forget back.
   const type = inputs.directory[id]?.type ?? hidden.get(id)?.type ?? null;
-  const holdings = await forgetAccountHoldings(ctx, id, { mayHoldPositions: type === null || isInvestmentType(type) });
+  const mayHoldPositions = type === null || isInvestmentType(type);
+  const holdings = mayHoldPositions ? await forgetAccountHoldings(ctx, id) : { changed: 0, damaged: false };
 
   if (found.hidden) {
     // Taken out of every past total for good, point by point, each in one step
@@ -645,7 +647,7 @@ export async function forgetEarlierAccount(
   // read before the pass above could have written the account back, and a
   // recording of holdings already under way could have too.
   await forgetAccountBalances(ctx, id, { today: true });
-  await forgetRecentHoldings(ctx, id);
+  if (mayHoldPositions) await forgetRecentHoldings(ctx, id);
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.

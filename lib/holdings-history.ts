@@ -52,11 +52,13 @@
 // THE INDEX IS BOOKKEEPING: each month names itself, so it can always be
 // derived from the months. If it is ever missing while months remain, the next
 // recording derives it before claiming anything, so no month is stored twice
-// and every recorded day stays readable. If its bytes are damaged, recording
-// stops (it is read strictly) and every read answers that it can't be read;
-// the person is offered a repair (repairHoldingsIndex), which, once confirmed,
-// puts a derived index in place of the damaged bytes in one step
-// (MapStore.replaceUnreadable). Nothing that can be read is ever removed for it.
+// and every recorded day stays readable (not around a month this version does
+// not recognise, which could be any month: recording then fails, counted). If
+// its bytes are damaged, recording stops (it is read strictly) and every read
+// answers that it can't be read; the person is offered a repair
+// (repairHoldingsIndex), which, once confirmed, puts a derived index in place
+// of the damaged bytes in one step (MapStore.replaceUnreadable). Nothing that
+// can be read is ever removed for it.
 //
 // READ strictly (readHoldingsHistory, and readHoldingsMonth, readHoldingsRange
 // and readHoldingsSpan on it): nothing recorded is an empty answer, and
@@ -88,8 +90,11 @@
 // month at a time (a forget that stops part way is finished by running it
 // again), and its days from the index (forgetAccountHoldings). Damaged
 // entries, the index's included, hold nothing anyone can read: they are left
-// as they are and reported. Deleting the person's account deletes both stores
-// with the rest of the container (lib/account-deletion.ts).
+// as they are and reported. An entry this version does not recognise stops the
+// forget, before anything is changed, but only for an account that could be
+// in it: what can't be read never holds back forgetting a checking account.
+// Deleting the person's account deletes both stores with the rest of the
+// container (lib/account-deletion.ts).
 
 import {
   defineMapStore,
@@ -962,27 +967,24 @@ export type ForgotHoldings = {
  *     in it, as a damaged balance map is (forgetAccountBalances in
  *     lib/history.ts);
  *   - an unrecognised entry is intact, and may hold the account. For an account
- *     with holdings history (found in a month, noted in the index, or, with the
- *     index unusable, an account that may hold positions) it stops the forget,
- *     changing nothing, to be run again once it can be read: removing it would
- *     lose the rest, and leaving it would keep the account. For any other
- *     account (a checking account, say) it is no reason to stop.
+ *     that could be in it (found in a month, noted in the index, or any
+ *     account while the index can't be used, since it could note any) it
+ *     stops the forget, changing nothing, to be run again once it can be read:
+ *     removing it would lose the rest, and leaving it would keep the account.
+ *     For an account the readable index never recorded, it is no reason to
+ *     stop.
  *
- * `mayHoldPositions` is false for an account known not to be an investment
- * account; omitted, an account may hold them.
+ * An account known not to be an investment account never had positions, so
+ * forgetEarlierAccount does not call this for it at all: nothing in holdings
+ * records, not even one no one can read, holds its forget back.
  */
-export async function forgetAccountHoldings(
-  ctx: Ctx,
-  account_id: string,
-  opts: { mayHoldPositions?: boolean } = {}
-): Promise<ForgotHoldings> {
+export async function forgetAccountHoldings(ctx: Ctx, account_id: string): Promise<ForgotHoldings> {
   const [months, index] = await Promise.all([historyStore.getAllReport(ctx), indexStore.getAllReport(ctx)]);
   const current = index.entries.get(INDEX_ID) ?? null;
   const holding = [...months.entries].filter(([, m]) => holdsAccount(m, account_id)).map(([id]) => id);
   const noted = !!current && !!own(current.accounts, account_id);
   const indexUnusable = index.unreadable.length > 0 || index.unrecognised.length > 0;
-  const related = holding.length > 0 || noted || (indexUnusable && opts.mayHoldPositions !== false);
-  if (!related) return { changed: 0, damaged: false };
+  if (holding.length === 0 && !noted && !indexUnusable) return { changed: 0, damaged: false };
   const unrecognised = [...months.unrecognised, ...index.unrecognised];
   if (unrecognised.length > 0) {
     throw new UnreadableEntriesError(historyStore.what, [], unrecognised, new Error('holdings records this version does not recognise may hold the account'));

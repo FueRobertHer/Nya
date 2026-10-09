@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AccountLinksView, refusalText, type AccountLinksPayload } from '@/components/AccountLinks';
+import { AccountLinksView, refusalText, forgottenNotice, type AccountLinksPayload } from '@/components/AccountLinks';
 
 const noop = () => {};
 const view = (data: AccountLinksPayload | null, picked: Record<string, string> = {}) =>
@@ -131,6 +131,19 @@ describe('AccountLinksView', () => {
     expect(refusalText('forget', {})).toBe('Could not forget that account');
     expect(refusalText('link', {})).toBe('Could not update the link');
     expect(refusalText('forget', { error: 'Unlink it first.' })).toBe('Unlink it first.');
+  });
+
+  test('after a forget, says what damaged records were left as they were, and nothing when none were', () => {
+    expect(forgottenNotice({ unreadable_days: 0 })).toBeNull();
+    expect(forgottenNotice({})).toBeNull();
+    expect(forgottenNotice({ unreadable_days: 1 })).toBe("Forgotten. 1 day of history is damaged and can't be read, so it was left as it was.");
+    expect(forgottenNotice({ unreadable_days: 3 })).toBe("Forgotten. 3 days of history are damaged and can't be read, so they were left as they were.");
+    expect(forgottenNotice({ unreadable_days: 0, damaged_holdings: true })).toBe(
+      "Forgotten. Some holdings history is damaged and can't be read, so it was left as it was."
+    );
+    expect(forgottenNotice({ unreadable_days: 1, damaged_holdings: true })).toBe(
+      "Forgotten. 1 day of history and some holdings history are damaged and can't be read, so they were left as they were."
+    );
   });
 
   test('shows a note after a change that worked, not as an error', () => {

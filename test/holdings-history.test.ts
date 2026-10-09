@@ -883,21 +883,20 @@ describe('forgetting an account', () => {
     expect(await decryptJsonText((await fake.hget<string>(HISTORY, 'orphan-month'))!)).toContain('acct_kept');
   });
 
-  test('an account that cannot hold positions is never held back by what cannot be read', async () => {
+  test('a record this version does not recognise holds back only an account that could be in it', async () => {
     await twoMonths();
-    const index = (await fake.hget<string>(INDEX, 'index'))!;
-    // A checking account, past a damaged index: nothing to do, nothing to say.
-    await fake.hset(INDEX, { index: 'damaged bytes' });
-    expect(await forgetAccountHoldings(ctx, 'chk_old', { mayHoldPositions: false })).toEqual({ changed: 0, damaged: false });
-    // Past an index this version does not recognise, too.
-    await fake.hset(INDEX, { index: await later({ v: 2 }) });
-    expect(await forgetAccountHoldings(ctx, 'chk_old', { mayHoldPositions: false })).toEqual({ changed: 0, damaged: false });
-    // An account that may hold positions could be in what can't be read: that stops.
-    expect(await forgetAccountHoldings(ctx, 'acct_unknown_type').catch((e) => e)).toBeInstanceOf(UnreadableEntriesError);
-    // With the index readable, an unrecognised month holds back no account it never recorded.
-    await fake.hset(INDEX, { index });
+    // With the index readable, an unrecognised month holds back no account it
+    // never recorded.
     await fake.hset(HISTORY, { [(await storedIndex()).months['2026-09']]: await later({ v: 9 }) });
-    expect(await forgetAccountHoldings(ctx, 'chk_old')).toEqual({ changed: 0, damaged: false });
+    expect(await forgetAccountHoldings(ctx, 'acct_never_recorded')).toEqual({ changed: 0, damaged: false });
+    // An index this version does not recognise could note any account: that stops.
+    await fake.hset(INDEX, { index: await later({ v: 2 }) });
+    expect(await forgetAccountHoldings(ctx, 'acct_never_recorded').catch((e) => e)).toBeInstanceOf(UnreadableEntriesError);
+    // A damaged one holds nothing anyone can read: said, and passed.
+    fake.reset();
+    await twoMonths();
+    await fake.hset(INDEX, { index: 'damaged bytes' });
+    expect(await forgetAccountHoldings(ctx, 'acct_never_recorded')).toEqual({ changed: 0, damaged: true });
   });
 
   test('the second pass touches only the recent months', async () => {
@@ -941,17 +940,33 @@ describe('forgetting through the account-links route', () => {
   const forgotten = { status: 200, body: { forgotten: true, unreadable_days: 0 } };
   const unreadable = 'Your saved holdings records could not be read, so they were left untouched.';
 
-  test('a checking account is forgotten whatever holdings records cannot be read', async () => {
-    for (const damage of [
-      async () => {},
-      async () => fake.hset(INDEX, { index: 'damaged bytes' }),
-      async () => fake.hset(INDEX, { index: await later({ v: 2 }) }),
-      async (month: string) => fake.hset(HISTORY, { [month]: await later({ v: 2, month: '2026-10' }) }),
-    ]) {
-      const month = await setup();
-      await damage(month);
-      expect(await forget('chk_old')).toEqual(forgotten);
-      expect(await listed('chk_old')).toBe(false);
+  test('a checking account is forgotten whatever holdings records cannot be read, and they are not even read', async () => {
+    // Every key a read or a script touches.
+    const touched: string[] = [];
+    const origHgetall = fake.hgetall;
+    fake.hgetall = (async (key: string) => (touched.push(key), origHgetall.call(fake, key))) as typeof fake.hgetall;
+    fake.eval = (async (script: string, keys: string[], args: string[]) => (touched.push(...keys), origEval.call(fake, script, keys, args))) as typeof fake.eval;
+    try {
+      for (const damage of [
+        async () => {},
+        async () => fake.hset(INDEX, { index: 'damaged bytes' }),
+        async () => fake.hset(INDEX, { index: await later({ v: 2 }) }),
+        async (month: string) => fake.hset(HISTORY, { [month]: await later({ v: 2, month: '2026-10' }) }),
+      ]) {
+        const month = await setup();
+        await damage(month);
+        touched.length = 0;
+        expect(await forget('chk_old')).toEqual(forgotten);
+        expect(await listed('chk_old')).toBe(false);
+        expect(touched.filter((key) => key === HISTORY || key === INDEX)).toEqual([]);
+      }
+      // As an investment account's forget does read them.
+      await setup();
+      touched.length = 0;
+      expect(await forget('acct_gone')).toEqual(forgotten);
+      expect(touched).toContain(HISTORY);
+    } finally {
+      fake.hgetall = origHgetall;
     }
   });
 
