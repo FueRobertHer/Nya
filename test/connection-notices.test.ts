@@ -528,6 +528,7 @@ describe("Nya's side, and a fault many containers share", () => {
   beforeEach(async () => {
     logs.length = 0;
     console.error = (...a: unknown[]) => void logs.push(a.join(' '));
+    console.warn = (...a: unknown[]) => void logs.push(a.join(' '));
     for (const id of OTHERS) {
       await fake.hset(testKey('containers'), { [id]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-01-01T00:00:00.000Z' }) });
     }
@@ -572,40 +573,81 @@ describe("Nya's side, and a fault many containers share", () => {
   const deliver = (batch: Awaited<ReturnType<typeof prepare>>, over: Record<string, unknown> = {}) =>
     sendNotices(batch, { fetch: resend, recipients: async (c) => [mailbox(c)], sleep: async () => {}, ...over });
 
-  test('a run in which many containers break at once outside their banks holds back those emails, and says so for the operator', async () => {
+  test('a new problem with the same code in many containers at once is held back for three days, then each goes, once', async () => {
     const all = (insts: (c: string) => Inst[]) => Object.fromEntries(CONTAINERS.map((c) => [c, insts(c)]));
     await deliver(await prepare(day(0), all(() => [healthy('item_chase')])));
-    // A code Nya can't place, everywhere at once: due an email three days on.
-    for (let d = 1; d <= 6; d++) {
+    // A code Nya can't place, everywhere at once: due an email three days on,
+    // on the same run in all four.
+    for (let d = 1; d <= 5; d++) {
       const outcomes = await deliver(await prepare(day(d), all(() => [broken('item_chase', 'SOMETHING_NEW')])));
       if (d >= 3) expect([...outcomes.values()]).toEqual(['held', 'held', 'held', 'held']);
     }
     expect(sent).toHaveLength(0);
-    expect(logs.some((l) => l.includes('4 of 4 containers') && l.includes('SOMETHING_NEW (4)') && l.includes('no email about those causes was sent this run (4 held back)'))).toBe(true);
-    // A sign-in somebody really owes their bank still goes, that same run, and
-    // its email names only that: the held cause stays out of it.
+    // The operator is told why, and when they go: day 3 is October 4.
+    expect(logs.some((l) => l.includes('(SOMETHING_NEW in 4)') && l.includes('those 4 email(s) are held back until October 7 (UTC)'))).toBe(true);
+    expect(logs.some((l) => l.includes('4 email(s) held back by an earlier run') && l.includes('go from October 7 (UTC)'))).toBe(true);
+    for (const c of CONTAINERS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toMatchObject({ notified_at: null, held_at: new Date(day(3)).toISOString() });
+    // Three days on, the break still open: each goes, once, and is never held
+    // again; the record of the hold goes with it.
+    expect([...(await deliver(await prepare(day(6), all(() => [broken('item_chase', 'SOMETHING_NEW')])))).values()]).toEqual(['sent', 'sent', 'sent', 'sent']);
+    expect(sent.map((s) => s.subject)).toEqual(Array(4).fill("Chase isn't updating"));
+    for (let d = 7; d <= 12; d++) await deliver(await prepare(day(d), all(() => [broken('item_chase', 'SOMETHING_NEW')])));
+    expect(sent).toHaveLength(4);
+    const record = await noticesStore.get(ctx, 'item_chase');
+    expect(record?.held_at).toBeUndefined();
+    expect(record?.due_since).toBeUndefined();
+  });
+
+  test('while a notice is held, a sign-in somebody owes their bank still goes, and names only that', async () => {
+    const all = (insts: (c: string) => Inst[]) => Object.fromEntries(CONTAINERS.map((c) => [c, insts(c)]));
+    await deliver(await prepare(day(0), all(() => [healthy('item_chase')])));
+    for (let d = 1; d <= 3; d++) await deliver(await prepare(day(d), all(() => [broken('item_chase', 'SOMETHING_NEW')])));
     const mixed = all(() => [broken('item_chase', 'SOMETHING_NEW')]);
     mixed[CONTAINERS[0]].push(broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' }));
-    const outcomes = await deliver(await prepare(day(7), mixed));
-    expect([...outcomes.values()]).toEqual(['sent', 'held', 'held', 'held']);
+    expect([...(await deliver(await prepare(day(4), mixed))).values()]).toEqual(['sent', 'held', 'held', 'held']);
     expect(sent.map((s) => [s.to, s.subject])).toEqual([[[mailbox(ctx)], 'Amex needs reconnecting']]);
     expect(sent[0].text).not.toContain('Chase');
-    expect(await noticesStore.get(ctx, 'item_chase')).toMatchObject({ notified_at: null });
-    // Once it no longer looks like that, what was held goes: here the one
-    // container still not answering, whose break is now its own.
-    const after = all(() => [healthy('item_chase')]);
-    after[CONTAINERS[0]] = [broken('item_chase', 'SOMETHING_NEW'), broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' })];
-    await deliver(await prepare(day(8), after));
-    expect(sent.map((s) => [s.to, s.subject])).toEqual([
-      [[mailbox(ctx)], 'Amex needs reconnecting'],
-      [[mailbox(ctx)], "Chase isn't updating"],
+    // A held one whose break turns out to be the person's own goes at once,
+    // and one whose break ends goes never.
+    const later = all(() => [broken('item_chase', 'SOMETHING_NEW')]);
+    later[CONTAINERS[1]] = [broken('item_chase', 'ITEM_LOGIN_REQUIRED')];
+    later[CONTAINERS[2]] = [healthy('item_chase')];
+    await deliver(await prepare(day(5), later));
+    expect(sent.map((s) => [s.to[0], s.subject])).toEqual([
+      [mailbox(ctx), 'Amex needs reconnecting'],
+      [mailbox(ctxOf(CONTAINERS[1])), 'Chase needs reconnecting'],
     ]);
+    await deliver(await prepare(day(6), later));
+    expect(sent.map((s) => s.to[0])).toEqual([mailbox(ctx), mailbox(ctxOf(CONTAINERS[1])), mailbox(ctx), mailbox(ctxOf(CONTAINERS[3]))]);
+  });
+
+  // The verification's probe V1: a hold that latched never let these go.
+  test('a lasting INSTITUTION_NO_LONGER_SUPPORTED across three containers is held, then each is told once; a fourth container’s own break is never caught in it', async () => {
+    const [a, b, c, d] = CONTAINERS;
+    const cu = (code?: string) => (code ? broken('item_cu', code, { institution_name: 'Small CU' }) : healthy('item_cu', { institution_name: 'Small CU' }));
+    const bank = (code?: string) => (code ? broken('item_bank', code, { institution_name: 'Other Bank' }) : healthy('item_bank', { institution_name: 'Other Bank' }));
+    await deliver(await prepare(day(0), { [a]: [cu()], [b]: [cu()], [c]: [cu()], [d]: [bank()] }));
+    const byDay: Record<number, string[]> = {};
+    for (let n = 1; n <= 30; n++) {
+      // Plaid loses the fourth container's own connection on day 10.
+      const out = await deliver(await prepare(day(n), { [a]: [cu('INSTITUTION_NO_LONGER_SUPPORTED')], [b]: [cu('INSTITUTION_NO_LONGER_SUPPORTED')], [c]: [cu('INSTITUTION_NO_LONGER_SUPPORTED')], [d]: [bank(n >= 10 ? 'ITEM_NOT_FOUND' : undefined)] }));
+      byDay[n] = [...out.values()];
+    }
+    expect(byDay[3]).toEqual(['held', 'held', 'held', 'none']);
+    expect(byDay[5]).toEqual(['held', 'held', 'held', 'none']);
+    expect(byDay[6]).toEqual(['sent', 'sent', 'sent', 'none']);
+    // Its own removal advice waits its three days, and goes alone.
+    expect(byDay[12]).toEqual(['none', 'none', 'none', 'sent']);
+    const mails = (box: string) => sent.filter((s) => s.to[0] === box).map((s) => s.subject);
+    // Each told once, and reminded once a week on, as any notice is.
+    for (const x of [a, b, c]) expect(mails(mailbox(ctxOf(x)))).toEqual(['Small CU can no longer be updated', 'Reminder: Small CU can no longer be updated']);
+    expect(mails(mailbox(ctxOf(d)))).toEqual(['Other Bank needs connecting again', 'Reminder: Other Bank needs connecting again']);
   });
 
   // The coordinator's case: a deployment mistake can't make a bank ask for a
   // new sign-in, and a bank asking everyone at once is when each person
   // should be told, however long an outage elsewhere lasts.
-  test('a Plaid outage across three containers, beside a sign-in break in a fourth: only the sign-in email goes', async () => {
+  test('a Plaid outage across three containers, beside a sign-in break in a fourth: only the sign-in email goes while the hold lasts', async () => {
     const [a, b, c, d] = CONTAINERS;
     const ally = (code?: string) => (code ? broken('item_ally', code, { institution_name: 'Ally' }) : healthy('item_ally', { institution_name: 'Ally' }));
     const chase = (code?: string) => (code ? broken('item_chase', code) : healthy('item_chase'));
@@ -619,11 +661,63 @@ describe("Nya's side, and a fault many containers share", () => {
     const day3 = await deliver(await prepare(day(3), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase('ITEM_LOGIN_REQUIRED')] }));
     expect([day3.get(a as any), day3.get(b as any), day3.get(c as any), day3.get(d as any)]).toEqual(['held', 'held', 'held', 'sent']);
     expect(sent.map((s) => [s.to, s.subject])).toEqual([[[mailbox(ctxOf(d))], 'Chase needs reconnecting']]);
-    // While the outage lasts it stays held, day after day; the sign-in was told
-    // once, as ever.
-    for (let n = 4; n <= 9; n++) await deliver(await prepare(day(n), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase('ITEM_LOGIN_REQUIRED')] }));
+    // Held while its days last; the sign-in was told once, as ever.
+    for (let n = 4; n <= 5; n++) await deliver(await prepare(day(n), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase('ITEM_LOGIN_REQUIRED')] }));
     expect(sent.map((s) => s.subject)).toEqual(['Chase needs reconnecting']);
     for (const x of [a, b, c]) expect(await noticesStore.get(ctxOf(x), 'item_ally')).toMatchObject({ state: 'outage', side: 'plaid', notified_at: null });
+    // Still down three days on: each outage email goes, once.
+    await deliver(await prepare(day(6), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase('ITEM_LOGIN_REQUIRED')] }));
+    expect(sent.map((s) => s.subject)).toEqual(['Chase needs reconnecting', "Ally isn't updating", "Ally isn't updating", "Ally isn't updating"]);
+  });
+
+  test('an outage each was told of that turns into the same Plaid-side relink everywhere at once is held, then told, once', async () => {
+    const [a, b, c] = CONTAINERS;
+    await deliver(await prepare(day(0), { [a]: [healthy('item_x')], [b]: [healthy('item_x')], [c]: [healthy('item_x')] }));
+    // Each stops answering a day apart, so each outage is told on its own.
+    const at = (n: number, code: string) => ({
+      [a]: [broken('item_x', code)],
+      [b]: [n >= 2 ? broken('item_x', code) : healthy('item_x')],
+      [c]: [n >= 3 ? broken('item_x', code) : healthy('item_x')],
+    });
+    for (let n = 1; n <= 5; n++) await deliver(await prepare(day(n), at(n, 'SOMETHING_NEW')));
+    expect(sent.map((s) => s.subject)).toEqual(Array(3).fill("Chase isn't updating"));
+    // Day 6: Plaid says all three are gone, at once.
+    expect([...(await deliver(await prepare(day(6), at(6, 'ITEM_NOT_FOUND')))).values()]).toEqual(['held', 'held', 'held']);
+    for (let n = 7; n <= 8; n++) await deliver(await prepare(day(n), at(n, 'ITEM_NOT_FOUND')));
+    expect(sent).toHaveLength(3);
+    expect([...(await deliver(await prepare(day(9), at(9, 'ITEM_NOT_FOUND')))).values()]).toEqual(['sent', 'sent', 'sent']);
+    expect(sent.slice(3).map((s) => s.subject)).toEqual(Array(3).fill('Chase needs connecting again'));
+  });
+
+  test('three different codes maturing on the same run are three problems, each told; so is the same code a day later', async () => {
+    const [a, b, c, d] = CONTAINERS;
+    const codes = { [a]: 'ITEM_NOT_FOUND', [b]: 'INSTITUTION_NO_LONGER_SUPPORTED', [c]: 'SOMETHING_NEW' };
+    await deliver(await prepare(day(0), { [a]: [healthy('item_x')], [b]: [healthy('item_x')], [c]: [healthy('item_x')], [d]: [healthy('item_x')] }));
+    for (let n = 1; n <= 3; n++) {
+      const out = await deliver(await prepare(day(n), { [a]: [broken('item_x', codes[a])], [b]: [broken('item_x', codes[b])], [c]: [broken('item_x', codes[c])], [d]: [healthy('item_x')] }));
+      if (n === 3) expect([...out.values()]).toEqual(['sent', 'sent', 'sent', 'none']);
+    }
+    expect(sent).toHaveLength(3);
+    expect(logs.some((l) => l.includes('held back'))).toBe(false);
+  });
+
+  test('only notices first due on a run can start a hold: one that failed to send is not counted again', async () => {
+    const [a, b, c] = CONTAINERS;
+    const fine = { [a]: [healthy('item_x')], [b]: [healthy('item_x')], [c]: [healthy('item_x')] };
+    await deliver(await prepare(day(0), fine));
+    // a and b lose their connection on day 1, c on day 2: due on days 3 and 4,
+    // three days after each last answered.
+    const gone = (n: number) => ({ [a]: [broken('item_x', 'ITEM_NOT_FOUND')], [b]: [broken('item_x', 'ITEM_NOT_FOUND')], [c]: [n >= 2 ? broken('item_x', 'ITEM_NOT_FOUND') : healthy('item_x')] });
+    for (let n = 1; n <= 2; n++) await deliver(await prepare(day(n), gone(n)));
+    // Day 3: a's and b's are due, two containers, no hold; but Resend is down.
+    resendStatus = 500;
+    expect([...(await deliver(await prepare(day(3), gone(3)))).values()]).toEqual(['failed', 'deferred', 'none']);
+    resendStatus = 200;
+    expect(sent).toHaveLength(0);
+    // Day 4: c's is due for the first time. a's and b's were due before, so
+    // they can't make a shared fault with it: all three go.
+    expect([...(await deliver(await prepare(day(4), gone(4)))).values()]).toEqual(['sent', 'sent', 'sent']);
+    expect(logs.some((l) => l.includes('held back'))).toBe(false);
   });
 
   test(`fewer than ${MASS_BREAK_CONTAINERS} containers breaking that way are each told, as their own`, async () => {
@@ -665,7 +759,6 @@ describe("Nya's side, and a fault many containers share", () => {
     }
     expect(sent).toHaveLength(0);
     expect(logs.some((l) => l.includes("8 connection(s) in 4 container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (8))"))).toBe(true);
-    expect(logs.some((l) => l.includes('no email about those causes was sent this run;'))).toBe(true);
     for (const c of CONTAINERS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toMatchObject({ state: 'outage', side: 'nya', notified_at: null });
     // The settings put back: every connection works again, and its break ends
     // without a word to anyone.

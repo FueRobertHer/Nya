@@ -15,7 +15,8 @@
 //   connection-syncs     when the connection last answered without an error:
 //                        every load that fetched it, and the daily snapshot.
 //   connection-notices   the email bookkeeping for a break: when it began, what
-//                        it was, and when its notices and its reminder went
+//                        it was, when its notices and its reminder went, and
+//                        whether its notice is held back for a while
 //                        (lib/connection-notices.ts, from the daily job).
 //
 // Encrypted like every seam value; the ids are the item_ids the other stores
@@ -57,6 +58,13 @@ export type ConnectionNotice = {
    *  from a record written before this was kept, which reads as its own state
    *  once notified. */
   told?: HealthState[];
+  /** When its pending notice first became due; absent once a notice is sent.
+   *  Only a notice first due on a run can be held back on it. */
+  due_since?: string;
+  /** When its notice was held back as part of a fault many containers shared
+   *  (lib/connection-notices.ts). It goes three days later if the break is
+   *  still open, and is never held again; absent once a notice is sent. */
+  held_at?: string;
 };
 
 const isTime = (v: unknown): v is string => typeof v === 'string' && v.length <= 64 && Number.isFinite(Date.parse(v));
@@ -89,7 +97,9 @@ export function isNotice(v: unknown): v is ConnectionNotice {
     (v.side === undefined || SIDES.has(v.side)) &&
     (v.notified_at === null || isTime(v.notified_at)) &&
     (v.reminded_at === null || isTime(v.reminded_at)) &&
-    (v.told === undefined || (Array.isArray(v.told) && v.told.length <= HEALTH_STATES.length && v.told.every((s) => STATES.has(s))))
+    (v.told === undefined || (Array.isArray(v.told) && v.told.length <= HEALTH_STATES.length && v.told.every((s) => STATES.has(s)))) &&
+    (v.due_since === undefined || isTime(v.due_since)) &&
+    (v.held_at === undefined || isTime(v.held_at))
   );
 }
 

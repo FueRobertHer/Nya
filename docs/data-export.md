@@ -244,6 +244,8 @@ The record of each problem with one of your bank connections that Nya kept for i
 | `notified_at` | When Nya last emailed you about it, or `null` if it hasn't. |
 | `reminded_at` | When it sent that email's one reminder, or `null`. |
 | `told` | The states its emails were about, in order. Absent from a record kept before it was. |
+| `due_since` | When its next email first became due, while it hasn't gone. |
+| `held_at` | When that email was held back, because the same problem reached several accounts at once and looked like a fault in Nya's setup or at Plaid. It goes three days later if the problem is still there. |
 
 #### `connection-syncs`
 

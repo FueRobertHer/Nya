@@ -39,16 +39,20 @@
 // account missing from a good answer settles itself within days
 // (lib/vanished.ts), and is not emailed.
 //
-// A SHARED FAULT. A run in which MASS_BREAK_CONTAINERS or more containers have
-// a connection breaking for a reason outside the person's and their bank's
-// side (one moving onto Nya's side, or an email due about one on Plaid's side
-// or that Nya can't place) is taken for a fault in Nya's setup or at Plaid,
-// not with everybody's banks at once. No email about such a cause goes to
-// anyone that run: they stay due, for the first run that doesn't look like
-// that, and the log tells the operator what it saw. An email about a cause on
-// the person's or their bank's side still goes: no deployment mistake makes a
-// bank ask for a new sign-in, and a bank asking everyone at once is exactly
-// when each person should be told.
+// A SHARED FAULT. A deployment mistake, or a fault at Plaid, gives many
+// containers the same Plaid code at once. So when notices about a cause on
+// Plaid's side or one Nya can't place first become due on the same run in
+// MASS_BREAK_CONTAINERS or more containers with the same code, those notices
+// are held back for HOLD_DAYS, and the log tells whoever runs Nya, with the
+// day they go. A held notice is never held again: once its days are up it
+// goes, once, like any other, if its break is still open (fixed, the break
+// ends and nothing goes). Only notices first due on this run can start a
+// hold, and only those that share the code are held, so a hold never latches
+// on breaks that stay open, and a different problem maturing the same day,
+// or a later one, is never caught in it. Nothing on the person's or their
+// bank's side is ever held: no deployment mistake makes a bank ask for a new
+// sign-in, and a bank asking everyone at once is when each person should be
+// told.
 //
 // NEVER TWICE. The episode is stored (connection-notices,
 // lib/connection-records.ts) before any email about it goes, and marked sent
@@ -91,10 +95,13 @@ import { ownersByContainer } from './owners';
 export const OUTAGE_NOTICE_DAYS = 3;
 /** Days after a notice that its one reminder goes, if still not fine. */
 export const REMINDER_DAYS = 7;
-/** How many containers breaking at once for a reason outside the person's and
- *  their bank's side make a run a shared fault, whose emails about those
- *  causes are held back. */
+/** How many containers whose notices first become due on one run with the
+ *  same Plaid code, about a cause on Plaid's side or one Nya can't place, make
+ *  that a shared fault, whose notices are held back. */
 export const MASS_BREAK_CONTAINERS = 3;
+/** How long a notice held back by a shared fault waits, before it goes anyway
+ *  if its break is still open: whoever runs Nya has had the log line that long. */
+export const HOLD_DAYS = 3;
 /** How long the emails of one run may take in all. */
 export const MAIL_BUDGET_MS = 30_000;
 /** How long finding whom to write to may take (a Clerk lookup). */
@@ -178,7 +185,9 @@ function same(a: ConnectionNotice | null, b: ConnectionNotice | null): boolean {
     a.side === b.side &&
     a.notified_at === b.notified_at &&
     a.reminded_at === b.reminded_at &&
-    JSON.stringify(a.told ?? null) === JSON.stringify(b.told ?? null)
+    JSON.stringify(a.told ?? null) === JSON.stringify(b.told ?? null) &&
+    a.due_since === b.due_since &&
+    a.held_at === b.held_at
   );
 }
 
@@ -313,8 +322,11 @@ function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 
 const nameOf = (err: unknown) => (err instanceof Error ? err.name : typeof err);
 
-/** One connection's email that is due, with what marks it sent. */
-type Due = DueNotice & { item_id: string; episode: string };
+/** One connection's email that is due, with what marks it sent. `label` is
+ *  Plaid's code (or the cause, without one); `fresh` says it is a notice
+ *  about a cause on Plaid's side or one Nya can't place that first became due
+ *  on this run, which alone can join a shared fault (A SHARED FAULT). */
+type Due = DueNotice & { item_id: string; episode: string; label: string; fresh: boolean };
 
 /** One container's part of a run, decided and waiting for its email
  *  (prepareNotices), which sendNotices sends with every other's. */
@@ -323,10 +335,9 @@ export type PendingNotices = {
   /** The run's time, as the records give it. */
   now: number;
   due: Due[];
-  /** What makes this container look like part of a shared fault this run: the
-   *  codes (or causes, without one) of connections breaking for a reason
-   *  outside the person's and their bank's side (see A SHARED FAULT). */
-  shared: string[];
+  /** Notices a shared fault held back on an earlier run, whose days are not
+   *  up: their code (or cause), and when they go. */
+  held: { label: string; until: number }[];
   /** The codes (or causes) of its connections failing on Nya's side, which
    *  nobody is emailed about: for the operator's log. */
   nyaSide: string[];
@@ -385,7 +396,7 @@ export async function prepareNotices(ctx: Ctx, institutions: InstitutionResult[]
   let skipped = 0;
   let unreadable = 0;
   const due: Due[] = [];
-  const shared: string[] = [];
+  const held: PendingNotices['held'] = [];
   const nyaSide: string[] = [];
   for (const inst of linked) {
     const id = inst.item_id;
@@ -399,7 +410,10 @@ export async function prepareNotices(ctx: Ctx, institutions: InstitutionResult[]
     const label = health.code ?? health.cause;
     if (health.side === 'nya') nyaSide.push(label);
     const prev = notices.entries.get(id) ?? null;
-    const { next, send } = decideNotice(prev, health, now, opts.newEpisode);
+    const decided = decideNotice(prev, health, now, opts.newEpisode);
+    const { send } = decided;
+    // When a notice first becomes due, so a later run knows it is not new.
+    const next = send === 'notice' && decided.next && !decided.next.due_since ? { ...decided.next, due_since: nowIso } : decided.next;
     let stored = prev;
     if (!same(prev, next)) {
       try {
@@ -413,24 +427,28 @@ export async function prepareNotices(ctx: Ctx, institutions: InstitutionResult[]
       }
       if (!same(stored, next)) continue;
     }
-    // What a fault shared by many containers looks like from here: a
-    // connection that moved onto Nya's side this run, or an email due about one
-    // on Plaid's side or that Nya can't place.
-    const movedToNya = health.side === 'nya' && next !== null && prev?.side !== 'nya';
-    if (movedToNya || (send && (health.side === 'plaid' || health.side === 'unknown'))) shared.push(label);
-    if (send && stored) due.push({ item_id: id, episode: stored.episode, institution_name: inst.institution_name, health, since: stored.since, kind: send });
+    if (!send || !stored) continue;
+    // Held back by an earlier run's shared fault, while its days are not up.
+    // A cause that has since moved to the person's or their bank's side goes
+    // now: nothing there is ever held.
+    if (send === 'notice' && stored.held_at && faultSide(health) && elapsedDays(stored.held_at, now) < HOLD_DAYS) {
+      held.push({ label, until: Date.parse(stored.held_at) + HOLD_DAYS * DAY_MS });
+      continue;
+    }
+    const fresh = send === 'notice' && faultSide(health) && !prev?.due_since && !stored.held_at;
+    due.push({ item_id: id, episode: stored.episode, institution_name: inst.institution_name, health, since: stored.since, kind: send, label, fresh });
   }
   if (unreadable > 0) {
     console.error(`Connection notices: ${unreadable} connection(s) in container ${ctx.container} have records that could not be read; left as they are.`);
   }
-  return { ctx, now, due, shared, nyaSide, skipped };
+  return { ctx, now, due, held, nyaSide, skipped };
 }
 
 /** What became of a container's email: none was due, it was sent, mail is off,
- *  there was nobody to send it to, it failed, everything due was about a
- *  shared fault and held back, or there was no time left; all but "sent" and
- *  "none" are tried again by the next run. An email sent while some of what
- *  was due was held back is "sent": the rest stays due. */
+ *  there was nobody to send it to, it failed, all it was due was held back by
+ *  a shared fault, or there was no time left; all but "sent" and "none" are
+ *  tried again by the next run (a held one once its days are up). An email
+ *  sent while some of what was due was held back is "sent". */
 export type MailOutcome = 'none' | 'sent' | 'off' | 'no-recipient' | 'failed' | 'held' | 'deferred';
 
 export type SendOptions = {
@@ -460,10 +478,10 @@ function tally(labels: string[]): string {
     .join(', ');
 }
 
-/** Whether a cause is one a fault many containers share can bring: on Nya's
- *  side, on Plaid's, or one Nya can't place. A shared fault holds back the
- *  emails about these, and only these. */
-const faultSide = (h: ConnectionHealth) => h.side === 'nya' || h.side === 'plaid' || h.side === 'unknown';
+/** Whether a cause is one a fault in Nya's setup or at Plaid can bring to
+ *  everybody at once: on Plaid's side, or one Nya can't place (Nya's own side
+ *  is never emailed at all). Only notices about these are ever held back. */
+const faultSide = (h: ConnectionHealth) => h.side === 'plaid' || h.side === 'unknown';
 
 /** The first call starts it; every later one gets the same answer, or the
  *  same failure. */
@@ -485,17 +503,29 @@ function idempotencyKey(due: Due[], to: string[], subject: string, text: string)
  *  was about, and starts its own reminder's week. */
 function marked(current: ConnectionNotice, d: Due, at: string): ConnectionNotice {
   if (d.kind === 'reminder') return { ...current, reminded_at: at };
+  const { due_since: _due, held_at: _held, ...rest } = current;
   const told = toldOf(current);
-  return { ...current, notified_at: at, reminded_at: null, told: told.includes(d.health.state) ? told : [...told, d.health.state] };
+  return { ...rest, notified_at: at, reminded_at: null, told: told.includes(d.health.state) ? told : [...told, d.health.state] };
+}
+
+/** Says, for whoever runs Nya, which notices an earlier run held back are
+ *  still waiting, and from when they go. */
+function logStillHeld(batch: PendingNotices[]): void {
+  const held = batch.flatMap((p) => p.held);
+  if (held.length === 0) return;
+  const from = Math.min(...held.map((h) => h.until));
+  console.warn(
+    `Connection notices: ${held.length} email(s) held back by an earlier run for a fault many containers shared (${tally(held.map((h) => h.label))}) go from ${utcDay(iso(from))} (UTC), if the problem is still there.`
+  );
 }
 
 /**
  * The daily run's second part: the emails, once every container has decided
- * its own (prepareNotices). Checks first for a fault many containers share,
- * whose emails it holds back; then sends each container's one email about
- * the rest, one at a time, within the deadline, marking each episode sent once
- * Resend accepted it. Never throws: each container's outcome is its own, and
- * the log says why.
+ * its own (prepareNotices). Looks first for a shared fault among the notices
+ * first due on this run, and holds those back (A SHARED FAULT); then sends
+ * each container's one email about the rest, one at a time, within the
+ * deadline, marking each episode sent once Resend accepted it. Never throws:
+ * each container's outcome is its own, and the log says why.
  */
 export async function sendNotices(batch: PendingNotices[], opts: SendOptions = {}): Promise<Map<ContainerId, MailOutcome>> {
   const clock = opts.clock ?? Date.now;
@@ -513,24 +543,47 @@ export async function sendNotices(batch: PendingNotices[], opts: SendOptions = {
     );
   }
 
-  // A fault many containers share: nobody is emailed about its causes this
-  // run. What is plainly the person's or their bank's still goes.
-  const shared = batch.filter((p) => p.shared.length > 0);
-  const sharedFault = shared.length >= MASS_BREAK_CONTAINERS;
-  const items = new Map(batch.map((p) => [p.ctx.container, sharedFault ? p.due.filter((d) => !faultSide(d.health)) : p.due]));
-  if (sharedFault) {
-    const held = batch.reduce((n, p) => n + p.due.length - items.get(p.ctx.container)!.length, 0);
-    console.error(
-      `Connection notices: ${shared.length} of ${batch.length} containers have connections breaking at once for a reason on Nya's side, on Plaid's, or one Nya can't place (${tally(shared.flatMap((p) => p.shared))}). That looks like a fault in Nya's setup or at Plaid rather than at everybody's banks, so no email about those causes was sent this run${held > 0 ? ` (${held} held back)` : ''}; one about a sign-in or a bank's own problem still goes. Check PLAID_ENV, PLAID_CLIENT_ID and PLAID_SECRET, and Plaid's status page. What was held waits for a run that doesn't look like this; each connection shows on its Connection health card.`
-    );
-    for (const p of batch) if (p.due.length > 0 && items.get(p.ctx.container)!.length === 0) outcomes.set(p.ctx.container, 'held');
+  // A shared fault: notices first due on this run in MASS_BREAK_CONTAINERS or
+  // more containers with the same code are held back, and only those.
+  const containersOf = new Map<string, Set<ContainerId>>();
+  for (const p of batch) for (const d of p.due) if (d.fresh) containersOf.set(d.label, (containersOf.get(d.label) ?? new Set()).add(p.ctx.container));
+  const sharedCodes = new Set([...containersOf].filter(([, cs]) => cs.size >= MASS_BREAK_CONTAINERS).map(([label]) => label));
+  const holdNow = (d: Due) => d.fresh && sharedCodes.has(d.label);
+  const items = new Map(batch.map((p) => [p.ctx.container, p.due.filter((d) => !holdNow(d))]));
+  for (const p of batch) {
+    if (items.get(p.ctx.container)!.length === 0 && (p.due.length > 0 || p.held.length > 0)) outcomes.set(p.ctx.container, 'held');
   }
   const due = batch.filter((p) => items.get(p.ctx.container)!.length > 0);
-  if (due.length === 0) return outcomes;
-  if (mailOff()) {
-    for (const p of due) outcomes.set(p.ctx.container, 'off');
+  const holding = batch.some((p) => p.due.some(holdNow));
+  if (due.length === 0 && !holding) {
+    logStillHeld(batch);
     return outcomes;
   }
+  if (mailOff()) {
+    for (const p of batch) if (p.due.length > 0) outcomes.set(p.ctx.container, 'off');
+    return outcomes;
+  }
+
+  if (holding) {
+    const now = Math.max(...batch.map((p) => p.now));
+    const count = batch.reduce((n, p) => n + p.due.filter(holdNow).length, 0);
+    console.error(
+      `Connection notices: new problems with the same Plaid code in ${MASS_BREAK_CONTAINERS} or more containers at once (${[...sharedCodes].map((l) => `${l} in ${containersOf.get(l)!.size}`).join(', ')}). That looks like a fault in Nya's setup or at Plaid rather than at each person's bank, so those ${count} email(s) are held back until ${utcDay(iso(now + HOLD_DAYS * DAY_MS))} (UTC), and go with that day's run if the problem is still there. Check PLAID_ENV, PLAID_CLIENT_ID and PLAID_SECRET, and Plaid's status page; each connection shows on its Connection health card.`
+    );
+    // Recorded on each held notice, so it waits out its days and is never
+    // held again; only while it is still the episode, and not held already.
+    for (const p of batch) {
+      for (const d of p.due.filter(holdNow)) {
+        try {
+          await noticesStore.update(p.ctx, d.item_id, (current) => (current && current.episode === d.episode && !current.held_at ? { ...current, held_at: iso(p.now) } : current));
+        } catch (err) {
+          console.error(`Connection notices: a held email could not be recorded for container ${p.ctx.container}.`, nameOf(err));
+        }
+      }
+    }
+  }
+  logStillHeld(batch);
+  if (due.length === 0) return outcomes;
 
   // The owners mapping read once for the run, not once per container.
   const owners = once(ownersByContainer);
