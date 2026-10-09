@@ -14,6 +14,7 @@ import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
 import { loadVanishedInputs, applyVanished } from './vanished';
 import { recordSnapshot, recordPartialAccounts } from './history';
+import { observeHoldings, recordHoldings, type HoldingsObservation, type HoldingsRecorded } from './holdings-history';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -40,6 +41,14 @@ export type InstitutionResult = {
   institution_id?: string | null;
   accounts: any[];
   holdings: any[];
+  /**
+   * What this fetch's holdings call answered, in the shape holdings history
+   * records it (lib/holdings-history.ts). Set only when the call answered, so
+   * its absence is what keeps a failed call (or a failed fetch) from being
+   * recorded as accounts holding nothing. Server-only: /api/net-worth deletes
+   * it before the payload is sent or cached.
+   */
+  holdings_observed?: HoldingsObservation;
   error: string | null;
   needs_reauth: boolean;
   liabilities: LiabilitiesState;
@@ -206,6 +215,12 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
       security_type: securities[h.security_id]?.type ?? null,
       is_cash_equivalent: securities[h.security_id]?.is_cash_equivalent ?? null,
     }));
+    // For holdings history, from Plaid's own fields rather than the display
+    // ones above. Only here, where the call answered, and only for a whole
+    // answer (observeHoldings): a call that failed, or an answer that is not
+    // whole, leaves it unset, and nothing is recorded for this institution.
+    const observed = observeHoldings(holdingsRes.data);
+    if (observed) result.holdings_observed = observed;
   } catch {
     // not a brokerage account, or investments not supported -- fine, skip
   }
@@ -348,25 +363,40 @@ export function measuredBalanceMap(institutions: InstitutionResult[]): Record<st
   return accountBalanceMap(institutions.filter((inst) => !inst.error));
 }
 
+export type RecordedFetch = {
+  /** The date the TOTAL landed on, or null if it didn't. */
+  date: string | null;
+  /** The accounts whose positions went into holdings history, and those whose
+   *  write failed. Never part of `date`. */
+  holdings: HoldingsRecorded;
+};
+
 /**
  * Writes what a fetch measured to history, and returns the date the TOTAL landed
- * on, or null if it didn't. The one place the recording rule lives, so
- * /api/net-worth, /api/snapshot and /api/ingest/balance agree.
+ * on (null if it didn't) with what holdings history recorded. The one place the
+ * recording rule lives, so /api/net-worth, /api/snapshot and /api/ingest/balance
+ * agree.
  *
  * A clean, non-empty fetch records a real snapshot. Otherwise (or if that write
  * failed) the measured accounts still go to the partial per-account layer, so one
  * broken bank doesn't turn every other account's chart into an estimate. Run it
  * before fillFromLastKnown: recovered balances must never be written as measured.
+ *
+ * Each institution whose holdings call answered also has its positions recorded
+ * (lib/holdings-history.ts), whether or not the total lands. That runs beside
+ * the snapshot, not before it, and never throws, so it can neither hold up nor
+ * change what the snapshot records: a failed holdings write is only counted.
  */
 export async function recordFetch(
   ctx: Ctx,
   institutions: InstitutionResult[],
   netWorth: number
-): Promise<string | null> {
+): Promise<RecordedFetch> {
+  const holdings = recordHoldings(ctx, institutions);
   const recorded =
     institutions.length > 0 && institutions.every(isRecordable)
       ? await recordSnapshot(ctx, netWorth, accountBalanceMap(institutions))
       : null;
   if (recorded === null) await recordPartialAccounts(ctx, measuredBalanceMap(institutions));
-  return recorded;
+  return { date: recorded, holdings: await holdings };
 }

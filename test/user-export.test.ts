@@ -623,6 +623,7 @@ describe('stores built on the storage seam', () => {
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
+      'holdings:history',
       'manual-transactions',
       'transaction-annotations',
     ]);
@@ -635,8 +636,10 @@ describe('stores built on the storage seam', () => {
     const text = JSON.stringify(doc);
     expect(text).not.toContain('SECRET-NOT-EXPORTED');
     expect(text).not.toContain('OTHER-PERSON-PLAN');
-    // The download limit's own counter is bookkeeping, never part of it.
+    // The download limit's own counter is bookkeeping, never part of it, and
+    // so is the holdings history's index (each month names itself).
     expect(keys).not.toContain('download-count');
+    expect(keys).not.toContain('holdings:history:index');
     // In the file as written, too, one entry per line.
     const written = [...exportFile(doc, 'json').pieces()].join('');
     expect(JSON.parse(written)['export-test-plans']).toEqual(doc['export-test-plans']);

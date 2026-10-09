@@ -18,6 +18,7 @@
 //   import './rules';
 
 import './fire-plan';
+import './holdings-history';
 import './manual-txns';
 import './rate-limit';
 import './txn-annotations';
