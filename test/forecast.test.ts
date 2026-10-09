@@ -462,17 +462,38 @@ describe('what it says it may be missing', () => {
     const withCard = [inst({ accounts: [acct(), sapphire] })];
     const cardNotes = (series: Parameters<typeof forecastNotes>[0]['series']) =>
       forecastNotes({ institutions: withCard, position: cashPosition(withCard), eventsLeftOut: [], series, until: '2026-11-08', today: '2026-10-09', days });
-    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: false } })).toEqual([
-      "Sapphire's payment, statement balance $812.40, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
-    ]);
+    const none = { known: new Set<string>(), unknown: [] as number[] };
+    const named =
+      "Sapphire's payment, statement balance $812.40, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.";
+    expect(cardNotes({ cardsPaid: none })).toEqual([named]);
     // Held: a payment detected from checking to that card.
-    expect(cardNotes({ cardsPaid: { known: new Set(['Chase|Sapphire']), unknown: false } })).toEqual([]);
-    // A payment held to a card it can't tell may be this one: not said.
-    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: true } })).toEqual([]);
+    expect(cardNotes({ cardsPaid: { known: new Set(['Chase|Sapphire']), unknown: [] } })).toEqual([]);
+    // A payment held to a card it can't tell mutes only a card it could be:
+    // one near this card's statement or minimum.
+    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: [800] } })).toEqual([]);
+    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: [40] } })).toEqual([]);
+    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: [150] } })).toEqual([named]);
     // Due after the forecast's end, or nothing owed: not said.
-    expect(forecastNotes({ institutions: withCard, position: cashPosition(withCard), eventsLeftOut: [], series: { cardsPaid: { known: new Set(), unknown: false } }, until: '2026-10-20', today: '2026-10-09', days })).toEqual([]);
-    const paidOff = [inst({ accounts: [acct(), { ...sapphire, liability: { ...sapphire.liability, last_statement_balance: 0 } }] })];
-    expect(forecastNotes({ institutions: paidOff, position: cashPosition(paidOff), eventsLeftOut: [], series: { cardsPaid: { known: new Set(), unknown: false } }, until: '2026-11-08', today: '2026-10-09', days })).toEqual([]);
+    expect(forecastNotes({ institutions: withCard, position: cashPosition(withCard), eventsLeftOut: [], series: { cardsPaid: none }, until: '2026-10-20', today: '2026-10-09', days })).toEqual([]);
+    const withLiability = (liability: object) => [inst({ accounts: [acct(), { ...sapphire, liability: { ...sapphire.liability, ...liability } }] })];
+    const notesFor = (institutions: ForecastInstitution[], planned: PlannedItem[] = []) =>
+      forecastNotes({ institutions, position: cashPosition(institutions), eventsLeftOut: [], series: { cardsPaid: none }, until: '2026-11-08', today: '2026-10-09', days, planned });
+    expect(notesFor(withLiability({ last_statement_balance: 0 }))).toEqual([]);
+    // The statement paid in full since it was issued: nothing left to plan.
+    expect(notesFor(withLiability({ last_payment_amount: 812.4, last_payment_date: '2026-10-03', last_statement_issue_date: '2026-09-30' }))).toEqual([]);
+    // Paid in part since: what is left of it.
+    expect(notesFor(withLiability({ last_payment_amount: 400, last_payment_date: '2026-10-03', last_statement_issue_date: '2026-09-30' }))).toEqual([
+      "Sapphire's payment, $412.40 left of its statement, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
+    ]);
+    // A payment before the statement was on an earlier one.
+    expect(notesFor(withLiability({ last_payment_amount: 812.4, last_payment_date: '2026-09-25', last_statement_issue_date: '2026-09-30' }))).toEqual([named]);
+    // Once planned, as the note asks, it isn't asked again.
+    const payment = plannedItem({ name: 'Sapphire payment', amount: 812.4, date: '2026-10-22' });
+    expect(notesFor(withCard, [payment])).toEqual([]);
+    expect(notesFor(withCard, [{ ...payment, amount: 40, date: '2026-10-20' }])).toEqual([]);
+    // Planned far from its due date, or for another amount: still said.
+    expect(notesFor(withCard, [{ ...payment, date: '2026-11-05' }])).toEqual([named]);
+    expect(notesFor(withCard, [{ ...payment, amount: 2000 }])).toEqual([named]);
   });
 
   test('pay that stopped coming or varies too much, and a series on an account of unknown type', () => {

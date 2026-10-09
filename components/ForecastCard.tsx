@@ -140,6 +140,7 @@ export default function ForecastCard({
         eventsLeftOut: leftOut,
         series: { varied, lapsed, unplaced, cardsPaid },
         until,
+        planned: ready ? planned.items : [],
         stopped,
         incomplete,
         refused: refusedNames(withoutTransactions),
@@ -147,7 +148,7 @@ export default function ForecastCard({
         today,
         days: DAYS,
       }),
-    [institutions, position, leftOut, varied, lapsed, unplaced, cardsPaid, until, stopped, incomplete, withoutTransactions, today]
+    [institutions, position, leftOut, varied, lapsed, unplaced, cardsPaid, until, planned, ready, stopped, incomplete, withoutTransactions, today]
   );
 
   // The what-if: one purchase, in the forecast's currency, within its range.

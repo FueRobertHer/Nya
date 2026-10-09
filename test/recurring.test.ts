@@ -472,7 +472,7 @@ describe('the evidence a series is judged on', () => {
     expect(first[0].id).not.toBe(later[0].id);
     expect([...dismissedSeries(later, [first[0].id]).keys()]).toEqual([later[0].id]);
     // A dismissal names one series: two saved are two.
-    expect(dismissedSeries(after, [icloud.id, icloud.id.replace(/\|299$/, '|1099')]).size).toBe(2);
+    expect(dismissedSeries(after, [icloud.id, icloud.id.replace(/\|=299$/, '|=1199')]).size).toBe(2);
   });
 
   test('bills come first, then income, each largest first', () => {
@@ -705,6 +705,54 @@ describe("the verification's other cases", () => {
     expect(dismissedSeries(stream, ['bill|Chase||streamco|USD|999']).size).toBe(1);
   });
 
+  test('a dismissal of one subscription never drifts to another of the merchant, however near in price', () => {
+    const visa = { name: 'Apple', account_name: 'Visa', account_type: 'credit', category: 'general merchandise' };
+    // As the dashboard runs it on a day: the loaded year and the history sent.
+    const detect = (rows: RecurringRow[], today: string) => {
+      const seen = rows.filter((t) => t.date <= today);
+      const recent = seen.filter((t) => t.date >= addDays(today, -365));
+      return detectRecurring([...recent, ...olderRowsForDetection(recent, seen.filter((t) => t.date < addDays(today, -365)))]);
+    };
+    // iCloud 2.99 dismissed, then cancelled; Arcade 6.99 added beside Music.
+    const rows = [
+      ...monthly('2025-06', 9, 3).map((d) => row(d, 2.99, visa)),
+      ...monthly('2025-06', 30, 13).map((d) => row(d, 10.99, visa)),
+      ...monthly('2026-04', 30, 21).map((d) => row(d, 6.99, visa)),
+    ];
+    const icloud = detect(rows, '2026-01-20').find((s) => s.amount === 2.99)!;
+    for (const day of ['2026-10-09', '2027-03-10', '2027-06-01']) {
+      const s = detect(rows, day);
+      expect([...dismissedSeries(s, [icloud.id]).keys()].map((id) => s.find((x) => x.id === id)!.amount)).toEqual(day === '2026-10-09' ? [2.99] : []);
+    }
+    // Music dismissed, then cancelled, while iCloud went up to 9.99.
+    const music = detectRecurring([...monthly('2025-11', 11, 13).map((d) => row(d, 10.99, visa)), ...monthly('2025-11', 11, 3).map((d) => row(d, 2.99, visa))]).find((s) => s.amount === 10.99)!;
+    const later = detectRecurring([...monthly('2025-11', 6, 13).map((d) => row(d, 10.99, visa)), ...monthly('2025-11', 23, 3).map((d, i) => row(d, i < 10 ? 2.99 : 9.99, visa))].filter((t) => t.date <= '2027-09-30'));
+    expect(later.find((s) => s.amount === 9.99)).toBeDefined();
+    expect(dismissedSeries(later, [music.id]).size).toBe(0);
+  });
+
+  test("an HOA bill is never taken for a card's payment, however its amount matches", () => {
+    const rows = monthly('2026-03', 7, 1).flatMap((d) => [
+      row(d, 200, { name: 'OAKS HOA', category: 'rent and utilities', account_name: 'Checking', account_type: 'depository' }),
+      row(addDays(d, 2), -200, { name: 'Payment Thank You', category: 'loan payments', account_name: 'Sapphire', account_type: 'credit' }),
+    ]);
+    const hoa = only(rows);
+    expect(hoa.paysCard).toBeUndefined();
+    expect(hoa.paysCardOf).toBeUndefined();
+    // Typed by hand without a category: nothing says it pays a card.
+    const typed = monthly('2026-03', 7, 1).flatMap((d) => [
+      row(d, 200, { name: 'OAKS HOA', category: null, source: 'manual', account_name: 'Checking', account_type: 'depository' }),
+      row(addDays(d, 2), -200, { name: 'Payment Thank You', category: 'loan payments', account_name: 'Sapphire', account_type: 'credit' }),
+    ]);
+    expect(only(typed).paysCardOf).toBeUndefined();
+    // A real card payment from checking is still matched to its card.
+    const autopay = monthly('2026-03', 7, 1).flatMap((d) => [
+      row(d, 200, { name: 'CHASE CREDIT CRD AUTOPAY', category: 'loan payments', account_name: 'Checking', account_type: 'depository' }),
+      row(addDays(d, 2), -200, { name: 'Payment Thank You', category: 'loan payments', account_name: 'Sapphire', account_type: 'credit' }),
+    ]);
+    expect(only(autopay)).toMatchObject({ paysCard: true, paysCardOf: { institution: 'Chase', account: 'Sapphire' } });
+  });
+
   test('money in on a card is never income, whatever the file calls it', () => {
     const card = { account_name: 'Visa', account_type: 'credit' };
     for (const category of [null, 'payment/credit', 'income'])
@@ -743,7 +791,7 @@ describe("the verification's other cases", () => {
   test("a card's payment from checking is matched to the card its side shows it on", () => {
     const rows = monthly('2026-03', 7, 25).flatMap((d) => [
       // Imported from checking: no category, no Plaid detail.
-      row(d, 812.4, { name: 'ONLINE PAYMENT CAPITAL ONE', category: null, account_name: 'Checking', account_type: 'depository' }),
+      row(d, 812.4, { name: 'ONLINE PAYMENT CAPITAL ONE', category: null, source: 'import:ofx', account_name: 'Checking', account_type: 'depository' }),
       row(addDays(d, 2), -812.4, { name: 'PAYMENT/CREDIT', category: 'payment/credit', account_name: 'Quicksilver', account_type: 'credit', institution_name: 'Capital One' }),
     ]);
     expect(only(rows)).toMatchObject({ paysCard: true, paysCardOf: { institution: 'Capital One', account: 'Quicksilver' } });

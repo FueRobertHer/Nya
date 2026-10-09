@@ -117,13 +117,21 @@
 // payment received on a card's side) is marked so, with the card when it is
 // known: a monthly total of bills leaves it out, the card's own bills being
 // in it already, and the forecast names a card whose payment it doesn't hold.
+// Only a loan payment, a row with Plaid's card-payment detail, or a row
+// imported from a file with no category (a file says nothing either way) is
+// matched: a bill in any other category, an HOA's 200, never is, however its
+// amount matches.
 //
 // IDENTITY. A series' id is its group (kind, account, merchant, currency) and
-// its amount when found. A dismissal ("not recurring", lib/planned.ts) saves
-// that id and applies to the series of the same group nearest its amount, or
-// the amount it had before a price change, and only within a similar amount
-// (dismissedSeries): it holds as amounts move and new charges come in, and it
-// never moves to another subscription from the same merchant.
+// its amount when found, marked "=" when the series was split from its
+// merchant's other charges by amount (iCloud beside Apple Music). A dismissal
+// ("not recurring", lib/planned.ts) saves that id and applies to the series of
+// the same group at that amount, or the amount it had before a price change:
+// exactly, when either the dismissed series or this one was split by amount,
+// and within a similar amount (25%, or 50 cents) otherwise, as a lone bill's
+// amount moves (a utility bill, a price rise). It holds as amounts move and
+// new charges come in, and it never moves to another subscription from the
+// same merchant (dismissedSeries).
 //
 // DATES. Transaction dates are the bank's calendar days, so every date here is
 // a calendar day, counted in whole days (UTC arithmetic on the date alone, so a
@@ -150,6 +158,9 @@ export type RecurringRow = {
   /** Absent on a compact row, which is always posted. */
   pending?: boolean;
   excluded?: boolean | null;
+  /** A manual row's source: "manual" when typed, "import:ofx" and the like
+   *  when imported from a file (lib/manual-txns.ts). */
+  source?: string;
   logo_url?: string | null;
   /** The account it was charged to or paid into, and Plaid's type for that
    *  account (depository for checking and savings, credit for a card, loan,
@@ -188,8 +199,9 @@ export type Schedule =
   | { unit: 'month'; every: number; days: number[]; month: string; slot: number };
 
 export type RecurringSeries = {
-  /** Its group and its amount when found (see IDENTITY): what "Not
-   *  recurring" is saved under (lib/planned.ts). */
+  /** Its group and its amount when found, "=" before the amount when split
+   *  by amount (see IDENTITY): what "Not recurring" is saved under
+   *  (lib/planned.ts). */
   id: string;
   /** Its kind, institution, account, merchant and currency. */
   group: string;
@@ -215,6 +227,10 @@ export type RecurringSeries = {
   paysCard?: true;
   /** The card it pays, when the card's side shows the payment received. */
   paysCardOf?: { institution: string; account: string };
+  /** One of a merchant's charges split by amount (a run of one exact amount,
+   *  or a part of two deposits a date): a dismissal names it by its amount
+   *  exactly (dismissedSeries). */
+  split?: true;
   /** One per series (see the grouping above). */
   currency: string | null;
   /** The merchant's logo, if any charge in the series carried one. */
@@ -352,6 +368,10 @@ const EARLY_MAX_DAYS = 31;
 /** How many days apart a payment from checking and the payment received on a
  *  card's side may post. */
 const CARD_PAYMENT_DAYS = 5;
+/** How far from its saved amount a dismissal still applies, for a series
+ *  whose amount moves: a share of it, or this many cents. */
+const DISMISS_NEAR = 0.25;
+const DISMISS_FLOOR_CENTS = 50;
 /** Plaid's detail for paying a card off (as lib/fire/inputs.ts reads it). */
 const CARD_PAYMENT = 'credit card payment';
 /** Categories of everyday spending, where two visits a year apart at the
@@ -907,14 +927,24 @@ function cardPayments(txns: readonly RecurringRow[]): Map<number, { day: number;
   return out;
 }
 
+/** Whether a charge may pay a card off (see CARD PAYMENTS): a loan payment,
+ *  Plaid's card-payment detail (kept when the category is changed), or a row
+ *  imported from a file without a category. Never one typed without a
+ *  category, nor a bill in any other. */
+function mayPayCard(t: RecurringRow): boolean {
+  return t.category === 'loan payments' || t.subcategory === CARD_PAYMENT || (t.category === null && !!t.source?.startsWith('import:'));
+}
+
 /** Whether a bill's charges pay a card off, and which: Plaid's detail on its
  *  latest charge, or its latest two (its only one) matched on a card's side at
- *  their amount within CARD_PAYMENT_DAYS. */
+ *  their amount within CARD_PAYMENT_DAYS, when each may pay a card
+ *  (mayPayCard): an HOA's 200 is never a card's 200. */
 function paidCard(
   kept: Found['kept'],
   payments: Map<number, { day: number; institution: string; account: string }[]>
 ): { paysCard?: true; paysCardOf?: { institution: string; account: string } } {
   const recent = kept.slice(-2).map((k) => k.row);
+  if (!recent.every((r) => mayPayCard(r.t))) return {};
   const cards = recent.map((r) => (payments.get(cents(r.amount)) ?? []).find((p) => Math.abs(p.day - r.day) <= CARD_PAYMENT_DAYS));
   const card = cards.every((c) => c !== undefined) && cards.every((c) => c!.institution === cards[0]!.institution && c!.account === cards[0]!.account) ? cards[0] : undefined;
   if (card) return { paysCard: true, paysCardOf: { institution: card.institution, account: card.account } };
@@ -972,14 +1002,20 @@ export function detectRecurring(txns: readonly RecurringRow[]): RecurringSeries[
     const claimed = new Set<Row>(found.flatMap(({ f }) => f.kept.map((k) => k.row)));
     const built = found.map(({ f, from }, i) => {
       const rivals = found.filter((_, j) => j !== i).map(({ f: o }) => typical(o.kept.slice(o.shift), o.agreement));
-      return { s: toSeries(key, g.kind, f, from, rows, pending, claimed, rivals), f };
+      return { s: toSeries(key, g.kind, f, from, rows, pending, claimed, rivals), f, from };
     });
-    for (const { s, f } of built) {
+    for (const { s, f, from } of built) {
       // Never two ids alike: a dismissal must name one series.
-      let id = s.id;
-      for (let n = 2; ids.has(id); n++) id = `${s.id}#${n}`;
+      const base = from === 'whole' ? s.id : `${key}|=${cents(s.amount)}`;
+      let id = base;
+      for (let n = 2; ids.has(id); n++) id = `${base}#${n}`;
       ids.add(id);
-      out.push({ ...s, id, ...(g.kind === 'bill' && s.accountType !== 'credit' ? paidCard(f.kept, payments) : {}) });
+      out.push({
+        ...s,
+        id,
+        ...(from !== 'whole' ? { split: true as const } : {}),
+        ...(g.kind === 'bill' && s.accountType !== 'credit' ? paidCard(f.kept, payments) : {}),
+      });
     }
   }
   return out.sort((a, b) => (a.kind === b.kind ? b.amount - a.amount : a.kind === 'bill' ? -1 : 1));
@@ -1111,10 +1147,11 @@ export function upcomingBills(
 /**
  * Which series the person said aren't recurring, each with the dismissal that
  * says so (see IDENTITY): a dismissal names a group and an amount, and applies
- * to the series of that group nearest the amount (or the amount it had before
- * a price change), within a similar amount (25%, or 5 units), each series and
- * each dismissal at most once. One with no series near its amount waits: iCloud
- * dismissed is never Apple Music dismissed, once iCloud is gone.
+ * to the series of that group at the amount (or the amount it had before a
+ * price change), exactly for a series split by amount and within 25% or 50
+ * cents for the rest, nearest first, each series and each dismissal at most
+ * once. One with no series at its amount waits: iCloud dismissed is never
+ * Apple Music or Arcade dismissed, once iCloud is gone.
  */
 export function dismissedSeries(series: readonly RecurringSeries[], dismissed: readonly string[]): Map<string, string> {
   const byGroup = new Map<string, RecurringSeries[]>();
@@ -1125,12 +1162,13 @@ export function dismissedSeries(series: readonly RecurringSeries[], dismissed: r
   }
   const pairs: { gap: number; id: string; entry: string }[] = [];
   for (const entry of dismissed) {
-    const m = /^(.*)\|(\d+)(?:#\d+)?$/.exec(entry);
+    const m = /^(.*)\|(=?)(\d+)(?:#\d+)?$/.exec(entry);
     if (!m) continue;
-    const saved = Number(m[2]) / 100;
+    const exactly = m[2] === '=';
+    const saved = Number(m[3]);
     for (const s of byGroup.get(m[1]) ?? []) {
-      const gap = Math.min(...[s.amount, s.previousAmount ?? Infinity].map((a) => Math.abs(a - saved)));
-      if (gap <= Math.max(saved * SIMILAR.share, SIMILAR.floor)) pairs.push({ gap, id: s.id, entry });
+      const gap = Math.min(...[s.amount, s.previousAmount ?? Infinity].map((a) => Math.abs(cents(a) - saved)));
+      if (exactly || s.split ? gap === 0 : gap <= Math.max(saved * DISMISS_NEAR, DISMISS_FLOOR_CENTS)) pairs.push({ gap, id: s.id, entry });
     }
   }
   pairs.sort((a, b) => a.gap - b.gap);

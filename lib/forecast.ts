@@ -69,7 +69,16 @@ export type ForecastAccount = {
   /** A card's or loan's payment terms, where Plaid serves them: the calendar
    *  marks the payment due (lib/calendar.ts duePayments), and the forecast
    *  names a card whose payment it doesn't hold (forecastNotes). */
-  liability?: { minimum_payment: number | null; next_due_date: string | null; last_statement_balance?: number | null };
+  liability?: {
+    minimum_payment: number | null;
+    next_due_date: string | null;
+    last_statement_balance?: number | null;
+    /** The last payment and when the statement was issued: a payment on or
+     *  after it is toward that statement (as lib/payoff.ts reads them). */
+    last_payment_amount?: number | null;
+    last_payment_date?: string | null;
+    last_statement_issue_date?: string | null;
+  };
 };
 
 /** An account an institution's card can't show (lib/last-known.ts). */
@@ -246,8 +255,9 @@ export type LeftOutSeries = {
   /** Bills and income on an account whose type isn't known. */
   unplaced: RecurringSeries[];
   /** The cards whose payment from cash it holds (institution, then account,
-   *  joined by "|"), and whether it holds one for a card it can't tell. */
-  cardsPaid: { known: Set<string>; unknown: boolean };
+   *  joined by "|"), and the amounts of those it holds for a card it can't
+   *  tell. */
+  cardsPaid: { known: Set<string>; unknown: number[] };
 };
 
 /**
@@ -269,7 +279,7 @@ export function forecastEvents(opts: {
   const events: ForecastEvent[] = [];
   const others = new Map<string, number>();
   const leaveOut = (c: string) => others.set(c, (others.get(c) ?? 0) + 1);
-  const named: LeftOutSeries = { varied: [], lapsed: [], unplaced: [], cardsPaid: { known: new Set(), unknown: false } };
+  const named: LeftOutSeries = { varied: [], lapsed: [], unplaced: [], cardsPaid: { known: new Set(), unknown: [] } };
 
   for (const s of opts.series) {
     if (opts.dismissed?.has(s.id)) continue;
@@ -294,7 +304,7 @@ export function forecastEvents(opts: {
       continue;
     }
     if (s.paysCardOf) named.cardsPaid.known.add(`${s.paysCardOf.institution}|${s.paysCardOf.account}`);
-    else if (s.paysCard) named.cardsPaid.unknown = true;
+    else if (s.paysCard) named.cardsPaid.unknown.push(s.amount);
     for (const d of dates)
       events.push({
         date: d.date,
@@ -419,6 +429,12 @@ export type IncompleteConnection = { institution_name: string; coverage: 'missin
 
 /** How old a typed balance may be before the forecast says when it is from. */
 export const MANUAL_STALE_DAYS = 7;
+/** A payment near a card's statement or minimum, within this share of it, is
+ *  taken for that card's (forecastNotes). */
+const CARD_NEAR = 0.25;
+/** How many days from a card's due date a planned expense is taken for its
+ *  payment. */
+const CARD_PLANNED_DAYS = 5;
 
 const join = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 const unique = (names: string[]) => [...new Set(names)];
@@ -447,6 +463,8 @@ export function forecastNotes(opts: {
   series?: Partial<LeftOutSeries>;
   /** The forecast's last day, for the card payments due within it. */
   until?: string;
+  /** The planned items: a card's payment already planned isn't named. */
+  planned?: readonly PlannedItem[];
   stopped?: readonly StoppedConnection[];
   incomplete?: readonly IncompleteConnection[];
   /** Institutions whose bank accounts or cards bring in no transactions:
@@ -510,17 +528,43 @@ export function forecastNotes(opts: {
 
   // A card's payment due within the forecast that it doesn't hold (none was
   // detected paying that card, as one that changes every month isn't), named
-  // with its statement balance, from Plaid's payment details. Not said when
-  // a payment held pays a card it can't tell: it may be that one.
+  // with what is owed of its statement, from Plaid's payment details. Not said
+  // when that statement is paid already (a payment on or after its issue
+  // date covers it), when a planned expense near the due date is that
+  // payment, or when a payment held for a card it can't tell is near what this
+  // one owes: it may be that one.
   const paid = opts.series?.cardsPaid;
-  if (opts.until && !paid?.unknown)
+  const close = (a: number, b: number | null | undefined) => b !== null && b !== undefined && b > 0 && Math.abs(a - b) <= b * CARD_NEAR;
+  if (opts.until)
     for (const i of institutions)
       for (const a of i.accounts) {
-        const due = a.liability?.next_due_date;
-        const owed = a.liability?.last_statement_balance ?? null;
-        if (a.type !== 'credit' || a.hidden || !due || due < today || due > opts.until || (a.currency && position.currency && a.currency !== position.currency)) continue;
-        if (paid?.known.has(`${i.institution_name}|${a.name}`) || owed === 0) continue;
-        const amount = owed !== null ? `, statement balance ${formatMoney(owed, a.currency ?? position.currency)},` : '';
+        const l = a.liability;
+        const due = l?.next_due_date;
+        if (!l || a.type !== 'credit' || a.hidden || !due || due < today || due > opts.until || (a.currency && position.currency && a.currency !== position.currency)) continue;
+        if (paid?.known.has(`${i.institution_name}|${a.name}`)) continue;
+        const statement = l.last_statement_balance ?? null;
+        const since = !!l.last_payment_date && !!l.last_statement_issue_date && l.last_payment_date >= l.last_statement_issue_date ? (l.last_payment_amount ?? 0) : 0;
+        const owed = statement === null ? null : Math.max(0, Math.round((statement - since) * 100) / 100);
+        if (owed === 0) continue;
+        const figure = owed ?? l.minimum_payment;
+        if (paid?.unknown.some((x) => close(x, figure) || close(x, l.minimum_payment))) continue;
+        const planned = (opts.planned ?? []).some(
+          (p) =>
+            p.kind === 'expense' &&
+            inCurrency({ iso_currency_code: p.currency }, position.currency) &&
+            plannedDates(p, addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS), 1).length > 0 &&
+            (close(p.amount, figure) || close(p.amount, l.minimum_payment))
+        );
+        if (planned) continue;
+        const money = (n: number) => formatMoney(n, a.currency ?? position.currency);
+        const amount =
+          owed === null
+            ? l.minimum_payment
+              ? `, minimum ${money(l.minimum_payment)},`
+              : ''
+            : since > 0
+              ? `, ${money(owed)} left of its statement,`
+              : `, statement balance ${money(owed)},`;
         notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
       }
 

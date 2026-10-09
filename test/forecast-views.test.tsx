@@ -290,7 +290,7 @@ describe('the recurring list', () => {
 
   test("a card's payments received, imported with no category, are never income; the payment from checking says which card it pays", () => {
     const rows = monthly('2026-03', 7, 25).flatMap((d) => [
-      row(d, 812.4, { name: 'ONLINE PAYMENT CAPITAL ONE', category: null }),
+      row(d, 812.4, { name: 'ONLINE PAYMENT CAPITAL ONE', category: null, source: 'import:ofx' }),
       row(addDays(d, 2), -812.4, { name: 'PAYMENT/CREDIT', category: null, account_name: 'Quicksilver', account_type: 'credit', institution_name: 'Capital One' }),
     ]);
     const t = list({ series: detectRecurring(rows) });
