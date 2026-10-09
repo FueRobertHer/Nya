@@ -18,7 +18,9 @@ import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import ConnectButtons from './ConnectButtons';
+import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
+import { noTransactionsView, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
@@ -101,6 +103,9 @@ type Institution = {
   // Plaid's institution id, for recognizing a second connection to the same
   // institution (lib/existing-items.ts). Absent on older cached payloads.
   institution_id?: string | null;
+  // Which way it was linked (lib/item-products.ts linkedAs), for the sheet
+  // that stops a second connection to it (components/ConnectRedirect.tsx).
+  linked_as?: LinkKind;
   // Plaid found accounts at this Item the user hasn't added (lib/new-accounts.ts).
   new_accounts_available?: boolean;
   accounts: Account[];
@@ -379,11 +384,15 @@ export default function Dashboard({
   clerk = false,
   viewer,
   admin = false,
+  brokerageLink = false,
 }: {
   clerk?: boolean;
   viewer?: string;
   /** Set by the server (app/page.tsx): only the admin is sent the admin panel. */
   admin?: boolean;
+  /** Set by the server (app/page.tsx): whether to offer connecting a brokerage
+   *  or retirement account (PLAID_BROKERAGE_LINK, lib/item-products.ts). */
+  brokerageLink?: boolean;
 }) {
   const cacheKey = cacheKeyFor(viewer);
   const [tab, setTab] = useState<Tab>('home');
@@ -423,6 +432,8 @@ export default function Dashboard({
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
+  // Connections that bring in no transactions, so the spending views say why.
+  const [txnWithout, setTxnWithout] = useState<NoTransactionsView>(NO_CONNECTIONS_WITHOUT);
   const [txnsLoading, setTxnsLoading] = useState(false);
   // Connection health (components/ConnectionHealth.tsx): whether the server
   // could read Plaid's warnings, and whether a notice email's link opened it.
@@ -595,6 +606,7 @@ export default function Dashboard({
       setTxns(data.transactions);
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
+      setTxnWithout(noTransactionsView(data));
     } catch {
       setTxnNotes(['Could not load transactions.']);
     } finally {
@@ -726,18 +738,25 @@ export default function Dashboard({
     bypassDuplicateRef.current = bypass;
     redirectingRef.current = false;
     connectKindRef.current = kind;
-    const res = await fetch('/api/create-link-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind }),
-    });
-    const data = await res.json();
-    setConnecting(false);
-    if (data.link_token) {
-      setLinkMode('new');
-      setLinkToken(data.link_token);
-    } else {
+    // Whatever happens (no network, an answer that isn't JSON), the buttons
+    // come back: left on "Starting…", nothing could be connected.
+    try {
+      const res = await fetch('/api/create-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.link_token) {
+        setLinkMode('new');
+        setLinkToken(data.link_token);
+      } else {
+        setError('Could not start connection.');
+      }
+    } catch {
       setError('Could not start connection.');
+    } finally {
+      setConnecting(false);
     }
   }, []);
   const startConnect = useCallback((kind: LinkKind) => beginConnect(kind, false), [beginConnect]);
@@ -1410,7 +1429,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} />
+              <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1521,7 +1540,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} />
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -2122,6 +2141,7 @@ export default function Dashboard({
                 onRename={renameVendor}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
+                withoutTransactions={txnWithout}
               />
             )}
 
@@ -2154,6 +2174,7 @@ export default function Dashboard({
                 loading={txnsLoading}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
+                withoutTransactions={txnWithout}
               />
             )}
 
@@ -2162,6 +2183,7 @@ export default function Dashboard({
                 txns={txns}
                 txnsLoading={txnsLoading}
                 txnNotes={txnNotes}
+                txnWithout={txnWithout}
                 // With what went wrong at each, so a figure that may be short
                 // says so; hidden accounts too, which the tab leaves out itself.
                 institutions={institutions.map((i) => ({
@@ -2351,39 +2373,20 @@ export default function Dashboard({
         onClose={() => setRedirect(null)}
       >
         {shownRedirect && (
-          <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              To add more {shownRedirect.name} accounts, add them to the connection you already have.
-              Connecting it again would create a duplicate connection with the same accounts. If it&apos;s a
-              different login (a joint or business login, say), connect it separately.
-            </p>
-            <div className="button-stack" style={{ marginTop: 16 }}>
-              {shownRedirect.items.map((inst) => (
-                <button
-                  key={inst.item_id}
-                  disabled={connecting}
-                  onClick={() => {
-                    setRedirect(null);
-                    startManageAccounts(inst.item_id);
-                  }}
-                >
-                  {shownRedirect.items.length > 1
-                    ? `Add to ${inst.institution_name} (${inst.accounts.length} account${inst.accounts.length === 1 ? '' : 's'})`
-                    : 'Add accounts to existing connection'}
-                </button>
-              ))}
-              <button
-                className="secondary"
-                disabled={connecting}
-                onClick={() => {
-                  setRedirect(null);
-                  beginConnect(shownRedirect.kind, true);
-                }}
-              >
-                It&apos;s a different login
-              </button>
-            </div>
-          </>
+          <RedirectChoices
+            name={shownRedirect.name}
+            items={shownRedirect.items}
+            kind={shownRedirect.kind}
+            connecting={connecting}
+            onAdd={(item_id) => {
+              setRedirect(null);
+              startManageAccounts(item_id);
+            }}
+            onConnectAgain={() => {
+              setRedirect(null);
+              beginConnect(shownRedirect.kind, true);
+            }}
+          />
         )}
       </Sheet>
 

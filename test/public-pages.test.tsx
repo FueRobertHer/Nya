@@ -176,7 +176,7 @@ describe('the security page', () => {
 
   test('lists what is stored as plain text, as docs/operations.md does', () => {
     const page = security();
-    for (const item of ['dates and times', 'ids: of your accounts, transactions and bank connections', 'the names of the banks you linked, and whether each connection brings in transactions', 'the merchant names you renamed', 'for sharing: the names']) {
+    for (const item of ['dates and times', 'ids: of your accounts, transactions and bank connections', 'the names of the banks you linked, and whether Plaid included transactions when each connection was linked', 'the merchant names you renamed', 'for sharing: the names']) {
       expect(page).toContain(item);
     }
     // IP addresses, in the rate limiters' keys, which exports leave out.

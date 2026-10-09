@@ -41,7 +41,7 @@ The JSON file lists these itself, under `not_included`.
 
 - **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
 - **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
-- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, whether Plaid bills a connection for transactions, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
+- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
 - **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
 - **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves.
 - **Unused invite links.** They work for 72 hours and are then gone.
@@ -339,7 +339,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `history:accounts`, `history:accounts:partial` | `account_history` (recorded) |
 | `history:accounts:est`, `history:accounts:est:ext` | `account_history` (estimated) |
 | `history:accounts:est:flatd`, `history:accounts:est:flat` | Left out: balances an estimate held flat (see above) |
-| `txns:<connection>` | `transactions` (the sync cursor is left out) |
+| `txns:<connection>` | `transactions` (the sync cursor, and when Plaid last refused its transactions, are left out) |
 | `invtxns:<connection>` | `investment_transactions`, `investment_history_coverage` |
 | `txn-category-overrides` | `category_overrides`, and `transactions[].your_category` |
 | `txn-vendor-renames` | `merchant_renames`, and `transactions[].your_merchant_name` |

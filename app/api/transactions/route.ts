@@ -5,6 +5,7 @@ import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, type Txn } from '@/lib/transactions';
+import type { WithoutTransactions } from '@/lib/no-transactions';
 import { getEffectiveHidden, type Link } from '@/lib/links';
 import { loggable } from '@/lib/log-safe';
 
@@ -16,6 +17,14 @@ type TransactionsPayload = {
   // says so under every month it totals (#51). Empty on any payload that is
   // cached, since only a payload without notes is.
   incomplete?: { institution_name: string; coverage: 'missing' | 'importing' }[];
+  // The connections that bring in no transactions, and why (lib/item-products.ts):
+  // investment accounts only, no bank account or card, or a bank account Plaid
+  // doesn't provide transactions for. Not problems, so outside `notes`, and the
+  // payload stays cacheable. With `connections` (how many there are), the views
+  // that count spending say what is true rather than "no transactions" or a
+  // figure that looks complete (lib/no-transactions.ts).
+  without_transactions?: WithoutTransactions[];
+  connections?: number;
   as_of: string;
 };
 
@@ -81,7 +90,18 @@ export async function GET(req: Request) {
       r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
     );
 
-    const payload: TransactionsPayload = { transactions, notes, incomplete, as_of: new Date().toISOString() };
+    const without_transactions = results.flatMap((r, i) =>
+      r.noTransactions ? [{ institution_name: items[i].institution_name, reason: r.noTransactions }] : []
+    );
+
+    const payload: TransactionsPayload = {
+      transactions,
+      notes,
+      incomplete,
+      without_transactions,
+      connections: items.length,
+      as_of: new Date().toISOString(),
+    };
 
     // Same rule as net-worth: only cache clean payloads, so syncing/reauth
     // institutions get re-checked on the next load instead of hiding for

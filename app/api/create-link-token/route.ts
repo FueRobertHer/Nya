@@ -3,18 +3,18 @@ import { Products, CountryCode, type LinkTokenCreateRequest } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { webhookUrlFor } from '@/lib/webhook-url';
-import { isLinkKind, TRANSACTIONS_DAYS_REQUESTED, type LinkKind } from '@/lib/item-products';
+import { brokerageLinkEnabled, isLinkKind, TRANSACTIONS_DAYS_REQUESTED, type LinkKind } from '@/lib/item-products';
 import { loggable } from '@/lib/log-safe';
 
 // The link token for a new connection, of one of two kinds:
 //
 //   bank         Transactions required; Investments and Liabilities optional.
-//                Checking, savings, cards and loans, and any investment
-//                accounts at the same login. The token every Item had before
-//                there were two.
-//   investments  Investments required; Transactions required only if
-//                supported; Liabilities optional. Brokerages and retirement
-//                plans, including those the bank kind can't show.
+//                Checking, savings and cards with their transactions, plus
+//                loans. The token every Item had before there were two.
+//   investments  Investments required; consent to Transactions collected, and
+//                nothing more; Liabilities optional. Brokerages and retirement
+//                plans, including those the bank kind can't show. Refused
+//                unless PLAID_BROKERAGE_LINK=1 (brokerageLinkEnabled).
 //
 // WHY TWO. Plaid's Link lets someone pick only an institution that supports
 // every product in `products`, shows only the account types compatible with
@@ -23,23 +23,27 @@ import { loggable } from '@/lib/log-safe';
 // picked at all. Listing Investments under required_if_supported_products
 // doesn't change that, since Transactions is still in `products`; and with
 // Investments in `products` instead, every plain bank drops out. Each
-// institution list needs its own token, so the app offers two buttons.
+// institution list needs its own token, so the app offers two buttons (the
+// second only where the deployment turns it on).
 //
-// WHY "REQUIRED IF SUPPORTED" for Transactions on the second: Plaid's reference
-// says such a product "will only be extracted and billed if the user selects an
-// institution and account type that supports" it, and Transactions covers
-// depository, credit and student loan accounts, never investment ones (the
-// reference for /transactions/sync sends those to Investments). So a 401(k) or
-// an IRA is never billed for Transactions, while a brokerage login whose
-// checking account is shared gets its transactions as through the bank kind.
-// For optional products the reference promises only a best effort, with no
-// word on billing. Either way the sync never calls Transactions on an Item
-// that doesn't have it unless the Item holds an account it describes
-// (lib/item-products.ts), since that call would add the product.
+// WHY TRANSACTIONS ONLY AS CONSENT on the second. Plaid's reference says
+// products in additional_consented_products "will not be billed until you
+// start using them by calling the relevant endpoints". Listed under
+// required_if_supported_products instead, it would be "extracted and billed if
+// the user selects an institution and account type that supports" it, and
+// which account types count is Plaid's to say, not in its reference: a
+// brokerage account it counted would start Transactions at Link, for good. As
+// consent only, nothing starts at Link, and the first /transactions/sync is
+// the one thing that can start the charge. Nya makes it only for an Item that
+// holds a bank account or a card (lib/item-products.ts), and the consent
+// already given means it doesn't fail with ADDITIONAL_CONSENT_REQUIRED.
 //
 // Liabilities is optional on both, as it always was: Nya asks for it only for
 // Items with a card or loan (lib/networth.ts).
-const PRODUCTS: Record<LinkKind, Pick<LinkTokenCreateRequest, 'products' | 'required_if_supported_products' | 'optional_products'>> = {
+const PRODUCTS: Record<
+  LinkKind,
+  Pick<LinkTokenCreateRequest, 'products' | 'additional_consented_products' | 'optional_products' | 'transactions'>
+> = {
   bank: {
     products: [Products.Transactions],
     // Optional, not required: an institution that can't serve investments or
@@ -47,10 +51,15 @@ const PRODUCTS: Record<LinkKind, Pick<LinkTokenCreateRequest, 'products' | 'requ
     // optional they initialize where supported and are silently dropped
     // elsewhere.
     optional_products: [Products.Investments, Products.Liabilities],
+    // Ask for up to 2 years of transaction history (default is 90 days) so
+    // the estimated net-worth backfill can reach back further.
+    transactions: { days_requested: TRANSACTIONS_DAYS_REQUESTED },
   },
+  // No `transactions` options: nothing initializes Transactions at Link here.
+  // The first sync asks for the same two years (lib/transactions.ts).
   investments: {
     products: [Products.Investments],
-    required_if_supported_products: [Products.Transactions],
+    additional_consented_products: [Products.Transactions],
     optional_products: [Products.Liabilities],
   },
 };
@@ -84,16 +93,17 @@ export async function POST(req: Request) {
     if (!kind) {
       return NextResponse.json({ error: "Expected { kind: 'bank' } or { kind: 'investments' }" }, { status: 400 });
     }
+    // Hidden in the app while off, and refused here too, so no Item without
+    // Transactions exists until the operator turns it on (lib/item-products.ts).
+    if (kind === 'investments' && !brokerageLinkEnabled()) {
+      return NextResponse.json({ error: "Connecting a brokerage or retirement account isn't turned on here" }, { status: 400 });
+    }
     const response = await plaidClient.linkTokenCreate({
       // One id per person, as Plaid expects: their container's, which says
       // nothing about who they are.
       user: { client_user_id: ctx.container },
       client_name: 'Nya',
       ...PRODUCTS[kind],
-      // Ask for up to 2 years of transaction history (default is 90 days) so
-      // the estimated net-worth backfill can reach back further. Applies to
-      // either kind wherever Transactions is initialized at Link.
-      transactions: { days_requested: TRANSACTIONS_DAYS_REQUESTED },
       country_codes: [CountryCode.Us],
       language: 'en',
       // Plaid tells us when new data is ready (app/api/plaid/webhook), so the

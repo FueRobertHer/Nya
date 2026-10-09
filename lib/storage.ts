@@ -157,8 +157,8 @@ export type StoredItem = {
    *  whether a call would start that charge (lib/item-products.ts). Absent on
    *  Items linked before it was stored, all of which required Transactions;
    *  null when the lookup failed. Plain text, like the name, and listed on the
-   *  Security page with it: it says whether the connection brings in
-   *  transactions, nothing about what they are. */
+   *  Security page with it: it says whether Plaid included transactions when
+   *  the connection was linked, nothing about what they are. */
   transactions_billed?: boolean | null;
 };
 

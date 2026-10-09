@@ -127,7 +127,7 @@ const enc = async (value: unknown) => encrypt(typeof value === 'string' ? value 
 async function seedPerson() {
   await fake.hset(ctxKey('plaid:items'), {
     item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('access-sandbox-SECRET-a') }),
-    // Linked as a brokerage: whether Plaid bills it for transactions is bookkeeping, left out.
+    // Linked as a brokerage: whether Plaid included transactions when it was linked is bookkeeping, left out.
     item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt('access-sandbox-SECRET-b'), transactions_billed: false }),
   });
   await fake.hset(ctxKey('accounts:meta'), {

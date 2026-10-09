@@ -11,8 +11,11 @@ import type { LinkKind } from '@/lib/item-products';
 
 const noop = () => {};
 const view = (over: Partial<Parameters<typeof ConnectButtonsView>[0]> = {}) =>
-  renderToStaticMarkup(<ConnectButtonsView connecting={false} starting={null} onConnect={noop} {...over} />);
+  renderToStaticMarkup(
+    <ConnectButtonsView connecting={false} starting={null} brokerage={true} idBase="cb" onConnect={noop} {...over} />
+  );
 const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map((m) => ({ attrs: m[1], label: m[2] }));
+const attr = (attrs: string, name: string) => attrs.match(new RegExp(`${name}="([^"]*)"`))?.[1];
 
 /** Every <button> element in a rendered tree, without a DOM. */
 function buttonElements(node: ReactNode): ReactElement<{ onClick: () => void }>[] {
@@ -27,7 +30,7 @@ describe('the two ways to connect', () => {
     const html = view();
     const shown = buttons(html);
     expect(shown.map((b) => b.label)).toEqual(['Connect a bank or card', 'Connect a brokerage or retirement account']);
-    expect(html).toContain('Checking, savings, credit cards and loans, with their transactions.');
+    expect(html).toContain('Checking, savings and credit cards with their transactions, plus loans.');
     expect(html).toContain('401(k)s, IRAs and brokerage accounts, including ones the bank option can’t find.');
     expect(shown[0].attrs).not.toContain('secondary');
     expect(shown[1].attrs).toContain('class="secondary"');
@@ -36,7 +39,13 @@ describe('the two ways to connect', () => {
 
   test('each asks for its own kind of link', () => {
     const asked: LinkKind[] = [];
-    const tree = ConnectButtonsView({ connecting: false, starting: null, onConnect: (kind) => asked.push(kind) });
+    const tree = ConnectButtonsView({
+      connecting: false,
+      starting: null,
+      brokerage: true,
+      idBase: 'cb',
+      onConnect: (kind) => asked.push(kind),
+    });
     for (const button of buttonElements(tree)) button.props.onClick();
     expect(asked).toEqual(['bank', 'investments']);
   });
@@ -55,6 +64,31 @@ describe('the two ways to connect', () => {
     for (const b of shown) expect(b.attrs).toContain('disabled');
   });
 
+  test("each button is described by its own line, so a screen reader reads what it's for", () => {
+    const html = view();
+    const ids = buttons(html).map((b) => attr(b.attrs, 'aria-describedby'));
+    expect(ids).toEqual(['cb-bank', 'cb-investments']);
+    for (const option of CONNECT_OPTIONS) {
+      expect(html).toContain(`<p class="panel-note" id="cb-${option.kind}">${option.note}</p>`);
+    }
+  });
+
+  // Off unless PLAID_BROKERAGE_LINK=1 (lib/item-products.ts): until then only
+  // the bank option shows, filled and described as before.
+  test('without the brokerage option turned on, only the bank option shows', () => {
+    const html = view({ brokerage: false });
+    const shown = buttons(html);
+    expect(shown.map((b) => b.label)).toEqual(['Connect a bank or card']);
+    expect(shown[0].attrs).not.toContain('secondary');
+    expect(attr(shown[0].attrs, 'aria-describedby')).toBe('cb-bank');
+    expect(html).toContain('Checking, savings and credit cards with their transactions, plus loans.');
+    expect(html).not.toContain('401(k)');
+    const asked: LinkKind[] = [];
+    const tree = ConnectButtonsView({ connecting: false, starting: null, brokerage: false, idBase: 'cb', onConnect: (k) => asked.push(k) });
+    for (const button of buttonElements(tree)) button.props.onClick();
+    expect(asked).toEqual(['bank']);
+  });
+
   // Read from the source, as test/public-pages.test.tsx does: the dashboard
   // needs Clerk and Plaid Link to render.
   test('the dashboard asks for the kind pressed, and a different login is connected the same way', () => {
@@ -62,5 +96,9 @@ describe('the two ways to connect', () => {
     expect(dashboard).toContain("fetch('/api/create-link-token', {");
     expect(dashboard).toContain('body: JSON.stringify({ kind }),');
     expect(dashboard).toContain('beginConnect(shownRedirect.kind, true);');
+    // Both places it shows take the server's word on the brokerage option.
+    expect(dashboard.match(/<ConnectButtons [^>]*brokerage=\{brokerageLink\} \/>/g)?.length).toBe(2);
+    const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
+    expect(page).toContain('const brokerageLink = brokerageLinkEnabled();');
   });
 });

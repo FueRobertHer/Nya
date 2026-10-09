@@ -10,6 +10,7 @@ Nya runs on Vercel, with Upstash Redis for storage and Plaid for bank data. Bun 
 - [6. Deploy](#6-deploy)
 - [7. Install on your phone](#7-install-on-your-phone)
 - [Email notices](#email-notices)
+- [Brokerage and retirement connections](#brokerage-and-retirement-connections)
 - [Security headers and the Content-Security-Policy](#security-headers-and-the-content-security-policy)
 - [Preview deployments](#preview-deployments)
 
@@ -47,6 +48,7 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). The deletion receipt and the public Security and Privacy pages read it (and whether a Blob store is connected), so what they say follows it. |
 | `PLAID_WEBHOOK_URL` | optional | Public URL of `/api/plaid/webhook`. See [features.md](features.md#keeping-plaid-costs-down). |
 | `PLAID_UNUSED_DAYS` | optional | Days before an unused connection is flagged (default 60, minimum 14). |
+| `PLAID_BROKERAGE_LINK` | optional | `1` offers **Connect a brokerage or retirement account** beside the bank option. Off by default, and turned on only after this release has run for a while. See [Brokerage and retirement connections](#brokerage-and-retirement-connections). |
 | `MAX_TXN_BLOB_CHARS` | optional | Ceiling on one institution's stored transactions (default 8,388,608 characters). See [architecture.md](architecture.md#storage-and-encryption). |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_ALLOWED_USER_IDS` | optional | Sign in with Clerk instead of the shared password. See [authentication.md](authentication.md). |
 | `CSP_MODE` | optional | How pages send their Content-Security-Policy: `report-only` (the default), `enforce` or `off`. See [Security headers](#security-headers-and-the-content-security-policy). |
@@ -123,6 +125,19 @@ The emails go once every container's snapshot has run, so they never use the sna
 
 **What the log tells you.** Problems on Nya's side are never emailed to anyone, so the log is where they show: each run lists the connections that fail for a reason on Nya's side, with Plaid's codes (`Connection notices: N connection(s) in M container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (12))`). `INVALID_ACCESS_TOKEN` across every connection means `PLAID_ENV`, `PLAID_CLIENT_ID` or `PLAID_SECRET` is not the set the connections were made with, a Preview value on Production, say; `INVALID_API_KEYS`, that the client id and secret don't match. Put the settings back and the connections work as before: don't remove them, which would delete their stored transactions and leave them live, and billed, at Plaid. When emails about a cause on Plaid's side or one Nya can't place first become due on the same run in three or more containers with the same Plaid code, the run holds them back and says so, with the code and the day they go (`... those 3 email(s) are held back until October 7 (UTC), and go with that day's run if the problem is still there`); each later run says what is still held. Fix the setup in those three days and the breaks end with nothing sent; otherwise each email goes once, and is never held again. Holds are recorded within the run's mail deadline, a few at a time: one left unrecorded only means that email isn't held, and it goes with the next run. An email about a sign-in or a bank's own problem is never held.
 
+## Brokerage and retirement connections
+
+**Connect a brokerage or retirement account** reaches 401(k) and IRA recordkeepers that the bank option can't list, since those offer Investments but not Transactions ([features.md](features.md#connecting-accounts)). Connections made with it have no Transactions, and the app decides alone whether one ever gets it: a first call for a connection's transactions starts Plaid's Transactions product, billed monthly until the connection is removed, so the transactions sync makes that call only for a connection holding a bank account or a card ([Keeping Plaid costs down](features.md#keeping-plaid-costs-down)).
+
+A release from before this one has no such check, and calls for every connection's transactions on every load. So the option ships turned off, and the release that checks runs for a while before any connection without Transactions exists:
+
+1. Deploy with `PLAID_BROKERAGE_LINK` unset. Only **Connect a bank or card** shows, and the route refuses a brokerage link token.
+2. Leave it a week or so, through the daily snapshots. Connect one bank in that time, and check in the Upstash console that its record in `<prefix>:c:<id>:plaid:items` carries `"transactions_billed":true`: the link recorded what Plaid bills.
+3. Set `PLAID_BROKERAGE_LINK=1` on Production (and Preview, to try it there first) and redeploy. Any other value counts as off.
+4. Connect a real 401(k) or IRA, and a brokerage account, with the new option. Each one's record should carry `"transactions_billed":false`: Plaid isn't billing Transactions on it. Its card on the Accounts tab shows its holdings and no error, and nothing on the Activity tab names it as failing.
+
+From then on, never roll back to a release from before this one: see [operations.md](operations.md#rolling-back-once-the-brokerage-option-is-on). Turning the option off again hides the button and refuses new brokerage link tokens; connections already made with it keep working.
+
 ## Security headers and the Content-Security-Policy
 
 Every response carries the same security headers, set in `next.config.js` so they also reach static files and the routes `proxy.ts` never sees: `Strict-Transport-Security` (two years, subdomains included, not preloaded), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a `Permissions-Policy` that turns off device features the app never uses, `X-Frame-Options: DENY`, and `Cross-Origin-Opener-Policy: same-origin-allow-popups` (not `same-origin`, which would cut a bank's sign-in pop-up off from Plaid Link). HSTS covers subdomains of the host Nya is served from: on `*.vercel.app` or a subdomain such as `nya.example.com` that is nothing else, but served at a bare domain it would require HTTPS on every subdomain of it.
@@ -151,7 +166,7 @@ Plaid Link and Clerk load scripts, frames and connections that only a live sessi
 4. Go through every flow:
    - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows, and on Preview with a demo button too;
    - open the account menu, **Manage account**, each page of the account window (Data & privacy included), then sign out from it;
-   - **Connect a bank or card** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank), then **Connect a brokerage or retirement account** once too;
+   - **Connect a bank or card** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank), then, with `PLAID_BROKERAGE_LINK=1`, **Connect a brokerage or retirement account** once too;
    - **Reconnect** and **Add or remove accounts** on a connected institution;
    - the Activity tab (merchant logos and category icons) and the Budgets tab;
    - the **Application** tab: the service worker is registered.

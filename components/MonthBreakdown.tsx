@@ -15,6 +15,7 @@ import MonthFlowChart from "./MonthFlowChart";
 import { dominantCurrency } from "@/lib/format";
 import { instantDay } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
+import { noSpending, refusedEmptyNote, refusedMonthNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -239,12 +240,17 @@ export default function MonthBreakdown({
   onRename,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
 }: {
   txns: Txn[] | null;
   notes: string[];
   loading: boolean;
   onRecategorize: (transaction_id: string, category: string) => void;
   onRename: (vendor_key: string, name: string) => void;
+  /** Connections that bring in no transactions (lib/no-transactions.ts): an
+   *  empty list says why rather than "no transactions", and a bank account
+   *  Plaid doesn't provide them for is named under every month. */
+  withoutTransactions?: NoTransactionsView;
   /** Institutions whose rows this load lacks, or lacks the oldest of
    *  (/api/transactions), and connections whose transactions have stopped
    *  (their health): the month's totals say so (lib/month-coverage.ts). */
@@ -407,9 +413,17 @@ export default function MonthBreakdown({
   }
 
   if (!txns || (txns.length === 0 && notes.length === 0)) {
+    // Connections that can't bring any in are not an empty year.
+    const none = txns ? noSpending(withoutTransactions) : null;
+    const refused = txns && !none ? refusedEmptyNote(withoutTransactions) : null;
     return (
       <div className="card">
-        <p className="empty-note">No transactions in the last 12 months.</p>
+        <p className="empty-note">
+          {none
+            ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}.`
+            : "No transactions in the last 12 months."}
+        </p>
+        {refused && <div className="stale-note">{refused}</div>}
       </div>
     );
   }
@@ -417,8 +431,9 @@ export default function MonthBreakdown({
   const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
+  const refusedNote = refusedMonthNote(withoutTransactions);
   const gapNotes = selected
-    ? monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10))
+    ? [...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...(refusedNote ? [refusedNote] : [])]
     : [];
 
   return (

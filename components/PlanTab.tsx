@@ -50,6 +50,7 @@ import {
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { instantDay, localDate } from '@/lib/local-date';
+import { noSpending as noSpendingOf, refusedFigureNote, refusedNames, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import {
   investedAssets,
   isWorkplacePlan,
@@ -247,6 +248,11 @@ export type PlanTabProps = {
   /** /api/transactions' notes: institutions whose transactions couldn't all
    *  be read ("Chase: needs to be reconnected"), or that the whole load failed. */
   txnNotes: string[];
+  /** The connections that bring in no transactions (lib/no-transactions.ts):
+   *  when none can bring in spending, the figures say so rather than waiting
+   *  for transactions that won't come; a bank account Plaid doesn't provide
+   *  them for keeps "this figure may be low". */
+  txnWithout?: NoTransactionsView;
   /** Every institution as the dashboard last loaded it, hidden accounts
    *  included (they are left out here), with its errors and stale state. */
   institutions: AssetInstitution[];
@@ -257,7 +263,7 @@ export type PlanTabProps = {
   currency: string | null;
 };
 
-export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, balancesAsOf, currency }: PlanTabProps) {
+export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_CONNECTIONS_WITHOUT, institutions, balancesAsOf, currency }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   const store = useMemo(
     () =>
@@ -481,6 +487,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         view={view}
         flows={flows}
         unread={unread}
+        withoutTransactions={txnWithout}
         txnsLoading={txnsLoading}
         txnsFailed={txns === null && !txnsLoading && txnNotes.length > 0}
         assets={assets}
@@ -688,6 +695,7 @@ export function FiCard({
   view,
   flows,
   unread,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
   txnsLoading,
   txnsFailed,
   assets: measuredAssets,
@@ -704,6 +712,8 @@ export function FiCard({
   flows: TrailingFlows | null;
   /** Institutions whose transactions couldn't all be read. */
   unread: UnreadTransactions[];
+  /** Connections that bring in no transactions (lib/no-transactions.ts). */
+  withoutTransactions?: NoTransactionsView;
   txnsLoading: boolean;
   /** The transactions couldn't be loaded at all. */
   txnsFailed: boolean;
@@ -719,7 +729,12 @@ export function FiCard({
   open: (s: SheetState) => void;
 }) {
   const { spending, savings, assets } = view;
-  const spendingShort = spending.source === 'measured' && unread.length > 0;
+  // A refused bank account or card leaves spending short as surely as one
+  // that couldn't be read; no connection that can bring spending in at all is
+  // said in place of the figure, not as waiting for it.
+  const refused = refusedNames(withoutTransactions).length > 0;
+  const noSpending = noSpendingOf(withoutTransactions);
+  const spendingShort = spending.source === 'measured' && (unread.length > 0 || refused);
   const assetLines = assets.source === 'measured' ? assetCaveatLines(measuredAssets.caveats) : [];
   const assetsShort = assets.source === 'measured' && measuredAssets.caveats.some((c) => c.kind !== 'stale');
 
@@ -728,11 +743,15 @@ export function FiCard({
   let spendingNote: React.ReactNode;
   if (spending.source === 'typed') spendingNote = 'typed by you';
   else if (!flows) {
-    spendingNote = txnsLoading
-      ? 'loading your transactions…'
-      : txnsFailed
-        ? "your transactions couldn't be loaded; type your spending, or try again later"
-        : 'not enough transactions to measure from yet';
+    spendingNote = txnsLoading ? (
+      'loading your transactions…'
+    ) : txnsFailed ? (
+      "your transactions couldn't be loaded; type your spending, or try again later"
+    ) : noSpending ? (
+      `${noSpending.lead}, so there are no bank or card transactions to measure spending from. Type it under Edit.`
+    ) : (
+      <Notes source="not enough transactions to measure from yet" warnings={[refusedFigureNote(withoutTransactions, 'uncounted')]} />
+    );
   } else {
     const parts: string[] = [];
     if (flows.loanPayments > 0) parts.push(`${money(flows.loanPayments)} of loan payments (principal counts as spending until the loan ends)`);
@@ -752,6 +771,7 @@ export function FiCard({
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
             : null,
           unreadText(unread, 'low'),
+          refusedFigureNote(withoutTransactions, 'low'),
         ]}
       />
     );
@@ -760,7 +780,13 @@ export function FiCard({
   // Savings: bank income minus spending, plus workplace plan contributions.
   let savingsNote: React.ReactNode;
   if (savings.source === 'typed') savingsNote = 'typed by you';
-  else if (!flows) savingsNote = txnsLoading ? 'loading your transactions…' : 'needs a year of transactions';
+  else if (!flows) {
+    savingsNote = txnsLoading
+      ? 'loading your transactions…'
+      : noSpending
+        ? `${noSpending.lead}, so there are no bank or card transactions to measure income and spending from. Type it under Edit.`
+        : 'needs a year of transactions';
+  }
   else {
     // What was added for each workplace plan, what counted and what didn't,
     // so nothing is counted twice unseen (lib/fire/inputs.ts workplaceSavings).
@@ -798,6 +824,7 @@ export function FiCard({
           workplace && workplace.unmeasured.length ? `Contributions to ${names(workplace.unmeasured)} couldn't be measured, so this figure may be low.` : null,
           ...(workplace?.problems ?? []).map((p) => `${p.name}'s activity couldn't all be read, so this figure may be low.`),
           unreadText(unread, 'off'),
+          refusedFigureNote(withoutTransactions, 'off'),
         ]}
       />
     );
@@ -843,7 +870,13 @@ export function FiCard({
             ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
             : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
       </div>
-      {spendingShort && <div className="as-of stale">May be low: spending is missing transactions that couldn&apos;t be read (below).</div>}
+      {spendingShort && (
+        <div className="as-of stale">
+          {unread.length > 0
+            ? "May be low: spending is missing transactions that couldn't be read (below)."
+            : "May be low: spending is missing transactions Plaid doesn't provide (below)."}
+        </div>
+      )}
       {view.progress !== null && (
         <>
           <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>

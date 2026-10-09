@@ -12,6 +12,7 @@ import { detectRecurring } from '@/lib/recurring';
 import { localMonth, instantDay } from '@/lib/local-date';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
+import { noSpending as noSpendingOf, refusedMonthNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 
 // Stable empty defaults, as in Insights.
@@ -53,6 +54,7 @@ export default function BudgetsTab({
   loading,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
@@ -78,6 +80,11 @@ export default function BudgetsTab({
    *  makes a budget look safer than it is. */
   incomplete?: Incomplete[];
   stopped?: Stopped[];
+  /** Connections that bring in no transactions (lib/no-transactions.ts). When
+   *  none can bring in spending, a budget shows its limit and why there is
+   *  nothing against it, never "$0 of" it; a bank account Plaid doesn't
+   *  provide transactions for is named under the month. */
+  withoutTransactions?: NoTransactionsView;
 }) {
   const [editing, setEditing] = useState<string | null>(null); // category being edited
   const [editAmount, setEditAmount] = useState('');
@@ -141,6 +148,10 @@ export default function BudgetsTab({
   const totalSpent = budgetedCategories.reduce((sum, c) => sum + (spendByCat[c] ?? 0), 0);
   const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : 0;
   const monthlyBills = recurring.reduce((sum, b) => sum + b.amount, 0);
+  // No connection can bring in spending, and none came from anywhere else:
+  // say so, rather than "$0 of" every limit.
+  const noSpending = txns && txns.length === 0 ? noSpendingOf(withoutTransactions) : null;
+  const refusedNote = noSpending ? null : refusedMonthNote(withoutTransactions);
 
   function startEdit(category: string) {
     setEditing(category);
@@ -173,7 +184,7 @@ export default function BudgetsTab({
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">{monthName} budgets</div>
-          {totalBudget > 0 && budgetsStatus === 'ready' && (
+          {totalBudget > 0 && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
               {formatMoney(totalSpent, displayCurrency)} of{' '}
               {formatMoney(totalBudget, displayCurrency)}
@@ -188,7 +199,12 @@ export default function BudgetsTab({
         ) : (
           <>
         {budgetsSaveError && <p className="stale-note">{budgetsSaveError}</p>}
-        {totalBudget > 0 && (
+        {noSpending && (
+          <p className="empty-note">
+            {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
+          </p>
+        )}
+        {totalBudget > 0 && !noSpending && (
           <div className={`meter-track${meterState(totalRatio)}`}>
             <div
               className={`meter-fill${meterState(totalRatio)}`}
@@ -236,17 +252,25 @@ export default function BudgetsTab({
                   <div className="budget-line">
                     <span className="budget-name">{cat}</span>
                     <span className="budget-amounts">
-                      {formatMoney(spent, displayCurrency)} of{' '}
-                      {formatMoney(budget, displayCurrency)}
-                      {ratio >= 1 && <span className="over-tag"> · over</span>}
+                      {noSpending ? (
+                        `${formatMoney(budget, displayCurrency)} limit`
+                      ) : (
+                        <>
+                          {formatMoney(spent, displayCurrency)} of{' '}
+                          {formatMoney(budget, displayCurrency)}
+                          {ratio >= 1 && <span className="over-tag"> · over</span>}
+                        </>
+                      )}
                     </span>
                   </div>
-                  <div className={`meter-track${meterState(ratio)}`}>
-                    <div
-                      className={`meter-fill${meterState(ratio)}`}
-                      style={{ width: `${Math.min(ratio * 100, 100)}%` }}
-                    />
-                  </div>
+                  {!noSpending && (
+                    <div className={`meter-track${meterState(ratio)}`}>
+                      <div
+                        className={`meter-fill${meterState(ratio)}`}
+                        style={{ width: `${Math.min(ratio * 100, 100)}%` }}
+                      />
+                    </div>
+                  )}
                 </button>
               )}
             </div>
@@ -291,7 +315,7 @@ export default function BudgetsTab({
           <div className="chart-note">Totals mix currencies and aren&apos;t converted.</div>
         )}
         {totalBudget > 0 &&
-          monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)).map((n) => (
+          [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...(refusedNote ? [refusedNote] : [])].map((n) => (
             <div className="stale-note" key={n}>
               {n}
             </div>
@@ -317,7 +341,9 @@ export default function BudgetsTab({
           )}
         </div>
 
-        {recurring.length === 0 ? (
+        {recurring.length === 0 && noSpending ? (
+          <p className="empty-note">{noSpending.lead}, so there are no bills to detect.</p>
+        ) : recurring.length === 0 ? (
           <p className="empty-note">
             No recurring charges detected yet — they show up once a merchant has billed a
             consistent amount for three months.

@@ -1,11 +1,12 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 // Link coverage for brokerages and retirement plans: the second way to connect
-// (a link token that asks for Investments), and every path an Item without
-// Transactions goes through. An Item like that must never block a snapshot,
-// never show a note, and never get a /transactions/sync call, since that call
-// would add the product and start Plaid billing it (lib/item-products.ts).
+// (a link token that asks for Investments, off unless PLAID_BROKERAGE_LINK=1),
+// and every path an Item without Transactions goes through. An Item like that
+// must never block a snapshot, never show a note, and never get a
+// /transactions/sync call unless it holds a bank account or card, since that
+// call would add the product and start Plaid billing it (lib/item-products.ts).
 
 const ctx = TEST_CTX;
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -101,7 +102,9 @@ const { getAccountHistory, getRealSnapshotDates, isBackfillDone } = await import
 const { snapshotData } = await import('@/lib/snapshot-job');
 const { readHoldingsRange } = await import('@/lib/holdings-history');
 const { existingItemsAt } = await import('@/lib/existing-items');
-const { transactionsBilledOf, transactionsBilled, holdsTransactionAccounts, isLinkKind } = await import('@/lib/item-products');
+const { transactionsBilledOf, transactionsBilled, holdsTransactionAccounts, isLinkKind, refusalStands, noTransactionsReason, transactionAccountIds } =
+  await import('@/lib/item-products');
+const { readStoredTxns } = await import('@/lib/transactions');
 
 const checking = (id = 'acct_chk') => ({
   account_id: id,
@@ -230,6 +233,40 @@ describe('which products an Item has', () => {
     for (const types of [[], ['investment'], ['loan'], ['other'], [null, undefined, 3]]) expect(holdsTransactionAccounts(types)).toBe(false);
   });
 
+  test('why an Item has none: investment accounts only, or no bank account or card', () => {
+    expect(noTransactionsReason(['investment', 'investment'])).toBe('investment_accounts');
+    expect(noTransactionsReason(['investment', 'loan'])).toBe('no_cash_accounts');
+    expect(noTransactionsReason([])).toBe('no_cash_accounts');
+  });
+
+  test('a remembered refusal stands for 30 days, for the accounts it was about, and one with no usable time never does', () => {
+    const now = Date.parse('2026-10-09T12:00:00Z');
+    const cash = ['acct_cash', 'acct_card'];
+    const at = (ms: number) => ({ at: new Date(now - ms).toISOString(), code: 'PRODUCTS_NOT_SUPPORTED', accounts: cash });
+    expect(refusalStands(at(0), cash, now)).toBe(true);
+    expect(refusalStands(at(29 * DAY), cash, now)).toBe(true);
+    expect(refusalStands(at(30 * DAY), cash, now)).toBe(false);
+    // One of them gone still stands; a bank account or card added since is asked about.
+    expect(refusalStands(at(DAY), ['acct_card'], now)).toBe(true);
+    expect(refusalStands(at(DAY), [...cash, 'acct_new'], now)).toBe(false);
+    // From the future (a clock that jumped): asked again rather than trusted.
+    expect(refusalStands(at(-DAY), cash, now)).toBe(false);
+    for (const r of [null, undefined, { at: 'yesterday', code: 'X', accounts: cash }]) expect(refusalStands(r, cash, now)).toBe(false);
+  });
+
+  test('the accounts a refusal is about: the bank accounts and cards, by id', () => {
+    expect(
+      transactionAccountIds([
+        { account_id: 'b', type: 'credit' },
+        { account_id: 'a', type: 'depository' },
+        { account_id: 'k', type: 'investment' },
+        { account_id: 'l', type: 'loan' },
+        { type: 'depository' },
+        { account_id: 'a', type: 'depository' },
+      ])
+    ).toEqual(['a', 'b']);
+  });
+
   test('the two kinds of link', () => {
     expect(isLinkKind('bank')).toBe(true);
     expect(isLinkKind('investments')).toBe(true);
@@ -238,6 +275,10 @@ describe('which products an Item has', () => {
 });
 
 describe('the link token', () => {
+  afterEach(() => {
+    delete process.env.PLAID_BROKERAGE_LINK;
+  });
+
   test('with no body, the bank kind, as every client asked before there were two', async () => {
     for (const body of [undefined, '', {}, { kind: 'bank' }]) {
       plaid.linkRequests.length = 0;
@@ -246,25 +287,43 @@ describe('the link token', () => {
       expect(req.products).toEqual(['transactions']);
       expect(req.optional_products).toEqual(['investments', 'liabilities']);
       expect(req.required_if_supported_products).toBeUndefined();
+      expect(req.additional_consented_products).toBeUndefined();
       expect(req.transactions).toEqual({ days_requested: 730 });
       expect(req.country_codes).toEqual(['US']);
     }
   });
 
-  test('the brokerage kind asks for Investments, and for Transactions only where an account supports it', async () => {
+  test('the brokerage kind asks for Investments, and only for consent to Transactions', async () => {
+    process.env.PLAID_BROKERAGE_LINK = '1';
     expect((await route('create-link-token', 'POST', { kind: 'investments' })).status).toBe(200);
     const [req] = plaid.linkRequests;
     // Investments in `products` is what puts plans without Transactions on the list.
     expect(req.products).toEqual(['investments']);
-    // Required if supported: Plaid adds and bills it only for an account type that supports it.
-    expect(req.required_if_supported_products).toEqual(['transactions']);
+    // Consent only: Plaid starts and bills it only once Transactions is
+    // called, which the sync's check alone decides (lib/item-products.ts).
+    expect(req.additional_consented_products).toEqual(['transactions']);
+    expect(req.required_if_supported_products).toBeUndefined();
     expect(req.optional_products).toEqual(['liabilities']);
-    expect(req.transactions).toEqual({ days_requested: 730 });
+    // Nothing initializes Transactions at Link; the first sync asks for the two years.
+    expect(req.transactions).toBeUndefined();
     expect(req.country_codes).toEqual(['US']);
     expect(req.user).toEqual({ client_user_id: ctx.container });
     // Plaid refuses a product listed twice.
-    const listed = [...req.products, ...req.required_if_supported_products, ...req.optional_products];
+    const listed = [...req.products, ...req.additional_consented_products, ...req.optional_products];
     expect(new Set(listed).size).toBe(listed.length);
+  });
+
+  test('the brokerage kind is refused until the deployment turns it on; the bank kind never is', async () => {
+    for (const value of [undefined, '', '0', 'true', 'yes', ' 1']) {
+      if (value === undefined) delete process.env.PLAID_BROKERAGE_LINK;
+      else process.env.PLAID_BROKERAGE_LINK = value;
+      const res = await route('create-link-token', 'POST', { kind: 'investments' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Connecting a brokerage or retirement account isn't turned on here");
+      expect((await route('create-link-token', 'POST', { kind: 'bank' })).status).toBe(200);
+    }
+    // Only bank tokens were ever asked for.
+    expect(plaid.linkRequests.map((r) => r.products)).toEqual(Array(6).fill(['transactions']));
   });
 
   test('anything else is refused before Plaid is asked', async () => {
@@ -312,10 +371,24 @@ describe('transactions from an Item without Transactions', () => {
       ['t2', 'Bank'],
     ]);
     expect(syncedTokens()).toEqual(['token-item_bank']);
+    // Said beside the rows, with why, for the views that count spending.
+    expect(res.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
+    expect(res.body.connections).toBe(2);
     // Clean, so the next load is served from the cache with no Plaid call.
     const again = await transactions(false);
     expect(again.body.from_cache).toBe(true);
+    expect(again.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
+    expect(again.body.connections).toBe(2);
     expect(syncedTokens()).toEqual(['token-item_bank']);
+  });
+
+  test('a connection with a loan and no bank account or card is said as that', async () => {
+    const loan = { ...checking('acct_loan'), name: 'Mortgage', type: 'loan', subtype: 'mortgage' };
+    await addItem('item_loan', 'Mortgage servicer', [loan], { billed: false });
+    const res = await transactions();
+    expect(res.body.without_transactions).toEqual([{ institution_name: 'Mortgage servicer', reason: 'no_cash_accounts' }]);
+    expect(res.body.connections).toBe(1);
+    expect(plaid.syncCalls).toHaveLength(0);
   });
 
   test('remembered accounts decide it, with no Plaid call at all', async () => {
@@ -343,11 +416,25 @@ describe('transactions from an Item without Transactions', () => {
     expect(plaid.syncCalls).toEqual([{ token: 'token-item_cu', cursor: undefined, options: { days_requested: 730 } }]);
   });
 
-  test('and when no account list can be had, the first call waits for a later load, quietly', async () => {
+  // Its link-time lookup failed and so does the first /accounts/get, as both
+  // can in one rate-limit spike: not knowing is neither "no transactions" nor
+  // a reason to call.
+  test("and when no account list can be had, it says it couldn't check, isn't cached, and the next load syncs", async () => {
     await addItem('item_cu', 'Credit union', [checking('acct_cu')], { billed: null, remember: false, txns: [bankRow('u1', 'acct_cu')] });
     plaid.accountsFail['token-item_cu'] = true;
-    expect((await transactions()).body).toMatchObject({ transactions: [], notes: [] });
+    const first = await transactions(false);
+    expect(first.body).toMatchObject({ transactions: [], notes: ['Credit union: could not check its accounts for transactions'] });
+    expect(first.body.without_transactions).toEqual([]);
+    // Its rows are missing from this load, so every month's totals say so.
+    expect(first.body.incomplete).toEqual([{ institution_name: 'Credit union', coverage: 'missing' }]);
     expect(plaid.syncCalls).toHaveLength(0);
+    // Plaid recovers: the next ordinary load is not served that empty answer.
+    delete plaid.accountsFail['token-item_cu'];
+    const next = await transactions(false);
+    expect(next.body.from_cache).toBeFalsy();
+    expect(next.body.notes).toEqual([]);
+    expect(next.body.transactions.map((t: any) => t.transaction_id)).toEqual(['u1']);
+    expect(plaid.syncCalls).toEqual([{ token: 'token-item_cu', cursor: undefined, options: { days_requested: 730 } }]);
   });
 
   test('a brokerage connection that holds a checking account starts Transactions, asking for two years', async () => {
@@ -380,7 +467,7 @@ describe('transactions from an Item without Transactions', () => {
     expect(syncedTokens()).toEqual(['token-item_b']);
   });
 
-  test("one that can't have Transactions after all is quiet, and asked again only on a later uncached load", async () => {
+  test("a bank account Plaid doesn't provide Transactions for is quiet, said as such, and not asked again on the next loads", async () => {
     for (const code of ['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED']) {
       fake.reset();
       plaid.syncCalls.length = 0;
@@ -388,12 +475,54 @@ describe('transactions from an Item without Transactions', () => {
       await registerTestContainer(fake);
       await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: code });
       const res = await transactions();
-      expect(res.body).toMatchObject({ transactions: [], notes: [] });
+      expect(res.body).toMatchObject({ transactions: [], notes: [], incomplete: [] });
+      // Its spending is not known, which the views say (lib/no-transactions.ts).
+      expect(res.body.without_transactions).toEqual([{ institution_name: 'Plan', reason: 'refused' }]);
       expect(plaid.syncCalls).toHaveLength(1);
       expect((await transactions(false)).body.from_cache).toBe(true);
+      // Remembered: a fresh load doesn't ask Plaid again either.
+      expect((await transactions()).body.without_transactions).toEqual([{ institution_name: 'Plan', reason: 'refused' }]);
       expect(plaid.syncCalls).toHaveLength(1);
-      // Nothing was stored for it, so nothing reads as synced.
-      expect(fake.strings.has(ctxKey('txns:item_ret'))).toBe(false);
+      // Kept in the Item's own transaction state, encrypted, with no rows and
+      // no cursor, so nothing reads as synced.
+      const raw = fake.strings.get(ctxKey('txns:item_ret'));
+      expect(typeof raw).toBe('string');
+      expect(raw).not.toContain(code);
+      expect(await readStoredTxns(ctx, 'item_ret')).toEqual([]);
+    }
+  });
+
+  test('a bank account or card added since a refusal is asked about at once', async () => {
+    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'PRODUCTS_NOT_SUPPORTED' });
+    await transactions();
+    expect(plaid.syncCalls).toHaveLength(1);
+    // The picker adds a checking account, which the next dashboard load remembers.
+    plaid.accounts['token-item_ret'] = [k401(), checking('acct_cash'), checking('acct_new')];
+    plaid.txns['token-item_ret'] = [bankRow('n1', 'acct_new')];
+    await remember('item_ret', 'Plan', plaid.accounts['token-item_ret']);
+    expect((await transactions()).body.transactions.map((t: any) => t.transaction_id)).toEqual(['n1']);
+    expect(plaid.syncCalls).toHaveLength(2);
+  });
+
+  test('a refusal is asked about again after 30 days, and is over once Plaid provides them', async () => {
+    try {
+      await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'PRODUCTS_NOT_SUPPORTED' });
+      await transactions();
+      setSystemTime(new Date(Date.now() + 29 * DAY));
+      await transactions();
+      expect(plaid.syncCalls).toHaveLength(1);
+      // 31 days on, the institution has started providing them.
+      setSystemTime(new Date(Date.now() + 2 * DAY));
+      plaid.txns['token-item_ret'] = [bankRow('c1', 'acct_cash')];
+      const res = await transactions();
+      expect(res.body.transactions.map((t: any) => t.transaction_id)).toEqual(['c1']);
+      expect(res.body.without_transactions).toEqual([]);
+      expect(plaid.syncCalls[1]).toEqual({ token: 'token-item_ret', cursor: undefined, options: { days_requested: 730 } });
+      // From then on an ordinary sync, whatever Plaid answered before.
+      await transactions();
+      expect(plaid.syncCalls[2]).toEqual({ token: 'token-item_ret', cursor: 'cursor-1', options: undefined });
+    } finally {
+      setSystemTime();
     }
   });
 
@@ -548,8 +677,10 @@ describe('one connection per login, whichever way it was made', () => {
   // Matched on the institution alone: adding accounts to the Item already
   // there brings in what they need (holdings for an investment account, and
   // Transactions, started on first use, for a checking account), where a second
-  // Item would duplicate any account both share.
-  test('a checking account added to a brokerage connection through the picker brings its transactions', async () => {
+  // Item would duplicate any account both share. Plaid may not offer a checking
+  // account on a brokerage connection at all; then the sheet offers to connect
+  // again (test/no-transactions-views.test.tsx). Where it does:
+  test('a checking account the picker adds to a brokerage connection brings its transactions', async () => {
     await addItem('item_fid', 'Fidelity', [k401()], { billed: false, txns: [bankRow('c1', 'acct_cma')] });
     await transactions();
     expect(plaid.syncCalls).toHaveLength(0);
@@ -560,6 +691,16 @@ describe('one connection per login, whichever way it was made', () => {
     expect(updated.body).toEqual({ added: 1, removed: 0 });
     expect((await transactions()).body.transactions.map((t: any) => t.transaction_id)).toEqual(['c1']);
     expect(plaid.syncCalls).toEqual([{ token: 'token-item_fid', cursor: undefined, options: { days_requested: 730 } }]);
+  });
+
+  test('the dashboard knows which way each connection was made, for the sheet', async () => {
+    await addBank();
+    await addRetirement();
+    await addItem('item_cu', 'Credit union', [checking('acct_cu')], { billed: null, txns: [] });
+    await addItem('item_new', 'New bank', [checking('acct_new')], { billed: true, txns: [] });
+    const res = await route('net-worth', 'GET', undefined, '?refresh=1');
+    const way = Object.fromEntries(res.body.institutions.map((i: any) => [i.item_id, i.linked_as ?? 'unknown']));
+    expect(way).toEqual({ item_bank: 'bank', item_ret: 'investments', item_cu: 'unknown', item_new: 'bank' });
   });
 
   test('a brokerage connection is found for the bank option, and the other way round', () => {
