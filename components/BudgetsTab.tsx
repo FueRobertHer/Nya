@@ -18,7 +18,7 @@ import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '
 import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
-import { EMPTY_PLANNED, type Planned } from '@/lib/planned';
+import { EMPTY_PLANNED, type Planned, type PlannedItem } from '@/lib/planned';
 import { formatMoney } from '@/lib/format';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import { missingMonthNotes, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -33,6 +33,8 @@ const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
 const NO_HISTORY: RecurringRow[] = [];
 const NO_INSTITUTIONS: ForecastInstitution[] = [];
+const NO_ITEMS: PlannedItem[] = [];
+const NO_DISMISSED: string[] = [];
 
 export type Budgets = Record<string, number>;
 
@@ -169,7 +171,12 @@ export default function BudgetsTab({
   // yearly charge needs (lib/recurring.ts), for the recurring list, the
   // forecast and the calendar alike.
   const series = useMemo(() => (txns ? detectRecurring([...txns, ...recurringHistory]) : []), [txns, recurringHistory]);
-  const dismissed = useMemo(() => new Set(plannedStatus === 'ready' ? planned.dismissed : []), [planned, plannedStatus]);
+  // Until the planned items load, no item counts and nothing is dismissed: the
+  // forecast says so.
+  const ready = plannedStatus === 'ready';
+  const items = ready ? planned.items : NO_ITEMS;
+  const dismissedIds = ready ? planned.dismissed : NO_DISMISSED;
+  const dismissed = useMemo(() => new Set(dismissedIds), [dismissedIds]);
   // A planned item starts in the forecast's currency: the cash accounts'.
   const plannedCurrency = useMemo(() => cashPosition(institutions).currency ?? displayCurrency, [institutions, displayCurrency]);
   const today = localDate();
@@ -388,7 +395,7 @@ export default function BudgetsTab({
       <CalendarView
         txns={txns ?? []}
         series={series}
-        planned={plannedStatus === 'ready' ? planned.items : []}
+        planned={items}
         dismissed={dismissed}
         institutions={institutions}
         today={today}
@@ -399,7 +406,7 @@ export default function BudgetsTab({
         series={series}
         today={today}
         currency={displayCurrency}
-        dismissed={plannedStatus === 'ready' ? planned.dismissed : []}
+        dismissed={dismissedIds}
         status={plannedStatus}
         saveError={plannedSaveError}
         onDismiss={
