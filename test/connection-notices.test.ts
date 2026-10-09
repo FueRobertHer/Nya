@@ -572,7 +572,7 @@ describe("Nya's side, and a fault many containers share", () => {
   const deliver = (batch: Awaited<ReturnType<typeof prepare>>, over: Record<string, unknown> = {}) =>
     sendNotices(batch, { fetch: resend, recipients: async (c) => [mailbox(c)], sleep: async () => {}, ...over });
 
-  test('a run in which many containers break at once outside their banks emails nobody, and says so for the operator', async () => {
+  test('a run in which many containers break at once outside their banks holds back those emails, and says so for the operator', async () => {
     const all = (insts: (c: string) => Inst[]) => Object.fromEntries(CONTAINERS.map((c) => [c, insts(c)]));
     await deliver(await prepare(day(0), all(() => [healthy('item_chase')])));
     // A code Nya can't place, everywhere at once: due an email three days on.
@@ -581,17 +581,49 @@ describe("Nya's side, and a fault many containers share", () => {
       if (d >= 3) expect([...outcomes.values()]).toEqual(['held', 'held', 'held', 'held']);
     }
     expect(sent).toHaveLength(0);
-    expect(logs.some((l) => l.includes('4 of 4 containers') && l.includes('SOMETHING_NEW (4)') && l.includes('no email was sent this run'))).toBe(true);
-    // In such a run nothing goes, even a sign-in somebody really owes their bank.
+    expect(logs.some((l) => l.includes('4 of 4 containers') && l.includes('SOMETHING_NEW (4)') && l.includes('no email about those causes was sent this run (4 held back)'))).toBe(true);
+    // A sign-in somebody really owes their bank still goes, that same run, and
+    // its email names only that: the held cause stays out of it.
     const mixed = all(() => [broken('item_chase', 'SOMETHING_NEW')]);
     mixed[CONTAINERS[0]].push(broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' }));
-    expect((await deliver(await prepare(day(7), mixed))).get(CONTAINERS[0] as any)).toBe('held');
-    expect(sent).toHaveLength(0);
-    // Once it no longer looks like that, what is due goes.
-    const after = all(() => [healthy('item_chase')]);
-    after[CONTAINERS[0]].push(broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' }));
-    await deliver(await prepare(day(8), after));
+    const outcomes = await deliver(await prepare(day(7), mixed));
+    expect([...outcomes.values()]).toEqual(['sent', 'held', 'held', 'held']);
     expect(sent.map((s) => [s.to, s.subject])).toEqual([[[mailbox(ctx)], 'Amex needs reconnecting']]);
+    expect(sent[0].text).not.toContain('Chase');
+    expect(await noticesStore.get(ctx, 'item_chase')).toMatchObject({ notified_at: null });
+    // Once it no longer looks like that, what was held goes: here the one
+    // container still not answering, whose break is now its own.
+    const after = all(() => [healthy('item_chase')]);
+    after[CONTAINERS[0]] = [broken('item_chase', 'SOMETHING_NEW'), broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' })];
+    await deliver(await prepare(day(8), after));
+    expect(sent.map((s) => [s.to, s.subject])).toEqual([
+      [[mailbox(ctx)], 'Amex needs reconnecting'],
+      [[mailbox(ctx)], "Chase isn't updating"],
+    ]);
+  });
+
+  // The coordinator's case: a deployment mistake can't make a bank ask for a
+  // new sign-in, and a bank asking everyone at once is when each person
+  // should be told, however long an outage elsewhere lasts.
+  test('a Plaid outage across three containers, beside a sign-in break in a fourth: only the sign-in email goes', async () => {
+    const [a, b, c, d] = CONTAINERS;
+    const ally = (code?: string) => (code ? broken('item_ally', code, { institution_name: 'Ally' }) : healthy('item_ally', { institution_name: 'Ally' }));
+    const chase = (code?: string) => (code ? broken('item_chase', code) : healthy('item_chase'));
+    await deliver(await prepare(day(0), { [a]: [ally()], [b]: [ally()], [c]: [ally()], [d]: [chase()] }));
+    const outage = () => ally('INTERNAL_SERVER_ERROR');
+    expect(outage().failure).toEqual({ cause: 'provider', side: 'plaid', code: 'INTERNAL_SERVER_ERROR' });
+    for (let n = 1; n <= 2; n++) await deliver(await prepare(day(n), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase()] }));
+    expect(sent).toHaveLength(0);
+    // Day three: the outage is due everywhere at once, and Chase asks the
+    // fourth container's owner to sign in again.
+    const day3 = await deliver(await prepare(day(3), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase('ITEM_LOGIN_REQUIRED')] }));
+    expect([day3.get(a as any), day3.get(b as any), day3.get(c as any), day3.get(d as any)]).toEqual(['held', 'held', 'held', 'sent']);
+    expect(sent.map((s) => [s.to, s.subject])).toEqual([[[mailbox(ctxOf(d))], 'Chase needs reconnecting']]);
+    // While the outage lasts it stays held, day after day; the sign-in was told
+    // once, as ever.
+    for (let n = 4; n <= 9; n++) await deliver(await prepare(day(n), { [a]: [outage()], [b]: [outage()], [c]: [outage()], [d]: [chase('ITEM_LOGIN_REQUIRED')] }));
+    expect(sent.map((s) => s.subject)).toEqual(['Chase needs reconnecting']);
+    for (const x of [a, b, c]) expect(await noticesStore.get(ctxOf(x), 'item_ally')).toMatchObject({ state: 'outage', side: 'plaid', notified_at: null });
   });
 
   test(`fewer than ${MASS_BREAK_CONTAINERS} containers breaking that way are each told, as their own`, async () => {
@@ -633,7 +665,7 @@ describe("Nya's side, and a fault many containers share", () => {
     }
     expect(sent).toHaveLength(0);
     expect(logs.some((l) => l.includes("8 connection(s) in 4 container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (8))"))).toBe(true);
-    expect(logs.some((l) => l.includes('no email was sent this run'))).toBe(true);
+    expect(logs.some((l) => l.includes('no email about those causes was sent this run;'))).toBe(true);
     for (const c of CONTAINERS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toMatchObject({ state: 'outage', side: 'nya', notified_at: null });
     // The settings put back: every connection works again, and its break ends
     // without a word to anyone.
