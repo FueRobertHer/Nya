@@ -41,7 +41,7 @@ Sometimes a connection has to be removed and added again (it broke badly, the ba
 
 Instead, the Accounts tab (under **Manage accounts**, in **Reconnected accounts**) offers to link each new account to the one it replaces, with the evidence and a chart preview. Nothing is linked until you say so. Once linked:
 
-- its **balance history** continues from the old account's;
+- its **balance history** continues from the old account's, and so does the record of what an investment account held each day;
 - if you had **hidden** the old account, the new one is hidden too (a hidden account stays hidden after you disconnect it, listed as disconnected in the Hidden card, where you can still unhide it);
 - **categories you set** on the old account's transactions show on the same transactions under the new account (matched by date, amount and the bank's own description of the transaction), and the link says how many carried over. A category you set on a new transaction wins. Two identical transactions on the same day that you categorized differently (or only one of) can't be told apart, so they carry nothing.
 
@@ -49,7 +49,7 @@ Anything not offered can be linked with **Link an earlier account by hand**: the
 
 ### What is kept, and forgetting it
 
-After you disconnect an institution, Nya keeps each of its accounts' balance history, name, mask and institution, and the categories you set, so a re-added account can pick them up, even months later. You decide how long: **Earlier accounts** lists the accounts of institutions you disconnected, and **Forget** deletes one's balance history, name and saved categories for good.
+After you disconnect an institution, Nya keeps each of its accounts' balance history (and, for an investment account, the record of what it held each day), name, mask and institution, and the categories you set, so a re-added account can pick them up, even months later. You decide how long: **Earlier accounts** lists the accounts of institutions you disconnected, and **Forget** deletes one's balance history, holdings history, name and saved categories for good.
 
 - Your past net-worth totals don't change (they were your net worth on those days).
 - A hidden account stays out of them: forgetting it takes its amount out of each stored total, so the chart looks as it did while it was hidden, and nothing about the account is kept. Two differences: a day the chart left out because it couldn't tell what the account held that day is deleted, if the account existed then; and a day it left out from before the account existed or after it was last seen comes back, since the account had no part in it.

@@ -38,7 +38,7 @@ const { checkConnections, prepareNotices, sendNotices, decideNotice, composeNoti
   '@/lib/connection-notices'
 );
 const { forgetMailOffLogged } = await import('@/lib/mail');
-const { runSnapshots, readRegistry, snapshotDate } = await import('@/lib/snapshot-job');
+const { runSnapshots, readRegistry, readRun, snapshotData, snapshotDate } = await import('@/lib/snapshot-job');
 const { forgetEpochs } = await import('@/lib/sessions');
 type Inst = import('@/lib/networth').InstitutionResult;
 
@@ -475,6 +475,46 @@ describe('end to end, through the daily snapshot and its catch-up', () => {
     forgetEpochs();
     return runSnapshots(await readRegistry(), { scheduledFor: snapshotDate(t) });
   };
+
+  // With holdings history: the catch-up runs again a day whose positions could
+  // not all be written. That run's notices find the day's email sent already.
+  test('a day run again for its positions sends no second email, and is then done', async () => {
+    process.env.NOTIFY_EMAIL = 'owner@example.com';
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = resend;
+    try {
+      await link('item_chase', 'tok-chase');
+      plaidAnswers['tok-chase'] = () => ({
+        data: {
+          item: { institution_id: 'ins_3', consent_expiration_time: new Date(day(4)).toISOString() },
+          accounts: [{ account_id: 'acct_1', name: 'Checking', type: 'depository', subtype: 'checking', mask: '4821', balances: { current: 1234.56 } }],
+        },
+      });
+      // The real run, with its first holdings write reported failed.
+      let runs = 0;
+      const work = async (c: typeof ctx, outbox: Parameters<typeof snapshotData>[1]) => {
+        const out = await snapshotData(c, outbox);
+        return ++runs === 1 ? { ...out, holdings_failed: 1 } : out;
+      };
+      const at = async (t: number) => {
+        setSystemTime(new Date(t));
+        forgetEpochs();
+        return runSnapshots(await readRegistry(), { scheduledFor: snapshotDate(day(1)), work });
+      };
+      expect((await at(day(1))).results[0]).toMatchObject({ status: 'recorded', holdings_failed: 1 });
+      expect(sent.map((s) => s.subject)).toEqual(['Reconnect Chase soon']);
+      // The catch-up runs it again for its positions: no second email.
+      expect((await at(day(1, 2))).results[0]).toMatchObject({ status: 'recorded' });
+      expect(runs).toBe(2);
+      expect(sent).toHaveLength(1);
+      expect((await readRun(ctx, snapshotDate(day(1))))?.holdings_failed).toBeUndefined();
+      // Done now: not run a third time.
+      expect((await at(day(1, 3))).results[0]).toMatchObject({ status: 'already' });
+      expect(runs).toBe(2);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 
   test('a connection that breaks gets one notice and one reminder, however often the job runs', async () => {
     process.env.NOTIFY_EMAIL = 'owner@example.com';

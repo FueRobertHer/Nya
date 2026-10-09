@@ -81,7 +81,10 @@
 //   ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR REMOVAL, and only once the
 // person confirms. MapStore.getAllReport names both kinds instead of throwing,
 // so a route can show what it read, offer to remove the unreadable ids, and
-// report the unrecognised ones as a problem to fix.
+// report the unrecognised ones as a problem to fix. MapStore.replaceUnreadable
+// is that removal with a value put in its place, in one step: it writes only
+// over an entry whose bytes are damaged and still the bytes it read, so it can
+// never replace one that reads, or one that is unrecognised.
 //   MapStore.getAllLenient is the one lenient read: it leaves out what it cannot
 // use (a deployment problem still throws). It is only for conveniences that
 // nothing writes, deletes or records on; say so where it is called.
@@ -275,6 +278,14 @@ export type MapStore<T> = Declared & {
    *  may therefore run more than once: it should only compute. Returns what was
    *  written. */
   update(ctx: Ctx, id: string, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null>;
+  /** The repair of an entry whose bytes are damaged, once the person has
+   *  confirmed removing it (see READS): writes `value` in its place, in one
+   *  step, only if it is unreadable and still holds the bytes read. Answers
+   *  false, writing nothing, when it reads fine, is unrecognised, is gone or
+   *  changed since it was read. A deployment problem is thrown, as by every
+   *  read, and a value it would refuse to write is refused before anything is
+   *  read. */
+  replaceUnreadable(ctx: Ctx, id: string, value: T): Promise<boolean>;
   /** Deletes entries, readable or not. Ids with no entry are ignored. */
   remove(ctx: Ctx, ...ids: string[]): Promise<void>;
   /** How many entries there are, readable or not (for count limits). */
@@ -326,12 +337,29 @@ return values`;
  * value is not sent back with its replacement. "" stands for "had none": the
  * seam never stores "", and update() stops at an unusable entry before it gets
  * here. Every write encrypts with a fresh IV, so any rewrite in between differs.
+ * update() hashes what it read on the client, which is the stored bytes: it
+ * only writes over a value that decoded, and ciphertext is ASCII.
+ * replaceUnreadable writes over damaged bytes, which need not be text at all,
+ * so it compares against Redis's own hash of them (READ_ENTRY_HASHED).
  */
 export const UPDATE_ENTRY = `-- nya:repo-update-entry
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if (cur and redis.sha1hex(cur) or '') ~= ARGV[2] then return 0 end
 if ARGV[3] == '' then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.call('HSET', KEYS[1], ARGV[1], ARGV[3]) end
 return 1`;
+
+/**
+ * Reads one field as READ_ENTRIES does, with Redis's own SHA-1 of the bytes it
+ * holds, for replaceUnreadable's compare-and-set. The client decodes what it
+ * reads as UTF-8 and replaces any byte sequence that isn't (Upstash's does,
+ * through a TextDecoder that never fails), so for damaged bytes its own SHA-1
+ * of what it read differs from the one UPDATE_ENTRY compares; this one is the
+ * same by construction. The hash is prefixed "v" too, so nothing parses it.
+ */
+export const READ_ENTRY_HASHED = `-- nya:repo-read-entry-hashed
+local v = redis.call('HGET', KEYS[1], ARGV[1])
+if not v then return {'', ''} end
+return {'v' .. v, 'v' .. redis.sha1hex(v)}`;
 
 /** The error a counter store's take answers for a stored count that is not
  *  one, so it can be told from storage failing. */
@@ -691,6 +719,24 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     },
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
+    },
+    async replaceUnreadable(ctx, id, value) {
+      checkId(what, id);
+      const written = await encode(codec, serialize(codec, value));
+      checkSize(name, what, ctx, id.length + SHA1_HEX + written.length);
+      const answer = await redis().eval(READ_ENTRY_HASHED, [key(ctx)], [id]);
+      if (!Array.isArray(answer) || answer.length !== 2 || !answer.every((v) => typeof v === 'string')) {
+        throw new Error(`repo: unexpected answer reading ${name}`);
+      }
+      const [stored, hash] = answer as [string, string];
+      if (stored === '') return false;
+      // Thrown as it is when this deployment can't read it (a failed decrypt
+      // under k0 among them): that says nothing about the bytes.
+      const d = await decode(codec, stored.slice(1));
+      if (d.ok || d.flaw !== 'unreadable') return false;
+      // The same compare-and-set as update(), only over the bytes just read,
+      // as Redis hashes them: what the client read may not be those bytes.
+      return Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, hash.slice(1), written])) === 1;
     },
   });
 }

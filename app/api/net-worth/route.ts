@@ -143,7 +143,8 @@ export async function GET(req: Request) {
     // second clock read, so the point charted below is labelled with the day
     // actually written even if the request straddles UTC midnight. When it didn't
     // land, the accounts that did answer are still recorded for their own charts.
-    const snapshotDate = await recordFetch(ctx, institutions, netWorth);
+    // Their positions go into holdings history the same way (lib/holdings-history.ts).
+    const { date: snapshotDate } = await recordFetch(ctx, institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so a
     // later failure can still draw its card. Per institution, not gated on
@@ -182,8 +183,12 @@ export async function GET(req: Request) {
     await syncWrite;
     // Plaid's cross-Item account identity is for matching on the server only
     // (lib/links.ts); it has no business in the payload, the cache or the
-    // browser's localStorage.
-    for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
+    // browser's localStorage. Nor has the raw holdings answer recorded above:
+    // the payload carries the holdings already, in the shape the client reads.
+    for (const inst of institutions) {
+      delete inst.holdings_observed;
+      for (const a of inst.accounts) delete a.persistent_account_id;
+    }
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.

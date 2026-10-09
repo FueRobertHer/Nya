@@ -1,7 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX } from './fake-redis';
 import { keyNamesIn } from './key-names';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -238,6 +238,39 @@ describe('the pass', () => {
     const budgets = fake.strings.get(testKey('budgets'))!;
     expect(formatOf(budgets).keyId).toBe(next);
     expect(await decrypt(budgets)).toBe('{"food":1}');
+  });
+
+  // A seam store's values, compressed ones among them, move like any other's
+  // (lib/repo.ts "Not bound to a context"), and read back as they were.
+  test('holdings history, compressed months and its index, is moved and reads back the same', async () => {
+    const { recordHoldings, observeHoldings, readHoldingsHistory } = await import('@/lib/holdings-history');
+    const accounts = [{ account_id: 'acct_1', type: 'investment' }];
+    const fetched = (q: number) => ({
+      institution_name: 'Broker',
+      error: null,
+      accounts,
+      holdings_observed:
+        observeHoldings({ accounts, holdings: [{ account_id: 'acct_1', security_id: 'vti', quantity: q }], securities: [{ security_id: 'vti', ticker_symbol: 'VTI' }] }) ??
+        undefined,
+    });
+    // Written before data keys existed: under k0.
+    delete process.env.MASTER_KEY;
+    forgetActiveKey();
+    for (const [q, at] of [[1, '2026-10-07T13:00:00Z'], [2, '2026-11-07T13:00:00Z']] as const) {
+      expect(await recordHoldings(TEST_CTX, [fetched(q)], Date.parse(at))).toEqual({ recorded: 1, failed: 0 });
+    }
+    const range = { from: '2026-10-01', to: '2026-11-30' };
+    const before = await readHoldingsHistory(TEST_CTX, range);
+    expect(before.days.map((d) => d.date)).toEqual(['2026-10-07', '2026-11-07']);
+    const stored = () => [ctxKey('holdings:history'), ctxKey('holdings:history:index')].flatMap((key) => [...fake.hashes.get(key)!.values()]);
+    expect(stored().map((v) => formatOf(v).keyId)).toEqual(['k0', 'k0', 'k0']);
+
+    process.env.MASTER_KEY = MASTER;
+    forgetActiveKey();
+    const report = await run();
+    expect(report).toMatchObject({ moved: 3, complete: true });
+    expect(stored().map((v) => formatOf(v).keyId)).toEqual(Array(3).fill(report.active_key));
+    expect(await readHoldingsHistory(TEST_CTX, range)).toEqual(before);
   });
 
   test('a save that lands mid-pass wins, and is left for next time', async () => {

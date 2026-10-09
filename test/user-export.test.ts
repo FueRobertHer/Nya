@@ -618,7 +618,15 @@ describe('stores built on the storage seam', () => {
     const doc = await download();
     const keys = Object.keys(doc);
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
-    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['connection-notices', 'connection-syncs', 'connection-warnings', 'export-test-plans', 'export-test-settings', 'fire-plan']);
+    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'connection-notices',
+      'connection-syncs',
+      'connection-warnings',
+      'export-test-plans',
+      'export-test-settings',
+      'fire-plan',
+      'holdings:history',
+    ]);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
       { id: 'p1', value: { name: 'House', target: 120_000 } },
@@ -628,8 +636,10 @@ describe('stores built on the storage seam', () => {
     const text = JSON.stringify(doc);
     expect(text).not.toContain('SECRET-NOT-EXPORTED');
     expect(text).not.toContain('OTHER-PERSON-PLAN');
-    // The download limit's own counter is bookkeeping, never part of it.
+    // The download limit's own counter is bookkeeping, never part of it, and
+    // so is the holdings history's index (each month names itself).
     expect(keys).not.toContain('download-count');
+    expect(keys).not.toContain('holdings:history:index');
     // In the file as written, too, one entry per line.
     const written = [...exportFile(doc, 'json').pieces()].join('');
     expect(JSON.parse(written)['export-test-plans']).toEqual(doc['export-test-plans']);
