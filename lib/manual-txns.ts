@@ -1,11 +1,12 @@
 // lib/manual-txns.ts
 //
 // Transactions on a manual account (lib/manual.ts), entered by hand: cash, a
-// bank Plaid can't reach, a card used abroad. Later, rows imported from a file
-// (#43: CSV, OFX) or pulled through SimpleFIN land here too, each marked with
-// its `source` and the source's own id (`source_id`, an OFX FITID say), so a
-// re-import can tell what is already stored, and with the import it came in
-// (`import_id`), so one import can be taken out whole.
+// bank Plaid can't reach, a card used abroad. Rows imported from a file (#43:
+// OFX or QFX, CSV, QIF; lib/import/) land here too, and later rows pulled
+// through SimpleFIN, each marked with its `source` and the source's own id
+// (`source_id`, an OFX FITID say), so a re-import can tell what is already
+// stored, and with the import it came in (`import_id`), so one import can be
+// taken out whole.
 //
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the
@@ -17,7 +18,7 @@
 // never trimmed. Deleting the account deletes its book in one step, and an
 // account's rows are read with one decrypt. Keeping each import's raw record
 // beside its row, as #43 also asks, would take several times that room: it
-// belongs in a store of its own, not in the book.
+// is in a store of its own (lib/import/store.ts), not in the book.
 //
 // WHO WINS. Every change to a book is a compare-and-set (MapStore.updateMany):
 // two devices adding to one account at once both land, and so will an import
@@ -64,11 +65,13 @@ export type ManualTxn = TxnFields & {
   id: string;
   /** The manual account it belongs to: the book it is kept in. */
   account_id: string;
-  /** 'manual' for one entered in the app; 'import:csv', 'import:ofx' or
-   *  'simplefin' once those exist. */
+  /** 'manual' for one entered in the app; 'import:ofx', 'import:csv' or
+   *  'import:qif' for one imported from a file; 'simplefin' once it exists. */
   source: string;
-  /** The source's own id for the row, for matching a re-import; null for one
-   *  entered by hand. */
+  /** The source's own id for the row, for matching a re-import: an OFX
+   *  file's FITID, or for a file without ids (CSV, QIF) the content key it
+   *  was imported with (lib/import/normalize.ts). Null for one entered by
+   *  hand. */
   source_id: string | null;
   /** The import it came in with (#43), so that import can be taken out whole;
    *  absent or null for one entered by hand. */

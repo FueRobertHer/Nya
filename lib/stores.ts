@@ -20,6 +20,7 @@
 import './connection-records';
 import './fire-plan';
 import './holdings-history';
+import './import/store';
 import './manual-txns';
 import './rate-limit';
 import './txn-annotations';
