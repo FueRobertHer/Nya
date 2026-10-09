@@ -22,6 +22,7 @@ import './allocation-settings';
 import './connection-records';
 import './fire-plan';
 import './holdings-history';
+import './import/store';
 import './manual-txns';
 import './planned-store';
 import './rate-limit';

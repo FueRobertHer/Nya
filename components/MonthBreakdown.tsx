@@ -216,6 +216,7 @@ export default function MonthBreakdown({
   onRecategorize,
   onRename,
   onAddTransaction,
+  onImport,
   onEditTransaction,
   onToggleExcluded,
   actionError = null,
@@ -231,6 +232,9 @@ export default function MonthBreakdown({
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
   onAddTransaction?: () => void;
+  /** Opens the import sheet (components/ImportSheet.tsx); left out, like the
+   *  quick-add form's, when there is no manual account to import into. */
+  onImport?: () => void;
   /** Opens a manual row's edit form. */
   onEditTransaction?: (t: Txn) => void;
   /** Leaves a transaction out of budgets and reports, or puts it back. */
@@ -239,8 +243,8 @@ export default function MonthBreakdown({
   actionError?: string | null;
   /** Connections that bring in no transactions (lib/no-transactions.ts): an
    *  empty list says why rather than "no transactions", rows entered by hand
-   *  name them under the month instead, and a bank account or card whose
-   *  transactions don't come in is named under every month. */
+   *  or imported name them under the month instead, and a bank account or
+   *  card whose transactions don't come in is named under every month. */
   withoutTransactions?: NoTransactionsView;
   /** Institutions whose rows this load lacks, or lacks the oldest of
    *  (/api/transactions), and connections whose transactions have stopped
@@ -409,14 +413,23 @@ export default function MonthBreakdown({
     );
   }
 
-  // Entering a transaction by hand, on a manual account: first on the tab,
-  // where a phone reaches it without scrolling.
+  // Entering a transaction by hand or importing a file, on a manual account:
+  // first on the tab, where a phone reaches it without scrolling.
   const addCard = onAddTransaction && (
     <div className="card">
-      <button onClick={onAddTransaction}>Add a transaction</button>
+      {onImport ? (
+        <div className="button-pair" style={{ marginTop: 0 }}>
+          <button onClick={onAddTransaction}>Add a transaction</button>
+          <button className="secondary" onClick={onImport}>
+            Import a file
+          </button>
+        </div>
+      ) : (
+        <button onClick={onAddTransaction}>Add a transaction</button>
+      )}
       <p className="panel-note">
-        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach. It doesn&apos;t change the
-        account&apos;s balance unless you ask.
+        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach, typed in or imported from the
+        bank&apos;s file. It doesn&apos;t change the account&apos;s balance unless you ask.
       </p>
     </div>
   );
@@ -431,7 +444,7 @@ export default function MonthBreakdown({
         <div className="card">
           <p className="empty-note">
             {none
-              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? ", or add a transaction by hand" : ""}.`
+              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? (onImport ? ", or add a transaction by hand or import a file" : ", or add a transaction by hand") : ""}.`
               : "No transactions in the last 12 months."}
           </p>
           {missing.map((n) => (
