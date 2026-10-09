@@ -27,6 +27,9 @@ const plaid = {
   txns: {} as Record<string, any[] | string>,
   /** Every /transactions/sync call. */
   syncCalls: [] as { token: string; cursor?: string; options?: any }[],
+  /** Every /accounts/get call, and the tokens it fails for. */
+  accountsCalls: [] as string[],
+  accountsFail: {} as Record<string, true>,
 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
@@ -42,7 +45,11 @@ mock.module('@/lib/plaid', () => ({
       if (!item) throw { response: { data: { error_code: 'INTERNAL_SERVER_ERROR' } } };
       return { data: { item } };
     },
-    accountsGet: async (req: any) => ({ data: { item: { institution_id: 'ins_1' }, accounts: plaid.accounts[req.access_token] ?? [] } }),
+    accountsGet: async (req: any) => {
+      plaid.accountsCalls.push(req.access_token);
+      if (plaid.accountsFail[req.access_token]) throw { response: { data: { error_code: 'INSTITUTION_DOWN' } } };
+      return { data: { item: { institution_id: 'ins_1' }, accounts: plaid.accounts[req.access_token] ?? [] } };
+    },
     investmentsHoldingsGet: async (req: any) => ({
       data: { accounts: plaid.accounts[req.access_token] ?? [], ...(plaid.holdings[req.access_token] ?? { holdings: [], securities: [] }) },
     }),
@@ -311,10 +318,34 @@ describe('transactions from an Item without Transactions', () => {
     expect(syncedTokens()).toEqual(['token-item_bank']);
   });
 
-  test('not even before a load has remembered its accounts, or when the record is unreadable', async () => {
+  test('remembered accounts decide it, with no Plaid call at all', async () => {
+    await addRetirement();
+    await transactions();
+    expect(plaid.syncCalls).toHaveLength(0);
+    expect(plaid.accountsCalls).toHaveLength(0);
+  });
+
+  test('before a load has remembered its accounts, or when that record is unreadable, a fresh account list does', async () => {
     await addRetirement({ remember: false });
     expect((await transactions()).body).toMatchObject({ transactions: [], notes: [] });
+    await remember('item_ret', 'Empower', [k401()]);
     await fake.hset(ctxKey('accounts:meta'), { item_ret: 'not ciphertext' });
+    expect((await transactions()).body).toMatchObject({ transactions: [], notes: [] });
+    // /accounts/get, which Plaid doesn't bill, twice; never /transactions/sync.
+    expect(plaid.accountsCalls).toEqual(['token-item_ret', 'token-item_ret']);
+    expect(plaid.syncCalls).toHaveLength(0);
+  });
+
+  test('so a connection linked a moment ago gets its transactions on the very first load', async () => {
+    // Its lookup at link time failed, and no balance load has run yet.
+    await addItem('item_cu', 'Credit union', [checking('acct_cu')], { billed: null, remember: false, txns: [bankRow('u1', 'acct_cu')] });
+    expect((await transactions()).body.transactions.map((t: any) => t.transaction_id)).toEqual(['u1']);
+    expect(plaid.syncCalls).toEqual([{ token: 'token-item_cu', cursor: undefined, options: { days_requested: 730 } }]);
+  });
+
+  test('and when no account list can be had, the first call waits for a later load, quietly', async () => {
+    await addItem('item_cu', 'Credit union', [checking('acct_cu')], { billed: null, remember: false, txns: [bankRow('u1', 'acct_cu')] });
+    plaid.accountsFail['token-item_cu'] = true;
     expect((await transactions()).body).toMatchObject({ transactions: [], notes: [] });
     expect(plaid.syncCalls).toHaveLength(0);
   });

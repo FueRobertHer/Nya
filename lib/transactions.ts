@@ -623,7 +623,7 @@ type SyncOutcome = {
 type SyncOptions = {
   /** The Item's accounts as the caller has just fetched them, for deciding
    *  whether a first call is worth making (see `starting` in syncItem).
-   *  Without them the remembered accounts are read (lib/last-known.ts). */
+   *  Without them, see accountTypes. */
   accounts?: readonly { type?: unknown }[];
 };
 
@@ -631,6 +631,31 @@ type SyncOptions = {
  *  the institution doesn't offer it for these accounts, or the person never
  *  consented to it. A retry changes neither. */
 const NO_TRANSACTIONS_CODES = new Set(['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED']);
+
+/**
+ * The types of an Item's accounts, for deciding whether a first call is worth
+ * making: the ones the caller just fetched; else the ones a dashboard load
+ * remembered (lib/last-known.ts), which costs no Plaid call; else, for an Item
+ * no load has remembered yet (one linked a moment ago, whose first
+ * transactions load can run beside its first balance load), a fresh
+ * /accounts/get, which Plaid doesn't bill. Null when none answers, which puts
+ * the first call off to a later load.
+ */
+async function accountTypes(
+  ctx: Ctx,
+  item: StoredItem,
+  access_token: string,
+  given?: readonly { type?: unknown }[]
+): Promise<unknown[] | null> {
+  if (given) return given.map((a) => a.type);
+  const remembered = await rememberedTypesForItem(ctx, item.item_id);
+  if (remembered) return remembered;
+  try {
+    return (await plaidClient.accountsGet({ access_token })).data.accounts.map((a) => a.type);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Sync one Item from Plaid and persist the reconciled set + cursor. Returns the
@@ -704,10 +729,10 @@ async function syncItem(ctx: Ctx,
   // the first call would add the product. Made only for an Item holding an
   // account Transactions describes. Any other (a 401(k), an IRA, a brokerage
   // account) would gain a monthly charge and nothing to show, so it simply has
-  // no transactions: no rows, no note, nothing stored, and no Plaid call.
+  // no transactions: no rows, no note, nothing stored, and no Transactions call.
   const starting = !transactionsBilled(item) && stored.cursor === '';
   if (starting) {
-    const types = opts.accounts ? opts.accounts.map((a) => a.type) : await rememberedTypesForItem(ctx, item.item_id);
+    const types = await accountTypes(ctx, item, access_token, opts.accounts);
     if (!holdsTransactionAccounts(types ?? [])) return { state: null, note: null, noTransactions: true };
   }
 
