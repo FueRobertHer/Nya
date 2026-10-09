@@ -1101,3 +1101,135 @@ describe('reading a CSV file again as its mapping changes', () => {
     expect(all.status === 'ready' ? all.records.length : all.status).toBe(21);
   });
 });
+
+describe('the review’s other probes, kept as tests', () => {
+  test('dates as banks and Quicken write them', () => {
+    const cases: [string, ReturnType<typeof readDateText>][] = [
+      ["1/2'26", { kind: 'ordered', mdy: '2026-01-02', dmy: '2026-02-01' }],
+      ["1/ 2'26", { kind: 'ordered', mdy: '2026-01-02', dmy: '2026-02-01' }],
+      ["1/2' 5", { kind: 'ordered', mdy: '2005-01-02', dmy: '2005-02-01' }],
+      ["12/31'99", { kind: 'ordered', mdy: '2099-12-31', dmy: null }],
+      ['12/31/99', { kind: 'ordered', mdy: '1999-12-31', dmy: null }],
+      ['12/31/27', { kind: 'ordered', mdy: '2027-12-31', dmy: null }],
+      ['12/31/28', { kind: 'ordered', mdy: '1928-12-31', dmy: null }],
+      ['1/1/00', { kind: 'fixed', day: '2000-01-01', style: 'numeric' }],
+      ['1/2/5', null],
+      ['D1/2\'26', null],
+      ["13/1'26", { kind: 'ordered', mdy: null, dmy: '2026-01-13' }],
+      ['2026/10/09', { kind: 'fixed', day: '2026-10-09', style: 'iso' }],
+      ['9.10.26', { kind: 'ordered', mdy: '2026-09-10', dmy: '2026-10-09' }],
+      ['30-Sep-26', { kind: 'fixed', day: '2026-09-30', style: 'named' }],
+      ['30 Sept 2026', { kind: 'fixed', day: '2026-09-30', style: 'named' }],
+      ['2026-10-09T23:59:59-05:00', { kind: 'fixed', day: '2026-10-09', style: 'iso' }],
+      ['10/09/2026 11:30 PM', { kind: 'ordered', mdy: '2026-10-09', dmy: '2026-09-10' }],
+      ['29/02/2025', null],
+      ['02/29/2028', { kind: 'ordered', mdy: '2028-02-29', dmy: null }],
+    ];
+    for (const [text, read] of cases) expect(readDateText(text, YEAR), text).toEqual(read);
+    for (const [text, day] of [
+      ['20261005235959[-5:EST]', '2026-10-05'],
+      ['20261006043000.000[0:GMT]', '2026-10-06'],
+      ['20261005T120000', '2026-10-05'],
+      ['20261005120000.000[-5]', '2026-10-05'],
+      ['  20261005  ', '2026-10-05'],
+      ['20261032', null],
+      ['20260229', null],
+      ['20280229', '2028-02-29'],
+    ] as const) {
+      expect(ofxDay(text), text).toBe(day);
+    }
+  });
+
+  test('amounts as banks write them, with a point or a comma for decimals', () => {
+    const cases: [string, ReturnType<typeof readAmount>, ReturnType<typeof readAmount>][] = [
+      ['$1,234.56', { value: 1234.56 }, null],
+      ['$-1,234.56', { value: -1234.56 }, null],
+      ['($1,234.56)', { value: -1234.56 }, null],
+      ['1,234.56-', { value: -1234.56 }, null],
+      ['€1.234,56', null, { value: 1234.56 }],
+      ['1 234,56', null, { value: 1234.56 }],
+      ['12.34 CR', { value: 12.34, direction: 'in' }, null],
+      ['12.34DR', { value: 12.34, direction: 'out' }, null],
+      ['−12.34', { value: -12.34 }, null],
+      ['.5', { value: 0.5 }, null],
+      ['1,2345.00', null, null],
+      ['USD 12.34', null, null],
+      ['(12.34)-', null, null],
+      ['1e3', null, null],
+      ['0x10', null, null],
+      ['1,234', { value: 1234 }, { value: 1.234 }],
+      ["1'234.50", { value: 1234.5 }, null],
+      ['--12', null, null],
+      ['12,345,678.90', { value: 12345678.9 }, null],
+      ['1.2.3', null, null],
+    ];
+    for (const [text, point, comma] of cases) {
+      expect(readAmount(text, '.'), `${text} with a point`).toEqual(point);
+      expect(readAmount(text, ','), `${text} with a comma`).toEqual(comma);
+    }
+  });
+
+  test('separate money-out and money-in columns: each odd line read or refused as it should be', () => {
+    const csv = [
+      'Date,Description,Debit,Credit',
+      '2026-10-01,Coffee,4.50,',
+      '2026-10-02,Pay,,1000.00',
+      '2026-10-03,Both zero,0.00,0.00',
+      '2026-10-04,Debit zero credit,0.00,12.00',
+      '2026-10-05,Negative debit,-20.00,',
+      '2026-10-06,Paren credit,,(5.00)',
+      '2026-10-07,Both,1.00,2.00',
+      '2026-10-08,Neither,,',
+      '2026-10-09,Symbols,$1,234.56,',
+    ].join('\n');
+    const r = ready(csv, { csv: { columns: { date: 0, description: 1, debit: 2, credit: 3 }, sign: 'negative-out' } });
+    const n = rows(r.records);
+    expect(n.rows.map((x) => [x.line, x.row.amount])).toEqual([
+      [2, 4.5],
+      [3, -1000],
+      [5, -12],
+      [6, 20],
+      [7, -5],
+    ]);
+    expect([...r.problems, ...n.problems].map((p) => [p.line, p.reason])).toEqual([
+      [8, 'It has both money out and money in.'],
+      [9, 'It has no amount.'],
+      [10, 'This line has 5 fields where the others have 4: a description may hold an unquoted ",".'],
+      [4, 'Its amount is zero.'],
+    ]);
+  });
+
+  test('every hostile file the review tried is read or refused quickly, with a small answer', () => {
+    const MB3 = 3 * 1024 * 1024;
+    const fill = (unit: string, prefix = '', suffix = '') => {
+      const n = Math.max(0, Math.floor((MB3 - prefix.length - suffix.length) / unit.length));
+      return prefix + unit.repeat(n) + suffix;
+    };
+    const ofxHead = '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD<BANKTRANLIST>';
+    const files = [
+      fill('<A>', ofxHead),
+      fill('<STMTTRN>', ofxHead, '</STMTTRN>'.repeat(10)),
+      fill('<STMTTRN><TRNAMT>-1.00<DTPOSTED>20261001<FITID>x<NAME>y', ofxHead),
+      fill('<A' + ' '.repeat(199) + '<', ofxHead),
+      fill('<', ofxHead),
+      fill('&#x10FFFF;&amp;&#1234567;', ofxHead + '<STMTTRN><NAME>'),
+      ofxHead + '<!--' + 'x'.repeat(MB3 - 100),
+      fill('<![CDATA[<x>]]>', ofxHead + '<STMTTRN><NAME>'),
+      'Date,Description,Amount\n2026-10-01,"' + 'x'.repeat(MB3 - 100) + '",1\n',
+      '\n'.repeat(MB3),
+      '"'.repeat(MB3),
+      fill('"",', 'Date,Description,Amount\n'),
+      fill('Mxxxxxxxxx\n', '!Type:Bank\nD1/1/26\nT-1\nPa\n'),
+      fill('D1/13/26\nT-1\nPa\n^\n', '!Type:Bank\n'),
+    ];
+    for (const file of files) {
+      const started = performance.now();
+      const r = readImport(file, { options: {}, thisYear: YEAR });
+      expect(performance.now() - started, file.slice(0, 40)).toBeLessThan(3000);
+      // Whatever it is, what is answered stays small: a question, an error,
+      // or records with at most 10,000 rows of bounded fields.
+      const answer = r.status === 'ready' ? { ...r, records: r.records.length, problems: r.problems.length } : r;
+      expect(JSON.stringify(answer).length, file.slice(0, 40)).toBeLessThan(250_000);
+    }
+  }, 60_000);
+});
