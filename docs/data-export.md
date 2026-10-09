@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today one: `fire-plan`. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today two: `fire-plan` and `sharing-access-log`. |
 
 ### `institutions[]`
 
@@ -224,8 +224,8 @@ Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `accou
 
 | Field | Meaning |
 | --- | --- |
-| `connections[]` | `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`. |
-| `blocked[]` | `name`: people you blocked, by what you called them. |
+| `connections[]` | `id` (the connection's id, which [`sharing-access-log`](#sharing-access-log) is keyed by), `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`, and `shared_until`: when what you share with them ends, a time that may have passed (from then on they see none of it), or `null` for no end. |
+| `blocked[]` | `id` and `name`: people you blocked, by what you called them. |
 
 ### Stores built on the storage seam
 
@@ -248,6 +248,16 @@ The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never sa
 | `income[]` | `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
 | `expenses[]` | `id`, `label`, `amount`, `atAge`. |
 | `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
+
+#### `sharing-access-log`
+
+When the people you share with looked at what you share (`lib/access-log.ts`), one entry per connection: `{ "id": ..., "value": { "hours": [...] } }`. The id is the connection's, as in `sharing.connections[].id` or `sharing.blocked[].id`; an id in neither is a connection since removed, whose entry is deleted once its last look is 90 days old. Nothing in it says who they are.
+
+| Field | Meaning |
+| --- | --- |
+| `hours[]` | Oldest first, one per UTC hour in which they looked: `hour` (its start), `views` (how many times they looked in it), and `read` (what they were shown: each account's id, with the widest level it was shown at in that hour, `exists`, `balance` or `transactions`). |
+
+Only the last 90 days are kept: each look drops older hours from its entry, and the nightly snapshot prunes every entry. Two people who connect again get the same connection id; until the first look on the new connection, its entry can still hold hours from the earlier one, which the app doesn't show.
 
 ## The CSV files
 
@@ -304,7 +314,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
 | Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: today only `download-count`, the counter behind the five downloads an hour. |
 
-Sharing settings are not in your container (connections are between two people) and are read as your side only.
+Sharing settings are not in your container (connections are between two people) and are read as your side only. The record of when people looked at what you share is in your container: `sharing-access-log`, a store on the seam.
 
 ## How it differs from the operator backup
 

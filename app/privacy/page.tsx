@@ -4,6 +4,7 @@ import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
+import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -58,11 +59,10 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   },
   {
     promise: 'You decide what anyone else sees, and you can see what they see about you.',
-    today:
-      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Sharing shows what each person can see of yours, and Remove or Block ends it at once.',
+    today: `Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of when they looked, kept for ${ACCESS_LOG_DAYS} days. A share can end on a date you set, and Remove or Block ends it at once. The people you share with see when what they see ends, and are told you can see when they look.`,
     next: {
-      label: 'Not built yet',
-      text: 'A preview of exactly what they see, shares that end on a date you set, and a record of when they looked.',
+      label: 'Planned',
+      text: 'More kinds of share, such as your net worth or your spending, with a warning when shares together would reveal something you held back.',
     },
   },
   {
@@ -112,6 +112,10 @@ const processors = (backups: BackupRetention): [string, string][] => [
   ],
 ];
 
+/** What outlives a deletion in other people's data: their record of when
+ *  you looked at what they shared with you (lib/access-log.ts). */
+const theirRecord = `People who shared with you keep their own record of when you looked. It doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`;
+
 function backupsRow(backups: BackupRetention): string {
   if (backups === null) return 'None taken and none deleted while the retention setting is not valid.';
   if (!backups.kept) return 'None: no backup store is set up for this copy of Nya.';
@@ -127,9 +131,10 @@ const retention = (backups: BackupRetention): [string, string][] => [
   ['Nightly backups', backupsRow(backups)],
   [
     'A deleted account',
-    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy.`,
+    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} ${theirRecord} Plaid keeps what it collected under its own policy.`,
   ],
   ['Invite links', '72 hours, or until used.'],
+  ['When people you share with looked', `${ACCESS_LOG_DAYS} days: each night, looks older than that are deleted.`],
   [
     'Copies of what the dashboard shows',
     'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted.',
@@ -234,6 +239,7 @@ export default function PrivacyPage() {
             Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
             own within 72 hours.
           </li>
+          <li>{theirRecord}</li>
           <li>
             Plaid keeps its own record of the connections you made through it. To see what Plaid holds about you, or
             delete it, use the{' '}

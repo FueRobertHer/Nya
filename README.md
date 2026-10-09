@@ -18,7 +18,7 @@ Five tabs, mobile-first, with bottom navigation:
 
 Amounts are shown in the currency they carry. Totals (net worth, month totals, budgets, recurring bills) are labelled with your most common currency and say so when a period or your accounts mix currencies: nothing is converted between currencies. The header's refresh button bypasses the cache and re-reads from Plaid.
 
-More than one person can use a deployment: sign in with Clerk and each account gets its own data, with optional read-only sharing between people who connect. Otherwise a single shared password protects the app. See [docs/authentication.md](docs/authentication.md).
+More than one person can use a deployment: sign in with Clerk and each account gets its own data, with optional read-only sharing between people who connect: you choose what each person sees and for how long, see exactly what they see, and see when they looked. Otherwise a single shared password protects the app. See [docs/authentication.md](docs/authentication.md).
 
 Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
 

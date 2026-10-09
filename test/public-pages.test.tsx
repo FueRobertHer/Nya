@@ -12,6 +12,7 @@ import { SHORT_TTL_SECONDS, WEBHOOK_TTL_SECONDS } from '@/lib/cache';
 import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
 import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
+import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -170,11 +171,18 @@ describe('the security page', () => {
     for (const who of ['The operator', 'Upstash', 'Vercel', 'Plaid', 'Clerk', 'People you share with', 'Your device']) {
       expect(page).toContain(who);
     }
-    expect(page).toContain(`last ${SHARED_TXN_DAYS} days of transactions`);
+    expect(page).toContain(`last ${SHARED_TXN_DAYS} days of transactions, until the end date you set, if you set one.`);
     expect(page).toContain('your name and picture if you sign in with Google or another account');
     expect(page).toContain('Cloudflare (Turnstile), which sees your IP address and browser');
     // The device keeps more than balances (components/Dashboard.tsx saves the whole snapshot).
     expect(page).toContain('Your accounts, their balances and your net-worth history, as the app last showed them');
+  });
+
+  test('sharing: what is encrypted, what is plain text, and what a deletion leaves with others', () => {
+    const page = security();
+    expect(page).toContain('manual accounts, the record of when people you share with looked, and the short-lived copies');
+    expect(page).toContain('which accounts each of you shares at which level and until when, and which of them your record of looks has an entry for (when they looked, and at what, is encrypted)');
+    expect(page).toContain(`The record each person who shared with you keeps of when you looked: theirs, it doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`);
   });
 
   test('deletion, sessions and the login limit, with the figures the code uses', () => {
@@ -327,6 +335,17 @@ describe('the privacy page', () => {
     expect(page).not.toContain('Until then there is no way to download');
   });
 
+  test('describes sharing as it is: the preview, ends, and the record of looks, kept as long as the code keeps it', () => {
+    const page = privacy();
+    expect(page).toContain(
+      `For each person, Sharing shows a preview of exactly what they see of yours, and a record of when they looked, kept for ${ACCESS_LOG_DAYS} days. A share can end on a date you set, and Remove or Block ends it at once.`
+    );
+    expect(page).toContain('The people you share with see when what they see ends, and are told you can see when they look.');
+    // Built now, so no longer listed as to come.
+    expect(page).not.toContain('A preview of exactly what they see, shares that end on a date you set');
+    expect(page).toContain(`When people you share with looked ${ACCESS_LOG_DAYS} days: each night, looks older than that are deleted.`);
+  });
+
   test('names the processors, and the kinds not used yet', () => {
     const page = privacy();
     for (const name of ['Vercel', 'Upstash', 'Plaid', 'Clerk']) expect(page).toContain(name);
@@ -351,6 +370,9 @@ describe('the privacy page', () => {
     expect(page).toContain(`apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within ${INVITE_HOURS} hours`);
     expect(page).toContain(`Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their own within ${INVITE_HOURS} hours.`);
     expect(page).toContain('for each one you recategorized, its date, amount and bank description are kept, encrypted');
+    // In the row for a deleted account, and among what deleting doesn't reach.
+    const theirs = `People who shared with you keep their own record of when you looked. It doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`;
+    expect(page.split(theirs)).toHaveLength(3);
     expect(page).toContain('Plaid keeps what it collected under its own policy');
     expect(privacyHtml()).toContain(`href="${PLAID_PORTAL}"`);
   });
