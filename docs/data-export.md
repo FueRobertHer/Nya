@@ -84,7 +84,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `institutions[]`
 
@@ -241,6 +241,20 @@ No id is in it. A connection's id is made from the two people's sign-in ids, so 
 ### Stores built on the storage seam
 
 Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. They are read as strictly as everything else: if any entry can't be read, nothing is downloaded and the error names the store. They are in the JSON file only.
+
+#### `allocation-settings`
+
+What you set under Allocation on the Plan tab ([features.md](features.md#allocation)), or `null` if you never set anything: only your choices, never an allocation Nya worked out.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `buckets[]` | The tax bucket you gave an account, over what its type says: `account_id`, and `bucket`, one of `taxable`, `tax-deferred`, `roth`, `hsa` or `education`. |
+| `funds[]` | The split you gave a security: `ticker` (as Plaid sends it, upper case, up to 40 characters), or `name` for one with no ticker (up to 200), and `split`. |
+| `accounts[]` | The split you gave an account's money that no position it lists explains (a manual investment account, say): `account_id` and `split`. |
+| `target` | Your target allocation, a `split`, or `null`. |
+
+A `split` is percents by asset class, each above 0 with at most one decimal, adding up to 100: `us-stocks`, `intl-stocks`, `stocks` (stocks of any region), `bonds`, `cash`, `real-estate`, `crypto` and `other`. A class it doesn't name holds none: `{ "us-stocks": 60, "bonds": 40 }`.
 
 #### `connection-notices`
 

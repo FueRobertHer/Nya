@@ -19,6 +19,7 @@
 
 import './access-log';
 import './api-token-store';
+import './allocation-settings';
 import './connection-records';
 import './fire-plan';
 import './holdings-history';

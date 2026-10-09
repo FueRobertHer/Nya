@@ -764,7 +764,7 @@ describe('strict reads', () => {
   test('nothing recorded reads as nothing', async () => {
     expect(await readHoldingsRange(ctx, '2026-10-01', '2026-10-31')).toEqual([]);
     expect(await readHoldingsSpan(ctx)).toEqual(span(null, null));
-    expect(await readHoldingsHistory(ctx, { from: '2026-10-01', to: '2026-10-31' })).toEqual({ span: span(null, null), days: [] });
+    expect(await readHoldingsHistory(ctx, { from: '2026-10-01', to: '2026-10-31' })).toEqual({ span: span(null, null), accounts: new Map(), days: [] });
   });
 });
 

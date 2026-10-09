@@ -19,6 +19,7 @@ export type FakeCommand =
   | 'hdel'
   | 'hkeys'
   | 'hgetall'
+  | 'hmget'
   | 'hlen'
   | 'hexists'
   | 'expire'
@@ -231,6 +232,17 @@ export class FakeRedis {
     const h = this.hashes.get(key);
     if (!h || h.size === 0) return null; // Upstash returns null, not {}
     return Object.fromEntries([...h].map(([f, v]) => [f, this.out(v)])) as T;
+  }
+
+  /** The fields asked for, as Upstash answers HMGET: an object of each
+   *  field's value (null for one the hash doesn't have), or null when it has
+   *  none of them. */
+  async hmget<T>(key: string, ...fields: string[]): Promise<T | null> {
+    this.gate('hmget');
+    if (fields.length === 0) throw new Error('ERR wrong number of arguments for HMGET');
+    const h = this.hashes.get(key);
+    if (!fields.some((f) => h?.has(f))) return null;
+    return Object.fromEntries(fields.map((f) => [f, this.out(h?.get(f))])) as T;
   }
 
   /** Fields in a hash; 0 for a missing key. A string there is Redis's

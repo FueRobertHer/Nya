@@ -13,6 +13,9 @@
 //     may be missing from it: an institution whose transactions couldn't be
 //     read, balances that are old or short. A figure that may be short says
 //     so; none is presented as complete when it may not be.
+//   - Allocation (components/AllocationCard.tsx): what the investment
+//     accounts hold by asset class and tax bucket, against a target, over
+//     time, and the mix the simulation can take from it, on the person's word.
 //   - "Will it last?": the plan run through history or Monte Carlo
 //     (lib/fire/simulate.ts), with the success rate and its definition, for a
 //     flexible rule the spending cuts beside it, a fan chart, the worst
@@ -36,6 +39,7 @@ import {
   DATA_STOCKS,
   HYPOTHETICAL,
   METHOD_NAMES,
+  PAYROLL_NOTE,
   REBALANCE_TEXT,
   RULE_NAMES,
   dayName,
@@ -43,37 +47,33 @@ import {
   pct,
   progressText,
   ruleText,
+  savingsRateText,
   successDefinition,
   successText,
   wholeMoney,
   yearsText,
+  yearsToFiText,
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { instantDay, localDate } from '@/lib/local-date';
-import { missingFigureNotes, missingWhat, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
-import { leftOutText } from '@/lib/spending';
+import { instantDay } from '@/lib/local-date';
+import { missingFigureNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import {
-  cashAccountIds,
   investedAssets,
-  isWorkplacePlan,
-  trailingFlows,
-  transfersOut,
-  unreadTransactions,
-  workplaceSavings,
   type AssetCaveat,
   type AssetInstitution,
   type InvestedAssets,
-  type Payment,
-  type PlanContributions,
   type TrailingFlows,
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
+import { assetsLeftOut, fiFigures, measuredInputs, spendingLeftOut, transactionCoverage, transactionsMissing } from '@/lib/fire/progress';
+import { usePlanInputs, workplacePlansOf } from './plan-inputs';
+import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
+import type { AllocHolding } from '@/lib/allocation/allocation';
 import {
   allocationOf,
   DEFAULT_PLAN,
   enginePlan,
-  fiView,
   formulasTake,
   isFirePlan,
   repairPlan,
@@ -186,63 +186,6 @@ export function assetCaveatLines(caveats: AssetCaveat[]): string[] {
   return lines;
 }
 
-/** The workplace plans whose contributions are measured: linked (not manual)
- *  and not hidden. */
-function workplacePlansOf(institutions: AssetInstitution[]) {
-  return institutions.flatMap((i) =>
-    i.item_id
-      ? i.accounts
-          .filter((a) => !a.hidden && isWorkplacePlan(a.subtype))
-          .map((a) => ({ item_id: i.item_id as string, account_id: a.account_id, name: a.name, institution: i.name }))
-      : []
-  );
-}
-
-/** One workplace plan contributions request per account, as the Accounts tab
- *  makes when an account is opened. Null until every answer is in. */
-function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContributions[] | null {
-  const plans = workplacePlansOf(institutions);
-  const key = plans.map((p) => `${p.item_id}:${p.account_id}`).join(',');
-  const plansRef = useRef(plans);
-  plansRef.current = plans;
-  const [state, setState] = useState<{ key: string; plans: PlanContributions[] } | null>(null);
-  useEffect(() => {
-    const wanted = plansRef.current;
-    let live = true;
-    Promise.all(
-      wanted.map(async (p): Promise<PlanContributions> => {
-        const base = { account_id: p.account_id, name: p.name, institution: p.institution };
-        const none = { ...base, amount: null, from: null, partial: false, rows: [], activityFrom: null, note: null };
-        try {
-          const res = await fetch(`/api/investment-activity?id=${encodeURIComponent(p.account_id)}&item_id=${encodeURIComponent(p.item_id)}`);
-          if (!res.ok) return none;
-          const data = await res.json();
-          const rows: unknown = data?.contributions_12m_rows;
-          return {
-            ...base,
-            amount: typeof data?.contributions_12m === 'number' ? data.contributions_12m : null,
-            from: typeof data?.contributions_12m_from === 'string' ? data.contributions_12m_from : null,
-            partial: data?.contributions_12m_partial === true,
-            rows: Array.isArray(rows)
-              ? rows.filter((r): r is Payment => typeof r?.date === 'string' && typeof r?.amount === 'number' && Number.isFinite(r.amount))
-              : [],
-            activityFrom: typeof data?.contributions_12m_activity_from === 'string' ? data.contributions_12m_activity_from : null,
-            note: typeof data?.note === 'string' ? data.note : null,
-          };
-        } catch {
-          return none;
-        }
-      })
-    ).then((answers) => {
-      if (live) setState({ key, plans: answers });
-    });
-    return () => {
-      live = false;
-    };
-  }, [key]);
-  return state && state.key === key ? state.plans : null;
-}
-
 export type PlanTabProps = {
   /** The dashboard's transactions, null until they load. */
   txns: Txn[] | null;
@@ -263,9 +206,12 @@ export type PlanTabProps = {
   balancesAsOf: string | null;
   /** The accounts' main currency, for amounts nothing else labels. */
   currency: string | null;
+  /** Every position the dashboard loaded, each with its account (hidden
+   *  accounts' included: the allocation leaves those out itself). */
+  holdings: AllocHolding[];
 };
 
-export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_CONNECTIONS_WITHOUT, institutions, balancesAsOf, currency }: PlanTabProps) {
+export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_CONNECTIONS_WITHOUT, institutions, balancesAsOf, currency, holdings }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   const store = useMemo(
     () =>
@@ -296,47 +242,26 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
   const repairing = repair.fixed.length > 0;
   const editable = state.status === 'ready' && !state.saving && !repairing;
 
-  // What Nya measures, and what may be missing from it. "Today" is the
-  // viewer's calendar day.
-  const today = localDate();
-  // The manual accounts marked as cash on hand, whose rows entered by hand are
-  // what cash withdrawals were spent on (lib/fire/inputs.ts trailingFlows),
-  // by name for the label.
-  const cashAccounts = useMemo(() => cashAccountIds(institutions), [institutions]);
-  const flows = useMemo(() => (txns ? trailingFlows(txns, today, { cashAccounts }) : null), [txns, today, cashAccounts]);
-  const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, a.name] as const))), [institutions]);
-  const cashOn = (flows?.cashEnteredOn ?? []).map((id) => accountNames.get(id) ?? 'a cash account');
-  // Spending entered by hand on a manual account not marked as cash: if it is
-  // the cash withdrawn, the label says how to keep the two from both counting.
-  const cashUnmarked = useMemo(
-    () => (txns ?? []).some((t) => t.source === 'manual' && t.amount > 0 && !!t.account_id && !cashAccounts.has(t.account_id)),
-    [txns, cashAccounts]
-  );
-  const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
-  const assets = useMemo(() => investedAssets(institutions, plan.includeCash), [institutions, plan.includeCash]);
-  const contributions = useWorkplaceContributions(institutions);
-  // Payments out of the bank that may have paid for a contribution, so it
-  // isn't counted twice (lib/fire/inputs.ts workplaceSavings).
-  const bankOut = useMemo(() => (txns ? transfersOut(txns, today) : []), [txns, today]);
-  const workplace = useMemo(
-    () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, funding: plan.planFunding }) : null),
-    [contributions, bankOut, plan.planFunding]
-  );
-  const view = fiView(plan, {
-    spending: flows?.spending ?? null,
-    savings: flows ? flows.savings + (workplace?.total ?? 0) : null,
-    assets: assets.total,
-  });
+  // What Nya measures, and what may be missing from it, by the same hook and
+  // arithmetic as the FI card on Home (components/plan-inputs.ts,
+  // lib/fire/progress.ts), so the two always agree. The hook also reads which
+  // manual accounts are cash on hand, whose spending entered by hand is what
+  // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
+  // them for the label.
+  const inputs = usePlanInputs({ txns, txnNotes, without: txnWithout, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
+  const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
+  const figures = fiFigures(plan, inputs, currency);
+  const view = figures.view;
   // Plan amounts are in the accounts' own currency, or the transactions'.
-  const displayCurrency = assets.currency ?? flows?.currency ?? currency;
+  const displayCurrency = figures.currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
   // Nothing is converted between currencies in this app: investments in one
-  // and spending in another can't be compared. Within either, only amounts in
-  // one currency are added up, and the notes beside them name the rest.
-  const currencyNote =
-    assets.currency && flows?.currency && assets.currency !== flows.currency
-      ? `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Nya doesn't convert currencies, so the FI number and your assets can't be compared.`
-      : null;
+  // and spending in another can't be compared (lib/fire/progress.ts). Within
+  // either, only amounts in one currency are added up, and the notes beside
+  // them name the rest.
+  const currencyNote = figures.currencyNote;
+  // In the plan's currency, so its mix is of what the plan counts.
+  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: plan.includeCash });
 
   const engine = enginePlan(plan, view);
   const sim = 'sim' in engine ? engine.sim : null;
@@ -514,7 +439,10 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
         money={money}
         editable={editable}
         open={open}
+        savingsRate={figures.savingsRate}
       />
+
+      <AllocationCard allocation={allocation} plan={plan} onSavePlan={store.save} planEditable={editable} institutions={institutions} balancesAsOf={balancesAsOf} />
 
       <SimulationCard
         plan={plan}
@@ -572,7 +500,15 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
         {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
         {shownSheet?.kind === 'assumptions' && <AssumptionsForm key={opened} {...formProps} />}
         {shownSheet?.kind === 'simulation' && (
-          <SimulationForm key={opened} {...formProps} fiNumber={view.fiNumber} assets={view.assets.value} spending={view.spending.value} currency={displayCurrency} />
+          <SimulationForm
+            key={opened}
+            {...formProps}
+            fiNumber={view.fiNumber}
+            assets={view.assets.value}
+            spending={view.spending.value}
+            currency={displayCurrency}
+            allocationMix={mixToOffer(allocation)}
+          />
         )}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
@@ -580,15 +516,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
             {...formProps}
             kind={shownSheet.figure}
             currency={displayCurrency}
-            measured={
-              shownSheet.figure === 'assets'
-                ? assets.total
-                : shownSheet.figure === 'spending'
-                  ? (flows?.spending ?? null)
-                  : flows
-                    ? flows.savings + (workplace?.total ?? 0)
-                    : null
-            }
+            measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
             assetsFor={(includeCash) => investedAssets(institutions, includeCash)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
@@ -725,6 +653,7 @@ export function FiCard({
   money,
   editable,
   open,
+  savingsRate = null,
 }: {
   plan: FirePlan;
   view: FiView;
@@ -753,6 +682,8 @@ export function FiCard({
   money: (n: number) => string;
   editable: boolean;
   open: (s: SheetState) => void;
+  /** The trailing year's savings rate (lib/fire/progress.ts), as Home shows it. */
+  savingsRate?: number | null;
 }) {
   const { spending, savings, assets } = view;
   // A bank account or card whose transactions don't come in (Plaid doesn't
@@ -760,13 +691,15 @@ export function FiCard({
   // one that couldn't be read; no connection that can bring spending in at
   // all, and no transaction from anywhere else, is said in place of the
   // figure, not as waiting for it. With transactions entered by hand, the
-  // connections that bring in none are named beside the figures instead.
-  const missing = missingWhat(withoutTransactions);
-  const noSpending = noSpendingOf(withoutTransactions, transactionCount);
+  // connections that bring in none are named beside the figures instead. The
+  // same function decides this for the FI card on Home (lib/fire/progress.ts),
+  // from the same two inputs (components/plan-inputs.ts).
+  const coverage = transactionCoverage(withoutTransactions, transactionCount);
+  const noSpending = coverage.noSpending;
   // Said where the figure's source is, not as a warning: nothing is missing.
-  const namedWithout = withoutNote(withoutTransactions, transactionCount);
+  const namedWithout = coverage.named;
   const alsoNamed = namedWithout ? ` ${namedWithout}` : '';
-  const spendingShort = spending.source === 'measured' && (unread.length > 0 || missing !== null);
+  const spendingMissing = spending.source === 'measured' ? transactionsMissing(unread, coverage) : null;
   const assetLines = assets.source === 'measured' ? assetCaveatLines(measuredAssets.caveats) : [];
   const assetsShort = assets.source === 'measured' && measuredAssets.caveats.some((c) => c.kind !== 'stale');
 
@@ -819,14 +752,16 @@ export function FiCard({
         ? `, less ${money(flows.refunds)} of refunds${big ? ` (the largest, ${money(big.amount)} from ${big.name} on ${dayName(big.date)})` : ''}`
         : '';
     // Transactions the person left out of budgets and reports count in no
-    // figure here either (lib/fire/inputs.ts), which the label says.
-    const left = flows.excludedCount;
-    const excluded = left > 0 ? ` Leaves out ${left} transaction${left === 1 ? '' : 's'} you excluded from budgets and reports.` : '';
+    // figure here either (lib/fire/inputs.ts), which the label says, and so
+    // do those in another currency: in the words the FI card on Home uses
+    // (lib/fire/progress.ts spendingLeftOut).
+    const leftOut = spendingLeftOut(flows);
+    const excluded = leftOut.excluded ? ` ${leftOut.excluded}` : '';
     spendingNote = (
       <Notes
         source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.${cashNote}${excluded}${alsoNamed}`}
         warnings={[
-          leftOutText(flows.leftOut, flows.currency, { where: 'your spending or savings' }),
+          leftOut.otherCurrencies,
           cashHint,
           flows.unclearLoans > 0
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
@@ -840,7 +775,14 @@ export function FiCard({
 
   // Savings: bank income minus spending, plus workplace plan contributions.
   let savingsNote: React.ReactNode;
-  if (savings.source === 'typed') savingsNote = 'typed by you';
+  if (savings.source === 'typed') {
+    // The savings rate (Home's) is from the transactions whatever is typed
+    // here, so it is said here too, as what they measure.
+    savingsNote =
+      flows && savingsRate !== null
+        ? `typed by you. Measured from ${windowText(flows)} instead, your savings rate is ${savingsRateText(savingsRate)} of income.`
+        : 'typed by you';
+  }
   else if (!flows) {
     savingsNote = txnsLoading
       ? 'loading your transactions…'
@@ -868,14 +810,16 @@ export function FiCard({
         ? `How ${x.name} is paid into isn't set: if you pay into it from your bank account, say so under Edit, or it may count twice.`
         : null,
     ]);
+    const rate =
+      savingsRate !== null
+        ? ` That is a savings rate of ${savingsRateText(savingsRate)} of income${addedTo.length ? ', what went into those plans counted as income too' : ''}.`
+        : '';
     savingsNote = (
       <Notes
-        source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}.${alsoNamed}`}
+        source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}.${rate}${alsoNamed}`}
         warnings={[
           workplaceCount === null ? 'Checking contributions to workplace plans…' : null,
-          workplaceCount === 0
-            ? "Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data."
-            : null,
+          workplaceCount === 0 ? PAYROLL_NOTE : null,
           ...planLines,
           fromBank.length
             ? `${names(fromBank)} ${fromBank.length === 1 ? 'is' : 'are'} set as paid from your bank, so nothing paid into ${fromBank.length === 1 ? 'it' : 'them'} is added again.`
@@ -905,22 +849,20 @@ export function FiCard({
         warnings={[
           ...assetLines,
           measuredAssets.unknown > 0 ? `${measuredAssets.unknown} more had no balance to count, so this figure may be low.` : null,
-          leftOutText(measuredAssets.leftOut, measuredAssets.currency, { noun: 'account', where: 'this figure', plural: false }),
+          assetsLeftOut(measuredAssets),
         ]}
       />
     );
   }
 
-  let yearsLine: React.ReactNode = '--';
+  // The same words as the FI card on Home (components/FiProgressCard.tsx).
+  const yearsLine = yearsToFiText(view.yearsToFi);
   let yearsNote = '';
-  if (view.yearsToFi === 0) yearsLine = 'You’re there';
-  else if (view.yearsToFi === Infinity) {
-    yearsLine = 'Not at this rate';
+  if (view.yearsToFi === Infinity) {
     yearsNote = `Saving ${money(savings.value ?? 0)} a year at ${pct(plan.realReturn)} real never reaches it.`;
-  } else if (view.yearsToFi !== null) {
-    yearsLine = yearsText(view.yearsToFi);
+  } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
-  } else {
+  } else if (view.yearsToFi === null) {
     yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : 'Needs your invested assets or savings.';
   }
 
@@ -935,13 +877,7 @@ export function FiCard({
             ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
             : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
       </div>
-      {spendingShort && (
-        <div className="as-of stale">
-          {unread.length > 0
-            ? "May be low: spending is missing transactions that couldn't be read (below)."
-            : `May be low: spending is missing ${missing} (below).`}
-        </div>
-      )}
+      {spendingMissing && <div className="as-of stale">{`May be low: spending is missing ${spendingMissing} (below).`}</div>}
       {view.progress !== null && (
         <>
           <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>

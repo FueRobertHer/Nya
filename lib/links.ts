@@ -114,6 +114,40 @@ export async function readDirectoryStrict(ctx: Ctx): Promise<Map<string, Directo
   return new Map(Object.entries(entries));
 }
 
+/** What the directory knows of an account, for allocation over time. */
+export type KnownAccount = {
+  /** The first day it is known to have existed (first_seen). */
+  first_seen: string | null;
+  /** "<name> at <institution>", for naming an account the dashboard no
+   *  longer shows; null when the directory has no name for it. */
+  label: string | null;
+};
+
+/**
+ * What the directory knows of each account, by the id it was seen under: when
+ * it is first known to have existed, so a day after that and before the
+ * account was first recorded is a day it is missing from rather than one
+ * before it existed, and its name. The ids whose entries can't be read are
+ * named, so the caller can tell "not known" from "not in it".
+ */
+export async function readKnownAccounts(ctx: Ctx): Promise<{ known: Map<string, KnownAccount>; unreadable: Set<string> }> {
+  const { entries, unreadable } = await readDirectory(ctx);
+  const known = new Map<string, KnownAccount>();
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  for (const [id, e] of Object.entries(entries)) {
+    if (!e || typeof e !== 'object') {
+      unreadable.add(id);
+      continue;
+    }
+    const first = typeof e.first_seen === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.first_seen) ? e.first_seen : null;
+    if (first === null) unreadable.add(id);
+    const name = text(e.name) ?? text(e.official_name);
+    const at = text(e.institution_name);
+    known.set(id, { first_seen: first, label: name ? (at ? `${name} at ${at}` : name) : null });
+  }
+  return { known, unreadable };
+}
+
 /** Every offer the user declined (dismissPair, dismissAll): "<old>><new>" or
  *  "<old>>*" -> when. For the download of my data; strict, unlike
  *  getDismissed. */
