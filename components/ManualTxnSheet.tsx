@@ -18,7 +18,9 @@
 // try sends it, so tapping Add again after an answer that never arrived
 // finds the row already saved rather than adding it twice, or moving the
 // balance twice. If the form was changed before that second tap, the saved
-// row is then changed to match it.
+// row is then changed to match it, unless the balance moved (or was to move)
+// with it and the amount changed: the server then says what was saved, and
+// the form leaves it so (app/api/manual-transactions).
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
@@ -277,14 +279,15 @@ export default function ManualTxnSheet({
         return;
       }
       setError(data?.error ?? 'Could not save. Please try again.');
-      // Saved, but the balance wasn't updated: say so, and offer nothing that
-      // would add it again.
+      // Saved (by this send or an earlier one), but not all as asked: say so,
+      // and offer nothing that would add it again.
       if (data?.saved === true && data?.transaction) {
         setDone(true);
-        onSaved({ balanceChanged: false, transaction: data.transaction });
+        onSaved({ balanceChanged: data.balance_updated === true, transaction: data.transaction });
       }
-      // The balance isn't what this form showed: show what it is now.
-      if (res.status === 409 && (typeof data?.balance === 'number' || data?.saved === true)) onBalanceStale();
+      // The balance isn't what this form showed: show what it is now (a
+      // balance that moved is reloaded by onSaved already).
+      if (res.status === 409 && data?.balance_updated !== true && (typeof data?.balance === 'number' || data?.saved === true)) onBalanceStale();
     } catch {
       setError('Could not reach the server.');
     } finally {

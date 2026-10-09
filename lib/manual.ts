@@ -156,16 +156,28 @@ export type BalanceMove = 'moved' | 'already' | 'changed' | 'missing';
 
 /**
  * Moves an account's balance from the figure a form showed (`from`) to the one
- * it said it would become (`to`), to the cent, as one compare-and-set on this
- * hash's field (the storage seam's scripts, lib/repo.ts: read exactly, then
- * write only if unchanged since): 'moved' when it held `from` and now holds
- * `to`, stamped now; 'already' when it holds `to` already, as after the same
- * request sent again; 'changed' when it holds anything else, left as it is;
- * 'missing' when the account is gone. A write landing between the read and the
- * write (a scripted push, another device) is read again, never overwritten.
- * Throws if the account can't be read.
+ * it said it would become (`to`), to the cent, for the transaction `mover`
+ * (a manual row's id), as one compare-and-set on this hash's field (the
+ * storage seam's scripts, lib/repo.ts: read exactly, then write only if
+ * unchanged since). The write stamps the record with the mover's id
+ * (`balance_moved_by`), and only the move writes it: any other save of the
+ * account (the Update form, a scripted push) writes the record without it.
+ * Answers 'moved' when it held `from` and now holds `to`, stamped now;
+ * 'already' when this mover's own move is the last write, as when the same
+ * add is sent again (another add of the same amount, which leaves the same
+ * figure, is not this one: 'changed'); 'changed' when it holds anything else,
+ * left as it is; 'missing' when the account is gone. A write landing between
+ * the read and the write (a scripted push, another device) is read again,
+ * never overwritten. Throws if the account can't be read.
  */
-export async function moveManualBalance(ctx: Ctx, account_id: string, from: number, to: number, now: Date = new Date()): Promise<BalanceMove> {
+export async function moveManualBalance(
+  ctx: Ctx,
+  account_id: string,
+  from: number,
+  to: number,
+  mover: string,
+  now: Date = new Date()
+): Promise<BalanceMove> {
   const cents = (n: number) => Math.round(n * 100);
   const key = ACCOUNTS_HASH(ctx);
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -173,14 +185,17 @@ export async function moveManualBalance(ctx: Ctx, account_id: string, from: numb
     if (!raw) return 'missing';
     const stored = raw.slice(1); // exactly as stored, past READ_ENTRIES's "v"
     let account: ManualAccount;
+    let movedBy: unknown;
     try {
-      account = parseStoredAccount(account_id, await decrypt(stored));
+      const plaintext = await decrypt(stored);
+      account = parseStoredAccount(account_id, plaintext);
+      movedBy = (JSON.parse(plaintext) as { balance_moved_by?: unknown }).balance_moved_by;
     } catch (err) {
       throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
     }
-    if (cents(account.balance) === cents(to)) return 'already';
+    if (cents(account.balance) === cents(to) && movedBy === mover) return 'already';
     if (cents(account.balance) !== cents(from)) return 'changed';
-    const next = await encrypt(JSON.stringify({ ...account, balance: to, updated_at: now.toISOString() }));
+    const next = await encrypt(JSON.stringify({ ...account, balance: to, updated_at: now.toISOString(), balance_moved_by: mover }));
     const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
     if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return 'moved';
   }

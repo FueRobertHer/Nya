@@ -26,9 +26,9 @@
 // disconnect records the excluded transactions of the Item's accounts by
 // content key (account, date, amount, the bank's descriptor:
 // lib/transactions.ts contentKey) before their ids die with the Item, and
-// forgets the Item's own records; once the person links the old account to
-// the re-added one (lib/links.ts), the new account's rows with the same key
-// are excluded again. The keys name a date, an amount and a merchant, so they
+// prunes the Item's own records once it is gone (pruneOrphanAnnotations).
+// Once the person links the old account to the re-added one (lib/links.ts),
+// the new account's rows with the same key are excluded again. The keys name a date, an amount and a merchant, so they
 // live inside one encrypted record per earlier account (the
 // `carried-annotations` store), never in a field name. A key whose identical
 // rows disagreed carries nothing rather than guessing; a record on the new
@@ -49,6 +49,7 @@
 import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
 import { resolveId, type Link } from './link-core';
+import { MANUAL_TXN_PREFIX } from './manual-txn-input';
 
 /** What is said about one transaction. Fields a later release adds ride along. */
 export type TxnAnnotation = {
@@ -162,14 +163,15 @@ export type RetiringTxn = { transaction_id: string; account_id: string; key: str
 /**
  * Records which of a disconnecting Item's transactions were excluded, by
  * content key under each of its accounts, merged with anything recorded for
- * the same account before (a key recorded both ways carries nothing), then
- * forgets the Item's own records, whose ids die with it. Posted rows only, as
- * for categories: a pending row's key is not the posted row's. Every posted
- * row with the key is counted, excluded or not, so a key that can't be pinned
- * to one answer carries nothing. A record that can't be read carries nothing
- * (it isn't shown today either) and goes with the rest. Returns how many keys
- * it recorded. Throws if storage fails; the caller must not let that stop the
- * disconnect.
+ * the same account before (a key recorded both ways carries nothing). The
+ * Item's own records stay until it is gone: pruneOrphanAnnotations drops them
+ * after, so a disconnect that fails part way leaves the Item with every
+ * exclusion it had. Posted rows only, as for categories: a pending row's key
+ * is not the posted row's. Every posted row with the key is counted, excluded
+ * or not, so a key that can't be pinned to one answer carries nothing. A
+ * record that can't be read carries nothing (it isn't shown today either).
+ * Sent again, it records the same. Returns how many keys it recorded. Throws
+ * if storage fails; the caller must not let that stop the disconnect.
  */
 export async function retireAnnotations(ctx: Ctx, txns: RetiringTxn[]): Promise<number> {
   const mine = new Set(txns.map((t) => t.transaction_id).filter(isTransactionId));
@@ -178,8 +180,7 @@ export async function retireAnnotations(ctx: Ctx, txns: RetiringTxn[]): Promise<
   // the Item: a damaged one is passed over instead of failing the rest.
   const report = await txnAnnotationStore.getAllReport(ctx);
   const records = new Map([...report.entries].filter(([id]) => mine.has(id)));
-  const dead = [...records.keys(), ...report.unreadable, ...report.unrecognised].filter((id) => mine.has(id));
-  if (dead.length === 0) return 0;
+  if (records.size === 0) return 0;
   const groups = new Map<string, { account_id: string; states: boolean[] }>();
   for (const t of txns) {
     if (t.pending) continue;
@@ -205,8 +206,30 @@ export async function retireAnnotations(ctx: Ctx, txns: RetiringTxn[]): Promise<
     });
     n += Object.keys(rows).length;
   }
-  await forgetAnnotations(ctx, dead);
   return n;
+}
+
+/**
+ * Forgets the records of bank transactions no stored Item holds any more (an
+ * Item disconnected, rows the bank removed): they can never be shown again.
+ * As lib/overrides.ts pruneOrphanOverrides does for categories, after the
+ * Item is gone. `readKnown` reads every transaction id the stored Items hold
+ * (lib/disconnect-item.ts), or null when a store couldn't be read or is
+ * behind, and then nothing is pruned. The records are read first and the
+ * stores after, so a record set meanwhile on a newly stored row is checked
+ * against a read that has the row. A manual row's record goes with its row,
+ * never here; one this release doesn't recognise is left for the release that
+ * wrote it. Returns how many it forgot.
+ */
+export async function pruneOrphanAnnotations(ctx: Ctx, readKnown: () => Promise<Set<string> | null>): Promise<number> {
+  const { entries, unreadable } = await txnAnnotationStore.getAllReport(ctx);
+  const ids = [...entries.keys(), ...unreadable].filter((id) => !id.startsWith(MANUAL_TXN_PREFIX));
+  if (ids.length === 0) return 0;
+  const known = await readKnown();
+  if (!known) return 0;
+  const orphans = ids.filter((id) => !known.has(id));
+  await forgetAnnotations(ctx, orphans);
+  return orphans.length;
 }
 
 /**

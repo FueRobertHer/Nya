@@ -25,14 +25,17 @@
 //     a payment from a linked checking account to a linked loan counts once.
 //   - cash withdrawals count (an ATM, or Plaid's "withdrawal" with no code):
 //     cash taken out is spent. Unless the person enters what they spend in
-//     cash by hand, on a manual cash account ("Cash (checking, savings)"):
-//     then the withdrawals and those rows are the same money, so only the
-//     larger counts, never both. Cash spending entered by hand always counts
-//     (it is spending like any other); withdrawals count only for what is
-//     beyond it. Over the whole window, so a withdrawal at the end of one
-//     month spent in the next isn't counted twice, and someone who has just
-//     begun entering cash keeps the year of withdrawals before that. The
-//     label says which it did;
+//     cash by hand, on a manual account they marked as cash on hand
+//     (lib/balance.ts isCashOnHand: cashAccountIds): then the withdrawals and
+//     those rows are the same money, so only the larger counts, never both.
+//     Only an account marked so: a manual checking account at a bank Plaid
+//     can't reach is not cash, and its debit spending never cancels a
+//     withdrawal. Cash spending entered by hand always counts (it is spending
+//     like any other); withdrawals count only for what is beyond it. Over the
+//     whole window, so a withdrawal at the end of one month spent in the next
+//     isn't counted twice, and someone who has just begun entering cash keeps
+//     the year of withdrawals before that. The label says which it did, and
+//     on which accounts;
 //   - money back in a spending category (a refund) is taken off spending
 //     rather than counted as income, which would overstate both. Only in a
 //     spending category: money in under income, a transfer or anything else
@@ -70,7 +73,7 @@
 import { type Txn } from '@/components/MonthBreakdown';
 import { currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
-import { isInvestmentType } from '@/lib/balance';
+import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 
 /** The trailing window, in days (today included). */
@@ -161,6 +164,8 @@ export type TrailingFlows = {
    *  accounts, a year's: when both are there, only the larger counts. */
   cashWithdrawn: number;
   cashEntered: number;
+  /** The cash accounts that spending was entered on, for the label. */
+  cashEnteredOn: string[];
   /** Loan payments NOT counted because they can't be told from card payments. */
   unclearLoans: number;
   /** The largest single refund taken off, as it was (not scaled), so an odd
@@ -212,6 +217,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
   const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && counts(planFlow(t))));
   const leftOutBy = new Map<string, number>();
   let cashEntered = 0;
+  const cashEnteredOn = new Set<string>();
   const sums: Record<PlanFlow, number> = {
     spending: 0,
     loan: 0,
@@ -242,7 +248,10 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       continue;
     }
     sums[flow] += t.amount;
-    if (flow === 'spending' && t.source === 'manual' && t.account_id && opts.cashAccounts?.has(t.account_id)) cashEntered += t.amount;
+    if (flow === 'spending' && t.source === 'manual' && t.account_id && opts.cashAccounts?.has(t.account_id)) {
+      cashEntered += t.amount;
+      cashEnteredOn.add(t.account_id);
+    }
     if (flow === 'refund' && (largestRefund === null || -t.amount > largestRefund.amount)) {
       largestRefund = { amount: -t.amount, date: t.date, name: t.name };
     }
@@ -266,6 +275,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     refunds: -sums.refund * scale,
     cashWithdrawn: sums.cash * scale,
     cashEntered: cashEntered * scale,
+    cashEnteredOn: [...cashEnteredOn].sort(),
     unclearLoans: sums['unclear-loan'] * scale,
     largestRefund,
     from: isoDay(earliest),
@@ -277,6 +287,14 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     currency,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
   };
+}
+
+/** The manual accounts marked as cash on hand: the ones whose spending
+ *  entered by hand is what cash withdrawals went on (trailingFlows). Never a
+ *  bank's account, and never a manual checking or savings account the person
+ *  hasn't marked. */
+export function cashAccountIds(institutions: AssetInstitution[]): Set<string> {
+  return new Set(institutions.filter((i) => i.item_id === null).flatMap((i) => i.accounts.filter(isCashOnHand).map((a) => a.account_id)));
 }
 
 /** An institution whose transactions could not all be read, from

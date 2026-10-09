@@ -30,7 +30,7 @@ import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
-import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
@@ -157,8 +157,12 @@ type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
   balance: string;
 };
 
+// "cash" is a choice, not a type: saved as depository with the subtype
+// CASH_SUBTYPE (lib/balance.ts), which the Plan reads to count cash
+// withdrawals and the cash spending entered on the account once.
 const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
-  { value: 'depository', label: 'Cash (checking, savings)' },
+  { value: 'depository', label: 'Checking or savings' },
+  { value: 'cash', label: 'Cash on hand (a wallet)' },
   { value: 'investment', label: 'Investment (brokerage, 401k, HSA)' },
   { value: 'credit', label: 'Credit card' },
   { value: 'loan', label: 'Loan (mortgage, auto, student)' },
@@ -2211,8 +2215,16 @@ export default function Dashboard({
               <label className="field">
                 Type
                 <select
-                  value={shownManualDraft.type}
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, type: e.target.value })}
+                  value={isCashOnHand(shownManualDraft) ? 'cash' : shownManualDraft.type}
+                  onChange={(e) => {
+                    const cash = e.target.value === 'cash';
+                    setManualDraft({
+                      ...shownManualDraft,
+                      type: cash ? 'depository' : e.target.value,
+                      // Cash only when chosen; another subtype is kept as it was.
+                      subtype: cash ? CASH_SUBTYPE : shownManualDraft.subtype === CASH_SUBTYPE ? null : shownManualDraft.subtype,
+                    });
+                  }}
                   disabled={savingManual}
                 >
                   {MANUAL_TYPE_LABELS.map((t) => (

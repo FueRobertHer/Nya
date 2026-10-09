@@ -184,6 +184,30 @@ describe('a re-link, end to end', () => {
     expect(await excludedOf('n_a')).toBeUndefined();
   });
 
+  test('a disconnect that fails part way keeps every exclusion the Item had; the next one prunes them once it is gone', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    await excludeRow('t_a', true);
+    // The carry is recorded, then removing the Item fails.
+    fake.failNext('hdel');
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(500);
+    } finally {
+      console.error = quiet;
+    }
+    expect(await fake.hget(ctxKey('plaid:items'), 'item_old')).not.toBeNull();
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_a')).not.toBeNull();
+    expect(await excludedOf('t_a')).toBe(true);
+    // Disconnected for good: pruned after the Item went, the carry recorded once.
+    expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(200);
+    expect(await fake.hgetall(ctxKey('transaction-annotations'))).toBeNull();
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    expect(await excludedOf('n_a')).toBe(true);
+  });
+
   test('what the person says on the new row itself wins over a carried exclusion', async () => {
     await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
     await route('transactions', 'GET');

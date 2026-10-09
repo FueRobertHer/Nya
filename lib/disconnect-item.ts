@@ -8,15 +8,31 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { getItems, removeItem, type StoredItem } from './storage';
 import { clearCaches } from './cache';
-import { clearItemTransactions, contentKey, readStoredTxns, type StoredTxn } from './transactions';
+import { clearItemTransactions, contentKey, readStoredTxns, storeIsBehind, type StoredTxn } from './transactions';
 import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
-import { retireAnnotations } from './txn-annotations';
+import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
 import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
+
+/** Every transaction id the stored Items hold, or null when a store
+ *  couldn't be read or is behind (rows shown from a store too large to save
+ *  aren't in it), so nothing is pruned on a partial answer. */
+async function storedTransactionIds(ctx: Ctx, item_ids: string[]): Promise<Set<string> | null> {
+  const known = new Set<string>();
+  try {
+    for (const item_id of item_ids) {
+      if (await storeIsBehind(ctx, item_id)) return null;
+      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
+    }
+  } catch {
+    return null;
+  }
+  return known;
+}
 
 /**
  * `item` is the stored Item, or undefined when only a stale id is being
@@ -75,6 +91,13 @@ export async function disconnectItem(
     await pruneOrphanOverrides(ctx, (await getItems(ctx)).map((i) => i.item_id));
   } catch (err) {
     console.error('disconnect: could not prune old category overrides', err instanceof Error ? err.message : err);
+  }
+  // And what was said about them, this Item's own exclusions among them, now
+  // that it is gone: the ones to carry were recorded above (best effort too).
+  try {
+    await pruneOrphanAnnotations(ctx, async () => storedTransactionIds(ctx, (await getItems(ctx)).map((i) => i.item_id)));
+  } catch (err) {
+    console.error('disconnect: could not prune old exclusions', err instanceof Error ? err.message : err);
   }
   // Hidden accounts STAY hidden (#46). Their history is kept, so dropping the
   // entry would put the account back into every past total the moment it

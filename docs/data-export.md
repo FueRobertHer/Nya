@@ -118,7 +118,7 @@ An account known only by its id has `null` for everything Nya never learned abou
 
 ### `manual_accounts[]`
 
-`account_id`, `name`, `institution_name`, `type`, `subtype`, `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency; the app shows them in US dollars.
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency; the app shows them in US dollars.
 
 ### `hidden_accounts[]`
 

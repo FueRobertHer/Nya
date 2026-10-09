@@ -18,7 +18,7 @@ const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
 const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, repairPlan, startAge, upgradePlan } = await import('@/lib/fire/plan');
-const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
+const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
 const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
 const { historicalCycles } = await import('@/lib/fire/simulate');
@@ -522,6 +522,52 @@ describe('spending and savings from the trailing year', () => {
     test('over the whole year, so cash taken out at a month’s end and spent in the next isn’t counted twice', () => {
       const r = flows([txn({ ...ATM, date: '2026-08-31' }), spent(200, { date: '2026-09-03' })]);
       expect(r.spending).toBe(1_200);
+    });
+
+    test('which accounts are cash: manual ones marked cash on hand, never a manual checking account or a bank’s', () => {
+      const manual = (accounts: Partial<AssetAccount>[]): AssetInstitution => ({
+        name: 'Cash',
+        item_id: null,
+        error: false,
+        staleAsOf: null,
+        staleAsOfAt: null,
+        missing: 0,
+        accounts: accounts.map((a, i) => ({ account_id: `m${i}`, name: 'Account', type: 'depository', balance: 0, currency: 'USD', ...a })),
+      });
+      const institutions: AssetInstitution[] = [
+        manual([
+          { account_id: 'manual_wallet', name: 'Wallet', subtype: 'cash' },
+          { account_id: 'manual_cu', name: 'Credit Union Checking', subtype: null },
+          { account_id: 'manual_old', name: 'Savings jar' }, // saved before the choice existed
+          { account_id: 'manual_odd', name: 'Card', type: 'credit', subtype: 'cash' },
+        ]),
+        { name: 'Bank', item_id: 'item-1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [{ account_id: 'plaid_chk', name: 'Checking', type: 'depository', subtype: 'cash', balance: 0, currency: 'USD' }] },
+      ];
+      expect([...cashAccountIds(institutions)]).toEqual(['manual_wallet']);
+    });
+
+    test('debit spending entered on a manual checking account never cancels a bank’s withdrawals', () => {
+      // The reviewer's case: $200 a month withdrawn from a linked bank and
+      // spent in cash, never entered, and $1,500 a month of debit spending
+      // entered on a manual credit-union checking account (not cash on hand).
+      const day = (n: number) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+      const rows: Txn[] = [];
+      for (let m = 0; m < 12; m++) {
+        rows.push(txn({ date: day(m * 30 + 1), amount: 200, category: 'transfer out', subcategory: 'withdrawal' }));
+        rows.push(txn({ date: day(m * 30 + 2), amount: 1_500, source: 'manual', account_id: 'manual_cu' }));
+      }
+      const institutions: AssetInstitution[] = [
+        { name: 'Credit Union', item_id: null, error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [{ account_id: 'manual_cu', name: 'Credit Union Checking', type: 'depository', subtype: null, balance: 0, currency: 'USD' }] },
+      ];
+      const r = trailingFlows(rows, today, { cashAccounts: cashAccountIds(institutions) })!;
+      const days = r.days;
+      expect(r.cash).toBeCloseTo((12 * 200 * 365) / days, 6);
+      expect(r.cashEntered).toBe(0);
+      expect(r.spending).toBeCloseTo((12 * 1_700 * 365) / days, 6);
+      // Marked as cash on hand, the same rows would be the withdrawals' spending.
+      const marked = trailingFlows(rows, today, { cashAccounts: new Set(['manual_cu']) })!;
+      expect(marked.cash).toBe(0);
+      expect(marked.cashEnteredOn).toEqual(['manual_cu']);
     });
 
     test('only spending entered on a manual cash account is cash: a card Plaid can’t reach isn’t', () => {

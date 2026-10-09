@@ -37,8 +37,9 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
   const groups = new Map<string, Txn[]>();
   for (const t of txns) {
     if (t.amount <= 0 || t.pending || isExcluded(t)) continue;
-    // Loan payments intentionally still count (mortgage/car are classic bills);
-    // only money moved (transfers, ATM, a bank's charges) is left out.
+    // Loan payments intentionally still count (mortgage/car are classic bills),
+    // and so do a bank's fees (a monthly fee is a bill worth seeing); only money
+    // moved (transfers, cash taken out) is left out.
     if (isMoneyMovement(t)) continue;
     const key = `${t.institution_name}::${t.name.toLowerCase().trim()}::${currencyOf(t) ?? ''}`;
     const list = groups.get(key);

@@ -125,12 +125,14 @@ beforeEach(async () => {
 });
 
 /** Runs `meanwhile` once, just before the next run of the seam's script
- *  `name` reaches storage, as another device would; or, with `fail`, makes it
- *  fail, as a storage blip would. */
-function atNextScript(name: string, opts: { meanwhile?: () => Promise<unknown>; fail?: boolean }) {
+ *  `name` reaches storage (after `skip` runs of it), as another device would;
+ *  or, with `fail`, makes it fail, as a storage blip would. */
+function atNextScript(name: string, opts: { meanwhile?: () => Promise<unknown>; fail?: boolean; skip?: number }) {
   const original = fake.eval.bind(fake);
+  let skip = opts.skip ?? 0;
   (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
     if (script.split('\n', 1)[0] !== `-- nya:${name}`) return original(script, keys, args);
+    if (skip-- > 0) return original(script, keys, args);
     delete (fake as any).eval;
     if (opts.fail) throw new Error('storage blip');
     await opts.meanwhile?.();
@@ -299,7 +301,7 @@ describe('adding a transaction', () => {
       const first = await quietly(() => post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT }));
       expect(first.status).toBe(500);
       expect(first.body).toMatchObject({ saved: true, balance_updated: false, transaction: { transaction_id: id } });
-      expect(first.body.error).toBe("The transaction was saved, but Wallet's balance couldn't be updated. Update it from the account.");
+      expect(first.body.error).toBe("The transaction was saved, but Wallet's balance may not have been updated. Check it on the account.");
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(200);
       const retry = await post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT });
       expect(retry).toMatchObject({ status: 200, body: { added: false, balance_updated: true, balance: 187.5 } });
@@ -307,13 +309,84 @@ describe('adding a transaction', () => {
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(187.5);
     });
 
-    test('moved, but not yet noted when the answer was lost: sending it again moves it no further', async () => {
+    test('moved, but noting it on the row failed: the reply says what is true, and sending it again moves it no further', async () => {
+      await fake.set(ctxKey('history:backfill-done'), '9');
+      await writeCache(ctx, CacheKey.NetWorth, { institutions: [] });
       const id = newManualTxnId();
-      await addManualTxn(ctx, newManualTxn(WALLET.account_id, FIELDS, new Date(), id));
-      await setManualBalance(ctx, WALLET.account_id, 187.5);
-      expect((await post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT })).body).toMatchObject({ balance_updated: true, balance: 187.5 });
+      // The add's own write is the first of these; the note's is the second.
+      atNextScript('repo-update-entries', { fail: true, skip: 1 });
+      const first = await quietly(() => post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT }));
+      expect(first).toMatchObject({ status: 200, body: { added: true, balance_updated: true, balance: 187.5 } });
+      // As after any balance update: the estimate to rebuild, net worth's cache dropped.
+      expect(await fake.get(ctxKey('history:backfill-done'))).toBeNull();
+      expect(await readCache(ctx, CacheKey.NetWorth)).toBeNull();
+      expect((await findManualTxn(ctx, id))!.row.balance_update).toBeUndefined();
+      // The account's own record of the move answers the resend.
+      const again = await post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT });
+      expect(again.body).toMatchObject({ added: false, balance_updated: true, balance: 187.5 });
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(187.5);
       expect((await findManualTxn(ctx, id))!.row.balance_update).toEqual(SPENT);
+    });
+
+    test('two adds of the same amount at the same moment each move the balance once, or say they didn’t', async () => {
+      const a = newManualTxnId();
+      const b = newManualTxnId();
+      // B is checked and saved, then A lands whole, then B's move: B's form
+      // showed $200, the balance is A's $187.50, and only A moved it.
+      let first: { status: number; body: any } | null = null;
+      atNextScript('repo-update-entry', { meanwhile: async () => (first = await post({ id: a, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT })) });
+      const second = await post({ id: b, account_id: WALLET.account_id, ...FIELDS, name: 'Pharmacy', update_balance: SPENT });
+      expect(first!).toMatchObject({ status: 200, body: { balance_updated: true, balance: 187.5 } });
+      expect(second).toMatchObject({ status: 409, body: { saved: true, balance_updated: false } });
+      expect(second.body.error).toBe("The transaction was saved, but Wallet's balance changed meanwhile, so it wasn't updated. Check it on the account.");
+      expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(187.5);
+      expect((await findManualTxn(ctx, a))!.row.balance_update).toEqual(SPENT);
+      expect((await findManualTxn(ctx, b))!.row.balance_update).toBeUndefined();
+      // Sent again, B is still not A's move.
+      expect((await post({ id: b, account_id: WALLET.account_id, ...FIELDS, name: 'Pharmacy', update_balance: SPENT })).body.balance_updated).toBe(false);
+      expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(187.5);
+    });
+
+    test('sent again with a corrected amount after its answer was lost: refused with what was saved, the row and balance left as they agree', async () => {
+      const id = newManualTxnId();
+      await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 50, update_balance: { from: 200, to: 150 } });
+      const corrected = await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 55, update_balance: { from: 200, to: 145 } });
+      expect(corrected).toMatchObject({ status: 409, body: { saved: true, added: false, balance_updated: true, balance: 150, transaction: { amount: 50 } } });
+      expect(corrected.body.error).toBe(
+        "This transaction was saved already, for $50.00, and Wallet's balance moved to $150.00 with it, so nothing more was changed. To change the amount, edit the transaction, then update the balance from the account."
+      );
+      expect((await findManualTxn(ctx, id))!.row.amount).toBe(50);
+      expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(150);
+      // Unticked on the second try, the same: the balance moved with the first.
+      expect((await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 55 })).status).toBe(409);
+    });
+
+    test('saved by a send whose balance move failed, then sent again corrected: refused, the balance untouched', async () => {
+      const id = newManualTxnId();
+      atNextScript('repo-update-entry', { fail: true });
+      await quietly(() => post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 50, update_balance: { from: 200, to: 150 } }));
+      const corrected = await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 55, update_balance: { from: 200, to: 145 } });
+      expect(corrected).toMatchObject({ status: 409, body: { saved: true, balance_updated: false } });
+      expect(corrected.body.error).toBe(
+        "This transaction was saved already, for $50.00, so nothing more was changed and the balance wasn't updated. To change the amount, edit the transaction, then update the balance from the account."
+      );
+      expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(200);
+      // Without a balance in it, a corrected resend is the form's to fix with an edit.
+      const plain = newManualTxnId();
+      await post({ id: plain, account_id: WALLET.account_id, ...FIELDS, amount: 50 });
+      expect((await post({ id: plain, account_id: WALLET.account_id, ...FIELDS, amount: 55 })).body).toMatchObject({ added: false, transaction: { amount: 50 } });
+    });
+
+    test('sent again after the account’s type changed, its row saved by the first send: says it was saved, and leaves the balance', async () => {
+      const id = newManualTxnId();
+      atNextScript('repo-update-entry', { fail: true });
+      await quietly(() => post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT }));
+      await saveManualAccount(ctx, { ...WALLET, type: 'credit' });
+      const again = await post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT });
+      expect(again).toMatchObject({ status: 409, body: { saved: true, added: false, balance_updated: false, transaction: { transaction_id: id } } });
+      expect(again.body.error).toBe("The transaction was saved already, but Wallet changed since this form opened, so its balance wasn't updated. Check it on the account.");
+      expect(await manualTxnStore.count(ctx)).toBe(1);
+      expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(200);
     });
 
     test('a balance that changed since the form opened is never overwritten: nothing is saved, and the reply says what it is now', async () => {
@@ -500,6 +573,21 @@ describe('editing and deleting a transaction', () => {
     expect((await manualTxnStore.get(ctx, CARD.account_id))!.rows.map((r) => r.id)).toEqual([other.transaction_id]);
     expect(await txnAnnotationStore.has(ctx, other.transaction_id)).toBe(true);
     expect(await txnAnnotationStore.has(ctx, 'plaid_txn_1')).toBe(true);
+  });
+
+  test('a manual account can be marked as cash on hand, and back: depository with the subtype cash', async () => {
+    const { isCashOnHand, CASH_SUBTYPE } = await import('@/lib/balance');
+    const added = await call(manualAccounts.POST, 'POST', { name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: CASH_SUBTYPE, balance: 40 });
+    expect(added.status).toBe(200);
+    expect(added.body.account).toMatchObject({ type: 'depository', subtype: 'cash' });
+    expect(isCashOnHand(added.body.account)).toBe(true);
+    // An existing checking account is not cash until it says so, and can be told so.
+    expect(isCashOnHand(WALLET)).toBe(false);
+    const marked = await call(manualAccounts.PATCH, 'PATCH', { ...WALLET, subtype: CASH_SUBTYPE });
+    expect(isCashOnHand(marked.body.account)).toBe(true);
+    const back = await call(manualAccounts.PATCH, 'PATCH', { ...WALLET, subtype: null });
+    expect(isCashOnHand(back.body.account)).toBe(false);
+    expect(isCashOnHand({ type: 'credit', subtype: CASH_SUBTYPE })).toBe(false);
   });
 
   test('an add landing while the account is deleted is swept up after it', async () => {
