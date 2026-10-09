@@ -47,7 +47,7 @@ const hold = (account_id: string, ticker: string | null, value: number | null, o
 
 const institutions = [
   inst('Vanguard', [acct('brk', { name: 'Brokerage', balance: 100_000 }), acct('k', { name: '401(k)', subtype: '401k', balance: 50_000 })]),
-  inst('Manual accounts', [acct('manual_1', { name: 'Old pension', subtype: null, balance: 10_000 })]),
+  inst('Manual accounts', [acct('manual_1', { name: 'Old pension', subtype: null, balance: 10_000 })], { item_id: null }),
 ];
 const holdings = [
   hold('brk', 'VTI', 50_000),
@@ -65,12 +65,12 @@ describe('the allocation by class', () => {
     // 37.5% by the largest remainder, which gave the tie to bonds.
     expect(t).toContain('Unclassified $60,000 37%');
     expect(t).toContain('Unclassified: $60,000');
-    expect(t).toContain("VFIFX $50,000 Vanguard Target Retirement 2050 Fund. unclassified: a fund whose mix Nya doesn't know");
-    expect(t).toContain('Old pension $10,000 Old pension at Manual accounts lists no position Nya can value.');
+    expect(t).toContain("VFIFX $50,000 Vanguard Target Retirement 2050 Fund. Unclassified: a fund whose mix Nya doesn't know");
+    expect(t).toContain('Old pension $10,000 Old pension is an account you track by hand, with no positions to go by.');
     expect(t).toContain('Classify');
     // Every holding, and how it is classified.
     expect(t).toContain("VTI $50,000 100% US stocks, from Nya's list of index funds.");
-    expect(t).toContain('VMFXX $8,000 cash: a cash or money market position.');
+    expect(t).toContain('VMFXX $8,000 Cash: a cash or money market position.');
   });
 
   test('a split the person set classifies it, and says so', () => {
@@ -122,7 +122,7 @@ describe('the allocation by tax bucket', () => {
     expect(t).toContain('Unclassified $10,000');
     expect(t).toContain('Brokerage · Vanguard Taxable $100,000, from its type (brokerage).');
     expect(t).toContain('401(k) · Vanguard Roth $50,000, as you set it; its type says tax-deferred.');
-    expect(t).toContain("Old pension · Manual accounts Unclassified $10,000, unclassified: its institution didn't say what kind of account it is.");
+    expect(t).toContain('Old pension · Manual accounts Unclassified $10,000, unclassified: an account you track by hand has no type to go by.');
     expect(t).toContain('A 401(k) can hold Roth money');
   });
 

@@ -533,7 +533,9 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
               ? `as you set it${b.subtype !== 'unclassified' ? `; its type says ${BUCKET_NAMES[b.subtype].toLowerCase()}` : ''}`
               : b.from === 'subtype'
                 ? `from its type${a.subtype ? ` (${a.subtype})` : ''}`
-                : `unclassified: ${b.why ?? "Nya doesn't know this kind of account"}`;
+                : a.manual && !a.subtype
+                  ? 'unclassified: an account you track by hand has no type to go by'
+                  : `unclassified: ${b.why ?? "Nya doesn't know this kind of account"}`;
           return (
             <Row
               key={a.account_id}
@@ -1106,7 +1108,7 @@ export function AllocationHistoryChart({ days, currency, accountNames }: { days:
   const missing = day.missing.map((id) => accountNames.get(id) ?? 'an account no longer shown');
   return (
     <div>
-      <div className="chart-readout chart-readout-stable">
+      <div className="chart-readout chart-readout-stable alloc-readout">
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
           {dayName(day.date)} · {wholeMoney(day.total, currency)} in positions

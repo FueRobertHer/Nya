@@ -51,7 +51,8 @@ export function names(list: string[]): string {
   return `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}`;
 }
 
-/** Why a security is where it is, in a few words, for its row. */
+/** Why a security is where it is, as a sentence without its full stop, for
+ *  its row. */
 export function classifiedText(k: Classified): string {
   if (k.split) {
     const what = splitText(k.split);
@@ -59,7 +60,7 @@ export function classifiedText(k: Classified): string {
       case 'yours':
         return `${what}, as you set it`;
       case 'cash':
-        return 'cash: a cash or money market position';
+        return 'Cash: a cash or money market position';
       case 'list':
         return `${what}, from Nya's list of index funds`;
       case 'type':
@@ -68,11 +69,11 @@ export function classifiedText(k: Classified): string {
   }
   switch (k.why) {
     case 'fund':
-      return "unclassified: a fund whose mix Nya doesn't know (a target-date or balanced fund, say)";
+      return "Unclassified: a fund whose mix Nya doesn't know (a target-date or balanced fund, say)";
     case 'unknown':
-      return "unclassified: Plaid doesn't say what kind of security it is";
+      return "Unclassified: Plaid doesn't say what kind of security it is";
     case 'bad-split':
-      return "unclassified: the split saved for it doesn't add up to 100%";
+      return "Unclassified: the split saved for it doesn't add up to 100%";
   }
 }
 
@@ -82,7 +83,9 @@ export function gapText(g: AccountGap, fmtDay: (day: string, at: string | null) 
   const classified = g.split ? `, classified as you set it: ${splitText(g.split)}` : '';
   switch (g.kind) {
     case 'no-positions':
-      return `${where} lists no position Nya can value${classified}`;
+      return g.manual
+        ? `${g.account} is an account you track by hand, with no positions to go by${classified}`
+        : `${where} lists no position Nya can value${classified}`;
     case 'not-in-position':
       return `${where}: part of its balance isn't in any position it lists (often cash)${classified}`;
     case 'unreachable':

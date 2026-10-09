@@ -72,6 +72,10 @@ export type AllocAccount = {
  *  (lib/fire/inputs.ts AssetInstitution). */
 export type AllocInstitution = {
   name: string;
+  /** Null for the manual accounts' grouping, as the dashboard passes it
+   *  (lib/fire/inputs.ts AssetInstitution): they have no positions or type
+   *  to go by, which their notes say. */
+  item_id?: string | null;
   error: boolean;
   staleAsOf: string | null;
   staleAsOfAt?: string | null;
@@ -127,6 +131,8 @@ export type AccountGap = {
   /** The person's split for it, which classifies it; null leaves it
    *  unclassified. Never set for "unreachable". */
   split: Split | null;
+  /** An account the person tracks by hand. */
+  manual: boolean;
 };
 
 export type AccountRow = {
@@ -144,6 +150,8 @@ export type AccountRow = {
    *  the day it is from, and the moment, when known. */
   staleAsOf: string | null;
   staleAsOfAt: string | null;
+  /** An account the person tracks by hand. */
+  manual: boolean;
 };
 
 /** Why the allocation may be short. */
@@ -236,6 +244,7 @@ export function allocate(input: {
         otherCurrency: null,
         staleAsOf: inst.error ? inst.staleAsOf : null,
         staleAsOfAt: inst.error ? (inst.staleAsOfAt ?? null) : null,
+        manual: inst.item_id === null,
       };
       accounts.push(row);
       const positions = held.get(a.account_id) ?? [];
@@ -263,6 +272,7 @@ export function allocate(input: {
           asOf: kind === 'unreachable' ? inst.staleAsOf : null,
           asOfAt: kind === 'unreachable' ? (inst.staleAsOfAt ?? null) : null,
           split,
+          manual: inst.item_id === null,
         });
       };
 

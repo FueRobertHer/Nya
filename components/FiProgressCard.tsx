@@ -144,11 +144,11 @@ export function FiProgressView({
           {saved ? 'Your plan' : 'Set up your plan'}
         </button>
       </div>
-      <div className="plan-stats fi-stats">
-        <div className="plan-stat">
-          <span className="plan-stat-value">{money(view.fiNumber)}</span>
-          <span className="plan-stat-label">FI number</span>
-        </div>
+      <div className="fi-lead">
+        <span className="fi-lead-value">{money(view.fiNumber)}</span>
+        <span className="plan-stat-label">FI number</span>
+      </div>
+      <div className="fi-stats">
         <div className="plan-stat">
           <span className="plan-stat-value">{yearsToFiText(view.yearsToFi)}</span>
           <span className="plan-stat-label">to FI</span>

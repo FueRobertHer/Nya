@@ -102,7 +102,7 @@ describe('the allocation', () => {
     const a = allocate({ institutions: [inst('Schwab', [acct('s', { name: 'Schwab', balance: 10_500 })])], holdings: [hold('s', 'VTI', 10_000)], settings: null, currency: 'USD' });
     expect(a.classes.cash).toBe(0);
     expect(a.classes.unclassified).toBe(500);
-    expect(a.gaps).toEqual([{ kind: 'not-in-position', account_id: 's', account: 'Schwab', institution: 'Schwab', amount: 500, asOf: null, asOfAt: null, split: null }]);
+    expect(a.gaps).toEqual([{ kind: 'not-in-position', account_id: 's', account: 'Schwab', institution: 'Schwab', amount: 500, asOf: null, asOfAt: null, split: null, manual: false }]);
     expect(a.total).toBe(10_500);
     expect(a.buckets.taxable).toBe(10_500);
   });
@@ -164,10 +164,11 @@ describe('the allocation', () => {
   });
 
   test('an account with no positions is unclassified whole, unless the person split it', () => {
-    const manual = inst('Manual accounts', [acct('manual_1', { name: '401(k) at work', subtype: null, balance: 40_000 })]);
+    const manual = inst('Manual accounts', [acct('manual_1', { name: '401(k) at work', subtype: null, balance: 40_000 })], { item_id: null });
     const a = allocate({ institutions: [manual], holdings: [], settings: null, currency: 'USD' });
     expect(a.classes.unclassified).toBe(40_000);
-    expect(a.gaps[0]).toMatchObject({ kind: 'no-positions', account: '401(k) at work', amount: 40_000, split: null });
+    expect(a.gaps[0]).toMatchObject({ kind: 'no-positions', account: '401(k) at work', amount: 40_000, split: null, manual: true });
+    expect(a.accounts[0].manual).toBe(true);
     expect(a.buckets.unclassified).toBe(40_000);
     const split = allocate({ institutions: [manual], holdings: [], settings: settings({ accounts: [{ account_id: 'manual_1', split: { 'us-stocks': 80, bonds: 20 } }] }), currency: 'USD' });
     expect(split.classes).toMatchObject({ 'us-stocks': 32_000, bonds: 8_000, unclassified: 0 });
