@@ -274,6 +274,12 @@ th.num {
   margin-bottom: 0;
 }
 
+/* The brand and its line take the room the buttons leave, down to the
+   brand's own width, so the buttons keep theirs for as long as they can. */
+.top-row > :first-child {
+  flex: 1 1 0;
+}
+
 .top-row h1 {
   margin-bottom: 4px;
 }
@@ -471,7 +477,11 @@ button:disabled {
 .top-actions {
   display: flex;
   gap: 8px;
-  flex-shrink: 0;
+  /* Password mode's three buttons don't fit beside the brand on a phone:
+     they wrap onto a second line, at the right, rather than push the page
+     wider than the screen. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .icon-btn {

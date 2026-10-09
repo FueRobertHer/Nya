@@ -1620,12 +1620,15 @@ export default function Dashboard({
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
+                  incomplete={txnIncomplete}
+                  stopped={stoppedTxns}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
                       .map((a) => ({
                         name: a.name,
                         type: a.type,
+                        subtype: a.subtype,
                         balance: a.balance,
                         currency: a.currency,
                         liability: a.liability,

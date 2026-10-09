@@ -22,6 +22,7 @@ import {
 } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
+import { classifyFailure, CAUSES } from '@/lib/connection-state';
 
 // Reconstructs up to a year of ESTIMATED history from transaction data, the same
 // trick Monarch/Copilot use. Plaid has no historical balances, but it has
@@ -86,6 +87,47 @@ async function settleDoneFlag(ctx: Ctx, invPending: boolean): Promise<boolean> {
   return false;
 }
 
+/**
+ * A balance read that failed for a reason that is not Nya's own (see
+ * balancesFailure). Every estimate starts from every institution's balance
+ * today, so the run stops, saves nothing and is not marked done. `waiting`:
+ * Plaid gave no answer, or Plaid or the bank is failing for now, which a later
+ * load tries again: answered 503, in words that name the institution for the
+ * person (the log gets only the call's code and endpoint, loggable).
+ * Otherwise the person has to act on the connection first (reconnect it, or
+ * remove it), which no retry fixes: the run is skipped, as it is when the
+ * transactions read finds a connection in that state.
+ */
+class BalancesUnavailable extends Error {
+  constructor(
+    message: string,
+    readonly waiting: boolean,
+    readonly cause: unknown
+  ) {
+    super(message);
+    this.name = 'BalancesUnavailable';
+  }
+}
+
+/** A failed balance call, by the mapping the dashboard uses
+ *  (lib/connection-state.ts): BalancesUnavailable, or the error itself when
+ *  the fault is on Nya's side (its Plaid keys or settings, or a stored token
+ *  Plaid doesn't accept), which neither a retry nor the person can fix, for
+ *  the route's logged 500. */
+function balancesFailure(institution: string, err: any): unknown {
+  const data = err?.response?.data;
+  const { cause, side, code } = classifyFailure({ code: data?.error_code, type: data?.error_type, responded: err?.response !== undefined });
+  if (side === 'nya') return err;
+  const named = code ? ` (${code})` : '';
+  // What the health view waits out is waited out here too; the rest is the
+  // person's to act on.
+  if (CAUSES[cause].action !== 'wait') {
+    return new BalancesUnavailable(`${institution} needs attention${named} before estimated history can be built`, false, err);
+  }
+  const why = cause === 'unreachable' ? `Plaid couldn't be reached for ${institution}'s balances` : `Plaid couldn't give ${institution}'s balances${named}`;
+  return new BalancesUnavailable(`${why}, so no estimated history was saved. It is tried again on a later load.`, true, err);
+}
+
 export async function POST() {
   try {
     const ctx = await dataCtx();
@@ -104,11 +146,17 @@ export async function POST() {
     // the Promise.all and aborts in the catch without marking done; a transaction
     // read that isn't clean comes back as a `note` (handled below). Either way a
     // partial reconstruction is never persisted, and the next attempt retries.
+    // A balance read Plaid didn't answer says why (balancesFailure).
     const perItem = await Promise.all(
       items.map(async (item) => {
         const access_token = await decrypt(item.encrypted_access_token);
         // Stored balances, not the billed live balance call: see lib/networth.ts.
-        const bal = await plaidClient.accountsGet({ access_token });
+        let bal: Awaited<ReturnType<typeof plaidClient.accountsGet>>;
+        try {
+          bal = await plaidClient.accountsGet({ access_token });
+        } catch (err) {
+          throw balancesFailure(item.institution_name, err);
+        }
         // The accounts just fetched decide whether an Item Plaid doesn't bill
         // Transactions on is worth a first call (lib/item-products.ts).
         const { txns, note, hasTransactions } = await readItemTransactions(ctx, item, LOOKBACK_DAYS, bal.data.accounts);
@@ -337,6 +385,13 @@ export async function POST() {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
+    if (err instanceof BalancesUnavailable) {
+      // A connection the person has to act on first: skipped, as a
+      // transaction read in that state is (above).
+      if (!err.waiting) return NextResponse.json({ skipped: true, reason: 'institutions not ready' });
+      console.error('Backfill stopped: an institution\'s balances did not come from Plaid', loggable(err.cause));
+      return NextResponse.json({ error: err.message }, { status: 503 });
+    }
     console.error(loggable(err));
     return NextResponse.json({ error: 'Backfill failed' }, { status: 500 });
   }

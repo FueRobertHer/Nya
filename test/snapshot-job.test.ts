@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { FakeRedis, storageMock, unscopedDataKeys } from './fake-redis';
+import { startRedis, type RealRedis } from './real-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -424,24 +425,21 @@ describe('a run where nothing was snapshotted', () => {
 
 const hasRedis = Bun.which('redis-server') !== null;
 describe.skipIf(!hasRedis && !process.env.CI)('the lock release script, on a real Redis', () => {
-  const port = 30000 + Math.floor(Math.random() * 20000);
-  let server: ReturnType<typeof Bun.spawn> | null = null;
-  let client: InstanceType<typeof Bun.RedisClient>;
+  // Started by test/real-redis.ts, before the test rather than inside it: it
+  // tries another port when one is taken and bounds every wait, so a server
+  // that won't start fails here rather than hanging the test.
+  let real: RealRedis | null = null;
+  beforeEach(async () => {
+    real ??= await startRedis();
+    await real.client.send('FLUSHALL', []);
+  });
   afterAll(() => {
-    server?.kill();
+    real?.stop();
+    real = null;
   });
 
   test("deletes the lock only while it holds the caller's token", async () => {
-    server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
-    client = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
-    for (let i = 0; i < 50; i++) {
-      try {
-        await client.send('PING', []);
-        break;
-      } catch {
-        await Bun.sleep(50);
-      }
-    }
+    const client = real!.client;
     const release = (token: string) => client.send('EVAL', [RELEASE_LOCK, '1', 'lock', token]);
     await client.send('SET', ['lock', 'mine']);
     expect(await release('theirs')).toBe(0);
