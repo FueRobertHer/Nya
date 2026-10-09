@@ -17,6 +17,8 @@ import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
+import ConnectButtons from './ConnectButtons';
+import type { LinkKind } from '@/lib/item-products';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
@@ -391,8 +393,11 @@ export default function Dashboard({
   // Whether Link is on screen: a late SELECT_INSTITUTION must not redirect a
   // Link that already closed.
   const linkOpenRef = useRef(false);
-  // Set when a new connection was stopped at an institution already connected.
-  const [redirect, setRedirect] = useState<{ name: string; items: Institution[] } | null>(null);
+  // Which way the new connection in progress was started (components/ConnectButtons.tsx).
+  const connectKindRef = useRef<LinkKind>('bank');
+  // Set when a new connection was stopped at an institution already connected,
+  // with the way it was started, for connecting it separately after all.
+  const [redirect, setRedirect] = useState<{ name: string; items: Institution[]; kind: LinkKind } | null>(null);
   const shownRedirect = useLast(redirect);
   const [connected, setConnected] = useState(false);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
@@ -681,14 +686,20 @@ export default function Dashboard({
     [loadTransactions]
   );
 
-  // `bypass` skips both duplicate checks for this run: the user has said the
-  // institution they already have is a different login.
-  const beginConnect = useCallback(async (bypass: boolean) => {
+  // `kind` is which way to connect (app/api/create-link-token). `bypass` skips
+  // both duplicate checks for this run: the user has said the institution they
+  // already have is a different login.
+  const beginConnect = useCallback(async (kind: LinkKind, bypass: boolean) => {
     setError('');
     setConnecting(true);
     bypassDuplicateRef.current = bypass;
     redirectingRef.current = false;
-    const res = await fetch('/api/create-link-token', { method: 'POST' });
+    connectKindRef.current = kind;
+    const res = await fetch('/api/create-link-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind }),
+    });
     const data = await res.json();
     setConnecting(false);
     if (data.link_token) {
@@ -698,9 +709,7 @@ export default function Dashboard({
       setError('Could not start connection.');
     }
   }, []);
-  // A wrapper, not beginConnect itself, since onClick would pass its event as
-  // `bypass`.
-  const startConnect = useCallback(() => beginConnect(false), [beginConnect]);
+  const startConnect = useCallback((kind: LinkKind) => beginConnect(kind, false), [beginConnect]);
 
   // Link's account picker on an existing Item, to add (or remove) accounts at an
   // institution already connected without creating a second Item.
@@ -1004,7 +1013,7 @@ export default function Dashboard({
       });
       if (items.length === 0) return;
       redirectingRef.current = true;
-      setRedirect({ name: metadata.institution_name || items[0].institution_name, items });
+      setRedirect({ name: metadata.institution_name || items[0].institution_name, items, kind: connectKindRef.current });
       exitLinkRef.current({ force: true });
     },
     [linkMode, institutions]
@@ -1365,9 +1374,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <button onClick={startConnect} disabled={connecting}>
-                {connecting ? 'Starting…' : 'Connect an account'}
-              </button>
+              <ConnectButtons connecting={connecting} onConnect={startConnect} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1501,9 +1508,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <button onClick={startConnect} disabled={connecting}>
-                    {connecting ? 'Starting…' : 'Connect an account'}
-                  </button>
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -2332,7 +2337,7 @@ export default function Dashboard({
                 disabled={connecting}
                 onClick={() => {
                   setRedirect(null);
-                  beginConnect(true);
+                  beginConnect(shownRedirect.kind, true);
                 }}
               >
                 It&apos;s a different login

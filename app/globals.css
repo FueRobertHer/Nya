@@ -2626,3 +2626,16 @@ button.plan-edit:disabled {
   font-size: 13px;
   margin-bottom: 6px;
 }
+
+/* --- link coverage: the two ways to connect (components/ConnectButtons.tsx) --- */
+
+/* More room between the two choices than between a button and its own line,
+   so each line reads as belonging to the button above it, and the coverage
+   statement after them as being about both. */
+.connect-options {
+  gap: 14px;
+}
+
+.connect-options + .coverage-note {
+  margin-top: 14px;
+}

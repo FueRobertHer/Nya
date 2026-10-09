@@ -385,15 +385,18 @@ describe('getting to them', () => {
 
   // Read from the source: rendering these needs Clerk and the router, which
   // other test files mock process-wide in their own ways.
-  test('the login and sign-in pages show both, and every Connect an account button the coverage statement', () => {
+  test('the login and sign-in pages show both, and every place to connect an account the coverage statement', () => {
     for (const page of ['app/login/page.tsx', 'app/sign-in/[[...sign-in]]/page.tsx']) {
       expect(source(page)).toContain('<CoverageNote />');
       expect(source(page)).toContain('<TrustLinks />');
     }
+    // Both ways to connect (components/ConnectButtons.tsx), on the empty
+    // state and on the Accounts tab, with the statement right after them.
     const dashboard = source('components/Dashboard.tsx');
-    const buttons = dashboard.split("{connecting ? 'Starting…' : 'Connect an account'}").slice(1);
-    expect(buttons.length).toBeGreaterThan(0);
-    for (const after of buttons) expect(after.slice(0, 200)).toMatch(/^\s*<\/button>\s*<CoverageNote \/>/);
+    const entries = dashboard.split('<ConnectButtons ').slice(1);
+    expect(entries.length).toBe(2);
+    for (const after of entries) expect(after.slice(0, 200)).toMatch(/^[^>]*\/>\s*<CoverageNote \/>/);
+    expect(dashboard).not.toContain("'Connect an account'");
     expect(dashboard).toContain('<TrustLinks />');
   });
 });
