@@ -17,6 +17,7 @@
 // One line per declaring module, in alphabetical order, like:
 //   import './rules';
 
+import './allocation-settings';
 import './connection-records';
 import './fire-plan';
 import './holdings-history';

@@ -49,28 +49,22 @@ import {
   yearsText,
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { instantDay, localDate } from '@/lib/local-date';
+import { instantDay } from '@/lib/local-date';
 import {
   investedAssets,
-  isWorkplacePlan,
-  trailingFlows,
-  transfersOut,
-  unreadTransactions,
-  workplaceSavings,
   type AssetCaveat,
   type AssetInstitution,
   type InvestedAssets,
-  type Payment,
-  type PlanContributions,
   type TrailingFlows,
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
+import { fiFigures, measuredInputs } from '@/lib/fire/progress';
+import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import {
   allocationOf,
   DEFAULT_PLAN,
   enginePlan,
-  fiView,
   formulasTake,
   isFirePlan,
   repairPlan,
@@ -183,63 +177,6 @@ export function assetCaveatLines(caveats: AssetCaveat[]): string[] {
   return lines;
 }
 
-/** The workplace plans whose contributions are measured: linked (not manual)
- *  and not hidden. */
-function workplacePlansOf(institutions: AssetInstitution[]) {
-  return institutions.flatMap((i) =>
-    i.item_id
-      ? i.accounts
-          .filter((a) => !a.hidden && isWorkplacePlan(a.subtype))
-          .map((a) => ({ item_id: i.item_id as string, account_id: a.account_id, name: a.name, institution: i.name }))
-      : []
-  );
-}
-
-/** One workplace plan contributions request per account, as the Accounts tab
- *  makes when an account is opened. Null until every answer is in. */
-function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContributions[] | null {
-  const plans = workplacePlansOf(institutions);
-  const key = plans.map((p) => `${p.item_id}:${p.account_id}`).join(',');
-  const plansRef = useRef(plans);
-  plansRef.current = plans;
-  const [state, setState] = useState<{ key: string; plans: PlanContributions[] } | null>(null);
-  useEffect(() => {
-    const wanted = plansRef.current;
-    let live = true;
-    Promise.all(
-      wanted.map(async (p): Promise<PlanContributions> => {
-        const base = { account_id: p.account_id, name: p.name, institution: p.institution };
-        const none = { ...base, amount: null, from: null, partial: false, rows: [], activityFrom: null, note: null };
-        try {
-          const res = await fetch(`/api/investment-activity?id=${encodeURIComponent(p.account_id)}&item_id=${encodeURIComponent(p.item_id)}`);
-          if (!res.ok) return none;
-          const data = await res.json();
-          const rows: unknown = data?.contributions_12m_rows;
-          return {
-            ...base,
-            amount: typeof data?.contributions_12m === 'number' ? data.contributions_12m : null,
-            from: typeof data?.contributions_12m_from === 'string' ? data.contributions_12m_from : null,
-            partial: data?.contributions_12m_partial === true,
-            rows: Array.isArray(rows)
-              ? rows.filter((r): r is Payment => typeof r?.date === 'string' && typeof r?.amount === 'number' && Number.isFinite(r.amount))
-              : [],
-            activityFrom: typeof data?.contributions_12m_activity_from === 'string' ? data.contributions_12m_activity_from : null,
-            note: typeof data?.note === 'string' ? data.note : null,
-          };
-        } catch {
-          return none;
-        }
-      })
-    ).then((answers) => {
-      if (live) setState({ key, plans: answers });
-    });
-    return () => {
-      live = false;
-    };
-  }, [key]);
-  return state && state.key === key ? state.plans : null;
-}
-
 export type PlanTabProps = {
   /** The dashboard's transactions, null until they load. */
   txns: Txn[] | null;
@@ -288,36 +225,17 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   const repairing = repair.fixed.length > 0;
   const editable = state.status === 'ready' && !state.saving && !repairing;
 
-  // What Nya measures, and what may be missing from it. "Today" is the
-  // viewer's calendar day.
-  const today = localDate();
-  const flows = useMemo(() => (txns ? trailingFlows(txns, today) : null), [txns, today]);
-  const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
-  const assets = useMemo(() => investedAssets(institutions, plan.includeCash), [institutions, plan.includeCash]);
-  const contributions = useWorkplaceContributions(institutions);
-  // Payments out of the bank that may have paid for a contribution, so it
-  // isn't counted twice (lib/fire/inputs.ts workplaceSavings).
-  const bankOut = useMemo(() => (txns ? transfersOut(txns, today) : []), [txns, today]);
-  const workplace = useMemo(
-    () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, funding: plan.planFunding }) : null),
-    [contributions, bankOut, plan.planFunding]
-  );
-  const view = fiView(plan, {
-    spending: flows?.spending ?? null,
-    savings: flows ? flows.savings + (workplace?.total ?? 0) : null,
-    assets: assets.total,
-  });
+  // What Nya measures, and what may be missing from it, by the same hook and
+  // arithmetic as the FI card on Home (components/plan-inputs.ts,
+  // lib/fire/progress.ts), so the two always agree.
+  const inputs = usePlanInputs({ txns, txnNotes, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
+  const { flows, unread, assets, contributions, workplace } = inputs;
+  const figures = fiFigures(plan, inputs, currency);
+  const view = figures.view;
   // Plan amounts are in the accounts' own currency, or the transactions'.
-  const displayCurrency = assets.currency ?? flows?.currency ?? currency;
+  const displayCurrency = figures.currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
-  // Nothing is converted between currencies in this app: investments in one
-  // and spending in another can't be compared, nor added up within either.
-  const currencyNote =
-    assets.currency && flows?.currency && assets.currency !== flows.currency
-      ? `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Nya doesn't convert currencies, so the FI number and your assets can't be compared.`
-      : assets.mixedCurrency || flows?.mixedCurrency
-        ? "Your accounts use more than one currency; amounts are added without converting them."
-        : null;
+  const currencyNote = figures.currencyNote;
 
   const engine = enginePlan(plan, view);
   const sim = 'sim' in engine ? engine.sim : null;
@@ -557,15 +475,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
             {...formProps}
             kind={shownSheet.figure}
             currency={displayCurrency}
-            measured={
-              shownSheet.figure === 'assets'
-                ? assets.total
-                : shownSheet.figure === 'spending'
-                  ? (flows?.spending ?? null)
-                  : flows
-                    ? flows.savings + (workplace?.total ?? 0)
-                    : null
-            }
+            measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
             assetsFor={(includeCash) => investedAssets(institutions, includeCash)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}

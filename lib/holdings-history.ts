@@ -888,25 +888,42 @@ function spanOf(index: HoldingsIndex | null, place: ReturnType<typeof placer>): 
   return { first: first?.day ?? null, last: last?.day ?? null, first_at: first?.at ?? null, last_at: last?.at ?? null };
 }
 
+/** The days the index notes for each account a view keeps, under the id it
+ *  is known by now: an account recorded under several ids (linked) spans
+ *  from the first of them to the last. */
+function accountSpansOf(index: HoldingsIndex | null, place: ReturnType<typeof placer>): Map<string, { first: string; last: string }> {
+  const out = new Map<string, { first: string; last: string }>();
+  for (const [recordedAs, s] of Object.entries(index?.accounts ?? {})) {
+    const placed = place(recordedAs);
+    if (!placed) continue;
+    const prev = out.get(placed.account);
+    out.set(placed.account, prev ? { first: s.first < prev.first ? s.first : prev.first, last: s.last > prev.last ? s.last : prev.last } : { first: s.first, last: s.last });
+  }
+  return out;
+}
+
 /**
  * STRICT. When anything (or the account asked for, following its links) was
  * recorded, and, given a range of UTC dates, every day recorded within it
  * (inclusive), oldest first, with each account's positions under the id it is
- * known by now. The index is read once for both, so they agree. Nothing
- * recorded is an empty answer; anything stored that cannot be used throws
- * (UnreadableEntriesError naming the entries, or the deployment's own error),
- * and never reads as empty.
+ * known by now. `accounts` is when each account the view keeps was recorded,
+ * first and last day, so a reader can tell a day an account wasn't recorded
+ * on from one before or after it was. The index is read once for all of it,
+ * so they agree. Nothing recorded is an empty answer; anything stored that
+ * cannot be used throws (UnreadableEntriesError naming the entries, or the
+ * deployment's own error), and never reads as empty.
  */
 export async function readHoldingsHistory(
   ctx: Ctx,
   range: { from: string; to: string } | null,
   opts: ReadOptions = {}
-): Promise<{ span: HoldingsSpan; days: HoldingsDay[] }> {
+): Promise<{ span: HoldingsSpan; accounts: Map<string, { first: string; last: string }>; days: HoldingsDay[] }> {
   if (range && (!DAY.test(range.from) || !DAY.test(range.to))) throw new TypeError('holdings-history: from and to are YYYY-MM-DD dates');
   const index = await indexStore.get(ctx, INDEX_ID);
   const place = placer(opts);
   const span = spanOf(index, place);
-  if (!range || !index || range.from > range.to) return { span, days: [] };
+  const accounts = accountSpansOf(index, place);
+  if (!range || !index || range.from > range.to) return { span, accounts, days: [] };
   const { from, to } = range;
   const months = Object.keys(index.months)
     .filter((m) => m >= from.slice(0, 7) && m <= to.slice(0, 7))
@@ -928,7 +945,7 @@ export async function readHoldingsHistory(
     }
     days.push(...viewOf(value, from, to, place));
   }
-  return { span, days };
+  return { span, accounts, days };
 }
 
 /** STRICT. Every day recorded within [from, to], as readHoldingsHistory. */
