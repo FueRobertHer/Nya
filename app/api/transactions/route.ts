@@ -4,7 +4,8 @@ import { getItems } from '@/lib/storage';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
-import { syncItemTransactions, LOOKBACK_DAYS, type Txn } from '@/lib/transactions';
+import { syncItemTransactions, LOOKBACK_DAYS, type OlderTxn, type Txn } from '@/lib/transactions';
+import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from '@/lib/recurring';
 import type { WithoutTransactions } from '@/lib/no-transactions';
 import { getEffectiveHidden, type Link } from '@/lib/links';
 import { getHiddenAccounts } from '@/lib/hidden';
@@ -23,6 +24,12 @@ import { loggable } from '@/lib/log-safe';
 // editing one or excluding one never drops the cache or waits on Plaid, a row
 // added while a load was running can't be cached away, and a record that
 // can't be read is only marked on its row, never a reason to stop caching.
+//
+// BEFORE THE YEAR. A yearly charge is seen twice only in two years, so the
+// rows from before the lookback that recurring detection can use go beside
+// the year's, as `recurring_history` (lib/recurring.ts olderRowsForDetection):
+// compact, from merchants that charged this year too and rarely enough to need
+// it, with the same categories, renames and exclusions. Nothing else reads them.
 
 /** What is cached: Plaid's rows as assembled. `plaid_only` tells it from the
  *  payload cached before, which held the manual rows too and must not be
@@ -44,6 +51,9 @@ type PlaidPayload = {
   // figure that looks complete (lib/no-transactions.ts).
   without_transactions?: WithoutTransactions[];
   connections?: number;
+  // Plaid's rows from before the lookback that recurring detection can use
+  // (see BEFORE THE YEAR). Absent on a payload cached before it was sent.
+  older?: OlderTxn[];
   as_of: string;
 };
 
@@ -113,7 +123,8 @@ async function assemblePlaid(ctx: Ctx): Promise<{ payload: PlaidPayload; hidden:
   // Manual overrides win over Plaid's data: recategorization by transaction,
   // vendor rename by vendor key (so it covers every row from that merchant).
   const transactions = results.flatMap((r) => r.txns);
-  for (const t of transactions) {
+  const older = results.flatMap((r) => r.older);
+  for (const t of [...transactions, ...older]) {
     const manual = overrides[t.transaction_id];
     if (manual) t.category = manual;
     const renamed = renames[t.vendor_key];
@@ -138,6 +149,7 @@ async function assemblePlaid(ctx: Ctx): Promise<{ payload: PlaidPayload; hidden:
       incomplete,
       without_transactions,
       connections: items.length,
+      older: olderRowsForDetection(transactions, older),
       as_of: new Date().toISOString(),
     },
     hidden: hiddenIds,
@@ -171,26 +183,46 @@ export async function GET(req: Request) {
     }
 
     const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+    const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
     const [manual, exclusions] = await Promise.all([
       // Transactions on manual accounts (lib/manual-txns.ts): an account whose
       // rows can't be read gets a note, like an institution that failed.
       // Their category and payee are their own, changed by editing the row
       // (app/api/recategorize does that for a manual row), so no override or
-      // rename applies.
-      readManualTxnsForDisplay(ctx, { hidden, cutoff }),
+      // rename applies. Read back to `since`, for the history below.
+      readManualTxnsForDisplay(ctx, { hidden, cutoff: since }),
       readExclusions(ctx),
     ]);
 
     // Manual rows come in newest entered first, so within a day without times
     // they follow Plaid's in that order.
-    const transactions = [...plaid.transactions, ...manual.txns].sort(newestFirst);
+    const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);
+    const history: OlderTxn[] = [
+      ...(plaid.older ?? []),
+      ...olderRowsForDetection(
+        transactions,
+        manual.txns.filter((t) => t.date < cutoff && !t.pending).map((t) => ({
+          transaction_id: t.transaction_id,
+          date: t.date,
+          name: t.name,
+          amount: t.amount,
+          institution_name: t.institution_name,
+          category: t.category,
+          iso_currency_code: t.iso_currency_code,
+          unofficial_currency_code: t.unofficial_currency_code ?? null,
+          transaction_code: t.transaction_code,
+          vendor_key: t.vendor_key,
+          logo_url: t.logo_url,
+        }))
+      ),
+    ];
 
     // Left out of budgets and reports (lib/spending.ts), still listed: what the
     // person said on the row itself, else an exclusion carried across a
     // re-link (already on the row). A row whose record couldn't be read is
     // marked as not known: it counts, and the Activity tab says a total may
     // include one the person excluded.
-    for (const t of transactions) {
+    for (const t of [...transactions, ...history]) {
       const own = exclusions.records.get(t.transaction_id);
       if (own === true) t.excluded = true;
       else if (own === false) delete t.excluded;
@@ -210,6 +242,7 @@ export async function GET(req: Request) {
       incomplete,
       without_transactions: plaid.without_transactions ?? [],
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
+      recurring_history: history,
       as_of: plaid.as_of,
       from_cache: fromCache,
     });

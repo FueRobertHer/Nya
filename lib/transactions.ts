@@ -44,6 +44,7 @@ import {
   type Refusal,
 } from './item-products';
 import { rememberedKindsForItem } from './last-known';
+import { RECURRING_LOOKBACK_DAYS } from './recurring';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -95,6 +96,26 @@ export type Txn = {
   note?: string | null; // a manual row's note
   excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
 };
+
+/** A row from before the lookback, sent only for recurring detection, which
+ *  needs two years to see a yearly charge twice (lib/recurring.ts
+ *  olderRowsForDetection): what detection reads, and what /api/transactions
+ *  needs to apply a category, a rename and an exclusion to it. Always posted. */
+export type OlderTxn = Pick<
+  Txn,
+  | 'transaction_id'
+  | 'date'
+  | 'name'
+  | 'amount'
+  | 'institution_name'
+  | 'category'
+  | 'iso_currency_code'
+  | 'unofficial_currency_code'
+  | 'transaction_code'
+  | 'vendor_key'
+  | 'logo_url'
+  | 'excluded'
+>;
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.
 // Adding a field later would cost a full re-sync (see TXN_SCHEMA_VERSION), and
@@ -963,13 +984,13 @@ export async function syncItemTransactions(ctx: Ctx,
    *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
    *  same reason; what the person says on the row itself still wins. */
   carriedExclusionsIn?: Set<string> | Promise<Set<string>>
-): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
   // missing from this load on its account, so it is never named as
   // incomplete. Why it has none goes back beside the rows: the views that
   // count spending say so, and a refused bank account leaves spending unknown.
-  if (!state) return noTransactions ? { txns: [], note, coverage: 'complete', noTransactions } : { txns: [], note, coverage: 'missing' };
+  if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
   const carried = await carriedIn;
   const carriedExclusions = await carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
@@ -1012,7 +1033,27 @@ export async function syncItemTransactions(ctx: Ctx,
       payment_reference: t.payment_meta?.reference_number ?? null,
       ...(carriedExclusions?.size && !t.pending && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
     }));
-  return { txns, note, coverage: importing ? 'importing' : 'complete' };
+  // Before the lookback, back to RECURRING_LOOKBACK_DAYS: posted rows of the
+  // accounts shown, compact, for recurring detection only (OlderTxn). The
+  // route keeps those detection can use.
+  const since = daysAgoIso(RECURRING_LOOKBACK_DAYS);
+  const older: OlderTxn[] = Object.values(state.txns)
+    .filter((t) => t.date < cutoff && t.date >= since && !t.pending && !hiddenAccountIds?.has(t.account_id))
+    .map((t) => ({
+      transaction_id: t.transaction_id,
+      date: t.date,
+      name: t.merchant_name || t.name,
+      amount: t.amount,
+      institution_name: t.institution_name,
+      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      iso_currency_code: t.iso_currency_code,
+      unofficial_currency_code: t.unofficial_currency_code ?? null,
+      transaction_code: t.transaction_code ?? null,
+      vendor_key: vendorKey(t),
+      logo_url: t.logo_url,
+      ...(carriedExclusions?.size && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+    }));
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
 }
 
 /**
