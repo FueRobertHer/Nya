@@ -298,8 +298,11 @@ describe("Activity's months say when they may be incomplete", () => {
         { institution_name: 'E', health: h('healthy') },
         { institution_name: 'F' },
         { institution_name: 'G', manual: true, health: h('outage') },
+        // Accounts SimpleFIN feeds are kept like manual ones, but have a connection that can stop.
+        { institution_name: 'H', manual: true, connector: 'simplefin', health: h('needs_reauth') },
+        { institution_name: 'I', manual: true, connector: 'simplefin', health: h('healthy') },
       ]).map((s) => s.institution_name)
-    ).toEqual(['A', 'B']);
+    ).toEqual(['A', 'B', 'H']);
     expect(joinNames(['A', 'B', 'C'])).toBe('A, B and C');
   });
 });

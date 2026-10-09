@@ -47,6 +47,10 @@ export type ManualAccount = {
   subtype: string | null;
   balance: number;
   updated_at: string; // ISO
+  /** The currency the balance is in, when not US dollars: only an account a
+   *  connector fed, kept as a manual one when it was disconnected
+   *  (lib/connectors/manage.ts). One typed in the app is always in dollars. */
+  currency?: string;
 };
 
 /** Collapses whitespace and trims, so "Ally  Bank" and "Ally Bank " group into
@@ -93,6 +97,7 @@ function parseStoredAccount(id: string, plaintext: string): ManualAccount {
     subtype: typeof raw.subtype === 'string' ? raw.subtype : null,
     balance: raw.balance,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString(),
+    ...(typeof raw.currency === 'string' && /^[A-Z]{3}$/.test(raw.currency) && raw.currency !== 'USD' ? { currency: raw.currency } : {}),
   };
 }
 
@@ -275,9 +280,10 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       type: a.type,
       subtype: a.subtype,
       balance: a.balance,
-      // Manual accounts are USD-only for now, matching the rest of the
-      // account-level figures (net worth, balances, goals).
-      currency: 'USD',
+      // Manual accounts are in US dollars, matching the rest of the
+      // account-level figures (net worth, balances, goals), except one a
+      // connector fed in another currency, kept on a disconnect.
+      currency: a.currency ?? 'USD',
       updated_at: a.updated_at,
     });
   }

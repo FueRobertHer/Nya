@@ -99,7 +99,7 @@ import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
-import { getManualAccounts } from './manual';
+import { getKeptAccounts } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
@@ -915,13 +915,14 @@ export type Shareable = {
   name: string;
 };
 
-/** The accounts I could share: my live and manual accounts, minus hidden ones,
- *  by institution and then name. `readOnly` changes nothing while reading (see
+/** The accounts I could share: my live and manual accounts, and those
+ *  SimpleFIN keeps up to date (lib/kept-accounts.ts), minus hidden ones, by
+ *  institution and then name. `readOnly` changes nothing while reading (see
  *  liveAccountIds), for a read made on someone else's behalf. */
 export async function shareableAccounts(ctx: Ctx, opts: { readOnly?: boolean } = {}): Promise<Shareable[]> {
   const [live, manual, { hidden }] = await Promise.all([
     liveAccountIds(ctx, { strict: true, readOnly: opts.readOnly }),
-    getManualAccounts(ctx),
+    getKeptAccounts(ctx),
     getEffectiveHidden(ctx, { readOnly: opts.readOnly }),
   ]);
   const plaidIds = [...live].filter((id) => !hidden.has(id));
@@ -950,14 +951,15 @@ export type SharedAccount = {
   level: Level;
   /** Null at the exists level, or before any balance was measured. */
   balance: number | null;
-  /** The currency the balance is in (bankCurrencies), or USD on a manual
-   *  account, the only currency a manual balance is kept in (lib/manual.ts
-   *  toInstitutions). Null at the exists level, which says nothing of its
-   *  money, or when nothing says, shown in the main currency as it is
-   *  throughout the app. */
+  /** The currency the balance is in (bankCurrencies), or a manual account's:
+   *  USD unless it says (lib/manual.ts), or the currency SimpleFIN gives one
+   *  it feeds. Null at the exists level, which says nothing of its money, or
+   *  when nothing says, shown in the main currency as it is throughout the
+   *  app. */
   currency: string | null;
-  /** When that balance was measured: an ISO time (a manual account, to the
-   *  hour), or a YYYY-MM-DD (a snapshot's day). shortDate reads both. */
+  /** When that balance was measured: an ISO time (a manual account's, or the
+   *  time the bank gave one SimpleFIN feeds, to the hour), or a YYYY-MM-DD (a
+   *  snapshot's day). shortDate reads both. */
   as_of: string | null;
   /** Money owed (a card, a loan) rather than held. */
   debt: boolean;
@@ -1060,7 +1062,9 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
   const granted = Object.entries(share.accounts).filter(([id]) => still.has(id));
   if (granted.length === 0) return null;
 
-  const manual = new Map((await getManualAccounts(theirs)).map((m) => [m.account_id, m]));
+  // Manual accounts, and those SimpleFIN keeps up to date, the same way: the
+  // balance kept with its time, and the rows in their book.
+  const manual = new Map((await getKeptAccounts(theirs)).map((m) => [m.account_id, m]));
   const types = await directoryTypes(theirs, granted.map(([id]) => id).filter((id) => !manual.has(id)));
   const currencies = await bankCurrencies(theirs, granted.filter(([id, level]) => level !== 'exists' && !manual.has(id)).map(([id]) => id));
 
@@ -1122,7 +1126,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
       label: still.get(id)!,
       level,
       balance,
-      currency: level === 'exists' ? null : m ? 'USD' : (currencies.get(id) ?? null),
+      currency: level === 'exists' ? null : m ? (m.currency ?? 'USD') : (currencies.get(id) ?? null),
       as_of,
       debt: DEBT_TYPES.has((m ? m.type : types[id]) ?? ''),
       ...(level === 'transactions'

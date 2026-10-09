@@ -77,6 +77,9 @@ import { accessLogStore, type Showing } from './access-log';
 import { declaredStores } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { connectionsStore, connectorAccountsStore, type ConnectorAccount, type ConnectorConnection } from './connectors/store';
+import { connectorOf } from './connectors/registry';
+import type { ConnectorKind } from './connectors/types';
 
 export const EXPORT_FORMAT = 'nya-export';
 export const EXPORT_VERSION = 1;
@@ -278,6 +281,10 @@ export type UserData = {
   remembered: Record<string, RememberedAccount[]>;
   directory: Map<string, DirectoryEntry>;
   manual: ManualAccount[];
+  /** The connections to SimpleFIN, and the accounts each feeds
+   *  (lib/connectors/store.ts). */
+  connections: Map<string, ConnectorConnection>;
+  connected: Map<string, ConnectorAccount>;
   hidden: HiddenMap;
   stores: { item_id: string; accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; behind: boolean }[];
   investments: { item_id: string; state: InvStoreState }[];
@@ -331,11 +338,13 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     });
 
   const items = await read('linked institutions', () => readItems(ctx));
-  const [remembered, directory, manual, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, sections] =
+  const [remembered, directory, manual, connections, connected, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, sections] =
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
       read('manual accounts', () => getManualAccounts(ctx)),
+      read(connectionsStore.what, () => connectionsStore.getAll(ctx)),
+      read(connectorAccountsStore.what, () => connectorAccountsStore.getAll(ctx)),
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
@@ -373,6 +382,8 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     remembered,
     directory,
     manual,
+    connections,
+    connected,
     hidden,
     stores,
     investments,
@@ -391,12 +402,15 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
 
 export type Kind = 'recorded' | 'estimated';
 
-export type ExportInstitution = { item_id: string; institution_name: string; institution_id: string | null; provider: 'plaid' };
+/** A connection: a Plaid Item, or a connection to SimpleFIN (`item_id` its
+ *  connection's id, `institution_name` "SimpleFIN" and the host it reaches). */
+export type ExportInstitution = { item_id: string; institution_name: string; institution_id: string | null; provider: 'plaid' | ConnectorKind };
 
 export type ExportAccount = {
   account_id: string;
-  /** "plaid"; "manual" for a manual account since removed, known now only
-   *  by what still names it; null when nothing stored says. */
+  /** "plaid"; "simplefin" for an account SimpleFIN keeps up to date; "manual"
+   *  for a manual account since removed, known now only by what still names
+   *  it; null when nothing stored says. */
   provider: string | null;
   item_id: string | null;
   institution_name: string | null;
@@ -482,6 +496,7 @@ export type UserExport = {
 export function notIncluded(people: boolean): string[] {
   return [
     'Bank access tokens: the credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya, so they are left out.',
+    'The Access URL SimpleFIN gave Nya when you connected it: a credential, which reads your accounts there, not your data. Remove Nya at SimpleFIN to end it.',
     people
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
       : 'The app password: a credential, not your data.',
@@ -540,6 +555,8 @@ function mentionedAccountIds(data: UserData): Set<string> {
     add(d.account_id);
   }
   for (const id of data.carried.keys()) add(id);
+  // The accounts SimpleFIN keeps up to date, whatever else names them.
+  for (const id of data.connected.keys()) add(id);
   const read = new Map(data.sections);
   for (const s of SECTIONS) if (s.mentions && read.has(s.key)) for (const id of s.mentions(read.get(s.key))) add(id);
   return ids;
@@ -576,7 +593,11 @@ export function countAccounts(data: UserData): { accounts: number; earlier: numb
     if (!connected.has(entry.item_id)) add(earlier, id);
   }
   for (const id of current) earlier.delete(id);
-  return { accounts: current.size + data.manual.length, earlier: earlier.size };
+  // The accounts SimpleFIN keeps up to date (manual ids, so not counted above),
+  // apart from one already counted as the manual account it was kept as.
+  const manualIds = new Set(data.manual.map((m) => m.account_id));
+  const fed = [...data.connected.keys()].filter((id) => !manualIds.has(id)).length;
+  return { accounts: current.size + data.manual.length + fed, earlier: earlier.size };
 }
 
 /** The newest recorded balance in a series (never an estimate), with its day. */
@@ -586,6 +607,33 @@ function latestRecorded(points: StoredPoint[] | undefined): { balance: number; d
     if (!p.estimated) return { balance: p.value, date: p.date };
   }
   return null;
+}
+
+/** An account SimpleFIN keeps up to date, as `accounts` lists it: what its
+ *  entry in connector-accounts says, and its newest recorded balance. */
+function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap): ExportAccount {
+  const h = hidden.get(c.account_id);
+  return {
+    account_id: c.account_id,
+    provider: c.connector,
+    item_id: c.connection_id,
+    institution_name: c.institution_name,
+    institution_id: null,
+    connected: data.connections.has(c.connection_id),
+    name: c.name,
+    official_name: null,
+    type: c.type,
+    subtype: c.subtype,
+    mask: null,
+    currency: c.currency,
+    credit_limit: null,
+    persistent_account_id: null,
+    first_seen: c.created_at.slice(0, 10),
+    last_seen: c.fetched_at ? c.fetched_at.slice(0, 10) : null,
+    hidden: !!h,
+    hidden_at: realTime(h?.hidden_at),
+    latest_balance: latestRecorded(data.history.accounts.get(c.account_id)),
+  };
 }
 
 /**
@@ -618,6 +666,8 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   const accounts: ExportAccount[] = [...mentionedAccountIds(data)]
     .filter((id) => !manualIds.has(id))
     .map((id): ExportAccount => {
+      const c = data.connected.get(id);
+      if (c) return fedAccount(c, data, hidden);
       const m = remembered.get(id);
       const d = data.directory.get(id);
       const s = synced.get(id);
@@ -747,9 +797,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     documentation: EXPORT_DOCUMENTATION,
     not_included: notIncluded(data.people),
     notes: [...notes],
-    institutions: data.items
-      .map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' }))
-      .sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
+    institutions: [
+      ...data.items.map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' })),
+      ...[...data.connections].map(([id, c]): ExportInstitution => ({ item_id: id, institution_name: `${connectorOf(c.connector).label} (${c.host})`, institution_id: null, provider: c.connector })),
+    ].sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
     accounts,
     manual_accounts,
     hidden_accounts: [...data.hidden]

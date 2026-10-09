@@ -171,3 +171,37 @@ export type ConnectorDef = {
   /** Fetches with a stored credential. Throws ConnectorFailure. */
   fetch(secret: string, request: FetchRequest, opts: { timeoutMs: number }): Promise<RemoteAnswer>;
 };
+
+/** What is wrong with a connector's accounts, if anything (lib/connectors/health.ts
+ *  words each): a failed request's kind, or one of these. */
+export type ConnectorIssue =
+  | 'ok'
+  /** No answer has held its balance yet. */
+  | 'waiting'
+  /** The connector reported a problem that concerns it, in its own words. */
+  | 'reported'
+  /** A tracked account wasn't in the latest answer. */
+  | 'missing'
+  /** No answer for longer than Nya's daily update allows. */
+  | 'stale'
+  /** What Nya keeps about these accounts couldn't be read. */
+  | 'unreadable'
+  /** Its connection is gone (a disconnect that stopped part way). */
+  | 'gone'
+  | FailureKind;
+
+/** A connector's part of a connection's health (lib/connection-state.ts
+ *  ConnectionHealth.detail): who it is, and what is wrong in its words. */
+export type ConnectorDetail = {
+  connector: ConnectorKind;
+  /** What the person calls it: "SimpleFIN". */
+  label: string;
+  /** The host it reaches, for "fix it there". */
+  host: string | null;
+  connection_id: string | null;
+  issue: ConnectorIssue;
+  /** The connector's own words (its error list, or why a request failed). */
+  messages: string[];
+  /** The accounts a problem or an absence concerns, by name. */
+  accounts: string[];
+};

@@ -20,6 +20,7 @@
 import './access-log';
 import './allocation-settings';
 import './connection-records';
+import './connectors/store';
 import './fire-plan';
 import './holdings-history';
 import './import/store';

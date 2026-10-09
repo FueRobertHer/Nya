@@ -8,6 +8,15 @@
 // stored, and with the import it came in (`import_id`), so one import can be
 // taken out whole.
 //
+// FROM SIMPLEFIN. An account a connector feeds (lib/connectors/) keeps its
+// rows in a book here too, under its own id, each with source 'simplefin' and
+// SimpleFIN's id as its source_id (lib/connectors/sync.ts writes them, matched
+// by that id). They are the bank's record: their category and note are the
+// person's to change, as a bank's transaction's category is, but never their
+// date, amount, payee or account, and they are never deleted one by one
+// (InvalidTxnError). A disconnect takes them out with the account, or keeps
+// them with it as a manual account's.
+//
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the
 // shape lib/transactions.ts keeps an Item's rows in, and the one #43 asks for.
@@ -53,7 +62,9 @@
 
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
-import { getManualAccounts, toInstitutions, type ManualAccount } from './manual';
+import { toInstitutions, type ManualAccount } from './manual';
+import { getKeptAccounts } from './kept-accounts';
+import { isConnectorKind } from './connectors/types';
 import { amountUnitsError, isCalendarDay, isCurrencyCode, MANUAL_TXN_PREFIX, newManualTxnId, type TxnFields } from './manual-txn-input';
 import type { Txn } from './transactions';
 
@@ -175,12 +186,29 @@ export function newManualTxn(account_id: string, fields: TxnFields, now: Date = 
 }
 
 /** A change a stored row can't take (an amount more precise than its
- *  currency): refused before anything is written. */
+ *  currency, or a change to what a bank said of a row a connector brought):
+ *  refused before anything is written. */
 export class InvalidTxnError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'InvalidTxnError';
   }
+}
+
+/** Whether a row came from a connector the person brought (SimpleFIN): its
+ *  source is the connector's name (lib/connectors/sync.ts). */
+export function isConnectorRow(row: Pick<ManualTxn, 'source'>): boolean {
+  return isConnectorKind(row.source);
+}
+
+/** Why a change can't be made to a connector's row, or null: only its
+ *  category and note are the person's (see the header). */
+function connectorRowRefusal(row: ManualTxn, changes: ManualTxnChanges): string | null {
+  if (!isConnectorRow(row)) return null;
+  const banks = (['date', 'amount', 'currency', 'name', 'account_id'] as const).filter((k) => changes[k] !== undefined && changes[k] !== row[k]);
+  return banks.length > 0
+    ? 'This transaction came from your bank through SimpleFIN, so its date, amount, payee and account stay as the bank gave them. Its category and note are yours to change, and you can leave it out of budgets.'
+    : null;
 }
 
 /**
@@ -269,6 +297,8 @@ export async function editManualTxn(
     const row = book?.rows.find((r) => r.id === id);
     // Deleted or moved by another device since it was found: nothing to change.
     if (!book || !row) return new Map();
+    const refused = connectorRowRefusal(row, changes);
+    if (refused) throw new InvalidTxnError(refused);
     const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
     const units = amountUnitsError(next.amount, next.currency);
     if (units) throw new InvalidTxnError(units);
@@ -320,7 +350,13 @@ export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Prom
     let removed = false;
     await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
       const book = books.get(found.account_id) ?? null;
-      removed = !!book?.rows.some((r) => r.id === id);
+      const row = book?.rows.find((r) => r.id === id);
+      // The bank's record: left out of budgets if the person wants, never
+      // deleted alone (the next fetch would only bring it back).
+      if (row && isConnectorRow(row)) {
+        throw new InvalidTxnError('This transaction came from your bank through SimpleFIN, so it can’t be deleted here. You can leave it out of budgets instead.');
+      }
+      removed = !!row;
       return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
     });
     if (removed) return true;
@@ -451,7 +487,8 @@ export async function readManualTxnsForDisplay(
   opts: { hidden: Set<string>; cutoff: string }
 ): Promise<{ txns: Txn[]; notes: string[] }> {
   const [accounts, report] = await Promise.all([
-    getManualAccounts(ctx).then(
+    // The manual accounts, and the accounts a connector feeds, kept the same way.
+    getKeptAccounts(ctx).then(
       (value) => ({ ok: true as const, value }),
       (err: unknown) => ({ ok: false as const, err })
     ),

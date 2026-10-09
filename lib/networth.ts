@@ -18,6 +18,9 @@ import { CAUSES, classifyFailure, isoTime, reconnectFixes, type ConnectionHealth
 import { observeHoldings, recordHoldings, type HoldingsObservation, type HoldingsRecorded } from './holdings-history';
 import { linkedAs, type LinkKind } from './item-products';
 import type { UnshownAccount } from './last-known';
+import { loggable } from './log-safe';
+import { connectorInstitutions, unreadableConnectorInstitution } from './connectors/institutions';
+import type { ConnectorKind } from './connectors/types';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -85,8 +88,14 @@ export type InstitutionResult = {
    * discloses it rather than presenting an incomplete figure as merely dated.
    */
   stale_missing?: number;
-  /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
+  /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid,
+   *  and for the accounts a connector feeds, which Nya keeps the same way. */
   manual?: boolean;
+  /** For accounts a connector the person brought feeds (lib/connectors/):
+   *  which connector, and the connection. Such an institution is `manual`
+   *  too: it is not a Plaid Item (lib/connectors/institutions.ts). */
+  connector?: ConnectorKind;
+  connection_id?: string;
   /**
    * HOW MANY accounts this institution is known to own that were absent from an
    * otherwise successful fetch, and have not been absent long enough to accept
@@ -324,7 +333,13 @@ async function fetchLiabilities(access_token: string, result: InstitutionResult)
   }
 }
 
-export async function computeNetWorth(ctx: Ctx): Promise<{
+export async function computeNetWorth(
+  ctx: Ctx,
+  /** `connectorsReady`: the daily fetch from connectors (lib/connectors/sync.ts),
+   *  which the snapshot job runs beside Plaid's: their accounts are read once
+   *  it is over. A dashboard load reads what was stored, asking no connector. */
+  opts: { connectorsReady?: Promise<unknown> } = {}
+): Promise<{
   institutions: InstitutionResult[];
   netWorth: number;
 }> {
@@ -335,6 +350,16 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
   // fan-out rather than after it (same reasoning as eager() in
   // app/api/net-worth/route.ts).
   const vanishedReads = loadVanishedInputs(ctx);
+  // The accounts a connector feeds, read from what its fetch stored, alongside
+  // the Plaid fan-out. Settled here, so a failure is handled below, never an
+  // unhandled rejection while Plaid answers.
+  const connected = (opts.connectorsReady ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => connectorInstitutions(ctx))
+    .then(
+      (list) => ({ ok: true as const, list }),
+      (err: unknown) => ({ ok: false as const, err })
+    );
 
   const institutions = await Promise.all(items.map(fetchInstitution));
 
@@ -366,8 +391,11 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
   // the error blocks the write. (A broken Plaid item thus freezes manual history
   // too, since one gate covers the snapshot; splitting it would corrupt the
   // total series.)
+  let manualIds: Set<string> | null = null;
   try {
-    institutions.push(...toInstitutions(await getManualAccounts(ctx)));
+    const manual = await getManualAccounts(ctx);
+    manualIds = new Set(manual.map((a) => a.account_id));
+    institutions.push(...toInstitutions(manual));
   } catch (err) {
     console.error('Manual accounts read failed', err);
     institutions.push({
@@ -380,6 +408,21 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
       liabilities: 'unavailable',
       manual: true,
     });
+  }
+
+  // The accounts a connector feeds (lib/connectors/institutions.ts), on the
+  // same terms: one that can't be read is an error that holds the gate, never
+  // an empty list. An account kept as a manual one on a disconnect that
+  // stopped part way is in both stores under one id: the manual one is it.
+  const read = await connected;
+  if (read.ok) {
+    for (const inst of read.list) {
+      const accounts = manualIds ? inst.accounts.filter((a) => !manualIds!.has(a.account_id)) : inst.accounts;
+      if (accounts.length > 0) institutions.push({ ...inst, accounts });
+    }
+  } else {
+    console.error('Connector accounts read failed', loggable(read.err));
+    institutions.push(unreadableConnectorInstitution());
   }
 
   // Net worth = sum of depository/investment/other balances minus credit/loan balances.
