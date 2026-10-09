@@ -286,6 +286,45 @@ describe('Activity', () => {
     );
   });
 
+  test('with a file to import as well, the empty state offers both, and says so', () => {
+    const html = (without?: NoTransactionsView) =>
+      renderToStaticMarkup(
+        <MonthBreakdown
+          txns={[]}
+          notes={[]}
+          loading={false}
+          onRecategorize={noop}
+          onRename={noop}
+          onAddTransaction={noop}
+          onImport={noop}
+          withoutTransactions={without}
+        />
+      );
+    const investments = html(investmentsOnly);
+    expect(text(investments)).toContain(
+      `${INVESTMENTS_LEAD}, so there are no bank or card transactions to show. To see spending, connect a bank or card, or add a transaction by hand or import a file.`
+    );
+    expect(investments).toContain('>Add a transaction</button>');
+    expect(investments).toContain('>Import a file</button>');
+    // An empty year as before, with both ways in.
+    const empty = html();
+    expect(text(empty)).toContain('No transactions in the last 12 months.');
+    expect(empty).toContain('>Add a transaction</button>');
+    expect(empty).toContain('>Import a file</button>');
+  });
+
+  // An imported row is a manual account's row like one entered by hand
+  // (lib/manual-txns.ts), with its file's format as its source.
+  test('rows imported from a file beside investment connections only: shown, never "nothing to show", and the connections named', () => {
+    const imported = handRow({ transaction_id: 'manual-txn:imported-1', name: 'Corner grocer', source: 'import:ofx', vendor_key: 'corner grocer' });
+    const t = activity([imported], investmentsOnly);
+    expect(t).toContain('Corner grocer');
+    expect(t).not.toContain(INVESTMENTS_LEAD);
+    expect(t).not.toContain('no bank or card transactions to show');
+    expect(t).not.toContain('No transactions in the last 12 months');
+    expect(t).toContain(NAMED);
+  });
+
   test('a refused bank account and nothing else: that, and once', () => {
     const t = activity([], refusedOnly);
     expect(t).toContain(
@@ -347,6 +386,14 @@ describe('budgets', () => {
     expect(t).not.toContain(INVESTMENTS_LEAD);
     expect(t).not.toContain('no spending to count against budgets');
     expect(t).not.toContain('$500.00 limit');
+    expect(t).toContain(NAMED);
+  });
+
+  test('spending imported from a file counts against budgets the same way', () => {
+    const t = budgets([handRow({ source: 'import:csv' })], investmentsOnly);
+    expect(t).toContain('$25.00 of $500.00');
+    expect(t).not.toContain(INVESTMENTS_LEAD);
+    expect(t).not.toContain('no spending to count against budgets');
     expect(t).toContain(NAMED);
   });
 

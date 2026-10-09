@@ -1,0 +1,19 @@
+Umsatzanzeige;Datei erstellt am: 01.10.2026 09:12
+;Letztes Update: aktuell
+
+IBAN;DE89 3704 0044 0532 0130 00
+Kontoname;Girokonto
+Bank;ING
+Kunde;Erika Mustermann
+Zeitraum;01.09.2026 - 30.09.2026
+Saldo;2.716,02;EUR
+
+Sortierung;Datum absteigend
+
+Buchung;Valuta;Auftraggeber/Empfänger;Buchungstext;Verwendungszweck;Saldo;Währung;Betrag;Währung
+30.09.2026;30.09.2026;REWE Markt GmbH;Lastschrift;REWE SAGT DANKE 47110815;2.716,02;EUR;-45,67;EUR
+29.09.2026;29.09.2026;Stadtwerke München;Lastschrift;Strom Abschlag 09/2026;2.761,69;EUR;-89,00;EUR
+28.09.2026;28.09.2026;Café Kränzler;Kartenzahlung;Kaffee und Kuchen;2.850,69;EUR;-12,40;EUR
+15.09.2026;15.09.2026;Arbeitgeber GmbH;Gehalt/Rente;Lohn September;2.863,09;EUR;3.150,00;EUR
+03.09.2026;03.09.2026;Vermieter Immobilien;Dauerauftrag;Miete Wohnung 09/2026;-286,91;EUR;-1.250,00;EUR
+01.09.2026;01.09.2026;Bäckerei Müller;Kartenzahlung;Brötchen €;963,09;EUR;-3,10;EUR

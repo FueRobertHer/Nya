@@ -25,9 +25,10 @@
 //     a payment from a linked checking account to a linked loan counts once.
 //   - cash withdrawals count (an ATM, or Plaid's "withdrawal" with no code):
 //     cash taken out is spent. Unless the person enters what they spend in
-//     cash by hand, on a manual account they marked as cash on hand
-//     (lib/balance.ts isCashOnHand: cashAccountIds): then the withdrawals and
-//     those rows are the same money, so only the larger counts, never both.
+//     cash by hand (or imports it from a file), on a manual account they
+//     marked as cash on hand (lib/balance.ts isCashOnHand: cashAccountIds):
+//     then the withdrawals and those rows are the same money, so only the
+//     larger counts, never both.
 //     Only an account marked so: a manual checking account at a bank Plaid
 //     can't reach is not cash, and its debit spending never cancels a
 //     withdrawal. Cash spending entered by hand always counts (it is spending
@@ -248,7 +249,9 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       continue;
     }
     sums[flow] += t.amount;
-    if (flow === 'spending' && t.source === 'manual' && t.account_id && opts.cashAccounts?.has(t.account_id)) {
+    // A row on the cash account, typed or imported (any source but a bank's,
+    // which has none): spending of the cash withdrawn.
+    if (flow === 'spending' && t.source && t.account_id && opts.cashAccounts?.has(t.account_id)) {
       cashEntered += t.amount;
       cashEnteredOn.add(t.account_id);
     }

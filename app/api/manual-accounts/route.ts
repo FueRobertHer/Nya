@@ -19,6 +19,7 @@ import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { pruneHidden } from '@/lib/hidden';
 import { removeAccountTxns } from '@/lib/manual-txns';
+import { forgetAccountImports } from '@/lib/import/commit';
 import { forgetAnnotations } from '@/lib/txn-annotations';
 import { loggable } from '@/lib/log-safe';
 
@@ -186,6 +187,9 @@ export async function DELETE(req: Request) {
     // Its transactions first (lib/manual-txns.ts), with what was said about
     // them: if this fails part way the account is still there to delete again,
     // rather than gone with its rows left behind where nothing shows them.
+    // Its imports' records and settings before the rows, while the rows can
+    // still say which imports were its (lib/import/commit.ts).
+    await forgetAccountImports(ctx, account_id);
     const rows = await removeAccountTxns(ctx, account_id);
     await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
     await removeManualAccount(ctx, account_id);

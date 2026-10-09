@@ -250,6 +250,34 @@ describe('the FI card on Home', () => {
     expect(h).toContain("1 transaction in JPY isn't in your spending or savings, which are in USD.");
   });
 
+  test('cash taken out at an ATM, imported from a bank’s OFX file, is spent on Home as on the Plan tab', async () => {
+    // As the dashboard loads it: the imported row from its manual account's
+    // book (lib/manual-txns.ts), with the ATM code its file's TRNTYPE gave it
+    // (lib/import/ofx.ts bankType).
+    const { manualRowForDisplay } = await import('@/lib/manual-txns');
+    const account = { account_id: 'manual_cu-1', name: 'Credit Union', institution_name: 'Credit Union', type: 'depository', subtype: 'checking', balance: 0, updated_at: '2026-10-01T00:00:00.000Z' };
+    const at = '2026-10-01T00:00:00.000Z';
+    const row = (id: string, date: string, amount: number, name: string, extra: object = {}) =>
+      manualRowForDisplay(account as any, { id: `manual-txn:${id}`, account_id: account.account_id, date, amount, currency: 'USD', name, category: null, note: null, source: 'import:ofx', source_id: id, created_at: at, updated_at: at, ...extra });
+    const year = [
+      row('pay', '2025-10-09', -70_000, 'PAYROLL'),
+      row('spend', '2025-10-10', 38_000, 'GROCER'),
+      row('atm', '2026-09-01', 2_000, 'ATM WITHDRAWAL', { category: 'transfer out', transaction_code: 'atm' }),
+    ];
+    expect(year[2]).toMatchObject({ transaction_code: 'atm', category: 'transfer out', source: 'import:ofx' });
+    const f = trailingFlows(year, '2026-10-08')!;
+    // Spent, as a linked bank's withdrawal is: not a transfer left out.
+    expect(f).toMatchObject({ spending: 40_000, cash: 2_000, cashWithdrawn: 2_000, income: 70_000 });
+    const i = inputs({ flows: f });
+    const figures = fiFigures(plan(), i, 'USD');
+    const fi = wholeMoney(figures.view.fiNumber!, 'USD');
+    expect(fi).toBe(wholeMoney(40_000 / 0.04, 'USD'));
+    for (const s of [fi, `${Math.round(figures.savingsRate! * 100)}%`]) {
+      expect(home(plan(), i)).toContain(s);
+      expect(planTab(plan(), i)).toContain(s);
+    }
+  });
+
   test('a figure that may be short says so, as the Plan’s does', () => {
     const unread = inputs({ unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] });
     expect(home(plan(), unread)).toContain("May be low: spending is missing transactions that couldn't be read, so the savings rate may be off too. The Plan tab says which.");

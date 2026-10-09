@@ -892,6 +892,62 @@ describe('a manual account’s transactions, shared', () => {
     expect(JSON.stringify(view)).not.toMatch(/exclude/i);
   });
 
+  // Rows imported from a file are rows of the same book (lib/manual-txns.ts),
+  // shared as those entered by hand are. What the file said is kept apart, in
+  // the import's records (lib/import/store.ts), which a share never reads.
+  test('rows imported from a file are shared like ones entered by hand, and nothing of the file is', async () => {
+    const imports = await import('@/app/api/import/route');
+    const compact = (d: string) => d.replace(/-/g, '');
+    const long = `HARDWARE OUTLET ${'X'.repeat(100)} FULL-DESCRIPTION-TAIL`;
+    const statement = [
+      'OFXHEADER:100',
+      'DATA:OFXSGML',
+      'VERSION:102',
+      '',
+      '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD',
+      '<BANKACCTFROM><BANKID>325081403<ACCTID>ACCT55507Q7Q<ACCTTYPE>CHECKING</BANKACCTFROM><BANKTRANLIST>',
+      `<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>${compact(daysAgo(4))}<TRNAMT>-23.40<FITID>FITID-SECRET-1<NAME>CORNER GROCER<MEMO>MEMO FROM THE FILE</STMTTRN>`,
+      `<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>${compact(daysAgo(6))}<TRNAMT>-61.00<FITID>FITID-SECRET-2<NAME>${long}</STMTTRN>`,
+      `<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>${compact(daysAgo(50))}<TRNAMT>900.00<FITID>FITID-SECRET-3<NAME>OLD DEPOSIT</STMTTRN>`,
+      `</BANKTRANLIST><LEDGERBAL><BALAMT>98765.43<DTASOF>${compact(daysAgo(1))}</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`,
+    ].join('\r\n');
+    const form = new FormData();
+    form.set('file', new Blob([statement]), 'house-export.qfx');
+    form.set('meta', JSON.stringify({ action: 'import', account_id: 'manual_house', file_name: 'house-export.qfx', options: {} }));
+    const res = await as('user_owner', () => imports.POST(new Request('http://x/api/import', { method: 'POST', body: form })));
+    expect(res.status).toBe(200);
+    const { import_id, imported } = await res.json();
+    expect(imported).toBe(3);
+    await add(daysAgo(5), 40, 'Hardware store', 'USD', 'A NOTE OF MINE');
+    await share({ acct_joint: 'balance', manual_house: 'transactions' });
+    const [view] = await sharedWithPartner();
+    // The same 30 days, newest first, with the same five fields: the long
+    // description as the row has it, cut to a payee's length.
+    expect(accountOf(view, 'manual_house').transactions).toEqual([
+      { date: daysAgo(4), name: 'CORNER GROCER', amount: 23.4, pending: false, currency: 'USD' },
+      { date: daysAgo(5), name: 'Hardware store', amount: 40, pending: false, currency: 'USD' },
+      { date: daysAgo(6), name: long.slice(0, 100), amount: 61, pending: false, currency: 'USD' },
+    ]);
+    // Nothing of the file: not its ids, its memo (the row's note), its
+    // account, its ledger balance, a description in full, its name, the
+    // import, or where a row came from.
+    const shown = JSON.stringify(view);
+    for (const kept of ['FITID-SECRET', 'MEMO FROM THE FILE', '7Q7Q', '98765', 'FULL-DESCRIPTION-TAIL', 'house-export', import_id, 'import:ofx', 'source', 'A NOTE OF MINE']) {
+      expect(shown).not.toContain(kept);
+    }
+    // The owner's preview is the same projection.
+    expect((await previewOf('user_owner')).body.view.accounts).toEqual(view.accounts);
+    // The import's records aren't read for it: damaged, the share is the
+    // same, and nothing is logged.
+    await fake.hset(ctxKey('imports'), { [import_id]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const { result, logged } = await quietly(() => sharedWithPartner());
+    expect(result[0].accounts).toEqual(view.accounts);
+    expect(logged).toEqual([]);
+    // As the owner's Undo of it finds it, reading its records.
+    const asked = await as('user_owner', () => imports.GET(new Request(`http://x/api/import?account_id=manual_house&undo=${import_id}`)));
+    expect((await asked.json()).undo).toMatchObject({ record: 'unreadable', remove: 3 });
+  });
+
   test('a hidden manual account is left out, its transactions with it', async () => {
     await add(daysAgo(2), 40, 'Hardware store');
     await share({ acct_joint: 'balance', manual_house: 'transactions' });

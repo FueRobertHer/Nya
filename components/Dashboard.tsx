@@ -26,6 +26,7 @@ import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import ManualTxnSheet from './ManualTxnSheet';
+import ImportSheet, { type ImportTarget } from './ImportSheet';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
@@ -740,6 +741,21 @@ export default function Dashboard({
     loadNetWorth,
     requestBackfill,
   });
+
+  // File import into a manual account (components/ImportSheet.tsx). After an
+  // import or an undo the list is read again, and when the statement's
+  // balance was set too, net worth as after the account's Update form.
+  const [importTarget, setImportTarget] = useState<ImportTarget | null>(null);
+  const onImported = useCallback(
+    async ({ balanceChanged }: { balanceChanged: boolean }) => {
+      loadTransactions();
+      if (balanceChanged) {
+        await loadNetWorth(true);
+        requestBackfill(() => loadNetWorth());
+      }
+    },
+    [loadTransactions, loadNetWorth, requestBackfill]
+  );
 
   // `kind` is which way to connect (app/api/create-link-token). `bypass` skips
   // both duplicate checks for this run: the user has said the institution they
@@ -1864,6 +1880,11 @@ export default function Dashboard({
                                             Add transaction
                                           </button>
                                         )}
+                                        {inst.manual && !a.hidden && (
+                                          <button className="link-btn" onClick={() => setImportTarget({ account_id: a.account_id })}>
+                                            Import
+                                          </button>
+                                        )}
                                         {/* Hiding works on any account, linked
                                             or manual: it only stops the account
                                             counting, it doesn't remove it. */}
@@ -2265,6 +2286,7 @@ export default function Dashboard({
                 onAddTransaction={
                   institutions.some((i) => i.manual && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
                 }
+                onImport={() => setImportTarget({ account_id: null })}
                 onEditTransaction={txnEdits.openEdit}
                 onToggleExcluded={txnEdits.toggleExcluded}
                 actionError={txnEdits.error}
@@ -2495,6 +2517,8 @@ export default function Dashboard({
         onSaved={txnEdits.onSaved}
         onBalanceStale={() => loadNetWorth(true)}
       />
+
+      <ImportSheet target={importTarget} institutions={institutions} onClose={() => setImportTarget(null)} onImported={onImported} />
 
       <Sheet
         open={!!redirect}

@@ -2955,3 +2955,181 @@ button.plan-edit:disabled {
 .connect-options + .coverage-note {
   margin-top: 14px;
 }
+
+/* --- file import (components/ImportSheet.tsx): lists, not tables, so the
+   sheet reads on a phone --- */
+
+/* What the preview found, first and largest. */
+.import-headline {
+  margin: 12px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+/* A statement or account to choose: its name, and what it holds under it. */
+button.import-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
+.import-choice-meta {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.import-question {
+  margin-bottom: 12px;
+}
+
+/* A row as it will be read: the payee and its details beside the amount. */
+.import-rows,
+.import-past,
+.import-problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.import-rows li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.import-rows li:last-child {
+  border-bottom: none;
+}
+
+/* Already there, or listed twice: shown, but quieter, since nothing is added. */
+.import-rows li.import-row-skipped {
+  opacity: 0.6;
+}
+
+.import-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.import-row-name {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.import-row-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.import-row-amount {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.import-row-amount.inflow {
+  color: var(--up);
+}
+
+.import-problems li {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.import-past li {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.import-past-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.import-past-head .import-row-name {
+  min-width: 0;
+}
+
+.import-confirm {
+  margin-top: 4px;
+}
+
+/* A row whose bank id is already used here: the file's version over the
+   stored one, each a name beside its amount, then the three choices. */
+.import-conflicts li {
+  display: block;
+}
+
+.import-conflict-version {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.import-conflict-version .import-row-name {
+  min-width: 0;
+}
+
+/* Three choices on one line, shrinking together on a narrow phone. */
+.import-choices {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.import-choices > button {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  padding-left: 6px;
+  padding-right: 6px;
+  font-size: 13px;
+}
+
+.import-choices > button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A currency typed for a file that doesn't say one, with its button beside. */
+.import-currency {
+  align-items: flex-end;
+}
+
+.import-currency > button {
+  flex: 0 0 auto;
+  width: auto;
+  margin-bottom: 12px;
+}
+
+/* A manual account's actions (Update, Add transaction, Import, and Hide and
+   Delete in Manage mode) wrap onto a second line on a narrow phone rather
+   than run off the card. */
+.manual-row-actions {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* An imported description can hold long unbroken text (a card processor's
+   reference, a web address), which would otherwise widen the Activity
+   tab's table past a phone's screen and push the amounts off it. */
+.txn-text {
+  overflow-wrap: anywhere;
+}
