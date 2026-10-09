@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today three: `fire-plan`, `manual-transactions` and `transaction-annotations`. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today four: `carried-annotations`, `fire-plan`, `manual-transactions` and `transaction-annotations`. |
 
 ### `institutions[]`
 
@@ -265,13 +265,19 @@ Transactions you entered by hand on manual accounts (`lib/manual-txns.ts`), all 
 | `note` | Your note, or `null`. |
 | `source` | Where it came from: `manual` for one entered in the app. |
 | `source_id` | The source's own id for it, from an import; `null` for one entered by hand. |
+| `import_id` | The import it came in with, so that import can be taken out whole; absent or `null` for one entered by hand (no import exists yet: #43). |
+| `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, and `to`, the one it became. Absent otherwise. |
 | `created_at`, `updated_at` | When it was entered, and last changed. |
 
-Adding one doesn't change the account's balance, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
+Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
 
 #### `transaction-annotations`
 
-What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports; absent otherwise) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction no longer exists (the bank removed it) is kept until you change it.
+What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports, `false` when you put it back) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction no longer exists (the bank removed it) is kept until you change it; those of an institution you disconnect go with it, after the ones you excluded are kept in `carried-annotations`.
+
+#### `carried-annotations`
+
+Transactions you excluded at an institution you have since disconnected, kept so that linking a re-added account to the old one excludes them again (`lib/txn-annotations.ts`, as categories carry: `account_links.carried_categories`). One entry per earlier account: `id` is its account id, and `value` holds `version` (1) and `rows`, keyed by the transaction's account, date, amount in cents and the bank's own description (lower-cased), joined by `|`, each `{ "excluded": true }`, or `null` where two identical transactions were excluded only one way, so nothing carries. Forgetting the earlier account deletes its entry.
 
 ## The CSV files
 

@@ -336,10 +336,15 @@ describe('the store', () => {
     await addManualTxn(ctx, r);
     await fake.hset(ctxKey('manual-transactions'), { [CARD.account_id]: 'not-ciphertext-but-long-enough-to-be-tried' });
     expect(await editManualTxn(ctx, r.id, { note: 'read one book' }, { from: WALLET.account_id })).toMatchObject({ note: 'read one book' });
-    // Not on the account named: deleted or moved meanwhile, as far as it can tell.
+    // Not on the account named: deleted or moved meanwhile, as far as an edit can tell.
     expect(await findManualTxn(ctx, r.id, 'manual_somewhere-else')).toBeNull();
-    expect(await deleteManualTxn(ctx, r.id, 'manual_somewhere-else')).toBe(false);
+    expect(await editManualTxn(ctx, r.id, { note: 'lost' }, { from: 'manual_somewhere-else' })).toBeNull();
     expect(await deleteManualTxn(ctx, r.id, WALLET.account_id)).toBe(true);
+    // A delete, though, takes the row wherever it is now: the person asked for it to go.
+    const moved = row(WALLET.account_id, { name: 'Moved on another device' });
+    await addManualTxn(ctx, moved);
+    expect(await deleteManualTxn(ctx, moved.id, 'manual_where-it-was')).toBe(true);
+    expect(await manualTxnStore.get(ctx, WALLET.account_id)).toBeNull();
   });
 
   test('an amount no longer whole in its currency is refused, and nothing is written', async () => {

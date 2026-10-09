@@ -283,7 +283,8 @@ export default function ManualTxnSheet({
         setDone(true);
         onSaved({ balanceChanged: false, transaction: data.transaction });
       }
-      if (res.status === 409 && typeof data?.balance === 'number') onBalanceStale();
+      // The balance isn't what this form showed: show what it is now.
+      if (res.status === 409 && (typeof data?.balance === 'number' || data?.saved === true)) onBalanceStale();
     } catch {
       setError('Could not reach the server.');
     } finally {

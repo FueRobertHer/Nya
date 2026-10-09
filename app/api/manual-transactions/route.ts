@@ -264,7 +264,8 @@ export async function PATCH(req: Request) {
 
 /** Removes one transaction, and what was said about it. Removing one that is
  *  already gone succeeds: what was asked for is true. `account_id` is the
- *  account the page shows it on, as for PATCH. */
+ *  account the page shows it on, read first; one moved meanwhile is found
+ *  where it is now (lib/manual-txns.ts deleteManualTxn). */
 export async function DELETE(req: Request) {
   try {
     const ctx = await dataCtx();

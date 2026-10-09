@@ -15,7 +15,9 @@
 // ten thousand); a book that would ever cross the request-size ceiling
 // (lib/blob.ts) is refused whole and loudly (StoredValueTooLargeError, 413),
 // never trimmed. Deleting the account deletes its book in one step, and an
-// account's rows are read with one decrypt.
+// account's rows are read with one decrypt. Keeping each import's raw record
+// beside its row, as #43 also asks, would take several times that room: it
+// belongs in a store of its own, not in the book.
 //
 // WHO WINS. Every change to a book is a compare-and-set (MapStore.updateMany):
 // two devices adding to one account at once both land, and so will an import
@@ -284,18 +286,25 @@ function withoutRow(book: ManualTxnBook | null, id: string): ManualTxnBook | nul
   return rows.length > 0 ? { ...book, rows } : null;
 }
 
-/** Deletes a row: from the book of `from` (the account the client shows it
- *  on), or wherever it is kept. False when it isn't there. */
+/**
+ * Deletes a row: from the book of `from` (the account the client shows it
+ * on), read alone; when it isn't there (moved on another device meanwhile),
+ * wherever it is now, since the person asked for this row to go. False when
+ * it is nowhere.
+ */
 export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Promise<boolean> {
-  const found = await findManualTxn(ctx, id, from);
-  if (!found) return false;
-  let removed = false;
-  await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
-    const book = books.get(found.account_id) ?? null;
-    removed = !!book?.rows.some((r) => r.id === id);
-    return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
-  });
-  return removed;
+  for (const where of from !== undefined ? [from, undefined] : [undefined]) {
+    const found = await findManualTxn(ctx, id, where);
+    if (!found) continue;
+    let removed = false;
+    await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
+      const book = books.get(found.account_id) ?? null;
+      removed = !!book?.rows.some((r) => r.id === id);
+      return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
+    });
+    if (removed) return true;
+  }
+  return false;
 }
 
 /**
