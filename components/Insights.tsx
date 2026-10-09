@@ -2,13 +2,16 @@
 
 // Small computed observations for the Home tab -- the "is this normal?"
 // glance the big trackers lead with. Everything derives from data already
-// loaded (history + transactions), no extra API calls.
+// loaded (history + transactions), no extra API calls. Spending is what counts
+// in totals (lib/spending.ts), as on the Activity and Budgets tabs: in one
+// currency, with what is in others named under the list.
 
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
+import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { localMonth } from '@/lib/local-date';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { formatMoney } from '@/lib/format';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 
 /**
@@ -97,12 +100,6 @@ export type InsightAccount = {
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
 
-const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
-function isTransfer(t: Txn): boolean {
-  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
-}
-
 // 'warn' is the amber the Accounts tab uses for idle cash: worth doing
 // something about, but nothing has gone wrong, which is what separates it from
 // the red 'down' of an overdue payment.
@@ -121,13 +118,14 @@ export default function Insights({
   idleCash?: IdleCashAccount[];
   reconnectSoon?: ReconnectSoon[];
 }) {
-  const insights = useMemo<Insight[]>(() => {
+  const { insights, leftOut } = useMemo(() => {
     const out: Insight[] = [];
     const now = new Date();
     const thisMonthKey = localMonth(now);
-    // One display currency for summed/budget figures (budgets carry no currency
-    // of their own). Per-item amounts below use their own currency where known.
-    const displayCurrency = dominantCurrency(txns ?? []);
+    // One currency for summed and budget figures (budgets carry none of their
+    // own): only spending in it counts in them. Per-item amounts below use
+    // their own currency where known.
+    const displayCurrency = totalsCurrency(txns ?? []);
 
     // --- alerts first: they're the actionable ones ---
 
@@ -139,7 +137,7 @@ export default function Insights({
     if (txns) {
       const spendByCat: Record<string, number> = {};
       for (const t of txns) {
-        if (t.date.slice(0, 7) !== thisMonthKey || t.amount <= 0 || isTransfer(t)) continue;
+        if (t.date.slice(0, 7) !== thisMonthKey || t.amount <= 0 || !countsInTotals(t, displayCurrency)) continue;
         const cat = t.category ?? 'other';
         spendByCat[cat] = (spendByCat[cat] ?? 0) + t.amount;
       }
@@ -256,14 +254,25 @@ export default function Insights({
       }
     }
 
+    // Spending in another currency than these figures', this month and last
+    // (what the budgets and the pace read): named under the list.
+    let leftOut: string | null = null;
     if (txns && txns.length > 0) {
       const thisMonth = localMonth(now);
       const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const lastMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+      leftOut = leftOutText(
+        leftOutByCurrency(
+          txns.filter((t) => (t.date.slice(0, 7) === thisMonth || t.date.slice(0, 7) === lastMonth) && t.amount > 0),
+          displayCurrency
+        ),
+        displayCurrency,
+        { where: 'these figures' }
+      );
 
       const spend = (month: string) =>
         txns
-          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && !isTransfer(t))
+          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && countsInTotals(t, displayCurrency))
           .reduce((sum, t) => sum + t.amount, 0);
 
       // --- spending pace vs last month, prorated to the same day-of-month ---
@@ -295,19 +304,22 @@ export default function Insights({
 
       // --- biggest purchase this month ---
       const purchases = txns.filter(
-        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && !isTransfer(t)
+        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && countsInTotals(t, displayCurrency)
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));
         out.push({
           key: 'biggest',
-          text: `Biggest purchase this month: ${biggest.name}, ${formatMoney(biggest.amount, biggest.iso_currency_code)}`,
+          text: `Biggest purchase this month: ${biggest.name}, ${formatMoney(biggest.amount, displayCurrency)}`,
           tone: 'neutral',
         });
       }
     }
 
-    return out.slice(0, MAX_INSIGHTS);
+    const shown = out.slice(0, MAX_INSIGHTS);
+    // Said only beside a figure it is missing from.
+    const fromSpending = shown.some((i) => i.key.startsWith('budget-') || i.key === 'pace' || i.key === 'biggest');
+    return { insights: shown, leftOut: fromSpending ? leftOut : null };
   }, [txns, budgets, accounts, idleCash, reconnectSoon]);
 
   if (insights.length === 0) return null;
@@ -324,6 +336,7 @@ export default function Insights({
           </li>
         ))}
       </ul>
+      {leftOut && <div className="chart-note">{leftOut}</div>}
     </div>
   );
 }

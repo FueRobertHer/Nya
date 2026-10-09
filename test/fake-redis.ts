@@ -580,6 +580,20 @@ export class FakeRedis {
       else this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
+    // Several fields at once (MapStore.updateMany): every one compared, then
+    // all written, or none. "" deletes a field, "=" leaves it as it is.
+    if (name === '-- nya:repo-update-entries') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      for (let i = 0; i < args.length; i += 3) {
+        const cur = this.hashes.get(keys[0])?.get(args[i]);
+        if ((cur === undefined ? '' : sha1(cur)) !== args[i + 1]) return 0;
+      }
+      for (let i = 0; i < args.length; i += 3) {
+        if (args[i + 2] === '') this.hdelNow(keys[0], [args[i]]);
+        else if (args[i + 2] !== '=') this.hash(keys[0]).set(args[i], args[i + 2]);
+      }
+      return 1;
+    }
     // A counter store's: GET or INCR, and the expiry, as one step. Like
     // Redis, INCR refuses a value that is not an integer, and a hash at the
     // key is WRONGTYPE.

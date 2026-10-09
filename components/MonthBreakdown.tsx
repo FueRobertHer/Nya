@@ -6,15 +6,20 @@
 // (green positive, red negative). Below it, a two-line chart traces cumulative
 // income vs spend across the days of the selected month. Then a summary shows
 // money in / money out / net (transfers and loan payments excluded, so
-// credit-card payments don't double-count as both spending and income); top
-// spending categories draw as single-hue horizontal bars (magnitude lives in
-// length, not color); and finally the searchable transaction list.
+// credit-card payments don't double-count as both spending and income, and so
+// is anything the person excluded; every total is in one currency and says
+// what it left out in others: lib/spending.ts); top spending categories
+// draw as single-hue horizontal bars (magnitude lives in length, not color);
+// and finally the searchable transaction list, where a manual row can be
+// edited and any row excluded from budgets and reports.
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
-import { dominantCurrency } from "@/lib/format";
-import { instantDay } from "@/lib/local-date";
+import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
+import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency } from "@/lib/spending";
+import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
+import { sourceLabel } from "@/lib/manual-txn-input";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -31,6 +36,7 @@ export type Txn = {
   institution_name: string;
   category: string | null;
   iso_currency_code: string | null;
+  unofficial_currency_code?: string | null;
   vendor_key: string;
   logo_url: string | null;
   category_icon_url: string | null;
@@ -47,72 +53,37 @@ export type Txn = {
   counterparty: string | null;
   payment_processor: string | null;
   payment_reference: string | null;
+  // As in lib/transactions.ts: on manual rows, and on rows the person excluded.
+  source?: string;
+  account_id?: string;
+  note?: string | null;
+  excluded?: boolean | null;
 };
 
-function fmtUsd(n: number): string {
-  return (
-    (n < 0 ? "-$" : "$") +
-    Math.abs(n).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
-  );
-}
+// Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
-// Currency-aware amount, so a EUR/GBP/etc. charge isn't silently shown with a
-// "$". Falls back to the $ formatter for a null or unrecognized currency code.
-function fmtMoney(n: number, currency: string | null): string {
-  if (!currency) return fmtUsd(n);
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-    }).format(n);
-  } catch {
-    return fmtUsd(n);
-  }
-}
-
-// Compact, signed currency for the net-bar value labels: +$1.2K / -$340.
-function fmtCompactSigned(n: number): string {
-  const sign = n < 0 ? "-" : "+";
-  const abs = Math.abs(n);
-  return abs >= 1000
-    ? `${sign}$${(abs / 1000).toFixed(1)}K`
-    : `${sign}$${Math.round(abs)}`;
+// Compact, signed, for the net-bar value labels: +$1.2K / -$340.
+function fmtCompactSigned(n: number, currency: string | null): string {
+  return `${n < 0 ? "-" : "+"}${compactMoney(Math.abs(n), currency)}`;
 }
 
 // Plaid's convention: positive amounts are money leaving the account, so the
-// displayed value flips sign (positive = money in). Currency-aware.
+// displayed value flips sign (positive = money in).
 function fmtTxnAmount(amount: number, currency: string | null): string {
-  const display = amount === 0 ? 0 : -amount; // avoid -0 rendering as "-$0.00"
-  if (currency) {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        signDisplay: "always",
-      }).format(display);
-    } catch {
-      // fall through to the $ formatter
-    }
-  }
-  const abs = Math.abs(amount).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return amount > 0 ? `-$${abs}` : `+$${abs}`;
+  return signedMoney(-amount, currency, { always: true });
 }
 
-// Signed currency for the per-day net summary, in display terms (positive =
-// net money in). Zero renders without a sign.
-function fmtSignedUsd(n: number): string {
-  const abs = Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
-  return `${sign}$${abs}`;
+// The per-day net, in display terms (positive = net money in), one figure per
+// currency the day's rows are in, the totals' first: never added across
+// currencies. Zero renders without a sign.
+function fmtDayNet(nets: Map<string | null, number>, currency: string | null): string {
+  return [...nets.keys()]
+    .sort((a, b) => (a === currency ? -1 : b === currency ? 1 : String(a) < String(b) ? -1 : 1))
+    .map((c) => {
+      const n = nets.get(c)!;
+      return signedMoney(Math.abs(n) < 0.005 ? 0 : n, c);
+    })
+    .join(" · ");
 }
 
 function fmtTxnDate(iso: string): string {
@@ -139,18 +110,11 @@ function isLowConfidence(t: Txn): boolean {
   return !!t.category_confidence && LOW_CONFIDENCE.has(t.category_confidence);
 }
 
-// Money moving between your own accounts isn't income or spending. Plaid's
-// transaction_code is the reliable signal (transfer / atm / bank charge / fee);
-// the category heuristic stays as a fallback for rows Plaid didn't code (older
-// data, or codes it never resolved).
-const TRANSFER_CODES = new Set(["transfer", "atm", "bank charge"]);
-export function isTransfer(t: Txn): boolean {
-  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
-  return (
-    !!t.category &&
-    (t.category.startsWith("transfer") || t.category === "loan payments")
-  );
-}
+// Money moving between your own accounts isn't income or spending, and a
+// transaction the person excluded counts in no total: both decided in
+// lib/spending.ts, which every total uses. isTransfer is re-exported for code
+// that imported it from here.
+export { isTransfer } from "@/lib/spending";
 
 // A short "HH:MM" from Plaid's ISO datetime, in the viewer's locale. Null when
 // the row carries only a posting date.
@@ -162,7 +126,7 @@ function fmtTime(iso: string | null): string | null {
 }
 
 // Base category options for recategorization, merged with whatever
-// categories appear in the data.
+// categories appear in the data (categoryOptions).
 const BASE_CATEGORIES = [
   "food and drink",
   "general merchandise",
@@ -179,6 +143,16 @@ const BASE_CATEGORIES = [
   "loan payments",
   "other",
 ];
+
+/** The categories to choose from: the base ones and every one in the data,
+ *  sorted. Shared with the quick-add form (components/ManualTxnSheet.tsx). */
+export function categoryOptions(txns: Txn[] | null): string[] {
+  const set = new Set(BASE_CATEGORIES);
+  (txns ?? []).forEach((t) => {
+    if (t.category) set.add(t.category);
+  });
+  return [...set].sort();
+}
 
 // "What is this charge?" detail panel, shown inside the expanded row. Surfaces
 // the Plaid fields that answer the question — the real merchant behind a
@@ -216,6 +190,7 @@ function TxnDetail({ t }: { t: Txn }) {
     rows.push({ label: "Reference", value: t.payment_reference });
   if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
   if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
+  if (t.note) rows.push({ label: "Note", value: t.note });
 
   if (rows.length === 0) return null;
 
@@ -237,6 +212,10 @@ export default function MonthBreakdown({
   loading,
   onRecategorize,
   onRename,
+  onAddTransaction,
+  onEditTransaction,
+  onToggleExcluded,
+  actionError = null,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
 }: {
@@ -245,6 +224,15 @@ export default function MonthBreakdown({
   loading: boolean;
   onRecategorize: (transaction_id: string, category: string) => void;
   onRename: (vendor_key: string, name: string) => void;
+  /** Opens the quick-add form; left out when there is no manual account to
+   *  add to, which hides the button. */
+  onAddTransaction?: () => void;
+  /** Opens a manual row's edit form. */
+  onEditTransaction?: (t: Txn) => void;
+  /** Leaves a transaction out of budgets and reports, or puts it back. */
+  onToggleExcluded?: (t: Txn, excluded: boolean) => void;
+  /** Why the last change to a transaction didn't save. */
+  actionError?: string | null;
   /** Institutions whose rows this load lacks, or lacks the oldest of
    *  (/api/transactions), and connections whose transactions have stopped
    *  (their health): the month's totals say so (lib/month-coverage.ts). */
@@ -256,13 +244,7 @@ export default function MonthBreakdown({
   const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
   const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
 
-  const categoryOptions = useMemo(() => {
-    const set = new Set(BASE_CATEGORIES);
-    (txns ?? []).forEach((t) => {
-      if (t.category) set.add(t.category);
-    });
-    return [...set].sort();
-  }, [txns]);
+  const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
   const months = useMemo(() => {
     const set = new Set<string>();
@@ -270,24 +252,33 @@ export default function MonthBreakdown({
     return [...set].sort().reverse().slice(0, 12);
   }, [txns]);
 
-  const selected = month ?? months[0] ?? null;
+  // The latest month not after this one: a row dated tomorrow, on the last
+  // day of a month, doesn't open the tab on the next.
+  const thisMonth = localMonth();
+  const selected = month ?? months.find((m) => m <= thisMonth) ?? months[0] ?? null;
 
   const monthTxns = useMemo(
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
     [txns, selected],
   );
 
-  // The month's summary figures sum amounts, which only makes sense in one
-  // currency; use the most common currency among the month's transactions to
-  // label them (a true multi-currency total would need FX conversion).
-  const monthCurrency = useMemo(() => dominantCurrency(monthTxns), [monthTxns]);
+  // Every total on the tab sums amounts in one currency, the one most of the
+  // transactions are in, the same for every month so the trend compares
+  // like with like; the month's rows in others are named, not added
+  // (lib/spending.ts).
+  const currency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
+  const leftOut = useMemo(() => leftOutText(leftOutByCurrency(monthTxns, currency), currency), [monthTxns, currency]);
 
-  // Summing amounts across currencies isn't meaningful without FX conversion;
-  // flag it so the single-currency-labelled totals aren't read as exact.
-  const mixedCurrency = useMemo(() => {
-    const seen = new Set<string>();
-    for (const t of monthTxns) if (t.iso_currency_code) seen.add(t.iso_currency_code);
-    return seen.size > 1;
+  // Rows the person excluded, and rows whether they did couldn't be read
+  // (counted, so the total may include one): both said under the summary.
+  const { excludedCount, unknownCount } = useMemo(() => {
+    let excludedCount = 0;
+    let unknownCount = 0;
+    for (const t of monthTxns) {
+      if (t.excluded === true) excludedCount++;
+      else if (t.excluded === null) unknownCount++;
+    }
+    return { excludedCount, unknownCount };
   }, [monthTxns]);
 
   const { moneyIn, moneyOut, categories } = useMemo(() => {
@@ -295,7 +286,7 @@ export default function MonthBreakdown({
     let outflow = 0;
     const byCategory: Record<string, number> = {};
     for (const t of monthTxns) {
-      if (isTransfer(t)) continue;
+      if (!countsInTotals(t, currency)) continue;
       if (t.amount < 0) {
         inflow += -t.amount;
       } else {
@@ -308,7 +299,7 @@ export default function MonthBreakdown({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
     return { moneyIn: inflow, moneyOut: outflow, categories };
-  }, [monthTxns]);
+  }, [monthTxns, currency]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -317,26 +308,26 @@ export default function MonthBreakdown({
     let online = 0;
     let inStore = 0;
     for (const t of monthTxns) {
-      if (t.amount <= 0 || isTransfer(t)) continue;
+      if (t.amount <= 0 || !countsInTotals(t, currency)) continue;
       if (t.payment_channel === "online") online += t.amount;
       else if (t.payment_channel === "in store") inStore += t.amount;
     }
     return { online, inStore };
-  }, [monthTxns]);
+  }, [monthTxns, currency]);
 
   // Top places by spend, from transaction location. Disambiguates same-named
   // merchants and gives a light geo view without a map dependency.
   const topCities = useMemo(() => {
     const byCity: Record<string, number> = {};
     for (const t of monthTxns) {
-      if (t.amount <= 0 || isTransfer(t) || !t.city) continue;
+      if (t.amount <= 0 || !countsInTotals(t, currency) || !t.city) continue;
       const label = t.region ? `${t.city}, ${t.region}` : t.city;
       byCity[label] = (byCity[label] ?? 0) + t.amount;
     }
     return Object.entries(byCity)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-  }, [monthTxns]);
+  }, [monthTxns, currency]);
 
   // Net per month (oldest → newest) for the trend columns. Bar height tracks
   // net magnitude and bar color tracks its sign (green positive, red negative),
@@ -348,13 +339,13 @@ export default function MonthBreakdown({
         let inflow = 0;
         let outflow = 0;
         for (const t of txns ?? []) {
-          if (t.date.slice(0, 7) !== m || isTransfer(t)) continue;
+          if (t.date.slice(0, 7) !== m || !countsInTotals(t, currency)) continue;
           if (t.amount < 0) inflow += -t.amount;
           else outflow += t.amount;
         }
         return { month: m, net: inflow - outflow };
       }),
-    [txns, months],
+    [txns, months, currency],
   );
 
   // Keep the newest month in view when the row overflows (older months scroll
@@ -378,21 +369,24 @@ export default function MonthBreakdown({
   }, [monthTxns, query]);
 
   // Group the visible rows into day sections, each carrying the day's net in
-  // display terms (positive = money in), so the sum of the rows shown matches
-  // the header's summary figure.
+  // display terms (positive = money in) for each currency its rows are in, so
+  // the header adds up the rows shown under it. A row the person excluded is
+  // left out of it, as of every total.
   const days = useMemo(() => {
-    const groups: { date: string; net: number; txns: Txn[] }[] = [];
+    const groups: { date: string; nets: Map<string | null, number>; txns: Txn[] }[] = [];
     for (const t of visible) {
       let g = groups[groups.length - 1];
       if (!g || g.date !== t.date) {
-        g = { date: t.date, net: 0, txns: [] };
+        g = { date: t.date, nets: new Map(), txns: [] };
         groups.push(g);
       }
       g.txns.push(t);
-      g.net += -t.amount;
+      if (isExcluded(t)) continue;
+      const c = currencyOf(t) ?? currency;
+      g.nets.set(c, (g.nets.get(c) ?? 0) - t.amount);
     }
     return groups;
-  }, [visible]);
+  }, [visible, currency]);
 
   if (loading) {
     return (
@@ -406,11 +400,26 @@ export default function MonthBreakdown({
     );
   }
 
+  // Entering a transaction by hand, on a manual account: first on the tab,
+  // where a phone reaches it without scrolling.
+  const addCard = onAddTransaction && (
+    <div className="card">
+      <button onClick={onAddTransaction}>Add a transaction</button>
+      <p className="panel-note">
+        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach. It doesn&apos;t change the
+        account&apos;s balance unless you ask.
+      </p>
+    </div>
+  );
+
   if (!txns || (txns.length === 0 && notes.length === 0)) {
     return (
-      <div className="card">
-        <p className="empty-note">No transactions in the last 12 months.</p>
-      </div>
+      <>
+        {addCard}
+        <div className="card">
+          <p className="empty-note">No transactions in the last 12 months.</p>
+        </div>
+      </>
     );
   }
 
@@ -423,6 +432,7 @@ export default function MonthBreakdown({
 
   return (
     <>
+      {addCard}
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
@@ -438,9 +448,9 @@ export default function MonthBreakdown({
                   className={`trend-col${m === selected ? " active" : ""}`}
                   onClick={() => setMonth(m)}
                   aria-pressed={m === selected}
-                  aria-label={`${monthLabel(m)}: net ${fmtUsd(net)}`}
+                  aria-label={`${monthLabel(m)}: net ${formatMoney(net, currency)}`}
                 >
-                  <span className="trend-val">{fmtCompactSigned(net)}</span>
+                  <span className="trend-val">{fmtCompactSigned(net, currency)}</span>
                   <span
                     className={`trend-bar${net >= 0 ? " up" : " down"}`}
                     style={{
@@ -461,7 +471,7 @@ export default function MonthBreakdown({
             <div className="inst-name">Income vs spend</div>
             <div className="inst-total">{monthLabel(selected)}</div>
           </div>
-          <MonthFlowChart txns={monthTxns} month={selected} />
+          <MonthFlowChart txns={monthTxns} month={selected} currency={currency} />
         </div>
       )}
 
@@ -470,25 +480,30 @@ export default function MonthBreakdown({
           <div>
             <div className="total-label">In</div>
             <div className="summary-value inflow">
-              {fmtMoney(moneyIn, monthCurrency)}
+              {formatMoney(moneyIn, currency)}
             </div>
           </div>
           <div>
             <div className="total-label">Out</div>
-            <div className="summary-value">{fmtMoney(moneyOut, monthCurrency)}</div>
+            <div className="summary-value">{formatMoney(moneyOut, currency)}</div>
           </div>
           <div>
             <div className="total-label">Net</div>
             <div
               className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
             >
-              {fmtMoney(net, monthCurrency)}
+              {formatMoney(net, currency)}
             </div>
           </div>
         </div>
         <div className="chart-note">
-          Transfers and loan payments excluded.
-          {mixedCurrency && " Totals mix currencies and aren't converted."}
+          Transfers and loan payments excluded
+          {excludedCount > 0 &&
+            `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
+          .
+          {unknownCount > 0 &&
+            ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
+          {leftOut && ` ${leftOut}`}
         </div>
         {gapNotes.map((n) => (
           <div className="stale-note" key={n}>
@@ -512,7 +527,7 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / maxCat) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                <span className="cat-val">{formatMoney(sum, currency)}</span>
               </div>
             ))}
           </div>
@@ -541,7 +556,7 @@ export default function MonthBreakdown({
                         style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
                       />
                     </div>
-                    <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                    <span className="cat-val">{formatMoney(sum, currency)}</span>
                   </div>
                 ))}
               </div>
@@ -565,7 +580,7 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                <span className="cat-val">{formatMoney(sum, currency)}</span>
               </div>
             ))}
           </div>
@@ -589,6 +604,8 @@ export default function MonthBreakdown({
           onChange={(e) => setQuery(e.target.value)}
         />
 
+        {actionError && <div className="error">{actionError}</div>}
+
         {visible.length === 0 ? (
           <p className="empty-note">
             {query
@@ -602,7 +619,7 @@ export default function MonthBreakdown({
                 <Fragment key={g.date}>
                   <tr className="txn-date-header">
                     <td>{fmtTxnDate(g.date)}</td>
-                    <td className="num">{fmtSignedUsd(g.net)}</td>
+                    <td className="num">{fmtDayNet(g.nets, currency)}</td>
                   </tr>
                   {g.txns.map((t, i) => (
                     <tr
@@ -652,7 +669,18 @@ export default function MonthBreakdown({
                               {t.institution_name} · {t.account_name}
                               {t.category ? ` · ${t.category}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
+                              {t.source ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
+                            {t.excluded === true && (
+                              <div className="excluded-tag">
+                                Excluded from budgets and reports
+                              </div>
+                            )}
+                            {t.excluded === null && (
+                              <div className="excluded-tag">
+                                Couldn&apos;t read whether you excluded this
+                              </div>
+                            )}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -669,12 +697,25 @@ export default function MonthBreakdown({
                               }}
                               aria-label={`Category for ${t.name}`}
                             >
-                              {categoryOptions.map((c) => (
+                              {pickable.map((c) => (
                                 <option key={c} value={c}>
                                   {c}
                                 </option>
                               ))}
                             </select>
+                            {t.source && onEditTransaction && (
+                              <div className="rename-row">
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    onEditTransaction(t);
+                                    setRecatId(null);
+                                  }}
+                                >
+                                  Edit or delete
+                                </button>
+                              </div>
+                            )}
                             {t.vendor_key && (
                               <>
                                 <div className="rename-row">
@@ -705,12 +746,42 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
+                            {/* A pending row gets a new id when it posts,
+                                and an exclusion is kept by id: offered once
+                                it has posted, so it can't quietly lapse. */}
+                            {onToggleExcluded && t.pending && t.excluded !== true && (
+                              <div className="rename-hint">
+                                Once it posts, it can be excluded from budgets and reports.
+                              </div>
+                            )}
+                            {onToggleExcluded && (!t.pending || t.excluded === true) && (
+                              <>
+                                <div className="rename-row">
+                                  <button
+                                    className="secondary"
+                                    onClick={() => {
+                                      onToggleExcluded(t, t.excluded !== true);
+                                      setRecatId(null);
+                                    }}
+                                  >
+                                    {t.excluded === true
+                                      ? "Include in budgets and reports"
+                                      : "Exclude from budgets and reports"}
+                                  </button>
+                                </div>
+                                <div className="rename-hint">
+                                  {t.excluded === true
+                                    ? "Puts it back in totals, budgets, insights, bills and the Plan."
+                                    : "For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan."}
+                                </div>
+                              </>
+                            )}
                             <TxnDetail t={t} />
                           </div>
                         )}
                       </td>
-                      <td className={`num${t.amount < 0 ? " inflow" : ""}`}>
-                        {fmtTxnAmount(t.amount, t.iso_currency_code)}
+                      <td className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true ? " excluded" : ""}`}>
+                        {fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}
                       </td>
                     </tr>
                   ))}

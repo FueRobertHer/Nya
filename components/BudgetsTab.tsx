@@ -2,15 +2,19 @@
 
 // Budgets tab -- the Mint core loop: monthly budgets per spending category
 // with progress meters (fill carries severity: accent -> warning -> over),
-// plus detected recurring bills. Spending is the current month's non-transfer
-// outflows, from the already-loaded transactions.
+// plus detected recurring bills. Spending is the current month's outflows that
+// count in totals (lib/spending.ts: not transfers or loan payments, not
+// excluded, and in the totals' currency, naming what is in others), from the
+// already-loaded transactions: the same rule as the Activity tab and the Home
+// insights, so a budget agrees with both.
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
+import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
 import { detectRecurring } from '@/lib/recurring';
 import { localMonth, instantDay } from '@/lib/local-date';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { formatMoney } from '@/lib/format';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 
@@ -25,10 +29,6 @@ function fmtDay(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
-}
-
-function isTransfer(t: Txn): boolean {
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
 }
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
@@ -87,25 +87,44 @@ export default function BudgetsTab({
   const thisMonth = localMonth();
   const monthName = new Date().toLocaleDateString(undefined, { month: 'long' });
 
+  // Budgets are plain numbers with no currency; they count, and are shown in,
+  // the currency most transactions are in (lib/spending.ts), as the Activity
+  // tab's totals are.
+  const displayCurrency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
+
   // Current-month spending per category.
   const spendByCat = useMemo(() => {
     const map: Record<string, number> = {};
     (txns ?? []).forEach((t) => {
-      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || isTransfer(t)) return;
+      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || !countsInTotals(t, displayCurrency)) return;
       const cat = t.category ?? 'other';
       map[cat] = (map[cat] ?? 0) + t.amount;
     });
     return map;
-  }, [txns, thisMonth]);
+  }, [txns, thisMonth, displayCurrency]);
+
+  // This month's spending in other currencies, named rather than added.
+  const leftOut = useMemo(
+    () =>
+      leftOutText(
+        leftOutByCurrency(
+          (txns ?? []).filter((t) => t.date.slice(0, 7) === thisMonth && t.amount > 0),
+          displayCurrency
+        ),
+        displayCurrency,
+        { where: 'these budgets' }
+      ),
+    [txns, thisMonth, displayCurrency]
+  );
 
   // Categories seen anywhere in the window, offered when adding a budget.
   const availableCategories = useMemo(() => {
     const seen = new Set<string>();
     (txns ?? []).forEach((t) => {
-      if (t.amount > 0 && !isTransfer(t)) seen.add(t.category ?? 'other');
+      if (t.amount > 0 && countsInTotals(t, displayCurrency)) seen.add(t.category ?? 'other');
     });
     return [...seen].filter((c) => !(c in budgets)).sort();
-  }, [txns, budgets]);
+  }, [txns, budgets, displayCurrency]);
 
   const budgetedCategories = useMemo(
     () =>
@@ -117,17 +136,22 @@ export default function BudgetsTab({
 
   const recurring = useMemo(() => (txns ? detectRecurring(txns) : []), [txns]);
 
-  // Budgets are plain numbers with no currency; label summed figures with the
-  // user's dominant transaction currency (defaults to $ when unknown).
-  const displayCurrency = useMemo(() => dominantCurrency(txns ?? []), [txns]);
-
-  // Summing across currencies isn't meaningful without FX; flag it (same as the
-  // Activity summary) so the single-currency-labelled totals aren't read as exact.
-  const mixedCurrency = useMemo(() => {
-    const seen = new Set<string>();
-    for (const t of txns ?? []) if (t.iso_currency_code) seen.add(t.iso_currency_code);
-    return seen.size > 1;
-  }, [txns]);
+  // The bills' monthly total adds up those in the budgets' currency; each bill
+  // is listed in its own, and those in others are named.
+  const { monthlyBills, billsLeftOut } = useMemo(() => {
+    let total = 0;
+    const others = new Map<string, number>();
+    for (const b of recurring) {
+      const c = b.currency ?? displayCurrency;
+      if (c === displayCurrency || displayCurrency === null) total += b.amount;
+      else if (c) others.set(c, (others.get(c) ?? 0) + 1);
+    }
+    const leftOut = [...others].map(([currency, count]) => ({ currency, count })).sort((a, b) => b.count - a.count);
+    return {
+      monthlyBills: total,
+      billsLeftOut: leftOutText(leftOut, displayCurrency, { noun: 'bill', where: 'this total', plural: false }),
+    };
+  }, [recurring, displayCurrency]);
 
   if (loading) {
     return (
@@ -140,7 +164,6 @@ export default function BudgetsTab({
   const totalBudget = Object.values(budgets).reduce((a, b) => a + b, 0);
   const totalSpent = budgetedCategories.reduce((sum, c) => sum + (spendByCat[c] ?? 0), 0);
   const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : 0;
-  const monthlyBills = recurring.reduce((sum, b) => sum + b.amount, 0);
 
   function startEdit(category: string) {
     setEditing(category);
@@ -287,9 +310,7 @@ export default function BudgetsTab({
           </>
         )}
 
-        {mixedCurrency && (
-          <div className="chart-note">Totals mix currencies and aren&apos;t converted.</div>
-        )}
+        {leftOut && <div className="chart-note">{leftOut}</div>}
         {totalBudget > 0 &&
           monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)).map((n) => (
             <div className="stale-note" key={n}>
@@ -353,7 +374,9 @@ export default function BudgetsTab({
             </tbody>
           </table>
         )}
-        <div className="chart-note">Detected from repeating charges of a consistent amount.</div>
+        <div className="chart-note">
+          Detected from repeating charges of a consistent amount.{billsLeftOut && ` ${billsLeftOut}`}
+        </div>
       </div>
     </>
   );

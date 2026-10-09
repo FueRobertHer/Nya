@@ -21,7 +21,9 @@ import './access-log';
 import './connection-records';
 import './fire-plan';
 import './holdings-history';
+import './manual-txns';
 import './rate-limit';
+import './txn-annotations';
 
 import { storesDeclaredSoFar, type Store } from './repo';
 

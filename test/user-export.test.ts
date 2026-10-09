@@ -739,6 +739,7 @@ describe('stores built on the storage seam', () => {
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     // Not the records of showings: "sharing" has them (covers).
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'carried-annotations',
       'connection-notices',
       'connection-syncs',
       'connection-warnings',
@@ -746,6 +747,8 @@ describe('stores built on the storage seam', () => {
       'export-test-settings',
       'fire-plan',
       'holdings:history',
+      'manual-transactions',
+      'transaction-annotations',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
