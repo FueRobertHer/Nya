@@ -236,6 +236,11 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
       ticker: securities[h.security_id]?.ticker_symbol ?? null,
       security_type: securities[h.security_id]?.type ?? null,
       is_cash_equivalent: securities[h.security_id]?.is_cash_equivalent ?? null,
+      // What `value` is in: Plaid's ISO code, or its unofficial one (a
+      // cryptocurrency) when there is no ISO code. The allocation
+      // (lib/allocation/allocation.ts) leaves a position in another currency
+      // out rather than add it unconverted.
+      currency: h.iso_currency_code ?? h.unofficial_currency_code ?? null,
     }));
     // For holdings history, from Plaid's own fields rather than the display
     // ones above. Only here, where the call answered, and only for a whole

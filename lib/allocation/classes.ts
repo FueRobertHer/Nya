@@ -32,8 +32,11 @@
 import { isCashHolding } from '@/lib/cash';
 import { fundSplit } from './funds';
 
-/** The classes a split can name, in the order they are shown. */
-export const ASSET_CLASSES = ['us-stocks', 'intl-stocks', 'stocks', 'bonds', 'cash', 'real-estate', 'crypto', 'other'] as const;
+/** The classes a split can name, in the order they are shown: the classes
+ *  most portfolios hold first, then the rest. Charts color them in this order
+ *  (components/allocation-text.ts), which is the order their colors were
+ *  checked for telling neighbours apart. */
+export const ASSET_CLASSES = ['us-stocks', 'intl-stocks', 'bonds', 'cash', 'stocks', 'real-estate', 'crypto', 'other'] as const;
 export type AssetClass = (typeof ASSET_CLASSES)[number];
 /** A class, or unclassified: where money goes in an allocation. */
 export type Slot = AssetClass | 'unclassified';
@@ -102,9 +105,10 @@ export const CLASS_WORDS: Record<Slot, string> = {
   unclassified: 'unclassified',
 };
 
-/** "60% US stocks, 40% bonds". */
+/** "60% US stocks, 40% bonds": the largest share first. */
 export function splitText(split: Split): string {
   return ASSET_CLASSES.filter((c) => (split[c] ?? 0) > 0)
+    .sort((a, b) => (split[b] as number) - (split[a] as number))
     .map((c) => `${split[c]}% ${CLASS_WORDS[c]}`)
     .join(', ');
 }

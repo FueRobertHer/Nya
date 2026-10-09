@@ -13,6 +13,9 @@
 //     may be missing from it: an institution whose transactions couldn't be
 //     read, balances that are old or short. A figure that may be short says
 //     so; none is presented as complete when it may not be.
+//   - Allocation (components/AllocationCard.tsx): what the investment
+//     accounts hold by asset class and tax bucket, against a target, over
+//     time, and the mix the simulation can take from it, on the person's word.
 //   - "Will it last?": the plan run through history or Monte Carlo
 //     (lib/fire/simulate.ts), with the success rate and its definition, for a
 //     flexible rule the spending cuts beside it, a fan chart, the worst
@@ -36,6 +39,7 @@ import {
   DATA_STOCKS,
   HYPOTHETICAL,
   METHOD_NAMES,
+  PAYROLL_NOTE,
   REBALANCE_TEXT,
   RULE_NAMES,
   dayName,
@@ -43,10 +47,12 @@ import {
   pct,
   progressText,
   ruleText,
+  savingsRateText,
   successDefinition,
   successText,
   wholeMoney,
   yearsText,
+  yearsToFiText,
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { instantDay } from '@/lib/local-date';
@@ -61,6 +67,8 @@ import {
 } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs } from '@/lib/fire/progress';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
+import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
+import type { AllocHolding } from '@/lib/allocation/allocation';
 import {
   allocationOf,
   DEFAULT_PLAN,
@@ -192,9 +200,12 @@ export type PlanTabProps = {
   balancesAsOf: string | null;
   /** The accounts' main currency, for amounts nothing else labels. */
   currency: string | null;
+  /** Every position the dashboard loaded, each with its account (hidden
+   *  accounts' included: the allocation leaves those out itself). */
+  holdings: AllocHolding[];
 };
 
-export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, balancesAsOf, currency }: PlanTabProps) {
+export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, balancesAsOf, currency, holdings }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   const store = useMemo(
     () =>
@@ -236,6 +247,8 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   const displayCurrency = figures.currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
   const currencyNote = figures.currencyNote;
+  // In the plan's currency, so its mix is of what the plan counts.
+  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: plan.includeCash });
 
   const engine = enginePlan(plan, view);
   const sim = 'sim' in engine ? engine.sim : null;
@@ -409,7 +422,10 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         money={money}
         editable={editable}
         open={open}
+        savingsRate={figures.savingsRate}
       />
+
+      <AllocationCard allocation={allocation} plan={plan} onSavePlan={store.save} planEditable={editable} institutions={institutions} balancesAsOf={balancesAsOf} />
 
       <SimulationCard
         plan={plan}
@@ -467,7 +483,15 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
         {shownSheet?.kind === 'assumptions' && <AssumptionsForm key={opened} {...formProps} />}
         {shownSheet?.kind === 'simulation' && (
-          <SimulationForm key={opened} {...formProps} fiNumber={view.fiNumber} assets={view.assets.value} spending={view.spending.value} currency={displayCurrency} />
+          <SimulationForm
+            key={opened}
+            {...formProps}
+            fiNumber={view.fiNumber}
+            assets={view.assets.value}
+            spending={view.spending.value}
+            currency={displayCurrency}
+            allocationMix={mixToOffer(allocation)}
+          />
         )}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
@@ -608,6 +632,7 @@ export function FiCard({
   money,
   editable,
   open,
+  savingsRate = null,
 }: {
   plan: FirePlan;
   view: FiView;
@@ -627,6 +652,8 @@ export function FiCard({
   money: (n: number) => string;
   editable: boolean;
   open: (s: SheetState) => void;
+  /** The trailing year's savings rate (lib/fire/progress.ts), as Home shows it. */
+  savingsRate?: number | null;
 }) {
   const { spending, savings, assets } = view;
   const spendingShort = spending.source === 'measured' && unread.length > 0;
@@ -691,14 +718,16 @@ export function FiCard({
         ? `How ${x.name} is paid into isn't set: if you pay into it from your bank account, say so under Edit, or it may count twice.`
         : null,
     ]);
+    const rate =
+      savingsRate !== null
+        ? ` That is a savings rate of ${savingsRateText(savingsRate)} of income${addedTo.length ? ', what went into those plans counted as income too' : ''}.`
+        : '';
     savingsNote = (
       <Notes
-        source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}.`}
+        source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}.${rate}`}
         warnings={[
           workplaceCount === null ? 'Checking contributions to workplace plans…' : null,
-          workplaceCount === 0
-            ? "Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data."
-            : null,
+          workplaceCount === 0 ? PAYROLL_NOTE : null,
           ...planLines,
           fromBank.length
             ? `${names(fromBank)} ${fromBank.length === 1 ? 'is' : 'are'} set as paid from your bank, so nothing paid into ${fromBank.length === 1 ? 'it' : 'them'} is added again.`
@@ -729,16 +758,14 @@ export function FiCard({
     );
   }
 
-  let yearsLine: React.ReactNode = '--';
+  // The same words as the FI card on Home (components/FiProgressCard.tsx).
+  const yearsLine = yearsToFiText(view.yearsToFi);
   let yearsNote = '';
-  if (view.yearsToFi === 0) yearsLine = 'You’re there';
-  else if (view.yearsToFi === Infinity) {
-    yearsLine = 'Not at this rate';
+  if (view.yearsToFi === Infinity) {
     yearsNote = `Saving ${money(savings.value ?? 0)} a year at ${pct(plan.realReturn)} real never reaches it.`;
-  } else if (view.yearsToFi !== null) {
-    yearsLine = yearsText(view.yearsToFi);
+  } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
-  } else {
+  } else if (view.yearsToFi === null) {
     yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : 'Needs your invested assets or savings.';
   }
 

@@ -2705,3 +2705,108 @@ button.plan-edit:disabled {
 .reconnect-soon .stale-note {
   margin-top: 8px;
 }
+
+/* --- allocation (components/AllocationCard.tsx), on the Plan tab, and the FI
+   card on Home (components/FiProgressCard.tsx) --- */
+
+/* The whole as one bar, a segment per class in its color: a 2px gap of card
+   between neighbours, rounded only at the bar's two ends. */
+.alloc-bar {
+  display: flex;
+  gap: 2px;
+  height: 12px;
+  margin-top: 12px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.alloc-seg {
+  flex-basis: 0;
+  min-width: 2px;
+}
+
+.alloc-table {
+  margin-top: 6px;
+}
+
+.alloc-table td,
+.alloc-table th {
+  padding: 7px 4px;
+}
+
+/* A class's key beside its name: identity never rests on the color alone. */
+.alloc-swatch {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.alloc-share {
+  width: 52px;
+  color: var(--muted);
+}
+
+/* Under a class in the drift table: how far from its target, in money. */
+.alloc-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* A split's fields, two to a row. */
+.alloc-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 10px;
+}
+
+.alloc-fields .field {
+  min-width: 0;
+}
+
+/* The bucket choices: a radio and a sentence each. */
+.alloc-choices .plan-check {
+  align-items: flex-start;
+  line-height: 1.4;
+}
+
+.alloc-choices .plan-check input {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Up to nine keys: they wrap on a phone. */
+.alloc-card .chart-legend {
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+/* A recorded day missing an account, as marked under its column. */
+.alloc-missing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* The FI card on Home: three figures side by side, wrapping on a narrow
+   phone. */
+.fi-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 12px;
+}
+
+.fi-stats .plan-stat {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.fi-stats .plan-stat-value {
+  font-size: 22px;
+}
