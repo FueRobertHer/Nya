@@ -943,9 +943,9 @@ describe('a manual account’s transactions, shared', () => {
     const { result, logged } = await quietly(() => sharedWithPartner());
     expect(result[0].accounts).toEqual(view.accounts);
     expect(logged).toEqual([]);
-    // As the owner's own list of imports finds it.
-    const listed = await as('user_owner', () => imports.GET(new Request('http://x/api/import?account_id=manual_house')));
-    expect((await listed.json()).imports.map((i: any) => [i.id, i.record])).toEqual([[import_id, 'unreadable']]);
+    // As the owner's Undo of it finds it, reading its records.
+    const asked = await as('user_owner', () => imports.GET(new Request(`http://x/api/import?account_id=manual_house&undo=${import_id}`)));
+    expect((await asked.json()).undo).toMatchObject({ record: 'unreadable', remove: 3 });
   });
 
   test('a hidden manual account is left out, its transactions with it', async () => {

@@ -8,12 +8,25 @@
 // read, and app/api/import calls it again, with the answers, on the file it
 // receives. Both run the same code on the same text, so the preview the
 // server answers with is the one the sheet showed.
+//
+// THE ORDER OF NUMERIC DATES comes from the file whenever its dates settle it
+// (some fit only one order): an order the person chose for an earlier file,
+// remembered for the account, is only a default for a file whose dates all
+// fit both, and the sheet shows it, changeable, as it shows the question. A
+// file whose dates contradict each other (some fit only one order, others
+// only the other) needs the person's answer every time.
+//
+// WHAT AN ANSWER HOLDS is bounded whatever the file: at most MAX_STATEMENTS
+// statements or accounts, MAX_CSV_COLUMNS column names of at most 100
+// characters, and the first rows of a CSV file with each cell cut short, all
+// without control characters, so a question the sheet asks stays small.
 
 import { MAX_IMPORT_ROWS, type FileFormat, type Problem, type RawRecord } from './record';
+import { cleanText } from './normalize';
 import { detectFormat } from './text';
 import { dateStyle, detectDateOrder, type DateDetection, type DateOrder, type DateStyle } from './dates';
 import { detectDecimalMark, type DecimalMark } from './amounts';
-import { accountMask, ofxRecords, parseOfx, statementLabel, type OfxStatement } from './ofx';
+import { accountMask, ofxRecords, parseOfx, repairNotes, statementLabel, type OfxStatement } from './ofx';
 import { parseQif, qifRecords, qifValues, sectionLabel, type QifSection } from './qif';
 import {
   columnsProblem,
@@ -87,6 +100,10 @@ export type ReadResult =
         date_order: DateOrder | null;
         /** Whether the order mattered: some dates depend on one. */
         dates_ordered: boolean;
+        /** Whether the order is the person's to choose: the file's dates
+         *  all fit both orders, or contradict each other. When false, the
+         *  file's dates settled it (or none needed one). */
+        order_open: boolean;
         /** How most of the dates are written, as read (CSV and QIF). */
         date_style: DateStyle | null;
         decimal: DecimalMark | null;
@@ -97,6 +114,8 @@ export type ReadResult =
          *  unclosed quote stopped the reading. */
         skipped?: number;
         unterminated?: number | null;
+        /** OFX: where the file's structure had to be repaired, in words. */
+        repairs: string[];
       };
     };
 
@@ -121,24 +140,49 @@ function ofxInfo(s: OfxStatement): StatementInfo {
 }
 
 function qifInfo(s: QifSection): StatementInfo {
-  return { index: s.index, label: sectionLabel(s), kind: s.kind, account: null, currency: null, start: null, end: null, count: s.entries.length, ledger: null };
+  return { index: s.index, label: shown(sectionLabel(s), 100), kind: s.kind, account: null, currency: null, start: null, end: null, count: s.entries.length, ledger: null };
 }
+
+/** Text for an answer: without control characters or invisible marks, and
+ *  at most `max` characters. */
+const shown = (s: string, max: number) => cleanText(s.slice(0, max * 2)).slice(0, max);
+
+/** The first rows of a CSV file shown with its column names, and how long a
+ *  cell of them may be. */
+const SAMPLE_ROWS = 8;
+const SAMPLE_CELL_CHARS = 80;
 
 function summary(table: CsvTable): CsvSummary {
   return {
     delimiter: table.delimiter,
-    header: table.header,
+    header: table.header.map((h) => shown(h, 100)),
     header_line: table.header_line,
     skipped: table.skipped,
-    sample: table.rows.slice(0, 8).map((r) => ({ line: r.line, cells: r.cells.map((c) => c.slice(0, 200)) })),
+    sample: table.rows.slice(0, SAMPLE_ROWS).map((r) => ({ line: r.line, cells: r.cells.slice(0, table.header.length + 1).map((c) => shown(c, SAMPLE_CELL_CHARS)) })),
     rows: table.rows.length,
   };
 }
 
-/** The file read with the person's answers so far (see the header). `format`
- *  is detected from the text when not given; `thisYear` places two-digit
- *  years. */
-export function readImport(text: string, opts: { format?: FileFormat; options: ImportOptions; thisYear: number }): ReadResult {
+/** The order to read numeric dates in (see the header): the file's own when
+ *  its dates settle it, else the person's, or a question when they gave none. */
+function orderOf(detection: DateDetection, chosen: DateOrder | undefined): { open: boolean; order: DateOrder | null; ask: boolean } {
+  const open = detection.ambiguous || detection.mixed;
+  if (!open) return { open, order: detection.order, ask: false };
+  return { open, order: chosen ?? null, ask: !chosen };
+}
+
+/**
+ * The file read with the person's answers so far (see the header). `format`
+ * is detected from the text when not given; `thisYear` places two-digit
+ * years. For the sheet, which reads a CSV file again as each answer changes:
+ * `table` is the file already read as a table with the same separator and
+ * header line (readCsvTable), and `limit` reads only the first rows' records
+ * (the dates and amounts are still detected from every row).
+ */
+export function readImport(
+  text: string,
+  opts: { format?: FileFormat; options: ImportOptions; thisYear: number; table?: CsvTable | { error: string }; limit?: number }
+): ReadResult {
   const format = opts.format ?? detectFormat(text);
   const o = opts.options;
   if (format === 'ofx') {
@@ -147,7 +191,7 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
     if (file.statements.length > 1 && o.statement === undefined) return { status: 'statement', format, statements: file.statements.map(ofxInfo) };
     const s = file.statements[o.statement ?? 0];
     if (!s) return { status: 'error', format, error: 'That statement isn’t in this file. Choose the file again.' };
-    if (s.transactions.length > MAX_IMPORT_ROWS) return tooMany(format);
+    if (Math.max(s.transactions.length, s.listed) > MAX_IMPORT_ROWS) return tooMany(format);
     const read = ofxRecords(s, { flip: o.flip });
     return {
       status: 'ready',
@@ -155,7 +199,15 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
       records: read.records,
       problems: [...file.problems, ...read.problems],
       statement: ofxInfo(s),
-      read: { date_order: null, dates_ordered: false, date_style: null, decimal: null, reversed_hint: !o.flip && read.reversedHint },
+      read: {
+        date_order: null,
+        dates_ordered: false,
+        order_open: false,
+        date_style: null,
+        decimal: null,
+        reversed_hint: !o.flip && read.reversedHint,
+        repairs: repairNotes(file.repairs),
+      },
     };
   }
   if (format === 'qif') {
@@ -167,9 +219,10 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
     if (s.entries.length > MAX_IMPORT_ROWS) return tooMany(format);
     const dates = qifValues(s, 'D');
     const detection = detectDateOrder(dates, opts.thisYear);
-    if ((detection.ambiguous || detection.mixed) && !o.date_order) return { status: 'date_order', format, detection, examples: dates.slice(0, 3) };
+    const order = orderOf(detection, o.date_order);
+    if (order.ask) return { status: 'date_order', format, detection, examples: dates.slice(0, 3).map((d) => shown(d, 40)) };
     const decimal = o.decimal ?? detectDecimalMark([...qifValues(s, 'T'), ...qifValues(s, 'U')]) ?? '.';
-    const date_order = o.date_order ?? detection.order;
+    const date_order = order.order;
     const read = qifRecords(s, { date_order, decimal, flip: o.flip }, opts.thisYear);
     return {
       status: 'ready',
@@ -180,30 +233,34 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
       read: {
         date_order,
         dates_ordered: detection.ambiguous || detection.mixed || detection.order !== null,
+        order_open: order.open,
         date_style: dateStyle(dates, date_order, opts.thisYear),
         decimal,
         reversed_hint: false,
+        repairs: [],
       },
     };
   }
-  const table = readCsvTable(text, { delimiter: o.csv?.delimiter, header_line: o.csv?.header_line });
+  const table = opts.table ?? readCsvTable(text, { delimiter: o.csv?.delimiter, header_line: o.csv?.header_line });
   if ('error' in table) return { status: 'error', format, error: table.error };
   if (table.too_many) return tooMany(format);
-  const shown = summary(table);
-  if (!o.csv) return { status: 'mapping', format, table: shown, guess: guessColumns(table.header), problem: null };
+  const sample = summary(table);
+  if (!o.csv) return { status: 'mapping', format, table: sample, guess: guessColumns(table.header), problem: null };
   const problem = columnsProblem(o.csv.columns, table.header);
-  if (problem) return { status: 'mapping', format, table: shown, guess: guessColumns(table.header), problem };
+  if (problem) return { status: 'mapping', format, table: sample, guess: guessColumns(table.header), problem };
   const { columns } = o.csv;
   const dates = columnValues(table, columns.date);
   const detection = detectDateOrder(dates, opts.thisYear);
-  if ((detection.ambiguous || detection.mixed) && !o.date_order) return { status: 'date_order', format, detection, examples: dates.slice(0, 3), table: shown };
+  const order = orderOf(detection, o.date_order);
+  if (order.ask) return { status: 'date_order', format, detection, examples: dates.slice(0, 3).map((d) => shown(d, 40)), table: sample };
   const amounts = [columns.amount, columns.debit, columns.credit].flatMap((at) => columnValues(table, at));
   // Semicolons separate fields where commas mark decimals.
   const decimal = o.decimal ?? detectDecimalMark(amounts) ?? (table.delimiter === ';' ? ',' : '.');
-  const date_order = o.date_order ?? detection.order;
-  const read = csvRecords(table, { columns, sign: o.csv.sign, decimal, date_order }, opts.thisYear);
+  const date_order = order.order;
+  const rows = opts.limit === undefined ? table : { ...table, rows: table.rows.slice(0, opts.limit) };
+  const read = csvRecords(rows, { columns, sign: o.csv.sign, decimal, date_order }, opts.thisYear);
   const problems = read.problems;
-  if (table.unterminated !== null) {
+  if (table.unterminated !== null && opts.limit === undefined) {
     problems.push({ line: table.unterminated, reason: 'A quote opened on this line is never closed, so nothing from here on could be read.' });
   }
   return {
@@ -215,12 +272,14 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
     read: {
       date_order,
       dates_ordered: detection.ambiguous || detection.mixed || detection.order !== null,
+      order_open: order.open,
       date_style: dateStyle(dates, date_order, opts.thisYear),
       decimal,
       reversed_hint: false,
-      table: shown,
+      table: sample,
       skipped: table.skipped,
       unterminated: table.unterminated,
+      repairs: [],
     },
   };
 }

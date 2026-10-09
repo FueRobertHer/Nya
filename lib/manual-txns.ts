@@ -76,6 +76,15 @@ export type ManualTxn = TxnFields & {
   /** The import it came in with (#43), so that import can be taken out whole;
    *  absent or null for one entered by hand. */
   import_id?: string | null;
+  /** For a row from a file with ids of its own (OFX): the content key it was
+   *  imported with, hashed (lib/import/normalize.ts keyHash), so a later file
+   *  holding exactly that version of it finds it, edited since or not. */
+  source_key?: string;
+  /** Plaid's code for what its file said it was, when the file says so
+   *  outright (an OFX file's ATM transaction is "atm": lib/import/ofx.ts
+   *  bankType); absent otherwise. The spending rules read it as they read a
+   *  bank's (lib/spending.ts, lib/fire/inputs.ts). */
+  transaction_code?: string | null;
   /** The balance update its add made, once made ("Also update the balance"):
    *  from the figure the form showed to the one it said, on the account it
    *  was added to (absent on a note written before it was kept). Absent when
@@ -127,6 +136,8 @@ export function isManualTxn(v: unknown): v is ManualTxn {
     isSource(v.source) &&
     isTextOrNull(v.source_id) &&
     (v.import_id === undefined || isTextOrNull(v.import_id)) &&
+    (v.source_key === undefined || (typeof v.source_key === 'string' && v.source_key.length <= 64)) &&
+    (v.transaction_code === undefined || v.transaction_code === null || (typeof v.transaction_code === 'string' && v.transaction_code.length <= 40)) &&
     isBalanceUpdate(v.balance_update) &&
     isInstant(v.created_at) &&
     isInstant(v.updated_at)
@@ -374,6 +385,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string):
     iso_currency_code: row.currency,
     vendor_key: '',
     ...NO_PLAID_DETAIL,
+    transaction_code: row.transaction_code ?? null,
     source: row.source,
     account_id: row.account_id,
     note: row.note,

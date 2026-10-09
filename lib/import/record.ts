@@ -50,6 +50,10 @@ export type RawRecord = {
   currency?: string;
   category?: string | null;
   note?: string | null;
+  /** Plaid's code for what the source says the transaction was, when it says
+   *  so outright (an OFX file's TRNTYPE ATM is "atm"): what the spending
+   *  rules read (lib/spending.ts), as they read a bank's. */
+  transaction_code?: string | null;
   /** Where it starts in the file, counting from 1. */
   line?: number;
 };
@@ -72,6 +76,13 @@ export const MAX_FILE_BYTES = 3 * 1024 * 1024;
  *  (never cut short), so a person imports a shorter period instead. Four years
  *  of a busy account is about 7,000. */
 export const MAX_IMPORT_ROWS = 10_000;
+
+/** The most statements (OFX) or accounts (QIF) one file may hold, and the
+ *  most columns a CSV file may have. A bank's export holds a few of each; a
+ *  file with more is refused before anything is built from it, so neither the
+ *  answer nor the sheet's list of them can grow with a hostile file. */
+export const MAX_STATEMENTS = 50;
+export const MAX_CSV_COLUMNS = 200;
 
 /** The longest single field taken: a cell, an OFX value, a QIF line. Longer is
  *  not a bank's description but a damaged or hostile file, so the row is not

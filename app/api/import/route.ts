@@ -19,6 +19,8 @@ import { COLUMN_ROLES, DELIMITERS, namesOf, type CsvColumns, type Delimiter } fr
 import {
   accountMismatch,
   commitImport,
+  CONFLICT_CHOICES,
+  ConflictsUnresolvedError,
   ImportNotFoundError,
   listImports,
   noteBalanceSet,
@@ -27,17 +29,36 @@ import {
   statementAccountOf,
   statementBalance,
   undoImport,
+  undoPlan,
+  type ConflictChoice,
+  type ConflictChoices,
   type ImportPlan,
   type StatementBalance,
 } from '@/lib/import/commit';
-import { IMPORT_REQUESTS_PER_HOUR, importSettingsStore, importStore, isImportId, takeImportRequest, type ImportSettings } from '@/lib/import/store';
+import {
+  IMPORT_READS_PER_HOUR,
+  IMPORT_REQUESTS_PER_HOUR,
+  importSettingsStore,
+  importStore,
+  importSummaryStore,
+  isImportId,
+  takeImportRead,
+  takeImportRequest,
+  type ImportAllowance,
+  type ImportSettings,
+} from '@/lib/import/store';
 
 // File import into a manual account (#43; lib/import/, which says how a file
 // is read, matched and committed).
 //
 //   GET    ?account_id=   the account's past imports, newest first, with
 //                         what is left of each (for Undo), and how its last
-//                         file was read (for the next one).
+//                         file was read (for the next one). Read from each
+//                         import's summary, never its records.
+//          &undo=<id>     what undoing that import would do, for the
+//                         confirmation: how many rows go, how many are kept
+//                         for a later import that relied on them, how many it
+//                         replaced go back as they were.
 //   POST   a form upload: `file`, and `meta` (JSON) with the account, the
 //          person's answers and `action`:
 //            "preview"   reads the file and matches it against the account,
@@ -49,20 +70,31 @@ import { IMPORT_REQUESTS_PER_HOUR, importSettingsStore, importStore, isImportId,
 //            "import"    the same, then the rows in one compare-and-set on
 //                        the account's book, and the file's raw records kept
 //                        beside them. Refused whole, never cut short, when
-//                        the account would grow past the size ceiling.
+//                        the account would grow past the size ceiling, and
+//                        refused (409, needs "conflicts") while a row whose
+//                        FITID is on another stored transaction has no
+//                        answer (lib/import/match.ts): the preview lists
+//                        them, and `options.conflicts` carries the choices.
 //          A file that needs an answer first (which statement, which
 //          columns, which order its dates are in) is answered with
 //          `needs` and what the question needs; the import sheet asks it.
 //   DELETE { account_id, import_id, confirm: true }: Undo. Every row the
-//          import added, edited since or not, and what was said about them.
+//          import added, edited since or not, and what was said about them,
+//          except rows a later import found already there, which are kept
+//          for that import; rows it replaced go back as they were.
 //
 // LIMITS. A file is at most MAX_FILE_BYTES (3 MB) and MAX_IMPORT_ROWS
 // (10,000) transactions; the request carrying it, form and all, must fit
 // Vercel's 4.5 MB limit on a function's request body, and a declared or
 // actual body over MAX_REQUEST_BYTES is refused before it is read as a form.
 // Each field is checked as a typed transaction's is (lib/import/normalize.ts).
-// Previews, imports and undos together are limited per person an hour
-// (lib/import/store.ts), failing closed.
+// Previews, imports and undos together are limited per person an hour, and
+// reads of the list and of an undo's plan with a higher limit of their own
+// (lib/import/store.ts), both failing closed and counted before a body is
+// read. Every answer is bounded whatever the file (lib/import/read.ts): a
+// question holds at most MAX_STATEMENTS statements or MAX_CSV_COLUMNS
+// columns, and a preview at most LISTED_PROBLEMS problems and
+// LISTED_CONFLICTS conflicts.
 //
 // FILES ARE NEVER LOGGED, nor any of what they hold: errors go to the log
 // through loggable(), which keeps their kind and stack, never the request.
@@ -79,11 +111,18 @@ import { IMPORT_REQUESTS_PER_HOUR, importSettingsStore, importStore, isImportId,
 
 /** The largest request taken: the file, and the form around it. */
 const MAX_REQUEST_BYTES = MAX_FILE_BYTES + 64 * 1024;
-/** The person's answers, as JSON: far more than any mapping needs. */
-const MAX_META_CHARS = 16 * 1024;
-/** Rows shown in a preview, and problems listed, at most. */
+/** The person's answers, as JSON: far more than any mapping needs, with a
+ *  choice for each of MAX_CHOICES conflicts. */
+const MAX_META_CHARS = 32 * 1024;
+/** Rows shown in a preview, and problems, conflicts and shared ids listed,
+ *  at most. */
 const PREVIEW_ROWS = 8;
 const LISTED_PROBLEMS = 200;
+const LISTED_CONFLICTS = 200;
+const LISTED_SHARED = 50;
+/** The most per-row conflict choices a request may carry: the listed ones
+ *  and more (the rest follow `all`). */
+const MAX_CHOICES = 1_000;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isAccountId = (v: unknown): v is string => typeof v === 'string' && v.length <= 80 && isManualId(v);
@@ -97,25 +136,30 @@ const tooLarge = () =>
     { status: 413 }
   );
 
-function tooMany(retryAfterSeconds: number): NextResponse {
+function tooMany(retryAfterSeconds: number, what: string): NextResponse {
   const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
   return NextResponse.json(
-    { error: `Files can be read or imported ${IMPORT_REQUESTS_PER_HOUR} times an hour. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`, retry_after_seconds: retryAfterSeconds },
+    { error: `${what}. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`, retry_after_seconds: retryAfterSeconds },
     { status: 429, headers: { 'Retry-After': String(retryAfterSeconds) } }
   );
 }
 
-/** Counts this request against the hourly limit: the response refusing it,
+/** Counts this request against an hourly limit: the response refusing it,
  *  or null. Fails closed: a limit that can't be read never opens. */
-async function overLimit(ctx: Ctx): Promise<NextResponse | null> {
+async function limited(take: () => Promise<ImportAllowance>, what: string): Promise<NextResponse | null> {
   try {
-    const allowed = await takeImportRequest(ctx);
-    return allowed.ok ? null : tooMany(allowed.retryAfterSeconds);
+    const allowed = await take();
+    return allowed.ok ? null : tooMany(allowed.retryAfterSeconds, what);
   } catch (err) {
     console.error('import: the request limit could not be checked', loggable(err));
     return NextResponse.json({ error: 'The import limit could not be checked just now, so nothing was done. Try again in a minute.' }, { status: 503 });
   }
 }
+
+/** A preview, an import or an undo, against their limit. */
+const overLimit = (ctx: Ctx) => limited(() => takeImportRequest(ctx), `Files can be read or imported ${IMPORT_REQUESTS_PER_HOUR} times an hour`);
+/** A read of the list of imports or of an undo's plan, against theirs. */
+const overReadLimit = (ctx: Ctx) => limited(() => takeImportRead(ctx), `Past imports can be listed ${IMPORT_READS_PER_HOUR} times an hour`);
 
 /** One of the container's manual accounts, or the response saying it isn't. */
 async function manualAccount(ctx: Ctx, account_id: unknown): Promise<ManualAccount | NextResponse> {
@@ -140,11 +184,18 @@ async function readSettings(ctx: Ctx, account_id: string): Promise<ImportSetting
 export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
-    const account = await manualAccount(ctx, new URL(req.url).searchParams.get('account_id'));
+    const params = new URL(req.url).searchParams;
+    const undo = params.get('undo');
+    if (undo !== null && !isImportId(undo)) return bad('Invalid import');
+    const over = await overReadLimit(ctx);
+    if (over) return over;
+    const account = await manualAccount(ctx, params.get('account_id'));
     if (account instanceof NextResponse) return account;
+    if (undo !== null) return NextResponse.json({ undo: await undoPlan(ctx, account.account_id, undo) });
     const [imports, settings] = await Promise.all([listImports(ctx, account.account_id), readSettings(ctx, account.account_id)]);
     return NextResponse.json({ imports, settings, limits: { max_bytes: MAX_FILE_BYTES, max_rows: MAX_IMPORT_ROWS } });
   } catch (err) {
+    if (err instanceof ImportNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });
     return storeFailure(err, 'Failed to load the imports');
   }
 }
@@ -156,11 +207,37 @@ type Meta = {
   account_id: string;
   file_name: string | null;
   options: ImportOptions;
+  conflicts: ConflictChoices;
   acknowledge_account: boolean;
   balance: { from: number; to: number } | null;
 };
 
-const OPTION_KEYS = new Set(['statement', 'flip', 'currency', 'date_order', 'decimal', 'csv']);
+const OPTION_KEYS = new Set(['statement', 'flip', 'currency', 'date_order', 'decimal', 'csv', 'conflicts']);
+
+const isChoice = (v: unknown): v is ConflictChoice => (CONFLICT_CHOICES as readonly unknown[]).includes(v);
+
+/** The person's choices for conflicts, checked strictly, or why not. */
+function readChoices(v: unknown): ConflictChoices | string {
+  if (v === undefined || v === null) return {};
+  if (!isRecord(v) || Object.keys(v).some((k) => k !== 'all' && k !== 'each')) return 'Invalid choices';
+  const out: ConflictChoices = {};
+  if (v.all !== undefined) {
+    if (!isChoice(v.all)) return 'Invalid choices';
+    out.all = v.all;
+  }
+  if (v.each !== undefined) {
+    if (!isRecord(v.each)) return 'Invalid choices';
+    const entries = Object.entries(v.each);
+    if (entries.length > MAX_CHOICES) return 'Too many choices';
+    const each: Record<string, ConflictChoice> = {};
+    for (const [index, choice] of entries) {
+      if (!/^\d{1,5}$/.test(index) || Number(index) >= MAX_IMPORT_ROWS || !isChoice(choice)) return 'Invalid choices';
+      each[String(Number(index))] = choice;
+    }
+    out.each = each;
+  }
+  return out;
+}
 
 /** The person's answers, checked strictly, or why not. */
 function readOptions(v: unknown): ImportOptions | string {
@@ -229,13 +306,15 @@ function readMeta(v: unknown): Meta | string {
   if (v.acknowledge_account !== undefined && typeof v.acknowledge_account !== 'boolean') return 'Invalid request';
   const options = readOptions(v.options);
   if (typeof options === 'string') return options;
+  const conflicts = readChoices(isRecord(v.options) ? v.options.conflicts : undefined);
+  if (typeof conflicts === 'string') return conflicts;
   let balance: Meta['balance'] = null;
   if (v.balance !== undefined && v.balance !== null) {
     const b = v.balance;
     if (!isRecord(b) || typeof b.from !== 'number' || !Number.isFinite(b.from) || typeof b.to !== 'number' || !Number.isFinite(b.to)) return 'Invalid balance update';
     balance = { from: b.from, to: b.to };
   }
-  return { action: v.action, account_id: v.account_id, file_name: cleanFileName(v.file_name), options, acknowledge_account: v.acknowledge_account === true, balance };
+  return { action: v.action, account_id: v.account_id, file_name: cleanFileName(v.file_name), options, conflicts, acknowledge_account: v.acknowledge_account === true, balance };
 }
 
 /** The form a request carries, read from bytes already counted. */
@@ -263,9 +342,20 @@ function readOf(options: ImportOptions, read: Ready): Record<string, unknown> {
   };
 }
 
-/** What the account should remember of how this file was read. */
-function settingsFor(format: FileFormat, options: ImportOptions, read: Ready, currency: string): Partial<Omit<ImportSettings, 'version' | 'updated_at'>> {
-  if (format === 'ofx') return { ofx: { statement: statementAccountOf(read.statement), flip: options.flip === true } };
+/** What the account should remember of how this file was read: for an OFX
+ *  file, the currency only when its statement didn't say one, as that is
+ *  what the next such file is read in. */
+function settingsFor(
+  format: FileFormat,
+  options: ImportOptions,
+  read: Ready,
+  currency: string,
+  remembered: ImportSettings | null
+): Partial<Omit<ImportSettings, 'version' | 'updated_at'>> {
+  if (format === 'ofx') {
+    const chosen = read.statement?.currency ? remembered?.ofx?.currency : currency;
+    return { ofx: { statement: statementAccountOf(read.statement), flip: options.flip === true, ...(chosen ? { currency: chosen } : {}) } };
+  }
   if (format === 'qif') return { qif: { date_order: read.read.date_order, decimal: read.read.decimal, flip: options.flip === true, currency } };
   const table = read.read.table!;
   return {
@@ -280,10 +370,24 @@ function settingsFor(format: FileFormat, options: ImportOptions, read: Ready, cu
   };
 }
 
+/** What the preview says became of a row, in one word. */
+function rowOutcome(plan: ImportPlan, i: number): 'new' | 'present' | 'repeated' | 'replace' | 'skip' | 'conflict' {
+  const o = plan.outcomes[i];
+  const action = plan.actions[i];
+  if (o.outcome !== 'conflict') return o.outcome;
+  return action === 'add' ? 'new' : action === 'replace' ? 'replace' : action === 'ask' ? 'conflict' : 'skip';
+}
+
 function previewOf(
   read: Ready,
   plan: ImportPlan,
-  extra: { encoding: string; warnings: string[]; mismatch: { expected: string; found: string } | null; balance: StatementBalance | null }
+  extra: {
+    encoding: string;
+    warnings: string[];
+    mismatch: { expected: string; found: string } | null;
+    balance: StatementBalance | null;
+    currency_from: 'file' | 'chosen' | 'default';
+  }
 ) {
   return {
     format: read.format,
@@ -292,6 +396,7 @@ function previewOf(
     read: {
       date_order: read.read.date_order,
       dates_ordered: read.read.dates_ordered,
+      order_open: read.read.order_open,
       date_style: read.read.date_style,
       decimal: read.read.decimal,
       ...(read.read.table ? { delimiter: read.read.table.delimiter, header_line: read.read.table.header_line, skipped: read.read.skipped ?? 0 } : {}),
@@ -305,13 +410,19 @@ function previewOf(
       currency: r.row.currency,
       category: r.row.category,
       note: r.row.note,
-      outcome: plan.outcomes[i].outcome,
+      outcome: rowOutcome(plan, i),
     })),
     problems: plan.problems.slice(0, LISTED_PROBLEMS).map((p) => ({ line: p.line, reason: p.reason })),
     more_problems: Math.max(0, plan.problems.length - LISTED_PROBLEMS),
+    conflicts: plan.conflicts.slice(0, LISTED_CONFLICTS),
+    more_conflicts: Math.max(0, plan.conflicts.length - LISTED_CONFLICTS),
+    shared_ids: plan.shared_ids.slice(0, LISTED_SHARED),
+    more_shared_ids: Math.max(0, plan.shared_ids.length - LISTED_SHARED),
+    kinds: plan.kinds,
     first_date: plan.first_date,
     last_date: plan.last_date,
     currency: plan.currency,
+    currency_from: extra.currency_from,
     other_currencies: plan.others,
     totals: plan.totals,
     shortened: plan.shortened,
@@ -326,6 +437,10 @@ function previewOf(
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
+    // Counted before anything is read, so every request that costs a body
+    // read counts, whatever it turns out to hold.
+    const over = await overLimit(ctx);
+    if (over) return over;
     // A body over the limit is refused before it is read as a form, whatever
     // it claims; one that claims too much is refused before it is read.
     const declared = Number(req.headers.get('content-length'));
@@ -349,8 +464,6 @@ export async function POST(req: Request) {
     const meta = readMeta(parsed);
     if (typeof meta === 'string') return bad(meta);
 
-    const limited = await overLimit(ctx);
-    if (limited) return limited;
     const account = await manualAccount(ctx, meta.account_id);
     if (account instanceof NextResponse) return account;
 
@@ -363,15 +476,18 @@ export async function POST(req: Request) {
     if (read.status !== 'ready') return NextResponse.json({ needs: read.status, ...read });
 
     const today = utcToday();
-    // The statement's currency for OFX; for the others (and an OFX file that
-    // doesn't say), the one chosen, else the manual accounts' own.
-    const currency = meta.options.currency ?? read.statement?.currency ?? DEFAULT_CURRENCY;
+    // The statement's own currency for OFX, whatever was sent; for the others
+    // (and an OFX file that doesn't say), the one chosen in the sheet, else
+    // the manual accounts' own. The preview says which.
+    const fromFile = format === 'ofx' ? (read.statement?.currency ?? null) : null;
+    const currency = fromFile ?? meta.options.currency ?? DEFAULT_CURRENCY;
+    const currency_from = fromFile ? 'file' : meta.options.currency ? 'chosen' : 'default';
     const normalized = normalizeRecords(read.records, { today, currency });
     const problems = [...read.problems, ...normalized.problems];
     const settings = await readSettings(ctx, account.account_id);
     const mismatch = format === 'ofx' ? accountMismatch(settings?.ofx?.statement, read.statement) : null;
     const balance = format === 'ofx' ? statementBalance(account, read.statement, today) : null;
-    const warnings: string[] = [];
+    const warnings: string[] = [...read.read.repairs];
     const named = formatFromName(meta.file_name);
     if (named && named !== format) warnings.push(`This file is named as ${FORMAT_NAMES[named]} but holds ${FORMAT_NAMES[format]}, so it was read as ${FORMAT_NAMES[format]}.`);
     if (read.read.reversed_hint) {
@@ -380,8 +496,8 @@ export async function POST(req: Request) {
 
     if (meta.action === 'preview') {
       // Strict: a book that can't be read is never matched as an empty one.
-      const plan = planImport(normalized.rows, problems, await manualTxnStore.get(ctx, account.account_id));
-      return NextResponse.json({ preview: previewOf(read, plan, { encoding, warnings, mismatch, balance }) });
+      const plan = planImport(normalized.rows, problems, await manualTxnStore.get(ctx, account.account_id), meta.conflicts);
+      return NextResponse.json({ preview: previewOf(read, plan, { encoding, warnings, mismatch, balance, currency_from }) });
     }
 
     // Everything the person must have agreed to is checked before anything is written.
@@ -426,8 +542,12 @@ export async function POST(req: Request) {
         read: readOf(meta.options, read),
         statement: read.statement,
         columns: read.read.table?.header ?? null,
+        choices: meta.conflicts,
       });
     } catch (err) {
+      if (err instanceof ConflictsUnresolvedError) {
+        return NextResponse.json({ error: err.message, needs: 'conflicts', conflicts: err.count }, { status: 409 });
+      }
       if (err instanceof StoredValueTooLargeError) {
         console.error('import: refused as too large to store', err.what);
         return NextResponse.json(
@@ -447,11 +567,13 @@ export async function POST(req: Request) {
     if (result.import_id && !(await getManualAccount(ctx, account.account_id))) {
       await removeAccountTxns(ctx, account.account_id);
       await importStore.remove(ctx, result.import_id);
+      await importSummaryStore.remove(ctx, result.import_id);
       return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
     }
-    await rememberSettings(ctx, account.account_id, settingsFor(format, meta.options, read, currency));
+    await rememberSettings(ctx, account.account_id, settingsFor(format, meta.options, read, currency, settings));
 
-    const counts = { imported: result.plan.counts.new, present: result.plan.counts.present, repeated: result.plan.counts.repeated, unreadable: result.plan.counts.unreadable };
+    const c = result.plan.counts;
+    const counts = { imported: c.new, present: c.present, repeated: c.repeated, unreadable: c.unreadable, replaced: c.replaced, skipped: c.skipped };
     let balance_updated = !!meta.balance && !setBalance;
     let balance_error: string | null = null;
     if (setBalance && meta.balance && balance?.as_of) {
@@ -495,6 +617,8 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const ctx = await dataCtx();
+    const over = await overLimit(ctx);
+    if (over) return over;
     const text = await req.text();
     if (text.length > 4096) return NextResponse.json({ error: 'Request too large' }, { status: 413 });
     let body: unknown;
@@ -505,12 +629,10 @@ export async function DELETE(req: Request) {
     }
     if (!isRecord(body) || !isImportId(body.import_id)) return bad('Invalid import');
     if (body.confirm !== true) return bad('Confirm undoing the import first');
-    const limited = await overLimit(ctx);
-    if (limited) return limited;
     const account = await manualAccount(ctx, body.account_id);
     if (account instanceof NextResponse) return account;
     const undone = await undoImport(ctx, account.account_id, body.import_id);
-    return NextResponse.json({ removed: undone.removed, edited: undone.edited, moved: undone.moved });
+    return NextResponse.json({ removed: undone.removed, edited: undone.edited, moved: undone.moved, kept: undone.kept, restored: undone.restored });
   } catch (err) {
     if (err instanceof ImportNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });
     return storeFailure(err, 'Failed to undo the import');

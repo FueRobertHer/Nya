@@ -14,7 +14,9 @@
 // and an investment section is skipped and said so. Quicken writes several
 // accounts into one file as "!Account" blocks naming each, followed by its
 // section: a file with more than one asks which to import, as an OFX file
-// with several statements does.
+// with several statements does. A file of more than MAX_STATEMENTS accounts
+// is refused as soon as the one past it starts, before anything is built
+// from it.
 //
 // DATES are Quicken's: "1/2'26" (the apostrophe means a year from 2000 on),
 // "1/ 2/26" padded with spaces, "01/02/2026", and day first in exports made
@@ -29,7 +31,7 @@
 // Balance" record is the account's starting balance, not a transaction, and is
 // not imported.
 
-import { capField, MAX_FIELD_CHARS, type Problem, type RawRecord } from './record';
+import { capField, MAX_FIELD_CHARS, MAX_STATEMENTS, type Problem, type RawRecord } from './record';
 import { dateFor, DATE_ORDER_NAMES, type DateOrder } from './dates';
 import { readAmount, type DecimalMark } from './amounts';
 
@@ -74,6 +76,13 @@ export function parseQif(text: string): QifFile {
       if (type !== null) {
         const key = type.toLowerCase().replace(/\s+/g, ' ');
         if (key in READ_TYPES) {
+          if (sections.length >= MAX_STATEMENTS) {
+            return {
+              sections: [],
+              problems,
+              error: `This file holds more than ${MAX_STATEMENTS} accounts, more than one import can choose from. Export one account at a time.`,
+            };
+          }
           section = { index: sections.length, type, kind: READ_TYPES[key], account_name: accountName, line, entries: [] };
           sections.push(section);
           accountName = null;

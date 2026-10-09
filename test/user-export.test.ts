@@ -766,6 +766,9 @@ describe('stores built on the storage seam', () => {
     // so is the holdings history's index (each month names itself).
     expect(keys).not.toContain('download-count');
     expect(keys).not.toContain('import-requests');
+    expect(keys).not.toContain('import-reads');
+    // Each import's summary is its entry without the records, which `imports` has whole.
+    expect(keys).not.toContain('import-summaries');
     expect(keys).not.toContain('holdings:history:index');
     // In the file as written, too, one entry per line.
     const written = [...exportFile(doc, 'json').pieces()].join('');

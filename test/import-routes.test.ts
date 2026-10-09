@@ -30,7 +30,7 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { saveManualAccount, getManualAccount } = await import('@/lib/manual');
 const { manualTxnStore, addManualTxn, newManualTxn, editManualTxn } = await import('@/lib/manual-txns');
 const { txnAnnotationStore, setExcluded } = await import('@/lib/txn-annotations');
-const { importStore, importSettingsStore, takeImportRequest, IMPORT_REQUESTS_PER_HOUR } = await import('@/lib/import/store');
+const { importStore, importSettingsStore, importSummaryStore, takeImportRequest, takeImportRead, IMPORT_REQUESTS_PER_HOUR, IMPORT_READS_PER_HOUR } = await import('@/lib/import/store');
 const { MAX_FILE_BYTES } = await import('@/lib/import/record');
 const { collectUserData, buildUserExport, exportFile } = await import('@/lib/user-export');
 const { csvCell } = await import('@/lib/csv');
@@ -89,6 +89,7 @@ const importFile = (account_id: string, file: Uint8Array | string, options: obje
 const list = async (account_id: string) => asRes(await routes.GET(new Request(`http://localhost/api/import?account_id=${account_id}`)));
 const undo = async (body: object) =>
   asRes(await routes.DELETE(new Request('http://localhost/api/import', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })));
+const undoPlanOf = async (account_id: string, import_id: string) => asRes(await routes.GET(new Request(`http://localhost/api/import?account_id=${account_id}&undo=${import_id}`)));
 const book = async (account_id = CHECKING.account_id) => (await manualTxnStore.get(ctx, account_id))?.rows ?? [];
 
 const CARD_MAPPING = { csv: { columns: { date: 0, description: 3, category: 4, debit: 5, credit: 6 }, sign: 'negative-out' } };
@@ -208,7 +209,21 @@ describe('an OFX statement into a manual account', () => {
     expect((await importSettingsStore.get(ctx, CHECKING.account_id))?.ofx).toEqual({ statement: { kind: 'bank', bank_id: '325081403', mask: '4567', type: 'CHECKING' }, flip: false });
     // The balance stays what was typed.
     expect(await getManualAccount(ctx, CHECKING.account_id)).toEqual(CHECKING);
-    expect(changedKeys(before, snapshot())).toEqual([COUNTER, ctxKey('import-settings'), ctxKey('imports'), ctxKey('manual-transactions')].sort());
+    // And its summary, what the list of imports reads.
+    expect(await importSummaryStore.get(ctx, id)).toEqual({
+      version: 1,
+      account_id: CHECKING.account_id,
+      format: 'ofx',
+      file_name: 'checking-ofx102.ofx',
+      imported_at: entry.imported_at,
+      currency: 'USD',
+      first_date: '2026-09-01',
+      last_date: '2026-09-30',
+      counts: { imported: 8, present: 0, repeated: 1, unreadable: 0 },
+      statement: 'Checking ending 4567',
+      balance_update: null,
+    });
+    expect(changedKeys(before, snapshot())).toEqual([COUNTER, ctxKey('import-settings'), ctxKey('import-summaries'), ctxKey('imports'), ctxKey('manual-transactions')].sort());
   });
 
   test('the same statement again adds nothing, and makes no import of it', async () => {
@@ -236,7 +251,7 @@ describe('an OFX statement into a manual account', () => {
       { fitid: 'A3', date: '2026-09-03', amount: -30, name: 'Three' },
     ]);
     const p = await preview(CHECKING.account_id, second);
-    expect(p.body.preview.counts).toEqual({ new: 1, present: 2, repeated: 0, unreadable: 0 });
+    expect(p.body.preview.counts).toEqual({ new: 1, present: 2, repeated: 0, replaced: 0, skipped: 0, conflicts: 0, unreadable: 0 });
     expect((await importFile(CHECKING.account_id, second)).body).toMatchObject({ imported: 1, present: 2 });
     expect((await book()).map((r) => r.name)).toEqual(['Renamed', 'Two', 'Three']);
   });
@@ -444,6 +459,61 @@ describe('limits and refusals', () => {
     expect(await manualTxnStore.count(ctx)).toBe(0);
   });
 
+  test('a request is counted before its body is read: one that turns out invalid counts, and one over the limit is never read', async () => {
+    for (let i = 0; i < IMPORT_REQUESTS_PER_HOUR - 2; i++) await takeImportRequest(ctx);
+    expect((await post({ action: 'peek', account_id: CHECKING.account_id }, 'x')).status).toBe(400);
+    expect((await preview(CHECKING.account_id, fixture('checking-ofx102.ofx'))).status).toBe(200);
+    let read = false;
+    const req = {
+      headers: new Headers({ 'content-type': 'multipart/form-data; boundary=x' }),
+      arrayBuffer: async () => {
+        read = true;
+        return new ArrayBuffer(0);
+      },
+    } as unknown as Request;
+    expect((await routes.POST(req)).status).toBe(429);
+    expect(read).toBe(false);
+  });
+
+  test('reading the list of imports is limited too, apart from imports, and fails closed', async () => {
+    for (let i = 0; i < IMPORT_READS_PER_HOUR - 1; i++) await takeImportRead(ctx);
+    expect((await list(CHECKING.account_id)).status).toBe(200);
+    const over = await list(CHECKING.account_id);
+    expect(over.status).toBe(429);
+    expect(over.body.error).toMatch(/^Past imports can be listed 300 times an hour\. Try again in \d+ minutes?\.$/);
+    // Imports are counted apart.
+    expect((await preview(CHECKING.account_id, fixture('checking-ofx102.ofx'))).status).toBe(200);
+    fake.reset();
+    await registerTestContainer(fake);
+    forgetEpochs();
+    await saveManualAccount(ctx, CHECKING);
+    fake.failNext('eval');
+    const { result } = await quietly(() => list(CHECKING.account_id));
+    expect(result.status).toBe(503);
+  });
+
+  test('a file built to make a large answer is refused with a small one', async () => {
+    const MB3 = 3 * 1024 * 1024 - 1024;
+    let wide = '';
+    while (wide.length < MB3) wide += 'a,';
+    let accounts = '';
+    while (accounts.length < MB3) accounts += '!Type:Bank\n';
+    const one = '<STMTRS><CURDEF>USD<BANKTRANLIST><STMTTRN><DTPOSTED>20261001<TRNAMT>-1<FITID>1<NAME>a</STMTTRN></BANKTRANLIST></STMTRS>';
+    let statements = '<OFX><BANKMSGSRSV1><STMTTRNRS>';
+    while (statements.length < MB3 - one.length) statements += one;
+    for (const [file, name, error] of [
+      [wide, 'wide.csv', 'Line 1 of this file has more than 200 fields, more than a bank’s export has, so it can’t be read as a table.'],
+      [accounts, 'accounts.qif', 'This file holds more than 50 accounts, more than one import can choose from. Export one account at a time.'],
+      [statements, 'statements.ofx', 'This file holds more than 50 statements, more than one import can choose from. Export one account at a time.'],
+    ]) {
+      const res = await routes.POST(upload({ action: 'preview', account_id: CHECKING.account_id, options: {} }, file, name));
+      const text = await res.text();
+      expect(res.status).toBe(422);
+      expect(JSON.parse(text).error).toBe(error);
+      expect(text.length).toBeLessThan(1_000);
+    }
+  });
+
   test('requests are limited per person an hour, and a limit that can’t be read refuses rather than opens', async () => {
     for (let i = 0; i < IMPORT_REQUESTS_PER_HOUR - 1; i++) await takeImportRequest(ctx);
     expect((await preview(CHECKING.account_id, fixture('checking-ofx102.ofx'))).status).toBe(200);
@@ -465,7 +535,22 @@ describe('limits and refusals', () => {
     expect((await post({ action: 'peek', account_id: CHECKING.account_id }, file)).status).toBe(400);
     expect((await post({ action: 'preview', account_id: 'acct_plaid' }, file)).status).toBe(400);
     expect((await post({ action: 'preview', account_id: 'manual_gone' }, file)).status).toBe(404);
-    for (const options of [{ statement: -1 }, { flip: 'yes' }, { currency: 'USX' }, { date_order: 'ymd' }, { decimal: ';' }, { extra: 1 }, { csv: { columns: { date: 0 }, sign: 'negative-out' } }, { csv: { columns: { date: 0, description: 1, nope: 2 }, sign: 'negative-out' } }, { csv: { columns: { date: 0, description: 1 }, sign: 'sideways' } }]) {
+    for (const options of [
+      { statement: -1 },
+      { flip: 'yes' },
+      { currency: 'USX' },
+      { date_order: 'ymd' },
+      { decimal: ';' },
+      { extra: 1 },
+      { csv: { columns: { date: 0 }, sign: 'negative-out' } },
+      { csv: { columns: { date: 0, description: 1, nope: 2 }, sign: 'negative-out' } },
+      { csv: { columns: { date: 0, description: 1 }, sign: 'sideways' } },
+      { conflicts: { all: 'merge' } },
+      { conflicts: { each: { x: 'new' } } },
+      { conflicts: { each: { '10000': 'new' } } },
+      { conflicts: { each: Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [String(i), 'new'])) } },
+      { conflicts: { other: 1 } },
+    ]) {
       expect((await preview(CHECKING.account_id, file, options)).status, JSON.stringify(options)).toBe(400);
     }
     expect((await post({ action: 'import', account_id: CHECKING.account_id, balance: { from: 'x', to: 1 } }, file)).status).toBe(400);
@@ -519,7 +604,7 @@ describe('limits and refusals', () => {
     expect(changedKeys(before, snapshot())).toEqual([COUNTER]);
   });
 
-  test('a write of the rows that fails leaves no record behind; one that may have landed keeps it, listed', async () => {
+  test('a write of the rows that fails leaves no record behind', async () => {
     // The book's compare-and-set fails as a storage blip would.
     const original = fake.eval.bind(fake);
     (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
@@ -532,6 +617,29 @@ describe('limits and refusals', () => {
     const { result } = await quietly(() => importFile(CHECKING.account_id, fixture('checking-ofx102.ofx')));
     expect(result.status).toBe(500);
     expect(await importStore.count(ctx)).toBe(0);
+    expect(await importSummaryStore.count(ctx)).toBe(0);
+    expect(await book()).toEqual([]);
+  });
+
+  test('a write of the rows whose answer is lost after it landed keeps the record, listed with Undo', async () => {
+    // The compare-and-set lands, then its answer never arrives.
+    const original = fake.eval.bind(fake);
+    (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
+      if (script.startsWith('-- nya:repo-update-entries')) {
+        delete (fake as any).eval;
+        await original(script, keys, args);
+        throw new Error('connection lost');
+      }
+      return original(script, keys, args);
+    };
+    const { result } = await quietly(() => importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'), {}, {}, 'sept.ofx'));
+    expect(result.status).toBe(500);
+    const rows = await book();
+    expect(rows).toHaveLength(8);
+    const id = rows[0].import_id!;
+    expect(await importStore.has(ctx, id)).toBe(true);
+    expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id, record: 'ok', file_name: 'sept.ofx', rows_now: 8 })]);
+    expect((await undo({ account_id: CHECKING.account_id, import_id: id, confirm: true })).body).toMatchObject({ removed: 8 });
     expect(await book()).toEqual([]);
   });
 
@@ -571,19 +679,25 @@ describe('the list of imports, and undo', () => {
     const listed = await list(CHECKING.account_id);
     expect(listed.status).toBe(200);
     expect(listed.body.imports).toEqual([
-      expect.objectContaining({ id, record: 'ok', format: 'ofx', file_name: 'sept.ofx', counts: { imported: 8, present: 0, repeated: 1, unreadable: 0 }, rows_now: 8, edited_now: 2, moved_now: 1, statement: 'Checking ending 4567' }),
+      expect.objectContaining({ id, record: 'ok', format: 'ofx', file_name: 'sept.ofx', counts: { imported: 8, present: 0, repeated: 1, unreadable: 0 }, rows_now: 8, edited_now: 2, moved_now: 1, statement: 'Checking ending 4567', taken_over: 0 }),
     ]);
     expect(listed.body.limits).toEqual({ max_bytes: MAX_FILE_BYTES, max_rows: 10_000 });
+    // What Undo would do, asked first for the confirmation, changing nothing.
+    const asked = await undoPlanOf(CHECKING.account_id, id);
+    expect(asked.status).toBe(200);
+    expect(asked.body.undo).toEqual({ record: 'ok', remove: 8, edited: 2, moved: 1, kept: [], restore: 0, incomplete: false });
+    expect(await book()).toHaveLength(8);
 
     expect((await undo({ account_id: CHECKING.account_id, import_id: id })).status).toBe(400); // not confirmed
     const done = await undo({ account_id: CHECKING.account_id, import_id: id, confirm: true });
     expect(done.status).toBe(200);
-    expect(done.body).toEqual({ removed: 8, edited: 2, moved: 1 });
+    expect(done.body).toEqual({ removed: 8, edited: 2, moved: 1, kept: 0, restored: 0 });
     expect(await book()).toEqual([typed]);
     expect(await book(SAVINGS.account_id)).toEqual([]);
     expect(await txnAnnotationStore.has(ctx, imported[2].id)).toBe(false);
     expect(await txnAnnotationStore.has(ctx, typed.id)).toBe(true);
     expect(await importStore.has(ctx, id)).toBe(false);
+    expect(await importSummaryStore.has(ctx, id)).toBe(false);
     expect((await list(CHECKING.account_id)).body.imports).toEqual([]);
     // Undone already: nothing to take out.
     expect((await undo({ account_id: CHECKING.account_id, import_id: id, confirm: true })).status).toBe(404);
@@ -596,15 +710,27 @@ describe('the list of imports, and undo', () => {
   });
 
   test('an import whose record is damaged is still listed and undone; one a later release wrote is listed and left alone', async () => {
-    const { body } = await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'));
+    const { body } = await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'), {}, {}, 'sept.ofx');
     const id = body.import_id as string;
     await fake.hset(ctxKey('imports'), { [id]: 'not-ciphertext-but-long-enough-to-be-tried' });
-    expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id, record: 'unreadable', rows_now: 8, file_name: null })]);
+    // Listed from its summary, which never reads the records; the undo's plan
+    // reads them, and says they can't be.
+    expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id, record: 'ok', rows_now: 8, file_name: 'sept.ofx' })]);
+    expect((await undoPlanOf(CHECKING.account_id, id)).body.undo).toMatchObject({ record: 'unreadable', remove: 8 });
     expect((await undo({ account_id: CHECKING.account_id, import_id: id, confirm: true })).body).toMatchObject({ removed: 8 });
     expect(await importStore.has(ctx, id)).toBe(false);
+    expect(await importSummaryStore.has(ctx, id)).toBe(false);
+
+    // With its summary damaged too, it is listed from what the rows name.
+    const third = (await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'))).body.import_id as string;
+    await fake.hset(ctxKey('imports'), { [third]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await fake.hset(ctxKey('import-summaries'), { [third]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id: third, record: 'unreadable', rows_now: 8, file_name: null })]);
+    expect((await undo({ account_id: CHECKING.account_id, import_id: third, confirm: true })).body).toMatchObject({ removed: 8 });
 
     const second = (await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'))).body.import_id as string;
     await fake.hset(ctxKey('imports'), { [second]: await encrypt(JSON.stringify({ version: 2, from: 'a later release' })) });
+    await fake.hset(ctxKey('import-summaries'), { [second]: await encrypt(JSON.stringify({ version: 2, from: 'a later release' })) });
     expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id: second, record: 'unrecognised' })]);
     const { result } = await quietly(() => undo({ account_id: CHECKING.account_id, import_id: second, confirm: true }));
     expect(result.status).toBe(409);
@@ -618,8 +744,10 @@ describe('the list of imports, and undo', () => {
     const res = await manualAccounts.DELETE(new Request('http://localhost/api/manual-accounts', { method: 'DELETE', body: JSON.stringify({ account_id: CHECKING.account_id }) }));
     expect(res.status).toBe(200);
     expect(await importStore.has(ctx, mine)).toBe(false);
+    expect(await importSummaryStore.has(ctx, mine)).toBe(false);
     expect(await importSettingsStore.has(ctx, CHECKING.account_id)).toBe(false);
     expect(await importStore.has(ctx, theirs)).toBe(true);
+    expect(await importSummaryStore.has(ctx, theirs)).toBe(true);
     expect(await importSettingsStore.has(ctx, VISA.account_id)).toBe(true);
   });
 });
@@ -681,5 +809,231 @@ describe('imported rows are ordinary manual rows everywhere', () => {
     const currency = totalsCurrency(shown);
     expect(currency).toBe('USD');
     expect(shown.filter((t) => countsInTotals(t, currency)).map((t) => t.name)).toEqual(['Refund']);
+  });
+});
+
+describe('a FITID on another stored transaction', () => {
+  const sept = ofx([
+    { fitid: '1', date: '2026-09-05', amount: -12.5, name: 'GROCER' },
+    { fitid: '2', date: '2026-09-10', amount: -1500, name: 'RENT' },
+    { fitid: '3', date: '2026-09-20', amount: 2400, name: 'PAYROLL' },
+  ]);
+  // The same bank numbers each download from 1 again.
+  const oct = ofx([
+    { fitid: '1', date: '2026-10-03', amount: -48.2, name: 'PHARMACY' },
+    { fitid: '2', date: '2026-10-05', amount: -1500, name: 'RENT' },
+    { fitid: '3', date: '2026-10-06', amount: -9.99, name: 'NETFLIX' },
+    { fitid: '4', date: '2026-10-07', amount: 2400, name: 'PAYROLL' },
+  ]);
+
+  test('is never dropped as already there: listed, imported as new where nothing else is alike, and asked where something is', async () => {
+    await importFile(CHECKING.account_id, sept);
+    const p = (await preview(CHECKING.account_id, oct)).body.preview;
+    expect(p.counts).toEqual({ new: 3, present: 0, repeated: 0, replaced: 0, skipped: 0, conflicts: 1, unreadable: 0 });
+    expect(p.conflicts.map((c: any) => [c.index, c.file.name, c.stored.name, c.suggested, c.choice])).toEqual([
+      [0, 'PHARMACY', 'GROCER', 'new', 'new'],
+      [1, 'RENT', 'RENT', null, null],
+      [2, 'NETFLIX', 'PAYROLL', 'new', 'new'],
+    ]);
+    expect(p.rows.map((r: any) => r.outcome)).toEqual(['new', 'conflict', 'new', 'new']);
+    // Not imported until the one asked about has an answer, and nothing written.
+    const before = snapshot();
+    const refused = await importFile(CHECKING.account_id, oct);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({
+      error: 'One transaction in this file has a bank id (FITID) that is on another transaction already here. Choose what to do with it, then import.',
+      needs: 'conflicts',
+      conflicts: 1,
+    });
+    expect(changedKeys(before, snapshot())).toEqual([COUNTER]);
+    const done = await importFile(CHECKING.account_id, oct, { conflicts: { each: { '1': 'new' } } });
+    expect(done.body).toMatchObject({ imported: 4, present: 0, replaced: 0, skipped: 0 });
+    expect((await book()).map((r) => [r.name, r.date])).toEqual([
+      ['GROCER', '2026-09-05'],
+      ['RENT', '2026-09-10'],
+      ['PAYROLL', '2026-09-20'],
+      ['PHARMACY', '2026-10-03'],
+      ['RENT', '2026-10-05'],
+      ['NETFLIX', '2026-10-06'],
+      ['PAYROLL', '2026-10-07'],
+    ]);
+    // Both Octobers' files again: everything is there, by its FITID and day.
+    expect((await preview(CHECKING.account_id, oct)).body.preview.counts).toMatchObject({ new: 0, present: 4, conflicts: 0 });
+    expect((await preview(CHECKING.account_id, sept)).body.preview.counts).toMatchObject({ new: 0, present: 3, conflicts: 0 });
+  });
+
+  test('a pending charge that posted at a new amount: replaced with the file’s version when asked, and put back by Undo', async () => {
+    const pending = await importFile(CHECKING.account_id, ofx([{ fitid: 'P9', date: '2026-10-01', amount: -50, name: 'BISTRO' }]), {}, {}, 'pending.ofx');
+    const [stored] = await book();
+    await editManualTxn(ctx, stored.id, { category: 'food and drink' });
+    const posted = ofx([{ fitid: 'P9', date: '2026-10-03', amount: -60, name: 'BISTRO' }]);
+    // Skipped: nothing changes, and nothing is kept of a file that changed nothing.
+    expect((await importFile(CHECKING.account_id, posted, { conflicts: { all: 'skip' } })).body).toMatchObject({ imported: 0, skipped: 1, import_id: null });
+    const done = await importFile(CHECKING.account_id, posted, { conflicts: { all: 'replace' } }, {}, 'posted.ofx');
+    expect(done.body).toMatchObject({ imported: 0, replaced: 1 });
+    const [replaced] = await book();
+    // The same row, now as the bank posted it, with what the person gave it kept.
+    expect(replaced).toMatchObject({ id: stored.id, amount: 60, date: '2026-10-03', name: 'BISTRO', category: 'food and drink', import_id: pending.body.import_id });
+    const entry = (await importStore.get(ctx, done.body.import_id))!;
+    expect(entry.counts).toEqual({ imported: 0, present: 0, repeated: 0, unreadable: 0, replaced: 1 });
+    expect(entry.records[0]).toMatchObject({
+      outcome: 'replaced',
+      row_id: stored.id,
+      before: { date: '2026-10-01', amount: 50, currency: 'USD', name: 'BISTRO', category: 'food and drink', note: null, transaction_code: null },
+    });
+    // Undo says it puts the row back, and does.
+    expect((await undoPlanOf(CHECKING.account_id, done.body.import_id)).body.undo).toMatchObject({ remove: 0, restore: 1, kept: [] });
+    expect((await undo({ account_id: CHECKING.account_id, import_id: done.body.import_id, confirm: true })).body).toEqual({ removed: 0, edited: 0, moved: 0, kept: 0, restored: 1 });
+    expect(await book()).toEqual([expect.objectContaining({ id: stored.id, amount: 50, date: '2026-10-01', category: 'food and drink', import_id: pending.body.import_id })]);
+  });
+});
+
+describe('undo keeps what a later import relied on', () => {
+  const janMar = ofx([
+    { fitid: 'F1', date: '2026-01-10', amount: -10, name: 'JAN' },
+    { fitid: 'F2', date: '2026-02-10', amount: -20, name: 'FEB' },
+    { fitid: 'F3', date: '2026-03-10', amount: -30, name: 'MAR' },
+  ]);
+  const febApr = ofx([
+    { fitid: 'F2', date: '2026-02-10', amount: -20, name: 'FEB' },
+    { fitid: 'F3', date: '2026-03-10', amount: -30, name: 'MAR' },
+    { fitid: 'F4', date: '2026-04-10', amount: -40, name: 'APR' },
+  ]);
+
+  test('January to March, then February to April, then the first undone: February and March stay, for the second', async () => {
+    const first = (await importFile(CHECKING.account_id, janMar, {}, {}, 'jan-mar.ofx')).body;
+    const second = (await importFile(CHECKING.account_id, febApr, {}, {}, 'feb-apr.ofx')).body;
+    expect(first).toMatchObject({ imported: 3 });
+    expect(second).toMatchObject({ imported: 1, present: 2 });
+    // The confirmation says what stays, and why.
+    const plan = (await undoPlanOf(CHECKING.account_id, first.import_id)).body.undo;
+    expect(plan).toEqual({
+      record: 'ok',
+      remove: 1,
+      edited: 0,
+      moved: 0,
+      kept: [{ import_id: second.import_id, file_name: 'feb-apr.ofx', imported_at: expect.any(String), count: 2 }],
+      restore: 0,
+      incomplete: false,
+    });
+    expect((await undo({ account_id: CHECKING.account_id, import_id: first.import_id, confirm: true })).body).toEqual({ removed: 1, edited: 0, moved: 0, kept: 2, restored: 0 });
+    expect((await book()).map((r) => [r.name, r.import_id])).toEqual([
+      ['FEB', second.import_id],
+      ['MAR', second.import_id],
+      ['APR', second.import_id],
+    ]);
+    // The second import now holds them, says so, and its Undo takes them out.
+    expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id: second.import_id, taken_over: 2, rows_now: 3, counts: expect.objectContaining({ imported: 1, present: 2 }) })]);
+    expect((await undoPlanOf(CHECKING.account_id, second.import_id)).body.undo).toMatchObject({ remove: 3, kept: [] });
+    expect((await undo({ account_id: CHECKING.account_id, import_id: second.import_id, confirm: true })).body).toMatchObject({ removed: 3, kept: 0 });
+    expect(await book()).toEqual([]);
+  });
+
+  test('the later one undone first takes only what it added', async () => {
+    const first = (await importFile(CHECKING.account_id, janMar, {}, {}, 'jan-mar.ofx')).body;
+    const second = (await importFile(CHECKING.account_id, febApr, {}, {}, 'feb-apr.ofx')).body;
+    expect((await undo({ account_id: CHECKING.account_id, import_id: second.import_id, confirm: true })).body).toMatchObject({ removed: 1, kept: 0 });
+    expect((await book()).map((r) => [r.name, r.import_id])).toEqual([
+      ['JAN', first.import_id],
+      ['FEB', first.import_id],
+      ['MAR', first.import_id],
+    ]);
+  });
+
+  test('a later import whose record can’t be read could have relied on any row, so the undo is refused rather than guessed', async () => {
+    const first = (await importFile(CHECKING.account_id, janMar, {}, {}, 'jan-mar.ofx')).body;
+    const second = (await importFile(CHECKING.account_id, febApr, {}, {}, 'feb-apr.ofx')).body;
+    await fake.hset(ctxKey('imports'), { [second.import_id]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const { result } = await quietly(() => undo({ account_id: CHECKING.account_id, import_id: first.import_id, confirm: true }));
+    expect(result.status).toBe(409);
+    expect(await book()).toHaveLength(4);
+  });
+});
+
+describe('the list of imports reads summaries, never a file’s records', () => {
+  test('with every import’s records damaged, the list still says what each was', async () => {
+    const a = (await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'), {}, {}, 'sept.ofx')).body.import_id;
+    const b = (await importFile(CHECKING.account_id, fixture('card-debit-credit.csv'), CARD_MAPPING, {}, 'card.csv')).body.import_id;
+    await fake.hset(ctxKey('imports'), { [a]: 'not-ciphertext-but-long-enough-to-be-tried', [b]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    // Every key the list reads, by any command the seam sends.
+    const reads: string[] = [];
+    const spy = (name: 'hget' | 'hgetall' | 'eval') => {
+      const original = (fake as any)[name].bind(fake);
+      (fake as any)[name] = async (first: unknown, ...rest: unknown[]) => {
+        if (name === 'eval') reads.push(...(rest[0] as string[]));
+        else reads.push(first as string);
+        return original(first, ...rest);
+      };
+    };
+    for (const name of ['hget', 'hgetall', 'eval'] as const) spy(name);
+    const listed = (await list(CHECKING.account_id)).body.imports;
+    for (const name of ['hget', 'hgetall', 'eval']) delete (fake as any)[name];
+    expect(listed.map((i: any) => [i.file_name, i.record])).toEqual(
+      expect.arrayContaining([
+        ['sept.ofx', 'ok'],
+        ['card.csv', 'ok'],
+      ])
+    );
+    expect(reads).toContain(ctxKey('import-summaries'));
+    expect(reads).not.toContain(ctxKey('imports'));
+  });
+});
+
+describe('a file that doesn’t say its currency', () => {
+  const european = '!Type:Bank\nD13.09.2026\nT-1.234,50\nPMIETE\n^\nD14.09.2026\nT-45,00\nPREWE\n^\n';
+
+  test('a QIF file is read in the currency chosen, which the preview says was chosen, and the account remembers', async () => {
+    const asIs = (await preview(CHECKING.account_id, european, {}, 'umsatz.qif')).body.preview;
+    expect(asIs).toMatchObject({ currency: 'USD', currency_from: 'default' });
+    const chosen = (await preview(CHECKING.account_id, european, { currency: 'EUR' }, 'umsatz.qif')).body.preview;
+    expect(chosen).toMatchObject({ currency: 'EUR', currency_from: 'chosen', read: { date_order: 'dmy', order_open: false, decimal: ',' } });
+    expect((await importFile(CHECKING.account_id, european, { currency: 'EUR' }, {}, 'umsatz.qif')).body).toMatchObject({ imported: 2 });
+    expect((await book()).map((r) => [r.name, r.amount, r.currency, r.date])).toEqual([
+      ['MIETE', 1234.5, 'EUR', '2026-09-13'],
+      ['REWE', 45, 'EUR', '2026-09-14'],
+    ]);
+    expect((await list(CHECKING.account_id)).body.settings.qif).toEqual({ date_order: 'dmy', decimal: ',', flip: false, currency: 'EUR' });
+  });
+
+  test('an OFX file without CURDEF the same; one that says its currency is read in it, whatever is sent', async () => {
+    const without = ofx([{ fitid: 'G1', date: '2026-09-02', amount: -12, name: 'TESCO' }]).replace('<CURDEF>USD</CURDEF>', '');
+    expect((await preview(CHECKING.account_id, without)).body.preview).toMatchObject({ currency: 'USD', currency_from: 'default' });
+    expect((await importFile(CHECKING.account_id, without, { currency: 'GBP' })).body).toMatchObject({ imported: 1 });
+    expect((await book())[0]).toMatchObject({ name: 'TESCO', currency: 'GBP' });
+    expect((await list(CHECKING.account_id)).body.settings.ofx).toMatchObject({ currency: 'GBP' });
+    const says = ofx([{ fitid: 'U1', date: '2026-09-03', amount: -5, name: 'DINER' }]);
+    expect((await preview(CHECKING.account_id, says, { currency: 'EUR' })).body.preview).toMatchObject({ currency: 'USD', currency_from: 'file' });
+  });
+});
+
+describe('what an OFX file’s own types and structure say, through the route', () => {
+  test('transfers, cash and fees are counted for the preview, stored with what the spending rules read, and shown so', async () => {
+    const file = ofx([
+      { fitid: 'K1', date: day(-5), amount: -4.5, name: 'COFFEE' },
+      { fitid: 'K2', date: day(-4), amount: -500, name: 'TRANSFER TO SAVINGS' },
+      { fitid: 'K3', date: day(-3), amount: -60, name: 'ATM WITHDRAWAL' },
+      { fitid: 'K4', date: day(-2), amount: -3, name: 'ATM FEE' },
+    ])
+      .replace('<TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>' + compact(day(-4)), '<TRNTYPE>XFER</TRNTYPE><DTPOSTED>' + compact(day(-4)))
+      .replace('<TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>' + compact(day(-3)), '<TRNTYPE>ATM</TRNTYPE><DTPOSTED>' + compact(day(-3)))
+      .replace('<TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>' + compact(day(-2)), '<TRNTYPE>FEE</TRNTYPE><DTPOSTED>' + compact(day(-2)));
+    expect((await preview(CHECKING.account_id, file)).body.preview.kinds).toEqual({ transfers: 1, atm: 1, payments: 0, fees: 1 });
+    await importFile(CHECKING.account_id, file);
+    expect((await book()).map((r) => [r.name, r.category, r.transaction_code ?? null])).toEqual([
+      ['COFFEE', null, null],
+      ['TRANSFER TO SAVINGS', 'transfer out', null],
+      ['ATM WITHDRAWAL', 'transfer out', 'atm'],
+      ['ATM FEE', 'bank fees', null],
+    ]);
+    const shown = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions as any[];
+    expect(shown.find((t) => t.name === 'ATM WITHDRAWAL')).toMatchObject({ transaction_code: 'atm', category: 'transfer out' });
+    expect(shown.filter((t) => countsInTotals(t, 'USD')).map((t) => t.name).sort()).toEqual(['ATM FEE', 'COFFEE']);
+  });
+
+  test('transactions left unended are all read, and the preview says the file was repaired', async () => {
+    const unended = ofx([1, 2, 3].map((i) => ({ fitid: `U${i}`, date: `2026-09-0${i}`, amount: -i, name: `SHOP ${i}` }))).replace(/<\/STMTTRN>/g, '');
+    const p = (await preview(CHECKING.account_id, unended)).body.preview;
+    expect(p.counts).toMatchObject({ new: 3, unreadable: 0 });
+    expect(p.warnings).toEqual(['3 transactions in this file have no end tag (</STMTTRN>), so each was read up to the next one. Check the rows below.']);
   });
 });

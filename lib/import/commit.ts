@@ -48,50 +48,135 @@ import { forgetAnnotations } from '../txn-annotations';
 import { loggable } from '../log-safe';
 import type { FileFormat, Problem } from './record';
 import type { NormalizedRecord } from './normalize';
-import { matchRows, type Outcome } from './match';
+import { matchRows, type Differs, type Outcome } from './match';
+import { digitsOf } from './normalize';
+import { isTransfer } from '../spending';
 import type { StatementInfo } from './read';
 import {
   importSettingsStore,
   importStore,
+  importSummaryStore,
   newImportId,
+  summaryOf,
   type ImportCounts,
   type ImportEntry,
   type ImportSettings,
+  type ReplacedBefore,
   type StoredImportRecord,
+  type StoredImportSummary,
   type StoredStatement,
 } from './store';
 
 // ---- Planning ----
 
+/** What the person chose for a row whose FITID the account has on another
+ *  transaction (lib/import/match.ts): import it as a new row, replace the
+ *  stored row with the file's version, or skip it. */
+export type ConflictChoice = 'new' | 'replace' | 'skip';
+export const CONFLICT_CHOICES: readonly ConflictChoice[] = ['new', 'replace', 'skip'];
+
+/** The person's choices: one for every conflict (`all`), and one for each by
+ *  the row's place among the records read (`each`), which wins. A conflict
+ *  with neither takes its suggestion, or waits for an answer when it has
+ *  none. */
+export type ConflictChoices = { all?: ConflictChoice; each?: Record<string, ConflictChoice> };
+
+/** A conflict as the preview lists it. */
+export type ImportConflict = {
+  /** The row's place among the records read: what a choice for it is keyed by. */
+  index: number;
+  line: number | null;
+  row_id: string;
+  differs: Differs;
+  suggested: 'new' | null;
+  /** What will be done with it, or null until the person says. */
+  choice: ConflictChoice | null;
+  file: { date: string; name: string; amount: number; currency: string };
+  stored: { date: string; name: string; amount: number; currency: string };
+};
+
 /** What an import would do, against a book as it stands. */
 export type ImportPlan = {
   rows: NormalizedRecord[];
-  /** What becomes of each of `rows`, in order. */
+  /** What matching made of each of `rows`, in order. */
   outcomes: Outcome[];
+  /** For each row, what is done with it once the person's choices apply. */
+  actions: RowAction[];
   /** The rows that can't be read, each with its line and why, in file order. */
   problems: Problem[];
-  counts: { new: number; present: number; repeated: number; unreadable: number };
+  counts: { new: number; present: number; repeated: number; replaced: number; skipped: number; conflicts: number; unreadable: number };
+  conflicts: ImportConflict[];
+  /** Rows sharing a FITID with an earlier row of the file that is another
+   *  transaction, both imported: their lines, for the preview to name. */
+  shared_ids: { line: number | null; with_line: number | null }[];
   first_date: string | null;
   last_date: string | null;
   /** The currency most rows are in, and how many are in each other one. */
   currency: string | null;
   others: { currency: string; count: number }[];
-  /** The new rows' money out and in, in `currency`. */
+  /** The money out and in of the rows to be added, in `currency`, rounded to
+   *  its minor unit. */
   totals: { out: number; in: number };
   /** Rows whose payee, category or note was shortened to fit. */
   shortened: number;
+  /** Among the rows to be added or replaced: what the file says they are
+   *  (lib/import/ofx.ts bankType, a QIF transfer, a CSV category), which keeps
+   *  them out of spending and income (lib/spending.ts), and bank fees. */
+  kinds: { transfers: number; atm: number; payments: number; fees: number };
 };
 
-const byLine = (a: Problem, b: Problem) => a.line - b.line;
+/** What is done with one row: added, replacing a stored row, nothing (already
+ *  there, repeated or skipped), or waiting for the person's answer. */
+export type RowAction = 'add' | 'replace' | 'none' | 'ask';
 
-/** What importing these rows into this book would do (lib/import/match.ts). */
-export function planImport(rows: NormalizedRecord[], problems: Problem[], book: ManualTxnBook | null): ImportPlan {
+const byLine = (a: Problem, b: Problem) => a.line - b.line;
+const shownRow = (r: { date: string; name: string; amount: number; currency: string }) => ({ date: r.date, name: r.name, amount: r.amount, currency: r.currency });
+const roundTo = (n: number, digits: number) => Math.round(n * 10 ** digits) / 10 ** digits;
+
+/** The choice that applies to a conflict (see ConflictChoices). */
+function choiceFor(choices: ConflictChoices, index: number, suggested: 'new' | null): ConflictChoice | null {
+  return choices.each?.[String(index)] ?? choices.all ?? suggested;
+}
+
+/** What importing these rows into this book would do (lib/import/match.ts),
+ *  with the person's choices for its conflicts. */
+export function planImport(rows: NormalizedRecord[], problems: Problem[], book: ManualTxnBook | null, choices: ConflictChoices = {}): ImportPlan {
+  const stored = book?.rows ?? [];
   const outcomes = matchRows(
     rows.map((r) => r.row),
-    book?.rows ?? []
+    stored
   );
-  const counts = { new: 0, present: 0, repeated: 0, unreadable: problems.length };
-  for (const o of outcomes) counts[o.outcome]++;
+  const byId = new Map(stored.map((r) => [r.id, r]));
+  const counts = { new: 0, present: 0, repeated: 0, replaced: 0, skipped: 0, conflicts: 0, unreadable: problems.length };
+  const conflicts: ImportConflict[] = [];
+  const shared_ids: ImportPlan['shared_ids'] = [];
+  const actions = outcomes.map((o, i): RowAction => {
+    if (o.outcome === 'present') counts.present++;
+    else if (o.outcome === 'repeated') counts.repeated++;
+    else if (o.outcome === 'new') {
+      counts.new++;
+      if (o.shares_id_with !== undefined) shared_ids.push({ line: rows[i].line, with_line: rows[o.shares_id_with].line });
+      return 'add';
+    } else {
+      const choice = choiceFor(choices, rows[i].index, o.suggested);
+      const s = byId.get(o.row_id)!;
+      conflicts.push({ index: rows[i].index, line: rows[i].line, row_id: o.row_id, differs: o.differs, suggested: o.suggested, choice, file: shownRow(rows[i].row), stored: shownRow(s) });
+      if (choice === 'new') {
+        counts.new++;
+        return 'add';
+      }
+      if (choice === 'replace') {
+        counts.replaced++;
+        return 'replace';
+      }
+      if (choice === 'skip') counts.skipped++;
+      else {
+        counts.conflicts++;
+        return 'ask';
+      }
+    }
+    return 'none';
+  });
   const byCurrency = new Map<string, number>();
   let first: string | null = null;
   let last: string | null = null;
@@ -103,22 +188,33 @@ export function planImport(rows: NormalizedRecord[], problems: Problem[], book: 
   let currency: string | null = null;
   for (const [c, n] of byCurrency) if (currency === null || n > byCurrency.get(currency)!) currency = c;
   const totals = { out: 0, in: 0 };
+  const kinds = { transfers: 0, atm: 0, payments: 0, fees: 0 };
   rows.forEach(({ row }, i) => {
-    if (outcomes[i].outcome !== 'new' || row.currency !== currency) return;
+    if (actions[i] !== 'add' && actions[i] !== 'replace') return;
+    if (row.transaction_code === 'atm') kinds.atm++;
+    else if (row.category === 'loan payments') kinds.payments++;
+    else if (isTransfer({ transaction_code: row.transaction_code ?? null, category: row.category })) kinds.transfers++;
+    else if (row.category === 'bank fees') kinds.fees++;
+    if (actions[i] !== 'add' || row.currency !== currency) return;
     if (row.amount > 0) totals.out += row.amount;
     else totals.in -= row.amount;
   });
+  const digits = currency ? digitsOf(currency) : 2;
   return {
     rows,
     outcomes,
+    actions,
     problems: [...problems].sort(byLine),
     counts,
+    conflicts,
+    shared_ids,
     first_date: first,
     last_date: last,
     currency,
     others: [...byCurrency].filter(([c]) => c !== currency).map(([c, count]) => ({ currency: c, count })),
-    totals: { out: Math.round(totals.out * 100) / 100, in: Math.round(totals.in * 100) / 100 },
+    totals: { out: roundTo(totals.out, digits), in: roundTo(totals.in, digits) },
     shortened: rows.filter((r) => r.shortened).length,
+    kinds,
   };
 }
 
@@ -200,16 +296,33 @@ export type CommitInput = {
   read: Record<string, unknown>;
   statement: StatementInfo | null;
   columns: string[] | null;
+  /** What the person chose for the file's conflicts. */
+  choices?: ConflictChoices;
   now?: Date;
 };
 
 export type CommitResult = {
-  /** The import's id, or null when nothing was new, so nothing was stored. */
+  /** The import's id, or null when nothing was added or replaced, so nothing
+   *  was stored. */
   import_id: string | null;
   plan: ImportPlan;
   /** The import's entry as stored, or null. */
   entry: ImportEntry | null;
 };
+
+/** Some of the file's rows have a FITID the account has on another
+ *  transaction, and the person hasn't said what to do with them. Thrown
+ *  before anything is written. */
+export class ConflictsUnresolvedError extends Error {
+  constructor(readonly count: number) {
+    super(
+      count === 1
+        ? 'One transaction in this file has a bank id (FITID) that is on another transaction already here. Choose what to do with it, then import.'
+        : `${count.toLocaleString('en-US')} transactions in this file have a bank id (FITID) that is on another transaction already here. Choose what to do with them, then import.`
+    );
+    this.name = 'ConflictsUnresolvedError';
+  }
+}
 
 function storedStatement(s: StatementInfo | null): StoredStatement | null {
   if (!s) return null;
@@ -226,23 +339,68 @@ function storedStatement(s: StatementInfo | null): StoredStatement | null {
   };
 }
 
+/** A stored row as it was, for an import that replaces it. */
+const beforeOf = (r: ManualTxn): ReplacedBefore => ({
+  date: r.date,
+  amount: r.amount,
+  currency: r.currency,
+  name: r.name,
+  category: r.category,
+  note: r.note,
+  transaction_code: r.transaction_code ?? null,
+});
+
+/** A row with these fields in place of its own: the bank's facts (day,
+ *  amount, currency, payee, Plaid's code), and a category or note only where
+ *  the fields have one, so what the person gave the row stays. */
+function withFields(r: ManualTxn, f: { date: string; amount: number; currency: string; name: string; category: string | null; note: string | null; transaction_code?: string | null }, at: string, keepEmpty: boolean): ManualTxn {
+  const { transaction_code: _old, ...rest } = r;
+  const code = f.transaction_code ?? null;
+  return {
+    ...rest,
+    date: f.date,
+    amount: f.amount,
+    currency: f.currency,
+    name: f.name,
+    category: keepEmpty ? f.category : (f.category ?? r.category),
+    note: keepEmpty ? f.note : (f.note ?? r.note),
+    ...(code ? { transaction_code: code } : {}),
+    updated_at: at,
+  };
+}
+
+const SKIPPED = 'Its bank id (FITID) is on another transaction already here, and it was skipped as asked.';
+
 /** The entry an import keeps: every record read, in file order, each with
- *  what became of it. */
-function entryOf(input: CommitInput, plan: ImportPlan, rowIds: string[], at: string): ImportEntry {
+ *  what became of it. `stored` is the book the rows were matched against, for
+ *  how a replaced row was before. */
+function entryOf(input: CommitInput, plan: ImportPlan, rowIds: string[], at: string, stored: ManualTxnBook | null): ImportEntry {
+  const byId = new Map((stored?.rows ?? []).map((r) => [r.id, r]));
   const records: { line: number; record: StoredImportRecord }[] = [];
   plan.rows.forEach((r, i) => {
     const o = plan.outcomes[i];
-    const record: StoredImportRecord =
-      o.outcome === 'new'
-        ? { line: r.line, outcome: 'imported', row_id: rowIds[i], raw: r.record.raw }
-        : o.outcome === 'present'
-          ? { line: r.line, outcome: 'present', row_id: o.row_id, raw: r.record.raw }
-          : { line: r.line, outcome: 'repeated', raw: r.record.raw };
+    const action = plan.actions[i];
+    const raw = r.record.raw;
+    let record: StoredImportRecord;
+    if (action === 'add') record = { line: r.line, outcome: 'imported', row_id: rowIds[i], raw };
+    else if (o.outcome === 'present') record = { line: r.line, outcome: 'present', row_id: o.row_id, raw };
+    else if (o.outcome === 'repeated') record = { line: r.line, outcome: 'repeated', raw };
+    else if (o.outcome === 'conflict' && action === 'replace') record = { line: r.line, outcome: 'replaced', row_id: o.row_id, before: beforeOf(byId.get(o.row_id)!), raw };
+    else if (o.outcome === 'conflict') record = { line: r.line, outcome: 'skipped', row_id: o.row_id, reason: SKIPPED, raw };
+    else record = { line: r.line, outcome: 'imported', row_id: rowIds[i], raw };
     records.push({ line: r.line ?? 0, record });
   });
   for (const p of plan.problems) records.push({ line: p.line, record: { line: p.line || null, outcome: 'unreadable', reason: p.reason, raw: p.raw ?? null } });
   records.sort((a, b) => a.line - b.line);
-  const counts: ImportCounts = { imported: plan.counts.new, present: plan.counts.present, repeated: plan.counts.repeated, unreadable: plan.counts.unreadable };
+  const c = plan.counts;
+  const counts: ImportCounts = {
+    imported: c.new,
+    present: c.present,
+    repeated: c.repeated,
+    unreadable: c.unreadable,
+    ...(c.replaced > 0 ? { replaced: c.replaced } : {}),
+    ...(c.skipped > 0 ? { skipped: c.skipped } : {}),
+  };
   return {
     version: 1,
     account_id: input.account.account_id,
@@ -263,87 +421,114 @@ function entryOf(input: CommitInput, plan: ImportPlan, rowIds: string[], at: str
   };
 }
 
-const sameOutcomes = (a: Outcome[], b: Outcome[]) => a.length === b.length && a.every((o, i) => JSON.stringify(o) === JSON.stringify(b[i]));
+/** Whether an import changes anything: rows to add or replace. */
+const changes = (plan: ImportPlan) => plan.counts.new + plan.counts.replaced > 0;
 
 /**
  * Imports the rows into the account's book (see the header), and keeps the
- * file's records. Nothing is stored when no row is new. Throws what the
- * seam throws (StoredValueTooLargeError when the book or the records would
- * be too large, UnreadableEntriesError for a book that can't be read,
+ * file's records. Nothing is stored when no row would be added or replaced.
+ * Throws ConflictsUnresolvedError when a conflict has no answer, and what the
+ * seam throws (StoredValueTooLargeError when the book or the records would be
+ * too large, UnreadableEntriesError for a book that can't be read,
  * UpdateConflictError when it kept changing), having written nothing.
  */
 export async function commitImport(ctx: Ctx, input: CommitInput): Promise<CommitResult> {
   const { account } = input;
+  const choices = input.choices ?? {};
   const at = (input.now ?? new Date()).toISOString();
   // Strict: a book that can't be read is never matched as an empty one.
   const before = await manualTxnStore.get(ctx, account.account_id);
-  const first = planImport(input.rows, input.problems, before);
-  if (first.counts.new === 0) return { import_id: null, plan: first, entry: null };
+  const first = planImport(input.rows, input.problems, before, choices);
+  if (first.counts.conflicts > 0) throw new ConflictsUnresolvedError(first.counts.conflicts);
+  if (!changes(first)) return { import_id: null, plan: first, entry: null };
 
   const import_id = newImportId();
   // One id per row, made once, so a retried compare-and-set writes the same
   // rows the entry names.
   const rowIds = input.rows.map(() => newManualTxnId());
-  const entry = entryOf(input, first, rowIds, at);
+  const entry = entryOf(input, first, rowIds, at, before);
+  // The records first, refused whole when too large; then the summary the
+  // list reads, without which the records go again.
   await importStore.set(ctx, import_id, entry);
+  try {
+    await importSummaryStore.set(ctx, import_id, summaryOf(entry));
+  } catch (err) {
+    await importStore.remove(ctx, import_id).catch((cleanup) => console.warn('import: an import that failed left its record, listed with Undo', loggable(cleanup)));
+    throw err;
+  }
 
   let plan = first;
+  let matched: ManualTxnBook | null = before;
   try {
     await manualTxnStore.updateMany(ctx, [account.account_id], (books) => {
       const book = books.get(account.account_id) ?? null;
-      plan = planImport(input.rows, input.problems, book);
-      if (plan.counts.new === 0) return new Map();
+      matched = book;
+      plan = planImport(input.rows, input.problems, book, choices);
+      // A row added on another device meanwhile can raise a new conflict.
+      if (plan.counts.conflicts > 0) throw new ConflictsUnresolvedError(plan.counts.conflicts);
+      if (!changes(plan)) return new Map();
+      const replacing = new Map<string, NormalizedRecord>();
       const added: ManualTxn[] = [];
       plan.rows.forEach((r, i) => {
-        if (plan.outcomes[i].outcome !== 'new') return;
+        const o = plan.outcomes[i];
+        if (plan.actions[i] === 'replace' && o.outcome === 'conflict') replacing.set(o.row_id, r);
+        if (plan.actions[i] !== 'add') return;
         added.push({ id: rowIds[i], account_id: account.account_id, ...r.row, import_id, created_at: at, updated_at: at });
       });
-      return new Map([[account.account_id, { version: 1 as const, rows: [...(book?.rows ?? []), ...added] }]]);
+      const kept = (book?.rows ?? []).map((row) => {
+        const r = replacing.get(row.id);
+        return r ? withFields(row, r.row, at, false) : row;
+      });
+      return new Map([[account.account_id, { version: 1 as const, rows: [...kept, ...added] }]]);
     });
   } catch (err) {
     await dropEntryUnlessStored(ctx, account.account_id, import_id, err);
     throw err;
   }
-  if (plan.counts.new === 0) {
+  if (!changes(plan)) {
     // Everything arrived meanwhile (the same file, sent twice at once).
     await importStore.remove(ctx, import_id);
+    await importSummaryStore.remove(ctx, import_id);
     return { import_id: null, plan, entry: null };
   }
   let stored = entry;
-  if (!sameOutcomes(plan.outcomes, first.outcomes)) {
-    stored = entryOf(input, plan, rowIds, at);
+  const final = entryOf(input, plan, rowIds, at, matched);
+  if (JSON.stringify(final.records) !== JSON.stringify(entry.records)) {
     try {
-      await importStore.set(ctx, import_id, stored);
+      await importStore.set(ctx, import_id, final);
+      await importSummaryStore.set(ctx, import_id, summaryOf(final));
+      stored = final;
     } catch (err) {
       // The rows are in; the entry still names every record, with what the
       // first matching made of them.
       console.warn('import: an import’s records could not be brought up to date', loggable(err));
-      stored = entry;
     }
   }
   return { import_id, plan, entry: stored };
 }
 
-/** After the rows couldn't be written: the entry goes, unless the book may
- *  hold its rows after all (an answer lost on the way). A refusal or a
- *  damaged book is certain to have written nothing. */
+/** After the rows couldn't be written: the entry and its summary go, unless
+ *  the book may hold its rows after all (an answer lost on the way). A
+ *  refusal, a conflict or a damaged book is certain to have written nothing. */
 async function dropEntryUnlessStored(ctx: Ctx, account_id: string, import_id: string, err: unknown): Promise<void> {
   try {
-    if (!(err instanceof StoreRefusedError || err instanceof StoredDataUnreadableError)) {
+    if (!(err instanceof StoreRefusedError || err instanceof StoredDataUnreadableError || err instanceof ConflictsUnresolvedError)) {
       const book = await manualTxnStore.get(ctx, account_id);
       if (book?.rows.some((r) => r.import_id === import_id)) return;
     }
     await importStore.remove(ctx, import_id);
+    await importSummaryStore.remove(ctx, import_id);
   } catch (cleanup) {
     console.warn('import: an import that failed left its record, listed with Undo', loggable(cleanup));
   }
 }
 
-/** Notes on an import's entry the balance it also set. Best effort: the
- *  balance moved either way. */
+/** Notes on an import's entry and summary the balance it also set. Best
+ *  effort: the balance moved either way. */
 export async function noteBalanceSet(ctx: Ctx, import_id: string, update: { from: number; to: number; as_of: string }): Promise<void> {
   try {
     await importStore.update(ctx, import_id, (current) => (current ? { ...current, balance_update: update } : null));
+    await importSummaryStore.update(ctx, import_id, (current) => (current ? { ...current, balance_update: update } : null));
   } catch (err) {
     console.warn('import: the balance an import set could not be noted on it', loggable(err));
   }
@@ -369,18 +554,32 @@ export class ImportNotFoundError extends Error {
   }
 }
 
-export type UndoResult = { removed: number; edited: number; moved: number; ids: string[] };
-
 /** Whether a row changed since its import added it. */
 const editedSince = (r: ManualTxn) => r.updated_at !== r.created_at;
 
+/** What undoing an import needs to know before it changes anything. */
+type UndoBasis = {
+  entry: ImportEntry | null;
+  /** Its entry's bytes are damaged: it is removed with the rows. */
+  damaged: boolean;
+  /** Rows a later import relied on (found already there, or replaced), each
+   *  with the earliest such import: they are kept, for that import. */
+  relied: Map<string, string>;
+  /** The later imports that relied on any row, as their summaries have them. */
+  later: Map<string, StoredImportSummary>;
+  /** Rows this import replaced, and how each was before it. */
+  restore: Map<string, ReplacedBefore>;
+};
+
 /**
- * Takes an import out (see the header): its rows wherever they are, what was
- * said about them, and its entry. Throws ImportNotFoundError when there is
- * nothing of it on this account, UnreadableEntriesError when the account's
- * book can't be read or the entry is one this release doesn't recognise.
+ * What undoing an import must respect (see the header): its entry, read
+ * strictly (damaged bytes are noted, anything else unreadable throws), and
+ * the later imports that relied on any of its rows, read whole: only those
+ * whose summaries say they found rows already there or replaced some, and
+ * that came after it. One of those that can't be read could have relied on
+ * any of its rows, so it throws rather than guessing.
  */
-export async function undoImport(ctx: Ctx, account_id: string, import_id: string): Promise<UndoResult> {
+async function undoBasis(ctx: Ctx, account_id: string, import_id: string): Promise<UndoBasis> {
   let entry: ImportEntry | null = null;
   let damaged = false;
   try {
@@ -392,28 +591,131 @@ export async function undoImport(ctx: Ctx, account_id: string, import_id: string
     else throw err;
   }
   if (entry && entry.account_id !== account_id) throw new ImportNotFoundError();
+  const summaries = await importSummaryStore.getAllReport(ctx);
+  const since = entry?.imported_at ?? summaries.entries.get(import_id)?.imported_at ?? null;
+  const candidates = [...summaries.entries]
+    .filter(([id, s]) => id !== import_id && s.counts.present + (s.counts.replaced ?? 0) > 0 && (since === null || s.imported_at >= since))
+    .map(([id]) => id);
+  // A summary that can't be read could be any import's: its entry says.
+  for (const id of [...summaries.unreadable, ...summaries.unrecognised]) if (id !== import_id) candidates.push(id);
+  const later = new Map<string, StoredImportSummary>();
+  const relied = new Map<string, { by: string; at: string }>();
+  for (const id of candidates) {
+    const e = await importStore.get(ctx, id);
+    if (!e || (since !== null && e.imported_at < since)) continue;
+    later.set(id, summaries.entries.get(id) ?? summaryOf(e));
+    for (const r of e.records) {
+      if ((r.outcome !== 'present' && r.outcome !== 'replaced') || !r.row_id) continue;
+      const seen = relied.get(r.row_id);
+      if (!seen || e.imported_at < seen.at) relied.set(r.row_id, { by: id, at: e.imported_at });
+    }
+  }
+  const restore = new Map<string, ReplacedBefore>();
+  for (const r of entry?.records ?? []) if (r.outcome === 'replaced' && r.row_id && r.before) restore.set(r.row_id, r.before);
+  return { entry, damaged, relied: new Map([...relied].map(([row, { by }]) => [row, by])), later, restore };
+}
 
-  const result: UndoResult = { removed: 0, edited: 0, moved: 0, ids: [] };
+export type UndoPlan = {
+  /** 'ok', or that the import's entry can't be read (Undo still takes its
+   *  rows out). */
+  record: 'ok' | 'unreadable';
+  /** Rows it added that go, how many of them were changed since, and how
+   *  many are on another account now. */
+  remove: number;
+  edited: number;
+  moved: number;
+  /** Rows it added that a later import found already there and relied on:
+   *  kept, for that import, whose Undo takes them out. */
+  kept: { import_id: string; file_name: string | null; imported_at: string; count: number }[];
+  /** Rows it replaced with its file's version, put back as they were. */
+  restore: number;
+  /** Some books can't be read: their rows of this import can't be counted. */
+  incomplete: boolean;
+};
+
+/** What undoing an import would do, changing nothing: for the confirmation. */
+export async function undoPlan(ctx: Ctx, account_id: string, import_id: string): Promise<UndoPlan> {
+  const basis = await undoBasis(ctx, account_id, import_id);
+  const books = await manualTxnStore.getAllReport(ctx);
+  const plan: UndoPlan = { record: basis.damaged ? 'unreadable' : 'ok', remove: 0, edited: 0, moved: 0, kept: [], restore: 0, incomplete: books.unreadable.length + books.unrecognised.length > 0 };
+  const kept = new Map<string, number>();
+  for (const [id, book] of books.entries) {
+    for (const r of book.rows) {
+      if (r.import_id === import_id) {
+        const by = basis.relied.get(r.id);
+        if (by) kept.set(by, (kept.get(by) ?? 0) + 1);
+        else {
+          plan.remove++;
+          if (editedSince(r)) plan.edited++;
+          if (id !== account_id) plan.moved++;
+        }
+      } else if (basis.restore.has(r.id) && !basis.relied.has(r.id)) plan.restore++;
+    }
+  }
+  if (!basis.entry && !basis.damaged && plan.remove + kept.size + plan.restore === 0) throw new ImportNotFoundError();
+  plan.kept = [...kept].map(([id, count]) => {
+    const s = basis.later.get(id);
+    return { import_id: id, file_name: s?.file_name ?? null, imported_at: s?.imported_at ?? '', count };
+  });
+  return plan;
+}
+
+export type UndoResult = { removed: number; edited: number; moved: number; kept: number; restored: number; ids: string[] };
+
+/**
+ * Takes an import out (see the header): the rows it added wherever they are,
+ * except those a later import relied on, which are kept for that import; the
+ * rows it replaced, put back as they were (unless a later import relied on
+ * them as they are); what was said about the rows that go; its entry and
+ * summary. Throws ImportNotFoundError when there is nothing of it on this
+ * account, UnreadableEntriesError when the account's book can't be read, the
+ * entry is one this release doesn't recognise, or a later import's can't be
+ * read.
+ */
+export async function undoImport(ctx: Ctx, account_id: string, import_id: string, now: Date = new Date()): Promise<UndoResult> {
+  const basis = await undoBasis(ctx, account_id, import_id);
+  const at = now.toISOString();
+  const result: UndoResult = { removed: 0, edited: 0, moved: 0, kept: 0, restored: 0, ids: [] };
+  const handed = new Map<string, number>();
+  const restored = new Set<string>();
   // A row moved between books while this ran is found on the next pass.
   for (let pass = 0; pass < 3; pass++) {
     const report = await manualTxnStore.getAllReport(ctx);
     if (report.unreadable.includes(account_id) || report.unrecognised.includes(account_id)) {
       throw new UnreadableEntriesError(manualTxnStore.what, report.unreadable.filter((id) => id === account_id), report.unrecognised.filter((id) => id === account_id));
     }
-    const holding = [...report.entries].filter(([, book]) => book.rows.some((r) => r.import_id === import_id)).map(([id]) => id);
+    const touches = (r: ManualTxn) => r.import_id === import_id || (basis.restore.has(r.id) && !basis.relied.has(r.id) && !restored.has(r.id));
+    const holding = [...report.entries].filter(([, book]) => book.rows.some(touches)).map(([id]) => id);
     if (holding.length === 0) break;
     for (let i = 0; i < holding.length; i += MANY_AT_ONCE) {
       const chunk = holding.slice(i, i + MANY_AT_ONCE);
       let taken: { id: string; edited: boolean; moved: boolean }[] = [];
+      let passed: { to: string }[] = [];
+      let putBack: string[] = [];
       await manualTxnStore.updateMany(ctx, chunk, (books) => {
         taken = [];
+        passed = [];
+        putBack = [];
         const next = new Map<string, ManualTxnBook | null>();
         for (const [id, book] of books) {
           if (!book) continue;
-          const keep = book.rows.filter((r) => r.import_id !== import_id);
-          if (keep.length === book.rows.length) continue;
-          for (const r of book.rows) if (r.import_id === import_id) taken.push({ id: r.id, edited: editedSince(r), moved: id !== account_id });
-          next.set(id, keep.length > 0 ? { ...book, rows: keep } : null);
+          let changed = false;
+          const rows: ManualTxn[] = [];
+          for (const r of book.rows) {
+            if (r.import_id === import_id) {
+              changed = true;
+              const by = basis.relied.get(r.id);
+              if (by) {
+                rows.push({ ...r, import_id: by });
+                passed.push({ to: by });
+              } else taken.push({ id: r.id, edited: editedSince(r), moved: id !== account_id });
+            } else if (basis.restore.has(r.id) && !basis.relied.has(r.id) && !restored.has(r.id)) {
+              changed = true;
+              rows.push(withFields(r, basis.restore.get(r.id)!, at, true));
+              putBack.push(r.id);
+            } else rows.push(r);
+          }
+          if (changed) next.set(id, rows.length > 0 ? { ...book, rows } : null);
         }
         return next;
       });
@@ -423,13 +725,25 @@ export async function undoImport(ctx: Ctx, account_id: string, import_id: string
         if (t.edited) result.edited++;
         if (t.moved) result.moved++;
       }
+      for (const p of passed) handed.set(p.to, (handed.get(p.to) ?? 0) + 1);
+      for (const id of putBack) restored.add(id);
     }
   }
-  if (!entry && !damaged && result.removed === 0) throw new ImportNotFoundError();
+  result.kept = [...handed.values()].reduce((n, c) => n + c, 0);
+  result.restored = restored.size;
+  if (!basis.entry && !basis.damaged && result.removed + result.kept + result.restored === 0) throw new ImportNotFoundError();
+  // The imports that now hold rows say so in their summaries. Best effort:
+  // their rows are theirs either way, and their Undo finds them.
+  for (const [id, count] of handed) {
+    await importSummaryStore
+      .update(ctx, id, (current) => (current ? { ...current, taken_over: (current.taken_over ?? 0) + count } : null))
+      .catch((err) => console.warn('import: rows kept for a later import could not be noted on it', loggable(err)));
+  }
   // What was said about the rows goes with them. Best effort: a record left
   // behind names a row that no longer exists, which is never shown.
   await forgetAnnotations(ctx, result.ids).catch((err) => console.warn('import: exclusions of undone rows were left behind', loggable(err)));
   await importStore.remove(ctx, import_id);
+  await importSummaryStore.remove(ctx, import_id);
   return result;
 }
 
@@ -437,7 +751,7 @@ export async function undoImport(ctx: Ctx, account_id: string, import_id: string
 
 export type ImportSummary = {
   id: string;
-  /** 'ok', or why its entry can't be shown: its bytes are damaged, a later
+  /** 'ok', or why it can't be shown: its record's bytes are damaged, a later
    *  release wrote it, or it is gone while rows still name it. */
   record: 'ok' | 'unreadable' | 'unrecognised' | 'missing';
   format: FileFormat | null;
@@ -448,7 +762,9 @@ export type ImportSummary = {
   last_date: string | null;
   currency: string | null;
   statement: string | null;
-  balance_update: ImportEntry['balance_update'] | null;
+  balance_update: StoredImportSummary['balance_update'];
+  /** Rows kept for it when an earlier import was undone. */
+  taken_over: number;
   /** Its rows stored now, on any account; of those, how many were changed
    *  since, and how many are on another account. Null when some book can't
    *  be read, so they can't be counted. */
@@ -457,16 +773,47 @@ export type ImportSummary = {
   moved_now: number | null;
 };
 
+const unknownImport = (id: string, record: ImportSummary['record']): Omit<ImportSummary, 'rows_now' | 'edited_now' | 'moved_now'> => ({
+  id,
+  record,
+  format: null,
+  file_name: null,
+  imported_at: null,
+  counts: null,
+  first_date: null,
+  last_date: null,
+  currency: null,
+  statement: null,
+  balance_update: null,
+  taken_over: 0,
+});
+
+const listed = (id: string, s: StoredImportSummary): Omit<ImportSummary, 'rows_now' | 'edited_now' | 'moved_now'> => ({
+  id,
+  record: 'ok',
+  format: s.format,
+  file_name: s.file_name,
+  imported_at: s.imported_at,
+  counts: s.counts,
+  first_date: s.first_date,
+  last_date: s.last_date,
+  currency: s.currency,
+  statement: s.statement,
+  balance_update: s.balance_update,
+  taken_over: s.taken_over ?? 0,
+});
+
 /**
  * The imports into an account, newest first, with what is left of each. For
- * the import sheet's list: a display read that names what it can't read
- * rather than failing (the entries and the books are read with getAllReport;
- * nothing is written or removed from this answer). An import whose rows are
- * on this account but whose entry can't be read or is gone is listed too, so
- * Undo can take its rows out.
+ * the import sheet's list: a display read of the summaries and the books
+ * (getAllReport), never of a file's records, which names what it can't read
+ * rather than failing; nothing is written or removed from this answer. An
+ * import whose rows are on this account but that has no summary to show is
+ * listed too, from its entry, read alone (or as damaged or gone), so Undo can
+ * take its rows out.
  */
 export async function listImports(ctx: Ctx, account_id: string): Promise<ImportSummary[]> {
-  const [imports, books] = await Promise.all([importStore.getAllReport(ctx), manualTxnStore.getAllReport(ctx)]);
+  const [summaries, books] = await Promise.all([importSummaryStore.getAllReport(ctx), manualTxnStore.getAllReport(ctx)]);
   const complete = books.unreadable.length === 0 && books.unrecognised.length === 0;
   const live = new Map<string, { rows: number; edited: number; moved: number }>();
   const onThisAccount = new Set<string>();
@@ -489,65 +836,53 @@ export async function listImports(ctx: Ctx, account_id: string): Promise<ImportS
     return { rows_now: n?.rows ?? 0, edited_now: n?.edited ?? 0, moved_now: n?.moved ?? 0 };
   };
   const out: ImportSummary[] = [];
-  for (const [id, e] of imports.entries) {
-    if (e.account_id !== account_id) continue;
-    out.push({
-      id,
-      record: 'ok',
-      format: e.format,
-      file_name: e.file_name,
-      imported_at: e.imported_at,
-      counts: e.counts,
-      first_date: e.first_date,
-      last_date: e.last_date,
-      currency: e.currency,
-      statement: e.statement?.label ?? null,
-      balance_update: e.balance_update ?? null,
-      ...now(id),
-    });
-  }
-  const flawed = new Map<string, ImportSummary['record']>([
-    ...imports.unreadable.map((id) => [id, 'unreadable'] as const),
-    ...imports.unrecognised.map((id) => [id, 'unrecognised'] as const),
-  ]);
+  for (const [id, s] of summaries.entries) if (s.account_id === account_id) out.push({ ...listed(id, s), ...now(id) });
   for (const id of onThisAccount) {
     // Listed above, or another account's import with a row moved here.
-    if (imports.entries.has(id)) continue;
-    out.push({
-      id,
-      record: flawed.get(id) ?? 'missing',
-      format: null,
-      file_name: null,
-      imported_at: null,
-      counts: null,
-      first_date: null,
-      last_date: null,
-      currency: null,
-      statement: null,
-      balance_update: null,
-      ...now(id),
-    });
+    if (summaries.entries.has(id)) continue;
+    let item = unknownImport(id, 'missing');
+    try {
+      const e = await importStore.get(ctx, id);
+      if (e) item = listed(id, summaryOf(e));
+    } catch (err) {
+      if (!(err instanceof UnreadableEntriesError)) throw err;
+      item = unknownImport(id, err.unreadable.includes(id) ? 'unreadable' : 'unrecognised');
+    }
+    out.push({ ...item, ...now(id) });
   }
   return out.sort((a, b) => (b.imported_at ?? '').localeCompare(a.imported_at ?? ''));
 }
 
 /**
- * For deleting a manual account: its imports' entries and its settings go.
- * Its rows go with its book (the caller deletes that), and so does an entry
- * whose bytes are damaged that only this account's rows named, since the
- * person asked for everything about the account to go. Rows of its imports
- * moved to another account keep their import there; that import, its entry
- * gone, is still listed on that account with Undo. Call it before the book
- * is deleted. Throws only when storage can't be reached.
+ * For deleting a manual account: its imports' entries and summaries, and its
+ * settings, go. Its rows go with its book (the caller deletes that), and so
+ * does an import named only by this account's rows whose summary can't be
+ * read and whose entry is this account's or is damaged, since the person
+ * asked for everything about the account to go. Rows of its imports moved to
+ * another account keep their import there; that import, its entry gone, is
+ * still listed on that account with Undo. Call it before the book is deleted.
+ * Throws only when storage can't be reached.
  */
 export async function forgetAccountImports(ctx: Ctx, account_id: string): Promise<void> {
-  const [imports, books] = await Promise.all([importStore.getAllReport(ctx), manualTxnStore.getAllReport(ctx)]);
+  const [summaries, books] = await Promise.all([importSummaryStore.getAllReport(ctx), manualTxnStore.getAllReport(ctx)]);
   const ids = new Set<string>();
-  for (const [id, e] of imports.entries) if (e.account_id === account_id) ids.add(id);
+  for (const [id, s] of summaries.entries) if (s.account_id === account_id) ids.add(id);
   const mine = new Set((books.entries.get(account_id)?.rows ?? []).flatMap((r) => (r.import_id ? [r.import_id] : [])));
   const elsewhere = new Set<string>();
   for (const [id, book] of books.entries) if (id !== account_id) for (const r of book.rows) if (r.import_id) elsewhere.add(r.import_id);
-  for (const id of imports.unreadable) if (mine.has(id) && !elsewhere.has(id)) ids.add(id);
-  if (ids.size > 0) await importStore.remove(ctx, ...ids);
+  for (const id of mine) {
+    if (summaries.entries.has(id) || elsewhere.has(id)) continue;
+    try {
+      const e = await importStore.get(ctx, id);
+      if (!e || e.account_id === account_id) ids.add(id);
+    } catch (err) {
+      if (!(err instanceof UnreadableEntriesError)) throw err;
+      if (err.unreadable.includes(id)) ids.add(id);
+    }
+  }
+  if (ids.size > 0) {
+    await importStore.remove(ctx, ...ids);
+    await importSummaryStore.remove(ctx, ...ids);
+  }
   await importSettingsStore.remove(ctx, account_id);
 }

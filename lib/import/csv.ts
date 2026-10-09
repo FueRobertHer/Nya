@@ -24,7 +24,11 @@
 // not read (an unquoted separator in a description would shift every column
 // after it, and a shifted amount column reads as a wrong amount); one with
 // fewer is read with the missing fields empty, as some exporters drop
-// trailing empty fields.
+// trailing empty fields. No line may have more than MAX_CSV_COLUMNS fields: a
+// bank's export has a dozen or two, and a file with a line wider than that is
+// refused as soon as the line is found, before a column list is built from it
+// that would make the answer, or the sheet's column pickers, grow with the
+// file.
 //
 // SIGNS. With one amount column, the person says whether money out is written
 // negative (most bank accounts) or positive (many card exports), and the
@@ -32,7 +36,7 @@
 // direction outright. With separate columns, the column says the direction
 // and the amount's own sign is ignored.
 
-import { capField, MAX_FIELD_CHARS, MAX_IMPORT_ROWS, type Problem, type RawRecord } from './record';
+import { capField, MAX_CSV_COLUMNS, MAX_FIELD_CHARS, MAX_IMPORT_ROWS, type Problem, type RawRecord } from './record';
 import { dateFor, DATE_ORDER_NAMES, type DateOrder } from './dates';
 import { readAmount, type DecimalMark } from './amounts';
 
@@ -53,12 +57,18 @@ function breaks(s: string): number {
   return n;
 }
 
+/** What splitting the text found: the records, the line of a quote never
+ *  closed, whether there were more than asked for, and the line of a record
+ *  with more than MAX_CSV_COLUMNS fields, where reading stopped. */
+export type CsvSplit = { rows: CsvRow[]; unterminated: number | null; more: boolean; wide: number | null };
+
 /**
  * The text split into records (see the header), at most `limit` of them:
  * each with the line it starts on. `unterminated` is the line of a quote that
- * is never closed, where reading stopped.
+ * is never closed, and `wide` of a record wider than any table is, where
+ * reading stopped.
  */
-export function splitCsv(text: string, delimiter: Delimiter, limit: number = Infinity): { rows: CsvRow[]; unterminated: number | null; more: boolean } {
+export function splitCsv(text: string, delimiter: Delimiter, limit: number = Infinity): CsvSplit {
   const rows: CsvRow[] = [];
   const n = text.length;
   let i = 0;
@@ -74,7 +84,7 @@ export function splitCsv(text: string, delimiter: Delimiter, limit: number = Inf
     return j;
   };
   while (i < n) {
-    if (rows.length >= limit) return { rows, unterminated: null, more: true };
+    if (rows.length >= limit) return { rows, unterminated: null, more: true, wide: null };
     const start = line;
     const cells: string[] = [];
     for (;;) {
@@ -100,7 +110,7 @@ export function splitCsv(text: string, delimiter: Delimiter, limit: number = Inf
           closed = true;
           break;
         }
-        if (!closed) return { rows, unterminated: start, more: false };
+        if (!closed) return { rows, unterminated: start, more: false, wide: null };
         // Anything after the closing quote, up to the separator, is kept.
         const end = runEnd(i);
         field += text.slice(i, end);
@@ -111,6 +121,7 @@ export function splitCsv(text: string, delimiter: Delimiter, limit: number = Inf
         i = end;
       }
       cells.push(field);
+      if (cells.length > MAX_CSV_COLUMNS) return { rows, unterminated: null, more: false, wide: start };
       if (i >= n) break;
       const c = text[i];
       if (c === delimiter) {
@@ -118,6 +129,7 @@ export function splitCsv(text: string, delimiter: Delimiter, limit: number = Inf
         // A separator at the very end of the text leaves one empty field.
         if (i >= n) {
           cells.push('');
+          if (cells.length > MAX_CSV_COLUMNS) return { rows, unterminated: null, more: false, wide: start };
           break;
         }
         continue;
@@ -129,7 +141,7 @@ export function splitCsv(text: string, delimiter: Delimiter, limit: number = Inf
     }
     if (cells.some((c) => c.trim() !== '')) rows.push({ line: start, cells });
   }
-  return { rows, unterminated: null, more: false };
+  return { rows, unterminated: null, more: false, wide: null };
 }
 
 /** A row's width: its fields, less the empty ones at its end. */
@@ -140,17 +152,22 @@ function width(cells: string[]): number {
 }
 
 /** The separator that splits the first lines most consistently into more
- *  than one field: most rows of one width, then the widest. */
+ *  than one field: most rows of one width, then the widest. One that splits
+ *  a line wider than any table is chosen only over separators that split
+ *  nothing, so such a file is refused for its width rather than read as one
+ *  column. */
 export function detectDelimiter(text: string): Delimiter {
   const sample = text.slice(0, 64 * 1024);
   let best: Delimiter = ',';
   let bestScore = -1;
   for (const d of DELIMITERS) {
-    const widths = splitCsv(sample, d, 40).rows.map((r) => width(r.cells));
+    const split = splitCsv(sample, d, 40);
+    const widths = split.rows.map((r) => width(r.cells));
     const counts = new Map<number, number>();
     for (const w of widths) if (w > 1) counts.set(w, (counts.get(w) ?? 0) + 1);
     let score = 0;
     for (const [w, c] of counts) score = Math.max(score, c * 1000 + w);
+    if (split.wide !== null) score = Math.min(score, 0.5);
     if (score > bestScore) {
       best = d;
       bestScore = score;
@@ -197,6 +214,11 @@ export function readCsvTable(text: string, opts: { delimiter?: Delimiter; header
   // Enough rows to tell a file over the limit, and no more: a file of nothing
   // but line breaks and separators is bounded by its size, and stops here.
   const split = splitCsv(text, delimiter, MAX_IMPORT_ROWS + 200);
+  if (split.wide !== null) {
+    return {
+      error: `Line ${split.wide.toLocaleString('en-US')} of this file has more than ${MAX_CSV_COLUMNS} fields, more than a bank’s export has, so it can’t be read as a table.`,
+    };
+  }
   const rows = split.rows;
   if (rows.length === 0) {
     return { error: split.unterminated !== null ? `A quote opened on line ${split.unterminated} is never closed, so nothing could be read.` : 'This file is empty.' };
