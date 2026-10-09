@@ -10,8 +10,11 @@
 // day or two after it was made), or exactly what that row was imported as
 // (its source_key: lib/import/normalize.ts), whatever the person changed on it
 // since. So re-importing a statement, or one that overlaps it, adds nothing.
-// A FITID repeated within one file on the same transaction is the bank
-// listing it twice: the first is read, the rest are counted as repeats.
+// A FITID repeated within one file on the same transaction (the same payee
+// and amount, dated within those days) is the bank listing it twice: the
+// first is read, the rest are counted as repeats. The payee counts here, as
+// it doesn't against a stored row: a bank that uses the day as its FITID
+// gives two purchases of the same amount that day one id, and both are real.
 //
 // A FITID IS NOT TRUSTED BLINDLY. Banks reuse them: some number a download's
 // transactions from 1, so September's "1" and October's "1" are different
@@ -146,7 +149,9 @@ export function matchRows(rows: readonly ImportRow[], existing: readonly StoredR
     if (!hasId(row)) return;
     const key = idKey(row.source, row.source_id!);
     const earlier = inFile.get(key) ?? [];
-    const twin = earlier.find((e) => sameTransaction(rows[e], row));
+    const twin = earlier.find(
+      (e) => rows[e].source_key === row.source_key || (sameTransaction(rows[e], row) && normalizeDescription(rows[e].name) === normalizeDescription(row.name))
+    );
     if (twin !== undefined) {
       out[i] = { outcome: 'repeated', of: twin };
       return;

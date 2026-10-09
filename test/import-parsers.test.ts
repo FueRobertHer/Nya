@@ -1049,6 +1049,10 @@ describe('a FITID is not trusted blindly', () => {
     // The same transaction listed twice is still one.
     const twice = rowsOf(ofxOf([['X', '20261005', -4.5, 'COFFEE'], ['X', '20261005', -4.5, 'COFFEE']]));
     expect(matchRows(twice, [])).toEqual([{ outcome: 'new' }, { outcome: 'repeated', of: 0 }]);
+    // A bank that uses the day as its FITID: two purchases of one amount that
+    // day are two, as their payees say.
+    const sameDay = rowsOf(ofxOf([['20261005', '20261005', -5, 'COFFEE'], ['20261005', '20261005', -5, 'BAKERY']]));
+    expect(matchRows(sameDay, [])).toEqual([{ outcome: 'new' }, { outcome: 'new', shares_id_with: 0 }]);
   });
 
   test('a pending charge that posted at a new amount under its FITID is asked about, never dropped', () => {
