@@ -228,7 +228,8 @@ export function withFund(settings: AllocationSettings, key: { ticker: string } |
 }
 
 /** Whether a target names stocks by region (US and international) rather
- *  than stocks of any region. */
+ *  than as stocks of any region. A target with no stocks at all does
+ *  neither: every stock, whatever its region, is held against 0%. */
 export function targetByRegion(target: Split): boolean {
-  return STOCK_CLASSES.some((c) => c !== 'stocks' && (target[c] ?? 0) > 0) || !((target.stocks ?? 0) > 0);
+  return STOCK_CLASSES.some((c) => c !== 'stocks' && (target[c] ?? 0) > 0);
 }

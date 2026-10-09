@@ -18,7 +18,7 @@ import AllocationCard, {
   readSplit,
   type AllocationState,
 } from '@/components/AllocationCard';
-import { CLASS_COLORS, mixBasisText, mixLeftOutText, mixText, noMixText, pointsText } from '@/components/allocation-text';
+import { CLASS_COLORS, mixBasisText, mixLeftOutText, mixText, noMixText, pointsText, tenthPct } from '@/components/allocation-text';
 import { SimulationForm } from '@/components/PlanForms';
 import { allocate, planMix, type AllocAccount, type AllocHolding, type AllocInstitution } from '@/lib/allocation/allocation';
 import { CLASS_NAMES, SLOTS } from '@/lib/allocation/classes';
@@ -41,6 +41,8 @@ const text = (html: string) =>
     .replace(/&#x27;|&#39;/g, "'")
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ')
     // A tag closing before punctuation leaves a space in front of it.
     .replace(/ ([.,:;])/g, '$1');
@@ -156,8 +158,38 @@ describe('drift', () => {
     expect(t).toContain('Cash $8,000 over 0% 8% +8 points');
     expect(t).toContain('$60,000 unclassified is left out of these shares');
     expect(pointsText(0.04)).toBe('on target');
+    // The shares' rule: money that is there never reads 0%, a share short of
+    // the whole never 100%.
+    expect([tenthPct(0.03), tenthPct(99.97), tenthPct(100), tenthPct(0), tenthPct(54.25), tenthPct(-0.02)]).toEqual(['<0.1%', '>99.9%', '100%', '0%', '54.3%', '>-0.1%']);
     expect(pointsText(1)).toBe('+1 point');
     expect(pointsText(-2.25)).toBe('-2.3 points');
+  });
+});
+
+describe('the target, while it isn’t known', () => {
+  test('a tiny share in the Now column reads as there, and the whole as short of it', () => {
+    const a = allocate({
+      institutions: [inst('X', [acct('m', { balance: 100_030 })])],
+      holdings: [hold('m', 'VTI', 100_000), hold('m', 'VMFXX', 30, { security_type: 'mutual fund' })],
+      settings: null,
+      currency: 'USD',
+    });
+    const t = text(renderToStaticMarkup(<DriftSection alloc={a} target={{ 'us-stocks': 100 }} money={money} editable onSet={noop} />));
+    expect(t).toContain('US stocks 100% >99.9% on target');
+    expect(t).toContain('Cash 0% <0.1% on target');
+    // No money line beside "on target".
+    expect(t).not.toContain('$30 under');
+  });
+
+  test('while the settings load, or can’t be read, no target is said to be missing', () => {
+    const loading = text(renderToStaticMarkup(<DriftSection alloc={alloc()} target={null} waiting="loading" money={money} editable={false} onSet={noop} />));
+    expect(loading).toContain('Loading your target…');
+    expect(loading).not.toContain('Set the allocation you aim for');
+    const unreadable = text(renderToStaticMarkup(<DriftSection alloc={alloc()} target={null} waiting="unreadable" money={money} editable={false} onSet={noop} />));
+    expect(unreadable).toContain('Your target shows here once your settings can be read.');
+    expect(unreadable).not.toContain('Set a target');
+    // Loaded, with none set: the offer to set one.
+    expect(text(renderToStaticMarkup(<DriftSection alloc={alloc()} target={null} money={money} editable onSet={noop} />))).toContain('Set the allocation you aim for');
   });
 });
 

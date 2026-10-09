@@ -286,6 +286,20 @@ describe('shares', () => {
     const s = shares({ a: 9_970, b: 30, c: 0 }, ['a', 'b', 'c']);
     expect(s.map((x) => x.label)).toEqual(['>99%', '<1%']);
   });
+
+  test('rounding residue is not money: no row, no share', () => {
+    // Cash positions of 0.1, 0.2 and -0.3 leave 5.55e-17 behind.
+    const a = allocate({
+      institutions: [inst('X', [acct('m', { balance: 1_000 })])],
+      holdings: [hold('m', 'VTI', 1_000), ...[0.1, 0.2, -0.3].map((v) => hold('m', 'CUR:USD', v, { security_type: 'cash' }))],
+      settings: null,
+      currency: 'USD',
+    });
+    expect(a.classes.cash).not.toBe(0);
+    expect(shares(a.classes, SLOTS)).toEqual([{ slot: 'us-stocks', amount: 1_000, pct: 100, label: '100%' }]);
+    expect(drift(a, { 'us-stocks': 100 })!.rows.map((r) => r.slot)).toEqual(['us-stocks']);
+    expect(planMix(a).leftOut).toEqual([]);
+  });
 });
 
 describe('drift against a target', () => {
@@ -320,6 +334,15 @@ describe('drift against a target', () => {
   test('stocks of an unknown region have no target under one split by region', () => {
     const d = drift(alloc({ 'us-stocks': 50, stocks: 10, bonds: 40 }), { 'us-stocks': 60, bonds: 40 })!;
     expect(d.rows.find((r) => r.slot === 'stocks')).toEqual({ slot: 'stocks', target: null, actual: 10, diff: null, toTarget: null });
+  });
+
+  test('a target with no stocks at all holds every stock against 0%, whatever its region', () => {
+    const d = drift(alloc({ stocks: 1_000, 'us-stocks': 500, bonds: 1_000 }), { bonds: 100 })!;
+    expect(d.byRegion).toBe(false);
+    expect(d.rows).toEqual([
+      { slot: 'all-stocks', target: 0, actual: 60, diff: 60, toTarget: -1_500 },
+      { slot: 'bonds', target: 100, actual: 40, diff: -60, toTarget: 1_500 },
+    ]);
   });
 
   test('a target of stocks of any region counts every region together', () => {

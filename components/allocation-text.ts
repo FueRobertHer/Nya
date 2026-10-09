@@ -94,6 +94,9 @@ export function gapText(g: AccountGap, fmtDay: (day: string, at: string | null) 
  *  the same size as one over it. */
 const oneDecimal = (n: number) => (Math.sign(n) * Math.round(Math.abs(n) * 10)) / 10;
 
+/** Whether a drift is too small to show at a tenth of a point. */
+export const onTarget = (diff: number) => oneDecimal(diff) === 0;
+
 /** A drift in percentage points: "+3.2 points", "-5 points", "on target". */
 export function pointsText(diff: number): string {
   const r = oneDecimal(diff);
@@ -101,8 +104,16 @@ export function pointsText(diff: number): string {
   return `${r > 0 ? '+' : ''}${r} point${Math.abs(r) === 1 ? '' : 's'}`;
 }
 
-/** A percent of the whole to one decimal, for drift tables: "54.3%". */
-export const tenthPct = (p: number) => `${oneDecimal(p) || 0}%`;
+/** A percent of the whole to one decimal, for drift tables: "54.3%". As
+ *  the shares are said (shareLabel), money that is there never reads 0%
+ *  ("<0.1%"), and a share short of the whole never reads 100% (">99.9%"). */
+export function tenthPct(p: number): string {
+  const r = oneDecimal(p);
+  if (p > 0 && r <= 0) return '<0.1%';
+  if (p < 0 && r >= 0) return '>-0.1%';
+  if (p < 100 && r >= 100) return '>99.9%';
+  return `${r || 0}%`;
+}
 
 /** The Plan's mix in words: "72% stocks, 20% bonds, 8% cash". */
 export function mixText(m: { stocksPct: number; bondsPct: number; cashPct?: number }): string {

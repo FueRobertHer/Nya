@@ -490,7 +490,7 @@ export function drift(alloc: Allocation, target: Split): Drift | null {
   for (const slot of slots) {
     const amount = amountOf(slot);
     const t = targetOf(slot);
-    if (amount === 0 && t === 0) continue;
+    if (!isMoney(amount) && t === 0) continue;
     const actual = (amount * 100) / basis;
     if (byRegion && slot === 'stocks') {
       rows.push({ slot, target: null, actual, diff: null, toTarget: null });

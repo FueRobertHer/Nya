@@ -40,6 +40,7 @@ import {
   mixText,
   names,
   noMixText,
+  onTarget,
   pointsText,
   tenthPct,
 } from './allocation-text';
@@ -248,7 +249,14 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             <BucketView alloc={alloc} money={money} editable={editable} open={open} />
           )}
           <AllocationNotes alloc={alloc} money={money} />
-          <DriftSection alloc={alloc} target={withSettings ? current.target : null} money={money} editable={editable} onSet={() => open({ kind: 'target' })} />
+          <DriftSection
+            alloc={alloc}
+            target={withSettings ? current.target : null}
+            waiting={withSettings ? null : settings.status === 'error' ? 'unreadable' : 'loading'}
+            money={money}
+            editable={editable}
+            onSet={() => open({ kind: 'target' })}
+          />
           <MixSection mix={mix} plan={plan} ready={withSettings} editable={planEditable && withSettings} onUse={() => open({ kind: 'mix' })} currency={currency} />
         </>
       )}
@@ -439,15 +447,15 @@ export function ClassView({
   settings: AllocationSettings;
   open: (s: SheetState) => void;
 }) {
-  const unclassifiedSecurities = alloc.securities.filter((s) => !s.classified.split && s.amount !== 0);
-  const gaps = alloc.gaps.filter((g) => g.amount !== 0);
+  const unclassifiedSecurities = alloc.securities.filter((s) => !s.classified.split && isMoney(s.amount));
+  const gaps = alloc.gaps.filter((g) => isMoney(g.amount));
   const accountSplits = overridesOf(settings).accounts;
   return (
     <>
       <ShareTable totals={alloc.classes} order={SLOTS} colors={CLASS_COLORS} label={(s: Slot) => CLASS_NAMES[s]} money={money} />
       {(unclassifiedSecurities.length > 0 || gaps.length > 0) && (
         <>
-          <div className="plan-subhead">{alloc.classes.unclassified !== 0 ? `Unclassified: ${money(alloc.classes.unclassified)}` : 'Account money no position explains'}</div>
+          <div className="plan-subhead">{isMoney(alloc.classes.unclassified) ? `Unclassified: ${money(alloc.classes.unclassified)}` : 'Account money no position explains'}</div>
           <p className="panel-note">
             Money Nya can&apos;t place in a class is shown as unclassified, never guessed at. Classify it to count it, here and in the plan&apos;s mix.
           </p>
@@ -596,16 +604,29 @@ const driftLabel = (slot: DriftSlot) => (slot === 'all-stocks' ? 'Stocks' : CLAS
 export function DriftSection({
   alloc,
   target,
+  waiting = null,
   money,
   editable,
   onSet,
 }: {
   alloc: Allocation;
   target: Split | null;
+  /** The person's settings aren't in yet ("loading") or can't be read
+   *  ("unreadable"): whether a target is set isn't known, so none is said
+   *  to be missing. */
+  waiting?: 'loading' | 'unreadable' | null;
   money: (n: number) => string;
   editable: boolean;
   onSet: () => void;
 }) {
+  if (waiting) {
+    return (
+      <>
+        <div className="plan-subhead">Target</div>
+        <p className="empty-note">{waiting === 'loading' ? 'Loading your target…' : 'Your target shows here once your settings can be read.'}</p>
+      </>
+    );
+  }
   if (!target) {
     return (
       <>
@@ -641,7 +662,9 @@ export function DriftSection({
                 <tr key={r.slot}>
                   <td>
                     {driftLabel(r.slot)}
-                    {r.toTarget !== null && Math.abs(r.toTarget) >= 1 && (
+                    {/* The money it takes, where the drift shows: never "$30
+                        under" beside "on target". */}
+                    {r.toTarget !== null && r.diff !== null && !onTarget(r.diff) && Math.abs(r.toTarget) >= 1 && (
                       <div className="alloc-sub">
                         {money(Math.abs(r.toTarget))} {r.toTarget > 0 ? 'under' : 'over'}
                       </div>
@@ -657,7 +680,7 @@ export function DriftSection({
           {d.byRegion && d.rows.some((r) => r.slot === 'stocks') && (
             <p className="panel-note">Stocks whose region Nya doesn&apos;t know have no target of their own: classify them to compare US and international exactly.</p>
           )}
-          {d.unclassified !== 0 && (
+          {isMoney(d.unclassified) && (
             <p className="panel-note">
               {money(d.unclassified)} unclassified is left out of these shares: it could be in any class. Classify it to compare all of your money.
             </p>
