@@ -5,11 +5,13 @@
 //
 // BY ID where the file has one, but never on the id alone. An OFX row is
 // already there when the account has a row with the same FITID (from an
-// earlier OFX or QFX import) that is the same transaction: the same amount in
-// the same currency, dated within FITID_DAYS of it (a pending charge posts a
-// day or two after it was made), or exactly what that row was imported as
-// (its source_key: lib/import/normalize.ts), whatever the person changed on it
-// since. So re-importing a statement, or one that overlaps it, adds nothing.
+// earlier OFX or QFX import) that is the same transaction: exactly what that
+// row was imported as (its source_key: lib/import/normalize.ts), whatever the
+// person changed on it since, or what it says now; else, once every row has
+// had its exact match by content (below), the same amount in the same
+// currency dated within FITID_DAYS of it (a pending charge posts a day or two
+// after it was made). So re-importing a statement, or one that overlaps it,
+// adds nothing.
 // A FITID repeated within one file on the same transaction (the same payee
 // and amount, dated within those days) is the bank listing it twice: the
 // first is read, the rest are counted as repeats. The payee counts here, as
@@ -19,8 +21,12 @@
 // A FITID IS NOT TRUSTED BLINDLY. Banks reuse them: some number a download's
 // transactions from 1, so September's "1" and October's "1" are different
 // purchases, and some keep a pending charge's FITID when it posts at another
-// amount (a tip added). So a row whose FITID the account has, on a row that
-// isn't the same transaction, is never dropped as already there:
+// amount (a tip added). So the tolerant match by id comes last, after every
+// exact one: a renumbered file's rows find their own stored rows by content
+// first, and a FITID now on another purchase of the same amount a day apart
+// can't take a stored row from the row it really is. And a row whose FITID
+// the account has, on a row that isn't the same transaction, is never dropped
+// as already there:
 //   - when a stored row is the same transaction by its content (below), that
 //     is the match, and the FITID was only reused;
 //   - otherwise it is a conflict (lib/import/commit.ts lets the person import
@@ -142,8 +148,8 @@ export function matchRows(rows: readonly ImportRow[], existing: readonly StoredR
   const sharesWith = new Map<number, number>();
   const hasId = (row: ImportRow) => ID_SOURCES.has(row.source) && !!row.source_id;
 
-  // By id, first for every row, so a stored row matched by its id is taken
-  // before any row could match it by content.
+  // A FITID the file repeats: the same transaction listed twice, or another
+  // one sharing the id.
   const inFile = new Map<string, number[]>();
   rows.forEach((row, i) => {
     if (!hasId(row)) return;
@@ -158,14 +164,24 @@ export function matchRows(rows: readonly ImportRow[], existing: readonly StoredR
     }
     if (earlier.length > 0) sharesWith.set(i, earlier[0]);
     inFile.set(key, [...earlier, i]);
-    const stored = (byFitid.get(key) ?? []).find((s) => !used.has(s.id) && sameTransaction(s, row));
-    if (stored) {
-      used.add(stored.id);
-      out[i] = { outcome: 'present', row_id: stored.id, by: 'id' };
-    }
   });
 
-  // By content, for the rest.
+  // 1. By id, exactly: the same FITID on exactly what was imported, or on a
+  //    row that says what this one says.
+  const tolerant: number[] = [];
+  rows.forEach((row, i) => {
+    if (out[i] || !hasId(row)) return;
+    const key = contentKey(row);
+    const exact = (byFitid.get(idKey(row.source, row.source_id!)) ?? []).find(
+      (s) => !used.has(s.id) && ((!!s.source_key && s.source_key === row.source_key) || contentKey(s) === key)
+    );
+    if (exact) {
+      used.add(exact.id);
+      out[i] = { outcome: 'present', row_id: exact.id, by: 'id' };
+    } else tolerant.push(i);
+  });
+
+  // 2. By content, for the rest, against any stored row not taken.
   rows.forEach((row, i) => {
     if (out[i]) return;
     const match = (pool.get(incomingKey(row)) ?? []).find((id) => !used.has(id));
@@ -175,8 +191,19 @@ export function matchRows(rows: readonly ImportRow[], existing: readonly StoredR
     }
   });
 
-  // What is left is new, unless a stored row nothing else matched has its
-  // FITID: then the person decides.
+  // 3. By id within the tolerance: a pending charge that posted days later.
+  for (const i of tolerant) {
+    if (out[i]) continue;
+    const row = rows[i];
+    const stored = (byFitid.get(idKey(row.source, row.source_id!)) ?? []).find((s) => !used.has(s.id) && sameTransaction(s, row));
+    if (stored) {
+      used.add(stored.id);
+      out[i] = { outcome: 'present', row_id: stored.id, by: 'id' };
+    }
+  }
+
+  // 4. What is left is new, unless a stored row nothing else matched has its
+  //    FITID: then the person decides.
   return rows.map((row, i): Outcome => {
     const done = out[i];
     if (done) return done;

@@ -365,7 +365,7 @@ Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or impor
 | `transaction_code` | Plaid's code for what its file said it was, when the file says so outright: `atm` for an OFX file's ATM transaction, which the spending rules read as they read a bank's. Absent otherwise. |
 | `import_id` | The import it came in with (in [`imports`](#imports)), so that import can be taken out whole; absent or `null` for one entered by hand. |
 | `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, `to`, the one it became, and `account_id`, the account whose balance it was (absent on one noted before that was kept). Absent otherwise. |
-| `created_at`, `updated_at` | When it was entered, and last changed. |
+| `created_at`, `updated_at` | When it was entered, and last changed in the app. An import that replaces it with its file's version, and the undo of that, leave `updated_at` as it was: neither is your change. |
 
 Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
 

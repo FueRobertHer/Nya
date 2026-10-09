@@ -888,6 +888,38 @@ describe('a FITID on another stored transaction', () => {
   });
 });
 
+describe('replacing a stored row with the file’s version', () => {
+  test('keeps the category and note the person gave it, isn’t counted as their edit, and Undo puts back only what it changed', async () => {
+    const xfer = (date: string, amount: string, memo: string) =>
+      `OFXHEADER:100\n\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD<BANKTRANLIST><STMTTRN><TRNTYPE>XFER<DTPOSTED>${date}<TRNAMT>${amount}<FITID>T7<NAME>ONLINE TRANSFER<MEMO>${memo}</STMTTRN></BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`;
+    const first = await importFile(CHECKING.account_id, xfer('20261001', '-1200.00', 'REF 0042'), {}, {}, 'a.ofx');
+    const [row] = await book();
+    expect(row).toMatchObject({ category: 'transfer out', note: 'REF 0042' });
+    await editManualTxn(ctx, row.id, { category: 'rent', note: 'October rent to landlord' });
+    const edited = (await book())[0];
+    const second = xfer('20261009', '-1250.00', 'REF 0042 CORRECTED');
+    const done = await importFile(CHECKING.account_id, second, { conflicts: { all: 'replace' } }, {}, 'b.ofx');
+    expect(done.body).toMatchObject({ replaced: 1 });
+    const [replaced] = await book();
+    // The bank's facts from the file; what the person said stays, and it is
+    // still the person's last change.
+    expect(replaced).toMatchObject({ id: row.id, date: '2026-10-09', amount: 1250, category: 'rent', note: 'October rent to landlord', updated_at: edited.updated_at });
+    // Undoing the first import keeps it for the second, which relied on it;
+    // its confirmation doesn't call it changed by the person since.
+    expect((await undoPlanOf(CHECKING.account_id, first.body.import_id)).body.undo).toMatchObject({ remove: 0, kept: [expect.objectContaining({ file_name: 'b.ofx', count: 1 })] });
+    // An unedited row replaced, then undone by its replacing import: back as
+    // it was, and never counted as changed.
+    await undo({ account_id: CHECKING.account_id, import_id: done.body.import_id, confirm: true });
+    expect((await book())[0]).toMatchObject({ date: '2026-10-01', amount: 1200, category: 'rent', note: 'October rent to landlord', updated_at: edited.updated_at });
+    const plain = await importFile(SAVINGS.account_id, xfer('20261001', '-300.00', 'REF 7'), {}, {}, 'c.ofx');
+    const again = await importFile(SAVINGS.account_id, xfer('20261003', '-320.00', 'REF 7'), { conflicts: { all: 'replace' } }, {}, 'd.ofx');
+    const [s] = await book(SAVINGS.account_id);
+    expect(s.updated_at).toBe(s.created_at);
+    await undo({ account_id: SAVINGS.account_id, import_id: plain.body.import_id, confirm: true });
+    expect((await undoPlanOf(SAVINGS.account_id, again.body.import_id)).body.undo).toMatchObject({ remove: 1, edited: 0 });
+  });
+});
+
 describe('undo keeps what a later import relied on', () => {
   const janMar = ofx([
     { fitid: 'F1', date: '2026-01-10', amount: -10, name: 'JAN' },
@@ -929,6 +961,24 @@ describe('undo keeps what a later import relied on', () => {
     expect(await book()).toEqual([]);
   });
 
+  test('a later import that skipped its own version of a row relied on it too: the row stays for it', async () => {
+    const week1 = (await importFile(CHECKING.account_id, ofx([{ fitid: 'P9', date: '2026-10-01', amount: -50, name: 'BISTRO' }, { fitid: 'K1', date: '2026-10-01', amount: -5, name: 'KIOSK' }]), {}, {}, 'week1.ofx')).body;
+    // The same FITID posted at 60: a conflict, and the person skips it.
+    const week2 = (
+      await importFile(CHECKING.account_id, ofx([{ fitid: 'P9', date: '2026-10-03', amount: -60, name: 'BISTRO' }, { fitid: 'K2', date: '2026-10-04', amount: -7, name: 'BAKERY' }]), { conflicts: { all: 'skip' } }, {}, 'week2.ofx')
+    ).body;
+    expect(week2).toMatchObject({ imported: 1, skipped: 1 });
+    expect((await undoPlanOf(CHECKING.account_id, week1.import_id)).body.undo).toMatchObject({
+      remove: 1,
+      kept: [{ import_id: week2.import_id, file_name: 'week2.ofx', imported_at: expect.any(String), count: 1 }],
+    });
+    expect((await undo({ account_id: CHECKING.account_id, import_id: week1.import_id, confirm: true })).body).toMatchObject({ removed: 1, kept: 1 });
+    expect((await book()).map((r) => [r.name, r.amount, r.import_id])).toEqual([
+      ['BISTRO', 50, week2.import_id],
+      ['BAKERY', 7, week2.import_id],
+    ]);
+  });
+
   test('the later one undone first takes only what it added', async () => {
     const first = (await importFile(CHECKING.account_id, janMar, {}, {}, 'jan-mar.ofx')).body;
     const second = (await importFile(CHECKING.account_id, febApr, {}, {}, 'feb-apr.ofx')).body;
@@ -938,6 +988,36 @@ describe('undo keeps what a later import relied on', () => {
       ['FEB', first.import_id],
       ['MAR', first.import_id],
     ]);
+  });
+
+  test('an undo that failed after removing the entry, leaving its summary, is finished by undoing again', async () => {
+    const x = (await importFile(CHECKING.account_id, ofx([{ fitid: 'F1', date: '2026-10-01', amount: -10, name: 'A' }, { fitid: 'F2', date: '2026-10-02', amount: -20, name: 'B' }]), {}, {}, 'x.ofx')).body;
+    // The summary's removal, the undo's last step, fails as a storage blip would.
+    const summaries = ctxKey('import-summaries');
+    const original = fake.hdel.bind(fake);
+    (fake as any).hdel = async (key: string, ...fields: string[]) => {
+      if (key === summaries) {
+        delete (fake as any).hdel;
+        throw new Error('storage blip');
+      }
+      return original(key, ...fields);
+    };
+    const { result } = await quietly(() => undo({ account_id: CHECKING.account_id, import_id: x.import_id, confirm: true }));
+    expect(result.status).toBe(500);
+    expect(await importStore.has(ctx, x.import_id)).toBe(false);
+    expect(await importSummaryStore.has(ctx, x.import_id)).toBe(true);
+    expect(await book()).toEqual([]);
+    // Still listed, with nothing of it left, and Undo finishes it.
+    expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id: x.import_id, file_name: 'x.ofx', rows_now: 0 })]);
+    expect((await undoPlanOf(CHECKING.account_id, x.import_id)).body.undo).toEqual({ record: 'ok', remove: 0, edited: 0, moved: 0, kept: [], restore: 0, incomplete: false });
+    expect(await undo({ account_id: CHECKING.account_id, import_id: x.import_id, confirm: true })).toMatchObject({ status: 200, body: { removed: 0 } });
+    expect((await list(CHECKING.account_id)).body.imports).toEqual([]);
+    // Then it is gone, and another account never could have done that.
+    expect((await undo({ account_id: CHECKING.account_id, import_id: x.import_id, confirm: true })).status).toBe(404);
+    const y = (await importFile(CHECKING.account_id, ofx([{ fitid: 'G1', date: '2026-10-03', amount: -1, name: 'C' }]), {}, {}, 'y.ofx')).body;
+    await fake.hdel(ctxKey('imports'), y.import_id);
+    expect((await undo({ account_id: SAVINGS.account_id, import_id: y.import_id, confirm: true })).status).toBe(404);
+    expect(await importSummaryStore.has(ctx, y.import_id)).toBe(true);
   });
 
   test('a later import whose record can’t be read could have relied on any row, so the undo is refused rather than guessed', async () => {

@@ -350,10 +350,18 @@ const beforeOf = (r: ManualTxn): ReplacedBefore => ({
   transaction_code: r.transaction_code ?? null,
 });
 
-/** A row with these fields in place of its own: the bank's facts (day,
- *  amount, currency, payee, Plaid's code), and a category or note only where
- *  the fields have one, so what the person gave the row stays. */
-function withFields(r: ManualTxn, f: { date: string; amount: number; currency: string; name: string; category: string | null; note: string | null; transaction_code?: string | null }, at: string, keepEmpty: boolean): ManualTxn {
+type Fields = { date: string; amount: number; currency: string; name: string; category: string | null; note: string | null; transaction_code?: string | null };
+
+/**
+ * A row with these fields in place of its own. `replace`, for an import that
+ * replaces a stored row with its file's version: the bank's facts (day,
+ * amount, currency, payee, Plaid's code), while the row's own category and
+ * note stay, the file's filling in only one the row lacks. `restore`, for
+ * undoing that import: every field as it was before. Neither is the person's
+ * edit, so `updated_at` stays as it was, and the row isn't counted as changed
+ * since its import by a later Undo's confirmation.
+ */
+function withFields(r: ManualTxn, f: Fields, how: 'replace' | 'restore'): ManualTxn {
   const { transaction_code: _old, ...rest } = r;
   const code = f.transaction_code ?? null;
   return {
@@ -362,10 +370,9 @@ function withFields(r: ManualTxn, f: { date: string; amount: number; currency: s
     amount: f.amount,
     currency: f.currency,
     name: f.name,
-    category: keepEmpty ? f.category : (f.category ?? r.category),
-    note: keepEmpty ? f.note : (f.note ?? r.note),
+    category: how === 'restore' ? f.category : (r.category ?? f.category),
+    note: how === 'restore' ? f.note : (r.note ?? f.note),
     ...(code ? { transaction_code: code } : {}),
-    updated_at: at,
   };
 }
 
@@ -477,7 +484,7 @@ export async function commitImport(ctx: Ctx, input: CommitInput): Promise<Commit
       });
       const kept = (book?.rows ?? []).map((row) => {
         const r = replacing.get(row.id);
-        return r ? withFields(row, r.row, at, false) : row;
+        return r ? withFields(row, r.row, 'replace') : row;
       });
       return new Map([[account.account_id, { version: 1 as const, rows: [...kept, ...added] }]]);
     });
@@ -562,8 +569,13 @@ type UndoBasis = {
   entry: ImportEntry | null;
   /** Its entry's bytes are damaged: it is removed with the rows. */
   damaged: boolean;
-  /** Rows a later import relied on (found already there, or replaced), each
-   *  with the earliest such import: they are kept, for that import. */
+  /** Its summary is still there (readable or damaged), whether or not its
+   *  entry is: an undo that failed after removing the entry left it, and
+   *  undoing again removes it. */
+  summaryLeft: boolean;
+  /** Rows a later import relied on (found already there, replaced, or
+   *  skipped as its own version of them), each with the earliest such
+   *  import: they are kept, for that import. */
   relied: Map<string, string>;
   /** The later imports that relied on any row, as their summaries have them. */
   later: Map<string, StoredImportSummary>;
@@ -575,9 +587,11 @@ type UndoBasis = {
  * What undoing an import must respect (see the header): its entry, read
  * strictly (damaged bytes are noted, anything else unreadable throws), and
  * the later imports that relied on any of its rows, read whole: only those
- * whose summaries say they found rows already there or replaced some, and
- * that came after it. One of those that can't be read could have relied on
- * any of its rows, so it throws rather than guessing.
+ * whose summaries say they found rows already there, replaced some or
+ * skipped their own versions of some, and that came after it. One of those
+ * that can't be read could have relied on any of its rows, so it throws
+ * rather than guessing. A skipped row counts as relied on: the person said
+ * the stored row is the later file's transaction.
  */
 async function undoBasis(ctx: Ctx, account_id: string, import_id: string): Promise<UndoBasis> {
   let entry: ImportEntry | null = null;
@@ -592,10 +606,12 @@ async function undoBasis(ctx: Ctx, account_id: string, import_id: string): Promi
   }
   if (entry && entry.account_id !== account_id) throw new ImportNotFoundError();
   const summaries = await importSummaryStore.getAllReport(ctx);
-  const since = entry?.imported_at ?? summaries.entries.get(import_id)?.imported_at ?? null;
-  const candidates = [...summaries.entries]
-    .filter(([id, s]) => id !== import_id && s.counts.present + (s.counts.replaced ?? 0) > 0 && (since === null || s.imported_at >= since))
-    .map(([id]) => id);
+  const own = summaries.entries.get(import_id) ?? null;
+  if (!entry && own && own.account_id !== account_id) throw new ImportNotFoundError();
+  const summaryLeft = !!own || summaries.unreadable.includes(import_id);
+  const since = entry?.imported_at ?? own?.imported_at ?? null;
+  const relies = (s: StoredImportSummary) => s.counts.present + (s.counts.replaced ?? 0) + (s.counts.skipped ?? 0) > 0;
+  const candidates = [...summaries.entries].filter(([id, s]) => id !== import_id && relies(s) && (since === null || s.imported_at >= since)).map(([id]) => id);
   // A summary that can't be read could be any import's: its entry says.
   for (const id of [...summaries.unreadable, ...summaries.unrecognised]) if (id !== import_id) candidates.push(id);
   const later = new Map<string, StoredImportSummary>();
@@ -605,15 +621,18 @@ async function undoBasis(ctx: Ctx, account_id: string, import_id: string): Promi
     if (!e || (since !== null && e.imported_at < since)) continue;
     later.set(id, summaries.entries.get(id) ?? summaryOf(e));
     for (const r of e.records) {
-      if ((r.outcome !== 'present' && r.outcome !== 'replaced') || !r.row_id) continue;
+      if ((r.outcome !== 'present' && r.outcome !== 'replaced' && r.outcome !== 'skipped') || !r.row_id) continue;
       const seen = relied.get(r.row_id);
       if (!seen || e.imported_at < seen.at) relied.set(r.row_id, { by: id, at: e.imported_at });
     }
   }
   const restore = new Map<string, ReplacedBefore>();
   for (const r of entry?.records ?? []) if (r.outcome === 'replaced' && r.row_id && r.before) restore.set(r.row_id, r.before);
-  return { entry, damaged, relied: new Map([...relied].map(([row, { by }]) => [row, by])), later, restore };
+  return { entry, damaged, summaryLeft, relied: new Map([...relied].map(([row, { by }]) => [row, by])), later, restore };
 }
+
+/** Whether anything of an import is left for Undo to take out. */
+const anythingLeft = (basis: UndoBasis, found: number) => !!basis.entry || basis.damaged || basis.summaryLeft || found > 0;
 
 export type UndoPlan = {
   /** 'ok', or that the import's entry can't be read (Undo still takes its
@@ -624,8 +643,9 @@ export type UndoPlan = {
   remove: number;
   edited: number;
   moved: number;
-  /** Rows it added that a later import found already there and relied on:
-   *  kept, for that import, whose Undo takes them out. */
+  /** Rows it added that a later import relied on (found already there,
+   *  replaced, or skipped as its own version of them): kept, for that
+   *  import, whose Undo takes them out. */
   kept: { import_id: string; file_name: string | null; imported_at: string; count: number }[];
   /** Rows it replaced with its file's version, put back as they were. */
   restore: number;
@@ -652,7 +672,7 @@ export async function undoPlan(ctx: Ctx, account_id: string, import_id: string):
       } else if (basis.restore.has(r.id) && !basis.relied.has(r.id)) plan.restore++;
     }
   }
-  if (!basis.entry && !basis.damaged && plan.remove + kept.size + plan.restore === 0) throw new ImportNotFoundError();
+  if (!anythingLeft(basis, plan.remove + kept.size + plan.restore)) throw new ImportNotFoundError();
   plan.kept = [...kept].map(([id, count]) => {
     const s = basis.later.get(id);
     return { import_id: id, file_name: s?.file_name ?? null, imported_at: s?.imported_at ?? '', count };
@@ -667,14 +687,14 @@ export type UndoResult = { removed: number; edited: number; moved: number; kept:
  * except those a later import relied on, which are kept for that import; the
  * rows it replaced, put back as they were (unless a later import relied on
  * them as they are); what was said about the rows that go; its entry and
- * summary. Throws ImportNotFoundError when there is nothing of it on this
- * account, UnreadableEntriesError when the account's book can't be read, the
+ * summary. Undoing again after an undo that failed partway finishes it: a
+ * summary left without its entry is removed. Throws ImportNotFoundError when
+ * there is nothing of it on this account, UnreadableEntriesError when the account's book can't be read, the
  * entry is one this release doesn't recognise, or a later import's can't be
  * read.
  */
-export async function undoImport(ctx: Ctx, account_id: string, import_id: string, now: Date = new Date()): Promise<UndoResult> {
+export async function undoImport(ctx: Ctx, account_id: string, import_id: string): Promise<UndoResult> {
   const basis = await undoBasis(ctx, account_id, import_id);
-  const at = now.toISOString();
   const result: UndoResult = { removed: 0, edited: 0, moved: 0, kept: 0, restored: 0, ids: [] };
   const handed = new Map<string, number>();
   const restored = new Set<string>();
@@ -711,7 +731,7 @@ export async function undoImport(ctx: Ctx, account_id: string, import_id: string
               } else taken.push({ id: r.id, edited: editedSince(r), moved: id !== account_id });
             } else if (basis.restore.has(r.id) && !basis.relied.has(r.id) && !restored.has(r.id)) {
               changed = true;
-              rows.push(withFields(r, basis.restore.get(r.id)!, at, true));
+              rows.push(withFields(r, basis.restore.get(r.id)!, 'restore'));
               putBack.push(r.id);
             } else rows.push(r);
           }
@@ -731,7 +751,7 @@ export async function undoImport(ctx: Ctx, account_id: string, import_id: string
   }
   result.kept = [...handed.values()].reduce((n, c) => n + c, 0);
   result.restored = restored.size;
-  if (!basis.entry && !basis.damaged && result.removed + result.kept + result.restored === 0) throw new ImportNotFoundError();
+  if (!anythingLeft(basis, result.removed + result.kept + result.restored)) throw new ImportNotFoundError();
   // The imports that now hold rows say so in their summaries. Best effort:
   // their rows are theirs either way, and their Undo finds them.
   for (const [id, count] of handed) {

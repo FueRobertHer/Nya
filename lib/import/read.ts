@@ -14,7 +14,10 @@
 // remembered for the account, is only a default for a file whose dates all
 // fit both, and the sheet shows it, changeable, as it shows the question. A
 // file whose dates contradict each other (some fit only one order, others
-// only the other) needs the person's answer every time.
+// only the other) is read in the order the person chose, or failing that the
+// one remembered for the account, shown and changeable the same way, and the
+// dates that don't fit it are listed as lines that can't be read; with
+// neither, the person is asked.
 //
 // WHAT AN ANSWER HOLDS is bounded whatever the file: at most MAX_STATEMENTS
 // statements or accounts, MAX_CSV_COLUMNS column names of at most 100

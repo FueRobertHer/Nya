@@ -92,6 +92,9 @@ export type ManualTxn = TxnFields & {
    *  twice, nor leaves the row and the balance apart. */
   balance_update?: { from: number; to: number; account_id?: string } | null;
   created_at: string;
+  /** When it was last changed in the app. An import that replaces it with
+   *  its file's version, and the undo of that, leave it as it was: neither is
+   *  the person's change (lib/import/commit.ts). */
   updated_at: string;
 };
 

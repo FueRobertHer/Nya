@@ -1036,6 +1036,21 @@ describe('a FITID is not trusted blindly', () => {
     ]);
   });
 
+  test('downloaded daily, renumbered each time: a FITID now on another purchase of the same amount takes nothing from the row that is it', () => {
+    // October 1 to 4, then 2 to 5: every transaction moves down one number.
+    const first = store(
+      rowsOf(ofxOf([['1', '20261001', -4.5, 'BLUE BOTTLE'], ['2', '20261002', -4.5, 'STARBUCKS'], ['3', '20261003', -20, 'ATM CASH'], ['4', '20261004', -20, 'LYFT RIDE']])),
+      'd'
+    );
+    const next = rowsOf(ofxOf([['1', '20261002', -4.5, 'STARBUCKS'], ['2', '20261003', -20, 'ATM CASH'], ['3', '20261004', -20, 'LYFT RIDE'], ['4', '20261005', -4.5, 'PEETS COFFEE']]));
+    expect(matchRows(next, first)).toEqual([
+      { outcome: 'present', row_id: 'manual-txn:d1', by: 'content' },
+      { outcome: 'present', row_id: 'manual-txn:d2', by: 'content' },
+      { outcome: 'present', row_id: 'manual-txn:d3', by: 'content' },
+      { outcome: 'new' },
+    ]);
+  });
+
   test('renumbered, but the same transactions: found by what they say, and no conflict', () => {
     const first = store(rowsOf(ofxOf([['1', '20261001', -4.5, 'COFFEE'], ['2', '20261003', -60, 'GAS STATION']])), 'f');
     // The next download starts on the 3rd: the gas is now "1", a new lunch "2".
