@@ -71,6 +71,25 @@ export function yearsText(n: number): string {
   return `about ${Number(n.toFixed(1))} years`;
 }
 
+/** Years to FI as the Plan tab and the FI card on Home both show it
+ *  (lib/fire/plan.ts FiView.yearsToFi): 0 is there, Infinity never. */
+export function yearsToFiText(years: number | null): string {
+  if (years === 0) return 'You’re there';
+  if (years === Infinity) return 'Not at this rate';
+  return years === null ? '--' : yearsText(years);
+}
+
+/** What savings from bank data can't see, said the same way wherever a
+ *  savings figure is shown. */
+export const PAYROLL_NOTE =
+  "Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data.";
+
+/** A savings rate as a whole percent, which can be below zero: "34%". */
+export function savingsRateText(rate: number): string {
+  const p = Math.round(rate * 100);
+  return `${p === 0 ? 0 : p}%`;
+}
+
 export const RULE_NAMES: Record<RuleKind, string> = {
   constant: 'Constant (the 4% rule)',
   percent: 'Percent of portfolio',

@@ -9,6 +9,8 @@ import { useState } from 'react';
 import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
+import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
+import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
   plan: FirePlan;
@@ -383,7 +385,18 @@ function startConsequence(
   return `Retires ${when}, spending ${spend}${rate !== null ? `: a ${pct(rate, 1)} withdrawal rate${rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
 
-export function SimulationForm(props: SaveProps & { fiNumber: number | null; assets: number | null; spending: number | null; currency: string | null }) {
+export function SimulationForm(
+  props: SaveProps & {
+    fiNumber: number | null;
+    assets: number | null;
+    spending: number | null;
+    currency: string | null;
+    /** The mix the allocation gives (components/AllocationCard.tsx), offered
+     *  to fill in, with what it is of and what it leaves out: nothing changes
+     *  until Save. Null when there is none. */
+    allocationMix?: (PlanMix & { ok: true }) | null;
+  }
+) {
   const { plan } = props;
   const [method, setMethod] = useState(plan.method);
   const [rule, setRule] = useState<RuleKind>(plan.rule);
@@ -495,8 +508,31 @@ export function SimulationForm(props: SaveProps & { fiNumber: number | null; ass
         </div>
         <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
           {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'} Stocks are{' '}
-          {DATA_STOCKS}, bonds {DATA_BONDS}. Nya doesn&apos;t look inside your funds yet, so set the mix you hold.
+          {DATA_STOCKS}, bonds {DATA_BONDS}.{' '}
+          {props.allocationMix
+            ? `${mixBasisText(props.allocationMix, props.currency)}: ${mixText(props.allocationMix)}.`
+            : "Nya doesn't look inside funds it doesn't know, so set the mix you hold, or classify them under Allocation."}
         </p>
+        {/* What the mix leaves out, beside the button that fills it in. */}
+        {props.allocationMix && mixLeftOutText(props.allocationMix, props.currency) && (
+          <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
+            {mixLeftOutText(props.allocationMix, props.currency)}
+          </p>
+        )}
+        {props.allocationMix && (props.allocationMix.stocksPct !== Number(stocks) || props.allocationMix.bondsPct !== Number(bonds)) && (
+          <button
+            type="button"
+            className="secondary"
+            style={{ marginTop: -4, marginBottom: 12 }}
+            disabled={s.saving}
+            onClick={() => {
+              setStocks(String(props.allocationMix!.stocksPct));
+              setBonds(String(props.allocationMix!.bondsPct));
+            }}
+          >
+            Fill in my allocation
+          </button>
+        )}
         <label className="field">
           Rebalancing
           <select value={rebalance} onChange={(e) => setRebalance(e.target.value as FirePlan['rebalance'])} disabled={s.saving}>
