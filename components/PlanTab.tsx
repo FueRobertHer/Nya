@@ -775,7 +775,14 @@ export function FiCard({
 
   // Savings: bank income minus spending, plus workplace plan contributions.
   let savingsNote: React.ReactNode;
-  if (savings.source === 'typed') savingsNote = 'typed by you';
+  if (savings.source === 'typed') {
+    // The savings rate (Home's) is from the transactions whatever is typed
+    // here, so it is said here too, as what they measure.
+    savingsNote =
+      flows && savingsRate !== null
+        ? `typed by you. Measured from ${windowText(flows)} instead, your savings rate is ${savingsRateText(savingsRate)} of income.`
+        : 'typed by you';
+  }
   else if (!flows) {
     savingsNote = txnsLoading
       ? 'loading your transactions…'

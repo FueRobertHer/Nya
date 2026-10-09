@@ -53,15 +53,38 @@ export const SETTINGS_LIMITS = {
   /** Accounts with a split set for their unlisted money. */
   accounts: 200,
   /** A security's name, when it has no ticker. */
-  name: 120,
+  name: 200,
+  /** A ticker: longer than any symbol Plaid sends (an option's OCC symbol
+   *  is 21 characters, and a bond's can be a short description). */
+  ticker: 40,
 } as const;
 
-/** Plaid's ticker symbols: "VTI", "BRK.B", "BRK/B", "CUR:USD", "BTC-USD",
- *  and an option's 21-character OCC symbol. Upper case, as compared. */
+/** The usual ticker symbols, as on Nya's list: "VTI", "BRK.B", "BRK/B",
+ *  "CUR:USD", "BTC-USD", an option's 21-character OCC symbol. Upper case,
+ *  as compared. A split is saved under whatever ticker Plaid sends
+ *  (fundKeyProblem), not only these. */
 export const TICKER = /^[A-Z0-9][A-Z0-9.:/-]{0,23}$/;
 /** Account ids as Plaid and manual accounts make them (lib/fire/plan.ts). */
 const ACCOUNT_ID = /^[A-Za-z0-9_.:-]{1,100}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Why a split can't be saved under this ticker or name, or null when it can,
+ * as the save checks it: a ticker as Plaid sends it (compared upper case,
+ * trimmed) or a name (trimmed, spaces collapsed), within its length and with
+ * no control characters. The Plan tab offers Classify only where this is
+ * null, so a save is never refused for the security it was offered for.
+ */
+export function fundKeyProblem(key: { ticker: string } | { name: string }): string | null {
+  if ('ticker' in key) {
+    const t = tickerKey(key.ticker);
+    if (!t || t.length > SETTINGS_LIMITS.ticker || CONTROL.test(t)) return `a ticker is 1 to ${SETTINGS_LIMITS.ticker} characters, with no control characters`;
+    return null;
+  }
+  const n = key.name.trim().replace(/\s+/g, ' ');
+  if (!n || n.length > SETTINGS_LIMITS.name || CONTROL.test(n)) return `a name is 1 to ${SETTINGS_LIMITS.name} characters`;
+  return null;
+}
 
 class Invalid extends Error {}
 
@@ -129,16 +152,16 @@ function readSettings(raw: unknown, input: boolean): { settings: AllocationSetti
       if (byTicker) {
         if (typeof e.ticker !== 'string') throw new Invalid(`${field}.ticker must be text`);
         const ticker = input ? tickerKey(e.ticker) : e.ticker;
-        if (input && !TICKER.test(ticker)) throw new Invalid(`${field}.ticker must be a ticker symbol: letters, digits and . : / -, at most 24`);
+        const problem = input ? fundKeyProblem({ ticker }) : null;
+        if (problem) throw new Invalid(`${field}.ticker: ${problem}`);
         if (input && seenTickers.has(ticker)) throw new Invalid(`${field} names a ticker already given a split`);
         seenTickers.add(ticker);
         return { ticker, split };
       }
       if (typeof e.name !== 'string') throw new Invalid(`${field}.name must be text`);
       const name = input ? e.name.trim().replace(/\s+/g, ' ') : e.name;
-      if (input && (!name || name.length > SETTINGS_LIMITS.name || CONTROL.test(name))) {
-        throw new Invalid(`${field}.name must be 1 to ${SETTINGS_LIMITS.name} characters`);
-      }
+      const problem = input ? fundKeyProblem({ name }) : null;
+      if (problem) throw new Invalid(`${field}.name: ${problem}`);
       if (input && seenNames.has(nameKey(name))) throw new Invalid(`${field} names a security already given a split`);
       seenNames.add(nameKey(name));
       return { name, split };

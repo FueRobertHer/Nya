@@ -16,9 +16,11 @@
 //      coin is crypto, an option is "other".
 //
 // Anything else is UNCLASSIFIED, never a guess: a fund Nya's list doesn't
-// have (a target-date or balanced fund, say, whose mix moves) or a security
-// Plaid gives no type for. It is shown as its own share until the person
-// classifies it.
+// have (a target-date fund, whose mix moves every year, or an actively
+// managed one), a leveraged or inverse fund (isLeveragedOrInverse: never its
+// index's class at face value, even when Plaid types it as an equity), or a
+// security Plaid gives no type for. It is shown as its own share until the
+// person classifies it.
 //
 // A stock's region is a class of its own when it isn't known. Plaid's
 // "equity" type covers "domestic and foreign equities" and nothing in a
@@ -155,6 +157,8 @@ export function securityKey(s: SecurityLike): { ticker: string } | { name: strin
 export type UnclassifiedWhy =
   /** A fund (an ETF or mutual fund) Nya's list doesn't have. */
   | 'fund'
+  /** A leveraged or inverse fund (isLeveragedOrInverse). */
+  | 'leveraged'
   /** Plaid gives no type for it, or "other". */
   | 'unknown'
   /** A split saved for it can't be used (not 100%: an older or later
@@ -179,6 +183,64 @@ const BY_TYPE: Record<string, AssetClass> = {
   loan: 'other',
 };
 
+/**
+ * Tickers of well-known leveraged and inverse funds: ETFs and ETNs whose
+ * daily return is a multiple of an index's or a stock's, or its opposite.
+ * Not every one there is: one off this list is caught by its name.
+ */
+const LEVERAGED_TICKERS: ReadonlySet<string> = new Set([
+  // Nasdaq-100, S&P 500, Dow, small and mid caps
+  'TQQQ', 'SQQQ', 'QLD', 'QID', 'PSQ', 'UPRO', 'SPXU', 'SPXL', 'SPXS', 'SSO', 'SDS', 'SH', 'SPDN',
+  'UDOW', 'SDOW', 'DDM', 'DXD', 'DOG', 'TNA', 'TZA', 'URTY', 'SRTY', 'UWM', 'TWM', 'RWM', 'MIDU', 'MVV', 'MZZ',
+  // Sectors
+  'SOXL', 'SOXS', 'TECL', 'TECS', 'FAS', 'FAZ', 'LABU', 'LABD', 'FNGU', 'FNGD', 'BULZ', 'ERX', 'ERY', 'GUSH', 'DRIP',
+  'NUGT', 'DUST', 'JNUG', 'JDST', 'DPST', 'CURE', 'NAIL', 'DFEN', 'WEBL', 'HIBL', 'RETL', 'UYG', 'SKF', 'ROM', 'REW',
+  'SSG', 'URE', 'SRS', 'DIG', 'DUG',
+  // Treasuries
+  'TMF', 'TMV', 'TBT', 'TBF', 'UBT', 'TYD', 'TYO', 'TTT', 'PST',
+  // Other countries
+  'YINN', 'YANG', 'EDC', 'EDZ', 'EET', 'EEV', 'EFO', 'EFU', 'EFZ', 'EUM', 'KORU', 'INDL', 'MEXX', 'BRZU', 'EURL',
+  // Commodities and volatility
+  'UCO', 'SCO', 'BOIL', 'KOLD', 'AGQ', 'ZSL', 'UGL', 'GLL', 'UVXY', 'SVXY', 'SVIX', 'UVIX',
+  // Single stocks and crypto
+  'TSLL', 'TSLQ', 'TSLZ', 'NVDL', 'NVDU', 'NVDQ', 'NVDD', 'CONL', 'MSTU', 'MSTX', 'AAPU', 'AMZU', 'GGLL', 'METU', 'MSFU',
+  'BITX', 'BITU', 'SBIT', 'ETHU', 'ETHT',
+]);
+
+/** Words that say a security is a fund, so a word that is also a company's
+ *  ("Ultra Clean Holdings", "Build-A-Bear Workshop") counts only in a
+ *  fund's name. */
+const FUND_WORDS = /\b(etf|etn|etp|fund|shares|trust|proshares|direxion)\b/;
+
+/**
+ * Whether a security is a leveraged or inverse fund, by its ticker (a list of
+ * the well-known ones) or by its name: a daily multiple ("2x", "3X", "-1x",
+ * "1.5x"), an issuer or series that makes only such funds (ProShares,
+ * Direxion Daily, MicroSectors, Defiance Daily Target, T-REX, Tradr, Leverage
+ * Shares), "UltraPro", "UltraShort", "Inverse", "Leveraged" (not a fund of
+ * leveraged loans), and, in a fund's name, "Ultra", "Short", "Bull" and
+ * "Bear" (not a fund of short-dated bonds: "Short-Term Bond", "Ultra-Short
+ * Income", "Short Treasury"). Such a fund's return is a multiple of its
+ * index's, or its opposite, so it is never that index's class at face value:
+ * an inverse fund counted as stocks would count a bet against stocks as
+ * holding them. Errs toward unclassified: a plain fund with one of these
+ * words in its name is left for the person to classify.
+ */
+export function isLeveragedOrInverse(s: SecurityLike): boolean {
+  const ticker = s.ticker ? tickerKey(s.ticker) : '';
+  if (LEVERAGED_TICKERS.has(ticker)) return true;
+  const name = ` ${(s.name ?? '').toLowerCase().replace(/\s+/g, ' ')} `;
+  if (/(^|[^a-z0-9.])[-+]?\d+(\.\d+)?x(?![a-z0-9])/.test(name)) return true;
+  if (/\b(proshares|direxion daily|microsectors|daily target|t-rex|tradr|leverage shares)\b/.test(name)) return true;
+  if (/\b(ultrapro|ultrashort|inverse)\b/.test(name)) return true;
+  if (/\bleveraged\b(?! loans?\b)/.test(name)) return true;
+  if (!FUND_WORDS.test(name)) return false;
+  if (/\b(bull|bear)\b/.test(name)) return true;
+  if (/\bultra\b(?![- ]short\b)/.test(name)) return true;
+  // "Short" for a fund of short-dated bonds is followed by what it holds.
+  return /\bshort\b(?![- ](term|duration|maturity|dated|treasury|bond|income|municipal|muni|government|govt|tax))/.test(name);
+}
+
 /** Which class, or mix of classes, a holding is in (see the top of this
  *  file). Pure and total. */
 export function classify(s: SecurityLike, splits: FundSplits = NO_SPLITS): Classified {
@@ -188,6 +250,8 @@ export function classify(s: SecurityLike, splits: FundSplits = NO_SPLITS): Class
   if (isCashHolding(s)) return { split: { cash: 100 }, by: 'cash' };
   const listed = s.ticker ? fundSplit(s.ticker) : null;
   if (listed) return { split: listed.split, by: 'list' };
+  // Never at face value, whatever type Plaid gives it.
+  if (isLeveragedOrInverse(s)) return { split: null, why: 'leveraged' };
   const type = (s.security_type ?? '').toLowerCase();
   if (Object.hasOwn(BY_TYPE, type)) return { split: { [BY_TYPE[type]]: 100 }, by: 'type' };
   return { split: null, why: type === 'etf' || type === 'mutual fund' ? 'fund' : 'unknown' };

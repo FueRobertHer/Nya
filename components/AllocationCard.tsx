@@ -67,6 +67,7 @@ import { ASSET_CLASSES, CLASS_NAMES, CLASS_WORDS, SLOTS, nameKey, splitProblem, 
 import { fundSplit, type FundEntry } from '@/lib/allocation/funds';
 import {
   EMPTY_SETTINGS,
+  fundKeyProblem,
   isAllocationSettings,
   overridesOf,
   withAccountSplit,
@@ -198,7 +199,11 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
     }
     return ok;
   };
-  const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, `${a.name} at ${i.name}`] as const))), [institutions]);
+  // "IRA at Fidelity"; an account kept by hand by its own name alone.
+  const accountNames = useMemo(
+    () => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, i.item_id === null ? a.name : `${a.name} at ${i.name}`] as const))),
+    [institutions]
+  );
   // The accounts the mix over time is of: the ones the allocation above shows.
   const seriesAccounts = useMemo(() => seriesAccountsOf(institutions), [institutions]);
   const hasAccounts = alloc.accounts.length > 0;
@@ -284,7 +289,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             intro={
               shown.listed
                 ? `Nya's list has ${shown.label} (${shown.listed.name}) as ${splitText(shown.listed.split)}. A split you set is used instead.`
-                : `What ${shown.label} holds, in percents that add up to 100. A target-date or balanced fund's mix is on its fact sheet; its mix moves, so check it now and then.`
+                : `What ${shown.label} holds, in percents that add up to 100. A fund's mix is on its fact sheet; a target-date fund's moves every year, so check it now and then.`
             }
             initial={shown.current ?? shown.listed?.split ?? null}
             canRemove={shown.current !== null}
@@ -426,9 +431,24 @@ const securityLabel = (s: SecurityRow) => s.ticker ?? s.name ?? 'A holding with 
 
 /** The sheet that classifies a security, by its ticker or, with none, its
  *  name; null when it has neither. */
-function fundSheet(s: SecurityRow, settings: AllocationSettings): SheetState | null {
-  const key: { ticker: string } | { name: string } | null = s.ticker ? { ticker: s.ticker } : s.name ? { name: s.name } : null;
+/** What a split for a security is saved under: its ticker, or its name when
+ *  it has none. */
+const fundKeyOf = (s: SecurityRow): { ticker: string } | { name: string } | null => (s.ticker ? { ticker: s.ticker } : s.name ? { name: s.name } : null);
+
+/** Why a security can't be classified by hand, for its row, or null. */
+function unclassifiable(s: SecurityRow): string | null {
+  const key = fundKeyOf(s);
   if (!key) return null;
+  const problem = fundKeyProblem(key);
+  return problem ? ` It can't be classified by hand: ${problem}.` : null;
+}
+
+/** The sheet to classify a security, or null when a split can't be saved
+ *  for it (no ticker or name, or one the save would refuse): Classify is
+ *  never offered for a save that can't succeed. */
+function fundSheet(s: SecurityRow, settings: AllocationSettings): SheetState | null {
+  const key = fundKeyOf(s);
+  if (!key || fundKeyProblem(key)) return null;
   const mine = overridesOf(settings).splits;
   const current = 'ticker' in key ? (mine.byTicker.get(key.ticker) ?? null) : (mine.byName.get(nameKey(key.name)) ?? null);
   return { kind: 'fund', key, label: securityLabel(s), current, listed: s.ticker ? fundSplit(s.ticker) : null };
@@ -467,7 +487,7 @@ export function ClassView({
                   key={s.key}
                   label={securityLabel(s)}
                   value={money(s.amount)}
-                  note={`${s.name && s.name !== s.ticker ? `${s.name}. ` : ''}${classifiedText(s.classified)}. In ${names(s.accounts)}.`}
+                  note={`${s.name && s.name !== s.ticker ? `${s.name}. ` : ''}${classifiedText(s.classified)}. In ${names(s.accounts)}.${unclassifiable(s) ?? ''}`}
                   action={
                     sheet ? (
                       <ActionButton onClick={() => open(sheet)} disabled={!editable} label={`Classify ${securityLabel(s)}`}>
@@ -1227,6 +1247,7 @@ export function AllocationHistoryChart({
   const day = days[i];
   const negative = days.some((d) => Object.values(d.classes).some((v) => (v ?? 0) < 0 && isMoney(v ?? 0)));
   const present = SLOTS.filter((s) => days.some((d) => (d.classes[s] ?? 0) > 0 && isMoney(d.classes[s] ?? 0)));
+  const marked = days.some((d) => d.missing.length > 0);
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
@@ -1240,7 +1261,9 @@ export function AllocationHistoryChart({
 
   return (
     <div>
-      <div className="chart-readout chart-readout-stable alloc-readout">
+      {/* With marked days, the date line keeps room for what a day leaves
+          out, so scrubbing onto one doesn't push the chart down. */}
+      <div className={`chart-readout chart-readout-stable alloc-readout${marked ? ' alloc-readout-marked' : ''}`}>
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
           {dayName(day.date)} · {wholeMoney(day.total, currency)} counted
@@ -1301,7 +1324,7 @@ export function AllocationHistoryChart({
             {CLASS_NAMES[s]}
           </span>
         ))}
-        {days.some((d) => d.missing.length > 0) && (
+        {marked && (
           <span className="chart-legend-item">
             <span className="alloc-missing-dot" aria-hidden="true" />
             Missing an account

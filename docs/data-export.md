@@ -244,7 +244,7 @@ What you set under Allocation on the Plan tab ([features.md](features.md#allocat
 | --- | --- |
 | `v` | The shape's version: 1. |
 | `buckets[]` | The tax bucket you gave an account, over what its type says: `account_id`, and `bucket`, one of `taxable`, `tax-deferred`, `roth`, `hsa` or `education`. |
-| `funds[]` | The split you gave a security: `ticker` (upper case), or `name` for one with no ticker, and `split`. |
+| `funds[]` | The split you gave a security: `ticker` (as Plaid sends it, upper case, up to 40 characters), or `name` for one with no ticker (up to 200), and `split`. |
 | `accounts[]` | The split you gave an account's money that no position it lists explains (a manual investment account, say): `account_id` and `split`. |
 | `target` | Your target allocation, a `split`, or `null`. |
 

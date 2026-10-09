@@ -181,7 +181,8 @@ export function FiProgressView({
       <p className="panel-note">
         Estimates, {saved ? `from your plan: ${rates}` : `from the Plan's default assumptions: ${rates}. Set your own on the Plan tab`}.
         {typed.length ? ` Using the ${typed.join(' and ')} you typed there.` : ''} The savings rate is income minus spending as a share of income
-        {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}.
+        {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}
+        {view.savings.source === 'typed' && savingsRate !== null ? ', from your transactions, not the savings you typed' : ''}.
       </p>
       {!workplaceAdded && view.savings.source === 'measured' && <p className="panel-note">{PAYROLL_NOTE}</p>}
       {/* What the year's figures leave out, in the Plan's own words: the

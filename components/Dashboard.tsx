@@ -1590,21 +1590,6 @@ export default function Dashboard({
                   )}
                 </div>
 
-                {/* The Plan's FI number, years to FI and savings rate, from
-                    the same inputs and plan as the Plan tab. */}
-                <FiProgressLoader
-                  txns={txns}
-                  txnsLoading={txnsLoading}
-                  txnNotes={txnNotes}
-                  txnWithout={txnWithout}
-                  institutions={planInstitutions}
-                  currency={accountCurrency}
-                  onOpenPlan={() => {
-                    window.scrollTo(0, 0);
-                    setTab('plan');
-                  }}
-                />
-
                 <Insights
                   txns={txns}
                   budgets={budgets}
@@ -1622,6 +1607,23 @@ export default function Dashboard({
                         liability: a.liability,
                       }))
                   )}
+                />
+
+                {/* The Plan's FI number, years to FI and savings rate, from
+                    the same inputs and plan as the Plan tab. Below the
+                    insights: it appears only once its inputs are in, so
+                    nothing above it moves when it does. */}
+                <FiProgressLoader
+                  txns={txns}
+                  txnsLoading={txnsLoading}
+                  txnNotes={txnNotes}
+                  txnWithout={txnWithout}
+                  institutions={planInstitutions}
+                  currency={accountCurrency}
+                  onOpenPlan={() => {
+                    window.scrollTo(0, 0);
+                    setTab('plan');
+                  }}
                 />
                 {error && <div className="error">{error}</div>}
               </>

@@ -70,12 +70,43 @@ describe('the allocation by class', () => {
     // 37.5% by the largest remainder, which gave the tie to bonds.
     expect(t).toContain('Unclassified $60,000 37%');
     expect(t).toContain('Unclassified: $60,000');
-    expect(t).toContain("VFIFX $50,000 Vanguard Target Retirement 2050 Fund. Unclassified: a fund whose mix Nya doesn't know");
+    expect(t).toContain("VFIFX $50,000 Vanguard Target Retirement 2050 Fund. Unclassified: a fund whose mix Nya doesn't know (a target-date fund, whose mix moves every year, or an actively managed one, say)");
+    expect(t).not.toContain('balanced');
     expect(t).toContain('Old pension $10,000 Old pension is an account you track by hand, with no positions to go by.');
     expect(t).toContain('Classify');
     // Every holding, and how it is classified.
     expect(t).toContain("VTI $50,000 100% US stocks, from Nya's list of index funds.");
     expect(t).toContain('VMFXX $8,000 Cash: a cash or money market position.');
+  });
+
+  test('an account no positions came for says so, true whether its holdings call failed or answered none', () => {
+    const a = allocate({ institutions: [inst('Fidelity', [acct('k', { name: '401(k)', balance: 30_000 })], { item_id: 'i' })], holdings: [], settings: null, currency: 'USD' });
+    const t = text(renderToStaticMarkup(<ClassView alloc={a} money={money} editable settings={EMPTY_SETTINGS} open={noop} />));
+    expect(t).toContain('401(k) $30,000 No positions came from Fidelity for 401(k).');
+    expect(t).not.toContain('lists no position');
+  });
+
+  test('Classify is offered only for a security whose ticker or name a save takes', () => {
+    const long = 'L'.repeat(41);
+    const a = allocate({
+      institutions: [inst('X', [acct('s', { balance: 300 })])],
+      holdings: [hold('s', long, 100, { security_type: 'mutual fund', name: 'A fund' }), hold('s', 'T 2.5 05/15/30', 100, { security_type: 'mutual fund' }), hold('s', 'OK', 100, { security_type: 'mutual fund' })],
+      settings: null,
+      currency: 'USD',
+    });
+    const html = renderToStaticMarkup(<ClassView alloc={a} money={money} editable settings={EMPTY_SETTINGS} open={noop} />);
+    expect(html).not.toContain(`aria-label="Classify ${long}"`);
+    expect(text(html)).toContain("It can't be classified by hand: a ticker is 1 to 40 characters, with no control characters.");
+    // A bond's ticker with spaces is one a save takes.
+    expect(html).toContain('aria-label="Classify T 2.5 05/15/30"');
+    expect(html).toContain('aria-label="Classify OK"');
+  });
+
+  test('a leveraged or inverse fund is unclassified, and says why', () => {
+    const a = allocate({ institutions: [inst('X', [acct('s', { balance: 100 })])], holdings: [hold('s', 'SQQQ', 100, { security_type: 'equity', name: 'ProShares UltraPro Short QQQ' })], settings: null, currency: 'USD' });
+    const t = text(renderToStaticMarkup(<ClassView alloc={a} money={money} editable settings={EMPTY_SETTINGS} open={noop} />));
+    expect(t).toContain('Unclassified $100 100%');
+    expect(t).toContain("Unclassified: a leveraged or inverse fund, which moves by a multiple of what it tracks, or against it, so it isn't counted as what it tracks.");
   });
 
   test('a split the person set classifies it, and says so', () => {

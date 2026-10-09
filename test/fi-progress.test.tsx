@@ -160,6 +160,18 @@ describe('the FI card on Home', () => {
     }
   });
 
+  test('with savings typed into the plan, both show the rate the transactions measure, and Home says it is that', () => {
+    const p = plan({ savings: 5_000 });
+    const rate = `${Math.round(fiFigures(p, inputs(), 'USD').savingsRate! * 100)}%`;
+    const t = planTab(p);
+    expect(t).toContain(`typed by you. Measured from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026) instead, your savings rate is ${rate} of income.`);
+    const h = home(p);
+    expect(h).toContain(rate);
+    expect(h).toContain('The savings rate is income minus spending as a share of income, from your transactions, not the savings you typed.');
+    // Measured savings: no such words.
+    expect(home(plan())).not.toContain('not the savings you typed');
+  });
+
   test('labels its figures as estimates, with the Plan’s note about pay that never reaches a bank', () => {
     const t = home(plan());
     expect(t).toContain('Estimates, from your plan: a 4% withdrawal rate and a 5% real return.');
@@ -317,6 +329,14 @@ describe('Home stays fast', () => {
     const loader = read('components/FiProgressLoader.tsx');
     expect(loader).toContain("import('./FiProgressCard')");
     expect(loader).toMatch(/import type \{ FiProgressProps \} from '\.\/FiProgressCard'/);
+  });
+
+  test('the card sits below the insights, so appearing once its figures are in moves nothing above it', () => {
+    const dashboard = read('components/Dashboard.tsx');
+    const insights = dashboard.indexOf('<Insights');
+    const card = dashboard.indexOf('<FiProgressLoader');
+    expect(insights).toBeGreaterThan(0);
+    expect(card).toBeGreaterThan(insights);
   });
 
   test('a failed load of the card is forgotten, so the next try fetches it again', async () => {

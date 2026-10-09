@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { InvestmentAccountSubtype } from 'plaid';
 import { accountBucket, DECIDED_SUBTYPES, subtypeBucket, type BucketSlot } from '@/lib/allocation/buckets';
-import { classify, isCompleteSplit, securityKey, splitProblem, splitText, spread, type FundSplits, type Split } from '@/lib/allocation/classes';
+import { classify, isCompleteSplit, isLeveragedOrInverse, securityKey, splitProblem, splitText, spread, type FundSplits, type Split } from '@/lib/allocation/classes';
 import { FUNDS, fundSplit } from '@/lib/allocation/funds';
-import { EMPTY_SETTINGS, SETTINGS_LIMITS, TICKER, isAllocationSettings, overridesOf, parseSettings, withAccountSplit, withBucket, withFund, type AllocationSettings } from '@/lib/allocation/settings';
+import { EMPTY_SETTINGS, SETTINGS_LIMITS, TICKER, fundKeyProblem, isAllocationSettings, overridesOf, parseSettings, withAccountSplit, withBucket, withFund, type AllocationSettings } from '@/lib/allocation/settings';
 
 // Tax buckets, by Plaid's account subtype. Every investment subtype Plaid
 // lists is decided on purpose, and a Plaid release listing one more fails
@@ -202,6 +202,58 @@ describe('the classifier', () => {
     expect(classify({ ticker: 'XYZ', security_type: 'constructor' })).toEqual({ split: null, why: 'unknown' });
   });
 
+  test('a leveraged or inverse fund is never its index’s class at face value, whatever type Plaid gives it', () => {
+    // By ticker, typed as an equity (the review's case): never "stocks".
+    for (const ticker of ['TQQQ', 'SQQQ', 'UPRO', 'SPXS', 'SH', 'SOXL', 'TMF', 'UVXY', 'NVDL', 'TSLQ', 'bitx']) {
+      expect(classify({ ticker, name: ticker, security_type: 'equity' })).toEqual({ split: null, why: 'leveraged' });
+    }
+    // By name, with a ticker the list doesn't know.
+    for (const name of [
+      'Direxion Daily Semiconductor Bull 3X Shares',
+      'Direxion Daily S&P 500 Bear 1X Shares',
+      'ProShares UltraPro Short QQQ',
+      'ProShares Ultra Bloomberg Crude Oil',
+      'ProShares Short S&P500',
+      'ProShares S&P 500 Dividend Aristocrats ETF',
+      'GraniteShares 2x Long NVDA Daily ETF',
+      'Defiance Daily Target 2X Long MSTR ETF',
+      'T-REX 2X Inverse Tesla Daily Target ETF',
+      '-1x Short VIX Futures ETF',
+      'Volatility Shares 1.5x Bitcoin ETF',
+      'MicroSectors FANG+ Index 3X Leveraged ETN',
+      'AdvisorShares Ranger Equity Bear ETF',
+      'Tuttle Capital Short Innovation ETF',
+      'Some Inverse Treasury Fund',
+      'Leverage Shares 3x Long Tesla ETP',
+    ]) {
+      expect([name, classify({ ticker: 'NEWX', name, security_type: 'equity' })]).toEqual([name, { split: null, why: 'leveraged' }]);
+    }
+    // The person's own split still wins.
+    expect(classify({ ticker: 'TQQQ', security_type: 'etf' }, splits({ TQQQ: { other: 100 } }))).toEqual({ split: { other: 100 }, by: 'yours' });
+  });
+
+  test('a fund of short-dated bonds, or a company with one of those words in its name, is not taken for one', () => {
+    for (const name of [
+      'Vanguard Short-Term Bond ETF',
+      'Schwab Short-Term U.S. Treasury ETF',
+      'iShares Short Treasury Bond ETF',
+      'JPMorgan Ultra-Short Income ETF',
+      'Invesco Ultra Short Duration ETF',
+      'PIMCO Enhanced Short Maturity Active ETF',
+      'SPDR Bloomberg Short Term High Yield Bond ETF',
+      'Invesco Senior Loan ETF',
+      'Eaton Vance Floating-Rate and Leveraged Loan Fund',
+      'Global X Uranium ETF',
+      'Ultra Clean Holdings Inc',
+      'Build-A-Bear Workshop Inc',
+      'Bull Run Corporation',
+    ]) {
+      expect([name, isLeveragedOrInverse({ ticker: 'XYZ', name })]).toEqual([name, false]);
+    }
+    expect(classify({ ticker: 'UCTT', name: 'Ultra Clean Holdings Inc', security_type: 'equity' })).toEqual({ split: { stocks: 100 }, by: 'type' });
+    expect(classify({ ticker: 'BBW', name: 'Build-A-Bear Workshop Inc', security_type: 'equity' })).toEqual({ split: { stocks: 100 }, by: 'type' });
+  });
+
   test('a security that is one class by itself is classified by Plaid’s type', () => {
     // "Domestic and foreign equities": a stock, region unknown.
     expect(classify({ ticker: 'AAPL', security_type: 'equity' })).toEqual({ split: { stocks: 100 }, by: 'type' });
@@ -230,14 +282,26 @@ describe('Nya’s list of funds', () => {
     }
   });
 
-  test('holds no target-date fund, whose mix moves every year', () => {
-    for (const entry of Object.values(FUNDS)) expect(entry.name).not.toMatch(/target|retirement 20\d\d|20[2-7]\d fund/i);
+  test('holds no target-date fund, whose mix moves every year, and no leveraged or inverse fund', () => {
+    for (const [ticker, entry] of Object.entries(FUNDS)) {
+      expect(entry.name).not.toMatch(/target|retirement 20\d\d|20[2-7]\d fund/i);
+      expect([ticker, isLeveragedOrInverse({ ticker, name: entry.name })]).toEqual([ticker, false]);
+    }
   });
 
-  test('is a small list', () => {
-    const n = Object.keys(FUNDS).length;
-    expect(n).toBeGreaterThan(50);
-    expect(n).toBeLessThan(150);
+  test('is a small list, of 91 funds, each checked by hand', () => {
+    expect(Object.keys(FUNDS)).toHaveLength(91);
+  });
+
+  test('a balanced fund is on it only where an index or a written policy fixes its mix', () => {
+    // Vanguard Balanced Index, LifeStrategy, and the iShares Core allocation
+    // ETFs: classified. Wellington, managed to a range, and target-date
+    // funds: not.
+    expect(fundSplit('VBIAX')?.split).toEqual({ 'us-stocks': 60, bonds: 40 });
+    expect(fundSplit('VSMGX')?.split).toEqual({ stocks: 60, bonds: 40 });
+    expect(fundSplit('AOR')?.split).toEqual({ stocks: 60, bonds: 40 });
+    expect(fundSplit('VWELX')).toBeNull();
+    expect(fundSplit('VFIFX')).toBeNull();
   });
 
   test('a ticker it doesn’t have, or a prototype name, is not on it', () => {
@@ -268,6 +332,20 @@ describe('the settings’ validation', () => {
     expect(isAllocationSettings(full)).toBe(true);
   });
 
+  test('a split is saved under whatever ticker Plaid sends, and Classify is offered only where a save takes it', () => {
+    // A bond's ticker with spaces, an option's OCC symbol, the longest a
+    // ticker may be, and a long name: all saved.
+    const keys = [{ ticker: 'T 2.5 05/15/30' }, { ticker: 'AAPL250117C00150000' }, { ticker: 'B'.repeat(SETTINGS_LIMITS.ticker) }, { name: 'n'.repeat(SETTINGS_LIMITS.name) }];
+    const r = parseSettings({ ...EMPTY_SETTINGS, funds: keys.map((k) => ({ ...k, split: { bonds: 100 } })) });
+    expect('settings' in r && r.settings.funds.length).toBe(4);
+    for (const k of keys) expect(fundKeyProblem(k)).toBeNull();
+    // What a save refuses, the client refuses too: the same check.
+    for (const k of [{ ticker: 'B'.repeat(SETTINGS_LIMITS.ticker + 1) }, { ticker: ' ' }, { ticker: 'A\u0007' }, { name: 'n'.repeat(SETTINGS_LIMITS.name + 1) }]) {
+      expect(fundKeyProblem(k)).not.toBeNull();
+      expect('error' in parseSettings({ ...EMPTY_SETTINGS, funds: [{ ...k, split: { bonds: 100 } }] })).toBe(true);
+    }
+  });
+
   test('a ticker is kept upper case and a name trimmed, as they are compared', () => {
     const r = parseSettings({ ...EMPTY_SETTINGS, funds: [{ ticker: ' brk.b ', split: { stocks: 100 } }, { name: '  A   Trust ', split: { bonds: 100 } }] });
     expect('settings' in r && r.settings.funds).toEqual([
@@ -288,13 +366,13 @@ describe('the settings’ validation', () => {
     ['an account twice', { ...full, buckets: [{ account_id: 'a', bucket: 'roth' }, { account_id: 'a', bucket: 'taxable' }] }],
     ['a bucket with an extra field', { ...full, buckets: [{ account_id: 'a', bucket: 'roth', note: 'x' }] }],
     ['too many buckets', { ...full, buckets: Array.from({ length: SETTINGS_LIMITS.buckets + 1 }, (_, i) => ({ account_id: `a${i}`, bucket: 'roth' })) }],
-    ['a ticker with a space', { ...full, funds: [{ ticker: 'BAD TICKER', split: { stocks: 100 } }] }],
+    ['a ticker with a control character', { ...full, funds: [{ ticker: 'VT\u0001I', split: { stocks: 100 } }] }],
     ['an empty ticker', { ...full, funds: [{ ticker: '  ', split: { stocks: 100 } }] }],
-    ['a ticker too long', { ...full, funds: [{ ticker: 'A'.repeat(25), split: { stocks: 100 } }] }],
+    ['a ticker too long', { ...full, funds: [{ ticker: 'A'.repeat(SETTINGS_LIMITS.ticker + 1), split: { stocks: 100 } }] }],
     ['a ticker twice, in any case', { ...full, funds: [{ ticker: 'VTI', split: { stocks: 100 } }, { ticker: 'vti', split: { bonds: 100 } }] }],
     ['a name twice', { ...full, funds: [{ name: 'A Trust', split: { stocks: 100 } }, { name: 'a  trust', split: { bonds: 100 } }] }],
     ['an empty name', { ...full, funds: [{ name: '   ', split: { stocks: 100 } }] }],
-    ['a name too long', { ...full, funds: [{ name: 'x'.repeat(121), split: { stocks: 100 } }] }],
+    ['a name too long', { ...full, funds: [{ name: 'x'.repeat(SETTINGS_LIMITS.name + 1), split: { stocks: 100 } }] }],
     ['a name with a control character', { ...full, funds: [{ name: 'A\u0000Trust', split: { stocks: 100 } }] }],
     ['a fund by ticker and name both', { ...full, funds: [{ ticker: 'VTI', name: 'x', split: { stocks: 100 } }] }],
     ['a fund by neither', { ...full, funds: [{ split: { stocks: 100 } }] }],

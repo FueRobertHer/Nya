@@ -115,7 +115,7 @@ describe('the route', () => {
   test('refuses invalid settings with the reason, and stores nothing', async () => {
     const cases: [unknown, string][] = [
       [{ settings: { ...saved, funds: [{ ticker: 'VTI', split: { 'us-stocks': 99 } }] } }, 'adds up to 99%'],
-      [{ settings: { ...saved, funds: [{ ticker: 'NOT A TICKER', split: { stocks: 100 } }] } }, 'ticker symbol'],
+      [{ settings: { ...saved, funds: [{ ticker: 'X'.repeat(41), split: { stocks: 100 } }] } }, 'a ticker is 1 to 40 characters'],
       [{ settings: { ...saved, target: { stocks: 50, 'us-stocks': 50 } } }, 'one or the other'],
       [{ settings: { ...saved, buckets: Array.from({ length: 201 }, (_, i) => ({ account_id: `a${i}`, bucket: 'roth' })) } }, 'at most 200'],
       [{ settings: { ...saved, extra: true } }, 'unknown field'],

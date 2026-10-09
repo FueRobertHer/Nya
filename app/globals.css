@@ -2903,6 +2903,13 @@ button.plan-edit:disabled {
   white-space: normal;
 }
 
+/* When some days leave an account out, the date line says which and since
+   when: three lines kept for it, so scrubbing between days moves nothing. */
+.alloc-readout-marked .chart-readout-date {
+  min-height: 3.9em;
+  line-height: 1.3;
+}
+
 /* The FI card on Home: the FI number leads, the years to FI and the savings
    rate side by side under it, each wrapping in its own column on a narrow
    phone. */
