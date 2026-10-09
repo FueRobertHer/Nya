@@ -19,6 +19,7 @@ import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
+import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import Insights, { type IdleCashAccount } from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
@@ -1751,6 +1752,12 @@ export default function Dashboard({
                                             : undefined
                                         }
                                       />
+                                      {/* Since when its positions have been
+                                          kept (lib/holdings-history.ts). A
+                                          manual account has none to keep. */}
+                                      {isInvestmentType(a.type) && !inst.manual && (
+                                        <HoldingsRecorded accountId={a.account_id} />
+                                      )}
                                       <LiabilityDetail liability={a.liability} currency={a.currency} />
                                       {/* Not for manual accounts: they're typed
                                           by hand, and their synthetic

@@ -129,14 +129,14 @@ describe('recordFetch', () => {
 
   test('a clean fetch records a real snapshot and no partial map', async () => {
     fake.reset();
-    expect(await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBe(today());
+    expect((await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).date).toBe(today());
     expect(await getHistory(ctx)).toEqual([{ date: today(), value: 10 }]);
     expect(await fake.hkeys(ctxKey('history:accounts:partial'))).toEqual([]);
   });
 
   test('a partly failed fetch records the accounts that answered, and no total', async () => {
     fake.reset();
-    const date = await recordFetch(ctx, 
+    const { date } = await recordFetch(ctx, 
       [
         inst([{ account_id: 'a', type: 'investment', balance: 10 }]),
         inst([{ account_id: 'b', type: 'depository', balance: 5 }], { error: 'This account needs to be reconnected' }),
@@ -152,7 +152,7 @@ describe('recordFetch', () => {
   // It answered, but short an account: no total, the returned accounts still count.
   test('an institution missing an account records its accounts and no total', async () => {
     fake.reset();
-    const date = await recordFetch(ctx, [inst([{ account_id: 'a', type: 'investment', balance: 10 }], { unconfirmed_missing: 1 })], 10);
+    const { date } = await recordFetch(ctx, [inst([{ account_id: 'a', type: 'investment', balance: 10 }], { unconfirmed_missing: 1 })], 10);
     expect(date).toBeNull();
     expect(await getHistory(ctx)).toEqual([]);
     expect(await getAccountHistory(ctx, 'a')).toEqual([{ date: today(), value: 10 }]);
@@ -160,7 +160,7 @@ describe('recordFetch', () => {
 
   test('records nothing when nothing is linked', async () => {
     fake.reset();
-    expect(await recordFetch(ctx, [], 0)).toBeNull();
+    expect(await recordFetch(ctx, [], 0)).toEqual({ date: null, holdings: { recorded: 0, failed: 0 } });
     expect(await fake.hkeys(ctxKey('history:accounts:partial'))).toEqual([]);
   });
 
@@ -173,7 +173,7 @@ describe('recordFetch', () => {
       return hset(key, fields);
     }) as typeof fake.hset;
     try {
-      expect(await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).toBeNull();
+      expect((await recordFetch(ctx, [inst([{ account_id: 'a', type: 'depository', balance: 10 }])], 10)).date).toBeNull();
     } finally {
       fake.hset = hset;
     }

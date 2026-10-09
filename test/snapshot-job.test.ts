@@ -172,6 +172,60 @@ describe('the fan-out', () => {
   });
 });
 
+// A day's positions can't be fetched later (lib/holdings-history.ts), so a
+// day recorded while its holdings write failed is the catch-up's to finish.
+describe('a day recorded with positions that could not be written', () => {
+  const failedOnce = async () => {
+    const registry = await register([[A, 'active']]);
+    await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded', holdings_failed: 2 }) });
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2, attempts: 1 });
+    return registry;
+  };
+
+  test('is run again by the catch-up, and a clean run clears the count', async () => {
+    const registry = await failedOnce();
+    let ran = 0;
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => (ran++, { status: 'recorded' }) });
+    expect(ran).toBe(1);
+    expect(report.results).toEqual([{ container: A, status: 'recorded', ms: expect.any(Number) }]);
+    const run = await readRun({ container: A }, DATE);
+    expect(run).toMatchObject({ status: 'recorded', attempts: 1 });
+    expect(run).not.toHaveProperty('holdings_failed');
+    // Done: not run a third time.
+    const third = await runSnapshots(registry, { scheduledFor: DATE, work: async () => (ran++, { status: 'recorded' }) });
+    expect([ran, third.results[0].status]).toEqual([1, 'already']);
+  });
+
+  test('a run again that still fails some is counted again', async () => {
+    const registry = await failedOnce();
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded', holdings_failed: 1 }) });
+    expect(report.results).toEqual([{ container: A, status: 'recorded', holdings_failed: 1, ms: expect.any(Number) }]);
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 1 });
+  });
+
+  test('a run again that comes back worse keeps the day as recorded, and says so', async () => {
+    for (const work of [async () => ({ status: 'unclean', reason: 'Not every account could be read.' }) as const, async () => Promise.reject(new Error('Plaid is down'))]) {
+      fake.reset();
+      const registry = await failedOnce();
+      const report = await runSnapshots(registry, { scheduledFor: DATE, work });
+      expect(report.results).toEqual([{ container: A, status: 'already', holdings_failed: 2 }]);
+      expect(report.failed).toBe(0);
+      expect(nothingSnapshotted(report)).toBe(false);
+      expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2, attempts: 1 });
+      expect(await fake.get(kc({ container: A }, 'snapshot:lock'))).toBeNull();
+    }
+  });
+
+  test('past the start budget it waits for the next run, and is reported as recorded', async () => {
+    const registry = await failedOnce();
+    let ran = 0;
+    const report = await runSnapshots(registry, { scheduledFor: DATE, budgetMs: -1, work: async () => (ran++, { status: 'recorded' }) });
+    expect(ran).toBe(0);
+    expect(report.results).toEqual([{ container: A, status: 'already', holdings_failed: 2 }]);
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2 });
+  });
+});
+
 describe('each container on its own', () => {
   test('every active container runs, whatever CONTAINER_ID names', async () => {
     const registry = await register([[A, 'active'], [B, 'active'], [C, 'archived']]);

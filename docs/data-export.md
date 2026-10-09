@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today one: `fire-plan`. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today two: `fire-plan` and `holdings:history`. |
 
 ### `institutions[]`
 
@@ -249,6 +249,20 @@ The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never sa
 | `expenses[]` | `id`, `label`, `amount`, `atAge`. |
 | `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
 
+#### `holdings:history`
+
+What each investment account held, day by day, as recorded from Plaid's holdings (see [architecture.md](architecture.md#holdings-history)): one entry per month, under a random id, with the month inside it. Plaid keeps no past holdings, so this starts on the day Nya first recorded them.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `month` | The month, `YYYY-MM`. |
+| `securities[]` | Every security a position that month names, once each: `security_id` (Plaid's), `ticker`, `name`, `security_type` and `is_cash_equivalent`, as last described that month, each `null` where Plaid gave none. A position names its security by its place in this list, counting from 0. |
+| `days` | Each recorded UTC day (`YYYY-MM-DD`), and in each, every account recorded that day by its id: `observed_at` (when that day's latest observation was taken) and `positions[]`. |
+| `positions[]` | `security` (its place in `securities`), `quantity`, `price` (the institution's), `price_as_of` (the day that price was current, when the institution says), `value`, `cost_basis`, `currency` (the ISO code), and `unofficial_currency` only when Plaid gave one (a cryptocurrency, say). A figure Plaid didn't give is `null`. |
+
+An account with an empty `positions[]` was listed by that day's holdings answer with no positions, which is not to say it held nothing: money an institution doesn't list as a position (cash, often) has none, and the account's balance that day is in `account_history`. A day missing for an account was not recorded: its institution couldn't be reached, say, or its answer was incomplete, which is never recorded as a whole day. Hidden accounts are here like the others (see `hidden_accounts`). Account ids are as recorded: positions recorded under an account's earlier id, before a reconnect, keep that id, and `account_links` says which ids are the same account.
+
 ## The CSV files
 
 Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, starting with a byte order mark (the bytes `EF BB BF`), which is how Excel on Windows knows the file is UTF-8 and shows accented and non-Latin merchant names as they are. Spreadsheets and most CSV readers skip the mark; in Python, open the file with `encoding="utf-8-sig"`.
@@ -302,7 +316,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: today only `download-count`, the counter behind the five downloads an hour. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: `download-count`, the counter behind the five downloads an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only.
 
