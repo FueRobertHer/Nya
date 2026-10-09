@@ -689,6 +689,26 @@ describe("Nya's side, and a fault many containers share", () => {
     expect(sent.slice(3).map((s) => s.subject)).toEqual(Array(3).fill('Chase needs connecting again'));
   });
 
+  // The verification's probe R4: the holds were recorded past the deadline.
+  test('a run already past its mail deadline records no holds and sends nothing; those emails then go, unheld, with the next run', async () => {
+    const [a, b, c] = CONTAINERS;
+    const fine = { [a]: [healthy('item_x')], [b]: [healthy('item_x')], [c]: [healthy('item_x')] };
+    const gone = () => ({ [a]: [broken('item_x', 'ITEM_NOT_FOUND')], [b]: [broken('item_x', 'ITEM_NOT_FOUND')], [c]: [broken('item_x', 'ITEM_NOT_FOUND')] });
+    await deliver(await prepare(day(0), fine));
+    for (let n = 1; n <= 2; n++) await deliver(await prepare(day(n), gone()));
+    const now = day(3);
+    const batch = await prepare(now, gone());
+    const writes = fake.ops;
+    const out = await deliver(batch, { clock: () => now, deadline: now - 60_000 });
+    expect([...out.values()]).toEqual(['held', 'held', 'held']);
+    expect(fake.ops).toBe(writes);
+    expect(sent).toHaveLength(0);
+    for (const x of [a, b, c]) expect((await noticesStore.get(ctxOf(x), 'item_x'))?.held_at).toBeUndefined();
+    expect(logs.some((l) => l.includes('3 of those holds could not be recorded in time'))).toBe(true);
+    // Not first due any more, so not held again: each goes the next day.
+    expect([...(await deliver(await prepare(day(4), gone()))).values()]).toEqual(['sent', 'sent', 'sent']);
+  });
+
   test('three different codes maturing on the same run are three problems, each told; so is the same code a day later', async () => {
     const [a, b, c, d] = CONTAINERS;
     const codes = { [a]: 'ITEM_NOT_FOUND', [b]: 'INSTITUTION_NO_LONGER_SUPPORTED', [c]: 'SOMETHING_NEW' };

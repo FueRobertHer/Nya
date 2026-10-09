@@ -46,7 +46,8 @@
 // are held back for HOLD_DAYS, and the log tells whoever runs Nya, with the
 // day they go. A held notice is never held again: once its days are up it
 // goes, once, like any other, if its break is still open (fixed, the break
-// ends and nothing goes). Only notices first due on this run can start a
+// ends and nothing goes). Holds are recorded within the run's mail deadline;
+// one left unrecorded only means that email is not held, and goes next run. Only notices first due on this run can start a
 // hold, and only those that share the code are held, so a hold never latches
 // on breaks that stay open, and a different problem maturing the same day,
 // or a later one, is never caught in it. Nothing on the person's or their
@@ -111,6 +112,8 @@ export const RECIPIENTS_TIMEOUT_MS = 3_000;
 export const SEND_INTERVAL_MS = 500;
 /** The longest Retry-After a rate-limited send is waited out for, once. */
 export const RETRY_AFTER_MAX_MS = 2_000;
+/** How many holds of a shared fault are recorded at once. */
+const HOLD_WRITES_AT_ONCE = 5;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The daily job's own timing (a cron that starts late, a fetch that takes a
@@ -571,15 +574,31 @@ export async function sendNotices(batch: PendingNotices[], opts: SendOptions = {
       `Connection notices: new problems with the same Plaid code in ${MASS_BREAK_CONTAINERS} or more containers at once (${[...sharedCodes].map((l) => `${l} in ${containersOf.get(l)!.size}`).join(', ')}). That looks like a fault in Nya's setup or at Plaid rather than at each person's bank, so those ${count} email(s) are held back until ${utcDay(iso(now + HOLD_DAYS * DAY_MS))} (UTC), and go with that day's run if the problem is still there. Check PLAID_ENV, PLAID_CLIENT_ID and PLAID_SECRET, and Plaid's status page; each connection shows on its Connection health card.`
     );
     // Recorded on each held notice, so it waits out its days and is never
-    // held again; only while it is still the episode, and not held already.
-    for (const p of batch) {
-      for (const d of p.due.filter(holdNow)) {
+    // held again; only while it is still the episode, and not held already. A
+    // few at a time, and none once the deadline has passed: a hold left
+    // unrecorded only means that email is not held, and it goes with the next
+    // run, since it is no longer first due then.
+    const holds = batch.flatMap((p) => p.due.filter(holdNow).map((d) => ({ p, d })));
+    let next = 0;
+    let unrecorded = 0;
+    const lane = async () => {
+      while (next < holds.length) {
+        const { p, d } = holds[next++];
+        if (clock() >= deadline) {
+          unrecorded++;
+          continue;
+        }
         try {
           await noticesStore.update(p.ctx, d.item_id, (current) => (current && current.episode === d.episode && !current.held_at ? { ...current, held_at: iso(p.now) } : current));
         } catch (err) {
+          unrecorded++;
           console.error(`Connection notices: a held email could not be recorded for container ${p.ctx.container}.`, nameOf(err));
         }
       }
+    };
+    await Promise.all(Array.from({ length: Math.min(HOLD_WRITES_AT_ONCE, holds.length) }, lane));
+    if (unrecorded > 0) {
+      console.warn(`Connection notices: ${unrecorded} of those holds could not be recorded in time; those emails are not held after this run, and go with the next.`);
     }
   }
   logStillHeld(batch);
