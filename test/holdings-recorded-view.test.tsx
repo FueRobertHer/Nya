@@ -4,6 +4,7 @@ import {
   HoldingsRecordedLine,
   HoldingsRecordedView,
   RepairConfirm,
+  afterRepair,
   recordedDay,
   requestRepair,
   summaryState,
@@ -179,11 +180,28 @@ describe('the repair', () => {
     expect(sent[0].url).toBe('/api/holdings-history');
     expect([sent[0].init.method, JSON.parse(String(sent[0].init.body))]).toEqual(['POST', { action: 'repair', confirm: true }]);
     expect(await requestRepair(answer(200, { repaired: true, months: 3, damaged_months: 2 }))).toEqual({ ok: true, damagedMonths: 2 });
-    expect(await requestRepair(answer(409, { error: 'Your holdings records need no repair.' }))).toEqual({ ok: false, error: 'Your holdings records need no repair.' });
-    expect(await requestRepair(answer(500, {}))).toEqual({ ok: false, error: 'Could not repair holdings history. Try again.' });
+    const unreadable = { error: 'Your saved holdings records could not be read, so they were left untouched.', unreadable: true, unreadable_ids: [], unrecognised_ids: ['m1'] };
+    expect(await requestRepair(answer(409, unreadable))).toEqual({ ok: false, error: unreadable.error, readAgain: false });
+    expect(await requestRepair(answer(500, {}))).toEqual({ ok: false, error: 'Could not repair holdings history. Try again.', readAgain: false });
     const offline = (async () => {
       throw new TypeError('Failed to fetch');
     }) as unknown as typeof fetch;
-    expect(await requestRepair(offline)).toEqual({ ok: false, error: 'Could not reach Nya. Try again.' });
+    expect(await requestRepair(offline)).toEqual({ ok: false, error: 'Could not reach Nya. Try again.', readAgain: false });
+  });
+
+  test('refused with nothing left to repair (a recording derived the index first), the line is read again, never shown as a failure', async () => {
+    const answer = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const none = await requestRepair(answer(409, { error: 'Your holdings records need no repair.' }));
+    expect(none).toEqual({ ok: false, error: 'Your holdings records need no repair.', readAgain: true });
+    expect(afterRepair(none)).toEqual({ phase: { kind: 'closed' }, readAgain: true, damagedMonths: 0 });
+    // As after a repair that went through.
+    expect(afterRepair({ ok: true, damagedMonths: 2 })).toEqual({ phase: { kind: 'closed' }, readAgain: true, damagedMonths: 2 });
+    // Any other refusal stays on the sheet, in the server's words.
+    for (const failed of [
+      { ok: false as const, error: 'Your saved holdings records could not be read, so they were left untouched.', readAgain: false },
+      { ok: false as const, error: 'Could not reach Nya. Try again.', readAgain: false },
+    ]) {
+      expect(afterRepair(failed)).toEqual({ phase: { kind: 'failed', error: failed.error }, readAgain: false, damagedMonths: 0 });
+    }
   });
 });

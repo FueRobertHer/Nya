@@ -96,6 +96,13 @@ const timeout = () =>
     code: 'ECONNABORTED',
     config: { url: 'https://sandbox.plaid.com/accounts/get', method: 'post' },
   });
+/** An error in Plaid's answer, as the Plaid client reports one. */
+const answered = (error_type: string, error_code: string) =>
+  Object.assign(new Error('Request failed with status code 400'), {
+    isAxiosError: true,
+    config: { url: 'https://sandbox.plaid.com/accounts/get', method: 'post' },
+    response: { status: 400, data: { error_type, error_code } },
+  });
 
 describe('when Plaid gives no balances', () => {
   test('no answer at all is a 503 saying Plaid could not be reached; nothing is saved, and a later run builds it', async () => {
@@ -115,15 +122,59 @@ describe('when Plaid gives no balances', () => {
     expect(await isBackfillDone(TEST_CTX)).toBe(true);
   });
 
-  test("an error in Plaid's answer is a 503 too, naming its code, with nothing saved", async () => {
-    plaid.balancesFail = { response: { status: 400, data: { error_type: 'ITEM_ERROR', error_code: 'ITEM_LOGIN_REQUIRED' } } };
-    const before = stored();
-    expect(await backfill()).toEqual({
-      status: 503,
-      body: { error: "Plaid couldn't give Chase's balances (ITEM_LOGIN_REQUIRED), so no estimated history was saved. It is tried again on a later load." },
-    });
-    expect(stored()).toBe(before);
-    expect(await isBackfillDone(TEST_CTX)).toBe(false);
+  test('Plaid or the bank failing for now is a 503 naming the code, tried again on a later load, with nothing saved', async () => {
+    // As the health view waits them out: an outage at the bank, Plaid's own
+    // errors and limits, data still being prepared, and a code it doesn't know.
+    for (const [type, code] of [
+      ['INSTITUTION_ERROR', 'INSTITUTION_DOWN'],
+      ['API_ERROR', 'INTERNAL_SERVER_ERROR'],
+      ['RATE_LIMIT_EXCEEDED', 'ACCOUNTS_LIMIT'],
+      ['ITEM_ERROR', 'PRODUCT_NOT_READY'],
+      ['ITEM_ERROR', 'A_CODE_PLAID_ADDS_LATER'],
+    ]) {
+      plaid.balancesFail = answered(type, code);
+      const before = stored();
+      expect([code, await backfill()]).toEqual([
+        code,
+        { status: 503, body: { error: `Plaid couldn't give Chase's balances (${code}), so no estimated history was saved. It is tried again on a later load.` } },
+      ]);
+      expect(stored()).toBe(before);
+      expect(await isBackfillDone(TEST_CTX)).toBe(false);
+    }
+  });
+
+  test('a connection that needs reconnecting, or removing, first is skipped as when its transactions can’t be read: never "tried again" on its own', async () => {
+    for (const [type, code] of [
+      ['ITEM_ERROR', 'ITEM_LOGIN_REQUIRED'],
+      ['ITEM_ERROR', 'ACCESS_NOT_GRANTED'],
+      ['ITEM_ERROR', 'ITEM_LOCKED'],
+      ['ITEM_ERROR', 'USER_PERMISSION_REVOKED'],
+      ['ITEM_ERROR', 'ITEM_NOT_FOUND'],
+      ['ITEM_ERROR', 'NO_ACCOUNTS'],
+    ]) {
+      plaid.balancesFail = answered(type, code);
+      const before = stored();
+      expect([code, await backfill()]).toEqual([code, { status: 200, body: { skipped: true, reason: 'institutions not ready' } }]);
+      expect(stored()).toBe(before);
+      expect(await isBackfillDone(TEST_CTX)).toBe(false);
+    }
+  });
+
+  test("Plaid refusing Nya's own keys, settings or stored token is the server's own failure: a 500, logged with the code", async () => {
+    for (const [type, code] of [
+      ['INVALID_INPUT', 'INVALID_API_KEYS'],
+      ['INVALID_INPUT', 'INVALID_ACCESS_TOKEN'],
+      ['INVALID_INPUT', 'UNAUTHORIZED_ENVIRONMENT'],
+      ['INVALID_REQUEST', 'MISSING_FIELDS'],
+    ]) {
+      errors.length = 0;
+      plaid.balancesFail = answered(type, code);
+      const before = stored();
+      expect([code, await backfill()]).toEqual([code, { status: 500, body: { error: 'Backfill failed' } }]);
+      expect([code, JSON.stringify(errors).includes(code)]).toEqual([code, true]);
+      expect(stored()).toBe(before);
+      expect(await isBackfillDone(TEST_CTX)).toBe(false);
+    }
   });
 
   test('the log names the call, never the access token nor the institution', async () => {

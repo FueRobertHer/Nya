@@ -116,12 +116,15 @@ export function summaryState(status: number, body: unknown): SummaryState {
   };
 }
 
-/** Asks the server to rebuild the index: what it answered, in the person's
- *  words. `damagedMonths` counts months too damaged to read, left as they
- *  were. */
-export async function requestRepair(
-  send: typeof fetch = fetch
-): Promise<{ ok: true; damagedMonths: number } | { ok: false; error: string }> {
+/** What the server answered a repair: done, with `damagedMonths` too damaged
+ *  to read and left as they were, or refused in the person's words.
+ *  `readAgain`: refused with nothing unreadable (a 409 without the flag), so
+ *  the index reads now or just changed: a recording derived a missing one
+ *  first, say. */
+export type RepairResult = { ok: true; damagedMonths: number } | { ok: false; error: string; readAgain: boolean };
+
+/** Asks the server to rebuild the index. */
+export async function requestRepair(send: typeof fetch = fetch): Promise<RepairResult> {
   try {
     const res = await send('/api/holdings-history', {
       method: 'POST',
@@ -130,10 +133,25 @@ export async function requestRepair(
     });
     const body = await res.json().catch(() => ({}));
     if (res.ok) return { ok: true, damagedMonths: Number.isSafeInteger(body?.damaged_months) ? body.damaged_months : 0 };
-    return { ok: false, error: typeof body?.error === 'string' && body.error ? body.error : 'Could not repair holdings history. Try again.' };
+    return {
+      ok: false,
+      error: typeof body?.error === 'string' && body.error ? body.error : 'Could not repair holdings history. Try again.',
+      readAgain: res.status === 409 && body?.unreadable !== true,
+    };
   } catch {
-    return { ok: false, error: 'Could not reach Nya. Try again.' };
+    return { ok: false, error: 'Could not reach Nya. Try again.', readAgain: false };
   }
+}
+
+/** What a repair's answer does, pure: done, or refused with nothing left to
+ *  repair, closes the sheet and reads the line again (so a line that said the
+ *  history can't be read never stays after the index came back); any other
+ *  refusal stays on the sheet, in the server's words. `damagedMonths` is what
+ *  the line says was left damaged, when it is read again. */
+export function afterRepair(result: RepairResult): { phase: RepairPhase; readAgain: boolean; damagedMonths: number } {
+  if (result.ok) return { phase: { kind: 'closed' }, readAgain: true, damagedMonths: result.damagedMonths };
+  if (result.readAgain) return { phase: { kind: 'closed' }, readAgain: true, damagedMonths: 0 };
+  return { phase: { kind: 'failed', error: result.error }, readAgain: false, damagedMonths: 0 };
 }
 
 /** The line, or what stopped it, pure. */
@@ -252,13 +270,10 @@ export default function HoldingsRecorded({ accountId }: { accountId: string }) {
 
   const repair = useCallback(async () => {
     setPhase({ kind: 'repairing' });
-    const result = await requestRepair();
-    if (!result.ok) {
-      setPhase({ kind: 'failed', error: result.error });
-      return;
-    }
-    setPhase({ kind: 'closed' });
-    setDamagedMonths(result.damagedMonths);
+    const next = afterRepair(await requestRepair());
+    setPhase(next.phase);
+    if (!next.readAgain) return;
+    setDamagedMonths(next.damagedMonths);
     setReload((n) => n + 1);
   }, []);
 
