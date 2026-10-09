@@ -908,8 +908,12 @@ export function PreviewView({
       <p className="panel-note">
         {range ? `${range}` : 'No dates'}
         {p.currency ? ` · in ${p.currency}` : ''}
-        {c.new > 0 && p.currency ? ` · new: ${formatMoney(p.totals.out, p.currency)} out, ${formatMoney(p.totals.in, p.currency)} in` : ''}
       </p>
+      {c.new > 0 && p.currency && (
+        <p className="panel-note" style={{ marginTop: 2 }}>
+          New: {formatMoney(p.totals.out, p.currency)} out, {formatMoney(p.totals.in, p.currency)} in
+        </p>
+      )}
       <p className="panel-note">Read as {readAs.join(', ')}.</p>
       {p.other_currencies.length > 0 && (
         <p className="panel-note">

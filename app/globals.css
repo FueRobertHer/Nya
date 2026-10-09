@@ -2884,3 +2884,18 @@ button.import-choice {
 .import-confirm {
   margin-top: 4px;
 }
+
+/* A manual account's actions (Update, Add transaction, Import, and Hide and
+   Delete in Manage mode) wrap onto a second line on a narrow phone rather
+   than run off the card. */
+.manual-row-actions {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* An imported description can hold long unbroken text (a card processor's
+   reference, a web address), which would otherwise widen the Activity
+   tab's table past a phone's screen and push the amounts off it. */
+.txn-text {
+  overflow-wrap: anywhere;
+}
