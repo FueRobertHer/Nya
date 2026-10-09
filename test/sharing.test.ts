@@ -81,8 +81,8 @@ async function ownerBank() {
     institution_id: 'ins_3',
     error: null,
     accounts: [
-      { ...account('acct_joint', '1111'), balance: 500 },
-      { ...account('acct_mine', '2222'), balance: 70 },
+      { ...account('acct_joint', '1111'), balance: 500, currency: 'USD' },
+      { ...account('acct_mine', '2222'), balance: 70, currency: 'USD' },
     ],
   };
   await rememberAccounts(TEST_CTX, [inst as any]);
@@ -322,7 +322,10 @@ describe('sharing accounts on a connection', () => {
   test('that it exists: the account and nothing about its money', async () => {
     await share({ acct_joint: 'exists' });
     const [from] = await sharedWithPartner();
-    expect(from.accounts).toEqual([{ id: 'acct_joint', label: expect.stringContaining('1111'), level: 'exists', balance: null, as_of: null, debt: false }]);
+    expect(from.accounts).toEqual([{ id: 'acct_joint', label: expect.stringContaining('1111'), level: 'exists', balance: null, currency: null, as_of: null, debt: false }]);
+    // Nor a manual account's, though every manual balance is in dollars.
+    await share({ manual_house: 'exists' });
+    expect((await sharedWithPartner())[0].accounts).toEqual([{ id: 'manual_house', label: 'Manual House', level: 'exists', balance: null, currency: null, as_of: null, debt: false }]);
   });
 
   test('balance only: the account and its balance, no transactions, and nothing else', async () => {
@@ -331,7 +334,7 @@ describe('sharing accounts on a connection', () => {
     expect(shared).toHaveLength(1);
     expect(shared[0]).toMatchObject({ connection: pair, label: 'Someone' });
     expect(shared[0].accounts).toEqual([
-      { id: 'acct_joint', label: expect.stringContaining('1111'), level: 'balance', balance: 500, as_of: new Date().toISOString().slice(0, 10), debt: false },
+      { id: 'acct_joint', label: expect.stringContaining('1111'), level: 'balance', balance: 500, currency: 'USD', as_of: new Date().toISOString().slice(0, 10), debt: false },
     ]);
   });
 
@@ -342,7 +345,7 @@ describe('sharing accounts on a connection', () => {
     expect(joint.transactions.map((t: any) => t.amount)).toEqual([12]); // not the 60-day-old one
     expect(JSON.stringify(from)).not.toContain('t_private');
     expect(JSON.stringify(from)).not.toContain('acct_mine');
-    expect(from.accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ id: 'manual_house', label: 'Manual House', level: 'balance', balance: 300000, debt: false });
+    expect(from.accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ id: 'manual_house', label: 'Manual House', level: 'balance', balance: 300000, currency: 'USD', debt: false });
   });
 
   test('each connection gets its own choice', async () => {
@@ -907,6 +910,90 @@ describe('a manual account’s transactions, shared', () => {
     expect((await ownerRecord())!.shown[0].read).toEqual({ acct_joint: 'transactions', manual_house: 'balance' });
     // Nothing was changed to get there: the book is as it was.
     expect(await fake.hget<string>(ctxKey('manual-transactions'), 'manual_house')).toBe('not-ciphertext-but-long-enough-to-be-tried');
+  });
+});
+
+describe('a shared balance, in its own currency', () => {
+  /** A second bank, abroad: each account as its last good load remembers it
+   *  (`remembered`, its currency) and as the transactions sync stores it
+   *  (`iso`, `unofficial`), measured today, with these rows. */
+  async function bankAbroad(accounts: { id: string; balance: number; remembered: string | null; iso: string | null; unofficial?: string }[], rows: any[] = []) {
+    const token = 'token-item_b';
+    const plaid = accounts.map((a, i) => ({
+      ...account(a.id, String(3000 + i)),
+      balances: { available: null, current: a.balance, limit: null, iso_currency_code: a.iso, unofficial_currency_code: a.unofficial ?? null },
+    }));
+    plaidAccounts[token] = plaid;
+    plaidTxns[token] = rows;
+    await fake.hset(ctxKey('plaid:items'), {
+      item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Monzo', encrypted_access_token: await encrypt(token) }),
+    });
+    const inst = {
+      item_id: 'item_b',
+      institution_name: 'Monzo',
+      institution_id: 'ins_9',
+      error: null,
+      accounts: plaid.map((p, i) => ({ ...p, balance: accounts[i].balance, currency: accounts[i].remembered })),
+    };
+    await rememberAccounts(TEST_CTX, [inst as any]);
+    await links.recordDirectory(TEST_CTX, [inst as any]);
+    await recordSnapshot(TEST_CTX, 0, { acct_joint: 500, acct_mine: 70, ...Object.fromEntries(accounts.map((a) => [a.id, a.balance])) });
+    await as('user_owner', () => route('transactions', 'GET')); // its accounts and rows stored
+  }
+  const render = async (el: unknown) => (await import('react-dom/server')).renderToStaticMarkup(el as any);
+
+  test('an account in pounds shows its balance and its rows in pounds, on their card and in my preview', async () => {
+    const { createElement } = await import('react');
+    const { SharedWithMeView, PreviewView, SharedAccountItem } = await import('@/components/Sharing');
+    await bankAbroad([{ id: 'acct_gbp', balance: 640, remembered: 'GBP', iso: 'GBP' }], [{ ...row('t_gbp', 'acct_gbp', daysAgo(1), 12), iso_currency_code: 'GBP', merchant_name: 'Pret' }]);
+    await share({ acct_gbp: 'transactions', acct_joint: 'balance' });
+    const shared = await sharedWithPartner();
+    const theirs = shared[0].accounts.find((a: any) => a.id === 'acct_gbp');
+    expect(theirs).toMatchObject({ balance: 640, currency: 'GBP', transactions: [{ name: 'Pret', amount: 12, currency: 'GBP' }] });
+    expect(shared[0].accounts.find((a: any) => a.id === 'acct_joint')).toMatchObject({ balance: 500, currency: 'USD' });
+    const preview = (await previewOf('user_owner')).body;
+    expect(preview.view.accounts).toEqual(shared[0].accounts);
+    const mine = preview.view.accounts.find((a: any) => a.id === 'acct_gbp');
+
+    const card = await render(createElement(SharedWithMeView, { data: { shared } }));
+    const previewed = await render(createElement(PreviewView, { who: 'Pat', expiresAt: null, preview, error: '', unsaved: false }));
+    for (const html of [card, previewed]) {
+      expect(html).toContain('£640.00');
+      expect(html).not.toContain('$640.00');
+      expect(html).toContain('$500.00'); // the account in dollars, still in dollars
+    }
+    // Its rows, opened, the same on both.
+    for (const a of [theirs, mine]) {
+      const opened = await render(createElement(SharedAccountItem, { a, open: true, onToggle: () => {} }));
+      expect(opened).toContain('Pret');
+      expect(opened).toContain('-£12.00');
+      expect(opened).not.toContain('$');
+    }
+  });
+
+  test('one its last load gave no currency for takes the stored one; one nothing names is in the main currency, as before', async () => {
+    const { createElement } = await import('react');
+    const { SharedWithMeView } = await import('@/components/Sharing');
+    const { formatMoney } = await import('@/lib/format');
+    await bankAbroad([
+      { id: 'acct_cad', balance: 640, remembered: null, iso: 'CAD' },
+      { id: 'acct_coin', balance: 2, remembered: null, iso: null, unofficial: 'BTC' },
+      { id: 'acct_vague', balance: 30, remembered: null, iso: null },
+    ]);
+    await share({ acct_cad: 'balance', acct_coin: 'balance', acct_vague: 'balance', manual_house: 'balance', acct_joint: 'exists' });
+    const [from] = await sharedWithPartner();
+    expect(Object.fromEntries(from.accounts.map((a: any) => [a.id, a.currency]))).toEqual({
+      acct_cad: 'CAD',
+      acct_coin: 'BTC', // Plaid's unofficial code, a cryptocurrency's
+      acct_vague: null,
+      manual_house: 'USD', // manual balances are kept in dollars
+      acct_joint: null, // that it exists says nothing of its money
+    });
+    const html = await render(createElement(SharedWithMeView, { data: { shared: [from] } }));
+    expect(html).toContain('CA$640.00');
+    expect(html).toContain(formatMoney(2, 'BTC'));
+    expect(html).toContain('$30.00');
+    expect((await previewOf('user_owner')).body.view.accounts).toEqual(from.accounts);
   });
 });
 
@@ -1596,6 +1683,8 @@ describe('records of showings', () => {
     // A manual account shared with its transactions, read from its own book.
     await addManualTxn(TEST_CTX, newManualTxn('manual_house', { date: daysAgo(1), amount: 40, currency: 'USD', name: 'Hardware store', category: null, note: null }));
     await share({ acct_joint: 'transactions', manual_house: 'transactions' });
+    // A load that gave no currency, so the read looks it up in the transaction store.
+    await rememberAccounts(TEST_CTX, [{ item_id: 'item_a', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_joint', '1111'), balance: 500, currency: null }] } as any]);
     // A remembered account in the shape from before per-item records, which
     // the owner's own loads tidy away and someone else's read must not.
     await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
@@ -1608,7 +1697,9 @@ describe('records of showings', () => {
     };
     const before = snapshot();
     expect(Object.keys(before)).toContain(`${ctxKey('accounts:meta')} acct_legacy`);
-    expect((await sharedWithPartner())[0].accounts.find((a: any) => a.id === 'manual_house').transactions).toHaveLength(1);
+    const [read] = await sharedWithPartner();
+    expect(read.accounts.find((a: any) => a.id === 'manual_house').transactions).toHaveLength(1);
+    expect(read.accounts.find((a: any) => a.id === 'acct_joint').currency).toBe('USD');
     const after = snapshot();
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
     expect(changed).toEqual([`${ctxKey('sharing-access-log')} ${await logIdOf()}`]);

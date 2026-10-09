@@ -95,6 +95,8 @@ type SharedAccount = {
   label: string;
   level: Level;
   balance: number | null;
+  /** The currency the balance is in (null: the main one). */
+  currency: string | null;
   as_of: string | null;
   debt: boolean;
   /** At the transactions level, the last SHARED_TXN_DAYS days of them, each in
@@ -780,7 +782,7 @@ export function sharedTxnAmount(t: { amount: number; currency: string | null }):
 function shownBalance(a: SharedAccount): string {
   if (a.level === 'exists') return 'Balance not shared';
   if (a.balance === null) return 'No balance yet';
-  return `${formatMoney(a.balance)}${a.debt ? ' owed' : ''}`;
+  return `${formatMoney(a.balance, a.currency)}${a.debt ? ' owed' : ''}`;
 }
 
 /** One person's shared accounts, read-only, as the one they're shared with
@@ -795,38 +797,46 @@ function SharedCard({ name, view, note }: { name: string; view: SharedView; note
         <span className="pill">Read-only</span>
       </div>
       {view.accounts.map((a) => (
-        <div key={a.id} className="incoming-account">
-          <div className="peer-row">
-            <span>
-              <span className="incoming-account-name">{a.label}</span>
-              {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
-            </span>
-            <span className="incoming-account-value">{shownBalance(a)}</span>
-          </div>
-          {a.transactions_unreadable ? (
-            <div className="incoming-account-date">Its transactions can&apos;t be read, so they aren&apos;t shown.</div>
-          ) : a.transactions && a.transactions.length === 0 ? (
-            <div className="incoming-account-date">No transactions in the last {SHARED_TXN_DAYS} days.</div>
-          ) : (
-            a.transactions && (
-              <button className="link-btn" onClick={() => setOpen(open === a.id ? null : a.id)}>
-                {open === a.id ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
-              </button>
-            )
-          )}
-          {open === a.id &&
-            a.transactions?.map((t, i) => (
-              <div key={i} className="incoming-txn">
-                <span>
-                  {t.date} {t.name}
-                  {t.pending ? ' (pending)' : ''}
-                </span>
-                <span>{sharedTxnAmount(t)}</span>
-              </div>
-            ))}
-        </div>
+        <SharedAccountItem key={a.id} a={a} open={open === a.id} onToggle={() => setOpen(open === a.id ? null : a.id)} />
       ))}
       {note}
+    </div>
+  );
+}
+
+/** One account on a shared card: its balance, and, when `open`, its
+ *  transactions, each figure in its own currency. */
+export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; open: boolean; onToggle: () => void }) {
+  return (
+    <div className="incoming-account">
+      <div className="peer-row">
+        <span>
+          <span className="incoming-account-name">{a.label}</span>
+          {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
+        </span>
+        <span className="incoming-account-value">{shownBalance(a)}</span>
+      </div>
+      {a.transactions_unreadable ? (
+        <div className="incoming-account-date">Its transactions can&apos;t be read, so they aren&apos;t shown.</div>
+      ) : a.transactions && a.transactions.length === 0 ? (
+        <div className="incoming-account-date">No transactions in the last {SHARED_TXN_DAYS} days.</div>
+      ) : (
+        a.transactions && (
+          <button className="link-btn" onClick={onToggle}>
+            {open ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
+          </button>
+        )
+      )}
+      {open &&
+        a.transactions?.map((t, i) => (
+          <div key={i} className="incoming-txn">
+            <span>
+              {t.date} {t.name}
+              {t.pending ? ' (pending)' : ''}
+            </span>
+            <span>{sharedTxnAmount(t)}</span>
+          </div>
+        ))}
     </div>
   );
 }

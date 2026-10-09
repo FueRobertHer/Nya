@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach, setSystemTime } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SharingPanelView, SharedWithMeView, PreviewView, shortDate, sharedTxnAmount } from '@/components/Sharing';
+import { SharingPanelView, SharedWithMeView, PreviewView, SharedAccountItem, shortDate, sharedTxnAmount } from '@/components/Sharing';
 import { formatMoney } from '@/lib/format';
 import {
   endAfterDays,
@@ -204,10 +204,10 @@ describe('what others share with me', () => {
               connection: 'c1',
               label: 'Olive',
               accounts: [
-                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }] },
-                { id: 'b', label: 'House', level: 'balance', balance: null, as_of: null, debt: false },
-                { id: 'c', label: 'Visa ••9999', level: 'balance', balance: 250, as_of: '2026-09-26', debt: true },
-                { id: 'd', label: 'Savings', level: 'exists', balance: null, as_of: null, debt: false },
+                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, currency: 'USD', as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }] },
+                { id: 'b', label: 'House', level: 'balance', balance: null, currency: 'USD', as_of: null, debt: false },
+                { id: 'c', label: 'Visa ••9999', level: 'balance', balance: 250, currency: 'USD', as_of: '2026-09-26', debt: true },
+                { id: 'd', label: 'Savings', level: 'exists', balance: null, currency: null, as_of: null, debt: false },
               ],
               expires_at: null,
             },
@@ -238,10 +238,10 @@ describe('what others share with me', () => {
                 connection: 'c1',
                 label: 'Olive',
                 accounts: [
-                  { id: 'manual_0b6f', label: 'Wallet', level: 'transactions', balance: 80, as_of: at, debt: false, transactions: [{ date: '2026-09-26', name: 'Farmers market', amount: 23, pending: false, currency: 'USD' }] },
-                  { id: 'manual_1c7a', label: 'Cash abroad', level: 'transactions', balance: 40, as_of: at, debt: false, transactions: [] },
-                  { id: 'manual_2d8b', label: 'Old book', level: 'transactions', balance: 10, as_of: at, debt: false, transactions_unreadable: true },
-                  { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [] },
+                  { id: 'manual_0b6f', label: 'Wallet', level: 'transactions', balance: 80, currency: 'USD', as_of: at, debt: false, transactions: [{ date: '2026-09-26', name: 'Farmers market', amount: 23, pending: false, currency: 'USD' }] },
+                  { id: 'manual_1c7a', label: 'Cash abroad', level: 'transactions', balance: 40, currency: 'USD', as_of: at, debt: false, transactions: [] },
+                  { id: 'manual_2d8b', label: 'Old book', level: 'transactions', balance: 10, currency: 'USD', as_of: at, debt: false, transactions_unreadable: true },
+                  { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, currency: 'USD', as_of: '2026-09-27', debt: false, transactions: [] },
                 ],
                 expires_at: null,
               },
@@ -261,12 +261,36 @@ describe('what others share with me', () => {
     expect(html).not.toContain("aren't shared yet");
   });
 
-  test('each shared transaction is shown in its own currency, nothing converted', () => {
-    expect(sharedTxnAmount({ amount: 12, currency: 'USD' })).toBe(formatMoney(-12, 'USD'));
+  test('each figure is shown in its own currency, nothing converted: the balance in its account’s, each row in its own', () => {
+    const toggle = () => {};
+    const pounds = {
+      id: 'a',
+      label: 'Monzo ••3000',
+      level: 'transactions' as const,
+      balance: 640,
+      currency: 'GBP',
+      as_of: '2026-09-27',
+      debt: false,
+      transactions: [{ date: '2026-09-26', name: 'Pret', amount: 12, pending: false, currency: 'GBP' }],
+    };
+    const opened = text(renderToStaticMarkup(<SharedAccountItem a={pounds} open onToggle={toggle} />));
+    expect(opened).toContain('£640.00');
+    expect(opened).toContain('Pret');
+    expect(opened).toContain('-£12.00');
+    expect(opened).not.toContain('$');
+    // Closed, as a card first shows it: the balance, and how many rows.
+    const closed = text(renderToStaticMarkup(<SharedAccountItem a={pounds} open={false} onToggle={toggle} />));
+    expect(closed).toContain('£640.00');
+    expect(closed).toContain('Recent transactions (1)');
+    expect(closed).not.toContain('Pret');
+    // Nothing names a currency (a bank's row stored before its currency was
+    // kept, an account its institution never gave one for): the main one.
+    const unnamed = { ...pounds, currency: null, debt: true, transactions: [{ ...pounds.transactions[0], amount: -5, currency: null }] };
+    const plain = text(renderToStaticMarkup(<SharedAccountItem a={unnamed} open onToggle={toggle} />));
+    expect(plain).toContain('$640.00 owed');
+    expect(plain).toContain('$5.00');
+    expect(plain).not.toContain('£');
     expect(sharedTxnAmount({ amount: 1200, currency: 'JPY' })).toBe(formatMoney(-1200, 'JPY'));
-    expect(sharedTxnAmount({ amount: 1200, currency: 'JPY' })).not.toBe(formatMoney(-1200, 'USD'));
-    // A bank's row stored before its currency was kept: the main one.
-    expect(sharedTxnAmount({ amount: -5, currency: null })).toBe('$5.00');
   });
 });
 
@@ -518,8 +542,8 @@ describe('a connection’s end, preview and records in the drawer', () => {
 describe('what they see: the preview', () => {
   const view = {
     accounts: [
-      { id: 'a', label: 'Joint ••1111', level: 'transactions' as const, balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }] },
-      { id: 'd', label: 'Savings', level: 'exists' as const, balance: null, as_of: null, debt: false },
+      { id: 'a', label: 'Joint ••1111', level: 'transactions' as const, balance: 500, currency: 'USD', as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }] },
+      { id: 'd', label: 'Savings', level: 'exists' as const, balance: null, currency: null, as_of: null, debt: false },
     ],
     expires_at: endAfterDays(10),
   };
@@ -561,7 +585,7 @@ describe('what they see: the preview', () => {
 
 describe('what others share with me, until when', () => {
   const shared = (expires_at: string | null) => (
-    <SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Olive', accounts: [{ id: 'd', label: 'Savings', level: 'exists', balance: null, as_of: null, debt: false }], expires_at }] }} />
+    <SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Olive', accounts: [{ id: 'd', label: 'Savings', level: 'exists', balance: null, currency: null, as_of: null, debt: false }], expires_at }] }} />
   );
 
   test('says until when, in my own days, and that both of us see each time it is shown to me', () => {

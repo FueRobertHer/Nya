@@ -84,11 +84,12 @@
 // snapshot stored, and on a manual account what they entered by hand or
 // imported (lib/manual-txns.ts); this never calls Plaid on the owner's
 // behalf. Each account's balance is its newest measured one, with its own
-// date. Each shared transaction carries its currency, and nothing is
-// converted. A transaction its owner excluded from budgets and reports
-// (lib/txn-annotations.ts) is shared like any other: excluding changes their
-// own totals, not what the account holds, and like their categories and the
-// names they give merchants it is theirs, so it isn't shown either way.
+// date. Each balance and each shared transaction carries its currency, and
+// nothing is converted. A transaction its owner excluded from budgets and
+// reports (lib/txn-annotations.ts) is shared like any other: excluding
+// changes their own totals, not what the account holds, and like their
+// categories and the names they give merchants it is theirs, so it isn't
+// shown either way.
 //
 // Hiding an account pauses its sharing: the share stays, and is honoured again
 // if the account is unhidden.
@@ -102,7 +103,8 @@ import { getManualAccounts } from './manual';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
-import { readStoredTxns, StateUnreadableError } from './transactions';
+import { readStoredItem, readStoredTxns, StateUnreadableError } from './transactions';
+import { rememberedAccountsByItem } from './last-known';
 import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
 import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARED_TXN_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
@@ -948,6 +950,12 @@ export type SharedAccount = {
   level: Level;
   /** Null at the exists level, or before any balance was measured. */
   balance: number | null;
+  /** The currency the balance is in (bankCurrencies), or USD on a manual
+   *  account, the only currency a manual balance is kept in (lib/manual.ts
+   *  toInstitutions). Null at the exists level, which says nothing of its
+   *  money, or when nothing says, shown in the main currency as it is
+   *  throughout the app. */
+  currency: string | null;
   /** When that balance was measured: an ISO time (a manual account, to the
    *  hour), or a YYYY-MM-DD (a snapshot's day). shortDate reads both. */
   as_of: string | null;
@@ -1054,6 +1062,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
 
   const manual = new Map((await getManualAccounts(theirs)).map((m) => [m.account_id, m]));
   const types = await directoryTypes(theirs, granted.map(([id]) => id).filter((id) => !manual.has(id)));
+  const currencies = await bankCurrencies(theirs, granted.filter(([id, level]) => level !== 'exists' && !manual.has(id)).map(([id]) => id));
 
   const withTxns = new Set(granted.filter(([, level]) => level === 'transactions').map(([id]) => id));
   const txns = new Map<string, SharedTxn[]>();
@@ -1113,6 +1122,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
       label: still.get(id)!,
       level,
       balance,
+      currency: level === 'exists' ? null : m ? 'USD' : (currencies.get(id) ?? null),
       as_of,
       debt: DEBT_TYPES.has((m ? m.type : types[id]) ?? ''),
       ...(level === 'transactions'
@@ -1123,6 +1133,37 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
     });
   }
   return { view: { accounts, expires_at: share.expires_at }, theirs };
+}
+
+/**
+ * The currency each of these bank accounts' balance is in, read only: the one
+ * its institution gave on its last good load (lib/last-known.ts, which every
+ * live account has a record in), or, when that gave none, the account as the
+ * last transactions sync stored it (lib/transactions.ts): its ISO code, then
+ * Plaid's unofficial one (a cryptocurrency's). An account neither names is
+ * left out. Strict, as every read here is: what can't be read throws.
+ */
+async function bankCurrencies(theirs: Ctx, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ids.length === 0) return out;
+  const wanted = new Set(ids);
+  const unnamed = new Map<string, string[]>(); // an Item, and its accounts its record gives no currency
+  for (const [item_id, accounts] of Object.entries(await rememberedAccountsByItem(theirs))) {
+    for (const a of accounts) {
+      if (!wanted.has(a.account_id)) continue;
+      if (a.currency) out.set(a.account_id, a.currency);
+      else unnamed.set(item_id, [...(unnamed.get(item_id) ?? []), a.account_id]);
+    }
+  }
+  for (const [item_id, accountIds] of unnamed) {
+    const { accounts } = await readStoredItem(theirs, item_id);
+    for (const id of accountIds) {
+      const b = accounts[id]?.balances;
+      const code = b?.iso_currency_code ?? b?.unofficial_currency_code;
+      if (code) out.set(id, code);
+    }
+  }
+  return out;
 }
 
 /** Manual rows newest first, the most recently entered first within a day,
