@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { getEffectiveHidden, readKnownAccounts } from '@/lib/links';
+import { pendingVanishedIds } from '@/lib/vanished';
 import { placeRecorded, readHoldingsHistory } from '@/lib/holdings-history';
 import { readMeasuredBalances } from '@/lib/history';
 import { allocationSettingsStore } from '@/lib/allocation-settings';
@@ -16,30 +17,41 @@ import { loggable } from '@/lib/log-safe';
 // calls.
 //
 //   POST /api/allocation-history
-//     { from?, to?, currency?, accounts: [{ account_id, currency, manual }] }
+//     { from?, to?, currency?, accounts: [{ account_id, currency, manual, shown }] }
 //   -> { from, to, currency, first_recorded, first_recorded_at,
 //        last_recorded, last_recorded_at,
 //        days: [{ date, classes, total, unlisted, missing, otherCurrencies,
 //                 noCurrency, unpriced }],
-//        accounts: [{ account_id, shown, first, last, label }],
+//        accounts: [{ account_id, state, first, last, unlisted, label }],
 //        unreadable_days: [date] }
 //
-// `accounts` is the investment accounts today's allocation shows, with each
-// one's currency and whether it is tracked by hand, as the Plan tab has them:
-// the series is of those accounts, by the same rules, so it and the view
-// above it can't disagree about what is counted. A POST because that list is
-// the question, and can be longer than a URL. Ids are followed through
-// account links, and a hidden account is left out, as everywhere.
+// `accounts` is the investment accounts the dashboard knows, with each one's
+// currency and whether it is tracked by hand, as the Plan tab has them: those
+// today's allocation shows (`shown`), and those whose institution it can't
+// show (lib/last-known.ts `unshown_accounts`). The series is of those
+// accounts, by the same rules, so it and the view above it can't disagree
+// about what is counted. A POST because that list is the question, and can be
+// longer than a URL. Ids are followed through account links, and a hidden
+// account is left out, as everywhere.
+//
+// Any other account holdings history recorded is still linked if it is
+// remembered for a connection still stored (lib/links.ts liveAccountIds), or
+// missing from an answer pending confirmation (lib/vanished.ts), and is
+// expected as a listed one is; otherwise it is gone (`state`), its connection
+// removed or the account closed, and expected only while it was recorded.
+// When the remembered accounts can't be read, every recorded account is
+// taken to be linked: none is drawn whole without it.
 //
 // Dates are UTC days, as holdings history's are. `to` defaults to today and
 // `from` to a year before it; a range is at most MAX_RANGE_DAYS long. Only
 // recorded days are in the answer, so nothing is ever drawn before the first
 // one. A day an expected account wasn't recorded on names it in `missing`:
-// an account listed is expected on every day from the first it was recorded
-// on, or the first the account directory knew it (lib/links.ts), so an
-// institution that stops answering never leaves its days drawn complete.
-// `accounts` says when each was recorded, for "not recorded since", and
-// names (`label`, from the directory) the ones no longer shown. `currency`
+// an account still linked is expected on every day from the first it was
+// recorded on, or the first the account directory knew it (lib/links.ts), so
+// an institution that stops answering, however long for, never leaves its
+// days drawn complete. `accounts` says where each stands and when it was
+// recorded, for "not recorded since", and names (`label`, from the
+// directory) the ones today's allocation doesn't show. `currency`
 // is the one amounts are summed in; given none, the one most listed accounts
 // are in.
 //
@@ -136,13 +148,14 @@ function parseQuestion(body: unknown): Question | string {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Each account is an object';
     const a = raw as Record<string, unknown>;
     const keys = Object.keys(a);
-    if (keys.length !== 3 || !['account_id', 'currency', 'manual'].every((k) => keys.includes(k))) return 'Each account has account_id, currency and manual';
+    if (keys.length !== 4 || !['account_id', 'currency', 'manual', 'shown'].every((k) => keys.includes(k))) return 'Each account has account_id, currency, manual and shown';
     if (typeof a.account_id !== 'string' || !ACCOUNT_ID.test(a.account_id)) return 'An account_id is not one';
     if (a.currency !== null && !(typeof a.currency === 'string' && CURRENCY.test(a.currency))) return "An account's currency is a currency code, or null";
     if (typeof a.manual !== 'boolean') return 'manual is true or false';
+    if (typeof a.shown !== 'boolean') return 'shown is true or false';
     if (seen.has(a.account_id)) return 'Each account once';
     seen.add(a.account_id);
-    accounts.push({ account_id: a.account_id, currency: a.currency as string | null, manual: a.manual });
+    accounts.push({ account_id: a.account_id, currency: a.currency as string | null, manual: a.manual, shown: a.shown });
   }
   const to = (b.to as string | undefined) ?? dayOf(Date.now());
   // A year, `to` included.
@@ -173,19 +186,27 @@ export async function POST(req: Request) {
     const effective = await getEffectiveHidden(ctx);
     const opts = { links: effective.links ?? undefined, hidden: effective.hidden };
     const place = placeRecorded(opts);
-    const [settings, head, directory] = await Promise.all([
+    const [settings, head, directory, pending] = await Promise.all([
       allocationSettingsStore.get(ctx),
       readHoldingsHistory(ctx, null, opts),
       readKnownAccounts(ctx),
+      pendingVanishedIds(ctx),
     ]);
+    // The accounts still linked, under the ids they are known by now.
+    const stillLinked = new Set<string>();
+    for (const id of [...effective.live, ...pending]) {
+      const placed = place(id);
+      if (placed) stillLinked.add(placed.account);
+    }
+    const linked = (id: string) => !effective.liveOk || stillLinked.has(id);
 
     // The accounts listed, under the ids they are known by now, hidden ones
     // left out: a list from before an account was hidden or re-linked is
     // read as it is now.
-    const shown = new Map<string, SeriesAccount>();
+    const listed = new Map<string, SeriesAccount>();
     for (const a of q.accounts) {
       const placed = place(a.account_id);
-      if (placed && !shown.has(placed.account)) shown.set(placed.account, { ...a, account_id: placed.account });
+      if (placed && !listed.has(placed.account)) listed.set(placed.account, { ...a, account_id: placed.account });
     }
     // When the directory first knew each account, the earliest of its ids.
     // One whose entry can't be read is taken to have been there all along:
@@ -204,11 +225,11 @@ export async function POST(req: Request) {
     }
     for (const id of directory.unreadable) {
       const placed = place(id);
-      if (placed && shown.has(placed.account)) knownFrom.set(placed.account, KNOWN_ALWAYS);
+      if (placed && (listed.has(placed.account) || linked(placed.account))) knownFrom.set(placed.account, KNOWN_ALWAYS);
     }
 
-    const currency = q.currency ?? commonCurrency([...shown.values()]);
-    const series = seriesBuilder({ shown: [...shown.values()], knownFrom, recorded: head.accounts, settings, currency });
+    const currency = q.currency ?? commonCurrency([...listed.values()]);
+    const series = seriesBuilder({ accounts: [...listed.values()], knownFrom, recorded: head.accounts, linked, settings, currency });
     const unreadableDays: string[] = [];
     // Nothing is read before the first recorded day, and the months are read
     // in turn, each reduced to its days' figures before the next.
@@ -242,7 +263,7 @@ export async function POST(req: Request) {
       last_recorded: head.span.last,
       last_recorded_at: head.span.last_at,
       days: series.days,
-      accounts: series.accounts().map((a) => ({ ...a, label: a.shown ? null : (labels.get(a.account_id) ?? null) })),
+      accounts: series.accounts().map((a) => ({ ...a, label: a.state === 'shown' ? null : (labels.get(a.account_id) ?? null) })),
       unreadable_days: unreadableDays,
     });
   } catch (err) {

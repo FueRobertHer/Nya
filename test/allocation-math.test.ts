@@ -185,6 +185,25 @@ describe('the allocation', () => {
     expect(a.classes).toMatchObject({ bonds: 10_000, cash: 2_000, unclassified: 0 });
   });
 
+  test('an account whose positions didn’t come is unclassified whole, never spread by the split meant for its unlisted money', () => {
+    // A brokerage's split is for the $5,000 of cash it doesn't list.
+    const set = settings({ accounts: [{ account_id: 's', split: { cash: 100 } }] });
+    const answered = allocate({ institutions: [inst('X', [acct('s', { balance: 100_000 })], { item_id: 'i' })], holdings: [hold('s', 'VTI', 95_000)], settings: set, currency: 'USD' });
+    expect(answered.classes).toMatchObject({ 'us-stocks': 95_000, cash: 5_000, unclassified: 0 });
+    // The holdings call failed for it this time (/api/net-worth's holdings_unanswered).
+    const failed = allocate({ institutions: [inst('X', [acct('s', { balance: 100_000, positionsFailed: true })], { item_id: 'i' })], holdings: [], settings: set, currency: 'USD' });
+    expect(failed.classes).toMatchObject({ cash: 0, unclassified: 100_000 });
+    expect(failed.gaps).toEqual([expect.objectContaining({ kind: 'no-answer', amount: 100_000, split: null, manual: false })]);
+    expect(failed.buckets.taxable).toBe(100_000);
+    // An account that lists none (at a connection with no positions to give)
+    // is what a split for its whole balance is for, as a manual one is.
+    const listedNone = allocate({ institutions: [inst('X', [acct('s', { balance: 100_000 })], { item_id: 'i' })], holdings: [], settings: set, currency: 'USD' });
+    expect(listedNone.classes).toMatchObject({ cash: 100_000, unclassified: 0 });
+    // The flag never reaches a manual account.
+    const manual = allocate({ institutions: [inst('Manual accounts', [acct('m', { balance: 1_000, positionsFailed: true })], { item_id: null })], holdings: [], settings: settings({ accounts: [{ account_id: 'm', split: { bonds: 100 } }] }), currency: 'USD' });
+    expect(manual.classes).toMatchObject({ bonds: 1_000, unclassified: 0 });
+  });
+
   test('an institution that couldn’t be reached: what it holds isn’t known, whatever was recovered', () => {
     const stale = inst('Fidelity', [acct('f', { name: '401(k)', subtype: '401k', balance: 70_000 })], { error: true, staleAsOf: '2026-10-01', staleAsOfAt: '2026-10-01T14:00:00Z' });
     const gone = inst('Chase', [], { error: true });
@@ -415,20 +434,21 @@ describe('allocation over time', () => {
     day: { date, accounts: Object.entries(accounts).map(([account_id, positions]) => ({ account_id, positions })) } as SeriesDayIn,
     balances: new Map(Object.entries(balances)),
   });
-  const shown = (...ids: string[]): SeriesAccount[] => ids.map((account_id) => ({ account_id, currency: 'USD', manual: false }));
-  const input = (over: Partial<SeriesInput> = {}): SeriesInput => ({ shown: [], knownFrom: new Map(), recorded: new Map(), settings: null, currency: 'USD', ...over });
+  const shown = (...ids: string[]): SeriesAccount[] => ids.map((account_id) => ({ account_id, currency: 'USD', manual: false, shown: true }));
+  // Accounts the Plan doesn't list are gone unless a test says they are linked.
+  const input = (over: Partial<SeriesInput> = {}): SeriesInput => ({ accounts: [], knownFrom: new Map(), recorded: new Map(), linked: () => false, settings: null, currency: 'USD', ...over });
 
   test('one point per recorded day, oldest first, starting on the first one', () => {
-    const s = allocationSeries([day('2026-10-03', { a: [pos('VTI', 110)] }), day('2026-10-01', { a: [pos('VTI', 100), pos('BND', 50)] })], input({ shown: shown('a') }));
+    const s = allocationSeries([day('2026-10-03', { a: [pos('VTI', 110)] }), day('2026-10-01', { a: [pos('VTI', 100), pos('BND', 50)] })], input({ accounts: shown('a') }));
     expect(s.days.map((d) => d.date)).toEqual(['2026-10-01', '2026-10-03']);
     expect(s.days[0]).toEqual({ date: '2026-10-01', classes: { 'us-stocks': 100, bonds: 50 }, total: 150, unlisted: 0, missing: [], otherCurrencies: {}, noCurrency: 0, unpriced: 0 });
-    expect(s.accounts).toEqual([{ account_id: 'a', shown: true, first: '2026-10-01', last: '2026-10-03', unlisted: false }]);
+    expect(s.accounts).toEqual([{ account_id: 'a', state: 'shown', first: '2026-10-01', last: '2026-10-03', unlisted: false }]);
     // Nothing recorded is no point at all.
     expect(allocationSeries([], input()).days).toEqual([]);
   });
 
   test('days are added once each, oldest first', () => {
-    const b = seriesBuilder(input({ shown: shown('a') }));
+    const b = seriesBuilder(input({ accounts: shown('a') }));
     b.add(day('2026-10-02', { a: [] }).day, new Map());
     expect(() => b.add(day('2026-10-02', { a: [] }).day, new Map())).toThrow('oldest first');
     expect(() => b.add(day('2026-10-01', { a: [] }).day, new Map())).toThrow('oldest first');
@@ -443,7 +463,7 @@ describe('allocation over time', () => {
         day('2026-10-05', { a: [pos('VTI', 1)] }),
         day('2026-10-08', { a: [pos('VTI', 1)] }),
       ],
-      input({ shown: shown('a', 'b') })
+      input({ accounts: shown('a', 'b') })
     );
     expect(s.days.map((d) => [d.date, d.missing])).toEqual([
       ['2026-10-01', []],
@@ -451,26 +471,26 @@ describe('allocation over time', () => {
       ['2026-10-05', ['b']],
       ['2026-10-08', ['b']],
     ]);
-    expect(s.accounts.find((a) => a.account_id === 'b')).toEqual({ account_id: 'b', shown: true, first: '2026-10-01', last: '2026-10-02', unlisted: false });
+    expect(s.accounts.find((a) => a.account_id === 'b')).toEqual({ account_id: 'b', state: 'shown', first: '2026-10-01', last: '2026-10-02', unlisted: false });
   });
 
   test('before it was first recorded, only once the directory knew it, or the index has it from before the range', () => {
     const days = [day('2026-10-01', { a: [pos('VTI', 1)] }), day('2026-10-02', { a: [pos('VTI', 1)] }), day('2026-10-03', { a: [pos('VTI', 1)], b: [pos('BND', 1)] })];
     // Linked on the 3rd: not missing before.
-    expect(allocationSeries(days, input({ shown: shown('a', 'b') })).days.map((d) => d.missing)).toEqual([[], [], []]);
+    expect(allocationSeries(days, input({ accounts: shown('a', 'b') })).days.map((d) => d.missing)).toEqual([[], [], []]);
     // Known since September, failing until the 3rd: missing before.
-    expect(allocationSeries(days, input({ shown: shown('a', 'b'), knownFrom: new Map([['b', '2026-09-01']]) })).days.map((d) => d.missing)).toEqual([['b'], ['b'], []]);
+    expect(allocationSeries(days, input({ accounts: shown('a', 'b'), knownFrom: new Map([['b', '2026-09-01']]) })).days.map((d) => d.missing)).toEqual([['b'], ['b'], []]);
     // Known from the 2nd.
-    expect(allocationSeries(days, input({ shown: shown('a', 'b'), knownFrom: new Map([['b', '2026-10-02']]) })).days.map((d) => d.missing)).toEqual([[], ['b'], []]);
+    expect(allocationSeries(days, input({ accounts: shown('a', 'b'), knownFrom: new Map([['b', '2026-10-02']]) })).days.map((d) => d.missing)).toEqual([[], ['b'], []]);
     // A directory entry that can't be read: there all along.
-    expect(allocationSeries(days, input({ shown: shown('a', 'b'), knownFrom: new Map([['b', KNOWN_ALWAYS]]) })).days.map((d) => d.missing)).toEqual([['b'], ['b'], []]);
+    expect(allocationSeries(days, input({ accounts: shown('a', 'b'), knownFrom: new Map([['b', KNOWN_ALWAYS]]) })).days.map((d) => d.missing)).toEqual([['b'], ['b'], []]);
     // Recorded in August, before the range read.
     const recorded = new Map([['b', { first: '2026-08-01', last: '2026-10-03' }]]);
-    expect(allocationSeries(days, input({ shown: shown('a', 'b'), recorded })).days.map((d) => d.missing)).toEqual([['b'], ['b'], []]);
+    expect(allocationSeries(days, input({ accounts: shown('a', 'b'), recorded })).days.map((d) => d.missing)).toEqual([['b'], ['b'], []]);
   });
 
   test('a balance alone is a record: the account counts by it, and isn’t missing', () => {
-    const s = allocationSeries([day('2026-10-01', { a: [pos('VTI', 100)] }, { a: 100, m: 50 }), day('2026-10-02', { a: [pos('VTI', 100)] }, { a: 100 })], input({ shown: [...shown('a'), { account_id: 'm', currency: 'USD', manual: true }] }));
+    const s = allocationSeries([day('2026-10-01', { a: [pos('VTI', 100)] }, { a: 100, m: 50 }), day('2026-10-02', { a: [pos('VTI', 100)] }, { a: 100 })], input({ accounts: [...shown('a'), { account_id: 'm', currency: 'USD', manual: true, shown: true }] }));
     expect(s.days[0]).toMatchObject({ classes: { 'us-stocks': 100, unclassified: 50 }, unlisted: 50, missing: [] });
     // Named as an account whose unlisted money was counted as unclassified.
     expect(s.accounts.map((a) => [a.account_id, a.unlisted])).toEqual([
@@ -490,7 +510,7 @@ describe('allocation over time', () => {
         day('2026-10-03', { a: [pos('VTI', 1)], gone: [pos('BND', 5)] }),
         day('2026-10-04', { a: [pos('VTI', 1)] }),
       ],
-      input({ shown: shown('a'), recorded })
+      input({ accounts: shown('a'), recorded })
     );
     expect(s.days.map((d) => [d.date, d.classes, d.missing, d.noCurrency])).toEqual([
       // Its balance isn't set against its positions (its currency isn't
@@ -501,15 +521,68 @@ describe('allocation over time', () => {
       ['2026-10-04', { 'us-stocks': 1 }, [], 0],
     ]);
     expect(s.accounts).toEqual([
-      { account_id: 'a', shown: true, first: '2026-10-01', last: '2026-10-04', unlisted: false },
-      { account_id: 'gone', shown: false, first: '2026-10-01', last: '2026-10-03', unlisted: false },
+      { account_id: 'a', state: 'shown', first: '2026-10-01', last: '2026-10-04', unlisted: false },
+      { account_id: 'gone', state: 'gone', first: '2026-10-01', last: '2026-10-03', unlisted: false },
+    ]);
+  });
+
+  test('an account whose positions didn’t come that day counts its balance as unclassified, never by its split; one that never lists any takes its split', () => {
+    const set = settings({ accounts: [{ account_id: 'brk', split: { cash: 100 } }, { account_id: 'np', split: { bonds: 100 } }] });
+    const s = allocationSeries(
+      [
+        day('2026-10-01', { brk: [pos('VTI', 95_000)] }, { brk: 100_000, np: 20_000 }),
+        // Oct 2: brk's balance was measured, but no answer for its holdings was recorded.
+        day('2026-10-02', {}, { brk: 100_000, np: 20_000 }),
+      ],
+      input({
+        accounts: shown('brk', 'np'),
+        // brk's institution answers for it on other days; np's never has.
+        recorded: new Map([['brk', { first: '2026-10-01', last: '2026-10-01' }]]),
+        settings: set,
+      })
+    );
+    expect(s.days[0].classes).toEqual({ 'us-stocks': 95_000, bonds: 20_000, cash: 5_000 });
+    expect(s.days[1]).toMatchObject({ classes: { bonds: 20_000, unclassified: 100_000 }, unlisted: 100_000, missing: [] });
+    expect(s.days[1].classes.cash).toBeUndefined();
+  });
+
+  test('an account the dashboard can’t show is still expected, however long its institution has failed, and counted on the days it was recorded', () => {
+    const k401 = { account_id: 'k401', currency: 'USD', manual: false, shown: false };
+    const s = allocationSeries(
+      [
+        day('2026-08-01', { brk: [pos('BND', 100_000)], k401: [pos('VTI', 300_000)] }, { brk: 100_000, k401: 310_000 }),
+        day('2026-09-30', { brk: [pos('BND', 100_000)] }, { brk: 100_000 }),
+        day('2026-10-08', { brk: [pos('BND', 100_000)] }, { brk: 100_000 }),
+      ],
+      input({ accounts: [...shown('brk'), k401], recorded: new Map([['k401', { first: '2026-08-01', last: '2026-08-01' }]]) })
+    );
+    // Counted by today's rules while recorded, its balance beyond its positions too.
+    expect(s.days[0].classes).toEqual({ 'us-stocks': 300_000, bonds: 100_000, unclassified: 10_000 });
+    expect(s.days.map((d) => d.missing)).toEqual([[], ['k401'], ['k401']]);
+    expect(s.accounts.find((a) => a.account_id === 'k401')).toMatchObject({ state: 'unshown', first: '2026-08-01', last: '2026-08-01' });
+  });
+
+  test('an account the Plan doesn’t list but is still linked is expected after its last day; a gone one isn’t', () => {
+    const recorded = new Map([
+      ['pending', { first: '2026-10-01', last: '2026-10-01' }],
+      ['closed', { first: '2026-10-01', last: '2026-10-01' }],
+    ]);
+    const s = allocationSeries(
+      [day('2026-10-01', { a: [pos('VTI', 1)], pending: [pos('BND', 1)], closed: [pos('BND', 1)] }), day('2026-10-02', { a: [pos('VTI', 1)] })],
+      input({ accounts: shown('a'), recorded, linked: (id) => id === 'pending' })
+    );
+    expect(s.days[1].missing).toEqual(['pending']);
+    expect(s.accounts.map((a) => [a.account_id, a.state])).toEqual([
+      ['a', 'shown'],
+      ['closed', 'gone'],
+      ['pending', 'unshown'],
     ]);
   });
 
   test('classified by the same rule as today’s, with the person’s splits', () => {
     const s = allocationSeries(
       [day('2026-10-01', { a: [pos('VFIFX', 100, { security_type: 'mutual fund' }), pos('VMFXX', 10, { security_type: 'mutual fund' }), pos('X', 5, { security_type: null })] })],
-      input({ shown: shown('a'), settings: settings({ funds: [{ ticker: 'VFIFX', split: { 'us-stocks': 60, bonds: 40 } }] }) })
+      input({ accounts: shown('a'), settings: settings({ funds: [{ ticker: 'VFIFX', split: { 'us-stocks': 60, bonds: 40 } }] }) })
     );
     expect(s.days[0].classes).toEqual({ 'us-stocks': 60, bonds: 40, cash: 10, unclassified: 5 });
   });
@@ -517,7 +590,7 @@ describe('allocation over time', () => {
   test('another currency is left out and summed by currency; an unpriced position is counted', () => {
     const s = allocationSeries(
       [day('2026-10-01', { a: [pos('VTI', 100), pos('XEQT', 50, { currency: 'CAD' }), pos('BTC', 2, { currency: null, unofficial_currency: 'BTC', security_type: 'cryptocurrency' }), pos('NEW', null)] })],
-      input({ shown: shown('a') })
+      input({ accounts: shown('a') })
     );
     expect(s.days[0]).toMatchObject({ total: 100, classes: { 'us-stocks': 100 }, otherCurrencies: { CAD: 50, BTC: 2 }, unpriced: 1 });
   });
@@ -551,7 +624,7 @@ describe('allocation over time', () => {
     for (const h of positions) (recorded[h.account_id!] ??= []).push(pos(h.ticker!, h.value as number, { name: h.name, security_type: h.security_type, is_cash_equivalent: h.is_cash_equivalent, currency: h.currency ?? null }));
     const s = allocationSeries(
       [day('2026-10-09', recorded, Object.fromEntries(accounts.map((x) => [x.a.account_id, x.a.balance as number])))],
-      input({ shown: accounts.map((x) => ({ account_id: x.a.account_id, currency: x.a.currency, manual: x.manual })), settings: set })
+      input({ accounts: accounts.map((x) => ({ account_id: x.a.account_id, currency: x.a.currency, manual: x.manual, shown: true })), settings: set })
     );
     const d = s.days[0];
     for (const slot of SLOTS) expect(d.classes[slot] ?? 0).toBeCloseTo(today.classes[slot], 9);
@@ -562,9 +635,9 @@ describe('allocation over time', () => {
   });
 
   test('the currency most of today’s accounts are in', () => {
-    expect(commonCurrency([...shown('a', 'b'), { account_id: 'c', currency: 'CAD', manual: false }])).toBe('USD');
-    expect(commonCurrency([{ account_id: 'c', currency: 'CAD', manual: false }, { account_id: 'u', currency: 'USD', manual: false }])).toBe('CAD');
-    expect(commonCurrency([{ account_id: 'x', currency: null, manual: true }])).toBeNull();
+    expect(commonCurrency([...shown('a', 'b'), { account_id: 'c', currency: 'CAD', manual: false, shown: true }])).toBe('USD');
+    expect(commonCurrency([{ account_id: 'c', currency: 'CAD', manual: false, shown: true }, { account_id: 'u', currency: 'USD', manual: false, shown: true }])).toBe('CAD');
+    expect(commonCurrency([{ account_id: 'x', currency: null, manual: true, shown: true }])).toBeNull();
     expect(commonCurrency([])).toBeNull();
   });
 });

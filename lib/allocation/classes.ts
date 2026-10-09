@@ -207,35 +207,35 @@ const LEVERAGED_TICKERS: ReadonlySet<string> = new Set([
   'BITX', 'BITU', 'SBIT', 'ETHU', 'ETHT',
 ]);
 
-/** Words that say a security is a fund, so a word that is also a company's
- *  ("Ultra Clean Holdings", "Build-A-Bear Workshop") counts only in a
- *  fund's name. */
-const FUND_WORDS = /\b(etf|etn|etp|fund|shares|trust|proshares|direxion)\b/;
+/** Words that say a security is a fund: an ETF, ETN or ETP, a fund or a
+ *  trust, or a family that makes only funds (ProShares, Direxion, and the
+ *  "Daily Target" and T-REX lines). Every rule on a name below needs one, so
+ *  a company whose name holds the same words ("10x Genomics", "Ultra Clean
+ *  Holdings", "Build-A-Bear Workshop") is never taken for a fund. */
+const FUND_WORDS = /\b(etfs?|etns?|etps?|funds?|trust|proshares|direxion|daily target|t-rex)\b/;
 
 /**
  * Whether a security is a leveraged or inverse fund, by its ticker (a list of
- * the well-known ones) or by its name: a daily multiple ("2x", "3X", "-1x",
- * "1.5x"), an issuer or series that makes only such funds (ProShares,
- * Direxion Daily, MicroSectors, Defiance Daily Target, T-REX, Tradr, Leverage
- * Shares), "UltraPro", "UltraShort", "Inverse", "Leveraged" (not a fund of
- * leveraged loans), and, in a fund's name, "Ultra", "Short", "Bull" and
- * "Bear" (not a fund of short-dated bonds: "Short-Term Bond", "Ultra-Short
- * Income", "Short Treasury"). Such a fund's return is a multiple of its
- * index's, or its opposite, so it is never that index's class at face value:
- * an inverse fund counted as stocks would count a bet against stocks as
- * holding them. Errs toward unclassified: a plain fund with one of these
- * words in its name is left for the person to classify.
+ * the well-known ones) or, in a fund's name (FUND_WORDS), by: a daily
+ * multiple ("2x", "3X", "-1x", "1.5x", "2xLeveraged"); a series that makes
+ * only such funds ("Direxion Daily", "Daily Target", T-REX); "UltraPro",
+ * "UltraShort", "Inverse", "Leveraged" (not a fund of leveraged loans);
+ * "Bull", "Bear" and "Ultra"; and "Short" (not a fund of short-dated bonds:
+ * "Short-Term Bond", "Ultra-Short Income", "Short Treasury"). An issuer that
+ * also makes plain funds (ProShares' NOBL and BITO, say) is not a marker by
+ * itself. Such a fund's return is a multiple of its index's, or its
+ * opposite, so it is never that index's class at face value: an inverse fund
+ * counted as stocks would count a bet against stocks as holding them.
  */
 export function isLeveragedOrInverse(s: SecurityLike): boolean {
   const ticker = s.ticker ? tickerKey(s.ticker) : '';
   if (LEVERAGED_TICKERS.has(ticker)) return true;
   const name = ` ${(s.name ?? '').toLowerCase().replace(/\s+/g, ' ')} `;
-  if (/(^|[^a-z0-9.])[-+]?\d+(\.\d+)?x(?![a-z0-9])/.test(name)) return true;
-  if (/\b(proshares|direxion daily|microsectors|daily target|t-rex|tradr|leverage shares)\b/.test(name)) return true;
-  if (/\b(ultrapro|ultrashort|inverse)\b/.test(name)) return true;
-  if (/\bleveraged\b(?! loans?\b)/.test(name)) return true;
   if (!FUND_WORDS.test(name)) return false;
-  if (/\b(bull|bear)\b/.test(name)) return true;
+  // A multiple: "2x", "-1x", "1.5x", or one run into its word ("2xleveraged").
+  if (/(^|[^a-z0-9.])[-+]?\d+(\.\d+)?x(?:(?![a-z0-9])|(?=leveraged|long|short|inverse|bull|bear))/.test(name)) return true;
+  if (/\b(direxion daily|daily target|t-rex|ultrapro|ultrashort|inverse|bull|bear)\b/.test(name)) return true;
+  if (/\bleveraged\b(?! loans?\b)/.test(name)) return true;
   if (/\bultra\b(?![- ]short\b)/.test(name)) return true;
   // "Short" for a fund of short-dated bonds is followed by what it holds.
   return /\bshort\b(?![- ](term|duration|maturity|dated|treasury|bond|income|municipal|muni|government|govt|tax))/.test(name);

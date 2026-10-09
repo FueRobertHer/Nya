@@ -214,7 +214,9 @@ describe('the classifier', () => {
       'ProShares UltraPro Short QQQ',
       'ProShares Ultra Bloomberg Crude Oil',
       'ProShares Short S&P500',
-      'ProShares S&P 500 Dividend Aristocrats ETF',
+      'PROSHARES TR ULTRA QQQ',
+      'DIREXION SHS ETF TR DAILY SEMICONDUCTOR BULL 3X SHS',
+      'UBS ETRACS Monthly Pay 2xLeveraged US Small Cap ETN',
       'GraniteShares 2x Long NVDA Daily ETF',
       'Defiance Daily Target 2X Long MSTR ETF',
       'T-REX 2X Inverse Tesla Daily Target ETF',
@@ -247,11 +249,23 @@ describe('the classifier', () => {
       'Ultra Clean Holdings Inc',
       'Build-A-Bear Workshop Inc',
       'Bull Run Corporation',
+      '10x Genomics Inc - Class A',
+      '8x8 Inc',
+      'Bear State Financial Inc',
+      'Northern Trust Corp',
+      // Plain funds from issuers that also make leveraged ones.
+      'ProShares S&P 500 Dividend Aristocrats ETF',
+      'ProShares Bitcoin Strategy ETF',
+      'MicroSectors FANG+ ETN',
     ]) {
       expect([name, isLeveragedOrInverse({ ticker: 'XYZ', name })]).toEqual([name, false]);
     }
     expect(classify({ ticker: 'UCTT', name: 'Ultra Clean Holdings Inc', security_type: 'equity' })).toEqual({ split: { stocks: 100 }, by: 'type' });
     expect(classify({ ticker: 'BBW', name: 'Build-A-Bear Workshop Inc', security_type: 'equity' })).toEqual({ split: { stocks: 100 }, by: 'type' });
+    // A company with a multiple in its name is a stock, not a fund.
+    expect(classify({ ticker: 'TXG', name: '10x Genomics Inc - Class A', security_type: 'equity' })).toEqual({ split: { stocks: 100 }, by: 'type' });
+    // ProShares' plain funds are unclassified only as funds Nya's list doesn't have.
+    expect(classify({ ticker: 'NOBL', name: 'ProShares S&P 500 Dividend Aristocrats ETF', security_type: 'etf' })).toEqual({ split: null, why: 'fund' });
   });
 
   test('a security that is one class by itself is classified by Plaid’s type', () => {

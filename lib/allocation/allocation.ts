@@ -11,14 +11,16 @@
 // An account's balance can hold money no position explains: cash an
 // institution doesn't list as a position, often. That difference is
 // unclassified ("not in a position it lists"), never assumed to be cash. An
-// account with no position at all (a manual investment account, or an
-// institution whose holdings didn't come) is unclassified whole, and so is
-// one whose institution couldn't be reached: its balance may be recovered
-// (lib/last-known.ts), but what it holds isn't known. The person can give an
-// account a split for its money no position explains (a manual investment
-// account, a brokerage that doesn't list its cash), which then classifies
-// it; never an unreachable one's, whose holdings may have changed since it
-// last answered. Positions worth more
+// account that lists no position at all (a manual investment account, or one
+// at a connection that offers no positions) is unclassified whole. The
+// person can give an account a split for its money no position explains (a
+// manual investment account, a brokerage that doesn't list its cash), which
+// then classifies it. An account whose positions didn't come this time (the
+// holdings call failed for it: `positionsFailed`, from /api/net-worth, or a
+// day holdings history has no answer for it) is unclassified whole and never
+// split: its split is for money beyond its positions, and what it holds isn't
+// known. So is one whose institution couldn't be reached: its balance may be
+// recovered (lib/last-known.ts), but what it holds isn't known. Positions worth more
 // than the balance (a margin loan the institution nets out of the balance,
 // or prices taken at another time) are counted as listed, and named.
 //
@@ -66,7 +68,17 @@ export type AllocAccount = {
   balance: number | null;
   currency: string | null;
   hidden?: boolean;
+  /** Its positions didn't come this time: the holdings call failed for it
+   *  (/api/net-worth's `holdings_unanswered`), or, over time, no answer for it
+   *  was recorded that day. */
+  positionsFailed?: boolean;
 };
+
+/** An account its institution is known to have that the dashboard can't show
+ *  (lib/last-known.ts `unshown_accounts`): no balance could be recovered for
+ *  it. Not in today's figures (the institution's caveat says so), but
+ *  expected over time. */
+export type UnshownAccount = { account_id: string; name: string; type: string | null; currency: string | null };
 
 /** An institution as the dashboard last loaded it, with what went wrong
  *  (lib/fire/inputs.ts AssetInstitution). */
@@ -81,6 +93,8 @@ export type AllocInstitution = {
   staleAsOfAt?: string | null;
   missing: number;
   accounts: AllocAccount[];
+  /** The accounts it can't show (see UnshownAccount). */
+  unshown?: UnshownAccount[];
 };
 
 /** A position as /api/net-worth sends it (lib/networth.ts fetchHoldings). */
@@ -133,9 +147,11 @@ export type SecurityRow = {
  *  gave the account a split for it. */
 export type AccountGap = {
   /** "no-positions": none listed. "not-in-position": its balance is more than
-   *  its positions. "unreachable": its institution couldn't be reached, so its
-   *  balance may be recovered but what it holds isn't known. */
-  kind: 'no-positions' | 'not-in-position' | 'unreachable';
+   *  its positions. "no-answer": its positions didn't come this time, so what
+   *  it holds isn't known. "unreachable": its institution couldn't be
+   *  reached, so its balance may be recovered but what it holds isn't
+   *  known. */
+  kind: 'no-positions' | 'not-in-position' | 'no-answer' | 'unreachable';
   account_id: string;
   account: string;
   institution: string;
@@ -144,7 +160,8 @@ export type AccountGap = {
   asOf: string | null;
   asOfAt: string | null;
   /** The person's split for it, which classifies it; null leaves it
-   *  unclassified. Never set for "unreachable". */
+   *  unclassified. Never set for "unreachable" or "no-answer": the split is
+   *  for money beyond positions, and what these hold isn't known. */
   split: Split | null;
   /** An account the person tracks by hand. */
   manual: boolean;
@@ -274,7 +291,7 @@ export function allocate(input: {
       /** Money no position explains: classified by the account's split, if
        *  the person set one (and it adds up), else unclassified. */
       const gap = (kind: AccountGap['kind'], amount: number) => {
-        const own = kind === 'unreachable' ? undefined : accountSplits.get(a.account_id);
+        const own = kind === 'unreachable' || kind === 'no-answer' ? undefined : accountSplits.get(a.account_id);
         const split = own && isCompleteSplit(own) ? own : null;
         if (split) for (const [c, part] of spread(amount, split)) classes[c] += part;
         else classes.unclassified += amount;
@@ -346,10 +363,13 @@ export function allocate(input: {
       if (counted === 0) {
         // Nothing listed to classify it by: unclassified whole, unless the
         // positions are all in another currency (named there, with the
-        // balance that converts them unknown here).
+        // balance that converts them unknown here). Whether the person's
+        // split applies depends on why: an account that lists none (kept by
+        // hand, or at a connection with no positions to give) is what the
+        // split is for; one whose positions didn't come is not.
         if (foreign) continue;
         if (finite(a.balance)) {
-          gap('no-positions', a.balance);
+          gap(a.positionsFailed && inst.item_id !== null ? 'no-answer' : 'no-positions', a.balance);
           row.amount = a.balance;
           buckets[bucket.bucket] += a.balance;
         } else noBalance++;

@@ -13,7 +13,7 @@
 // first slot again. Identity never rests on color alone: every swatch has its
 // name beside it, and every figure is in a table.
 
-import { isMoney, shareLabel, type AccountGap, type PlanMix } from '@/lib/allocation/allocation';
+import { isMoney, shareLabel, type AccountGap, type AllocCaveat, type PlanMix } from '@/lib/allocation/allocation';
 import type { BucketSlot } from '@/lib/allocation/buckets';
 import { CLASS_WORDS, splitText, type Classified, type Slot } from '@/lib/allocation/classes';
 import { wholeMoney } from './plan-text';
@@ -82,16 +82,27 @@ export function gapText(g: AccountGap, fmtDay: (day: string, at: string | null) 
   const classified = g.split ? `, classified as you set it: ${splitText(g.split)}` : '';
   switch (g.kind) {
     case 'no-positions':
-      // A failed holdings call and an answer with none look the same here,
-      // and this is true of both.
       return g.manual
         ? `${g.account} is an account you track by hand, with no positions to go by${classified}`
-        : `No positions came from ${g.institution} for ${g.account}${classified}`;
+        : `${g.institution} lists no positions for ${g.account}${classified}`;
+    case 'no-answer':
+      // The holdings call failed for it this time: its split, for money
+      // beyond its positions, isn't applied to what it holds.
+      return `No positions came from ${g.institution} for ${g.account} this time, so what it holds isn't known`;
     case 'not-in-position':
       return `${where}: part of its balance isn't in any position it lists (often cash)${classified}`;
     case 'unreachable':
       return `${where} couldn't be reached${g.asOf ? `, so its balance is from ${fmtDay(g.asOf, g.asOfAt)} and` : ', so'} what it holds isn't known`;
   }
+}
+
+/** Why figures may be short, for one of the allocation's caveats: `what` is
+ *  the figure ("this", "the latest days"). The same words under today's
+ *  allocation and under the mix over time. */
+export function caveatText(c: AllocCaveat, what: string): string {
+  return c.kind === 'unreachable'
+    ? `${c.institution} couldn't be reached and isn't counted, so ${what} may be short.`
+    : `${c.count} account${c.count === 1 ? '' : 's'} at ${c.institution} couldn't be shown, so ${what} may be short.`;
 }
 
 /** To one decimal, halves away from zero, so a drift under its target reads

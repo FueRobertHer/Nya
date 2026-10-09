@@ -17,6 +17,7 @@ import { recordSnapshot, recordPartialAccounts } from './history';
 import { CAUSES, classifyFailure, isoTime, reconnectFixes, type ConnectionHealth, type Failure } from './connection-state';
 import { observeHoldings, recordHoldings, type HoldingsObservation, type HoldingsRecorded } from './holdings-history';
 import { linkedAs, type LinkKind } from './item-products';
+import type { UnshownAccount } from './last-known';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -116,8 +117,10 @@ export type InstitutionResult = {
   health?: ConnectionHealth;
   /** The accounts this institution is known to have that its card can't show
    *  (no balance could be recovered for them), by name and mask, so the health
-   *  view can say which accounts a failure affects. Set by fillFromLastKnown. */
-  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
+   *  view can say which accounts a failure affects, with their kind and
+   *  currency, so allocation over time still expects the investment ones.
+   *  Set by fillFromLastKnown. */
+  unshown_accounts?: UnshownAccount[];
 };
 
 /**
@@ -219,12 +222,37 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
   return result;
 }
 
+/** Plaid's answers to the holdings call that mean the connection has no
+ *  positions to give at all: the institution doesn't offer them, the person
+ *  didn't consent to them, or the deployment can't ask. Its investment
+ *  accounts list no positions, like a manual one, rather than failing. */
+const NO_HOLDINGS_CODES: ReadonlySet<string> = new Set(['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED', 'NO_INVESTMENT_ACCOUNTS', 'INVALID_PRODUCT']);
+
+/**
+ * Marks the investment accounts whose positions this fetch's holdings call
+ * did not answer for (`holdings_unanswered: true` on the account, sent to the
+ * client): the call failed this time, or its answer left the account out.
+ * The allocation (lib/allocation/allocation.ts) counts such an account's
+ * balance as unclassified whole, since what it holds isn't known, and never
+ * spreads it by the split the person set for money no position explains.
+ * Not set when the connection has no positions to give at all
+ * (NO_HOLDINGS_CODES): there the account lists none, as a manual one does.
+ */
+function markUnanswered(result: InstitutionResult, answered: ReadonlySet<string> | null): void {
+  for (const a of result.accounts) {
+    if (isInvestmentType(a.type) && !answered?.has(a.account_id)) a.holdings_unanswered = true;
+  }
+}
+
 /** Investment holdings. Only called for Items that actually hold securities (see
  *  the gate in fetchInstitution); still swallows its own errors, because an Item
  *  can have an investment account without the investments product enabled. */
 async function fetchHoldings(access_token: string, result: InstitutionResult): Promise<void> {
   try {
     const holdingsRes = await plaidClient.investmentsHoldingsGet({ access_token });
+    // The investment accounts the answer speaks for; any other's positions
+    // didn't come.
+    markUnanswered(result, new Set((holdingsRes.data.accounts || []).map((a) => a.account_id)));
     const securities: Record<string, any> = {};
     (holdingsRes.data.securities || []).forEach((s) => (securities[s.security_id] = s));
     result.holdings = (holdingsRes.data.holdings || []).map((h) => ({
@@ -255,8 +283,10 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
     // whole, leaves it unset, and nothing is recorded for this institution.
     const observed = observeHoldings(holdingsRes.data);
     if (observed) result.holdings_observed = observed;
-  } catch {
-    // not a brokerage account, or investments not supported -- fine, skip
+  } catch (err: any) {
+    // Investments not offered here: the accounts list no positions. Anything
+    // else is a call that failed this time: their positions didn't come.
+    if (!NO_HOLDINGS_CODES.has(err?.response?.data?.error_code)) markUnanswered(result, null);
   }
 }
 

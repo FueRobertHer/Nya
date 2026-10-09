@@ -66,6 +66,9 @@ type Account = {
   // what keeps the balance out of accountBalanceMap; the client only needs to
   // know the field exists so it survives the localStorage round trip.
   stale?: boolean;
+  // Investment accounts only: this load's holdings call failed for it, so its
+  // positions are unknown (lib/networth.ts markUnanswered).
+  holdings_unanswered?: boolean;
 };
 
 // Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
@@ -157,8 +160,9 @@ type Institution = {
   // is on and what to do (lib/connection-state.ts). Optional: a payload
   // cached before it existed has none, and nothing is said then.
   health?: Health;
-  // The accounts a broken card can't show, by name, for the health view.
-  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
+  // The accounts a broken card can't show, by name, for the health view, with
+  // their kind and currency (absent on a payload from before they were sent).
+  unshown_accounts?: { account_id: string; name: string; mask: string | null; type?: string; currency?: string | null }[];
 };
 
 // One manually-tracked account as the API returns it (see lib/manual.ts).
@@ -1427,7 +1431,11 @@ export default function Dashboard({
           balance: a.balance,
           currency: a.currency,
           hidden: a.hidden,
+          positionsFailed: a.holdings_unanswered === true,
         })),
+        // What it can't show (no balance recovered), for allocation over
+        // time, which still expects the investment ones.
+        unshown: (i.unshown_accounts ?? []).map((a) => ({ account_id: a.account_id, name: a.name, type: a.type ?? null, currency: a.currency ?? null })),
       })),
     [institutions]
   );

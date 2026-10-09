@@ -9,31 +9,44 @@
 //   - each account's balance that day (the balances measured beside the
 //     positions, lib/history.ts readMeasuredBalances) is set against its
 //     positions: money no position explains is unclassified, or split by the
-//     person's split for the account, and an account with no position (one
-//     tracked by hand, or one whose positions didn't come that day) is
+//     person's split for the account; an account that lists no positions (one
+//     tracked by hand, or at a connection that never gives any) is
 //     unclassified whole, or split;
+//   - an account whose positions didn't come that day (its institution
+//     answers for it on other days, but holdings history has no answer for it
+//     on this one, while its balance was measured) is unclassified whole and
+//     never split, as today's view counts an account whose holdings call
+//     failed: its split is for money beyond its positions, and what it holds
+//     that day isn't known;
 //   - one currency: an account in another is left out whole, positions and
 //     all, a position priced in another is left out, and a position with no
 //     currency takes its account's.
-// The accounts are the ones today's allocation shows, as the Plan tab lists
-// them with each one's currency, so the days and the view above them are of
-// the same accounts. An account recorded before that the dashboard no longer
-// shows (its connection removed, the account closed) is counted on the days
-// it was recorded from its positions alone: its currency isn't known, so its
-// balance can't be set against them, and a position of its with no currency
-// is left out and counted, never taken to be in the display currency.
+//
+// THE ACCOUNTS. The Plan tab lists the investment accounts the dashboard
+// knows: those today's allocation shows, and those whose institution it
+// can't show (no balance could be recovered: an outage past the recovery
+// limit, or an account missing from the last snapshot), each with its
+// currency. Both are counted the same way on the days they were recorded. Of
+// the other accounts holdings history recorded, the route says which are
+// still linked (remembered for a connection still stored, or missing from an
+// answer pending confirmation): those are counted from their positions alone,
+// since their currency isn't known here, a position of theirs with no
+// currency left out and counted, never taken to be in the display currency.
+// Every other recorded account is GONE: its connection was removed, or the
+// account closed.
 //
 // Only what was recorded. Plaid keeps no past holdings, so the series starts
 // on the first day Nya recorded any and is never drawn before it; a day
 // nothing was recorded on is not in it. A recorded day can still be short: an
 // account with neither positions nor a balance recorded that day (its
 // institution couldn't be reached) is MISSING from it, and named, so the
-// day's mix is never taken for the whole. An account today's allocation shows
-// is expected on every day from the first it was recorded on, and from the
-// first day the account directory knew it (lib/links.ts), so an institution
-// that stops answering, or was failing when recording began, leaves its days
-// marked rather than drawn complete. One it no longer shows is expected only
-// between the first and last days it was recorded: after that it was gone.
+// day's mix is never taken for the whole. An account still linked is
+// expected on every day from the first it was recorded on, and from the first
+// day the account directory knew it (lib/links.ts), so an institution that
+// stops answering, however long for, or was failing when recording began,
+// leaves its days marked rather than drawn complete. A gone one is expected
+// only between the first and last days it was recorded: after that it was
+// gone.
 //
 // Pure. The route (app/api/allocation-history) reads the days a month at a
 // time and adds them here oldest first, so a year of positions is never held
@@ -57,8 +70,7 @@ export type SeriesDayIn = {
   accounts: { account_id: string; positions: SeriesPosition[] }[];
 };
 
-/** An investment account today's allocation shows, as the Plan tab lists it
- *  for the series. */
+/** An investment account the Plan tab lists for the series. */
 export type SeriesAccount = {
   account_id: string;
   /** Its currency, as the dashboard has it: null when Plaid gives none, taken
@@ -66,6 +78,8 @@ export type SeriesAccount = {
   currency: string | null;
   /** Tracked by hand. */
   manual: boolean;
+  /** In today's allocation; false for one its institution can't show. */
+  shown: boolean;
 };
 
 export type SeriesDay = {
@@ -75,26 +89,31 @@ export type SeriesDay = {
   /** What they add up to. */
   total: number;
   /** Of the unclassified money, how much no position explains: accounts with
-   *  none, and balances beyond their positions. */
+   *  none, balances beyond their positions, and accounts whose positions
+   *  didn't come. */
   unlisted: number;
   /** Accounts expected that day and not recorded on it, by id, in id order. */
   missing: string[];
   /** Left out for being in another currency, by currency: accounts in another
    *  currency whole, and positions priced in another. */
   otherCurrencies: Record<string, number>;
-  /** Positions with no currency in accounts the dashboard no longer shows,
-   *  whose currency isn't known: left out. */
+  /** Positions with no currency in accounts the Plan doesn't list, whose
+   *  currency isn't known: left out. */
   noCurrency: number;
   /** Positions with no value. */
   unpriced: number;
 };
 
+/** Where an account stands now: in today's allocation ("shown"), still linked
+ *  but not shown ("unshown": its institution can't be shown, or it is missing
+ *  pending confirmation), or "gone" (its connection removed, or the account
+ *  closed). */
+export type AccountState = 'shown' | 'unshown' | 'gone';
+
 /** When an account was recorded, positions or a balance. */
 export type SeriesAccountSpan = {
   account_id: string;
-  /** In today's allocation. One that isn't is counted from its positions
-   *  alone, on the days it was recorded. */
-  shown: boolean;
+  state: AccountState;
   /** The first and last day it was recorded, from all that is known (the
    *  holdings index, and the balances of the days read); null if never. */
   first: string | null;
@@ -124,27 +143,31 @@ function holdingOf(account_id: string, p: SeriesPosition): AllocHolding {
 
 /** One account as an institution of its own: on a past day nothing about its
  *  institution's health is known but what was recorded. */
-function institutionOf(account_id: string, manual: boolean, balance: number | null, currency: string | null): AllocInstitution {
+function institutionOf(account_id: string, manual: boolean, balance: number | null, currency: string | null, positionsFailed: boolean): AllocInstitution {
   return {
     name: '',
     item_id: manual ? null : 'recorded',
     error: false,
     staleAsOf: null,
     missing: 0,
-    accounts: [{ account_id, name: account_id, type: 'investment', subtype: null, balance, currency }],
+    accounts: [{ account_id, name: account_id, type: 'investment', subtype: null, balance, currency, positionsFailed }],
   };
 }
 
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
 
 export type SeriesInput = {
-  shown: readonly SeriesAccount[];
+  /** The accounts the Plan tab lists: shown, and those it can't show. */
+  accounts: readonly SeriesAccount[];
   /** The first day each account is known to have existed (the account
    *  directory, links followed), by id; KNOWN_ALWAYS when it can't be read. */
   knownFrom: ReadonlyMap<string, string>;
   /** Every account holdings history recorded, first and last day, by the id
    *  it is known by now (the index), hidden ones left out. */
   recorded: ReadonlyMap<string, { first: string; last: string }>;
+  /** Of the recorded accounts the Plan doesn't list, whether one is still
+   *  linked (expected as a listed one is) rather than gone. */
+  linked: (account_id: string) => boolean;
   settings: AllocationSettings | null;
   currency: string | null;
 };
@@ -155,7 +178,7 @@ export type SeriesInput = {
  * now, then read `days` and `accounts()`.
  */
 export function seriesBuilder(input: SeriesInput) {
-  const shown = new Map(input.shown.map((a) => [a.account_id, a]));
+  const listed = new Map(input.accounts.map((a) => [a.account_id, a]));
   const days: SeriesDay[] = [];
   // First and last day each account was recorded, positions or a balance:
   // from the index, then from each day added.
@@ -169,11 +192,19 @@ export function seriesBuilder(input: SeriesInput) {
       if (date > s.last) s.last = date;
     }
   };
-  // The accounts no longer shown that were recorded, or expected, on a day
-  // added: the only ones worth naming.
-  const earlier = new Set<string>();
+  /** Expected on a day: known to have existed by then, or recorded by then
+   *  (the spans hold the days added before it, and the index's first day,
+   *  which may be before the range). */
+  const expectedFrom = (id: string, date: string) => {
+    const known = input.knownFrom.get(id);
+    const first = spans.get(id)?.first;
+    return (known !== undefined && known <= date) || (first !== undefined && first <= date);
+  };
+  // The accounts the Plan doesn't list that were recorded, or expected, on a
+  // day added: the only ones worth naming.
+  const unlisted = new Set<string>();
   // The accounts whose unlisted money was counted as unclassified.
-  const unlistedIn = new Set<string>();
+  const unlistedMoneyIn = new Set<string>();
   let previous: string | null = null;
 
   function add(day: SeriesDayIn, balances: ReadonlyMap<string, number>): void {
@@ -185,29 +216,28 @@ export function seriesBuilder(input: SeriesInput) {
     const missing: string[] = [];
     let noCurrency = 0;
 
-    // Today's accounts: positions and the balance, by today's rules.
-    for (const a of shown.values()) {
+    // The accounts the Plan lists: positions and the balance, by today's
+    // rules.
+    for (const a of listed.values()) {
       const positions = held.get(a.account_id);
       const balance = balances.get(a.account_id);
       if (positions === undefined && balance === undefined) {
-        // Expected once it is known to have existed, or once it was first
-        // recorded: the spans hold the days added before this one, and the
-        // index's first day, which may be before the range.
-        const known = input.knownFrom.get(a.account_id);
-        const first = spans.get(a.account_id)?.first;
-        if ((known !== undefined && known <= day.date) || (first !== undefined && first <= day.date)) missing.push(a.account_id);
+        if (expectedFrom(a.account_id, day.date)) missing.push(a.account_id);
         continue;
       }
-      institutions.push(institutionOf(a.account_id, a.manual, balance ?? null, a.currency));
+      // A balance with no answer for it, at an institution that answers for
+      // it on other days: its positions didn't come.
+      const positionsFailed = positions === undefined && !a.manual && input.recorded.has(a.account_id);
+      institutions.push(institutionOf(a.account_id, a.manual, balance ?? null, a.currency, positionsFailed));
       for (const p of positions ?? []) holdings.push(holdingOf(a.account_id, p));
     }
 
-    // Accounts no longer shown: their positions alone, each in its own
-    // currency, or left out with none.
+    // The others: their positions alone, each in its own currency, or left
+    // out with none.
     for (const [id, positions] of held) {
-      if (shown.has(id)) continue;
-      earlier.add(id);
-      institutions.push(institutionOf(id, false, null, null));
+      if (listed.has(id)) continue;
+      unlisted.add(id);
+      institutions.push(institutionOf(id, false, null, null, false));
       for (const p of positions) {
         const own = p.currency ?? p.unofficial_currency ?? null;
         if (own === null && finite(p.value)) {
@@ -218,17 +248,20 @@ export function seriesBuilder(input: SeriesInput) {
       }
     }
     for (const [id, s] of input.recorded) {
-      if (shown.has(id) || held.has(id)) continue;
-      if (s.first <= day.date && day.date <= s.last) {
+      if (listed.has(id) || held.has(id)) continue;
+      // Still linked: expected from its first day, with no end. Gone: only
+      // between its first and last days.
+      const expected = input.linked(id) ? expectedFrom(id, day.date) : s.first <= day.date && day.date <= s.last;
+      if (expected) {
         missing.push(id);
-        earlier.add(id);
+        unlisted.add(id);
       }
     }
 
     for (const inst of institutions) noteRecorded(inst.accounts[0].account_id, day.date);
     const alloc = allocate({ institutions, holdings, settings: input.settings, currency: input.currency });
-    const unlisted = alloc.gaps.filter((g) => g.split === null && isMoney(g.amount));
-    for (const g of unlisted) unlistedIn.add(g.account_id);
+    const unexplained = alloc.gaps.filter((g) => g.split === null && isMoney(g.amount));
+    for (const g of unexplained) unlistedMoneyIn.add(g.account_id);
     const classes: Partial<Record<Slot, number>> = {};
     for (const s of SLOTS) if (isMoney(alloc.classes[s])) classes[s] = alloc.classes[s];
     const otherCurrencies: Record<string, number> = {};
@@ -237,7 +270,7 @@ export function seriesBuilder(input: SeriesInput) {
       date: day.date,
       classes,
       total: alloc.total,
-      unlisted: unlisted.reduce((sum, g) => sum + g.amount, 0),
+      unlisted: unexplained.reduce((sum, g) => sum + g.amount, 0),
       missing: missing.sort(),
       otherCurrencies,
       noCurrency,
@@ -245,18 +278,24 @@ export function seriesBuilder(input: SeriesInput) {
     });
   }
 
+  const stateOf = (id: string): AccountState => {
+    const a = listed.get(id);
+    if (a) return a.shown ? 'shown' : 'unshown';
+    return input.linked(id) ? 'unshown' : 'gone';
+  };
+
   return {
     add,
     days,
-    /** Today's accounts, and the earlier ones the days added name, each with
-     *  when it was recorded, in id order. */
+    /** The listed accounts, and the others the days added name, each with
+     *  where it stands and when it was recorded, in id order. */
     accounts(): SeriesAccountSpan[] {
-      return [...new Set([...shown.keys(), ...earlier])].sort().map((account_id) => ({
+      return [...new Set([...listed.keys(), ...unlisted])].sort().map((account_id) => ({
         account_id,
-        shown: shown.has(account_id),
+        state: stateOf(account_id),
         first: spans.get(account_id)?.first ?? null,
         last: spans.get(account_id)?.last ?? null,
-        unlisted: unlistedIn.has(account_id),
+        unlisted: unlistedMoneyIn.has(account_id),
       }));
     },
   };
@@ -274,8 +313,8 @@ export function allocationSeries(
   return { days: b.days, accounts: b.accounts() };
 }
 
-/** The currency most of today's accounts are in, for a series asked for with
- *  none: ties go to the code first in order, and none known is null. */
+/** The currency most of the listed accounts are in, for a series asked for
+ *  with none: ties go to the code first in order, and none known is null. */
 export function commonCurrency(accounts: readonly SeriesAccount[]): string | null {
   const counts = new Map<string, number>();
   for (const a of accounts) if (a.currency) counts.set(a.currency, (counts.get(a.currency) ?? 0) + 1);

@@ -33,6 +33,7 @@ import { dayName, wholeMoney } from './plan-text';
 import {
   BUCKET_COLORS,
   CLASS_COLORS,
+  caveatText,
   classifiedText,
   gapText,
   mixBasisText,
@@ -46,6 +47,7 @@ import {
 } from './allocation-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { compactMoney } from '@/lib/format';
+import { isInvestmentType } from '@/lib/balance';
 import { instantDay } from '@/lib/local-date';
 import {
   allocate,
@@ -55,6 +57,7 @@ import {
   planMix,
   shares,
   shownAccounts,
+  type AllocCaveat,
   type AllocHolding,
   type AllocInstitution,
   type Allocation,
@@ -199,9 +202,16 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
     }
     return ok;
   };
-  // "IRA at Fidelity"; an account kept by hand by its own name alone.
+  // "IRA at Fidelity"; an account kept by hand by its own name alone. The
+  // accounts an institution can't show are named too.
   const accountNames = useMemo(
-    () => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, i.item_id === null ? a.name : `${a.name} at ${i.name}`] as const))),
+    () =>
+      new Map(
+        institutions.flatMap((i) => [
+          ...(i.unshown ?? []).map((a) => [a.account_id, `${a.name} at ${i.name}`] as const),
+          ...i.accounts.map((a) => [a.account_id, i.item_id === null ? a.name : `${a.name} at ${i.name}`] as const),
+        ])
+      ),
     [institutions]
   );
   // The accounts the mix over time is of: the ones the allocation above shows.
@@ -266,7 +276,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
         </>
       )}
 
-      <AllocationHistory currency={currency} version={saves} accounts={seriesAccounts} accountNames={accountNames} />
+      <AllocationHistory currency={currency} version={saves} accounts={seriesAccounts} accountNames={accountNames} caveats={alloc.caveats} />
 
       <Sheet
         open={!!sheet}
@@ -505,7 +515,9 @@ export function ClassView({
                 value={money(g.amount)}
                 note={`${gapText(g, fmtDay)}.`}
                 action={
-                  g.kind === 'unreachable' ? undefined : (
+                  // A split is for money beyond positions: never offered for an
+                  // account whose positions aren't known.
+                  g.kind === 'unreachable' || g.kind === 'no-answer' ? undefined : (
                     <ActionButton
                       onClick={() => open({ kind: 'account', account_id: g.account_id, label: g.account, current: accountSplits.get(g.account_id) ?? null })}
                       disabled={!editable}
@@ -595,10 +607,7 @@ export function AllocationNotes({ alloc, money }: { alloc: Allocation; money: (n
       `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${alloc.otherCurrencies.length === 1 ? 'another currency' : 'other currencies'}. Nya doesn't convert currencies.`
     );
   }
-  for (const c of alloc.caveats) {
-    if (c.kind === 'unreachable') lines.push(`${c.institution} couldn't be reached and isn't counted, so this may be short.`);
-    else lines.push(`${c.count} account${c.count === 1 ? '' : 's'} at ${c.institution} couldn't be shown, so this may be short.`);
-  }
+  for (const c of alloc.caveats) lines.push(caveatText(c, 'this'));
   for (const o of alloc.over) {
     lines.push(`${o.account}'s positions are worth ${money(o.amount)} more than its balance (a margin loan, or prices from another time): they are counted as listed.`);
   }
@@ -1004,9 +1013,29 @@ export type HistoryState =
 
 /** The accounts the mix over time is worked out for: those today's
  *  allocation shows (lib/allocation/allocation.ts shownAccounts), each with
- *  its currency and whether it is tracked by hand, as allocate reads them. */
+ *  its currency and whether it is tracked by hand, as allocate reads them;
+ *  and the investment accounts an institution is known to have but can't
+ *  show (no balance recovered: an outage past the recovery limit, say),
+ *  which are still the person's, so the days they are missing from are
+ *  marked, never drawn whole. */
 export function seriesAccountsOf(institutions: readonly AllocInstitution[]): SeriesAccount[] {
-  return institutions.flatMap((i) => shownAccounts(i).map((a) => ({ account_id: a.account_id, currency: a.currency ?? null, manual: i.item_id === null })));
+  const out: SeriesAccount[] = [];
+  const seen = new Set<string>();
+  for (const i of institutions) {
+    for (const a of shownAccounts(i)) {
+      if (seen.has(a.account_id)) continue;
+      seen.add(a.account_id);
+      out.push({ account_id: a.account_id, currency: a.currency ?? null, manual: i.item_id === null, shown: true });
+    }
+  }
+  for (const i of institutions) {
+    for (const a of i.unshown ?? []) {
+      if (seen.has(a.account_id) || !a.type || !isInvestmentType(a.type)) continue;
+      seen.add(a.account_id);
+      out.push({ account_id: a.account_id, currency: a.currency ?? null, manual: false, shown: false });
+    }
+  }
+  return out;
 }
 
 /** Whether an answer has the shape this reads. */
@@ -1024,11 +1053,14 @@ export function AllocationHistory({
   version,
   accounts,
   accountNames,
+  caveats = [],
 }: {
   currency: string | null;
   version: number;
   accounts: SeriesAccount[];
   accountNames: Map<string, string>;
+  /** Today's allocation's caveats: what the latest days may be short of. */
+  caveats?: AllocCaveat[];
 }) {
   const [state, setState] = useState<HistoryState>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -1055,7 +1087,7 @@ export function AllocationHistory({
   return (
     <>
       <div className="plan-subhead">Over time</div>
-      <HistoryBody state={state} accountNames={accountNames} onRetry={() => setAttempt((n) => n + 1)} />
+      <HistoryBody state={state} accountNames={accountNames} caveats={caveats} onRetry={() => setAttempt((n) => n + 1)} />
     </>
   );
 }
@@ -1083,7 +1115,17 @@ export function missingOn(day: SeriesDay, answer: Pick<HistoryAnswer, 'accounts'
   return names(day.missing.map((id) => `${nameOf(id)} (${missingWhy(spans.get(id), day.date)})`));
 }
 
-export function HistoryBody({ state, accountNames, onRetry }: { state: HistoryState; accountNames: Map<string, string>; onRetry: () => void }) {
+export function HistoryBody({
+  state,
+  accountNames,
+  caveats = [],
+  onRetry,
+}: {
+  state: HistoryState;
+  accountNames: Map<string, string>;
+  caveats?: AllocCaveat[];
+  onRetry: () => void;
+}) {
   if (state.kind === 'loading') return <p className="empty-note">Loading what has been recorded…</p>;
   if (state.kind === 'unreadable') {
     return (
@@ -1141,10 +1183,11 @@ export function HistoryBody({ state, accountNames, onRetry }: { state: HistorySt
       : `On ${marked.length} day${marked.length === 1 ? '' : 's'} (marked), the mix leaves out ${
           markedIds.length === 1 ? `${nameOf(markedIds[0])}, which wasn't recorded then` : `accounts that weren't recorded then: ${names(markedIds.map(nameOf))}`
         }.`;
-  // Accounts the dashboard no longer shows, counted from their positions on
-  // the days they were recorded: within their span, and not missing.
+  // Accounts whose connection is gone (removed, or the account closed),
+  // counted from their positions on the days they were recorded: within their
+  // span, and not missing.
   const recordedOn = (a: HistoryAccount, d: SeriesDay) => a.first !== null && a.last !== null && d.date >= a.first && d.date <= a.last && !d.missing.includes(a.account_id);
-  const gone = answer.accounts.filter((a) => !a.shown && days.some((d) => recordedOn(a, d)));
+  const gone = answer.accounts.filter((a) => a.state === 'gone' && days.some((d) => recordedOn(a, d)));
   const goneNote =
     gone.length === 0
       ? null
@@ -1179,6 +1222,12 @@ export function HistoryBody({ state, accountNames, onRetry }: { state: HistorySt
       )}
       {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: Nya doesn&apos;t convert currencies.</div>}
       {unreadableNote && <div className="as-of stale">{unreadableNote}</div>}
+      {/* What today's allocation may be short of, so are the latest days. */}
+      {caveats.map((c) => (
+        <div key={caveatText(c, '')} className="as-of stale">
+          {caveatText(c, 'the latest days')}
+        </div>
+      ))}
     </>
   );
 }

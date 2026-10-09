@@ -591,22 +591,24 @@ describe('the total it produces', () => {
 });
 
 // The connection health view names the accounts a failure affects (#51): the
-// ones recovery could not show, by name and mask, never by balance.
+// ones recovery could not show, by name and mask, never by balance. Their
+// kind and currency go with them, so allocation over time still expects the
+// investment ones (components/AllocationCard.tsx seriesAccountsOf).
 describe('the accounts a broken card cannot show', () => {
   test('are named when some, all, or none of the balances could be recovered', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit'), acct('save', 'Savings', 'depository', { mask: '7777' })]);
     const none = broken('item_a');
     await fillFromLastKnown(ctx, [none]);
     expect((none as any).unshown_accounts).toEqual([
-      { account_id: 'card', name: 'Venture', mask: '0189' },
-      { account_id: 'save', name: 'Savings', mask: '7777' },
+      { account_id: 'card', name: 'Venture', mask: '0189', type: 'credit', currency: 'USD' },
+      { account_id: 'save', name: 'Savings', mask: '7777', type: 'depository', currency: 'USD' },
     ]);
 
     await writeAccountSnapshot(RECENT, { card: 500 });
     const some = broken('item_a');
     await fillFromLastKnown(ctx, [some]);
     expect(some.accounts.map((a) => a.account_id)).toEqual(['card']);
-    expect((some as any).unshown_accounts).toEqual([{ account_id: 'save', name: 'Savings', mask: '7777' }]);
+    expect((some as any).unshown_accounts).toEqual([{ account_id: 'save', name: 'Savings', mask: '7777', type: 'depository', currency: 'USD' }]);
 
     await writeAccountSnapshot(RECENT, { card: 500, save: 20 });
     const all = broken('item_a');
@@ -620,7 +622,7 @@ describe('the accounts a broken card cannot show', () => {
     const inst = broken('item_a');
     await fillFromLastKnown(ctx, [inst]);
     expect(inst.stale_too_old).toBe(daysAgo(60));
-    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189' }]);
+    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189', type: 'credit', currency: 'USD' }]);
     expect(JSON.stringify(inst)).not.toContain('500');
   });
 
@@ -631,7 +633,7 @@ describe('the accounts a broken card cannot show', () => {
     const inst = broken('item_a');
     await fillFromLastKnown(ctx, [inst]);
     applyHidden([inst], new Map([['save', {}]]) as any);
-    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189' }]);
+    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189', type: 'credit', currency: 'USD' }]);
     const allHidden = broken('item_a');
     await fillFromLastKnown(ctx, [allHidden]);
     applyHidden([allHidden], new Map([['save', {}], ['card', {}]]) as any);

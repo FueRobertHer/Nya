@@ -156,6 +156,27 @@ export async function forgetVanishedIds(ctx: Ctx, item_id: string, ids: string[]
   if (changed) await writeRecord(ctx, item_id, record);
 }
 
+/**
+ * The ids missing from a healthy institution's answer that have not been
+ * missing long enough to accept as closed: still the person's accounts,
+ * pending confirmation, for allocation over time, which marks the days they
+ * are missing from rather than drawing them as whole. Read only. An entry
+ * whose time can't be read counts as pending, as checkOne treats it; a
+ * record that can't be read holds nothing.
+ */
+export async function pendingVanishedIds(ctx: Ctx, now: number = Date.now()): Promise<Set<string>> {
+  const records = await readAllRecords(ctx);
+  const cutoff = now - CONFIRM_AFTER_DAYS * 24 * 60 * 60 * 1000;
+  const out = new Set<string>();
+  for (const record of Object.values(records)) {
+    for (const [id, at] of Object.entries(record)) {
+      const since = Date.parse(at);
+      if (!Number.isFinite(since) || since > cutoff) out.add(id);
+    }
+  }
+  return out;
+}
+
 /** Drops an Item's record, on disconnect. */
 export async function forgetVanished(ctx: Ctx, item_id: string): Promise<void> {
   try {

@@ -79,11 +79,24 @@ describe('the allocation by class', () => {
     expect(t).toContain('VMFXX $8,000 Cash: a cash or money market position.');
   });
 
-  test('an account no positions came for says so, true whether its holdings call failed or answered none', () => {
-    const a = allocate({ institutions: [inst('Fidelity', [acct('k', { name: '401(k)', balance: 30_000 })], { item_id: 'i' })], holdings: [], settings: null, currency: 'USD' });
-    const t = text(renderToStaticMarkup(<ClassView alloc={a} money={money} editable settings={EMPTY_SETTINGS} open={noop} />));
-    expect(t).toContain('401(k) $30,000 No positions came from Fidelity for 401(k).');
-    expect(t).not.toContain('lists no position');
+  test('an account its institution lists no positions for can be classified; one whose positions didn’t come can’t, and its split isn’t applied', () => {
+    const split = { ...EMPTY_SETTINGS, accounts: [{ account_id: 'k', split: { cash: 100 } }] };
+    const listedNone = allocate({ institutions: [inst('Fidelity', [acct('k', { name: '401(k)', balance: 30_000 })], { item_id: 'i' })], holdings: [], settings: null, currency: 'USD' });
+    const t = text(renderToStaticMarkup(<ClassView alloc={listedNone} money={money} editable settings={EMPTY_SETTINGS} open={noop} />));
+    expect(t).toContain('401(k) $30,000 Fidelity lists no positions for 401(k).');
+    expect(t).toContain('Classify');
+    // The holdings call failed for it (/api/net-worth's holdings_unanswered).
+    const failed = allocate({
+      institutions: [inst('Fidelity', [acct('k', { name: '401(k)', balance: 30_000, positionsFailed: true })], { item_id: 'i' })],
+      holdings: [],
+      settings: split,
+      currency: 'USD',
+    });
+    expect(failed.classes).toMatchObject({ unclassified: 30_000, cash: 0 });
+    expect(failed.gaps).toEqual([expect.objectContaining({ kind: 'no-answer', amount: 30_000, split: null })]);
+    const html = renderToStaticMarkup(<ClassView alloc={failed} money={money} editable settings={split} open={noop} />);
+    expect(text(html)).toContain("401(k) $30,000 No positions came from Fidelity for 401(k) this time, so what it holds isn't known.");
+    expect(html).not.toContain('aria-label="Classify 401(k)"');
   });
 
   test('Classify is offered only for a security whose ticker or name a save takes', () => {
@@ -388,9 +401,9 @@ describe('the mix over time', () => {
     ['b', 'IRA at Fidelity'],
     ['k', '401(k) at Fidelity'],
   ]);
-  const span = (account_id: string, first: string | null, last: string | null, shown = true, label: string | null = null, unlisted = false): HistoryAccount => ({
+  const span = (account_id: string, first: string | null, last: string | null, state: HistoryAccount['state'] = 'shown', label: string | null = null, unlisted = false): HistoryAccount => ({
     account_id,
-    shown,
+    state,
     first,
     last,
     label,
@@ -456,7 +469,7 @@ describe('the mix over time', () => {
       day('2026-10-02', { 'us-stocks': 100 }, { missing: ['gone'] }),
       day('2026-10-03', { 'us-stocks': 100 }),
     ];
-    const t = text(body(days, { accounts: [span('gone', '2026-10-01', '2026-10-03', false, 'Rollover IRA at Schwab'), span('b', '2026-10-01', '2026-10-03', true, null, true)], unreadable_days: ['2026-09-30'] }));
+    const t = text(body(days, { accounts: [span('gone', '2026-10-01', '2026-10-03', 'gone', 'Rollover IRA at Schwab'), span('b', '2026-10-01', '2026-10-03', 'shown', null, true)], unreadable_days: ['2026-09-30'] }));
     expect(t).toContain(
       "Unclassified includes money no position explains, in IRA at Fidelity: an account kept by hand, a balance beyond its positions, or a day an account's positions didn't come."
     );
@@ -467,6 +480,26 @@ describe('the mix over time', () => {
     expect(t).toContain("Positions with no currency in an account that isn't linked now are left out: its currency isn't known.");
     expect(t).toContain("Money in CAD is left out: Nya doesn't convert currencies.");
     expect(t).toContain("1 recorded day couldn't be read, so it isn't drawn.");
+  });
+
+  test('an account its institution can’t show is named as not recorded since, never as not linked, and today’s caveats are repeated', () => {
+    const days = [day('2026-08-20', { 'us-stocks': 300, bonds: 100 }), day('2026-10-08', { bonds: 100 }, { missing: ['k'] })];
+    const html = renderToStaticMarkup(
+      <HistoryBody
+        state={ready(days, { accounts: [span('k', '2026-08-20', '2026-08-20', 'unshown', '401(k) at Fidelity')] })}
+        accountNames={new Map([['brk', 'Brokerage at Vanguard']])}
+        caveats={[
+          { kind: 'unreachable', institution: 'Fidelity' },
+          { kind: 'missing', institution: 'Questrade', count: 1 },
+        ]}
+        onRetry={noop}
+      />
+    );
+    const t = text(html);
+    expect(t).toContain("401(k) at Fidelity hasn't been recorded since Aug 20, 2026, so the mix on the latest days leaves it out.");
+    expect(t).not.toContain("isn't linked now");
+    expect(t).toContain("Fidelity couldn't be reached and isn't counted, so the latest days may be short.");
+    expect(t).toContain("1 account at Questrade couldn't be shown, so the latest days may be short.");
   });
 
   test('nothing recorded, unreadable, or not loaded: each says so, never an empty chart', () => {
@@ -506,13 +539,33 @@ describe('the mix over time', () => {
 
   test('asks for the accounts the allocation above shows, with each one’s currency and whether it is kept by hand', () => {
     expect(seriesAccountsOf(institutions)).toEqual([
-      { account_id: 'brk', currency: 'USD', manual: false },
-      { account_id: 'k', currency: 'USD', manual: false },
-      { account_id: 'manual_1', currency: 'USD', manual: true },
+      { account_id: 'brk', currency: 'USD', manual: false, shown: true },
+      { account_id: 'k', currency: 'USD', manual: false, shown: true },
+      { account_id: 'manual_1', currency: 'USD', manual: true, shown: true },
     ]);
     // Hidden accounts and accounts that aren't investments aren't in it.
     const more = [inst('Bank', [acct('chk', { type: 'depository' }), acct('ira', { hidden: true })], { item_id: 'x' })];
     expect(seriesAccountsOf(more)).toEqual([]);
+  });
+
+  test('and the investment accounts an institution can’t show, which are still expected', () => {
+    // Fidelity has failed past the recovery limit: it shows no account, and
+    // names the ones it has (lib/last-known.ts unshown_accounts).
+    const failing = inst('Fidelity', [], {
+      item_id: 'if',
+      error: true,
+      unshown: [
+        { account_id: 'k401', name: '401(k)', type: 'investment', currency: 'USD' },
+        { account_id: 'cash', name: 'Cash Management', type: 'depository', currency: 'USD' },
+        { account_id: 'old', name: 'From a payload with no kind', type: null, currency: null },
+      ],
+    });
+    expect(seriesAccountsOf([...institutions, failing])).toEqual([
+      { account_id: 'brk', currency: 'USD', manual: false, shown: true },
+      { account_id: 'k', currency: 'USD', manual: false, shown: true },
+      { account_id: 'manual_1', currency: 'USD', manual: true, shown: true },
+      { account_id: 'k401', currency: 'USD', manual: false, shown: false },
+    ]);
   });
 });
 

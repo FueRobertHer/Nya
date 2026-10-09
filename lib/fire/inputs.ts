@@ -318,6 +318,9 @@ export type AssetAccount = {
   balance: number | null;
   currency: string | null;
   hidden?: boolean;
+  /** The holdings call failed for it this time (/api/net-worth's
+   *  `holdings_unanswered`): read by the allocation, not here. */
+  positionsFailed?: boolean;
 };
 
 /** An institution as the dashboard last loaded it, with what went wrong. */
@@ -335,6 +338,9 @@ export type AssetInstitution = {
    *  or stopped reporting. */
   missing: number;
   accounts: AssetAccount[];
+  /** Accounts it is known to have that it can't show (lib/last-known.ts
+   *  `unshown_accounts`): read by allocation over time, not here. */
+  unshown?: { account_id: string; name: string; type: string | null; currency: string | null }[];
 };
 
 export type CountedAccount = AssetAccount & { institution: string; item_id: string | null; balance: number };

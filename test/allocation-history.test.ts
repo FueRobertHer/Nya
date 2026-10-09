@@ -23,6 +23,8 @@ const { allocationSettingsStore } = await import('@/lib/allocation-settings');
 const { setAccountHidden } = await import('@/lib/hidden');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { encrypt } = await import('@/lib/crypto');
+const { saveItem } = await import('@/lib/storage');
+const { rememberAccounts } = await import('@/lib/last-known');
 const route = await import('@/app/api/allocation-history/route');
 
 beforeEach(async () => {
@@ -93,8 +95,9 @@ async function known(account_id: string, first_seen: string, name: string, insti
   await fake.hset(ctxKey('accounts:directory'), { [account_id]: await encrypt(JSON.stringify(entry)) });
 }
 
-/** An investment account as the Plan tab lists it. */
-const acct = (account_id: string, currency: string | null = 'USD', manual = false) => ({ account_id, currency, manual });
+/** An investment account as the Plan tab lists it: one today's allocation
+ *  shows, unless `shown` is false (its institution can't show it). */
+const acct = (account_id: string, currency: string | null = 'USD', manual = false, shown = true) => ({ account_id, currency, manual, shown });
 
 const ask = async (body: unknown) => {
   const res = await route.POST(new Request('http://x/api/allocation-history', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }));
@@ -148,8 +151,8 @@ describe('allocation over time', () => {
       ['2026-10-03', []],
     ]);
     expect(body.accounts).toEqual([
-      { account_id: 'a', shown: true, first: '2026-09-30', last: '2026-10-03', unlisted: false, label: null },
-      { account_id: 'b', shown: true, first: '2026-09-30', last: '2026-10-03', unlisted: false, label: null },
+      { account_id: 'a', state: 'shown', first: '2026-09-30', last: '2026-10-03', unlisted: false, label: null },
+      { account_id: 'b', state: 'shown', first: '2026-09-30', last: '2026-10-03', unlisted: false, label: null },
     ]);
   });
 
@@ -220,7 +223,7 @@ describe('an institution that stops answering', () => {
       ]);
       // The last day, which the readout opens on, is never complete.
       expect(body.days.at(-1).missing).toEqual(['k401']);
-      expect(body.accounts.find((a: any) => a.account_id === 'k401')).toEqual({ account_id: 'k401', shown: true, first: '2026-10-01', last: '2026-10-02', unlisted: false, label: null });
+      expect(body.accounts.find((a: any) => a.account_id === 'k401')).toEqual({ account_id: 'k401', state: 'shown', first: '2026-10-01', last: '2026-10-02', unlisted: false, label: null });
     });
   }
 
@@ -274,11 +277,82 @@ describe('an institution that stops answering', () => {
       // Gone after its last day: not missing.
       ['2026-10-06', { bonds: 100_000 }, [], 0],
     ]);
-    expect(body.accounts.find((a: any) => a.account_id === 'old')).toEqual({ account_id: 'old', shown: false, first: '2026-10-01', last: '2026-10-03', unlisted: false, label: 'Rollover IRA at Schwab' });
+    expect(body.accounts.find((a: any) => a.account_id === 'old')).toEqual({ account_id: 'old', state: 'gone', first: '2026-10-01', last: '2026-10-03', unlisted: false, label: 'Rollover IRA at Schwab' });
+  });
+});
+
+describe('an account the dashboard can’t show', () => {
+  // The verification's reproduction (case B): a Fidelity 401(k) recorded on
+  // Aug 20 whose institution has failed since, past the 35-day recovery
+  // limit, so the dashboard shows none of Fidelity's accounts and names k401
+  // only in unshown_accounts.
+  const LATE = ['2026-09-30', '2026-10-08'];
+  async function outage() {
+    await known('k401', '2026-01-01', '401(k)', 'Fidelity');
+    await recordAt('2026-08-20T13:00:00Z', [answered('Vanguard', 'iv', ['brk'], [hold('brk', 'bnd', 100_000)]), answered('Fidelity', 'if', ['k401'], [hold('k401', 'vti', 300_000)])]);
+    await measured('2026-08-20', { brk: 100_000, k401: 300_000 });
+    for (const d of LATE) {
+      await recordAt(`${d}T13:00:00Z`, [answered('Vanguard', 'iv', ['brk'], [hold('brk', 'bnd', 100_000)]), failedInst('Fidelity', 'if')]);
+      await measured(d, { brk: 100_000 }, 'partial');
+    }
+  }
+  const lateDays = (body: any) => body.days.filter((d: any) => LATE.includes(d.date)).map((d: any) => [d.date, d.classes, d.missing]);
+  const STILL_MISSING = [
+    ['2026-09-30', { bonds: 100_000 }, ['k401']],
+    ['2026-10-08', { bonds: 100_000 }, ['k401']],
+  ];
+
+  test('listed by the Plan as one it can’t show: expected however long the outage, and never called gone', async () => {
+    await outage();
+    const { body } = await ask({ from: '2026-08-01', to: '2026-10-09', currency: 'USD', accounts: [acct('brk'), acct('k401', 'USD', false, false)] });
+    expect(lateDays(body)).toEqual(STILL_MISSING);
+    expect(body.days[0].classes).toEqual({ 'us-stocks': 300_000, bonds: 100_000 });
+    expect(body.accounts.find((a: any) => a.account_id === 'k401')).toEqual({ account_id: 'k401', state: 'unshown', first: '2026-08-20', last: '2026-08-20', unlisted: false, label: '401(k) at Fidelity' });
+  });
+
+  test('not listed, but remembered for a connection still stored: the same, from what the server knows', async () => {
+    await outage();
+    await saveItem(ctx, { item_id: 'if', institution_name: 'Fidelity', encrypted_access_token: await encrypt('tok') });
+    await rememberAccounts(ctx, [{ item_id: 'if', error: null, accounts: [{ account_id: 'k401', name: '401(k)', type: 'investment', subtype: '401k', currency: 'USD' }] }]);
+    const { body } = await ask({ from: '2026-08-01', to: '2026-10-09', currency: 'USD', accounts: [acct('brk')] });
+    expect(lateDays(body)).toEqual(STILL_MISSING);
+    expect(body.accounts.find((a: any) => a.account_id === 'k401')).toMatchObject({ state: 'unshown' });
+  });
+
+  test('missing from an answer pending confirmation: still expected', async () => {
+    await outage();
+    await fake.hset(ctxKey('accounts:vanished'), { if: await encrypt(JSON.stringify({ k401: new Date().toISOString() })) });
+    const { body } = await ask({ from: '2026-08-01', to: '2026-10-09', currency: 'USD', accounts: [acct('brk')] });
+    expect(lateDays(body)).toEqual(STILL_MISSING);
+    expect(body.accounts.find((a: any) => a.account_id === 'k401')).toMatchObject({ state: 'unshown' });
+  });
+
+  test('its connection removed, or the account closed: gone, expected only while it was recorded', async () => {
+    await outage();
+    const { body } = await ask({ from: '2026-08-01', to: '2026-10-09', currency: 'USD', accounts: [acct('brk')] });
+    expect(lateDays(body)).toEqual([
+      ['2026-09-30', { bonds: 100_000 }, []],
+      ['2026-10-08', { bonds: 100_000 }, []],
+    ]);
+    expect(body.accounts.find((a: any) => a.account_id === 'k401')).toMatchObject({ state: 'gone' });
   });
 });
 
 describe('each day counted by today’s rules', () => {
+  test('on a day an account’s positions didn’t come, its balance is unclassified, never spread by its split (the verification’s case A)', async () => {
+    // A brokerage's split is for its $5,000 of unlisted cash.
+    await allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [], accounts: [{ account_id: 'brk', split: { cash: 100 } }], target: null });
+    await recordAt('2026-10-01T13:00:00Z', [answered('Vanguard', 'iv', ['brk', 'ira'], [hold('brk', 'vti', 95_000), hold('ira', 'bnd', 50_000)])]);
+    await measured('2026-10-01', { brk: 100_000, ira: 50_000 });
+    // Oct 2: no answer for brk's holdings was recorded; its balance was measured.
+    await recordAt('2026-10-02T13:00:00Z', [answered('Other', 'io', ['ira'], [hold('ira', 'bnd', 50_000)])]);
+    await measured('2026-10-02', { brk: 100_000, ira: 50_000 });
+    const { body } = await ask({ from: '2026-10-01', to: '2026-10-02', currency: 'USD', accounts: [acct('brk'), acct('ira')] });
+    expect(body.days[0].classes).toEqual({ 'us-stocks': 95_000, bonds: 50_000, cash: 5_000 });
+    expect(body.days[1]).toMatchObject({ classes: { bonds: 50_000, unclassified: 100_000 }, unlisted: 100_000, missing: [] });
+  });
+
+
   test('a manual investment account counts its balance, unclassified, or by the split the person set for it', async () => {
     await record('2026-10-01T13:00:00Z', ['brk'], [hold('brk', 'vti', 100_000)]);
     await measured('2026-10-01', { brk: 100_000, manual_401k: 200_000 });
@@ -341,7 +415,7 @@ describe('each day counted by today’s rules', () => {
     await fake.hset(ctxKey('account-links'), { acct_old: await encrypt(JSON.stringify({ to: 'acct_new', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
     const { body } = await ask({ from: '2026-10-01', to: '2026-10-01', currency: 'USD', accounts: [acct('acct_old')] });
     expect(body.days[0]).toMatchObject({ classes: { 'us-stocks': 1_000 }, missing: [] });
-    expect(body.accounts.map((a: any) => [a.account_id, a.shown])).toEqual([['acct_new', true]]);
+    expect(body.accounts.map((a: any) => [a.account_id, a.state])).toEqual([['acct_new', 'shown']]);
   });
 });
 
@@ -430,11 +504,12 @@ describe('reading', () => {
       { ...ok, currency: 'A' },
       {},
       { accounts: 'a' },
-      { accounts: [{ account_id: 'a', currency: 'USD' }] },
-      { accounts: [{ account_id: 'a', currency: 'USD', manual: false, name: 'IRA' }] },
-      { accounts: [{ account_id: 'has space', currency: 'USD', manual: false }] },
-      { accounts: [{ account_id: 'a', currency: 'usd', manual: false }] },
-      { accounts: [{ account_id: 'a', currency: 'USD', manual: 'no' }] },
+      { accounts: [{ account_id: 'a', currency: 'USD', manual: false }] },
+      { accounts: [{ account_id: 'a', currency: 'USD', manual: false, shown: true, name: 'IRA' }] },
+      { accounts: [{ account_id: 'has space', currency: 'USD', manual: false, shown: true }] },
+      { accounts: [{ account_id: 'a', currency: 'usd', manual: false, shown: true }] },
+      { accounts: [{ account_id: 'a', currency: 'USD', manual: 'no', shown: true }] },
+      { accounts: [{ account_id: 'a', currency: 'USD', manual: false, shown: 'yes' }] },
       { accounts: [acct('a'), acct('a')] },
       { accounts: Array.from({ length: 501 }, (_, i) => acct(`a${i}`)) },
     ]) {
