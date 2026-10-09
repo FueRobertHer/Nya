@@ -350,9 +350,11 @@ export default function ManualTxnSheet({
         </label>
       </div>
 
-      {!edit && after !== null && account && balance !== null && (
+      {/* Not offered at all when it would take an amount owed below zero:
+          the note below says why. */}
+      {!edit && after !== null && account && balance !== null && !negativeOwed && (
         <label className="quick-add-check">
-          <input type="checkbox" checked={updating} disabled={busy || negativeOwed} onChange={(e) => set({ updateBalance: e.target.checked })} />
+          <input type="checkbox" checked={updating} disabled={busy} onChange={(e) => set({ updateBalance: e.target.checked })} />
           <span>
             Also update {account.name}&apos;s {owed ? 'amount owed' : 'balance'}, from {money(balance)} to {money(after)}
           </span>

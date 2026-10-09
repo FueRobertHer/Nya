@@ -2625,13 +2625,9 @@ button.plan-edit:disabled {
   color: var(--accent);
 }
 
-/* The amount comes first and largest: it is what is typed every time. The
-   currency beside it is as tall. */
-.quick-add-pair input {
-  font-size: 22px;
-}
-
+/* The amount comes first and largest: it is what is typed every time. */
 .quick-add-amount input {
+  font-size: 22px;
   font-weight: 600;
 }
 
@@ -2644,6 +2640,11 @@ button.plan-edit:disabled {
 .quick-add-pair .field {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* Each box fills its field, so the currency's is as tall as the amount's. */
+.quick-add-pair .field input {
+  flex: 1 1 auto;
 }
 
 .quick-add-pair .quick-add-currency {

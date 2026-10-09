@@ -18,7 +18,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Format | File | What it holds |
 | --- | --- | --- |
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
-| Transactions (CSV) | `nya-transactions-<date>.csv` | Every stored transaction, one per row. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction stored from your banks, one per row. Those you entered by hand are in the JSON file. |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
@@ -73,7 +73,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `hidden_accounts` | Accounts you hid. |
 | `net_worth_history` | Your net worth by day. |
 | `account_history` | Each account's balance by day. |
-| `transactions` | Every stored transaction. |
+| `transactions` | Every transaction stored from your banks. Those you entered by hand are in `manual-transactions`. |
 | `category_overrides` | Every category you set on a transaction. |
 | `merchant_renames` | Every merchant you renamed. |
 | `investment_transactions` | Every stored investment transaction. |
@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today one: `fire-plan`. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today three: `fire-plan`, `manual-transactions` and `transaction-annotations`. |
 
 ### `institutions[]`
 
@@ -144,7 +144,7 @@ Each account's own balance by day, one point per day, by the same rules the app'
 
 ### `transactions[]`
 
-Every stored transaction, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it:
+Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions you entered by hand are in [`manual-transactions`](#manual-transactions)):
 
 | Field | Meaning |
 | --- | --- |
@@ -249,6 +249,30 @@ The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never sa
 | `expenses[]` | `id`, `label`, `amount`, `atAge`. |
 | `bankFunded[]` | The account ids of workplace plans you pay into from a bank account ("Paid through payroll" turned off). |
 
+#### `manual-transactions`
+
+Transactions you entered by hand on manual accounts (`lib/manual-txns.ts`), all of them, not just the year the Activity tab shows. One entry per manual account: `id` is the account's id (as in `manual_accounts`), and `value` holds `version` (the shape's version: 1) and `rows`, the account's transactions in the order they were added:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The transaction's id: `manual-txn:` and a random id. It is its `transaction_id` in the app, and the key of anything said about it in `transaction-annotations`. |
+| `account_id` | The manual account. |
+| `date` | The day it happened, as you entered it. |
+| `amount` | Plaid's sign: positive is money out. |
+| `currency` | Its currency's ISO 4217 code. |
+| `name` | Who was paid, or who paid you. |
+| `category` | Its category, or `null`. |
+| `note` | Your note, or `null`. |
+| `source` | Where it came from: `manual` for one entered in the app. |
+| `source_id` | The source's own id for it, from an import; `null` for one entered by hand. |
+| `created_at`, `updated_at` | When it was entered, and last changed. |
+
+Adding one doesn't change the account's balance, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
+
+#### `transaction-annotations`
+
+What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports; absent otherwise) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction no longer exists (the bank removed it) is kept until you change it.
+
 ## The CSV files
 
 Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, starting with a byte order mark (the bytes `EF BB BF`), which is how Excel on Windows knows the file is UTF-8 and shows accented and non-Latin merchant names as they are. Spreadsheets and most CSV readers skip the mark; in Python, open the file with `encoding="utf-8-sig"`.
@@ -257,7 +281,7 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 ### `nya-transactions-<date>.csv`
 
-One row per stored transaction, newest first, with the [transaction fields](#transactions) flattened. Columns, in order:
+One row per transaction stored from your banks, newest first, with the [transaction fields](#transactions) flattened (transactions you entered by hand are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
 
 `date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`.
 

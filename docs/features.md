@@ -9,6 +9,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Hiding accounts](#hiding-accounts)
 - [When an institution can't be reached](#when-an-institution-cant-be-reached)
 - [Manual accounts](#manual-accounts)
+- [Excluding a transaction](#excluding-a-transaction)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 - [Planning](#planning)
 
@@ -132,7 +133,17 @@ Plaid's coverage is wide but uneven: small credit unions, HSAs, 401k recordkeepe
 
 Click **Add a manual account** (on the Accounts tab, or on the empty state before anything is connected), give it a name, an institution, a type, and a balance. Accounts sharing an institution name group into one card. From then on it behaves like a linked account: it counts toward net worth, appears in the Accounts tab, is selectable as a savings-goal source, and gets its own balance history chart.
 
-The balance holds flat until you change it, and each update is recorded on the timeline, so the chart shows a step at each update rather than a pretend-smooth curve. Credit and loan balances are entered as the **amount owed** (a positive number) and subtract from net worth. Deleting a manual account is not reversible: re-adding it creates a new account with a fresh id and an empty history.
+The balance holds flat until you change it, and each update is recorded on the timeline, so the chart shows a step at each update rather than a pretend-smooth curve. Credit and loan balances are entered as the **amount owed** (a positive number) and subtract from net worth. Deleting a manual account is not reversible: re-adding it creates a new account with a fresh id and an empty history, and the transactions entered on it are deleted with it.
+
+### Transactions on a manual account
+
+Spending in cash, or at a bank Plaid can't reach, can be entered by hand. Tap **Add a transaction** at the top of the Activity tab, or **Add transaction** on a manual account's row on the Accounts tab. The form is built for a phone: the amount first, on the decimal keypad (a comma works as the decimal point), **Spent** or **Received** instead of a minus sign, then who was paid, the date (today), the account (the one whose row you started from, or the one you used last on this device), a category from the ones you already have (filled in from the last time you entered the same payee) and an optional note. Any currency works; it starts at US dollars.
+
+A transaction entered by hand shows in the Activity tab with its account's name and institution and "entered by hand", and counts everywhere a bank's transaction does: the month's totals and chart, budgets, insights, recurring-bill detection and the Plan's spending. Tap it to change its category, to **Edit or delete** it, or to exclude it. Its category and payee are its own, so changing the category edits the transaction itself; vendor renames, which relabel a bank's merchant, don't apply to it. Transactions on a hidden manual account are left out, like any hidden account's.
+
+**The balance stays what you typed.** A manual account's balance feeds net worth and its history, and transactions you enter beside it need not add up to it, so adding one doesn't move it. The form says so, and offers **Also update the balance**, showing the balance before and after. Ticking it records the new balance exactly as the account's **Update** form would (and the estimated history is rebuilt around it); if the balance has changed since the form opened, nothing is saved and the form says what it is now. It is offered only for a transaction in US dollars, the currency manual balances are kept in, and never when it would take an amount owed below zero. Editing or deleting a transaction never moves the balance. The estimated history behind the chart keeps holding manual accounts flat: it never walks a typed balance back through transactions typed beside it.
+
+Each account's transactions are stored together, encrypted and compressed, on the storage seam (`lib/manual-txns.ts`); one account holds some 80,000 of them, and a save that would not fit is refused whole rather than trimmed. Each carries where it came from and that source's own id, so the planned file import (#43) can tell a transaction it already has from a new one. They are in the [download of your data](data-export.md#manual-transactions).
 
 ### Updating balances from a script
 
@@ -150,6 +161,12 @@ This is the escape hatch for filling Plaid's gaps however you like. Some options
 - **OFX Direct Connect**, the pre-Plaid standard, is still enabled at many credit unions (often needing a separate enrollment and PIN) and is scriptable with [`ofxtools`](https://github.com/csingley/ofxtools). Check the [GnuCash bank list](https://wiki.gnucash.org/wiki/OFX_Direct_Connect_Bank_Settings) for a given institution. The industry is migrating away from it, so treat it as a bonus where it exists.
 - **Other aggregators** (Teller, MX, Akoya, Finicity) generally have *narrower* long-tail coverage than Plaid, so they rarely help with the exact institutions Plaid is missing.
 - **Scraping your own account** is possible but a maintenance treadmill: MFA and device binding break it, bank logins from datacenter IPs get flagged (so it can't run on Vercel), most bank terms prohibit automated access, and the failure mode is a locked account rather than a stale number. If you do it, run it on your own machine and push the result here rather than storing bank credentials in this app.
+
+## Excluding a transaction
+
+A one-off can swamp a month: a car bought outright, a deposit paid and returned, a work trip that was paid back. Tap the transaction on the Activity tab, then **Exclude from budgets and reports**. It stays in the list, marked "Excluded from budgets and reports", and is left out of every total that already leaves transfers and loan payments out: the month's money in, out and net, its chart, top categories, places and channels, the budgets, the Home insights, recurring-bill detection and the Plan's spending, whose label says how many were left out. **Include in budgets and reports** puts it back exactly. It works on any transaction, a bank's or one entered by hand. A pending transaction can be excluded once it posts: the bank gives the posted one a new id, and the exclusion is kept by id.
+
+Excluding changes nothing stored about the transaction itself, and never a balance, net worth or the history behind the chart: the money did move. Which transactions count in a total is decided in one place (`lib/spending.ts`), and the exclusion is kept in one record per transaction (`lib/txn-annotations.ts`), where notes, tags and a reviewed state can join it later, and where rules will be able to set it.
 
 ## Keeping Plaid costs down
 
@@ -183,7 +200,7 @@ Each input says where it came from, over what dates, and what may be missing fro
   - **Cash withdrawals** (at an ATM or a teller) and **bank charges**.
   - **Refunds**: money back in a spending category (food, shopping, travel, bills and the like) is taken off spending rather than counted as income, which would overstate both. Money in under income, a transfer or "other" is never a refund. The total and the largest refund are shown beside the figure, so an odd large one (a deposit returned, an insurance payout) can be seen and typed over.
 
-  Paying a card off never counts, whatever the row was recategorized as: it settles purchases already counted on the card. Anything else filed under loan payments (no detail, Plaid's "other payment", which can be a store card, or a row recategorized there whose detail says something else, a card payoff among them) can't be told from a card payment, so it is left out and its total is named beside the figure, never guessed. A pending charge whose posted version has arrived was already dropped. With less than a year of history the total is scaled up to a year, and the label says from how many days or months. Under four weeks gives no figure.
+  A transaction you [excluded](#excluding-a-transaction) counts in none of the figures, and the label says how many were left out. Paying a card off never counts, whatever the row was recategorized as: it settles purchases already counted on the card. Anything else filed under loan payments (no detail, Plaid's "other payment", which can be a store card, or a row recategorized there whose detail says something else, a card payoff among them) can't be told from a card payment, so it is left out and its total is named beside the figure, never guessed. A pending charge whose posted version has arrived was already dropped. With less than a year of history the total is scaled up to a year, and the label says from how many days or months. Under four weeks gives no figure.
 - **Invested assets**: your investment accounts at their balances when the dashboard last loaded them (the time is shown), without hidden ones, plus checking and savings if you tick the box. Debts are not subtracted. Every investment account counts, a 529 or an HSA included, since tax buckets aren't modelled yet: type your own total to leave one out.
 - **Annual savings**: an estimate. A year of income minus spending from bank data, plus what went into workplace retirement plans over the year through payroll: a 401(k), 403(b), 457(b), TSP, SIMPLE IRA and similar, by the account's type, from Nya's verified investment transactions, an employer's match included where the plan reports it as a contribution. Payroll contributions never pass through a bank account, so bank data alone misses them. Nothing is counted twice:
   - a contribution that a transfer out of your accounts paid for (the same amount within a dollar or 1%, within five days) already counts as saved, so it is not added again;

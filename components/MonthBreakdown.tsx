@@ -429,7 +429,10 @@ export default function MonthBreakdown({
   const addCard = onAddTransaction && (
     <div className="card">
       <button onClick={onAddTransaction}>Add a transaction</button>
-      <p className="panel-note">For cash, or a manual account. It doesn&apos;t change the account&apos;s balance unless you ask.</p>
+      <p className="panel-note">
+        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach. It doesn&apos;t change the
+        account&apos;s balance unless you ask.
+      </p>
     </div>
   );
 
@@ -783,7 +786,7 @@ export default function MonthBreakdown({
                                 </div>
                                 <div className="rename-hint">
                                   {t.excluded === true
-                                    ? "Counts in totals, budgets, insights, bills and the Plan again."
+                                    ? "Puts it back in totals, budgets, insights, bills and the Plan."
                                     : "For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan."}
                                 </div>
                               </>

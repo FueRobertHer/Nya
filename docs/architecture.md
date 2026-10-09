@@ -90,7 +90,7 @@ The daily net-worth series behind the Home chart (`lib/history.ts`) is stored th
 
 - cash and credit accounts are walked backward from today's balances, un-applying each day's transactions;
 - investment accounts have their external flows (deposits, withdrawals, dividends, fees) un-applied the same way, but market movement isn't a transaction and can't be recovered, so price changes within the window are not modelled;
-- loans and manual accounts are held flat, since amortization isn't in the transaction stream and a typed balance has no stream at all.
+- loans and manual accounts are held flat, since amortization isn't in the transaction stream and a typed balance has no stream at all (transactions entered by hand on a manual account need not add up to its balance, so they are never walked).
 
 The chart draws the whole estimated region dashed and labels it estimated. Some details:
 
