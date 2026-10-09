@@ -60,7 +60,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     : []),
   [
     'People you share with',
-    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions. They can never change anything.',
+    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
   ],
   [
     'Your device',
@@ -74,9 +74,9 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
       <p>
         These values are encrypted with AES-256-GCM before they are written to the database: the tokens that connect
         your banks through Plaid, balances, net-worth history, transactions, budgets, goals, the categories you set and
-        the names you give merchants, manual accounts, how each bank connection is doing, and the short-lived copies of
-        what the dashboard last showed.
-        Some details around them are not; they are listed below.
+        the names you give merchants, manual accounts, how each bank connection is doing, the records of when shared
+        accounts were shown, and the short-lived copies of what the dashboard last showed. Some details around them
+        are not; they are listed below.
       </p>
       {envelope ? (
         <>
@@ -198,8 +198,10 @@ export default function SecurityPage() {
           <li>the names of the banks you linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
           <li>
-            for sharing: the names you and the people you connect with gave each other, and which accounts each of you
-            shares at which level, never the balances or transactions themselves.
+            for sharing: the names you and the people you connect with gave each other, which accounts each of you
+            shares at which level and until when, and for each connection a random id, which its records of when shared
+            accounts were shown are kept under, and when those records began (what they record is encrypted), never
+            the balances or transactions themselves.
           </li>
         </ul>
         <p>

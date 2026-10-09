@@ -48,7 +48,7 @@ The copies live in Vercel, like the database. They protect against losing or dam
 
 Balances, transactions, budgets, goals and access tokens stay **encrypted** in the archive and cannot be read without `PLAID_ENCRYPTION_KEY` (and, once data keys are in use, `MASTER_KEY`; the data keys themselves are in the archive, encrypted with it). Keep a copy of those keys somewhere separate from both the archive and Vercel (a password manager, or on paper). Lose them and the backup cannot be read.
 
-Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks, the merchant names you have renamed, and for sharing, the names people gave each other and which accounts each shares at which level, are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
+Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks, the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 

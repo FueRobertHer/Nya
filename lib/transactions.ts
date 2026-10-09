@@ -373,7 +373,7 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
  * than swallowed: carrying on with an empty state would have the next writeState
  * persist that emptiness over the real thing. See readState.
  */
-class StateUnreadableError extends Error {
+export class StateUnreadableError extends Error {
   constructor(
     readonly item_id: string,
     readonly kind: 'read' | 'decode',
