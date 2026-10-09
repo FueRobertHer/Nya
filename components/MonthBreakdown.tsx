@@ -246,6 +246,7 @@ export default function MonthBreakdown({
   onAddTransaction,
   onEditTransaction,
   onToggleExcluded,
+  actionError = null,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -259,6 +260,8 @@ export default function MonthBreakdown({
   onEditTransaction?: (t: Txn) => void;
   /** Leaves a transaction out of budgets and reports, or puts it back. */
   onToggleExcluded?: (t: Txn, excluded: boolean) => void;
+  /** Why the last change to a transaction didn't save. */
+  actionError?: string | null;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
@@ -613,6 +616,8 @@ export default function MonthBreakdown({
           onChange={(e) => setQuery(e.target.value)}
         />
 
+        {actionError && <div className="error">{actionError}</div>}
+
         {visible.length === 0 ? (
           <p className="empty-note">
             {query
@@ -753,7 +758,15 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            {onToggleExcluded && (
+                            {/* A pending row gets a new id when it posts,
+                                and an exclusion is kept by id: offered once
+                                it has posted, so it can't quietly lapse. */}
+                            {onToggleExcluded && t.pending && t.excluded !== true && (
+                              <div className="rename-hint">
+                                Once it posts, it can be excluded from budgets and reports.
+                              </div>
+                            )}
+                            {onToggleExcluded && (!t.pending || t.excluded === true) && (
                               <>
                                 <div className="rename-row">
                                   <button

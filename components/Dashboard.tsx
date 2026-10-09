@@ -20,6 +20,8 @@ import { CoverageNote, TrustLinks } from './TrustLinks';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
+import ManualTxnSheet from './ManualTxnSheet';
+import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
@@ -680,6 +682,9 @@ export default function Dashboard({
     [loadTransactions]
   );
 
+  // Transactions entered by hand, and the exclude flag (components/transaction-edits.ts).
+  const txnEdits = useTransactionEdits({ setTxns, loadTransactions, loadNetWorth, requestBackfill });
+
   // `bypass` skips both duplicate checks for this run: the user has said the
   // institution they already have is a different login.
   const beginConnect = useCallback(async (bypass: boolean) => {
@@ -819,6 +824,8 @@ export default function Dashboard({
         // is thin).
         await loadNetWorth(true);
         requestBackfill(() => loadNetWorth());
+        // Its transactions carry its name, and go with it when it is deleted.
+        loadTransactions();
         return true;
       } catch {
         setManualError('Could not reach the server.');
@@ -827,7 +834,7 @@ export default function Dashboard({
         setSavingManual(false);
       }
     },
-    [loadNetWorth, requestBackfill]
+    [loadNetWorth, requestBackfill, loadTransactions]
   );
 
   const startAddManual = useCallback(() => {
@@ -1702,6 +1709,11 @@ export default function Dashboard({
                                             Update
                                           </button>
                                         )}
+                                        {inst.manual && (
+                                          <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
+                                            Add transaction
+                                          </button>
+                                        )}
                                         {/* Hiding works on any account, linked
                                             or manual: it only stops the account
                                             counting, it doesn't remove it. */}
@@ -2072,6 +2084,13 @@ export default function Dashboard({
                 loading={txnsLoading}
                 onRecategorize={recategorize}
                 onRename={renameVendor}
+                // Only with a manual account to add to (hidden ones aren't offered).
+                onAddTransaction={
+                  institutions.some((i) => i.manual && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
+                }
+                onEditTransaction={txnEdits.openEdit}
+                onToggleExcluded={txnEdits.toggleExcluded}
+                actionError={txnEdits.error}
               />
             )}
 
@@ -2273,8 +2292,8 @@ export default function Dashboard({
         {shownDeleteTarget && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              This account&apos;s balance history is <strong>not recoverable</strong>. Re-adding it
-              creates a new account with an empty history.
+              This account&apos;s balance history, and any transactions entered on it, are{' '}
+              <strong>not recoverable</strong>. Re-adding it creates a new account with an empty history.
             </p>
             {manualError && <div className="error">{manualError}</div>}
             <div className="button-pair" style={{ marginTop: 16 }}>
@@ -2292,6 +2311,15 @@ export default function Dashboard({
           </>
         )}
       </Sheet>
+
+      <ManualTxnSheet
+        target={txnEdits.sheet}
+        institutions={institutions}
+        txns={txns}
+        onClose={txnEdits.closeSheet}
+        onSaved={txnEdits.onSaved}
+        onBalanceStale={() => loadNetWorth(true)}
+      />
 
       <Sheet
         open={!!redirect}

@@ -2616,3 +2616,68 @@ button.plan-edit:disabled {
 .plan-save-error {
   margin: 0 0 12px;
 }
+
+/* --- manual transactions and exclusions (components/ManualTxnSheet.tsx, components/MonthBreakdown.tsx) --- */
+
+/* Spent or received: the chosen one in the accent, like a pressed action. */
+.quick-add-choice > button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The amount comes first and largest: it is what is typed every time. The
+   currency beside it is as tall. */
+.quick-add-pair input {
+  font-size: 22px;
+}
+
+.quick-add-amount input {
+  font-weight: 600;
+}
+
+/* Amount and currency side by side; the currency is three letters. */
+.quick-add-pair {
+  display: flex;
+  gap: 10px;
+}
+
+.quick-add-pair .field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.quick-add-pair .quick-add-currency {
+  flex: 0 0 88px;
+}
+
+/* The choice to update the balance too, with what it would become. */
+.quick-add-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.quick-add-check input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+/* A transaction left out of budgets and reports: still listed, marked, and
+   its amount quieter, since no total counts it. */
+.excluded-tag {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.num.excluded {
+  color: var(--muted);
+}
