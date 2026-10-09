@@ -43,7 +43,8 @@ import { loggable } from '@/lib/log-safe';
 //                        zero rather than dropped (see reconstruct in
 //                        lib/backfill.ts).
 //   loans / manual       Flat at today's value: amortization isn't in the
-//                        transaction stream and typed balances have no stream.
+//                        transaction stream and typed balances have no stream
+//                        (rows entered by hand need not add up to one).
 //
 // Plaid's sign convention: a positive amount is money leaving the account. For
 // the net-worth total every transaction's effect is exactly -amount for both
@@ -199,8 +200,10 @@ export async function POST() {
     if (!oldestTxn && cashIds.size === 0) oldestTxn = oldestInvTxn;
     else if (!oldestTxn && oldestInvTxn) oldestTxn = isoDaysAgo(0);
 
-    // Manual accounts have no transactions, so they can't be walked backward, but
-    // they must land in totalNow or every estimated point would sit short by
+    // Manual accounts can't be walked backward: their balances are typed, and
+    // the transactions entered on them (lib/manual-txns.ts) needn't add up to
+    // what was typed, so they are never read here. But they must land in
+    // totalNow or every estimated point would sit short by
     // their whole total, with a visible step at the estimated/real seam. Never
     // entering cashType, they fall into the flat-held `rest` below (as
     // investments and loans do), so today's manual balance applies retroactively
