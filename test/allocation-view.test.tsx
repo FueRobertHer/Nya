@@ -18,7 +18,7 @@ import AllocationCard, {
   readSplit,
   type AllocationState,
 } from '@/components/AllocationCard';
-import { CLASS_COLORS, leftOutText, mixText, pointsText } from '@/components/allocation-text';
+import { CLASS_COLORS, mixBasisText, mixLeftOutText, mixText, noMixText, pointsText } from '@/components/allocation-text';
 import { SimulationForm } from '@/components/PlanForms';
 import { allocate, planMix, type AllocAccount, type AllocHolding, type AllocInstitution } from '@/lib/allocation/allocation';
 import { CLASS_NAMES, SLOTS } from '@/lib/allocation/classes';
@@ -164,24 +164,29 @@ describe('drift', () => {
 describe('the plan’s mix', () => {
   const m = () => planMix(alloc());
 
-  test('offers the mix from the allocation, says what it left out, and changes nothing by itself', () => {
-    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready money={money} currency="USD" editable onUse={noop} />));
-    expect(t).toContain('Your accounts hold 72% stocks, 20% bonds, 8% cash.');
+  test('offers the mix of what is classified, says what it left out and how much of the whole that is, and changes nothing by itself', () => {
+    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready currency="USD" editable onUse={noop} />));
+    // Never "your accounts hold" a mix of part of them.
+    expect(t).not.toContain('Your accounts hold');
+    expect(t).toContain('Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds or cash: 72% stocks, 20% bonds, 8% cash.');
     expect(t).toContain("Your plan's simulation uses 75% stocks, 25% bonds, 0% cash.");
-    expect(t).toContain("Left out: $60,000 unclassified, which can't be counted as stocks or bonds without knowing what it is.");
+    // 37%, as the share table above has it (the largest remainder there gave
+    // the tie to bonds), never a second rounding that reads 38%.
+    expect(t).toContain("Left out: $60,000 unclassified, 37% of the $160,000, which can't be counted as stocks or bonds without knowing what it is.");
+    expect(text(renderToStaticMarkup(<ClassView alloc={alloc()} money={money} editable settings={EMPTY_SETTINGS} open={noop} />))).toContain('Unclassified $60,000 37%');
     expect(t).toContain('Use my allocation in the plan');
   });
 
   test('says when the plan already uses it, and offers nothing then', () => {
-    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan({ stocksPct: 72, bondsPct: 20 })} ready money={money} currency="USD" editable onUse={noop} />));
+    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan({ stocksPct: 72, bondsPct: 20 })} ready currency="USD" editable onUse={noop} />));
     expect(t).toContain("Your plan's simulation already uses this mix.");
     expect(t).not.toContain('Use my allocation');
   });
 
   test('offers nothing while the person’s settings aren’t in the figures, or when there is no mix to take', () => {
-    expect(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready={false} money={money} currency="USD" editable onUse={noop} />)).toBe('');
+    expect(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready={false} currency="USD" editable onUse={noop} />)).toBe('');
     const none = planMix(allocate({ institutions: [inst('X', [acct('s', { balance: 5 })])], holdings: [hold('s', 'VFIFX', 5, { security_type: 'mutual fund' })], settings: null, currency: 'USD' }));
-    const t = text(renderToStaticMarkup(<MixSection mix={none} plan={plan()} ready money={money} currency="USD" editable onUse={noop} />));
+    const t = text(renderToStaticMarkup(<MixSection mix={none} plan={plan()} ready currency="USD" editable onUse={noop} />));
     expect(t).toContain('Nothing is classified as stocks, bonds or cash yet');
     expect(t).not.toContain('Use my allocation');
   });
@@ -193,7 +198,6 @@ describe('the plan’s mix', () => {
         <UseMixForm
           mix={m()}
           plan={plan()}
-          money={money}
           currency="USD"
           editable
           onConfirm={async () => {
@@ -205,8 +209,10 @@ describe('the plan’s mix', () => {
       )
     );
     expect(confirmed).toBe(0);
-    expect(t).toContain("Your plan's simulation uses 75% stocks, 25% bonds, 0% cash. Your accounts hold 72% stocks, 20% bonds, 8% cash, of the $100,000 classified as stocks, bonds or cash.");
-    expect(t).toContain('Left out: $60,000 unclassified');
+    expect(t).toContain(
+      "Your plan's simulation uses 75% stocks, 25% bonds, 0% cash. Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds or cash: 72% stocks, 20% bonds, 8% cash."
+    );
+    expect(t).toContain('Left out: $60,000 unclassified, 37% of the $160,000');
     expect(t).toContain("The plan keeps this mix until you change it: it doesn't follow your accounts.");
     expect(t).toContain('Use 72/20/8');
     expect(t).toContain('Cancel');
@@ -221,19 +227,60 @@ describe('the plan’s mix', () => {
     });
     const mix = planMix(a, 5_000);
     expect(mixText(mix as never)).toBe('94% stocks, 0% bonds, 6% cash');
-    expect(leftOutText(mix, 'USD')).toBe(
-      "Left out: $10,000 of real estate and $10,000 of crypto, which the simulation's stocks, bonds and cash can't stand for. CA$1,000 in another currency is left out too: Nya doesn't convert currencies."
+    expect(mixLeftOutText(mix, 'USD')).toBe(
+      "Left out: $10,000 of real estate and $10,000 of crypto, 19% of the $105,000, which the simulation's stocks, bonds and cash can't stand for. CA$1,000 in another currency is left out too: Nya doesn't convert currencies."
     );
-    const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready money={money} currency="USD" editable onUse={noop} />));
-    expect(t).toContain('counting $5,000 of checking and savings as cash, as your plan does');
+    const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready currency="USD" editable onUse={noop} />));
+    expect(t).toContain(
+      'Of the $105,000 your accounts hold in USD, $85,000 is classified as stocks, bonds or cash (with $5,000 of checking and savings as cash, as your plan counts them): 94% stocks, 0% bonds, 6% cash.'
+    );
   });
 
-  test('the simulation’s form offers to fill in the allocation’s mix, which saves only with Save', () => {
+  test('another currency alone is left out, not left out "too"; with nothing left out, all of it is the mix', () => {
+    const a = allocate({
+      institutions: [inst('X', [acct('s', { balance: 1_000 })]), inst('Q', [acct('c', { balance: 1_000, currency: 'CAD' })])],
+      holdings: [hold('s', 'VTI', 1_000)],
+      settings: null,
+      currency: 'USD',
+    });
+    const mix = planMix(a);
+    expect(mixLeftOutText(mix, 'USD')).toBe("CA$1,000 in another currency is left out: Nya doesn't convert currencies.");
+    expect(mixBasisText(mix, 'USD')).toBe('All $1,000 your accounts hold in USD is classified as stocks, bonds or cash');
+    const solo = planMix(allocate({ institutions: [inst('X', [acct('s', { balance: 1_000 })])], holdings: [hold('s', 'VTI', 1_000)], settings: null, currency: 'USD' }));
+    expect(mixBasisText(solo, 'USD')).toBe('All $1,000 in your accounts is classified as stocks, bonds or cash');
+    expect(mixLeftOutText(solo, 'USD')).toBeNull();
+  });
+
+  test('a mix that can’t be taken says which class is below zero, and what could put it there', () => {
+    const short = planMix(
+      allocate({
+        institutions: [inst('X', [acct('m', { balance: 10_000 })])],
+        holdings: [hold('m', 'TSLA', -5_000, { security_type: 'equity' }), hold('m', 'CUR:USD', 15_000, { security_type: 'cash' })],
+        settings: null,
+        currency: 'USD',
+      })
+    );
+    expect(short).toMatchObject({ ok: false, why: 'negative', below: ['stocks'] });
+    expect(noMixText(short as never)).toBe("Your stocks (a short position, say) are below zero, which a mix of shares can't hold, so set the plan's mix yourself.");
+    const margin = planMix(allocate({ institutions: [inst('X', [acct('m', { balance: 5_000 })])], holdings: [hold('m', 'VTI', 9_000), hold('m', 'CUR:USD', -4_000, { security_type: 'cash' })], settings: null, currency: 'USD' }));
+    expect(noMixText(margin as never)).toBe("Your cash (money borrowed on margin, say) is below zero, which a mix of shares can't hold, so set the plan's mix yourself.");
+    // An overdrawn checking account the plan counts as cash.
+    const overdrawn = planMix(allocate({ institutions: [inst('X', [acct('m', { balance: 1_000 })])], holdings: [hold('m', 'VTI', 1_000)], settings: null, currency: 'USD' }), -300);
+    expect(noMixText(overdrawn as never)).toBe(
+      "Your cash (an overdrawn account the plan counts as cash, say) is below zero, which a mix of shares can't hold, so set the plan's mix yourself."
+    );
+  });
+
+  test('the simulation’s form offers to fill in the allocation’s mix, saying what it is of and what it left out, and saves only with Save', () => {
+    const offered = planMix(alloc());
+    if (!offered.ok) throw new Error('a mix was expected');
     const html = renderToStaticMarkup(
-      <SimulationForm plan={plan()} onSave={async () => true} onDone={noop} editable fiNumber={1} assets={1} spending={1} currency="USD" allocationMix={{ stocksPct: 72, bondsPct: 20, cashPct: 8 }} />
+      <SimulationForm plan={plan()} onSave={async () => true} onDone={noop} editable fiNumber={1} assets={1} spending={1} currency="USD" allocationMix={offered} />
     );
     const t = text(html);
-    expect(t).toContain('Your accounts hold 72% stocks, 20% bonds and 8% cash (Allocation, above, says what that leaves out).');
+    expect(t).not.toContain('Your accounts hold');
+    expect(t).toContain('Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds or cash: 72% stocks, 20% bonds, 8% cash.');
+    expect(t).toContain("Left out: $60,000 unclassified, 37% of the $160,000, which can't be counted as stocks or bonds without knowing what it is.");
     expect(t).toContain('Fill in my allocation');
     // The fields still hold what the plan has: nothing is filled in by itself.
     expect(html).toContain('value="75"');

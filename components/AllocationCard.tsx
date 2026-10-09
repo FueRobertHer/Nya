@@ -35,7 +35,8 @@ import {
   CLASS_COLORS,
   classifiedText,
   gapText,
-  leftOutText,
+  mixBasisText,
+  mixLeftOutText,
   mixText,
   names,
   noMixText,
@@ -248,7 +249,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
           )}
           <AllocationNotes alloc={alloc} money={money} />
           <DriftSection alloc={alloc} target={withSettings ? current.target : null} money={money} editable={editable} onSet={() => open({ kind: 'target' })} />
-          <MixSection mix={mix} plan={plan} ready={withSettings} money={money} editable={planEditable && withSettings} onUse={() => open({ kind: 'mix' })} currency={currency} />
+          <MixSection mix={mix} plan={plan} ready={withSettings} editable={planEditable && withSettings} onUse={() => open({ kind: 'mix' })} currency={currency} />
         </>
       )}
 
@@ -315,7 +316,6 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             key={opened}
             mix={mix}
             plan={plan}
-            money={money}
             currency={currency}
             editable={planEditable && withSettings}
             onConfirm={async (stocksPct, bondsPct) => {
@@ -672,7 +672,6 @@ export function MixSection({
   mix,
   plan,
   ready,
-  money,
   currency,
   editable,
   onUse,
@@ -680,7 +679,6 @@ export function MixSection({
   mix: PlanMix;
   plan: FirePlan;
   ready: boolean;
-  money: (n: number) => string;
   currency: string | null;
   editable: boolean;
   onUse: () => void;
@@ -692,20 +690,18 @@ export function MixSection({
       <>
         <div className="plan-subhead">For your plan</div>
         <p className="panel-note">
-          {noMixText(mix.why)} Your plan&apos;s simulation uses {plans}.
+          {noMixText(mix)} Your plan&apos;s simulation uses {plans}.
         </p>
       </>
     );
   }
   const same = mix.stocksPct === plan.stocksPct && mix.bondsPct === plan.bondsPct;
-  const left = leftOutText(mix, currency);
+  const left = mixLeftOutText(mix, currency);
   return (
     <>
       <div className="plan-subhead">For your plan</div>
       <p className="panel-note">
-        Your accounts hold <strong>{mixText(mix)}</strong>
-        {mix.bank > 0 ? `, counting ${money(mix.bank)} of checking and savings as cash, as your plan does` : ''}.{' '}
-        {same ? "Your plan's simulation already uses this mix." : `Your plan's simulation uses ${plans}.`}
+        {mixBasisText(mix, currency)}: <strong>{mixText(mix)}</strong>. {same ? "Your plan's simulation already uses this mix." : `Your plan's simulation uses ${plans}.`}
       </p>
       {left && <p className="panel-note">{left}</p>}
       {!same && (
@@ -722,7 +718,6 @@ export function MixSection({
 export function UseMixForm({
   mix,
   plan,
-  money,
   currency,
   editable,
   onConfirm,
@@ -730,7 +725,6 @@ export function UseMixForm({
 }: {
   mix: PlanMix;
   plan: FirePlan;
-  money: (n: number) => string;
   currency: string | null;
   editable: boolean;
   onConfirm: (stocksPct: number, bondsPct: number) => Promise<boolean>;
@@ -738,15 +732,13 @@ export function UseMixForm({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  if (!mix.ok) return <p className="empty-note">{noMixText(mix.why)}</p>;
-  const counted = mix.stocks + mix.bonds + mix.cash;
-  const left = leftOutText(mix, currency);
+  if (!mix.ok) return <p className="empty-note">{noMixText(mix)}</p>;
+  const left = mixLeftOutText(mix, currency);
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        Your plan&apos;s simulation uses <strong>{mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct })}</strong>. Your accounts hold{' '}
-        <strong>{mixText(mix)}</strong>, of the {money(counted)} classified as stocks, bonds or cash
-        {mix.bank > 0 ? `, with ${money(mix.bank)} of checking and savings counted as cash, as your plan counts them` : ''}.
+        Your plan&apos;s simulation uses <strong>{mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct })}</strong>. {mixBasisText(mix, currency)}:{' '}
+        <strong>{mixText(mix)}</strong>.
       </p>
       {left && <p className="panel-note">{left}</p>}
       <p className="panel-note">

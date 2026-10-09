@@ -517,12 +517,21 @@ export type PlanMix = {
   /** What was left out, by class, and in other currencies. */
   leftOut: { slot: Slot; amount: number }[];
   otherCurrencies: { currency: string; amount: number }[];
+  /** Everything in the one currency: what the mix is of, and what it left
+   *  out by class. */
+  whole: number;
+  /** What it left out by class, as a whole percent of `whole`: the sum of
+   *  those classes' shares as the share table shows them (the same largest
+   *  remainder, so the two never disagree). Null when shares of `whole`
+   *  mean nothing. */
+  leftOutPct: number | null;
 } & (
   | { ok: true; stocksPct: number; bondsPct: number; cashPct: number }
   /** "nothing": no stocks, bonds or cash to take a mix from. "negative": one
-   *  of them is below zero (cash borrowed on margin, say), which a mix of
-   *  shares can't hold. */
-  | { ok: false; why: 'nothing' | 'negative' }
+   *  of them is below zero (`below`: a short position, say, or cash borrowed
+   *  on margin), which a mix of shares can't hold. */
+  | { ok: false; why: 'nothing' }
+  | { ok: false; why: 'negative'; below: ('stocks' | 'bonds' | 'cash')[] }
 );
 
 /**
@@ -536,12 +545,21 @@ export function planMix(alloc: Allocation, bank = 0, bankOtherCurrencies: { curr
   const stocks = STOCK_CLASSES.reduce((s, c) => s + alloc.classes[c], 0);
   const bonds = alloc.classes.bonds;
   const cash = alloc.classes.cash + bank;
-  const leftOut = LEFT_OUT_OF_MIX.filter((s) => alloc.classes[s] !== 0).map((slot) => ({ slot, amount: alloc.classes[slot] }));
+  const leftOut = LEFT_OUT_OF_MIX.filter((s) => isMoney(alloc.classes[s])).map((slot) => ({ slot, amount: alloc.classes[slot] }));
   const merged = new Map<string, number>();
   for (const o of [...alloc.otherCurrencies, ...bankOtherCurrencies]) merged.set(o.currency, (merged.get(o.currency) ?? 0) + o.amount);
   const otherCurrencies = [...merged].map(([currency, amount]) => ({ currency, amount })).sort((x, y) => (x.currency < y.currency ? -1 : 1));
-  const base = { stocks, bonds, cash, bank, leftOut, otherCurrencies };
-  if (stocks < 0 || bonds < 0 || cash < 0) return { ...base, ok: false, why: 'negative' };
+  // The left-out share as the share table has it: the classes' own whole
+  // percents (with checking and savings in cash, when they count), summed.
+  const withBank = { ...alloc.classes, cash };
+  const rows = shares(withBank, SLOTS);
+  const whole = SLOTS.reduce((s, k) => s + withBank[k], 0);
+  const leftOutPct = rows.some((r) => r.pct === null)
+    ? null
+    : rows.filter((r) => LEFT_OUT_OF_MIX.includes(r.slot)).reduce((s, r) => s + (r.pct as number), 0);
+  const base = { stocks, bonds, cash, bank, leftOut, otherCurrencies, whole, leftOutPct: rows.length ? leftOutPct : null };
+  const below = (['stocks', 'bonds', 'cash'] as const).filter((k) => ({ stocks, bonds, cash })[k] < 0 && isMoney(({ stocks, bonds, cash })[k]));
+  if (below.length > 0) return { ...base, ok: false, why: 'negative', below };
   const pcts = wholePercents([stocks, bonds, cash]);
   if (!pcts) return { ...base, ok: false, why: 'nothing' };
   return { ...base, ok: true, stocksPct: pcts[0], bondsPct: pcts[1], cashPct: pcts[2] };

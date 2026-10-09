@@ -13,9 +13,9 @@
 // first slot again. Identity never rests on color alone: every swatch has its
 // name beside it, and every figure is in a table.
 
-import type { AccountGap, PlanMix } from '@/lib/allocation/allocation';
-import { BUCKET_NAMES, type BucketSlot } from '@/lib/allocation/buckets';
-import { CLASS_NAMES, CLASS_WORDS, splitText, type Classified, type Slot } from '@/lib/allocation/classes';
+import { isMoney, shareLabel, type AccountGap, type PlanMix } from '@/lib/allocation/allocation';
+import type { BucketSlot } from '@/lib/allocation/buckets';
+import { CLASS_WORDS, splitText, type Classified, type Slot } from '@/lib/allocation/classes';
 import { wholeMoney } from './plan-text';
 
 export const UNCLASSIFIED_COLOR = '#6f7480';
@@ -40,9 +40,6 @@ export const BUCKET_COLORS: Record<BucketSlot, string> = {
   education: '#d55181',
   unclassified: UNCLASSIFIED_COLOR,
 };
-
-export const slotName = (s: Slot) => CLASS_NAMES[s];
-export const bucketName = (b: BucketSlot) => BUCKET_NAMES[b];
 
 /** "A, B and C". */
 export function names(list: string[]): string {
@@ -113,23 +110,49 @@ export function mixText(m: { stocksPct: number; bondsPct: number; cashPct?: numb
   return `${m.stocksPct}% stocks, ${m.bondsPct}% bonds, ${cash}% cash`;
 }
 
-/** What the Plan's mix left out, in a sentence, or null when nothing was. */
-export function leftOutText(m: PlanMix, currency: string | null): string | null {
+/**
+ * What the Plan's mix is of, as the start of a sentence its percents follow:
+ * "Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds
+ * or cash". The mix is of the classified part only, so it is never said as
+ * what "your accounts hold".
+ */
+export function mixBasisText(m: PlanMix, currency: string | null): string {
+  const money = (n: number) => wholeMoney(n, currency);
+  const counted = m.stocks + m.bonds + m.cash;
+  const bank = m.bank > 0 ? ` (with ${money(m.bank)} of checking and savings as cash, as your plan counts them)` : '';
+  const where = m.otherCurrencies.length && currency ? `your accounts hold in ${currency}` : 'in your accounts';
+  return isMoney(m.whole - counted)
+    ? `Of the ${money(m.whole)} ${where}, ${money(counted)} is classified as stocks, bonds or cash${bank}`
+    : `All ${money(counted)} ${where} is classified as stocks, bonds or cash${bank}`;
+}
+
+/** What the Plan's mix left out, in a sentence, or null when nothing was:
+ *  each class with its amount, and their share of the whole, as the share
+ *  table has it; then what is in another currency. */
+export function mixLeftOutText(m: PlanMix, currency: string | null): string | null {
   const money = (n: number) => wholeMoney(n, currency);
   const parts = m.leftOut.map((l) => (l.slot === 'unclassified' ? `${money(l.amount)} unclassified` : `${money(l.amount)} of ${CLASS_WORDS[l.slot]}`));
+  const left = m.leftOut.reduce((s, l) => s + l.amount, 0);
+  const share = m.leftOutPct !== null && left > 0 ? `, ${shareLabel(left, m.leftOutPct, m.whole)} of the ${money(m.whole)}` : '';
   const classes = parts.length
-    ? `Left out: ${names(parts)}, which ${m.leftOut.length === 1 && m.leftOut[0].slot === 'unclassified' ? "can't be counted as stocks or bonds without knowing what it is" : "the simulation's stocks, bonds and cash can't stand for"}.`
+    ? `Left out: ${names(parts)}${share}, which ${m.leftOut.length === 1 && m.leftOut[0].slot === 'unclassified' ? "can't be counted as stocks or bonds without knowing what it is" : "the simulation's stocks, bonds and cash can't stand for"}.`
     : null;
+  const one = m.otherCurrencies.length === 1;
   const other = m.otherCurrencies.length
-    ? `${names(m.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))} in ${m.otherCurrencies.length === 1 ? 'another currency' : 'other currencies'} ${m.otherCurrencies.length === 1 ? 'is' : 'are'} left out too: Nya doesn't convert currencies.`
+    ? `${names(m.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))} in ${one ? 'another currency' : 'other currencies'} ${one ? 'is' : 'are'} left out${classes ? ' too' : ''}: Nya doesn't convert currencies.`
     : null;
   const all = [classes, other].filter((x): x is string => !!x);
   return all.length ? all.join(' ') : null;
 }
 
-/** Why the Plan's mix can't be taken from the allocation. */
-export function noMixText(why: 'nothing' | 'negative'): string {
-  return why === 'negative'
-    ? "Your cash is below zero (money borrowed on margin, say), which a mix of shares can't hold, so set the plan's mix yourself."
-    : 'Nothing is classified as stocks, bonds or cash yet, so there is no mix to use.';
+/** Why the Plan's mix can't be taken from the allocation: nothing to take it
+ *  from, or which of stocks, bonds and cash is below zero, and what could put
+ *  it there. */
+export function noMixText(m: Extract<PlanMix, { ok: false }>): string {
+  if (m.why === 'nothing') return 'Nothing is classified as stocks, bonds or cash yet, so there is no mix to use.';
+  const why = (k: 'stocks' | 'bonds' | 'cash') =>
+    k === 'cash' ? (m.bank < 0 ? 'an overdrawn account the plan counts as cash, say' : 'money borrowed on margin, say') : 'a short position, say';
+  const what = m.below.map((k) => `${k} (${why(k)})`);
+  const one = m.below.length === 1;
+  return `Your ${names(what)} ${one ? (m.below[0] === 'cash' ? 'is' : 'are') : 'are'} below zero, which a mix of shares can't hold, so set the plan's mix yourself.`;
 }

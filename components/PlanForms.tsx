@@ -9,6 +9,8 @@ import { useState } from 'react';
 import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
+import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
+import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
   plan: FirePlan;
@@ -390,8 +392,9 @@ export function SimulationForm(
     spending: number | null;
     currency: string | null;
     /** The mix the allocation gives (components/AllocationCard.tsx), offered
-     *  to fill in: nothing changes until Save. Null when there is none. */
-    allocationMix?: { stocksPct: number; bondsPct: number; cashPct: number } | null;
+     *  to fill in, with what it is of and what it leaves out: nothing changes
+     *  until Save. Null when there is none. */
+    allocationMix?: (PlanMix & { ok: true }) | null;
   }
 ) {
   const { plan } = props;
@@ -507,9 +510,15 @@ export function SimulationForm(
           {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'} Stocks are{' '}
           {DATA_STOCKS}, bonds {DATA_BONDS}.{' '}
           {props.allocationMix
-            ? `Your accounts hold ${props.allocationMix.stocksPct}% stocks, ${props.allocationMix.bondsPct}% bonds and ${props.allocationMix.cashPct}% cash (Allocation, above, says what that leaves out).`
+            ? `${mixBasisText(props.allocationMix, props.currency)}: ${mixText(props.allocationMix)}.`
             : "Nya doesn't look inside funds it doesn't know, so set the mix you hold, or classify them under Allocation."}
         </p>
+        {/* What the mix leaves out, beside the button that fills it in. */}
+        {props.allocationMix && mixLeftOutText(props.allocationMix, props.currency) && (
+          <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
+            {mixLeftOutText(props.allocationMix, props.currency)}
+          </p>
+        )}
         {props.allocationMix && (props.allocationMix.stocksPct !== Number(stocks) || props.allocationMix.bondsPct !== Number(bonds)) && (
           <button
             type="button"
