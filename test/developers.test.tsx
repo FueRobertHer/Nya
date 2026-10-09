@@ -28,7 +28,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const { default: DevelopersPage } = await import('@/app/developers/page');
 const { API_DOCS } = await import('@/lib/api-examples');
 const { OPERATION_SPECS, TOOL_SPECS, PROTOCOL_VERSIONS } = await import('@/lib/api-spec');
-const { REQUESTS_PER_MINUTE, MAX_TOKENS, MAX_PAGE_SIZE } = await import('@/lib/api-limits');
+const { REQUESTS_PER_MINUTE, MAX_TOKENS, MAX_PAGE_SIZE, MCP_MAX_PAGE_SIZE, API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS } = await import('@/lib/api-limits');
 const { ctx, seedPerson } = await import('./api-fixture');
 const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -69,6 +69,22 @@ describe('the page', () => {
     expect(p).toContain('A transaction’s positive amount is money leaving the account');
     expect(p).toContain('What a credit card or a loan owes is a positive balance');
     expect(p).toContain('What version 1 promises');
+  });
+
+  test('says what the review asked to be said: failures, restores, the demo, dates, and the MCP server’s size', () => {
+    const p = page();
+    expect(p).toContain(`or more than ${API_AUTH_MAX_FAILURES} requests with tokens that don’t work from your address in ${API_AUTH_WINDOW_SECONDS / 60} minutes`);
+    expect(p).toContain('The token is good, but your data can’t be reached just now');
+    expect(p).toContain('Try again later, and keep the token.');
+    expect(p).toContain('Backups leave tokens out, so if a backup is ever restored, every token stops: make new ones.');
+    expect(p).toContain('Signing out everywhere, or changing the app password, doesn’t revoke tokens.');
+    expect(p).toContain('The demo accounts can’t make tokens');
+    expect(p).toContain('A sandbox to try the API against');
+    expect(p).toContain('a transaction’s is the date it carries, the bank’s posting date or the day picked for one entered by hand');
+    expect(p).toContain('one message per request (no batches)');
+    expect(p).toContain(`gives at most ${MCP_MAX_PAGE_SIZE} transactions a page`);
+    expect(p).toContain('at any path under /api/v1, an endpoint or not');
+    expect(p).not.toContain('2025-03-26');
   });
 
   test('shows this copy’s own address when APP_URL is set, and a stand-in otherwise', () => {

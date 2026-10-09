@@ -1,8 +1,8 @@
 // lib/rate-limit.ts
 //
 // Counters that turn a request away once it has been made too often. Each is
-// a fixed window that starts with its first count and expires with it. Two of
-// them:
+// a fixed window that starts with its first count and expires with it. Three
+// of them:
 //
 //   - WRONG PASSWORDS, per IP, environment-wide: the login (app/api/login) and
 //     the password asked for again before a download of my data
@@ -13,6 +13,16 @@
 //     login's own Redis counter, moved here unchanged from app/api/login so
 //     both routes share it. Fails open if Redis is unreachable, as the login
 //     always has: being able to sign in beats a rate limit.
+//   - API TOKENS THAT DON'T WORK, per IP, environment-wide (lib/api-http.ts):
+//     a request to the read-only API or the MCP server whose token is in the
+//     right form but doesn't check out costs reads, so an address that sends
+//     too many is turned away before any is made, and a flood of made-up
+//     tokens can't become a flood of database reads. Like the wrong
+//     passwords, it runs before any container is known, so it is the same
+//     kind of environment-wide counter (ratelimit:api:<ip>), never backed up.
+//     A token not even in the right form costs nothing and isn't counted.
+//     Fails open, as the login's does: a limit that can't be read is no
+//     reason to refuse a good token.
 //   - DOWNLOADS OF MY DATA, per container (app/api/my-data), a counter store on
 //     the storage seam (downloadCount). Each download decrypts everything the
 //     person has, so a script holding a fresh sign-in can't pull it in a
@@ -23,6 +33,7 @@ import { redis, kEnv } from './storage';
 import { defineCounterStore } from './repo';
 import type { Ctx } from './containers';
 import { DOWNLOADS_PER_WINDOW, DOWNLOAD_WINDOW_SECONDS } from './download-limit';
+import { API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS } from './api-limits';
 
 // ---- Wrong passwords ----
 
@@ -66,6 +77,39 @@ export async function clearWrongPasswords(req: Request): Promise<void> {
     await redis().del(loginKey(req));
   } catch {
     // Counter just expires on its own.
+  }
+}
+
+// ---- API tokens that don't work ----
+
+// The numbers live where the developer page can read them too (lib/api-limits.ts).
+export { API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS };
+
+function apiFailureKey(req: Request): string {
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  // Environment-wide: it runs before any container is known.
+  return kEnv(`ratelimit:api:${ip}`);
+}
+
+/** Whether this IP has sent too many tokens that don't work, for now. False
+ *  when the counter can't be read (fails open, see the header). */
+export async function tokenFailuresExhausted(req: Request): Promise<boolean> {
+  try {
+    const failures = await redis().get<number>(apiFailureKey(req));
+    return failures !== null && Number(failures) >= API_AUTH_MAX_FAILURES;
+  } catch {
+    return false;
+  }
+}
+
+/** Counts one token that didn't work. Best effort. */
+export async function countTokenFailure(req: Request): Promise<void> {
+  const key = apiFailureKey(req);
+  try {
+    const failures = await redis().incr(key);
+    if (failures === 1) await redis().expire(key, API_AUTH_WINDOW_SECONDS);
+  } catch {
+    // Best-effort counter.
   }
 }
 

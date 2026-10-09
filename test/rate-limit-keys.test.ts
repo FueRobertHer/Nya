@@ -55,13 +55,13 @@ for (const file of [...sources('lib'), ...sources('app'), ...sources('scripts'),
 
 describe('every rate-limit key the code builds, and where it lives', () => {
   test('the scan finds them, and nothing builds one another way', () => {
-    expect(built.map((b) => `${b.builder} ${b.name}`).sort()).toEqual(['kEnv ratelimit:demo:', 'kEnv ratelimit:login:']);
+    expect(built.map((b) => `${b.builder} ${b.name}`).sort()).toEqual(['kEnv ratelimit:api:', 'kEnv ratelimit:demo:', 'kEnv ratelimit:login:']);
     expect(elsewhere).toEqual([]);
   });
 
   test('a limit counted before anyone is known is the environment’s, and refused inside a container', () => {
     const env = built.filter((b) => b.builder === 'kEnv');
-    expect(env.length).toBeGreaterThanOrEqual(2);
+    expect(env.length).toBeGreaterThanOrEqual(3);
     for (const b of env) {
       expect({ at: b.file, key: b.sample, envWide: isEnvWide(b.sample) }).toEqual({ at: b.file, key: b.sample, envWide: true });
       expect({ at: b.file, key: b.sample, kind: classify(b.sample) }).toEqual({ at: b.file, key: b.sample, kind: 'plain' });

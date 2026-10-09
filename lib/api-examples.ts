@@ -16,10 +16,10 @@ const SOURCES: readonly FieldDoc[] = [
   ['sources', 'Where the transactions come from: one entry per linked institution.'],
   ['sources[].institution', 'The institution’s name.'],
   ['sources[].synced_at', 'When its transactions were last synced from the bank (the app syncs them when it shows the Activity tab), or null when not known.'],
-  ['sources[].complete', 'False when its transactions couldn’t be read, or none are stored yet: the notes say which. A connection that brings in none (no_transactions) has none missing, so it is complete.'],
+  ['sources[].complete', 'False when its transactions couldn’t be read, none are stored yet, or older ones are still being brought in: the notes say which. A connection that brings in none (no_transactions) has none missing, so it is complete.'],
   [
     'sources[].no_transactions',
-    'Null when the connection brings in transactions. Otherwise why it brings in none: "investment_accounts" (it holds investment accounts only, whose activity is not spending), "no_cash_accounts" (it holds no bank account or card), "refused" (Plaid doesn’t provide transactions for its bank or card accounts, so their spending isn’t known), or "no_consent" (you didn’t allow Nya to see them; Allow transactions on the Accounts tab brings them in). An empty list or a zero total is never no spending on its own: the notes say what these leave out.',
+    'Null when the connection brings in transactions. Otherwise why it brings in none: "investment_accounts" (it holds investment accounts only, whose activity is not spending), "no_cash_accounts" (it holds no bank account or card), "refused" (Plaid doesn’t provide transactions for its bank or card accounts, so their spending isn’t known), or "no_consent" (you didn’t allow Nya to see them; Allow transactions on the Accounts tab brings them in). An empty list or a zero total is never no spending on its own: the notes say what these leave out. Version 1 may add reasons: read one you don’t know as no transactions, for a reason not given.',
   ],
 ];
 const NOTES: FieldDoc = ['notes', 'Anything that couldn’t be read or is missing, in words for a person: an institution whose accounts couldn’t be read, say. Empty when all is well.'];
@@ -28,6 +28,17 @@ const NOTES: FieldDoc = ['notes', 'Anything that couldn’t be read or is missin
 const TXN_NOTES: FieldDoc = [
   'notes',
   'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out. Empty when there is nothing to say.',
+];
+/** What accounts and net worth say of the accounts they couldn't include. */
+const MISSING_ACCOUNTS = (consequence: string): FieldDoc[] => [
+  ['complete', `False when accounts are missing (missing_accounts), so ${consequence}.`],
+  [
+    'missing_accounts',
+    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, and each manual account that couldn’t be read. Empty when nothing is missing.',
+  ],
+  ['missing_accounts[].institution', 'The connection’s institution; null for a manual account, whose name is in what couldn’t be read.'],
+  ['missing_accounts[].account_id', 'A manual account’s id; null for a connection, whose accounts can’t be told apart until they are read.'],
+  ['missing_accounts[].reason', '"unreadable" (stored, but couldn’t be read) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.'],
 ];
 const LEFT_OUT: readonly FieldDoc[] = [
   ['left_out', 'Transactions left out of these totals for being in another currency, by currency, most first. Nothing is converted.'],
@@ -105,12 +116,14 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           connection: null,
         },
       ],
+      complete: true,
+      missing_accounts: [],
       notes: [],
     },
     fields: [
       ['accounts', 'Every account, linked and manual, by institution and then name. Hidden ones only with include_hidden=true.'],
       ['accounts[].id', 'The account’s id: Plaid’s for a linked account, manual_… for one you track by hand.'],
-      ['accounts[].source', '"plaid" for a linked account, "manual" for one you track by hand.'],
+      ['accounts[].source', '"plaid" for a linked account, "manual" for one you track by hand. Version 1 may add values, as new ways to connect come: treat one you don’t know as neither.'],
       ['accounts[].name', 'Its name.'],
       ['accounts[].official_name', 'The name the bank gives it, or null.'],
       ['accounts[].institution', 'The institution it is at (for a manual account, the one you typed).'],
@@ -131,6 +144,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['accounts[].connection.problem.since', 'When the daily check first found it.'],
       ['accounts[].connection.ends_at', 'When Plaid has warned the connection will end, so reconnect before then; or null.'],
       ['accounts[].connection.records_unreadable', 'Present, and true, when some of what Nya keeps about the connection couldn’t be read, so a problem or a warning may be missing.'],
+      ...MISSING_ACCOUNTS('the list is short of them'),
       NOTES,
     ],
   },
@@ -142,6 +156,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       balances_from: '2026-10-08',
       balances_to: '2026-10-09',
       accounts_without_balance: 0,
+      complete: true,
+      missing_accounts: [],
       recorded: { date: '2026-10-09', value: 431870.25, currency: 'USD', mixed_currencies: false },
       notes: [],
     },
@@ -155,6 +171,11 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['balances_from', 'The oldest day among the balances counted: each account’s newest balance can be from a different day.'],
       ['balances_to', 'The newest.'],
       ['accounts_without_balance', 'Accounts left out for never having had a balance measured.'],
+      [
+        'complete',
+        'False when the totals leave accounts out: ones that couldn’t be read or haven’t been loaded (missing_accounts), or have no measured balance (accounts_without_balance). Never chart or report a total with complete false as your whole net worth.',
+      ],
+      ...MISSING_ACCOUNTS('the totals are short of them').filter(([path]) => path !== 'complete'),
       ['recorded', 'The newest net worth recorded in history (the chart’s last recorded point), or null.'],
       ['recorded.date', 'Its day (UTC).'],
       ['recorded.value', 'Its value. Recorded totals add every account’s balance whatever its currency, as the chart does.'],
@@ -177,6 +198,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         { date: '2026-09-30', value: 429600.0, estimated: false },
         { date: '2026-10-09', value: 431870.25, estimated: false },
       ],
+      notes: [],
     },
     fields: [
       ['account_id', 'The account asked for, or null for net worth.'],
@@ -187,6 +209,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['points[].date', 'The day (UTC).'],
       ['points[].value', 'Net worth, or the account’s balance (what a card or a loan owes is positive).'],
       ['points[].estimated', 'True for a point reconstructed from transactions rather than recorded: only with include_estimated=true.'],
+      ['notes', 'Anything that couldn’t be read, in words for a person: an account’s currency, say. Empty when all is well. An account_id that names no account Nya has or had is a 404.'],
     ],
   },
 
@@ -231,7 +254,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['to', 'The last.'],
       ['transactions', 'Newest first: the day, then the moment, then the id. The last 365 days are read, as the app shows them.'],
       ['transactions[].id', 'The transaction’s id: Plaid’s, or manual-txn:… for one entered by hand.'],
-      ['transactions[].date', 'The day it posted.'],
+      ['transactions[].date', 'The day it is dated: the bank’s posting date (not a UTC day), or the day picked for one entered by hand.'],
       ['transactions[].datetime', 'When it happened, where the bank says, or null.'],
       ['transactions[].amount', 'Plaid’s sign: positive is money out of the account, negative money in.'],
       ['transactions[].currency', 'Its currency, or null for one stored before currencies were kept (taken to be in your main one).'],
@@ -244,7 +267,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].account_id', 'The account it is on.'],
       ['transactions[].account_name', 'That account’s name.'],
       ['transactions[].institution', 'That account’s institution.'],
-      ['transactions[].source', '"plaid" for a bank’s, "manual" for one you entered.'],
+      ['transactions[].source', '"plaid" for a bank’s, "manual" for one you entered. Version 1 may add values (rows brought in from a file, say): treat one you don’t know as neither.'],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
       ['transactions[].note', 'Your note on one you entered, or null.'],
       ['transactions[].counterparty', 'The merchant behind a payment processor, when it differs from the name, or null.'],

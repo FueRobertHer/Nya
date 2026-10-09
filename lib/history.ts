@@ -494,9 +494,10 @@ export type MeasuredBalance = {
  * passed over, as getLatestAccountSnapshot passes them: clock skew can mint
  * one. Reads the dates, then only the maps it needs, newest first and a few
  * more each round trip, until every account has a balance: on most days the
- * newest map names them all. A map that can't be decrypted is passed over
- * (the next date down answers, with its own date); storage failing throws. An
- * account no measured map names is left out.
+ * newest map names them all. A map damaged for good (unreadableForGood) is
+ * passed over (the next date down answers, with its own date); a failure that
+ * may pass (storage, or the key store, out of reach) throws, never "an older
+ * balance". An account no measured map names is left out.
  */
 export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, string[]>): Promise<Map<string, MeasuredBalance>> {
   const found = new Map<string, MeasuredBalance>();
@@ -512,8 +513,9 @@ export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, str
     if (!blob) return null;
     try {
       return await decryptMap(blob);
-    } catch {
-      return null; // undecryptable (rotated key): the date before answers
+    } catch (err) {
+      if (!unreadableForGood(err)) throw err;
+      return null; // damaged for good: the date before answers
     }
   };
   const valueIn = (map: Record<string, number> | null, ids: string[]): number | null => {

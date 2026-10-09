@@ -173,6 +173,11 @@ type ItemState = {
   // remembered, with the bank accounts and cards it was about, so the next
   // loads don't ask again. Gone once a sync succeeds.
   refused?: Refusal;
+  // The first pull stopped at the page cap, older rows still to come: saved
+  // with the progress, so a reader that never syncs (storedItemTransactions)
+  // says the rows aren't all here yet, as the sync's own `importing` does.
+  // Gone once a sync gets to the end.
+  importing?: true;
 };
 
 // Trailing window callers display / reconstruct by default.
@@ -469,6 +474,7 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
         txns: parsed.txns ?? {},
         synced_at: typeof parsed.synced_at === 'string' && !Number.isNaN(Date.parse(parsed.synced_at)) ? parsed.synced_at : null,
         ...(isRefusal(parsed.refused) ? { refused: parsed.refused } : {}),
+        ...(parsed.importing === true ? { importing: true as const } : {}),
       };
     }
     // Older or unversioned: upgrade in place, keeping every row and the cursor.
@@ -915,6 +921,8 @@ async function syncItem(ctx: Ctx,
     if (cursor) state.cursor = cursor;
     state.synced_at = new Date().toISOString();
     delete state.refused;
+    if (hasMore) state.importing = true;
+    else delete state.importing;
     const write = await writeState(ctx, item.item_id, state);
 
     // Too large to persist. `state` is still complete (nothing was trimmed), so
@@ -1098,7 +1106,11 @@ export async function storedItemTransactions(
     if (noTransactions) return { txns: [], note: null, coverage: 'complete', synced_at: null, noTransactions };
     return { txns: [], note: `${item.institution_name}: no transactions stored yet; open the app to load them`, coverage: 'missing', synced_at: null };
   }
-  return { txns: await displayRows(state, inputs), note: null, coverage: 'complete', synced_at: state.synced_at };
+  const txns = await displayRows(state, inputs);
+  if (state.importing) {
+    return { txns, note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`, coverage: 'importing', synced_at: state.synced_at };
+  }
+  return { txns, note: null, coverage: 'complete', synced_at: state.synced_at };
 }
 
 /**

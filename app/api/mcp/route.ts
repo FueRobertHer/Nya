@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { admit } from '@/lib/api-http';
-import { handleMessage, rpcError, RPC, PROTOCOL_VERSIONS, type RpcResponse } from '@/lib/mcp';
+import { appUrl } from '@/lib/app-url';
+import { handleMessage, rpcError, RPC, PROTOCOL_VERSIONS } from '@/lib/mcp';
 
 // The MCP server (lib/mcp.ts) over MCP's streamable HTTP transport, read only,
 // with an API token (lib/api-tokens.ts) as a bearer token, exactly as the REST
@@ -8,19 +9,31 @@ import { handleMessage, rpcError, RPC, PROTOCOL_VERSIONS, type RpcResponse } fro
 // token, one request counted per HTTP request). proxy.ts lets it past the
 // session gate: it reads no cookie.
 //
-//   POST  one JSON-RPC message, or a batch of them (2025-03-26 allows one;
-//         later versions send none): each request's answer as JSON, or 202
-//         with no body when there was nothing to answer (a notification).
+//   POST  one JSON-RPC message: a request's answer as JSON, or 202 with no
+//         body when there was nothing to answer (a notification). A batch (an
+//         array) is refused, as MCP 2025-06-18 and later have no batches: so
+//         every tool call is a request of its own, counted against the token's
+//         limit, and no answer holds many.
 //   GET   405: the server offers no stream of its own messages.
 //   DELETE 405: there are no sessions to end.
 //
-// As the transport requires, a request a browser sends from another site (an
-// Origin that isn't this one) is refused, against DNS rebinding; a client
-// that isn't a browser sends none. An MCP-Protocol-Version this server doesn't
-// speak is a 400. No CORS headers are sent.
+// A request a browser sends from another site's page (an Origin that isn't
+// this app's: APP_URL's when it is set, else the address the request came
+// to) is refused. That stops a page elsewhere from calling it with a token it
+// somehow holds; it isn't what stops DNS rebinding, where Host and Origin are
+// both the attacker's name and match: a rebinding page has no token, and
+// every request needs one. A client that isn't a browser sends no Origin. An
+// MCP-Protocol-Version this server doesn't speak is a 400. No CORS headers
+// are sent.
 
 const MAX_BODY_CHARS = 256 * 1024;
-const MAX_BATCH = 20;
+
+/** This app's own origin: APP_URL's when it is set, else the one the request
+ *  came to. */
+function ownOrigin(req: Request): string {
+  const configured = appUrl();
+  return configured ? new URL(configured).origin : new URL(req.url).origin;
+}
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store', ...headers } });
@@ -38,7 +51,7 @@ async function refused(res: NextResponse): Promise<NextResponse> {
 
 export async function POST(req: Request) {
   const origin = req.headers.get('origin');
-  if (origin !== null && origin !== new URL(req.url).origin) {
+  if (origin !== null && origin !== ownOrigin(req)) {
     return json(403, rpcError(null, -32000, 'Requests from other sites are not accepted.'));
   }
   const version = req.headers.get('mcp-protocol-version');
@@ -60,15 +73,7 @@ export async function POST(req: Request) {
   }
 
   if (Array.isArray(body)) {
-    if (body.length === 0 || body.length > MAX_BATCH) return json(400, rpcError(null, RPC.invalidRequest, `A batch holds 1 to ${MAX_BATCH} messages.`), limits);
-    // One at a time: each tool reads the data whole, and a batch is no reason
-    // to read it many times at once.
-    const answers: RpcResponse[] = [];
-    for (const m of body) {
-      const answer = await handleMessage(auth, m);
-      if (answer) answers.push(answer);
-    }
-    return answers.length > 0 ? json(200, answers, limits) : new NextResponse(null, { status: 202, headers: limits });
+    return json(400, rpcError(null, RPC.invalidRequest, 'Batches are not accepted: send one JSON-RPC message per request.'), limits);
   }
 
   const answer = await handleMessage(auth, body);

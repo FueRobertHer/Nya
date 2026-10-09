@@ -6,11 +6,19 @@
 // no inference. Served at /api/mcp (app/api/mcp/route.ts).
 //
 // Written by hand from the spec, without an SDK: JSON-RPC 2.0 messages over
-// the streamable HTTP transport, protocol versions 2025-11-25, 2025-06-18 and
-// 2025-03-26 (the subset used here is the same in each). Every request here
-// has exactly one answer, so each is sent as plain JSON, which the transport
-// allows; there is no SSE stream, and no session (the server keeps no state
-// between requests, so it hands out no Mcp-Session-Id).
+// the streamable HTTP transport, protocol versions 2025-11-25 and 2025-06-18
+// (the subset used here is the same in each), one message per request: those
+// versions have no batches, so every tool call is a request of its own,
+// counted against the token's limit. Every request here has exactly one
+// answer, so each is sent as plain JSON, which the transport allows; there is
+// no SSE stream, and no session (the server keeps no state between requests,
+// so it hands out no Mcp-Session-Id).
+//
+// SIZE. A tool's result is sent twice (as text, and as structured content),
+// so it may come to at most MCP_MAX_RESULT_BYTES of JSON, well inside what a
+// function may send back: a larger one is a tool error saying how to ask for
+// less (ToolSpec.narrow). search_transactions pages are smaller than the
+// REST endpoint's, with the same cursor.
 //
 // It speaks initialize, notifications/initialized, ping, tools/list and
 // tools/call; any other method is "method not found". Each tool is a thin
@@ -30,7 +38,8 @@
 import type { Authenticated } from './api-tokens';
 import { argsFromJson, inputSchema, operation, BadRequest, NotFound, type Args } from './api-ops';
 import { TOOL_SPECS, DATA_NOT_INSTRUCTIONS, PROTOCOL_VERSIONS, type ToolSpec } from './api-spec';
-import { readNetWorth, readBalanceHistory, type Interval } from './api-read';
+import { readNetWorthAndHistory, readNetWorth, type ApiMissing, type Interval } from './api-read';
+import { MCP_MAX_RESULT_BYTES } from './api-limits';
 import { StoredDataUnreadableError } from './repo';
 import { loggable } from './log-safe';
 
@@ -67,21 +76,41 @@ type Tool = ToolSpec & {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const money = (n: number, currency: string | null) => `${n.toFixed(2)}${currency ? ` ${currency}` : ''}`;
 
-/** Net worth now, and its history unless include_history is false: the two
- *  reads its two endpoints make (net-worth, balance-history). */
+/** Net worth now, and its history unless include_history is false, from one
+ *  read of the accounts and of the history (readNetWorthAndHistory). */
 async function netWorthTool(auth: Authenticated, a: Args): Promise<unknown> {
   if (typeof a.from === 'string' && typeof a.to === 'string' && a.from > a.to) throw new BadRequest('from is after to.');
   const includeHidden = a.include_hidden === true;
-  const now = await readNetWorth(auth.ctx, { includeHidden });
-  if (a.include_history === false) return { now };
-  const history = await readBalanceHistory(auth.ctx, {
+  if (a.include_history === false) return { now: await readNetWorth(auth.ctx, { includeHidden }) };
+  return readNetWorthAndHistory(auth.ctx, {
     from: a.from as string | undefined,
     to: a.to as string | undefined,
     includeEstimated: a.include_estimated === true,
     includeHidden,
     interval: (a.interval as Interval | undefined) ?? 'month',
   });
-  return { now, history };
+}
+
+/** What an answer's list of accounts is short of, in counts (never names:
+ *  see PROMPT INJECTION above), or '' when it is whole. */
+function missingAccounts(missing: readonly ApiMissing[], withoutBalance = 0): string {
+  const count = (pred: (m: ApiMissing) => boolean) => missing.filter(pred).length;
+  const unreadable = count((m) => m.account_id === null && m.reason === 'unreadable');
+  const notLoaded = count((m) => m.reason === 'not_loaded');
+  const manual = count((m) => m.account_id !== null);
+  const parts = [
+    unreadable > 0 ? `the accounts of ${plural(unreadable, 'connection')} couldn’t be read` : '',
+    notLoaded > 0 ? `${plural(notLoaded, 'connection')} ${notLoaded === 1 ? 'hasn’t' : 'haven’t'} been loaded yet` : '',
+    manual > 0 ? `${plural(manual, 'manual account')} couldn’t be read` : '',
+    withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no measured balance` : '',
+  ].filter(Boolean);
+  return parts.length === 0 ? '' : ` Incomplete: ${parts.join('; ')}. See missing_accounts and notes.`;
+}
+
+/** The days the balances counted are from, when known. */
+function datedFrom(from: string | null, to: string | null): string {
+  if (!from || !to) return '';
+  return from === to ? `, from balances dated ${from}` : `, from balances dated ${from} to ${to}`;
 }
 
 /**
@@ -101,11 +130,13 @@ function withoutTransactions(r: { sources?: { no_transactions: string | null }[]
 }
 
 const SUMMARIES: Record<string, Tool['summary']> = {
-  list_accounts: (r) => `${plural(r.accounts.length, 'account')}.${r.notes.length ? ` ${plural(r.notes.length, 'note')} on what couldn’t be read.` : ''}`,
+  list_accounts: (r) => `${plural(r.accounts.length, 'account')}.${missingAccounts(r.missing_accounts)}`,
   get_net_worth: (r) =>
-    r.now.totals.length
-      ? `Net worth ${r.now.totals.map((t: any) => money(t.net_worth, t.currency)).join(', ')}, from balances dated ${r.now.balances_from} to ${r.now.balances_to}.${r.history ? ` ${plural(r.history.points.length, 'history point')}.` : ''}`
-      : 'No balances are recorded yet.',
+    (r.now.totals.length
+      ? `Net worth ${r.now.totals.map((t: any) => money(t.net_worth, t.currency)).join(', ')}${datedFrom(r.now.balances_from, r.now.balances_to)}.`
+      : 'No balances are recorded yet.') +
+    missingAccounts(r.now.missing_accounts, r.now.accounts_without_balance) +
+    (r.history ? ` ${plural(r.history.points.length, 'history point')}.` : ''),
   get_balance_history: (r) => `${plural(r.points.length, 'point')}${r.points.length ? `, ${r.points[0].date} to ${r.points[r.points.length - 1].date}` : ''}.`,
   search_transactions: (r) =>
     `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,
@@ -155,10 +186,15 @@ export async function callTool(auth: Authenticated, name: string, raw: unknown):
   }
   try {
     const result = await tool.run(auth, args);
+    const json = JSON.stringify(result);
+    const bytes = Buffer.byteLength(json, 'utf8');
+    if (bytes > MCP_MAX_RESULT_BYTES) {
+      return toolError(`This answer is too large to send (${(bytes / 1_000_000).toFixed(1)} MB). ${tool.narrow}`);
+    }
     return {
       content: [
         { type: 'text', text: tool.summary(result) },
-        { type: 'text', text: JSON.stringify(result) },
+        { type: 'text', text: json },
       ],
       structuredContent: result,
     };
@@ -171,7 +207,8 @@ export async function callTool(auth: Authenticated, name: string, raw: unknown):
 
 // ---- Messages ----
 
-const isId = (v: unknown): v is Id => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
+/** MCP's request ids: a string or an integer (never null). */
+const isId = (v: unknown): v is Id => typeof v === 'string' || (typeof v === 'number' && Number.isSafeInteger(v));
 
 /**
  * One JSON-RPC message's answer, or null for one that has none (a
@@ -191,9 +228,9 @@ export async function handleMessage(auth: Authenticated, msg: unknown): Promise<
   }
   // A notification (no id) is never answered, whatever its method.
   if (!('id' in m)) return null;
-  if (!isId(id)) return rpcError(null, RPC.invalidRequest, 'id is a string or a number.');
+  if (!isId(id)) return rpcError(null, RPC.invalidRequest, 'id is a string or an integer.');
   const params = m.params;
-  if (params !== undefined && (typeof params !== 'object' || params === null)) return rpcError(id, RPC.invalidParams, 'params is an object.');
+  if (params !== undefined && (typeof params !== 'object' || params === null || Array.isArray(params))) return rpcError(id, RPC.invalidParams, 'params is an object.');
   const p = (params ?? {}) as Record<string, unknown>;
 
   switch (m.method) {

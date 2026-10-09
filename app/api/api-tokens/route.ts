@@ -3,7 +3,9 @@ import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { freshSignIn, PASSWORD_MAX } from '@/lib/fresh-sign-in';
-import { apiTokenStore, cleanLabel, createToken, listTokens, revokeToken, TokenLimitError, MAX_TOKENS } from '@/lib/api-tokens';
+import { apiTokenStore, cleanLabel, createToken, listTokens, revokeToken, TokenLimitError, MAX_TOKENS, DEMO_REFUSAL } from '@/lib/api-tokens';
+import { clerkEnabled } from '@/lib/auth-mode';
+import { isDemoUser } from '@/lib/demo';
 import { loggable } from '@/lib/log-safe';
 
 // The API tokens card (components/ApiTokens.tsx): the person's own tokens for
@@ -20,9 +22,14 @@ import { loggable } from '@/lib/log-safe';
 // Making a token needs a FRESH SIGN-IN (lib/fresh-sign-in.ts, as downloading
 // everything does): a token goes on reading the data after "Sign out
 // everywhere", so a stolen session cookie must not be able to make one. The
-// limit (MAX_TOKENS) is checked before the sign-in, so a person at it isn't
-// asked to sign in for nothing, and again as the token is saved. Revoking
-// needs only the session: it only ever takes access away.
+// token keeps the Clerk account that made it, which must go on owning the
+// container and being allowed in for it to work. The limit (MAX_TOKENS) is
+// checked before the sign-in, so a person at it isn't asked to sign in for
+// nothing, and again as the token is saved. A DEMO account (Preview's shared
+// ones, lib/demo.ts) can't make one: everyone who tries the demo shares its
+// data, and a token would go on reading what later visitors type. A sandbox
+// for developers is a later step. Revoking needs only the session: it only
+// ever takes access away.
 //
 // A token whose record can't be read is listed by id under `unreadable`
 // (damaged: DELETE removes it once the person confirms, with unreadable:
@@ -81,6 +88,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'password must be text.' }, { status: 400 });
   }
 
+  // Before the sign-in, so a demo visitor isn't asked to confirm it's them for nothing.
+  if (clerkEnabled()) {
+    const { auth } = await import('@clerk/nextjs/server');
+    const { userId } = await auth();
+    if (userId && isDemoUser(userId)) return NextResponse.json({ error: DEMO_REFUSAL }, { status: 403 });
+  }
+
   try {
     if ((await apiTokenStore.count(ctx)) >= MAX_TOKENS) return NextResponse.json({ error: new TokenLimitError().message }, { status: 409 });
   } catch (err) {
@@ -89,9 +103,10 @@ export async function POST(req: Request) {
 
   const signedIn = await freshSignIn(req, typeof password === 'string' ? password : null);
   if (signedIn instanceof NextResponse) return signedIn;
+  if (signedIn.userId && isDemoUser(signedIn.userId)) return NextResponse.json({ error: DEMO_REFUSAL }, { status: 403 });
 
   try {
-    const { token, info } = await createToken(ctx, label);
+    const { token, info } = await createToken(ctx, label, new Date(), signedIn.userId);
     // Never the token itself: it is in this answer alone.
     console.log('API token made');
     return NextResponse.json({ token, info }, { headers: noStore });

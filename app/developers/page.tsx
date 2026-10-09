@@ -2,7 +2,17 @@ import type { Metadata } from 'next';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { OPERATION_SPECS, TOOL_SPECS, PROTOCOL_VERSIONS, describeKind } from '@/lib/api-spec';
 import { API_DOCS } from '@/lib/api-examples';
-import { API_VERSION, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE } from '@/lib/api-limits';
+import {
+  API_AUTH_MAX_FAILURES,
+  API_AUTH_WINDOW_SECONDS,
+  API_VERSION,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  MCP_MAX_PAGE_SIZE,
+  MAX_TOKENS,
+  RATE_WINDOW_SECONDS,
+  REQUESTS_PER_MINUTE,
+} from '@/lib/api-limits';
 import { appUrl } from '@/lib/app-url';
 
 export const metadata: Metadata = {
@@ -23,13 +33,21 @@ export const metadata: Metadata = {
 
 const ERRORS: [status: string, code: string, meaning: string][] = [
   ['400', 'invalid_request', 'A parameter isn’t one the endpoint takes, is given twice, or isn’t valid. The message says which.'],
-  ['401', 'unauthorized', 'No token, or one that isn’t good: malformed, revoked, or for data that can’t be reached. Every case gets the same answer.'],
-  ['404', 'not_found', 'What you asked for isn’t there, or is hidden and you didn’t ask for hidden accounts.'],
+  ['401', 'unauthorized', 'No token, or one that doesn’t work: malformed, unknown, revoked, or made by an account no longer allowed in. Every case gets the same answer.'],
+  ['404', 'not_found', 'There is no such endpoint, or what you asked for isn’t there (an account_id no account has), or is hidden and you didn’t ask for hidden accounts.'],
   ['405', 'method_not_allowed', 'Anything but GET: the API only reads.'],
   ['409', 'unreadable', 'Stored data couldn’t be read. Nothing is guessed in its place; the app shows the same problem.'],
-  ['429', 'rate_limited', `More than ${REQUESTS_PER_MINUTE} requests in ${RATE_WINDOW_SECONDS} seconds with this token. Retry-After says when to try again.`],
+  [
+    '429',
+    'rate_limited',
+    `More than ${REQUESTS_PER_MINUTE} requests in ${RATE_WINDOW_SECONDS} seconds with this token, or more than ${API_AUTH_MAX_FAILURES} requests with tokens that don’t work from your address in ${API_AUTH_WINDOW_SECONDS / 60} minutes. Retry-After says when to try again.`,
+  ],
   ['500', 'internal', 'Something went wrong. The answer never says what; the server’s log does.'],
-  ['503', 'unavailable', 'Your data can’t be reached just now (being restored, say). Try again later.'],
+  [
+    '503',
+    'unavailable',
+    'The token is good, but your data can’t be reached just now: it is being restored, say, or the sign-in service couldn’t confirm the account that made the token may still sign in. Try again later, and keep the token.',
+  ],
 ];
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -65,10 +83,12 @@ export default function DevelopersPage() {
         <pre>{`curl -H "Authorization: Bearer $NYA_TOKEN" ${base}/api/v1/me`}</pre>
         <p>
           A token reads everything listed below, including transactions, for as long as it exists. Keep it secret, like a
-          password. Revoke one under API tokens: the next request with it is refused. Signing out everywhere doesn’t revoke
-          tokens. Deleting your account deletes them; with sign-in accounts, being taken off the list of people allowed in
-          stops them working, as it stops you signing in. Tokens start with <code>nya_</code>, so one is easy to recognise,
-          by you or by a tool that looks for leaked secrets.
+          password. Revoke one under API tokens: the next request with it is refused. Signing out everywhere, or changing
+          the app password, doesn’t revoke tokens. Deleting your account deletes them; with sign-in accounts, being taken
+          off the list of people allowed in stops the tokens you made working, as it stops you signing in. Backups leave
+          tokens out, so if a backup is ever restored, every token stops: make new ones. Tokens start with{' '}
+          <code>nya_</code>, so one is easy to recognise, by you or by a tool that looks for leaked secrets. The demo
+          accounts can’t make tokens: everyone who tries the demo shares their data.
         </p>
         <p className="info-aside">
           The API sends no CORS headers, so a web page on another site can’t call it from your browser: it is for programs,
@@ -100,8 +120,9 @@ export default function DevelopersPage() {
             which each answer says per institution. Nothing is an estimate unless it is marked <code>estimated</code>.
           </li>
           <li>
-            <strong>Dates</strong> are UTC days, <code>YYYY-MM-DD</code>; times are ISO 8601 instants. <code>null</code> means
-            not known, never zero.
+            <strong>Dates</strong> are <code>YYYY-MM-DD</code>. A balance’s and history’s are UTC days; a transaction’s is
+            the date it carries, the bank’s posting date or the day picked for one entered by hand. Times are ISO 8601
+            instants. <code>null</code> means not known, never zero.
           </li>
           <li>
             <strong>Hidden accounts</strong> are left out everywhere unless you add <code>include_hidden=true</code>: their
@@ -131,7 +152,12 @@ export default function DevelopersPage() {
           each answer says where it stands: <code>RateLimit-Limit</code>, <code>RateLimit-Remaining</code> and{' '}
           <code>RateLimit-Reset</code> (seconds until the window ends). Every answer says not to cache it.
         </p>
-        <p>Every error has one shape, whatever went wrong:</p>
+        <p>
+          A request with a token that doesn’t work is counted against the address it came from: after{' '}
+          {API_AUTH_MAX_FAILURES} in {API_AUTH_WINDOW_SECONDS / 60} minutes, that address is turned away until the
+          window ends. Something that isn’t a token at all is refused without being counted.
+        </p>
+        <p>Every error has one shape, whatever went wrong, at any path under /api/v1, an endpoint or not:</p>
         <pre>{json({ error: { code: 'invalid_request', message: 'from is a date, YYYY-MM-DD.' } })}</pre>
         <table className="info-table">
           <thead>
@@ -226,7 +252,11 @@ export default function DevelopersPage() {
         <ul>
           <li>
             Address: <code>{mcpUrl}</code>, over MCP’s streamable HTTP transport (protocol versions{' '}
-            {PROTOCOL_VERSIONS.join(', ')}), answered as plain JSON.
+            {PROTOCOL_VERSIONS.join(', ')}), one message per request (no batches), answered as plain JSON.
+          </li>
+          <li>
+            Size: <code>search_transactions</code> gives at most {MCP_MAX_PAGE_SIZE} transactions a page, with a cursor
+            for the next, and a result too large to send is refused with how to ask for less.
           </li>
           <li>
             Sign-in: an API token from the app, sent as <code>Authorization: Bearer nya_…</code>. It counts against the
@@ -295,6 +325,7 @@ export default function DevelopersPage() {
           <li>Signing in on your behalf for a third-party app (OAuth): tokens are personal.</li>
           <li>Being told when your data changes (webhooks): ask again instead.</li>
           <li>Live balances: everything is what Nya has stored, with its date.</li>
+          <li>A sandbox to try the API against: the demo accounts can’t make tokens, since everyone who tries the demo shares their data.</li>
         </ul>
       </InfoSection>
     </InfoPage>

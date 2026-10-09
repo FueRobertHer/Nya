@@ -6,7 +6,7 @@ import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/dele
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
-import { RATE_WINDOW_SECONDS } from '@/lib/api-limits';
+import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -173,7 +173,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   ],
   [
     'API tokens',
-    'Until you revoke them, or delete your account. Each is kept as its name, when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere doesn’t end them.',
+    'Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.',
   ],
   [
     'Requests counted for each API token',
@@ -182,6 +182,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],
+  ['Requests with API tokens that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
   [
     'What your device keeps',
     'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere.',

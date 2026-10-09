@@ -8,12 +8,21 @@
 //   { "error": { "code": "<code>", "message": "<for a person>" } }
 //
 //   400 invalid_request   a parameter that isn't one, or isn't valid
-//   401 unauthorized      no token, or one that isn't good (every way alike)
+//   401 unauthorized      no token, or one that doesn't work (every way alike)
 //   404 not_found         what was asked for isn't there (or is hidden)
 //   409 unreadable        stored data that can't be read: nothing is guessed
-//   429 rate_limited      over the token's limit; Retry-After says when
+//   429 rate_limited      over the token's limit, or too many tokens that
+//                         don't work from this address; Retry-After says when
 //   500 internal          anything else; the log has it, the answer doesn't
-//   503 unavailable       the data can't be reached just now
+//   503 unavailable       the data can't be reached just now (the token is
+//                         good: its data is being restored, say)
+//
+// A token that isn't in a token's form is a 401 before anything is read; one
+// in the right form that doesn't work is counted against its address
+// (lib/rate-limit.ts), which is turned away for a while past the limit, before
+// any read. When the token was last used is written down at most once a
+// minute per token; requests that start together write it once
+// (lib/api-tokens.ts noteUse).
 //
 // No answer carries an internal detail: an error's own message goes to the
 // log (through loggable, lib/log-safe.ts), never to the caller, apart from the
@@ -25,7 +34,8 @@
 // pages on other sites.
 
 import { NextResponse } from 'next/server';
-import { authenticate, noteUse, takeRequest, RateCountUnreadableError, type Authenticated } from './api-tokens';
+import { bearerToken, checkToken, noteUse, parseToken, takeRequest, RateCountUnreadableError, type Authenticated } from './api-tokens';
+import { tokenFailuresExhausted, countTokenFailure, API_AUTH_WINDOW_SECONDS } from './rate-limit';
 import { ContainerError } from './containers';
 import { StoredDataUnreadableError } from './repo';
 import { loggable } from './log-safe';
@@ -65,14 +75,29 @@ export function failed(err: unknown, what: string): NextResponse {
  *  MCP route, which answers its own way around the same steps. */
 export async function admit(req: Request, now: number = Date.now()): Promise<{ auth: Authenticated; limits: Record<string, string> } | NextResponse> {
   const header = req.headers.get('authorization');
-  let auth: Authenticated | null;
+  // Not even in a token's form: refused before anything is read or counted.
+  if (!parseToken(bearerToken(header))) return unauthorized(header !== null);
+  // An address that has sent too many tokens that don't work is turned away
+  // before any of the reads a token costs.
+  if (await tokenFailuresExhausted(req)) {
+    return apiError(429, 'rate_limited', 'Too many requests with tokens that don’t work have come from this address. Try again later.', {
+      'Retry-After': String(API_AUTH_WINDOW_SECONDS),
+    });
+  }
+  let check: Awaited<ReturnType<typeof checkToken>>;
   try {
-    auth = await authenticate(header, now);
+    check = await checkToken(header, now);
   } catch (err) {
     console.error('API: a token could not be checked', loggable(err));
     return apiError(503, 'unavailable', 'Tokens can’t be checked just now. Try again later.');
   }
-  if (!auth) return unauthorized(header !== null);
+  if (check.kind === 'malformed') return unauthorized(header !== null);
+  if (check.kind === 'refused') {
+    await countTokenFailure(req);
+    return unauthorized(true);
+  }
+  if (check.kind === 'unavailable') return apiError(503, 'unavailable', `${check.why} Try again later.`);
+  const { auth } = check;
   let allowance;
   try {
     allowance = await takeRequest(auth, now);

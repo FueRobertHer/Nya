@@ -43,24 +43,33 @@ function fingerprint(parts: readonly unknown[]): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('base64url').slice(0, 16);
 }
 
-/** A cursor: where the page before ended, and the query it belongs to.
- *  Opaque to callers (base64url JSON). */
-function encodeCursor(key: PageKey, print: string): string {
-  return Buffer.from(JSON.stringify([key.date, key.datetime, key.id, print])).toString('base64url');
+/** A cursor: where the page before ended, the query it belongs to, and the
+ *  range that query came to, so a page asked for after midnight (UTC) goes
+ *  on with the range the first page had, defaults and all. Opaque to callers
+ *  (base64url JSON). */
+function encodeCursor(key: PageKey, print: string, range: { from: string; to: string }): string {
+  return Buffer.from(JSON.stringify([key.date, key.datetime, key.id, print, range.from, range.to])).toString('base64url');
 }
 
-function decodeCursor(cursor: string, print: string): PageKey {
+function decodeCursor(cursor: string, print: string): { after: PageKey; from: string; to: string } {
   let parts: unknown;
   try {
     parts = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
   } catch {
     parts = null;
   }
-  if (!Array.isArray(parts) || parts.length !== 4 || !isCalendarDay(parts[0]) || !parts.slice(1).every((p) => typeof p === 'string' && p.length <= 200)) {
+  if (
+    !Array.isArray(parts) ||
+    parts.length !== 6 ||
+    !isCalendarDay(parts[0]) ||
+    !parts.slice(1, 4).every((p) => typeof p === 'string' && p.length <= 200) ||
+    !isCalendarDay(parts[4]) ||
+    !isCalendarDay(parts[5])
+  ) {
     throw new BadRequest('cursor is not one this API gave.');
   }
   if (parts[3] !== print) throw new BadRequest('cursor belongs to another query: ask again with the same parameters, or without one.');
-  return { date: parts[0], datetime: parts[1], id: parts[2] };
+  return { after: { date: parts[0], datetime: parts[1], id: parts[2] }, from: parts[4], to: parts[5] };
 }
 
 // ---- What each runs ----
@@ -68,7 +77,13 @@ function decodeCursor(cursor: string, print: string): PageKey {
 const DAY_MS = 86_400_000;
 const today = () => new Date().toISOString().slice(0, 10);
 const daysBefore = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) - n * DAY_MS).toISOString().slice(0, 10);
-const lastOfMonth = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+/** The month's last day. setUTCFullYear, not Date.UTC, which reads a year
+ *  under 100 as 19xx. */
+const lastOfMonth = (month: string) => {
+  const d = new Date(0);
+  d.setUTCFullYear(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0);
+  return d.toISOString().slice(0, 10);
+};
 
 const flag = (a: Args, name: string) => a[name] === true;
 const str = (a: Args, name: string) => a[name] as string | undefined;
@@ -104,7 +119,6 @@ const RUNS: Record<string, Operation['run']> = {
   },
 
   transactions: async (auth, a) => {
-    const { from, to } = range(a, 30);
     const min = num(a, 'min_amount');
     const max = num(a, 'max_amount');
     if (min !== undefined && max !== undefined && min > max) throw new BadRequest('min_amount is more than max_amount.');
@@ -112,8 +126,21 @@ const RUNS: Record<string, Operation['run']> = {
     const includeHidden = flag(a, 'include_hidden');
     const text = str(a, 'q');
     const category = str(a, 'category');
-    const print = fingerprint([from, to, accountIds ? [...new Set(accountIds)].sort() : null, includeHidden, text ?? null, category?.toLowerCase() ?? null, min ?? null, max ?? null]);
+    // The query as asked, defaults left out, so a cursor made before midnight
+    // (UTC) still belongs to it after; the range it came to rides in the cursor.
+    const print = fingerprint([
+      str(a, 'from') ?? null,
+      str(a, 'to') ?? null,
+      accountIds ? [...new Set(accountIds)].sort() : null,
+      includeHidden,
+      text ?? null,
+      category?.toLowerCase() ?? null,
+      min ?? null,
+      max ?? null,
+    ]);
     const cursor = str(a, 'cursor');
+    const resumed = cursor ? decodeCursor(cursor, print) : null;
+    const { from, to } = resumed ?? range(a, 30);
     const page = await queryTransactions(auth.ctx, {
       from,
       to,
@@ -124,7 +151,7 @@ const RUNS: Record<string, Operation['run']> = {
       minAmount: min,
       maxAmount: max,
       limit: num(a, 'limit') ?? DEFAULT_PAGE_SIZE,
-      after: cursor ? decodeCursor(cursor, print) : null,
+      after: resumed?.after ?? null,
     });
     const notes = [...page.notes];
     if (from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read, as the app shows them; the data download has every one stored.`);
@@ -133,7 +160,7 @@ const RUNS: Record<string, Operation['run']> = {
       to,
       transactions: page.transactions,
       has_more: page.next !== null,
-      next_cursor: page.next ? encodeCursor(page.next, print) : null,
+      next_cursor: page.next ? encodeCursor(page.next, print, { from, to }) : null,
       sources: page.sources,
       notes,
     };
@@ -158,7 +185,7 @@ const RUNS: Record<string, Operation['run']> = {
 
   recurring: async (auth, a) => readRecurring(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
-  holdings: async (auth, a) => readHoldings(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+  holdings: async (auth, a) => readHoldings(auth.ctx, { includeHidden: flag(a, 'include_hidden'), accountId: str(a, 'account_id') }),
 };
 
 export const OPERATIONS: readonly Operation[] = OPERATION_SPECS.map((spec) => {

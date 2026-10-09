@@ -13,8 +13,9 @@ import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-heade
 //   - the manual-balance ingest, via INGEST_SECRET;
 //   - the read-only API (each /api/v1 endpoint, listed one by one) and the MCP
 //     server (/api/mcp), via a personal API token (lib/api-tokens.ts). They
-//     read no cookie, so a session alone reaches none of them; a new endpoint
-//     is gated until it is added here;
+//     read no cookie, so a session alone reaches none of them. Any other path
+//     under /api/v1 is answered 404 here (proxy below), so a new endpoint
+//     isn't reached until it is added;
 //   - Plaid's webhook, by verifying Plaid's signature (lib/plaid-webhook.ts);
 //   - the ops routes (export, rotate-master, reencrypt, containers), via
 //     OPS_SECRET, and off entirely unless OPS_ENABLED=1 (lib/ops.ts);
@@ -121,8 +122,20 @@ const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) =
   return pass(req);
 });
 
+// The read-only API's endpoints skip this proxy (the matcher above), so a path
+// under /api/v1 that reaches it is no endpoint at all: a typo, or a trailing
+// slash. It is answered in the API's own error shape (lib/api-http.ts), a 404,
+// whoever asks, so a program never reads it as a token that doesn't work.
+const API_V1 = /^\/api\/v1(\/|$)/;
+
 // Next always passes the event; tests of the password path need not.
 export async function proxy(req: NextRequest, event?: NextFetchEvent) {
+  if (API_V1.test(req.nextUrl.pathname)) {
+    return NextResponse.json(
+      { error: { code: 'not_found', message: 'There is no such endpoint. The endpoints are listed at /developers.' } },
+      { status: 404, headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
   if (clerkEnabled()) {
     const res = await (clerkProxy ??= makeClerkProxy())(req, event as NextFetchEvent);
     return res ?? NextResponse.next();

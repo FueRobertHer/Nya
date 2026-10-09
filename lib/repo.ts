@@ -62,7 +62,9 @@
 // walking every store reads: the key inventory in lib/reencrypt.ts, and the
 // person's data download (lib/user-export.ts), where each store declared
 // exportable is a section of its own. The name is the key family, so a
-// declared store is in the key inventory by construction.
+// declared store is in the key inventory by construction. A store holding a
+// credential that a restore must never bring back (API tokens) is declared
+// `backup: false`, and lib/export.ts leaves its key out of every backup.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with
 // what is stored, or says exactly why it cannot:
@@ -237,6 +239,12 @@ export type StoreOptions<T> = {
   /** Stores each value gzip-compressed (lib/blob.ts), for values that can grow
    *  large. Reads take either form, so it can be switched on or off later. */
   compress?: boolean;
+  /** False only for a credential a restore must never bring back (an API
+   *  token, which a restore could otherwise revive after it was revoked): its
+   *  key is left out of every backup, and lib/export.ts must list it in
+   *  EXCLUDED_PREFIXES, which declare() checks both ways. A restore then
+   *  deletes what is there and brings none back. Backed up by default. */
+  backup?: false;
 };
 
 type Declared = {
@@ -244,6 +252,8 @@ type Declared = {
   readonly name: string;
   readonly what: string;
   readonly exportable: boolean;
+  /** In backups (lib/export.ts), unless declared `backup: false`. */
+  readonly backedUp: boolean;
 };
 
 export type ValueStore<T> = Declared & {
@@ -518,8 +528,9 @@ const declared = new Map<string, Store>();
 const NAME = /^[a-z][a-z0-9]*(?:[-:][a-z0-9]+)*$/;
 
 /** Why a well-formed name still cannot be a store's, or null. Each would put
- *  the store's key where something else is meant to be. */
-function nameTaken(name: string): string | null {
+ *  the store's key where something else is meant to be. `backedUp` false is a
+ *  store declared out of backups, whose key lib/export.ts must leave out. */
+function nameTaken(name: string, backedUp: boolean): string | null {
   // Containers never nest, and an environment-wide store never belongs in one:
   // lib/reencrypt.ts reports either as a key built wrongly.
   if (name.startsWith('c:')) return 'a container';
@@ -527,7 +538,8 @@ function nameTaken(name: string): string | null {
   // A store moving behind the seam takes its entry off the list in the same
   // change; anything else under a listed name would be read as that family.
   if (listedKind(name) !== null) return 'a key family stored the old way (lib/key-families.ts)';
-  if (isExcluded(name)) return 'a key that backups leave out (lib/export.ts), so its data would never be backed up';
+  if (backedUp && isExcluded(name)) return 'a key that backups leave out (lib/export.ts), so its data would never be backed up';
+  if (!backedUp && !isExcluded(name)) return 'declared out of backups, but lib/export.ts would back it up: list it in EXCLUDED_PREFIXES';
   return null;
 }
 
@@ -536,7 +548,7 @@ function declare<S extends Store>(store: S): S {
   if (!NAME.test(name) || name.length > 64) {
     throw new Error(`"${name}" cannot name a store: use lowercase words joined by "-" or ":", at most 64 long.`);
   }
-  const taken = nameTaken(name);
+  const taken = nameTaken(name, store.backedUp);
   if (taken) throw new Error(`"${name}" cannot name a store: it is ${taken}.`);
   // The same name declared again with the same kind is its module being
   // evaluated again (a development reload), so the new declaration replaces the
@@ -672,6 +684,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     name,
     what,
     exportable: opts.exportable,
+    backedUp: opts.backup !== false,
     get: read,
     async set(ctx, value) {
       const json = serialize(codec, value);
@@ -833,6 +846,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     name,
     what,
     exportable: opts.exportable,
+    backedUp: opts.backup !== false,
     async get(ctx, id) {
       return (await getMany(ctx, [id])).get(id) ?? null;
     },
@@ -884,6 +898,9 @@ export type CounterOptions = {
   what: string;
   /** How long a window lasts, from its first count: a whole number of seconds. */
   windowSeconds: number;
+  /** As for a value or map store (StoreOptions): false leaves it out of
+   *  backups, with lib/export.ts listing it. */
+  backup?: false;
 };
 
 /** A count as COUNTER_READ answers it: digits only, as INCR writes them. */
@@ -921,6 +938,7 @@ export function defineCounterStore(name: string, opts: CounterOptions): CounterS
     name,
     what,
     exportable: false,
+    backedUp: opts.backup !== false,
     windowSeconds,
     async read(ctx) {
       return windowOf(await redis().eval(COUNTER_READ, [key(ctx)], [String(windowSeconds)]), false);
@@ -957,6 +975,7 @@ export function defineCounterMapStore(name: string, opts: CounterOptions): Count
     name,
     what,
     exportable: false,
+    backedUp: opts.backup !== false,
     windowSeconds,
     async take(ctx, id, now = Date.now()) {
       checkId(what, id);

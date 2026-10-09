@@ -63,6 +63,10 @@ describe('with Clerk on', () => {
     // Anywhere else, they come back there once signed in (an invite link).
     expect((await call('/connect/abc')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fconnect%2Fabc');
     expect((await call('/api/net-worth')).status).toBe(401);
+    // Under /api/v1, a path that is no endpoint is the API's own 404, not a sign-in's 401.
+    const res = await call('/api/v1/acounts');
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe('not_found');
   });
 
   // Review should-fix 1: a notice email's link, opened signed out, still ends

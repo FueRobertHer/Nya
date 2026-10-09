@@ -76,9 +76,25 @@ export const SCHEMA_ERA = 'containers';
  *   - the nightly backup's last outcome would describe backups of another moment
  *     (lib/backup.ts);
  *   - unused invite links last hours, and a restored one would work again
- *     (lib/sharing.ts).
+ *     (lib/sharing.ts);
+ *   - an API token revoked since the backup would work again, so tokens and
+ *     their request counts are never backed up: a restore deletes them, and
+ *     people make new ones (lib/api-token-store.ts, declared backup: false).
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:', 'backups:', 'invites:'] as const;
+export const EXCLUDED_PREFIXES = [
+  'cache:',
+  'ratelimit:',
+  'invtxns-lock:',
+  'sessions:',
+  'snapshot:',
+  'move:',
+  'account-links:lock',
+  'history:forgetting:',
+  'backups:',
+  'invites:',
+  'api-tokens',
+  'api-requests',
+] as const;
 
 /** Page size for HSCAN. history:accounts gains a field every day, and one
  *  HGETALL of years of it would be one oversized response. */

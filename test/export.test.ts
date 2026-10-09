@@ -51,6 +51,11 @@ describe('the archive', () => {
         'c:*:backups:*',
         'invites:*',
         'c:*:invites:*',
+        // API tokens and their counts: a restore must never revive a revoked token.
+        'api-tokens*',
+        'c:*:api-tokens*',
+        'api-requests*',
+        'c:*:api-requests*',
       ],
     });
   });
@@ -94,6 +99,21 @@ describe('the archive', () => {
 
     const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
     expect(keys).toEqual(['goals']);
+  });
+
+  test('leaves out API tokens and their counts, so restoring a backup can never bring back a revoked token', async () => {
+    const container = '00000000-0000-4000-8000-000000000000';
+    await fake.hset(testKey(`c:${container}:api-tokens`), { '0123456789abcdef': 'v1-ciphertext' });
+    await fake.hset(testKey(`c:${container}:api-requests`), { '0123456789abcdef': '3:1760000000' });
+    await fake.set(testKey(`c:${container}:goals`), 'kept');
+
+    const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
+    expect(keys).toEqual([`c:${container}:goals`]);
+    // And a restore refuses an archive that holds one.
+    const { verifyArchive } = await import('@/lib/restore');
+    const lines = await collect();
+    const forged = [lines[0], JSON.stringify({ key: `c:${container}:api-tokens`, type: 'hash', ttl: null, value: { '0123456789abcdef': 'v1-ciphertext' } }) + '\n', ...lines.slice(1)];
+    expect(() => verifyArchive(forged.join(''))).toThrow('which exports never include');
   });
 
   test('never reaches another environment', async () => {

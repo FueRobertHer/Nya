@@ -1584,9 +1584,12 @@ describe('the key inventory', () => {
     expect(classify(`${c}snapshot:runs`)).toBe('plain');
     const stored = { value: 'string', map: 'hash', counter: 'plain', 'counter-map': 'plain' } as const;
     for (const store of declaredStores()) {
-      expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, false]);
+      // In backups unless declared out of them, which lib/export.ts agrees with.
+      expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, !store.backedUp]);
       expect(classify(`${c}${store.name}`)).toBe(stored[store.kind]);
     }
+    // Only the API's tokens and their counts are left out: a restore must never revive a revoked token.
+    expect(declaredStores().filter((s) => !s.backedUp).map((s) => s.name).sort()).toEqual(['api-requests', 'api-tokens']);
     // A counter is a plain integer, which the re-encryption pass leaves alone.
     expect(classify(`${c}seam-contract-counter`)).toBe('plain');
     expect(classify('seam-contract-counter')).toBeNull();
@@ -1621,6 +1624,12 @@ describe('the key inventory', () => {
       expect(() => defineMapStore(name, { what: 'test notes', isValid: isNote, exportable: false })).toThrow(why);
       expect(declaredStore(name)).toBeNull();
     }
+    // Out of backups only where lib/export.ts leaves the key out too.
+    expect(() => defineMapStore('seam-contract-unbacked', { what: 'test notes', isValid: isNote, exportable: false, backup: false })).toThrow(
+      'declared out of backups, but lib/export.ts would back it up'
+    );
+    expect(() => defineCounterMapStore('seam-contract-unbacked', { what: 'test counts', windowSeconds: 60, backup: false })).toThrow('declared out of backups');
+    expect(declaredStore('seam-contract-unbacked')).toBeNull();
   });
 
   test('declaring a name again replaces the store, unless it is another kind', () => {

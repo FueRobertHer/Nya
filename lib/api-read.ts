@@ -31,6 +31,12 @@
 // they leave out, in the words the app's views use (lib/no-transactions.ts),
 // so an empty list or a zero is never passed off as no spending.
 //
+// NEVER SHORT WITHOUT SAYING SO. What can't be read is named, and the rest
+// answered: accounts and net worth list the connections and manual accounts
+// they couldn't include (missing_accounts) and say complete: false; a
+// per-account history reads only that account's records; an account_id no
+// account has is a 404 (NotFound), never an empty series.
+//
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
@@ -49,7 +55,7 @@ import { getEffectiveHidden, sameAccountIds, type Link } from './links';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
-import { getManualAccounts, toInstitutions } from './manual';
+import { getManualAccountsReport, manualAccountExists, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { bankCurrencies } from './sharing';
 import { readHealthForDisplay } from './connection-health';
 import { noticesStore } from './connection-records';
@@ -67,6 +73,7 @@ import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
 import type { Authenticated } from './api-tokens';
+import { NotFound } from './api-spec';
 
 const DAY_MS = 86_400_000;
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -122,8 +129,10 @@ export type ApiConnection = {
 
 export type ApiAccount = {
   id: string;
-  /** 'plaid' for a linked account, 'manual' for one tracked by hand. */
-  source: 'plaid' | 'manual';
+  /** 'plaid' for a linked account, 'manual' for one tracked by hand. Version
+   *  1 may add values (another way to connect): treat one you don't know as
+   *  neither. */
+  source: string;
   name: string;
   official_name: string | null;
   institution: string;
@@ -146,7 +155,24 @@ export type ApiAccount = {
   connection: ApiConnection | null;
 };
 
-type AccountsRead = { accounts: ApiAccount[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
+/** An account, or a connection's accounts, that an answer couldn't include
+ *  (see AccountsRead). */
+export type ApiMissing = {
+  /** The connection's institution; null for a manual account, whose name is
+   *  in what couldn't be read. */
+  institution: string | null;
+  /** A manual account's id; null for a connection, whose accounts can't be
+   *  told apart until they are read. */
+  account_id: string | null;
+  /** 'unreadable': stored, and couldn't be read. 'not_loaded': a connection
+   *  whose accounts the app hasn't loaded yet. Version 1 may add reasons. */
+  reason: 'unreadable' | 'not_loaded';
+};
+
+/** The accounts, and what couldn't be included, named (`missing`): never a
+ *  shorter list passed off as whole (an answer built on it says complete:
+ *  false). */
+type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
 
 /** The connection facts for each Item, from the records health keeps. */
 async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => ApiConnection; note: string | null }> {
@@ -179,13 +205,14 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     rememberedAccountsReport(ctx),
     // Strict: a hidden account must never show for a read that failed.
     getEffectiveHidden(ctx, { readOnly: true }),
-    getManualAccounts(ctx).then(
-      (value) => ({ ok: true as const, value }),
-      (err: unknown) => ({ ok: false as const, err })
-    ),
+    // LENIENT, for this display only: an account that can't be read is named
+    // in `missing`, and the others listed; recording a snapshot reads them all
+    // strictly (lib/networth.ts). Storage out of reach still throws.
+    getManualAccountsReport(ctx),
     connectionFacts(ctx),
   ]);
   const notes: string[] = [];
+  const missing: ApiMissing[] = [];
   const { hidden } = effective;
   const links = effective.links ?? new Map<string, Link>();
   const unreadable = new Set(remembered.unreadable);
@@ -195,11 +222,13 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   for (const item of items) {
     if (unreadable.has(item.item_id)) {
       notes.push(`${item.institution_name}: its accounts couldn’t be read, so they aren’t listed`);
+      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable' });
       continue;
     }
     const accounts = remembered.byItem[item.item_id];
     if (!accounts) {
       notes.push(`${item.institution_name}: its accounts haven’t been loaded yet; open the app to load them`);
+      missing.push({ institution: item.institution_name, account_id: null, reason: 'not_loaded' });
       continue;
     }
     for (const account of accounts) {
@@ -241,45 +270,56 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     };
   });
 
-  if (!manual.ok) {
-    notes.push('Manual accounts: couldn’t be read, so they aren’t listed');
-  } else {
-    for (const inst of toInstitutions(manual.value)) {
-      for (const a of inst.accounts) {
-        if (!includeHidden && hidden.has(a.account_id)) continue;
-        const at = realTime(a.updated_at);
-        accounts.push({
-          id: a.account_id,
-          source: 'manual',
-          name: a.name,
-          official_name: null,
-          institution: inst.institution_name,
-          type: a.type,
-          subtype: a.subtype,
-          mask: null,
-          balance: a.balance,
-          // The only currency a manual balance is kept in (lib/manual.ts).
-          currency: a.currency,
-          credit_limit: null,
-          is_debt: isOwedType(a.type),
-          hidden: hidden.has(a.account_id),
-          as_of: at ? at.slice(0, 10) : null,
-          as_of_time: at,
-          connection: null,
-        });
-      }
+  // A hidden one is left out either way: nothing missing from what was asked.
+  const unreadableManual = manual.unreadable.filter((id) => includeHidden || !hidden.has(id));
+  for (const id of unreadableManual) missing.push({ institution: null, account_id: id, reason: 'unreadable' });
+  if (unreadableManual.length > 0) {
+    const one = unreadableManual.length === 1;
+    notes.push(`${one ? 'A manual account' : `${unreadableManual.length} manual accounts`} couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
+  }
+  for (const inst of toInstitutions(manual.accounts)) {
+    for (const a of inst.accounts) {
+      if (!includeHidden && hidden.has(a.account_id)) continue;
+      const at = realTime(a.updated_at);
+      accounts.push({
+        id: a.account_id,
+        source: 'manual',
+        name: a.name,
+        official_name: null,
+        institution: inst.institution_name,
+        type: a.type,
+        subtype: a.subtype,
+        mask: null,
+        balance: a.balance,
+        // The only currency a manual balance is kept in (lib/manual.ts).
+        currency: a.currency,
+        credit_limit: null,
+        is_debt: isOwedType(a.type),
+        hidden: hidden.has(a.account_id),
+        as_of: at ? at.slice(0, 10) : null,
+        as_of_time: at,
+        connection: null,
+      });
     }
   }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
-  return { accounts, notes, hidden, links };
+  return { accounts, missing, notes, hidden, links };
 }
+
+export type ApiAccounts = {
+  accounts: ApiAccount[];
+  /** False when accounts are missing from the list (missing_accounts). */
+  complete: boolean;
+  missing_accounts: ApiMissing[];
+  notes: string[];
+};
 
 /** Every account: linked and manual, with its newest measured balance and as
  *  of when. Hidden ones only with `includeHidden`. */
-export async function readAccounts(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ accounts: ApiAccount[]; notes: string[] }> {
-  const { accounts, notes } = await accountsRead(ctx, !!opts.includeHidden);
-  return { accounts, notes };
+export async function readAccounts(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<ApiAccounts> {
+  const { accounts, missing, notes } = await accountsRead(ctx, !!opts.includeHidden);
+  return { accounts, complete: missing.length === 0, missing_accounts: missing, notes };
 }
 
 // ---- Net worth ----
@@ -295,6 +335,11 @@ export type ApiNetWorth = {
   balances_to: string | null;
   /** Accounts left out of the totals for having no measured balance. */
   accounts_without_balance: number;
+  /** False when the totals leave accounts out: ones that couldn't be read or
+   *  haven't been loaded (missing_accounts), or have no measured balance
+   *  (accounts_without_balance). A total is never passed off as whole. */
+  complete: boolean;
+  missing_accounts: ApiMissing[];
   /** The newest net worth recorded in history (what the chart's last recorded
    *  point is), which adds every account's balance whatever its currency, as
    *  the chart does: see mixed_currencies. */
@@ -302,12 +347,28 @@ export type ApiNetWorth = {
   notes: string[];
 };
 
-/** Net worth now, from each account's newest measured balance, per currency,
- *  and the newest recorded point of its history. */
-export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<ApiNetWorth> {
-  const includeHidden = !!opts.includeHidden;
+/** What net worth, now and over time, is built from, read once: the
+ *  accounts, and the recorded history with hidden accounts subtracted (as the
+ *  chart subtracts them) unless they are asked for. */
+type NetWorthRead = { read: AccountsRead; history: HistoryPoint[] };
+
+async function netWorthRead(ctx: Ctx, includeHidden: boolean): Promise<NetWorthRead> {
   const read = await accountsRead(ctx, includeHidden);
-  const main = dominantCurrency(read.accounts.map((a) => ({ iso_currency_code: a.currency })));
+  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden);
+  return { read, history };
+}
+
+/** The currency net worth is labelled with, and whether the accounts mix
+ *  several (the recorded totals add them unconverted, as the chart does). */
+function netWorthCurrency(accounts: readonly ApiAccount[]): { currency: string | null; mixed: boolean } {
+  return {
+    currency: dominantCurrency(accounts.map((a) => ({ iso_currency_code: a.currency }))),
+    mixed: new Set(accounts.map((a) => a.currency).filter(Boolean)).size > 1,
+  };
+}
+
+function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
+  const { currency: main, mixed } = netWorthCurrency(read.accounts);
   const totals = new Map<string | null, { currency: string | null; net_worth: number; assets: number; debts: number; accounts: number }>();
   let without = 0;
   const days: string[] = [];
@@ -325,9 +386,7 @@ export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean } =
     if (a.as_of) days.push(a.as_of);
   }
   days.sort();
-  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden);
   const last = [...history].reverse().find((p) => !p.estimated) ?? null;
-  const currencies = new Set(read.accounts.map((a) => a.currency).filter(Boolean));
   return {
     totals: [...totals.values()]
       .map((t) => ({ ...t, assets: tidy(t.assets), debts: tidy(t.debts), net_worth: tidy(t.assets - t.debts) }))
@@ -335,9 +394,17 @@ export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean } =
     balances_from: days[0] ?? null,
     balances_to: days[days.length - 1] ?? null,
     accounts_without_balance: without,
-    recorded: last ? { date: last.date, value: tidy(last.value), currency: main, mixed_currencies: currencies.size > 1 } : null,
+    complete: read.missing.length === 0 && without === 0,
+    missing_accounts: read.missing,
+    recorded: last ? { date: last.date, value: tidy(last.value), currency: main, mixed_currencies: mixed } : null,
     notes: read.notes,
   };
+}
+
+/** Net worth now, from each account's newest measured balance, per currency,
+ *  and the newest recorded point of its history. */
+export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<ApiNetWorth> {
+  return netWorthOf(await netWorthRead(ctx, !!opts.includeHidden));
 }
 
 // ---- Balance history ----
@@ -374,7 +441,71 @@ export type ApiHistory = {
   /** Oldest first. `estimated` is true for a point reconstructed from
    *  transactions rather than recorded (only with include_estimated). */
   points: { date: string; value: number; estimated: boolean }[];
+  notes: string[];
 };
+
+export type HistoryQuery = { accountId?: string; from?: string; to?: string; includeEstimated?: boolean; includeHidden?: boolean; interval?: Interval };
+
+/** A series as answered: recorded points only unless estimated ones are
+ *  asked for, in [from, to], one point per interval. */
+function seriesOf(points: readonly HistoryPoint[], q: HistoryQuery, head: { account_id: string | null; currency: string | null; mixed: boolean }, notes: string[]): ApiHistory {
+  const interval = q.interval ?? 'day';
+  const kept = points.filter(
+    (p) => (q.includeEstimated || !p.estimated) && (q.from === undefined || p.date >= q.from) && (q.to === undefined || p.date <= q.to)
+  );
+  return {
+    account_id: head.account_id,
+    currency: head.currency,
+    mixed_currencies: head.mixed,
+    interval,
+    points: sampleSeries(kept, interval).map((p) => ({ date: p.date, value: tidy(p.value), estimated: !!p.estimated })),
+    notes,
+  };
+}
+
+/** Net worth's history from a read already made. */
+function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery): ApiHistory {
+  const { currency, mixed } = netWorthCurrency(nw.read.accounts);
+  return seriesOf(nw.history, q, { account_id: null, currency, mixed }, []);
+}
+
+/**
+ * One account's history (linked or manual, by its current id or an earlier
+ * one), reading only what that account needs: a damaged record of another
+ * account never fails it. Null for a hidden account when hidden ones aren't
+ * asked for; NotFound for an id that names no account Nya has or had.
+ */
+async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<ApiHistory | null> {
+  const effective = await getEffectiveHidden(ctx, { readOnly: true });
+  if (!q.includeHidden && effective.hidden.has(id)) return null;
+  const links = effective.links ?? new Map<string, Link>();
+  const older = sameAccountIds(id, links).filter((other) => other !== id);
+  const points = await getAccountHistory(ctx, id, older);
+  const notes: string[] = [];
+  let known = links.has(id) || [...links.values()].some((l) => l.to === id);
+  let currency: string | null = null;
+  if (isManualId(id)) {
+    // Whether it is there, without reading it: its currency is the one every
+    // manual balance is kept in.
+    const exists = await manualAccountExists(ctx, id);
+    known ||= exists;
+    if (exists) currency = MANUAL_CURRENCY;
+  } else {
+    // LENIENT, for this display only: an Item's record that can't be read
+    // leaves this account's currency unknown, said in a note, rather than
+    // failing a history kept apart from it. Storage out of reach still throws.
+    const remembered = await rememberedAccountsReport(ctx);
+    known ||= Object.values(remembered.byItem).some((accounts) => accounts.some((a) => a.account_id === id));
+    currency = (await bankCurrencies(ctx, [id], remembered.byItem)).get(id) ?? null;
+    if (currency === null && remembered.unreadable.length > 0) {
+      notes.push('Some accounts’ records couldn’t be read, so this account’s currency isn’t known');
+      // It may be one of theirs: not said to be unknown.
+      known = true;
+    }
+  }
+  if (!known && points.length === 0) throw new NotFound('No account has that id. The ids are in /api/v1/accounts.');
+  return seriesOf(points, q, { account_id: id, currency, mixed: false }, notes);
+}
 
 /**
  * Net worth's history (hidden accounts subtracted, as the chart subtracts
@@ -382,39 +513,15 @@ export type ApiHistory = {
  * [from, to], one point per `interval`. Null for an account that is hidden
  * when hidden ones aren't asked for.
  */
-export async function readBalanceHistory(
-  ctx: Ctx,
-  opts: { accountId?: string; from?: string; to?: string; includeEstimated?: boolean; includeHidden?: boolean; interval?: Interval }
-): Promise<ApiHistory | null> {
-  const includeHidden = !!opts.includeHidden;
-  const effective = await getEffectiveHidden(ctx, { readOnly: true });
-  const links = effective.links ?? new Map<string, Link>();
-  let points: HistoryPoint[];
-  let currency: string | null;
-  let mixed = false;
-  if (opts.accountId !== undefined) {
-    if (!includeHidden && effective.hidden.has(opts.accountId)) return null;
-    const older = sameAccountIds(opts.accountId, links).filter((id) => id !== opts.accountId);
-    points = await getAccountHistory(ctx, opts.accountId, older);
-    const manual = (await getManualAccounts(ctx)).find((m) => m.account_id === opts.accountId);
-    currency = manual ? toInstitutions([manual])[0].accounts[0].currency : ((await bankCurrencies(ctx, [opts.accountId])).get(opts.accountId) ?? null);
-  } else {
-    points = await getHistory(ctx, includeHidden ? undefined : effective.hidden);
-    const { accounts } = await accountsRead(ctx, includeHidden);
-    currency = dominantCurrency(accounts.map((a) => ({ iso_currency_code: a.currency })));
-    mixed = new Set(accounts.map((a) => a.currency).filter(Boolean)).size > 1;
-  }
-  const interval = opts.interval ?? 'day';
-  const kept = points.filter(
-    (p) => (opts.includeEstimated || !p.estimated) && (opts.from === undefined || p.date >= opts.from) && (opts.to === undefined || p.date <= opts.to)
-  );
-  return {
-    account_id: opts.accountId ?? null,
-    currency,
-    mixed_currencies: mixed,
-    interval,
-    points: sampleSeries(kept, interval).map((p) => ({ date: p.date, value: tidy(p.value), estimated: !!p.estimated })),
-  };
+export async function readBalanceHistory(ctx: Ctx, q: HistoryQuery): Promise<ApiHistory | null> {
+  if (q.accountId !== undefined) return accountHistory(ctx, q.accountId, q);
+  return netWorthHistoryOf(await netWorthRead(ctx, !!q.includeHidden), q);
+}
+
+/** Net worth now and its history, from one read of each (get_net_worth). */
+export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
+  const nw = await netWorthRead(ctx, !!q.includeHidden);
+  return { now: netWorthOf(nw), history: netWorthHistoryOf(nw, q) };
 }
 
 // ---- Transactions ----
@@ -804,10 +911,20 @@ export type ApiHoldingsAccount = {
  * loads kept, never a fresh fetch. Plaid keeps no history of holdings, so an
  * account is known only from the day recording began.
  */
-export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ accounts: ApiHoldingsAccount[]; notes: string[] }> {
+export async function readHoldings(
+  ctx: Ctx,
+  opts: { includeHidden?: boolean; accountId?: string } = {}
+): Promise<{ accounts: ApiHoldingsAccount[]; notes: string[] }> {
   const read = await accountsRead(ctx, !!opts.includeHidden);
   const base = { links: read.links, ...(opts.includeHidden ? {} : { hidden: read.hidden }) };
-  const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type));
+  const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
+  if (opts.accountId !== undefined && investment.length === 0) {
+    throw new NotFound(
+      read.hidden.has(opts.accountId) && !opts.includeHidden
+        ? 'That account is hidden: ask with include_hidden=true to see it.'
+        : 'No linked investment account has that id. The ids are in /api/v1/accounts.'
+    );
+  }
   const accounts = await Promise.all(
     investment.map(async (a): Promise<ApiHoldingsAccount> => {
       const span = await readHoldingsSpan(ctx, { ...base, accountId: a.id });

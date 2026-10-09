@@ -53,7 +53,7 @@ Not everything in it is encrypted, so still treat the file as private: dates, ac
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
-Caches and the login's rate-limit counters are left out on purpose. Each account's count of data downloads is a store on the storage seam, so it is kept like the rest, with its expiry. Avoid running it around 13:00 UTC, when the daily snapshot writes.
+Caches and the login's rate-limit counters are left out on purpose. So are API tokens and their request counts (`api-tokens`, `api-requests`, declared `backup: false` on the storage seam): a backup must never bring back a token revoked after it was taken, which nothing could tell its owner, so a restore ends every token and people make new ones. Each account's count of data downloads is a store on the storage seam, so it is kept like the rest, with its expiry. Avoid running it around 13:00 UTC, when the daily snapshot writes.
 
 ## Restoring a backup
 
@@ -78,7 +78,7 @@ The command refuses, and writes nothing, when:
 - it would replace data with an archive holding no keys (`--allow-empty` overrides), or with one taken from a different environment (`--allow-different-source` overrides). Restoring into an **empty** target from anywhere, like production into `restore-test`, needs neither;
 - the target has containers (see [Containers](#containers)) and the archive's are not the same, for example an archive from before containers existed: restoring it would leave `CONTAINER_ID` naming a container that no longer exists. `--replace-registry` overrides; afterwards set `CONTAINER_ID` again (or create a container, if the archive has none). A dry run reports this too.
 
-With `--overwrite`, it prints how many keys it is about to replace, saves the target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file, and checks that file holds every key it is about to delete. Then it **replaces** the target entirely (login rate-limit counters aside), so nothing newer than the archive survives. If the target changes while this is going on, it stops before deleting anything. It finishes by reading everything back and comparing it with the archive, and reports success only if they match exactly. If a restore stops part way, run it again with `--overwrite`.
+With `--overwrite`, it prints how many keys it is about to replace, saves the target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file, and checks that file holds every key it is about to delete. Then it **replaces** the target entirely (login rate-limit counters aside), so nothing newer than the archive survives. API tokens are in no backup, so afterwards every token is gone: tell the people who use the deployment to make new ones under **Manage**, **API tokens**. If the target changes while this is going on, it stops before deleting anything. It finishes by reading everything back and comparing it with the archive, and reports success only if they match exactly. If a restore stops part way, run it again with `--overwrite`.
 
 File paths are resolved from the repo root, since `bun run` runs there, and that is also where the pre-restore file is written.
 

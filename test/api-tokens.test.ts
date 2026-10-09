@@ -30,11 +30,15 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { forgetEmails } = await import('@/lib/auth-mode');
 const { encrypt } = await import('@/lib/crypto');
 const route = await import('@/app/api/api-tokens/route');
+const me = await import('@/app/api/v1/me/route');
+const { API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS } = await import('@/lib/rate-limit');
 const {
   createToken,
   listTokens,
   revokeToken,
   authenticate,
+  checkToken,
+  DEMO_REFUSAL,
   takeRequest,
   noteUse,
   parseToken,
@@ -96,7 +100,7 @@ describe('a token', () => {
     expect(info).toEqual({ id: parts.id, label: 'Raycast', hint: `nya_${parts.id.slice(0, 8)}`, created_at: new Date(NOW).toISOString(), last_used_at: null });
     expect(token.startsWith(info.hint)).toBe(true);
     // Stored under its id, in its container: the hash of the secret, never the secret.
-    expect(await apiTokenStore.get(ctx, info.id)).toEqual({ v: 1, label: 'Raycast', hash: sha256(parts.secret), created_at: info.created_at, last_used_at: null });
+    expect(await apiTokenStore.get(ctx, info.id)).toEqual({ v: 1, label: 'Raycast', hash: sha256(parts.secret), user_id: null, created_at: info.created_at, last_used_at: null });
     const raw = JSON.stringify([...fake.hashes.entries()].map(([k, h]) => [k, [...h]]));
     expect(raw).not.toContain(parts.secret);
     expect(raw).not.toContain(sha256(parts.secret)); // encrypted, as every seam value
@@ -152,42 +156,62 @@ describe('checking a token', () => {
     expect(auth).toMatchObject({ ctx: { container: MINE }, id: info.id, token: { label: 'Raycast', last_used_at: null } });
   });
 
-  test('every kind of failure is the same null, after the same work', async () => {
+  test('something not in a token’s form is refused before anything is read', async () => {
+    const { token } = await createToken(ctx, 'Raycast');
+    for (const header of [null, '', `Basic ${token}`, 'Bearer nya_nope', `Bearer ${token}x`, `Bearer ${token.toUpperCase()}`]) {
+      sent.length = 0;
+      expect([header, await checkToken(header, NOW)]).toEqual([header, { kind: 'malformed' }]);
+      expect([header, sent]).toEqual([header, []]);
+    }
+  });
+
+  test('every way a token in the right form fails is the same refusal, after the same work', async () => {
     const { token, info } = await createToken(ctx, 'Raycast');
     const parts = parseToken(token)!;
     const revoked = await createToken(ctx, 'Gone');
     await revokeToken(ctx, revoked.info.id);
     await register(OTHER.container, 'archived');
-    const failures: [string, string | null][] = [
-      ['no header', null],
-      ['not bearer', `Basic ${token}`],
-      ['malformed', 'Bearer nya_nope'],
+    const failures: [string, string][] = [
       ['wrong secret', bearer(formatToken(info.id, 'B'.repeat(43), TEST_CONTAINER as any))],
       ['unknown id', bearer(formatToken('fedcba9876543210', parts.secret, TEST_CONTAINER as any))],
       ['revoked', bearer(revoked.token)],
       ['unknown container', bearer(formatToken(info.id, parts.secret, '7d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6' as any))],
-      ['archived container', bearer(formatToken(info.id, parts.secret, OTHER.container as any))],
+      // An archived container's: the secret isn't checked against anything there, so nothing is said of it.
+      ['another, archived container', bearer(formatToken(info.id, parts.secret, OTHER.container as any))],
     ];
     const work: string[][] = [];
     for (const [what, header] of failures) {
       sent.length = 0;
-      expect([what, await authenticate(header, NOW)]).toEqual([what, null]);
+      expect([what, await checkToken(header, NOW)]).toEqual([what, { kind: 'refused' }]);
       work.push([...sent].sort());
+      expect([what, await authenticate(header, NOW)]).toEqual([what, null]);
     }
     // The registry entry and the token's record, read at once, every time.
     for (const w of work) expect(w).toEqual(['eval', 'hget']);
   });
 
-  test('a container being restored or archived refuses its own good token', async () => {
+  test('a good token whose data is being restored or archived is told to try again later, never refused', async () => {
     const { token } = await createToken(ctx, 'Raycast');
     for (const status of ['restoring', 'archived'] as const) {
       await registerTestContainer(fake, status);
       forgetEpochs();
+      expect([status, (await checkToken(bearer(token), NOW)).kind]).toEqual([status, 'unavailable']);
       expect(await authenticate(bearer(token), NOW)).toBeNull();
     }
+    expect(await checkToken(bearer(token), NOW)).toEqual({ kind: 'unavailable', why: 'Your data can’t be reached just now.' });
+    await registerTestContainer(fake, 'restoring');
+    forgetEpochs();
+    expect(await checkToken(bearer(token), NOW)).toEqual({ kind: 'unavailable', why: 'Your data is being restored.' });
     await registerTestContainer(fake, 'active');
     forgetEpochs();
     expect(await authenticate(bearer(token), NOW)).not.toBeNull();
+  });
+
+  test('with the shared password and no usable container, a good token is told to try again later', async () => {
+    const { token } = await createToken(ctx, 'Raycast');
+    process.env.CONTAINER_ID = 'not-a-container';
+    forgetEpochs();
+    expect(await checkToken(bearer(token), NOW)).toEqual({ kind: 'unavailable', why: 'This copy of Nya has no data it can serve just now.' });
   });
 
   test('with the shared password, only a token for this deployment’s container works', async () => {
@@ -225,21 +249,83 @@ describe('checking a token', () => {
     await expect(authenticate(bearer(token), NOW)).rejects.toThrow('armed failure');
   });
 
-  test('with Clerk, the container must still have an owner on the allowlist', async () => {
+  test('with Clerk, the account that made it must still own the container and be allowed in', async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
     process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
     process.env.CLERK_ALLOWED_USER_IDS = 'user_me';
     await fake.hset(testKey('owners'), { user_me: TEST_CONTAINER, user_gone: OTHER.container });
     await register(OTHER.container, 'active');
-    const mine = await createToken(ctx, 'Mine');
-    const theirs = await createToken(OTHER, 'Theirs');
+    const mine = await createToken(ctx, 'Mine', new Date(NOW), 'user_me');
+    const theirs = await createToken(OTHER, 'Theirs', new Date(NOW), 'user_gone');
     expect((await authenticate(bearer(mine.token), NOW))?.ctx).toEqual({ container: MINE });
     // Taken off the allowlist: they can't sign in, and their tokens stop too.
-    expect(await authenticate(bearer(theirs.token), NOW)).toBeNull();
+    expect(await checkToken(bearer(theirs.token), NOW)).toEqual({ kind: 'refused' });
     process.env.CLERK_ALLOWED_USER_IDS = 'user_me, user_gone';
     expect((await authenticate(bearer(theirs.token), NOW))?.ctx).toEqual({ container: OTHER.container as any });
     // Each token reaches only its own container.
     expect((await authenticate(bearer(mine.token), NOW))?.ctx).toEqual({ container: MINE });
+    // Its container's id swapped for another active, allowed one: refused both ways.
+    const swap = (t: string, to: string) => t.slice(0, t.length - 36) + to;
+    expect(await checkToken(bearer(swap(mine.token, OTHER.container)), NOW)).toEqual({ kind: 'refused' });
+    expect(await checkToken(bearer(swap(theirs.token, TEST_CONTAINER)), NOW)).toEqual({ kind: 'refused' });
+  });
+
+  test('with Clerk, a co-owner taken off the allowlist loses the tokens they made, and only those', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+    process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_me, user_partner';
+    // One container, two owners (a mapping edited by hand, docs/authentication.md).
+    await fake.hset(testKey('owners'), { user_me: TEST_CONTAINER, user_partner: TEST_CONTAINER });
+    const mine = await createToken(ctx, 'Mine', new Date(NOW), 'user_me');
+    const theirs = await createToken(ctx, 'Partner’s', new Date(NOW), 'user_partner');
+    expect((await checkToken(bearer(theirs.token), NOW)).kind).toBe('ok');
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_me';
+    expect(await checkToken(bearer(theirs.token), NOW)).toEqual({ kind: 'refused' });
+    expect((await checkToken(bearer(mine.token), NOW)).kind).toBe('ok');
+    // An account that no longer owns the container, or a token made without one, never works with Clerk.
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_me, user_partner';
+    await fake.hset(testKey('owners'), { user_partner: OTHER.container });
+    expect(await checkToken(bearer(theirs.token), NOW)).toEqual({ kind: 'refused' });
+    const unowned = await createToken(ctx, 'Password era', new Date(NOW), null);
+    expect(await checkToken(bearer(unowned.token), NOW)).toEqual({ kind: 'refused' });
+  });
+
+  test('with Clerk, each check reads one owner, never the whole mapping', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+    process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_me';
+    await fake.hset(testKey('owners'), { user_me: TEST_CONTAINER, ...Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`user_${i}`, OTHER.container])) });
+    const { token } = await createToken(ctx, 'Mine', new Date(NOW), 'user_me');
+    sent.length = 0;
+    expect((await checkToken(bearer(token), NOW)).kind).toBe('ok');
+    expect(sent).not.toContain('hgetall');
+  });
+
+  test('with Clerk, when it can’t say whether the account is allowed in, a good token is told to try again later', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+    process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+    // Allowed by email only, and Clerk can't be asked for the account's emails here.
+    process.env.CLERK_ALLOWED_USER_IDS = 'me@example.com';
+    await fake.hset(testKey('owners'), { user_me: TEST_CONTAINER });
+    const { token } = await createToken(ctx, 'Mine', new Date(NOW), 'user_me');
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect(await checkToken(bearer(token), NOW)).toEqual({ kind: 'unavailable', why: 'Whether this token’s account may still sign in couldn’t be checked just now.' });
+    } finally {
+      console.error = quiet;
+    }
+  });
+
+  test('a demo account’s token never works, even made by hand', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+    process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+    process.env.CLERK_ALLOWED_USER_IDS = '';
+    process.env.VERCEL_ENV = 'preview';
+    process.env.DEMO_USER_IDS = 'user_demo:Alex';
+    await fake.hset(testKey('owners'), { user_demo: TEST_CONTAINER });
+    const { token } = await createToken(ctx, 'Demo', new Date(NOW), 'user_demo');
+    expect(await checkToken(bearer(token), NOW)).toEqual({ kind: 'refused' });
   });
 });
 
@@ -307,6 +393,22 @@ describe('when a token was last used', () => {
     expect((await apiTokenStore.get(ctx, info.id))!.last_used_at).toBe(new Date(NOW + LAST_USED_EVERY_MS).toISOString());
   });
 
+  test('requests that start together write it once, without colliding or complaining', async () => {
+    const { token, info } = await createToken(ctx, 'A');
+    const auth = (await authenticate(bearer(token), NOW))!;
+    const logged: unknown[] = [];
+    const quiet = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args);
+    try {
+      sent.length = 0;
+      await Promise.all(Array.from({ length: 5 }, () => noteUse(auth, NOW)));
+    } finally {
+      console.error = quiet;
+    }
+    expect(logged).toEqual([]);
+    expect((await apiTokenStore.get(ctx, info.id))!.last_used_at).toBe(new Date(NOW).toISOString());
+  });
+
   test('never brings back a token revoked meanwhile, and never throws', async () => {
     const { token, info } = await createToken(ctx, 'A');
     const auth = (await authenticate(bearer(token), NOW))!;
@@ -365,6 +467,48 @@ describe('listing and revoking', () => {
   });
 });
 
+describe('the API’s door (lib/api-http.ts admit)', () => {
+  const ask = (authorization: string | null, ip = '203.0.113.7') =>
+    me.GET(new Request('https://nya.test/api/v1/me', { headers: { ...(authorization === null ? {} : { authorization }), 'x-forwarded-for': ip } })) as Promise<Response>;
+
+  test('something not in a token’s form is a 401 before anything is read or counted', async () => {
+    for (const header of [null, 'Bearer nya_nope', 'Basic abc', `Bearer ${'x'.repeat(101)}`]) {
+      sent.length = 0;
+      const res = await ask(header);
+      expect([header, res.status, sent]).toEqual([header, 401, []]);
+      expect((await res.json()).error.code).toBe('unauthorized');
+    }
+  });
+
+  test(`an address that sends ${API_AUTH_MAX_FAILURES} tokens that don’t work is turned away before any token is read`, async () => {
+    const { token, info } = await createToken(ctx, 'Good');
+    const wrong = bearer(formatToken(info.id, 'B'.repeat(43), TEST_CONTAINER as any));
+    for (let i = 0; i < API_AUTH_MAX_FAILURES; i++) expect((await ask(wrong)).status).toBe(401);
+    sent.length = 0;
+    const res = await ask(wrong);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('retry-after')).toBe(String(API_AUTH_WINDOW_SECONDS));
+    expect((await res.json()).error.code).toBe('rate_limited');
+    expect(sent).toEqual(['get']); // the address's count, and nothing of any token
+    // A good token from that address waits too; from another, it works.
+    expect((await ask(bearer(token))).status).toBe(429);
+    expect((await ask(bearer(token), '198.51.100.4')).status).toBe(200);
+    // The count is the environment's, by address, and ends on its own.
+    expect(await fake.ttl(testKey('ratelimit:api:203.0.113.7'))).toBeGreaterThan(0);
+  });
+
+  test('a good token whose data is being restored is a 503 to try again, never a 401', async () => {
+    const { token } = await createToken(ctx, 'Good');
+    await registerTestContainer(fake, 'restoring');
+    forgetEpochs();
+    const res = await ask(bearer(token));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: 'unavailable', message: 'Your data is being restored. Try again later.' } });
+    // Not counted against the address: the token is good.
+    expect(fake.strings.has(testKey('ratelimit:api:203.0.113.7'))).toBe(false);
+  });
+});
+
 describe('the card’s route', () => {
   const call = (method: 'GET' | 'POST' | 'DELETE', body?: unknown) =>
     (route as any)[method](
@@ -412,6 +556,26 @@ describe('the card’s route', () => {
     res = await call('POST', { label: 'Claude' });
     expect(res.status).toBe(200);
     expect(await apiTokenStore.count(ctx)).toBe(1);
+    // The account that made it is kept with it, encrypted: it must stay allowed in for the token to work.
+    const { info } = await res.json();
+    expect((await apiTokenStore.get(ctx, info.id))!.user_id).toBe('user_me');
+  });
+
+  test('a demo account can’t make one, and is told why before being asked to confirm it’s them', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+    process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+    process.env.CLERK_ALLOWED_USER_IDS = '';
+    process.env.VERCEL_ENV = 'preview';
+    process.env.DEMO_USER_IDS = 'user_demo:Alex';
+    await fake.hset(testKey('owners'), { user_demo: TEST_CONTAINER });
+    clerk.signedIn = 'user_demo';
+    for (const reverified of [false, true]) {
+      clerk.reverified = reverified;
+      const res = await call('POST', { label: 'Sandbox' });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: DEMO_REFUSAL });
+    }
+    expect(await apiTokenStore.count(ctx)).toBe(0);
   });
 
   test('refuses a bad name or a token past the limit before asking to sign in', async () => {

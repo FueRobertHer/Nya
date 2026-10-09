@@ -19,23 +19,37 @@
 //
 // STORED in the container (lib/api-token-store.ts), in a map store on the
 // storage seam keyed by the token's id: its label, the SHA-256 of its secret,
-// when it was made and when it was last used. Encrypted like every seam value;
-// the id is a field name in plain text, as random as an account's. Not
-// exportable: the hashes are credential material. The data download lists each
-// token's label and dates itself (lib/user-export.ts), never its hash or id.
-// The stored shape is closed, so a later version's record never authenticates
-// here (isApiToken).
+// the Clerk account that made it (null with the shared password), when it was
+// made and when it was last used. Encrypted like every seam value; the id is a
+// field name in plain text, as random as an account's. Not exportable: the
+// hashes are credential material. The data download lists each token's label
+// and dates itself (lib/user-export.ts), never its hash or id. Never backed
+// up, so restoring a backup can't bring back a revoked token (the store's
+// header). The stored shape is closed, so a later version's record never
+// authenticates here (isApiToken).
 //
-// CHECKING ONE (authenticate). Every failure is the same 401, after the same
-// work: a malformed token, an unknown container or one that isn't active
-// (restoring, archived), an unknown or revoked token, a wrong secret. Each
-// reads the container's registry entry and the token's record (at once, with
-// stand-ins where the token gave none) and compares a hash, so neither the
-// answer nor its timing tells which containers exist. Only once the secret
-// matches is the rest checked, which takes a real token to reach: with Clerk
-// (lib/auth-mode.ts), the container must still have an owner on the allowlist,
-// as signing in does; with the shared password, it must be this deployment's,
-// as a session's must (lib/sessions.ts). Either failing is the same 401.
+// CHECKING ONE (checkToken). Something not in a token's form is refused at
+// once, reading nothing: the form is public, so refusing it says nothing, and
+// garbage costs no database reads (lib/api-http.ts also limits, per address,
+// the tokens in the right form that don't work). A token in the right form
+// that doesn't work is refused the same way, after the same work, whatever the
+// reason: an unknown container, an unknown or revoked token, a wrong secret.
+// Each reads the container's registry entry and the token's record, at once,
+// and compares a hash in constant time, so neither the answer nor its timing
+// tells which containers exist. Only once the secret matches is the rest
+// checked, which takes a real token to reach:
+//   - the container must be active. One being restored or archived is
+//     `unavailable` (a 503, "try again later"), never "refused": a client
+//     told its token was refused would drop a good one;
+//   - with Clerk (lib/auth-mode.ts), the account that made the token must
+//     still own this container and be allowed in, as signing in requires; a
+//     demo account's never works. When Clerk can't say whether it is allowed
+//     in, `unavailable`;
+//   - with the shared password, the container must be this deployment's, as a
+//     session's must (lib/sessions.ts); with no usable container at all,
+//     `unavailable`.
+// A 503 after the secret matched tells only its holder something, and only
+// about their own data.
 //
 // RATE LIMITED per token: REQUESTS_PER_MINUTE in a window of
 // RATE_WINDOW_SECONDS (a counter map store on the seam, in the container),
@@ -50,15 +64,17 @@
 //
 // At most MAX_TOKENS per person. Making one needs a fresh sign-in
 // (lib/fresh-sign-in.ts, app/api/api-tokens), since a token goes on working
-// after "Sign out everywhere"; revoking one takes effect on its next request.
+// after "Sign out everywhere" and after APP_PASSWORD changes; a demo account
+// can't make one. Revoking one takes effect on its next request.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { UnreadableEntriesError, type CounterWindow } from './repo';
 import { apiTokenStore, apiRequestCount, type ApiToken } from './api-token-store';
 import { getContainer, isContainerId, type ContainerId, type Ctx } from './containers';
-import { clerkEnabled, clerkUserAllowed } from './auth-mode';
-import { ownersOf } from './owners';
+import { clerkEnabled, clerkUserAccess } from './auth-mode';
+import { ownedContainer } from './owners';
 import { deploymentContainer } from './sessions';
+import { isDemoUser } from './demo';
 import { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
 
 export { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX };
@@ -118,6 +134,12 @@ export function cleanLabel(raw: unknown): string | { error: string } {
   return label;
 }
 
+/** Why a demo account can't make a token: everyone who tries the demo shares
+ *  its data (lib/demo.ts), so a token would go on reading what later visitors
+ *  type. A sandbox for developers is a later step. */
+export const DEMO_REFUSAL =
+  'Demo accounts can’t make API tokens: everyone who tries the demo shares its data, so a token would go on reading what later visitors type. Try the API on your own copy of Nya.';
+
 /** A token refused for the limit: nothing was saved. */
 export class TokenLimitError extends Error {
   constructor() {
@@ -127,17 +149,18 @@ export class TokenLimitError extends Error {
 }
 
 /**
- * Makes a token named `label` (cleaned by cleanLabel), and returns it, the one
+ * Makes a token named `label` (cleaned by cleanLabel) for `userId`, the Clerk
+ * account making it (null with the shared password), and returns it, the one
  * time it is ever available whole, with what the list shows of it. Refused
  * (TokenLimitError) past MAX_TOKENS, counted again once it is saved so that
  * two made at once can't both pass the limit: past it, the new one is taken
  * back.
  */
-export async function createToken(ctx: Ctx, label: string, now: Date = new Date()): Promise<{ token: string; info: TokenInfo }> {
+export async function createToken(ctx: Ctx, label: string, now: Date = new Date(), userId: string | null = null): Promise<{ token: string; info: TokenInfo }> {
   if ((await apiTokenStore.count(ctx)) >= MAX_TOKENS) throw new TokenLimitError();
   const id = randomBytes(8).toString('hex');
   const secret = randomBytes(32).toString('base64url');
-  const record: ApiToken = { v: 1, label, hash: digest(secret).toString('hex'), created_at: now.toISOString(), last_used_at: null };
+  const record: ApiToken = { v: 1, label, hash: digest(secret).toString('hex'), user_id: userId, created_at: now.toISOString(), last_used_at: null };
   // Written only where nothing is: an id already taken (one in 2^64) is never
   // written over.
   await apiTokenStore.update(ctx, id, (current) => {
@@ -188,14 +211,6 @@ export async function revokeToken(ctx: Ctx, id: string, opts: { unreadable?: boo
 /** A token that checked out: whose data it reads, and its record as read. */
 export type Authenticated = { ctx: Ctx; id: string; token: ApiToken };
 
-/** Stand-ins for a token that gave no container, id or secret, so it costs
- *  the same work as one that did (see the header). The container is a valid
- *  v4 id no container is ever given (they are random). */
-const STAND_IN = {
-  container: '00000000-0000-4000-8000-000000000000' as ContainerId,
-  id: '0000000000000000',
-  secret: 'A'.repeat(43),
-};
 const NO_HASH = Buffer.alloc(32);
 
 /** A token's record, or null: none, or one that can't be used, which can't
@@ -210,31 +225,65 @@ async function recordOf(ctx: Ctx, id: string): Promise<ApiToken | null> {
   }
 }
 
-/** Whether the container can still be reached by signing in (see the header). */
-async function stillServes(container: ContainerId, now: number): Promise<boolean> {
+/** What checking a token came to (see the header). */
+export type TokenCheck =
+  | { kind: 'ok'; auth: Authenticated }
+  /** No token, or nothing in a token's form: nothing was read. */
+  | { kind: 'malformed' }
+  /** A token in the right form that doesn't work, every way alike. */
+  | { kind: 'refused' }
+  /** The token is good, but its data can't be reached just now. */
+  | { kind: 'unavailable'; why: string };
+
+const REFUSED: TokenCheck = { kind: 'refused' };
+
+/** Whether a token whose secret matched may read its container now (see the
+ *  header): its own data, reachable by signing in. */
+async function stillServes(container: ContainerId, token: ApiToken, now: number): Promise<TokenCheck | null> {
   if (clerkEnabled()) {
-    for (const owner of await ownersOf(container)) if (await clerkUserAllowed(owner, now)) return true;
-    return false;
+    const userId = token.user_id;
+    // Made without a sign-in account (with the shared password), or by a demo
+    // account: nobody vouches for it here.
+    if (userId === null || isDemoUser(userId)) return REFUSED;
+    // The account must still own this container: one reassigned, or a
+    // co-owner taken off the mapping, takes its tokens with it. One read.
+    if ((await ownedContainer(userId)) !== container) return REFUSED;
+    const access = await clerkUserAccess(userId, now);
+    if (access === 'denied') return REFUSED;
+    if (access === 'unknown') return { kind: 'unavailable', why: 'Whether this token’s account may still sign in couldn’t be checked just now.' };
+    return null;
   }
   const dep = await deploymentContainer(now);
-  return dep.kind === 'container' && dep.container === container;
+  if (dep.kind !== 'container') return { kind: 'unavailable', why: 'This copy of Nya has no data it can serve just now.' };
+  return dep.container === container ? null : REFUSED;
 }
 
 /**
- * The token an Authorization header carries, checked (see the header), or null
- * for every kind of failure alike. Storage failing, or a registry entry that
- * can't be read, throws: that says nothing about the token.
+ * Checks the token an Authorization header carries (see the header). Storage
+ * failing, or a registry entry that can't be read, throws: that says nothing
+ * about the token.
  */
-export async function authenticate(header: string | null, now: number = Date.now()): Promise<Authenticated | null> {
+export async function checkToken(header: string | null, now: number = Date.now()): Promise<TokenCheck> {
   const parsed = parseToken(bearerToken(header));
-  const container = parsed?.container ?? STAND_IN.container;
-  const id = parsed?.id ?? STAND_IN.id;
-  const presented = digest(parsed?.secret ?? STAND_IN.secret);
+  if (!parsed) return { kind: 'malformed' };
+  const { container, id } = parsed;
+  const presented = digest(parsed.secret);
   const [registered, record] = await Promise.all([getContainer(container), recordOf({ container }, id)]);
   const matches = timingSafeEqual(record ? Buffer.from(record.hash, 'hex') : NO_HASH, presented);
-  if (!parsed || registered?.status !== 'active' || !record || !matches) return null;
-  if (!(await stillServes(container, now))) return null;
-  return { ctx: { container }, id, token: record };
+  if (!record || !matches) return REFUSED;
+  if (registered?.status !== 'active') {
+    return { kind: 'unavailable', why: registered?.status === 'restoring' ? 'Your data is being restored.' : 'Your data can’t be reached just now.' };
+  }
+  const refused = await stillServes(container, record, now);
+  if (refused) return refused;
+  return { kind: 'ok', auth: { ctx: { container }, id, token: record } };
+}
+
+/** The token a header carries, if it checks out; null for every way it
+ *  doesn't (checkToken says which). */
+export async function authenticate(header: string | null, now: number = Date.now()): Promise<Authenticated | null> {
+  const check = await checkToken(header, now);
+  return check.kind === 'ok' ? check.auth : null;
 }
 
 /** A token's count couldn't be read; it was cleared (see the header). */
@@ -277,14 +326,26 @@ export async function takeRequest(auth: Authenticated, now: number = Date.now())
  * never failed for it.
  */
 export async function noteUse(auth: Authenticated, now: number = Date.now()): Promise<void> {
-  const last = auth.token.last_used_at === null ? NaN : Date.parse(auth.token.last_used_at);
-  if (now - last >= 0 && now - last < LAST_USED_EVERY_MS) return;
+  const fresh = (iso: string | null) => {
+    const last = iso === null ? NaN : Date.parse(iso);
+    // Within the minute, or later than now (another instance's clock ahead).
+    return now - last < LAST_USED_EVERY_MS;
+  };
+  if (fresh(auth.token.last_used_at)) return;
   const at = new Date(now).toISOString();
   try {
-    await apiTokenStore.update(auth.ctx, auth.id, (current) =>
-      current ? { ...current, last_used_at: current.last_used_at !== null && Date.parse(current.last_used_at) > now ? current.last_used_at : at } : null
-    );
+    await apiTokenStore.update(auth.ctx, auth.id, (current) => {
+      // Requests that start together all saw the old time: the first to write
+      // wins, and the rest, run again on what it wrote, find it fresh and stop.
+      if (current && fresh(current.last_used_at)) throw ALREADY_NOTED;
+      return current ? { ...current, last_used_at: at } : null;
+    });
   } catch (err) {
+    if (err === ALREADY_NOTED) return;
     console.error('API token: when it was last used could not be saved', err instanceof Error ? err.name : typeof err);
   }
 }
+
+/** Thrown inside noteUse's update to stop it when another request has just
+ *  written the time: nothing to write. */
+const ALREADY_NOTED = new Error('already noted');

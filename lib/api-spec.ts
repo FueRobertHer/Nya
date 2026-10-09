@@ -13,7 +13,7 @@
 // guessed at.
 
 import { isCalendarDay } from './manual-txn-input';
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from './api-limits';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MCP_DEFAULT_PAGE_SIZE, MCP_MAX_PAGE_SIZE } from './api-limits';
 
 /** An argument refused: 400 with its message (REST), or a tool's error (MCP). */
 export class BadRequest extends Error {
@@ -58,7 +58,8 @@ export type OperationSpec = {
   args: Readonly<Record<string, Arg>>;
 };
 
-const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** A month from the year 1000 on: Date.UTC reads a year under 100 as 19xx. */
+const MONTH = /^[1-9]\d{3}-(0[1-9]|1[0-2])$/;
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 /** An ISO code, or Plaid's unofficial one (a cryptocurrency's). */
 const CURRENCY = /^[A-Z0-9]{2,10}$/;
@@ -227,8 +228,14 @@ export function inputSchema(args: Readonly<Record<string, Arg>>): Record<string,
 // ---- The operations ----
 
 const INCLUDE_HIDDEN: Arg = { kind: 'flag', description: 'Include hidden accounts, which are left out unless this is true.' };
+/** For history: its days are UTC days. */
 const FROM: Arg = { kind: 'day', description: 'The first day, YYYY-MM-DD (UTC), inclusive.' };
 const TO: Arg = { kind: 'day', description: 'The last day, YYYY-MM-DD (UTC), inclusive.' };
+/** For transactions: the day each one is dated, the bank's (or, entered by
+ *  hand, the person's), not a UTC day. */
+const TXN_DATE = 'by the day each transaction is dated (the bank’s posting date, or the day picked for one entered by hand)';
+const TXN_FROM: Arg = { kind: 'day', description: `The first day, YYYY-MM-DD, inclusive, ${TXN_DATE}.` };
+const TXN_TO: Arg = { kind: 'day', description: `The last day, YYYY-MM-DD, inclusive, ${TXN_DATE}.` };
 
 export const OPERATION_SPECS: readonly OperationSpec[] = [
   { name: 'me', summary: 'The token you called with, and when your data in Nya began.', args: {} },
@@ -258,8 +265,8 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     name: 'transactions',
     summary: 'Transactions, newest first, a page at a time, as the Activity tab shows them.',
     args: {
-      from: { kind: 'day', description: 'The first day, YYYY-MM-DD (UTC), inclusive. Defaults to 30 days before to.' },
-      to: { kind: 'day', description: 'The last day, YYYY-MM-DD (UTC), inclusive. Defaults to today.' },
+      from: { kind: 'day', description: `${TXN_FROM.description} Defaults to 30 days before to.` },
+      to: { kind: 'day', description: `${TXN_TO.description} Defaults to today (UTC).` },
       account_id: { kind: 'ids', max: 50, description: 'Only these accounts (ids from accounts).' },
       q: { kind: 'text', max: 100, description: 'Text to find, in any case, in the name, the merchant behind it, the category or the note.' },
       category: { kind: 'text', max: 60, description: 'Only this category, as categories lists it ("other" for none).' },
@@ -281,8 +288,8 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     summary: 'Money in and out, and spending by category, for a month or any range, in one currency.',
     args: {
       month: { kind: 'month', description: 'A month, YYYY-MM, instead of from and to. Defaults to this month (UTC).' },
-      from: FROM,
-      to: TO,
+      from: TXN_FROM,
+      to: TXN_TO,
       currency: { kind: 'currency', description: 'Total in this currency. Defaults to the one most transactions are in.' },
       include_hidden: INCLUDE_HIDDEN,
     },
@@ -295,7 +302,10 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   {
     name: 'holdings',
     summary: 'Each investment account’s latest recorded positions, and the day they were recorded.',
-    args: { include_hidden: INCLUDE_HIDDEN },
+    args: {
+      account_id: { kind: 'id', description: 'One investment account’s positions (ids from accounts); every account’s without it.' },
+      include_hidden: INCLUDE_HIDDEN,
+    },
   },
 ];
 
@@ -308,8 +318,10 @@ export function operationSpec(name: string): OperationSpec {
 
 // ---- The MCP tools ----
 
-/** The MCP protocol versions the server speaks (lib/mcp.ts), newest first. */
-export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
+/** The MCP protocol versions the server speaks (lib/mcp.ts), newest first.
+ *  Not 2025-03-26, whose servers must take JSON-RPC batches: this one takes
+ *  one message per request (app/api/mcp). */
+export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18'] as const;
 
 /** What every tool's description, and the server's instructions, end with
  *  (see PROMPT INJECTION in lib/mcp.ts). */
@@ -325,18 +337,32 @@ export type ToolSpec = {
   operation?: string;
   defaults?: Args;
   args: Readonly<Record<string, Arg>>;
+  /** How to ask for less, when a result is too large to send (lib/mcp.ts). */
+  narrow: string;
 };
 
-function fromOperation(name: string, opName: string, title: string, about: string, defaults: Args = {}): ToolSpec {
-  return { name, title, description: `${about} ${DATA_NOT_INSTRUCTIONS}`, operation: opName, defaults, args: operationSpec(opName).args };
+function fromOperation(
+  name: string,
+  opName: string,
+  title: string,
+  about: string,
+  narrow: string,
+  defaults: Args = {},
+  overrides: Readonly<Record<string, Arg>> = {}
+): ToolSpec {
+  const args = { ...operationSpec(opName).args, ...overrides };
+  return { name, title, description: `${about} ${DATA_NOT_INSTRUCTIONS}`, operation: opName, defaults, args, narrow };
 }
+
+const NARROW_HIDDEN = 'Ask without include_hidden.';
 
 export const TOOL_SPECS: readonly ToolSpec[] = [
   fromOperation(
     'list_accounts',
     'accounts',
     'List accounts',
-    'Every account, linked and manual, with its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, and how its bank connection was last found.'
+    'Every account, linked and manual, with its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, and how its bank connection was last found.',
+    NARROW_HIDDEN
   ),
   {
     name: 'get_net_worth',
@@ -350,49 +376,65 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       include_estimated: { kind: 'flag', description: 'Include history points estimated from transactions, flagged estimated (left out by default).' },
       include_hidden: INCLUDE_HIDDEN,
     },
+    narrow: 'Ask for less history: a shorter from and to, interval month, or include_history false.',
   },
   fromOperation(
     'get_balance_history',
     'balance-history',
     'Balance history',
     'Net worth by day, or one account’s balance by day (account_id), recorded points only unless include_estimated; a point a month unless interval says otherwise.',
+    'Ask for a shorter from and to, or a longer interval (week or month).',
     { interval: 'month' }
   ),
   fromOperation(
     'search_transactions',
     'transactions',
     'Search transactions',
-    'Transactions, newest first, filtered by text, dates, category, amount and account, a page at a time (25 unless limit says otherwise; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it.',
-    { limit: 25 }
+    `Transactions, newest first, filtered by text, dates, category, amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it.`,
+    'Ask for fewer at a time with limit, and page with cursor.',
+    { limit: MCP_DEFAULT_PAGE_SIZE },
+    {
+      limit: {
+        kind: 'int',
+        min: 1,
+        max: MCP_MAX_PAGE_SIZE,
+        description: `Transactions per page, at most ${MCP_MAX_PAGE_SIZE}. Defaults to ${MCP_DEFAULT_PAGE_SIZE}.`,
+      },
+    }
   ),
   fromOperation(
     'spending_by_category',
     'spending',
     'Spending by category',
-    'Money in, money out and spending by category for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.'
+    'Money in, money out and spending by category for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.',
+    NARROW_HIDDEN
   ),
   fromOperation(
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it.'
+    'Monthly budgets by category with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it.',
+    NARROW_HIDDEN
   ),
   fromOperation(
     'list_recurring_bills',
     'recurring',
     'Recurring bills',
-    'Recurring bills detected from transactions (a merchant charging about monthly at a steady amount), with each one’s estimated next date; detection and dates are estimates.'
+    'Recurring bills detected from transactions (a merchant charging about monthly at a steady amount), with each one’s estimated next date; detection and dates are estimates.',
+    NARROW_HIDDEN
   ),
   fromOperation(
     'list_categories',
     'categories',
     'Categories',
-    'The categories in use, with how many transactions each has, and whether it has a budget or is a transfer category (never counted as spending).'
+    'The categories in use, with how many transactions each has, and whether it has a budget or is a transfer category (never counted as spending).',
+    NARROW_HIDDEN
   ),
   fromOperation(
     'get_holdings',
     'holdings',
     'Investment holdings',
-    'Each investment account’s latest recorded positions (security, quantity, price, value, cost basis), with the day they were recorded. Plaid keeps no history of holdings, so an account is known only from the day Nya began recording it.'
+    'Each investment account’s latest recorded positions (security, quantity, price, value, cost basis), with the day they were recorded. Plaid keeps no history of holdings, so an account is known only from the day Nya began recording it.',
+    'Ask for one account at a time with account_id (ids from list_accounts).'
   ),
 ];

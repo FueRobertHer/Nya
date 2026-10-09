@@ -195,6 +195,34 @@ describe('an Item’s rows as stored', () => {
     expect(syncPages).toEqual([]);
   });
 
+  test('a first import that stopped at the page cap reads as not all here, until a sync finishes it', async () => {
+    const page = (n: number, more: boolean) => ({
+      added: [row(`t${n}`, 'acct_1', 1 + (n % 300), 1 + n)],
+      modified: [],
+      removed: [],
+      accounts: [],
+      next_cursor: `c${n}`,
+      has_more: more,
+      transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
+    });
+    syncPages = Array.from({ length: 50 }, (_, i) => page(i, true));
+    const item = { ...ITEM, encrypted_access_token: await encrypt('access-sandbox-x') };
+    const quiet = console.warn;
+    console.warn = () => {};
+    try {
+      expect((await syncItemTransactions(ctx, item)).coverage).toBe('importing');
+    } finally {
+      console.warn = quiet;
+    }
+    const stored = await storedItemTransactions(ctx, item);
+    expect(stored).toMatchObject({ coverage: 'importing', note: 'Test Bank: older transactions are still being brought in; open the app to go on' });
+    expect(stored.txns.length).toBe(50);
+    // The next sync gets to the end: whole again.
+    syncPages = [page(50, false)];
+    await syncItemTransactions(ctx, item);
+    expect(await storedItemTransactions(ctx, item)).toMatchObject({ coverage: 'complete', note: null });
+  });
+
   test('a sync that saves stamps when, and the stamp survives the next', async () => {
     syncPages = [{ added: [], modified: [], removed: [], accounts: [], next_cursor: 'c2', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' }];
     await fake.set(ctxKey('txns:item_a'), await stored({ t1: row('t1', 'acct_1', 1, 5) }));

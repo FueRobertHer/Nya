@@ -13,7 +13,7 @@ import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
 import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
-import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE } from '@/lib/api-limits';
+import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -517,10 +517,17 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain('Programs you give an API token to What the read-only API and the MCP server serve (the Developers page lists it)');
     expect(page).toContain('until you revoke the token. Never your sign-in or your bank logins, and they can never change anything.');
     expect(page).toContain('Nya shows it once and never stores it: it keeps a SHA-256 hash of the token’s secret, inside your own data and encrypted with it');
-    expect(page).toContain('Every way a token can fail (malformed, revoked, wrong, or for data that can’t be reached) gets the same answer');
+    expect(page).toContain('Every way a token can fail (unknown, revoked, a wrong secret, or another person’s data) gets the same answer after the same work');
+    expect(page).toContain('Only a token whose secret checks out is told more: that its data is being restored, say, and to try again later.');
+    expect(page).toContain('Requests with tokens that don’t work are counted by the address they come from');
     expect(page).toContain('Making one needs a fresh sign-in, as downloading your data does.');
-    expect(page).toContain(`makes at most ${REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out everywhere`);
-    expect(page).toContain('deleting your account deletes every token with the rest of your data.');
+    expect(page).toContain(`makes at most ${REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out everywhere or a change of the shared password`);
+    expect(page).toContain('it stops when the account that made it is taken off the list of people allowed in.');
+    expect(page).toContain('Deleting your account deletes every token with the rest of your data, and restoring a backup ends every token, since backups leave them out.');
+    // Backups: the same kinds of data, but no tokens.
+    backupsAre('kept');
+    expect(security()).toContain('A backup holds the same kinds of data as the database, apart from API tokens');
+    expect(security()).toContain('API tokens are never backed up, so restoring a backup ends every token, and none revoked before it can work again.');
     expect(securityHtml()).toContain('href="/developers"');
   });
 
@@ -530,6 +537,7 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain(
       `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
     );
+    expect(page).toContain(`of a device that sent API tokens that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
   });
 
   test('the privacy page: what an assistant connected to the MCP server reads, how long tokens and their counts are kept, and what the download holds of them', () => {
@@ -542,8 +550,9 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain('Not built yet Writing through the API, a way to bring your download into another copy of Nya');
     expect(page).not.toContain('A public API');
     expect(page).toContain(
-      'API tokens Until you revoke them, or delete your account. Each is kept as its name, when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere doesn’t end them.'
+      'API tokens Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'
     );
+    expect(page).toContain(`Requests with API tokens that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
     expect(page).toContain(
       `Requests counted for each API token Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
     );
