@@ -5,10 +5,12 @@
 // and income from the dashboard's transactions (by lib/fire/inputs.ts's
 // rules: one currency, excluded rows left out, cash withdrawals and the cash
 // spending entered on an account marked as cash on hand counted once), the
-// invested assets from its accounts, and what went into workplace plans, from
+// invested assets from its accounts, what went into workplace plans, from
 // one /api/investment-activity request per plan (as the Accounts tab makes
-// when an account is opened). Both screens run this and lib/fire/progress.ts
-// on the same plan, so they can't disagree.
+// when an account is opened), and what the connections that bring in no
+// transactions mean for those figures (lib/no-transactions.ts). Both screens
+// run this and lib/fire/progress.ts on the same plan, so they can't
+// disagree.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
@@ -30,7 +32,8 @@ import {
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
 import type { PlanFunding } from '@/lib/fire/plan';
-import type { FiInputs } from '@/lib/fire/progress';
+import { transactionCoverage, type FiInputs, type TransactionCoverage } from '@/lib/fire/progress';
+import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -94,6 +97,9 @@ export type PlanInputs = FiInputs & {
   today: string;
   /** Institutions whose transactions couldn't all be read. */
   unread: UnreadTransactions[];
+  /** What the connections that bring in no transactions mean for the
+   *  figures (lib/fire/progress.ts transactionCoverage). */
+  coverage: TransactionCoverage;
   /** The names of the cash accounts cash spending was entered on, for the
    *  label beside spending. */
   cashOn: string[];
@@ -113,12 +119,16 @@ export type PlanInputs = FiInputs & {
 export function usePlanInputs({
   txns,
   txnNotes,
+  without = NO_CONNECTIONS_WITHOUT,
   institutions,
   includeCash,
   planFunding,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
+  /** The connections that bring in no transactions, as /api/transactions
+   *  reports them (lib/no-transactions.ts). */
+  without?: NoTransactionsView;
   institutions: AssetInstitution[];
   includeCash: boolean;
   planFunding: PlanFunding[];
@@ -139,6 +149,10 @@ export function usePlanInputs({
     [txns, cashAccounts]
   );
   const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
+  // Every transaction counts toward "is there spending at all", entered by
+  // hand included.
+  const transactionCount = txns?.length ?? 0;
+  const coverage = useMemo(() => transactionCoverage(without, transactionCount), [without, transactionCount]);
   const assets = useMemo(() => investedAssets(institutions, includeCash), [institutions, includeCash]);
   const contributions = useWorkplaceContributions(institutions);
   // Payments out of the bank that may have paid for a contribution, so it
@@ -148,5 +162,5 @@ export function usePlanInputs({
     () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, funding: planFunding }) : null),
     [contributions, bankOut, planFunding]
   );
-  return { today, flows, unread, assets, contributions, workplace, cashOn, cashUnmarked };
+  return { today, flows, unread, coverage, assets, contributions, workplace, cashOn, cashUnmarked };
 }

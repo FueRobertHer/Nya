@@ -16,6 +16,12 @@
 // would still exceed Upstash's request-size ceiling, writeState REFUSES to write
 // it rather than trimming. Trimming oldest-first would drop precisely the rows
 // no bank will re-serve, silently; refusing is recoverable.
+//
+// Not every Item has Transactions. One linked as a brokerage or retirement
+// account often doesn't, and calling /transactions/sync on it would add the
+// product and start Plaid billing it, so syncItem first checks whether that call
+// is worth making (lib/item-products.ts). An Item without the product is a known,
+// quiet state: no rows and no note, never a failure.
 
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
@@ -24,6 +30,20 @@ import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './b
 import { redis, kc, type StoredItem } from './storage';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
+import {
+  holdsTransactionAccounts,
+  noTransactionsReason,
+  refusalReason,
+  refusalStands,
+  CONSENT_REQUIRED,
+  transactionAccountIds,
+  transactionsBilled,
+  REFUSAL_RECHECK_DAYS,
+  TRANSACTIONS_DAYS_REQUESTED,
+  type NoTransactionsReason,
+  type Refusal,
+} from './item-products';
+import { rememberedKindsForItem } from './last-known';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -143,6 +163,10 @@ type ItemState = {
   cursor: string; // '' = never synced → pull full history
   accounts: Record<string, StoredAccount>; // account_id → metadata, merged over time
   txns: Record<string, StoredTxn>; // keyed by transaction_id
+  // A first call Plaid refused (lib/item-products.ts), on an Item never synced:
+  // remembered, with the bank accounts and cards it was about, so the next
+  // loads don't ask again. Gone once a sync succeeds.
+  refused?: Refusal;
 };
 
 // Trailing window callers display / reconstruct by default.
@@ -276,6 +300,32 @@ function parseBlocked(raw: string): BlockedMarker | null {
   return null;
 }
 
+/**
+ * Forgets a remembered refusal once the person has been through update mode
+ * on the Item, a Reconnect or "Allow transactions" (app/api/item-reconnected):
+ * a consent given, or a sign-in that changed what Plaid offers, is asked about
+ * on the next load rather than up to REFUSAL_RECHECK_DAYS later. Only a state holding nothing but the refusal
+ * (never synced, no rows) is removed. A read that fails removes nothing: the
+ * refusal stands until it lapses.
+ */
+export async function forgetRefusal(ctx: Ctx, item_id: string): Promise<void> {
+  try {
+    const state = await readState(ctx, item_id);
+    if (!state.refused || state.cursor !== '' || Object.keys(state.txns).length > 0) return;
+    await redis().del(stateKey(ctx, item_id));
+  } catch (err) {
+    console.error(loggable(err));
+  }
+}
+
+/** A remembered refusal as written; anything else is not one, and is dropped
+ *  (the next first call asks Plaid again, which is all a refusal saves). */
+function isRefusal(v: unknown): v is Refusal {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Refusal;
+  return typeof r.at === 'string' && typeof r.code === 'string' && Array.isArray(r.accounts) && r.accounts.every((id) => typeof id === 'string');
+}
+
 function emptyState(): ItemState {
   return { schema_version: TXN_SCHEMA_VERSION, cursor: '', accounts: {}, txns: {} };
 }
@@ -373,7 +423,7 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
  * than swallowed: carrying on with an empty state would have the next writeState
  * persist that emptiness over the real thing. See readState.
  */
-class StateUnreadableError extends Error {
+export class StateUnreadableError extends Error {
   constructor(
     readonly item_id: string,
     readonly kind: 'read' | 'decode',
@@ -410,6 +460,7 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
         cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
         accounts: parsed.accounts ?? {},
         txns: parsed.txns ?? {},
+        ...(isRefusal(parsed.refused) ? { refused: parsed.refused } : {}),
       };
     }
     // Older or unversioned: upgrade in place, keeping every row and the cursor.
@@ -617,17 +668,72 @@ function toStoredAccount(a: AccountBase): StoredAccount {
   };
 }
 
+/** What a sync of one Item came to (see syncItem). */
+type SyncOutcome = {
+  state: ItemState | null;
+  note: string | null;
+  /** Set when the Item has no Transactions to sync, with why
+   *  (lib/item-products.ts): nothing to show and nothing wrong, so there is no
+   *  note. */
+  noTransactions?: NoTransactionsReason;
+  /** The initial pull hit the page cap: older rows are still arriving. */
+  importing?: boolean;
+};
+
+/** An account as the check before a first call reads it (accountKinds). */
+type AccountKind = { account_id?: unknown; type?: unknown };
+
+type SyncOptions = {
+  /** The Item's accounts as the caller has just fetched them, for deciding
+   *  whether a first call is worth making (see `starting` in syncItem).
+   *  Without them, see accountKinds. */
+  accounts?: readonly AccountKind[];
+};
+
+/** Plaid's answers to a first call on an Item that can't have Transactions:
+ *  the institution doesn't offer it for these accounts, or the person never
+ *  consented to it. A retry changes neither. */
+const NO_TRANSACTIONS_CODES = new Set(['PRODUCTS_NOT_SUPPORTED', CONSENT_REQUIRED]);
+
+/**
+ * An Item's accounts (their ids and types), for deciding whether a first call
+ * is worth making: the ones the caller just fetched; else the ones a dashboard
+ * load remembered (lib/last-known.ts), which costs no Plaid call; else, for an
+ * Item no load has remembered yet (one linked a moment ago, whose first
+ * transactions load can run beside its first balance load), a fresh
+ * /accounts/get, which Plaid doesn't bill. Null when none answers: not
+ * knowing is neither "no transactions" nor a reason to call, so the sync says
+ * it could not check, and the load isn't cached as complete.
+ */
+async function accountKinds(
+  ctx: Ctx,
+  item: StoredItem,
+  access_token: string,
+  given?: readonly AccountKind[]
+): Promise<readonly AccountKind[] | null> {
+  if (given) return given;
+  const remembered = await rememberedKindsForItem(ctx, item.item_id);
+  if (remembered) return remembered;
+  try {
+    return (await plaidClient.accountsGet({ access_token })).data.accounts;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Sync one Item from Plaid and persist the reconciled set + cursor. Returns the
  * full retained `state` (callers slice to the window they need), plus a `note`
  * when something is off. `state` is null only on a hard stop (reauth, fresh
- * Item still syncing, unrecoverable error); a non-null `state` with a `note`
- * means usable-but-partial (e.g. the initial pull hit the page cap, which also
- * sets `importing`). Prior stored state is left untouched on a hard stop.
+ * Item still syncing, unrecoverable error) or for an Item with no Transactions
+ * (`noTransactions`, with no note); a non-null `state` with a `note` means
+ * usable-but-partial (e.g. the initial pull hit the page cap, which also sets
+ * `importing`). Prior stored state is left untouched on a hard stop.
  */
-async function syncItem(ctx: Ctx, 
-  item: StoredItem
-): Promise<{ state: ItemState | null; note: string | null; importing?: boolean }> {
+async function syncItem(ctx: Ctx,
+  item: StoredItem,
+  opts: SyncOptions = {}
+): Promise<SyncOutcome> {
   let access_token: string;
   try {
     access_token = await decrypt(item.encrypted_access_token);
@@ -682,6 +788,29 @@ async function syncItem(ctx: Ctx,
     throw err;
   }
 
+  // A call that may start Plaid billing Transactions (lib/item-products.ts):
+  // Plaid isn't known to bill it on this Item, and Nya has never synced it, so
+  // the first call would add the product. Made only for an Item holding a bank
+  // account or a card. Any other (a 401(k), an IRA, a brokerage account) would
+  // gain a monthly charge and nothing to show, so it simply has no
+  // transactions: no rows, no note, nothing stored, and no Transactions call.
+  const starting = !transactionsBilled(item) && stored.cursor === '';
+  // The bank accounts and cards a first call is for, which a refusal names.
+  let cash: string[] = [];
+  if (starting) {
+    const accounts = await accountKinds(ctx, item, access_token, opts.accounts);
+    if (accounts === null) {
+      return { state: null, note: `${item.institution_name}: could not check its accounts for transactions` };
+    }
+    const types = accounts.map((a) => a.type);
+    if (!holdsTransactionAccounts(types)) return { state: null, note: null, noTransactions: noTransactionsReason(types) };
+    // Plaid refused this first call lately, for these same accounts: asking
+    // again would only be refused again, a call and a log line on every load,
+    // until it may answer otherwise. One added since is asked about.
+    cash = transactionAccountIds(accounts);
+    if (stored.refused && refusalStands(stored.refused, cash)) return { state: null, note: null, noTransactions: refusalReason(stored.refused) };
+  }
+
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
     // page's deltas onto an already-mutated set.
@@ -693,7 +822,15 @@ async function syncItem(ctx: Ctx,
 
     try {
       while (hasMore && pages < MAX_PAGES) {
-        const res = await plaidClient.transactionsSync({ access_token, cursor, count: 500 });
+        const res = await plaidClient.transactionsSync({
+          access_token,
+          cursor,
+          count: 500,
+          // The call that initializes the product is the only place left to say
+          // how much history to fetch: the link token's days_requested applies
+          // only where Link initialized it. Plaid ignores it on any other call.
+          ...(starting && !cursor ? { options: { days_requested: TRANSACTIONS_DAYS_REQUESTED } } : {}),
+        });
         pages++;
         lastStatus = res.data.transactions_update_status;
         res.data.accounts.forEach((a) => (state.accounts[a.account_id] = toStoredAccount(a)));
@@ -730,6 +867,23 @@ async function syncItem(ctx: Ctx,
           note: `${item.institution_name}: transactions are still syncing — try again in a minute`,
         };
       }
+      // The first call found the Item can't have Transactions after all (an
+      // institution that doesn't provide it for these accounts, or no consent
+      // for it). No note: nothing is wrong that a retry or the person could
+      // fix, and the views that count spending say what it leaves out
+      // (lib/no-transactions.ts). Remembered in the Item's own state
+      // (refusalStands), so the next loads don't ask again. Only on that first
+      // call: on an Item that has the product, these would be a real fault and
+      // get the note below.
+      if (starting && NO_TRANSACTIONS_CODES.has(code)) {
+        const refused = { at: new Date().toISOString(), code, accounts: cash };
+        console.warn(
+          `transactions: ${refusalReason(refused) === 'no_consent' ? "the person didn't consent to sharing an Item's transactions" : "Plaid doesn't provide Transactions for an Item's accounts"} (${code}); asking again in ${REFUSAL_RECHECK_DAYS} days, after a reconnect, or when a bank account or card is added`
+        );
+        // Best effort: a write that fails costs one more refused call later.
+        await writeState(ctx, item.item_id, { ...stored, refused });
+        return { state: null, note: null, noTransactions: refusalReason(refused) };
+      }
       console.error(loggable(err));
       return { state: null, note: `${item.institution_name}: could not fetch transactions` };
     }
@@ -748,8 +902,10 @@ async function syncItem(ctx: Ctx,
     }
 
     // Advance the cursor and persist. writeState refuses, rather than dropping
-    // rows, if the blob would exceed the request-size ceiling.
+    // rows, if the blob would exceed the request-size ceiling. A refusal that
+    // a later first call outlived is over.
     if (cursor) state.cursor = cursor;
+    delete state.refused;
     const write = await writeState(ctx, item.item_id, state);
 
     // Too large to persist. `state` is still complete (nothing was trimmed), so
@@ -807,9 +963,13 @@ export async function syncItemTransactions(ctx: Ctx,
    *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
    *  same reason; what the person says on the row itself still wins. */
   carriedExclusionsIn?: Set<string> | Promise<Set<string>>
-): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage }> {
-  const { state, note, importing } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note, coverage: 'missing' };
+): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
+  const { state, note, importing, noTransactions } = await syncItem(ctx, item);
+  // An Item with no Transactions holds all of its (no) rows: nothing is
+  // missing from this load on its account, so it is never named as
+  // incomplete. Why it has none goes back beside the rows: the views that
+  // count spending say so, and a refused bank account leaves spending unknown.
+  if (!state) return noTransactions ? { txns: [], note, coverage: 'complete', noTransactions } : { txns: [], note, coverage: 'missing' };
   const carried = await carriedIn;
   const carriedExclusions = await carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
@@ -860,13 +1020,19 @@ export async function syncItemTransactions(ctx: Ctx,
  * window, defaulting to LOOKBACK days. Used by the estimated-history backfill,
  * which walks balances per account. Reads straight from the same persisted
  * store, so the two features share one Plaid pull.
+ *
+ * `hasTransactions` is false for an Item with no Transactions (see syncItem):
+ * no stream at all, so its cash accounts can't be walked, which an empty list
+ * from an Item that has one (a dormant account) can. `accounts` are the Item's
+ * accounts as the caller just fetched them.
  */
-export async function readItemTransactions(ctx: Ctx, 
+export async function readItemTransactions(ctx: Ctx,
   item: StoredItem,
-  sinceDays: number = LOOKBACK_DAYS
-): Promise<{ txns: StoredTxn[]; note: string | null }> {
-  const { state, note } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note };
+  sinceDays: number = LOOKBACK_DAYS,
+  accounts?: readonly AccountKind[]
+): Promise<{ txns: StoredTxn[]; note: string | null; hasTransactions: boolean }> {
+  const { state, note, noTransactions } = await syncItem(ctx, item, { accounts });
+  if (!state) return { txns: [], note, hasTransactions: !noTransactions };
   const cutoff = daysAgoIso(sinceDays);
   const superseded = supersededPendingIds(state.txns);
   return {
@@ -874,5 +1040,6 @@ export async function readItemTransactions(ctx: Ctx,
       (t) => t.date >= cutoff && !superseded.has(t.transaction_id)
     ),
     note,
+    hasTransactions: true,
   };
 }

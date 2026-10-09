@@ -17,6 +17,10 @@ import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
+import ConnectButtons from './ConnectButtons';
+import { RedirectChoices } from './ConnectRedirect';
+import type { LinkKind } from '@/lib/item-products';
+import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
@@ -107,6 +111,9 @@ type Institution = {
   // Plaid's institution id, for recognizing a second connection to the same
   // institution (lib/existing-items.ts). Absent on older cached payloads.
   institution_id?: string | null;
+  // Which way it was linked (lib/item-products.ts linkedAs), for the sheet
+  // that stops a second connection to it (components/ConnectRedirect.tsx).
+  linked_as?: LinkKind;
   // Plaid found accounts at this Item the user hasn't added (lib/new-accounts.ts).
   new_accounts_available?: boolean;
   accounts: Account[];
@@ -389,11 +396,15 @@ export default function Dashboard({
   clerk = false,
   viewer,
   admin = false,
+  brokerageLink = false,
 }: {
   clerk?: boolean;
   viewer?: string;
   /** Set by the server (app/page.tsx): only the admin is sent the admin panel. */
   admin?: boolean;
+  /** Set by the server (app/page.tsx): whether to offer connecting a brokerage
+   *  or retirement account (PLAID_BROKERAGE_LINK, lib/item-products.ts). */
+  brokerageLink?: boolean;
 }) {
   const cacheKey = cacheKeyFor(viewer);
   const [tab, setTab] = useState<Tab>('home');
@@ -413,8 +424,11 @@ export default function Dashboard({
   // Whether Link is on screen: a late SELECT_INSTITUTION must not redirect a
   // Link that already closed.
   const linkOpenRef = useRef(false);
-  // Set when a new connection was stopped at an institution already connected.
-  const [redirect, setRedirect] = useState<{ name: string; items: Institution[] } | null>(null);
+  // Which way the new connection in progress was started (components/ConnectButtons.tsx).
+  const connectKindRef = useRef<LinkKind>('bank');
+  // Set when a new connection was stopped at an institution already connected,
+  // with the way it was started, for connecting it separately after all.
+  const [redirect, setRedirect] = useState<{ name: string; items: Institution[]; kind: LinkKind } | null>(null);
   const shownRedirect = useLast(redirect);
   const [connected, setConnected] = useState(false);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
@@ -430,6 +444,8 @@ export default function Dashboard({
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
+  // Connections that bring in no transactions, so the spending views say why.
+  const [txnWithout, setTxnWithout] = useState<NoTransactionsView>(NO_CONNECTIONS_WITHOUT);
   const [txnsLoading, setTxnsLoading] = useState(false);
   // Connection health (components/ConnectionHealth.tsx): whether the server
   // could read Plaid's warnings, and whether a notice email's link opened it.
@@ -602,6 +618,7 @@ export default function Dashboard({
       setTxns(data.transactions);
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
+      setTxnWithout(noTransactionsView(data));
     } catch {
       setTxnNotes(['Could not load transactions.']);
     } finally {
@@ -709,28 +726,48 @@ export default function Dashboard({
 
   // Transactions entered by hand, categories and the exclude flag
   // (components/transaction-edits.ts).
-  const txnEdits = useTransactionEdits({ txns, setTxns, setTxnNotes, setTxnIncomplete, loadTransactions, loadNetWorth, requestBackfill });
+  const txnEdits = useTransactionEdits({
+    txns,
+    setTxns,
+    setTxnNotes,
+    setTxnIncomplete,
+    setTxnWithout,
+    loadTransactions,
+    loadNetWorth,
+    requestBackfill,
+  });
 
-  // `bypass` skips both duplicate checks for this run: the user has said the
-  // institution they already have is a different login.
-  const beginConnect = useCallback(async (bypass: boolean) => {
+  // `kind` is which way to connect (app/api/create-link-token). `bypass` skips
+  // both duplicate checks for this run: the user has said the institution they
+  // already have is a different login.
+  const beginConnect = useCallback(async (kind: LinkKind, bypass: boolean) => {
     setError('');
     setConnecting(true);
     bypassDuplicateRef.current = bypass;
     redirectingRef.current = false;
-    const res = await fetch('/api/create-link-token', { method: 'POST' });
-    const data = await res.json();
-    setConnecting(false);
-    if (data.link_token) {
-      setLinkMode('new');
-      setLinkToken(data.link_token);
-    } else {
+    connectKindRef.current = kind;
+    // Whatever happens (no network, an answer that isn't JSON), the buttons
+    // come back: left on "Starting…", nothing could be connected.
+    try {
+      const res = await fetch('/api/create-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.link_token) {
+        setLinkMode('new');
+        setLinkToken(data.link_token);
+      } else {
+        setError('Could not start connection.');
+      }
+    } catch {
       setError('Could not start connection.');
+    } finally {
+      setConnecting(false);
     }
   }, []);
-  // A wrapper, not beginConnect itself, since onClick would pass its event as
-  // `bypass`.
-  const startConnect = useCallback(() => beginConnect(false), [beginConnect]);
+  const startConnect = useCallback((kind: LinkKind) => beginConnect(kind, false), [beginConnect]);
 
   // Link's account picker on an existing Item, to add (or remove) accounts at an
   // institution already connected without creating a second Item.
@@ -772,6 +809,36 @@ export default function Dashboard({
       setLinkToken(data.link_token);
     } else {
       setError('Could not start reconnection.');
+    }
+  }, []);
+
+  // Asks for consent to share transactions on a connection whose transactions
+  // weren't allowed (lib/no-transactions.ts, no_consent): update mode with the
+  // consent request (app/api/create-update-link-token, allow_transactions).
+  // Its success goes the way of a Reconnect's: the server forgets the refusal
+  // (app/api/item-reconnected), and the reload asks Plaid again.
+  const startAllowTransactions = useCallback(async (item_id: string) => {
+    setError('');
+    setConnecting(true);
+    redirectingRef.current = false;
+    try {
+      const res = await fetch('/api/create-update-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id, allow_transactions: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.link_token) {
+        reconnectingItemRef.current = item_id;
+        setLinkMode('update');
+        setLinkToken(data.link_token);
+      } else {
+        setError('Could not start allowing transactions.');
+      }
+    } catch {
+      setError('Could not start allowing transactions.');
+    } finally {
+      setConnecting(false);
     }
   }, []);
 
@@ -967,6 +1034,8 @@ export default function Dashboard({
           }).catch(() => null);
         }
         loadNetWorth(true);
+        // Transactions allowed just now come in on this load.
+        if (txns !== null) loadTransactions(true);
         return;
       }
 
@@ -1049,7 +1118,7 @@ export default function Dashboard({
       });
       if (items.length === 0) return;
       redirectingRef.current = true;
-      setRedirect({ name: metadata.institution_name || items[0].institution_name, items });
+      setRedirect({ name: metadata.institution_name || items[0].institution_name, items, kind: connectKindRef.current });
       exitLinkRef.current({ force: true });
     },
     [linkMode, institutions]
@@ -1134,7 +1203,11 @@ export default function Dashboard({
     [institutions]
   );
   // Connections whose transactions have stopped arriving, for Activity's months.
-  const stoppedTxns = useMemo(() => stoppedConnections(institutions), [institutions]);
+  // Not a connection that holds no bank account or card: it brings no
+  // transactions in, so its lapse leaves no month short (lib/no-transactions.ts).
+  const stoppedTxns = useMemo(() => stoppedConnections(institutions, quietItemIds(txnWithout)), [institutions, txnWithout]);
+  // Connections whose transactions weren't allowed: their card offers to.
+  const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);
 
   // The last recorded day, when recording has stalled (see lib/history-status.ts).
   const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
@@ -1430,9 +1503,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <button onClick={startConnect} disabled={connecting}>
-                {connecting ? 'Starting…' : 'Connect an account'}
-              </button>
+              <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1525,6 +1596,7 @@ export default function Dashboard({
                   txns={txns}
                   txnsLoading={txnsLoading}
                   txnNotes={txnNotes}
+                  txnWithout={txnWithout}
                   institutions={planInstitutions}
                   currency={accountCurrency}
                   onOpenPlan={() => {
@@ -1538,6 +1610,7 @@ export default function Dashboard({
                   budgets={budgets}
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
+                  withoutTransactions={txnWithout}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
@@ -1557,9 +1630,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <button onClick={startConnect} disabled={connecting}>
-                    {connecting ? 'Starting…' : 'Connect an account'}
-                  </button>
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -2037,16 +2108,33 @@ export default function Dashboard({
                         </p>
                       )}
 
+                      {unallowedIds.has(inst.item_id) && (
+                        <p className="empty-note">
+                          You didn&apos;t allow Nya to see transactions from the bank or card accounts here.
+                        </p>
+                      )}
+
                       {/* One container, independent actions. Enable must NOT
                           sit inside a needs_reauth gate: a healthy institution
                           is exactly the case it exists for. */}
                       {(inst.needs_reauth ||
                         canEnableLiabilities(inst) ||
+                        unallowedIds.has(inst.item_id) ||
                         (!inst.manual && (manageMode || inst.new_accounts_available))) && (
                         <div className="card-actions">
                           {inst.needs_reauth && (
                             <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
                               Reconnect
+                            </button>
+                          )}
+                          {unallowedIds.has(inst.item_id) && (
+                            <button
+                              className="secondary"
+                              onClick={() => startAllowTransactions(inst.item_id)}
+                              disabled={connecting}
+                              aria-label={`Allow transactions from ${inst.institution_name}`}
+                            >
+                              Allow transactions
                             </button>
                           )}
                           {canEnableLiabilities(inst) && (
@@ -2172,6 +2260,7 @@ export default function Dashboard({
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
+                withoutTransactions={txnWithout}
               />
             )}
 
@@ -2204,6 +2293,7 @@ export default function Dashboard({
                 loading={txnsLoading}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
+                withoutTransactions={txnWithout}
               />
             )}
 
@@ -2212,6 +2302,7 @@ export default function Dashboard({
                 txns={txns}
                 txnsLoading={txnsLoading}
                 txnNotes={txnNotes}
+                txnWithout={txnWithout}
                 institutions={planInstitutions}
                 holdings={planHoldings}
                 balancesAsOf={asOf}
@@ -2401,39 +2492,20 @@ export default function Dashboard({
         onClose={() => setRedirect(null)}
       >
         {shownRedirect && (
-          <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              To add more {shownRedirect.name} accounts, add them to the connection you already have.
-              Connecting it again would create a duplicate connection with the same accounts. If it&apos;s a
-              different login (a joint or business login, say), connect it separately.
-            </p>
-            <div className="button-stack" style={{ marginTop: 16 }}>
-              {shownRedirect.items.map((inst) => (
-                <button
-                  key={inst.item_id}
-                  disabled={connecting}
-                  onClick={() => {
-                    setRedirect(null);
-                    startManageAccounts(inst.item_id);
-                  }}
-                >
-                  {shownRedirect.items.length > 1
-                    ? `Add to ${inst.institution_name} (${inst.accounts.length} account${inst.accounts.length === 1 ? '' : 's'})`
-                    : 'Add accounts to existing connection'}
-                </button>
-              ))}
-              <button
-                className="secondary"
-                disabled={connecting}
-                onClick={() => {
-                  setRedirect(null);
-                  beginConnect(true);
-                }}
-              >
-                It&apos;s a different login
-              </button>
-            </div>
-          </>
+          <RedirectChoices
+            name={shownRedirect.name}
+            items={shownRedirect.items}
+            kind={shownRedirect.kind}
+            connecting={connecting}
+            onAdd={(item_id) => {
+              setRedirect(null);
+              startManageAccounts(item_id);
+            }}
+            onConnectAgain={() => {
+              setRedirect(null);
+              beginConnect(shownRedirect.kind, true);
+            }}
+          />
         )}
       </Sheet>
 

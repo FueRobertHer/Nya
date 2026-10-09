@@ -4,6 +4,7 @@ import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
+import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
 
 export const metadata: Metadata = {
@@ -14,18 +15,19 @@ export const metadata: Metadata = {
 // How Nya handles personal data: its commitments, who processes the data, how
 // long things are kept, and how to download and delete it. Public (proxy.ts)
 // and a plain-language summary, not a legal policy. Each commitment says what
-// makes it true today and what is not built yet. Reads no stored data: what it
-// says of backups comes from backupRetention() (lib/backup.ts, environment
-// only), the rule the deletion receipt dates by, so the two never disagree,
-// and whether it names an email provider from sendsEmail()
-// (lib/notice-recipients.ts): mail set up, and someone it may write to, which
-// is whether this copy sends email at all.
+// makes it true today and, where some of it is still to come, what is not
+// built yet. Reads no stored data: what it says of backups comes from
+// backupRetention() (lib/backup.ts, environment only), the rule the deletion
+// receipt dates by, so the two never disagree, and whether it names an email
+// provider from sendsEmail() (lib/notice-recipients.ts): mail set up, and
+// someone it may write to, which is whether this copy sends email at all.
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
   promise: string;
   today: ReactNode;
-  next: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned'; text: ReactNode };
+  /** What is still to come, if anything. */
+  next?: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned'; text: ReactNode };
 };
 
 /** What happens to a deleted account's data in the nightly backups here. */
@@ -63,11 +65,7 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   {
     promise: 'You decide what anyone else sees, and you can see what they see about you.',
     today:
-      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Sharing shows what each person can see of yours, and Remove or Block ends it at once.',
-    next: {
-      label: 'Not built yet',
-      text: 'A preview of exactly what they see, shares that end on a date you set, and a record of when they looked.',
-    },
+      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.',
   },
   {
     promise: 'You can see who can read what, including us.',
@@ -124,6 +122,17 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
     : []),
 ];
 
+/** How long the records of showings on a connection last (lib/access-log.ts),
+ *  backups included. */
+function showingsRow(backups: BackupRetention): string {
+  const kept = `Each entry is deleted after ${ACCESS_LOG_DAYS} days, by a pass that runs every night, and both people’s records go at once when either of you removes or blocks the other, or deletes their account.`;
+  if (backups === null) {
+    return `${kept} Nightly backups already taken keep a copy until their retention setting, which is not valid on this copy of Nya, is fixed and they are deleted in turn.`;
+  }
+  if (!backups.kept) return `${kept} This copy of Nya takes no backups, so no copy is left in one.`;
+  return `${kept} Nightly backups keep a copy up to ${backupDaysAtMost(backups)} days more, while the nightly backup keeps running.`;
+}
+
 function backupsRow(backups: BackupRetention): string {
   if (backups === null) return 'None taken and none deleted while the retention setting is not valid.';
   if (!backups.kept) return 'None: no backup store is set up for this copy of Nya.';
@@ -149,6 +158,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
     `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy.`,
   ],
   ['Invite links', '72 hours, or until used.'],
+  ['Records of when shared accounts were shown', showingsRow(backups)],
   [
     'Copies of what the dashboard shows',
     'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted.',
@@ -178,8 +188,12 @@ export default function PrivacyPage() {
           <dl className="info-status">
             <dt>True today</dt>
             <dd>{c.today}</dd>
-            <dt>{c.next.label}</dt>
-            <dd>{c.next.text}</dd>
+            {c.next && (
+              <>
+                <dt>{c.next.label}</dt>
+                <dd>{c.next.text}</dd>
+              </>
+            )}
           </dl>
         </section>
       ))}

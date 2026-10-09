@@ -16,6 +16,7 @@ import { loadVanishedInputs, applyVanished } from './vanished';
 import { recordSnapshot, recordPartialAccounts } from './history';
 import { CAUSES, classifyFailure, isoTime, reconnectFixes, type ConnectionHealth, type Failure } from './connection-state';
 import { observeHoldings, recordHoldings, type HoldingsObservation, type HoldingsRecorded } from './holdings-history';
+import { linkedAs, type LinkKind } from './item-products';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -40,6 +41,11 @@ export type InstitutionResult = {
    *  a disconnect and re-add, unlike item_id and the display name (which is
    *  whatever the client sent at link time); lib/links.ts matches on it. */
   institution_id?: string | null;
+  /** Which way the Item was linked, from its record (lib/item-products.ts
+   *  linkedAs): the duplicate-institution sheet says when a connection made
+   *  the other way may not offer the accounts someone came to add. Absent when
+   *  the lookup at link failed. */
+  linked_as?: LinkKind;
   accounts: any[];
   holdings: any[];
   /**
@@ -131,6 +137,7 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
     // The stored id, so an Item that fails below still carries one; a
     // successful fetch overwrites it with what Plaid reports.
     institution_id: item.institution_id ?? null,
+    ...(linkedAs(item) ? { linked_as: linkedAs(item) } : {}),
     accounts: [],
     holdings: [],
     error: null,

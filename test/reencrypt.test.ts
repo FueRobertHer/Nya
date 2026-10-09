@@ -52,7 +52,7 @@ async function seed() {
     new Map([
       [
         'item-1',
-        JSON.stringify({ item_id: 'item-1', institution_name: 'Bank é', encrypted_access_token: await legacy('access-sandbox-1') }),
+        JSON.stringify({ item_id: 'item-1', institution_name: 'Bank é', encrypted_access_token: await legacy('access-sandbox-1'), transactions_billed: false }),
       ],
     ])
   );
@@ -178,8 +178,9 @@ describe('the pass', () => {
     expect(await decrypt(hist.get('2026-01-02')!)).toBe('101');
 
     const item = JSON.parse(fake.hashes.get(testKey('plaid:items'))!.get('item-1')!);
-    expect(item).toMatchObject({ item_id: 'item-1', institution_name: 'Bank é' });
-    expect(Object.keys(item)).toEqual(['item_id', 'institution_name', 'encrypted_access_token']);
+    // Only the token is ciphertext: the rest of the record comes through as it was.
+    expect(item).toMatchObject({ item_id: 'item-1', institution_name: 'Bank é', transactions_billed: false });
+    expect(Object.keys(item)).toEqual(['item_id', 'institution_name', 'encrypted_access_token', 'transactions_billed']);
     expect(formatOf(item.encrypted_access_token).keyId).toBe(active);
     expect(await decrypt(item.encrypted_access_token)).toBe('access-sandbox-1');
 

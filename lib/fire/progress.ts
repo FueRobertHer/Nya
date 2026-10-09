@@ -18,7 +18,8 @@
 // Arithmetic only: no engine, no market history.
 
 import { fiView, type FirePlan, type FiView, type Measured } from './plan';
-import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from './inputs';
+import type { InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
+import { missingWhat, noSpending, withoutNote, type NoSpending, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText } from '@/lib/spending';
 
 /** What the Plan measures from, as the hook gathers it. */
@@ -85,6 +86,35 @@ export function spendingLeftOut(flows: TrailingFlows | null): { excluded: string
  *  USD." `where` names the figure, plural or not. */
 export function assetsLeftOut(assets: InvestedAssets, where = 'this figure', plural = false): string | null {
   return leftOutText(assets.leftOut, assets.currency, { noun: 'account', where, plural });
+}
+
+/** What the connections that bring in no transactions mean for the figures
+ *  measured from transactions (lib/no-transactions.ts), worked out the same
+ *  way for the Plan tab and for Home. */
+export type TransactionCoverage = {
+  /** What spending lacks because a connection's bank account or card doesn't
+   *  bring its transactions in ("transactions Plaid doesn't provide"), or
+   *  null. */
+  missing: string | null;
+  /** No connection can bring spending in, and no transaction came from
+   *  anywhere else: what to say in place of the figures, never "yet". */
+  noSpending: NoSpending | null;
+  /** With transactions entered by hand only: the connections that hold no
+   *  bank account or card, named beside the figures (nothing is missing). */
+  named: string | null;
+};
+
+/** The coverage from what /api/transactions says about the connections, and
+ *  how many transactions there are (entered by hand included). */
+export function transactionCoverage(without: NoTransactionsView, transactionCount: number): TransactionCoverage {
+  return { missing: missingWhat(without), noSpending: noSpending(without, transactionCount), named: withoutNote(without, transactionCount) };
+}
+
+/** What the year's transactions are missing, for "spending is missing ...":
+ *  transactions that couldn't be read, and otherwise those a connection
+ *  doesn't bring in. Null when neither. */
+export function transactionsMissing(unread: UnreadTransactions[], coverage: TransactionCoverage): string | null {
+  return unread.length > 0 ? "transactions that couldn't be read" : coverage.missing;
 }
 
 export type FiFigures = {

@@ -25,7 +25,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 
 **Five downloads an hour**, per account. A sixth is refused with how long to wait. The number is `DOWNLOADS_PER_WINDOW` in `lib/download-limit.ts`, which both the limit and the card's text read.
 
-**All or nothing.** Every store is read before the first byte is sent. If any part can't be read (a value that won't decrypt, a database error), nothing is downloaded and the error says which part, rather than handing over a file that looks complete and isn't.
+**All or nothing.** Every store is read before the first byte is sent. If any part can't be read (a value that won't decrypt, a database error), nothing is downloaded and the error says which part, rather than handing over a file that looks complete and isn't. One kind of entry is named in the file instead: a record of when shared accounts were shown that can't be read is marked as such where it belongs, in [`sharing`](#sharing), never left out or shown as empty. The other person's record of what they share being shown to you is theirs to clear, so a damaged one would otherwise stop your download with nothing you could do about it.
 
 **A whole file or none.** Before sending anything, the route writes the file out once only to count its bytes, keeping none of them, then streams it, and says how many bytes to expect twice: `Content-Length`, and `X-Nya-Export-Bytes`, the same number, which is the one the page checks (a proxy that compresses the response changes or drops `Content-Length`, and leaves this one alone). The page counts what arrives and saves the file only when that count is there and matches; otherwise it saves nothing and says the download was cut off, to try again. So a connection that drops part way, or a response ended early by the platform or a proxy, never leaves a short file that looks whole. The route may run for up to 300 seconds, for a large file over a slow connection.
 
@@ -41,9 +41,9 @@ The JSON file lists these itself, under `not_included`.
 
 - **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
 - **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
-- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
+- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
 - **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
-- **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves.
+- **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves. Their record of each time what they share was shown to you is in, under `sharing`: it is about you, and the same one they see.
 - **Unused invite links.** They work for 72 hours and are then gone.
 
 ## Conventions
@@ -81,8 +81,8 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `account_links` | Accounts you linked across a reconnect, offers you declined, and categories carried across. |
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
-| `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. |
+| `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `institutions[]`
 
@@ -220,12 +220,17 @@ Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `accou
 
 ### `sharing`
 
-`null` with the shared password. With Clerk, your side of each connection, never theirs:
+`null` with the shared password, unless records of showings from when it had accounts are still stored (then only `unmatched` has anything in it). With Clerk, your side of each connection, never theirs, and both records of when what was shared on it was shown (`lib/access-log.ts`): yours, and theirs of showings to you, which is about you, and the same one they see.
 
 | Field | Meaning |
 | --- | --- |
-| `connections[]` | `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`. |
+| `connections[]` | `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`, `shared_until` (when what you share with them ends, a time that may have passed, from which on they see none of it, or `null` for no end), `record_since` (when the records on it began, or `null` before the first showing on a connection from before records, or when its record id can't be read), `shown_to_them` (each time what you share was shown to them: your record) and `shown_to_me` (each time what they share was shown to you: their record). |
 | `blocked[]` | `name`: people you blocked, by what you called them. |
+| `unmatched[]` | Records of yours that no connection in the file is matched to: `shown_to_them`, or `null` with `problem`. Either a connection's that has ended, until the nightly pass deletes it (a removal deletes its records at once; one that stopped part way leaves them to that pass), or the record of a connection whose record id can't be read, which that connection says (`record_id_unreadable`): which record is its can't be known then, so it is here rather than called ended. |
+
+Each record is a list, oldest first, of the quarter hours (UTC) in which something was shown: `at` (the quarter hour's start), `times` (how many times it was shown in it) and `read` (what was shown: each account's id, at the widest level shown in that quarter hour). It holds what was counted, and only since `record_since`: an empty list means nothing was recorded, not that nothing was looked at. A record that can't be read is `null`, with `shown_to_them_problem`, `shown_to_me_problem` or `problem` saying why: `unreadable` (damaged), `unrecognised` (saved by a version of Nya this one doesn't know), `unavailable` (their container couldn't be reached: being deleted or restored), or `record_id_unreadable` (the connection's record id is damaged, so its records can't be found by it; yours, if there is one, is among `unmatched`). A record holds the last 90 days at most: a showing drops older quarter hours from its record, and so does the nightly pass. What is still stored is in the file, all of it.
+
+No id is in it. A connection's id is made from the two people's sign-in ids, so it stays in the app, and the records are kept under a random id each connection gets, which says nothing either; each record is beside the connection it belongs to.
 
 ### Stores built on the storage seam
 
@@ -383,7 +388,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `history:accounts`, `history:accounts:partial` | `account_history` (recorded) |
 | `history:accounts:est`, `history:accounts:est:ext` | `account_history` (estimated) |
 | `history:accounts:est:flatd`, `history:accounts:est:flat` | Left out: balances an estimate held flat (see above) |
-| `txns:<connection>` | `transactions` (the sync cursor is left out) |
+| `txns:<connection>` | `transactions` (the sync cursor, and when Plaid last refused its transactions, are left out) |
 | `invtxns:<connection>` | `investment_transactions`, `investment_history_coverage` |
 | `txn-category-overrides` | `category_overrides`, and `transactions[].your_category` |
 | `txn-vendor-renames` | `merchant_renames`, and `transactions[].your_merchant_name` |
@@ -392,9 +397,9 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: `download-count`, the counter behind the five downloads an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `download-count`, the counter behind the five downloads an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
-Sharing settings are not in your container (connections are between two people) and are read as your side only.
+Sharing settings are not in your container (connections are between two people) and are read as your side only. Your records of when what you share was shown are in your container (`sharing-access-log`, a store on the seam); the other person's record of when what they share was shown to you is in theirs, and read from there, as they see it.
 
 ## How it differs from the operator backup
 
@@ -414,6 +419,6 @@ Deleting your account deletes your data now, and the nightly backups expire it l
 
 ## Adding a store
 
-A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it strictly. Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that.
+A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it strictly, unless an entry of `SECTIONS` exports it itself and names it in `covers` (as `sharing` does `sharing-access-log`, to put each record beside its connection). Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that.
 
 The older stores are read by hand. One that stands alone (nothing else needs to read it to build the file) is an entry in `SECTIONS`: its key in the file, its name for errors, a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape, and, if it names accounts, which ids it names, so `accounts` lists them. Its key goes in `STORED_KEYS`. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.

@@ -7,8 +7,9 @@ import { FiProgressView, ready } from '@/components/FiProgressCard';
 import { loadFiProgress } from '@/components/FiProgressLoader';
 import { PAYROLL_NOTE, wholeMoney, yearsToFiText } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type FirePlan } from '@/lib/fire/plan';
-import { currencyNote, fiFigures, measuredInputs, planCurrency, savingsRate, type FiInputs } from '@/lib/fire/progress';
-import { trailingFlows, type InvestedAssets, type TrailingFlows, type WorkplaceSavings } from '@/lib/fire/inputs';
+import { currencyNote, fiFigures, measuredInputs, planCurrency, savingsRate, transactionCoverage, type FiInputs } from '@/lib/fire/progress';
+import { trailingFlows, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
+import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import type { Txn } from '@/components/MonthBreakdown';
 
 // The FI card on Home: the Plan's own figures, from the same inputs and the
@@ -61,10 +62,23 @@ const withPlan = (total: number): WorkplaceSavings => ({
   total,
   plans: [{ name: 'Fidelity 401(k)', paidFrom: 'payroll', added: total, count: 24, largest: { date: '2026-09-30', amount: 1000 }, matched: 0 }],
 });
-const inputs = (over: Partial<FiInputs> = {}): FiInputs & { unread: [] } => ({ flows, workplace: noPlans, assets: assets(), unread: [], ...over });
+/** The inputs as the hook gathers them (components/plan-inputs.ts), with
+ *  what the connections say about transactions (lib/no-transactions.ts) and
+ *  how many there are; the coverage is worked out as the hook does. */
+type Inputs = FiInputs & { unread: UnreadTransactions[]; without: NoTransactionsView; transactionCount: number };
+const inputs = (over: Partial<Inputs> = {}): Inputs => ({
+  flows,
+  workplace: noPlans,
+  assets: assets(),
+  unread: [],
+  without: NO_CONNECTIONS_WITHOUT,
+  transactionCount: (over.flows === undefined ? flows : over.flows)?.count ?? 0,
+  ...over,
+});
+const hookInputs = (i: Inputs) => ({ ...i, coverage: transactionCoverage(i.without, i.transactionCount) });
 
 const home = (p: FirePlan, i = inputs(), saved = true, repaired = false) =>
-  text(renderToStaticMarkup(<FiProgressView figures={fiFigures(p, i, 'USD')} plan={p} saved={saved} repaired={repaired} inputs={i} onOpenPlan={noop} />));
+  text(renderToStaticMarkup(<FiProgressView figures={fiFigures(p, i, 'USD')} plan={p} saved={saved} repaired={repaired} inputs={hookInputs(i)} onOpenPlan={noop} />));
 const planTab = (p: FirePlan, i = inputs()) => {
   const f = fiFigures(p, i, 'USD');
   return text(
@@ -73,7 +87,9 @@ const planTab = (p: FirePlan, i = inputs()) => {
         plan={p}
         view={f.view}
         flows={i.flows}
-        unread={[]}
+        unread={i.unread}
+        withoutTransactions={i.without}
+        transactionCount={i.transactionCount}
         txnsLoading={false}
         txnsFailed={false}
         assets={i.assets}
@@ -223,18 +239,43 @@ describe('the FI card on Home', () => {
   });
 
   test('a figure that may be short says so, as the Plan’s does', () => {
-    const unread = { ...inputs(), unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] };
-    const t = text(renderToStaticMarkup(<FiProgressView figures={fiFigures(plan(), unread, 'USD')} plan={plan()} saved repaired={false} inputs={unread} onOpenPlan={noop} />));
-    expect(t).toContain("May be low: spending is missing transactions that couldn't be read.");
+    const unread = inputs({ unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] });
+    expect(home(plan(), unread)).toContain("May be low: spending is missing transactions that couldn't be read, so the savings rate may be off too. The Plan tab says which.");
+    expect(planTab(plan(), unread)).toContain("May be low: spending is missing transactions that couldn't be read (below).");
+    // Spending typed: the savings rate is still from the transactions.
+    expect(home(plan({ spending: 50_000 }), unread)).toContain("The savings rate may be off: it is missing transactions that couldn't be read. The Plan tab says which.");
     const short = inputs({ assets: assets({ caveats: [{ kind: 'unreachable', institution: 'Schwab' }] }) });
     expect(home(plan(), short)).toContain('Invested assets may be low');
     // Balances that are only old aren't short.
     expect(home(plan(), inputs({ assets: assets({ caveats: [{ kind: 'stale', institution: 'Schwab', asOf: '2026-10-01', at: null }] }) }))).not.toContain('may be low');
   });
 
+  test('connections that bring in no transactions: Home and the Plan say the same, by the same rule', () => {
+    const acme = { item_id: 'i2', institution_name: 'Acme CU', reason: 'refused' as const };
+    const vanguard = { item_id: 'i1', institution_name: 'Vanguard', reason: 'investment_accounts' as const };
+    // A bank account whose transactions Plaid doesn't provide, beside one
+    // that brings them in: spending may be low on both screens.
+    const refused = inputs({ without: { without: [acme], connections: 2 } });
+    expect(home(plan(), refused)).toContain("May be low: spending is missing transactions Plaid doesn't provide, so the savings rate may be off too. The Plan tab says which.");
+    expect(planTab(plan(), refused)).toContain("May be low: spending is missing transactions Plaid doesn't provide (below).");
+    // Only investment connections, and a year of transactions entered by
+    // hand: measured from those, with the connections named on both, never
+    // as a warning.
+    const byHand = inputs({ without: { without: [vanguard], connections: 1 } });
+    const named = 'Vanguard holds no bank account or card, so no transactions come from it.';
+    expect(home(plan(), byHand)).toContain(named);
+    expect(planTab(plan(), byHand)).toContain(named);
+    expect(home(plan(), byHand)).not.toContain('May be low');
+    // Only investment connections and no transactions at all: no spending,
+    // so Home shows nothing, and the Plan says why in place of the figures.
+    const none = inputs({ flows: null, without: { without: [vanguard], connections: 1 } });
+    expect(renderToStaticMarkup(<FiProgressView figures={fiFigures(plan(), none, 'USD')} plan={plan()} saved repaired={false} inputs={hookInputs(none)} onOpenPlan={noop} />)).toBe('');
+    expect(planTab(plan(), none)).toContain('Your connected accounts are investment accounts, so there are no bank or card transactions to measure spending from.');
+  });
+
   test('shows nothing with no spending to work from', () => {
     const html = renderToStaticMarkup(
-      <FiProgressView figures={fiFigures(plan(), inputs({ flows: null }), 'USD')} plan={plan()} saved={false} repaired={false} inputs={inputs({ flows: null })} onOpenPlan={noop} />
+      <FiProgressView figures={fiFigures(plan(), inputs({ flows: null }), 'USD')} plan={plan()} saved={false} repaired={false} inputs={hookInputs(inputs({ flows: null }))} onOpenPlan={noop} />
     );
     expect(html).toBe('');
   });

@@ -29,13 +29,17 @@ import type { Txn } from './MonthBreakdown';
 import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { PAYROLL_NOTE, dayName, pct, progressText, savingsRateText, wholeMoney, yearsToFiText } from './plan-text';
 import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/plan';
-import { assetsLeftOut, fiFigures, spendingLeftOut, type FiFigures } from '@/lib/fire/progress';
+import { assetsLeftOut, fiFigures, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
+import type { NoTransactionsView } from '@/lib/no-transactions';
 
 export type FiProgressProps = {
   txns: Txn[] | null;
   txnsLoading: boolean;
   txnNotes: string[];
+  /** The connections that bring in no transactions, as the Plan tab gets
+   *  them (lib/no-transactions.ts). */
+  txnWithout?: NoTransactionsView;
   /** As the Plan tab gets them (components/Dashboard.tsx planInstitutions). */
   institutions: AssetInstitution[];
   currency: string | null;
@@ -46,7 +50,7 @@ export type FiProgressProps = {
 /** What /api/fire-plan answered: the saved plan, or null for none. */
 type Loaded = { plan: FirePlan | null } | 'failed' | null;
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, institutions, currency, onOpenPlan }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, onOpenPlan }: FiProgressProps) {
   const [loaded, setLoaded] = useState<Loaded>(null);
   useEffect(() => {
     let live = true;
@@ -68,7 +72,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, institutio
   // replaced by its default there too, with the same result.
   const repair = useMemo(() => repairPlan(stored ?? DEFAULT_PLAN), [stored]);
   const plan = repair.plan;
-  const inputs = usePlanInputs({ txns, txnNotes, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
+  const inputs = usePlanInputs({ txns, txnNotes, without: txnWithout, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
   if (
     !ready({
       plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
@@ -120,14 +124,18 @@ export function FiProgressView({
   saved: boolean;
   /** The saved plan had values this release can't use (the Plan tab shows them). */
   repaired: boolean;
-  inputs: Pick<PlanInputs, 'unread' | 'assets' | 'workplace' | 'flows'>;
+  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows'>;
   onOpenPlan: () => void;
 }) {
   const { view, savingsRate, currency, currencyNote } = figures;
   if (view.fiNumber === null) return null;
   const money = (n: number) => wholeMoney(n, currency);
-  // As the Plan's FI card warns (components/PlanTab.tsx FiCard).
-  const spendingShort = view.spending.source === 'measured' && inputs.unread.length > 0;
+  // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
+  // rule: transactions that couldn't be read, or that a connection doesn't
+  // bring in. The savings rate is measured from the same transactions.
+  const missing = transactionsMissing(inputs.unread, inputs.coverage);
+  const spendingShort = view.spending.source === 'measured' && missing !== null;
+  const rateShort = savingsRate !== null && missing !== null;
   const assetsShort = view.assets.source === 'measured' && inputs.assets.caveats.some((c) => c.kind !== 'stale');
   const workplaceAdded = (inputs.workplace?.total ?? 0) > 0;
   const leftOut = spendingLeftOut(inputs.flows);
@@ -180,9 +188,16 @@ export function FiProgressView({
           savings rate is always from the year's transactions, so these are
           said whenever there are any. */}
       {inputs.flows && leftOut.excluded && <p className="panel-note">{leftOut.excluded}</p>}
+      {/* Transactions entered by hand only: the connections that bring in
+          none are named, as the Plan names them beside its figures. */}
+      {inputs.flows && inputs.coverage.named && <p className="panel-note">{inputs.coverage.named}</p>}
       {inputs.flows && leftOut.otherCurrencies && <div className="as-of stale">{leftOut.otherCurrencies}</div>}
       {view.assets.source === 'measured' && otherAccounts && <div className="as-of stale">{otherAccounts}</div>}
-      {spendingShort && <div className="as-of stale">May be low: spending is missing transactions that couldn&apos;t be read. The Plan tab says which.</div>}
+      {spendingShort ? (
+        <div className="as-of stale">{`May be low: spending is missing ${missing}${rateShort ? ', so the savings rate may be off too' : ''}. The Plan tab says which.`}</div>
+      ) : (
+        rateShort && <div className="as-of stale">{`The savings rate may be off: it is missing ${missing}. The Plan tab says which.`}</div>
+      )}
       {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
       {repaired && <div className="as-of stale">Your saved plan has values this version of Nya can&apos;t use, so these use the defaults for them. The Plan tab says which.</div>}

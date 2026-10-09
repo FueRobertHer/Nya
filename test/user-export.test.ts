@@ -42,6 +42,18 @@ const { declaredStores } = await import('@/lib/stores');
 
 const ctx = TEST_CTX;
 const OTHER = { container: '9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f' } as typeof TEST_CTX;
+/** Sam's container: the one I'm connected with. */
+const FRIEND = { container: '2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182' } as typeof TEST_CTX;
+/** How connections are kept, environment-wide: by an id made from the two
+ *  people's sign-in ids. Never in a download. */
+const CONN = connectionId('user_me', 'user_friend');
+/** The connection's log id: random, made with it. Both records of showings
+ *  on it are kept under this, one in each container. */
+const LOG_ID = '5e1f0c9a7b3d4e2f8a6b1c0d9e8f7a6b';
+const MY_RECORD = { shown: [{ at: '2026-05-03T14:00:00.000Z', times: 2, read: { acc_chk: 'balance' as const, manual_house: 'exists' as const } }] };
+/** Sam's record of what Sam shares being shown to me: an account they shared then. */
+const THEIR_RECORD = { shown: [{ at: '2026-05-04T08:15:00.000Z', times: 1, read: { acc_friend_then: 'transactions' as const } }] };
+const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
 const NOW = new Date('2026-10-06T12:00:00.000Z');
 
 // ---- A container with something in every store ----
@@ -127,7 +139,8 @@ const enc = async (value: unknown) => encrypt(typeof value === 'string' ? value 
 async function seedPerson() {
   await fake.hset(ctxKey('plaid:items'), {
     item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('access-sandbox-SECRET-a') }),
-    item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt('access-sandbox-SECRET-b') }),
+    // Linked as a brokerage: whether Plaid included transactions when it was linked is bookkeeping, left out.
+    item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt('access-sandbox-SECRET-b'), transactions_billed: false }),
   });
   await fake.hset(ctxKey('accounts:meta'), {
     item_a: await enc([
@@ -194,7 +207,7 @@ async function seedPerson() {
   await fake.set(ctxKey('download-count'), '1'); // the download limit's counter, on the seam
 
   // Sharing: my side of one connection, one person I blocked, one who blocked me.
-  const id = connectionId('user_me', 'user_friend');
+  const id = CONN;
   const blocked = connectionId('user_me', 'user_pest');
   const blockedMe = connectionId('user_me', 'user_blocker');
   await fake.hset(testKey('connections'), {
@@ -205,11 +218,20 @@ async function seedPerson() {
     [`${id}|intro|user_friend`]: JSON.stringify('THEIR-INTRODUCTION'),
     [`${id}|share|user_me`]: JSON.stringify({ accounts: { acc_chk: 'balance', manual_house: 'exists' }, updated_at: '2026-05-02T09:00:00.000Z' }),
     [`${id}|share|user_friend`]: JSON.stringify({ accounts: { THEIR_ACCOUNT: 'transactions' }, updated_at: '2026-05-03T09:00:00.000Z' }),
+    [`${id}|log`]: JSON.stringify({ id: LOG_ID, since: '2026-05-01T09:00:00.000Z' }),
     [blocked]: JSON.stringify({ users: ['user_me', 'user_pest'], status: 'blocked', blocked_by: 'user_me', created_at: '2026-04-01T00:00:00.000Z' }),
     [`${blocked}|label|user_me`]: JSON.stringify('Pest'),
     [blockedMe]: JSON.stringify({ users: ['user_blocker', 'user_me'], status: 'blocked', blocked_by: 'user_blocker', created_at: '2026-04-01T00:00:00.000Z' }),
     [`${blockedMe}|label|user_me`]: JSON.stringify('GONE-TO-ME'),
   });
+  // Both records of showings on it, on the storage seam, under its log id:
+  // mine (what I share, shown to Sam) here, and Sam's (what Sam shares, shown
+  // to me) in Sam's container.
+  const { accessLogStore } = await import('@/lib/access-log');
+  await accessLogStore.set(ctx, LOG_ID, MY_RECORD);
+  await fake.hset(testKey('containers'), { [FRIEND.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-01-01T00:00:00.000Z' }) });
+  await fake.hset(testKey('owners'), { user_friend: FRIEND.container });
+  await accessLogStore.set(FRIEND, LOG_ID, THEIR_RECORD);
 }
 
 /** Someone else, in the same database: none of it may reach the download. */
@@ -324,7 +346,7 @@ describe('everything stored, decrypted, and nothing else', () => {
 
   test('an account only a goal, a share or history still names is listed too, and says only what is known', async () => {
     await fake.set(ctxKey('goals'), await enc([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_forgotten' }]));
-    const id = connectionId('user_me', 'user_friend');
+    const id = CONN;
     await fake.hset(testKey('connections'), {
       [`${id}|share|user_me`]: JSON.stringify({ accounts: { acc_chk: 'balance', acc_shared_gone: 'balance' }, updated_at: '2026-05-02T09:00:00.000Z' }),
     });
@@ -418,7 +440,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     expect(doc.goals).toEqual([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' }]);
   });
 
-  test('sharing: my side of each connection, never theirs', async () => {
+  test('sharing: my side of each connection, never theirs, with both records of showings on it', async () => {
     const doc = await download();
     expect(doc.sharing).toEqual({
       connections: [
@@ -431,17 +453,115 @@ describe('everything stored, decrypted, and nothing else', () => {
             { account_id: 'manual_house', level: 'exists' },
           ],
           shared_updated_at: '2026-05-02T09:00:00.000Z',
+          shared_until: null,
+          record_since: '2026-05-01T09:00:00.000Z',
+          // When what I share was shown to Sam: my record.
+          shown_to_them: MY_RECORD.shown,
+          // When what Sam shares was shown to me: Sam's record, the same one Sam sees.
+          shown_to_me: THEIR_RECORD.shown,
         },
       ],
       blocked: [{ name: 'Pest' }],
+      unmatched: [],
     });
     const text = JSON.stringify(doc);
-    for (const theirs of ['THEIR-NAME-FOR-ME', 'THEIR-INTRODUCTION', 'THEIR_ACCOUNT', 'GONE-TO-ME', 'user_friend', 'user_me']) {
+    // Their settings are theirs: what they call me, how they introduced
+    // themselves, what they share now. And nobody is named by an id: not a
+    // sign-in id, not a connection's (made from those), not its log id.
+    for (const theirs of ['THEIR-NAME-FOR-ME', 'THEIR-INTRODUCTION', 'THEIR_ACCOUNT', 'GONE-TO-ME', 'user_friend', 'user_me', CONN, LOG_ID]) {
       expect(text).not.toContain(theirs);
     }
+    for (const other of ['user_pest', 'user_blocker']) expect(text).not.toContain(connectionId('user_me', other));
+    // The records are in "sharing", beside their connection, and nowhere else.
+    expect(Object.keys(doc)).not.toContain('sharing-access-log');
+    // Only my own accounts are listed: what was shown to me of Sam's is Sam's.
+    const listed = doc.accounts.map((a) => a.account_id);
+    expect(listed).toContain('acc_chk');
+    expect(listed).not.toContain('acc_friend_then');
+  });
+
+  test('sharing: a share with an end says until when', async () => {
+    await fake.hset(testKey('connections'), {
+      [`${CONN}|share|user_me`]: JSON.stringify({ expiring: { acc_chk: 'balance' }, expires_at: '2026-06-01T04:00:00.000Z', updated_at: '2026-05-02T09:00:00.000Z' }),
+    });
+    const [conn] = ((await download()).sharing as any).connections;
+    expect(conn).toMatchObject({ shared: [{ account_id: 'acc_chk', level: 'balance' }], shared_until: '2026-06-01T04:00:00.000Z' });
+  });
+
+  test('sharing: a record of showings that can’t be read is named where it belongs, and never stops the download', async () => {
+    const { accessLogStore } = await import('@/lib/access-log');
+    await fake.hset(ctxKey('sharing-access-log'), { [LOG_ID]: DAMAGED });
+    await fake.hset(ctxKey('sharing-access-log', FRIEND), { [LOG_ID]: DAMAGED });
+    // And two of mine that no connection is matched to: ended, until the nightly pass deletes them.
+    await accessLogStore.set(ctx, 'a'.repeat(32), MY_RECORD);
+    await fake.hset(ctxKey('sharing-access-log'), { ['b'.repeat(32)]: DAMAGED });
+    const sharing = (await download()).sharing as any;
+    expect(sharing.connections[0]).toMatchObject({
+      name: 'Sam',
+      shown_to_them: null,
+      shown_to_them_problem: 'unreadable',
+      shown_to_me: null,
+      shown_to_me_problem: 'unreadable',
+    });
+    expect(sharing.unmatched).toEqual([{ shown_to_them: MY_RECORD.shown }, { shown_to_them: null, problem: 'unreadable' }]);
+    expect(JSON.stringify(sharing)).not.toContain('a'.repeat(32));
+  });
+
+  test('sharing: a connection from before records has none yet, and Sam’s container out of reach is said so', async () => {
+    await fake.hdel(testKey('connections'), `${CONN}|log`);
+    expect(((await download()).sharing as any).connections[0]).toMatchObject({ record_since: null, shown_to_them: [], shown_to_me: [] });
+    await fake.hset(testKey('connections'), { [`${CONN}|log`]: JSON.stringify({ id: LOG_ID, since: '2026-05-01T09:00:00.000Z' }) });
+    await fake.hset(testKey('containers'), { [FRIEND.container]: JSON.stringify({ status: 'restoring', primary: false, created_at: '2026-01-01T00:00:00.000Z' }) });
+    expect(((await download()).sharing as any).connections[0]).toMatchObject({
+      shown_to_them: MY_RECORD.shown,
+      shown_to_me: null,
+      shown_to_me_problem: 'unavailable',
+    });
+  });
+
+  test('sharing: a connection whose record id can’t be read says so, and its record is filed as matched to no connection, never as ended', async () => {
+    await fake.hset(testKey('connections'), { [`${CONN}|log`]: 'not json' });
+    const sharing = (await download()).sharing as any;
+    expect(sharing.connections[0]).toMatchObject({
+      name: 'Sam',
+      record_since: null,
+      shown_to_them: null,
+      shown_to_them_problem: 'record_id_unreadable',
+      shown_to_me: null,
+      shown_to_me_problem: 'record_id_unreadable',
+    });
+    // Mine is still in the file, whole, where a record no connection is matched to goes.
+    expect(sharing.unmatched).toEqual([{ shown_to_them: MY_RECORD.shown }]);
+    expect(sharing).not.toHaveProperty('ended');
+  });
+
+  test('sharing: storage out of reach fails the download, never reads as no showings', async () => {
+    const real = fake.hgetall.bind(fake);
+    for (const where of [ctx, FRIEND]) {
+      (fake as any).hgetall = async (key: string) => {
+        if (key === ctxKey('sharing-access-log', where)) throw new Error('FakeRedis: out of reach');
+        return real(key);
+      };
+      (fake as any).eval = ((realEval) => async (script: string, keys: string[], args: string[]) => {
+        if (keys[0] === ctxKey('sharing-access-log', where)) throw new Error('FakeRedis: out of reach');
+        return realEval(script, keys, args);
+      })(FakeRedis.prototype.eval.bind(fake));
+      try {
+        const err = await collectUserData({ ctx, userId: 'user_me' }).catch((e) => e);
+        expect(err).toBeInstanceOf(ExportReadError);
+        expect(err.what).toBe('sharing settings');
+      } finally {
+        (fake as any).hgetall = real;
+        delete (fake as any).eval;
+      }
+    }
+    expect((await download()).sharing).toMatchObject({ connections: [{ shown_to_them: MY_RECORD.shown, shown_to_me: THEIR_RECORD.shown }] });
   });
 
   test('with the shared password there is no sharing, and the file says so', async () => {
+    // Records of showings left from when it had accounts are still in it.
+    expect((await download(null)).sharing).toEqual({ connections: [], blocked: [], unmatched: [{ shown_to_them: MY_RECORD.shown }] });
+    await fake.del(ctxKey('sharing-access-log'));
     const doc = await download(null);
     expect(doc.sharing).toBeNull();
     expect(doc.not_included.some((s) => s.startsWith('Sharing:'))).toBe(true);
@@ -456,7 +576,7 @@ describe('everything stored, decrypted, and nothing else', () => {
 
   test('the machinery is left out: cursors, caches, timings, counters', async () => {
     const text = JSON.stringify(await download());
-    for (const machinery of ['cursor-SECRET', 'CACHED-SECRET', 'acc_vanished', '2026-01-03T13:00:00.000Z', TEST_CTX.container]) {
+    for (const machinery of ['cursor-SECRET', 'CACHED-SECRET', 'acc_vanished', '2026-01-03T13:00:00.000Z', TEST_CTX.container, 'transactions_billed']) {
       expect(text).not.toContain(machinery);
     }
     // The flat balances behind estimated totals are not an account's history.
@@ -618,6 +738,7 @@ describe('stores built on the storage seam', () => {
     const doc = await download();
     const keys = Object.keys(doc);
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
+    // Not the records of showings: "sharing" has them (covers).
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
       'allocation-settings',
       'carried-annotations',
