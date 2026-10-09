@@ -18,6 +18,7 @@
 //   import './rules';
 
 import './access-log';
+import './api-token-store';
 import './connection-records';
 import './fire-plan';
 import './holdings-history';

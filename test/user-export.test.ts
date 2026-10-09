@@ -283,6 +283,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       'account_links',
       'budgets',
       'goals',
+      'api_tokens',
       'sharing',
       // Then a section for each store on the storage seam declared exportable.
       ...declaredSections().map((s) => s.key),
@@ -437,6 +438,33 @@ describe('everything stored, decrypted, and nothing else', () => {
       { category: 'Travel', monthly_amount: 150 },
     ]);
     expect(doc.goals).toEqual([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' }]);
+  });
+
+  test('API tokens: each one’s name and dates, never the token, its hash or its id, and an unreadable one stops the download', async () => {
+    const { createToken } = await import('@/lib/api-tokens');
+    const { apiTokenStore } = await import('@/lib/api-token-store');
+    expect((await download()).api_tokens).toEqual([]);
+    const first = await createToken(ctx, 'Raycast', new Date('2026-09-01T10:00:00.000Z'));
+    const second = await createToken(ctx, 'Claude', new Date('2026-09-02T10:00:00.000Z'));
+    await apiTokenStore.update(ctx, second.info.id, (t) => t && { ...t, last_used_at: '2026-10-01T08:00:00.000Z' });
+    const doc = await download();
+    expect(doc.api_tokens).toEqual([
+      { label: 'Raycast', created_at: '2026-09-01T10:00:00.000Z', last_used_at: null },
+      { label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z' },
+    ]);
+    const text = JSON.stringify(doc);
+    const stored = await apiTokenStore.getAll(ctx);
+    for (const [id, t] of stored) {
+      expect(text).not.toContain(id);
+      expect(text).not.toContain(t.hash);
+    }
+    for (const { token } of [first, second]) expect(text).not.toContain(token.split('_')[2].slice(0, 20));
+    expect(doc.not_included.some((s: string) => s.startsWith('Your API tokens themselves, and the hashes'))).toBe(true);
+    // Read strictly, as every store is: a damaged record fails the download, naming it.
+    await fake.hset(ctxKey('api-tokens'), { [first.info.id]: DAMAGED });
+    const err = await collectUserData({ ctx, userId: 'user_me' }).catch((e) => e);
+    expect(err).toBeInstanceOf(ExportReadError);
+    expect(err.message).toContain('Your API tokens could not be read');
   });
 
   test('sharing: my side of each connection, never theirs, with both records of showings on it', async () => {

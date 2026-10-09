@@ -1,16 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import { clerkEnabled } from '@/lib/auth-mode';
-import { verifyPassword } from '@/lib/auth';
 import type { Ctx } from '@/lib/containers';
-import {
-  passwordAttemptsExhausted,
-  countWrongPassword,
-  clearWrongPasswords,
-  downloadAllowed,
-  takeDownload,
-  DOWNLOADS_PER_WINDOW,
-} from '@/lib/rate-limit';
+import { downloadAllowed, takeDownload, DOWNLOADS_PER_WINDOW } from '@/lib/rate-limit';
+import { freshSignIn, PASSWORD_MAX } from '@/lib/fresh-sign-in';
 import {
   collectUserData,
   buildUserExport,
@@ -32,7 +24,8 @@ import {
 // POST, not GET: the request carries a password in the shared-password mode,
 // and a download link must not be something a page can make a browser fetch.
 //
-// Behind a FRESH SIGN-IN, on top of the session the proxy already checked:
+// Behind a FRESH SIGN-IN (lib/fresh-sign-in.ts, which making an API token
+// shares), on top of the session the proxy already checked:
 //   - with Clerk (lib/auth-mode.ts), a sign-in verified within the last ten
 //     minutes (Clerk's "strict" reverification: the second factor if the
 //     account has one, the first otherwise). Without it the answer is Clerk's
@@ -65,11 +58,6 @@ import {
 // over a slow connection takes minutes: the same allowance as the operator
 // export and the nightly backup.
 export const maxDuration = 300;
-
-/** How recent a Clerk sign-in must be (see the header). */
-const FRESH = 'strict' as const;
-
-const PASSWORD_MAX = 1024;
 
 type Body = { format: ExportFormat; password: string | null };
 
@@ -106,27 +94,6 @@ function notPrepared(err: unknown): NextResponse {
   return NextResponse.json({ error: 'The download could not be prepared, so nothing was downloaded. Try again later.' }, { status: 500 });
 }
 
-/** The fresh sign-in, or the response to send instead. `userId` is the
- *  Clerk account (null with the shared password). */
-async function freshSignIn(req: Request, body: Body): Promise<{ userId: string | null } | NextResponse> {
-  if (clerkEnabled()) {
-    const { auth, reverificationError } = await import('@clerk/nextjs/server');
-    const { userId, has } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 });
-    if (!has({ reverification: FRESH })) return NextResponse.json(reverificationError(FRESH), { status: 403 });
-    return { userId };
-  }
-  if (await passwordAttemptsExhausted(req)) {
-    return NextResponse.json({ error: 'Too many wrong passwords. Try again in a few minutes.' }, { status: 429 });
-  }
-  if (!body.password || !(await verifyPassword(body.password))) {
-    await countWrongPassword(req);
-    return NextResponse.json({ error: 'That password isn’t right.', wrong_password: true }, { status: 403 });
-  }
-  await clearWrongPasswords(req);
-  return { userId: null };
-}
-
 export async function POST(req: Request) {
   let ctx: Ctx;
   try {
@@ -148,7 +115,7 @@ export async function POST(req: Request) {
     return limitUnreadable();
   }
 
-  const signedIn = await freshSignIn(req, body);
+  const signedIn = await freshSignIn(req, body.password);
   if (signedIn instanceof NextResponse) return signedIn;
 
   try {

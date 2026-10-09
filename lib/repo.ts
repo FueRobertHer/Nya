@@ -18,7 +18,7 @@
 //                     accounts). In Redis, one hash with a field per id; in a
 //                     table, a row per id.
 //
-// And one for the service's own bookkeeping:
+// And two for the service's own bookkeeping:
 //
 //   defineCounterStore  a count per container in a fixed window that starts
 //                       with its first count and ends on its own (a rate
@@ -27,6 +27,12 @@
 //                       Redis, one integer key with an expiry, counted in
 //                       Lua; in a table, a row with the count and the end of
 //                       its window.
+//   defineCounterMapStore  the same, a count per id within a container (a
+//                       rate limit per API token). In Redis, one hash with a
+//                       field per id holding its count and the end of its
+//                       window, counted in Lua, the hash kept a window past
+//                       its last count so it goes on its own; in a table, a
+//                       row per id.
 //
 // CONTAINERS ONLY, by design. Every store keeps its data inside a container (kc
 // in lib/storage.ts), so deleting the account deletes it with the rest
@@ -330,7 +336,22 @@ export type CounterStore = Declared & {
   take(ctx: Ctx): Promise<CounterWindow>;
 };
 
-export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore;
+export type CounterMapStore = Declared & {
+  readonly kind: 'counter-map';
+  /** How long a window lasts, from its first count. */
+  readonly windowSeconds: number;
+  /** Counts one for `id`, atomically, starting a window for it if none is
+   *  running, and answers its window with this one counted. Each id counts
+   *  apart from the others, and two callers racing never get the same count,
+   *  so the count is what decides. `now` (ms) is the clock the window is
+   *  measured by: the caller's, and a test's own. Throws if it cannot count,
+   *  so a limit built on it fails closed. */
+  take(ctx: Ctx, id: string, now?: number): Promise<CounterWindow>;
+  /** Forgets these ids' windows, counted or not. */
+  remove(ctx: Ctx, ...ids: string[]): Promise<void>;
+};
+
+export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore | CounterMapStore;
 
 /**
  * Reads fields exactly: each as "v" followed by its stored text, or "" where
@@ -441,6 +462,40 @@ if ttl < 0 then
   ttl = tonumber(ARGV[1])
 end
 return {n, ttl}`;
+
+/**
+ * Counts one for an id in a counter map store, in one step. Each field holds
+ * "<count>:<end of its window>" (whole seconds since 1970, by the clock of
+ * whoever started the window). ARGV: the id, now and the window, in seconds.
+ * A window that has ended, or ends further ahead than any could (a clock that
+ * moved back), starts again. The hash is kept two windows past its last count,
+ * so it outlives every window in it (with room for clocks a little apart) and
+ * goes on its own once nothing counts. What is there and is not a count as
+ * this writes one is refused, writing nothing but that expiry, should the hash
+ * have none (one restored by hand), so it can't stay forever. Answers the
+ * count and its seconds left.
+ */
+export const COUNTERS_TAKE = `-- nya:repo-counters-take
+local now = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+local count, ends = 0, 0
+if raw then
+  local c, e = string.match(raw, '^([1-9]%d*):([1-9]%d*)$')
+  if not c then
+    if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], 2 * window) end
+    return redis.error_reply('${NOT_A_COUNT}')
+  end
+  count, ends = tonumber(c), tonumber(e)
+end
+if ends <= now or ends - now > 2 * window then
+  count = 0
+  ends = now + window
+end
+count = count + 1
+redis.call('HSET', KEYS[1], ARGV[1], count .. ':' .. ends)
+redis.call('EXPIRE', KEYS[1], 2 * window)
+return {count, ends - now}`;
 
 /** Fields read per READ_ENTRIES call, well inside Lua's limit for unpack. */
 const READ_BATCH = 1000;
@@ -880,6 +935,51 @@ export function defineCounterStore(name: string, opts: CounterOptions): CounterS
         throw err;
       }
       return windowOf(answer, true);
+    },
+  });
+}
+
+/**
+ * Declares a counter map store: a count per id in a container, each in a fixed
+ * window of its own (see TWO SHAPES above), such as requests per API token.
+ * The service's bookkeeping, like a counter store: never exportable, and its
+ * values are plain text ("<count>:<end>"), which the re-encryption pass knows
+ * (classify() in lib/reencrypt.ts). Ids are opaque, as a map store's are.
+ */
+export function defineCounterMapStore(name: string, opts: CounterOptions): CounterMapStore {
+  const { what, windowSeconds } = opts;
+  if (!Number.isInteger(windowSeconds) || windowSeconds < 1) {
+    throw new Error(`The window of "${name}" must be a whole number of seconds, 1 or more.`);
+  }
+  const key = (ctx: Ctx) => storeKey(ctx, name);
+  return declare<CounterMapStore>({
+    kind: 'counter-map',
+    name,
+    what,
+    exportable: false,
+    windowSeconds,
+    async take(ctx, id, now = Date.now()) {
+      checkId(what, id);
+      let answer: unknown;
+      try {
+        answer = await redis().eval(COUNTERS_TAKE, [key(ctx)], [id, String(Math.floor(now / 1000)), String(windowSeconds)]);
+      } catch (err) {
+        // Damaged: thrown, never taken for no count, so a limit built on it
+        // stays shut rather than open. The id is named, as a map store's are.
+        if (err instanceof Error && err.message.includes(NOT_A_COUNT)) throw new UnreadableEntriesError(what, [id], [], err);
+        throw err;
+      }
+      const [count, left] = Array.isArray(answer) && answer.length === 2 ? answer.map(Number) : [NaN, NaN];
+      if (!Number.isSafeInteger(count) || count < 1 || !Number.isSafeInteger(left)) {
+        throw new Error(`repo: unexpected answer counting ${name}`);
+      }
+      // A window's end is set by the clock of whoever started it, which may run
+      // a little ahead of this one: never more than a window is left.
+      return { count, secondsLeft: Math.min(windowSeconds, Math.max(1, left)) };
+    },
+    async remove(ctx, ...ids) {
+      for (const id of ids) checkId(what, id);
+      if (ids.length > 0) await redis().hdel(key(ctx), ...ids);
     },
   });
 }

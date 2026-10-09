@@ -40,6 +40,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 The JSON file lists these itself, under `not_included`.
 
 - **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
+- **Your API tokens themselves.** Nya never keeps a token's secret, only a hash of it to check it against, and the hash is credential material too, so neither is in the file, and nor is the token's id, which is part of the token. Each token's name and dates are in, under [`api_tokens`](#api_tokens).
 - **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
 - **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
 - **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
@@ -81,6 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `account_links` | Accounts you linked across a reconnect, offers you declined, and categories carried across. |
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
+| `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
 | *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
@@ -217,6 +219,10 @@ Every stored investment transaction, newest first, with every field Plaid sent (
 ### `budgets[]` and `goals[]`
 
 Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`).
+
+### `api_tokens[]`
+
+The tokens you made for the read-only API and the MCP server (see `/developers` in the app), oldest first: `label` (the name you gave it), `created_at`, and `last_used_at` (when it last read your data, to within a minute, or `null` if never). Never the token, the hash Nya keeps of its secret, or its id; revoked tokens are gone, and so are their entries. Read as strictly as every other part: a token whose record can't be read stops the download, naming API tokens, until you remove it on the API tokens card.
 
 ### `sharing`
 
@@ -383,7 +389,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `download-count`, the counter behind the five downloads an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `api-tokens`, whose hashes are credential material (each token's name and dates are in [`api_tokens`](#api_tokens) instead), `api-requests` and `download-count`, the counters behind each API token's requests a minute and the five downloads an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only. Your records of when what you share was shown are in your container (`sharing-access-log`, a store on the seam); the other person's record of when what they share was shown to you is in theirs, and read from there, as they see it.
 
