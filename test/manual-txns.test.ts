@@ -359,7 +359,7 @@ describe('the store', () => {
     await addManualTxn(ctx, r);
     await editManualTxn(ctx, r.id, { account_id: CARD.account_id });
     await noteBalanceUpdate(ctx, r.id, WALLET.account_id, { from: 200, to: 187.5 });
-    expect((await findManualTxn(ctx, r.id))!.row.balance_update).toEqual({ from: 200, to: 187.5 });
+    expect((await findManualTxn(ctx, r.id))!.row.balance_update).toEqual({ from: 200, to: 187.5, account_id: WALLET.account_id });
     // Gone: nothing to note, no error.
     await deleteManualTxn(ctx, r.id);
     await noteBalanceUpdate(ctx, r.id, WALLET.account_id, { from: 200, to: 187.5 });

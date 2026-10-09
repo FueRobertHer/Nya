@@ -278,7 +278,7 @@ describe('adding a transaction', () => {
       // Plaid's cached rows don't hold a manual balance: they stay.
       expect(await readCache(ctx, CacheKey.Transactions)).not.toBeNull();
       // Noted on the row, so it is never moved twice.
-      expect((await findManualTxn(ctx, id))!.row.balance_update).toEqual(SPENT);
+      expect((await findManualTxn(ctx, id))!.row.balance_update).toEqual({ ...SPENT, account_id: WALLET.account_id });
       // The route writes no history itself: the reload of net worth that
       // follows records today's balance, as after any typed balance.
       expect(Object.keys(snapshot()).filter((k) => k.startsWith(ctxKey('history:')))).toEqual([]);
@@ -332,7 +332,7 @@ describe('adding a transaction', () => {
       const again = await post({ id, account_id: WALLET.account_id, ...FIELDS, update_balance: SPENT });
       expect(again.body).toMatchObject({ added: false, balance_updated: true, balance: 187.5 });
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(187.5);
-      expect((await findManualTxn(ctx, id))!.row.balance_update).toEqual(SPENT);
+      expect((await findManualTxn(ctx, id))!.row.balance_update).toEqual({ ...SPENT, account_id: WALLET.account_id });
     });
 
     test('two adds of the same amount at the same moment each move the balance once, or say they didn’t', async () => {
@@ -347,7 +347,7 @@ describe('adding a transaction', () => {
       expect(second).toMatchObject({ status: 409, body: { saved: true, balance_updated: false } });
       expect(second.body.error).toBe("The transaction was saved, but Wallet's balance changed meanwhile, so it wasn't updated. Check it on the account.");
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(187.5);
-      expect((await findManualTxn(ctx, a))!.row.balance_update).toEqual(SPENT);
+      expect((await findManualTxn(ctx, a))!.row.balance_update).toEqual({ ...SPENT, account_id: WALLET.account_id });
       expect((await findManualTxn(ctx, b))!.row.balance_update).toBeUndefined();
       // Sent again, B is still not A's move.
       expect((await post({ id: b, account_id: WALLET.account_id, ...FIELDS, name: 'Pharmacy', update_balance: SPENT })).body.balance_updated).toBe(false);
@@ -360,12 +360,34 @@ describe('adding a transaction', () => {
       const corrected = await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 55, update_balance: { from: 200, to: 145 } });
       expect(corrected).toMatchObject({ status: 409, body: { saved: true, added: false, balance_updated: true, balance: 150, transaction: { amount: 50 } } });
       expect(corrected.body.error).toBe(
-        "This transaction was saved already, for $50.00, and Wallet's balance moved to $150.00 with it, so nothing more was changed. To change the amount, edit the transaction, then update the balance from the account."
+        "This transaction was saved already, for $50.00 on Wallet, and Wallet's balance moved to $150.00 with it, so nothing more was changed. To change it, edit the transaction, then update the balance from the account."
       );
       expect((await findManualTxn(ctx, id))!.row.amount).toBe(50);
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(150);
       // Unticked on the second try, the same: the balance moved with the first.
       expect((await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 55 })).status).toBe(409);
+    });
+
+    test('sent again on another account after its answer was lost: refused with what was saved, so the row stays where its balance moved', async () => {
+      const JAR: ManualAccount = { ...WALLET, account_id: 'manual_jar-1', name: 'Jar', balance: 80 };
+      await saveManualAccount(ctx, JAR);
+      const id = newManualTxnId();
+      await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 50, update_balance: { from: 200, to: 150 } }); // answer lost
+      // The form switched to Jar, which unticks the balance, and Add tapped again.
+      const moved = await post({ id, account_id: JAR.account_id, ...FIELDS, amount: 50 });
+      expect(moved).toMatchObject({ status: 409, body: { saved: true, added: false, balance_updated: true, balance: 150, transaction: { account_id: WALLET.account_id } } });
+      expect(moved.body.error).toBe(
+        "This transaction was saved already, for $50.00 on Wallet, and Wallet's balance moved to $150.00 with it, so nothing more was changed. To change it, edit the transaction, then update the balance from the account."
+      );
+      // Ticked again on Jar, the same.
+      expect((await post({ id, account_id: JAR.account_id, ...FIELDS, amount: 50, update_balance: { from: 80, to: 30 } })).status).toBe(409);
+      expect((await findManualTxn(ctx, id))!.account_id).toBe(WALLET.account_id);
+      expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(150);
+      expect((await getManualAccount(ctx, JAR.account_id))!.balance).toBe(80);
+      // With no balance in it, a resend on another account is the form's to move with an edit.
+      const plain = newManualTxnId();
+      await post({ id: plain, account_id: WALLET.account_id, ...FIELDS });
+      expect((await post({ id: plain, account_id: JAR.account_id, ...FIELDS })).body).toMatchObject({ added: false, transaction: { account_id: WALLET.account_id } });
     });
 
     test('saved by a send whose balance move failed, then sent again corrected: refused, the balance untouched', async () => {
@@ -375,7 +397,7 @@ describe('adding a transaction', () => {
       const corrected = await post({ id, account_id: WALLET.account_id, ...FIELDS, amount: 55, update_balance: { from: 200, to: 145 } });
       expect(corrected).toMatchObject({ status: 409, body: { saved: true, balance_updated: false } });
       expect(corrected.body.error).toBe(
-        "This transaction was saved already, for $50.00, so nothing more was changed and the balance wasn't updated. To change the amount, edit the transaction, then update the balance from the account."
+        "This transaction was saved already, for $50.00 on Wallet, so nothing more was changed and the balance wasn't updated. To change it, edit the transaction, then update the balance from the account."
       );
       expect((await getManualAccount(ctx, WALLET.account_id))!.balance).toBe(200);
       // Without a balance in it, a corrected resend is the form's to fix with an edit.

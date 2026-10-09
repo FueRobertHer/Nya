@@ -74,9 +74,11 @@ export type ManualTxn = TxnFields & {
    *  absent or null for one entered by hand. */
   import_id?: string | null;
   /** The balance update its add made, once made ("Also update the balance"):
-   *  from the figure the form showed to the one it said. Absent when it made
-   *  none. Kept so the same add sent again never moves the balance twice. */
-  balance_update?: { from: number; to: number } | null;
+   *  from the figure the form showed to the one it said, on the account it
+   *  was added to (absent on a note written before it was kept). Absent when
+   *  it made none. Kept so the same add sent again never moves the balance
+   *  twice, nor leaves the row and the balance apart. */
+  balance_update?: { from: number; to: number; account_id?: string } | null;
   created_at: string;
   updated_at: string;
 };
@@ -95,7 +97,8 @@ const isInstant = (v: unknown) => typeof v === 'string' && !Number.isNaN(Date.pa
 const isText = (v: unknown) => typeof v === 'string';
 const isTextOrNull = (v: unknown) => v === null || typeof v === 'string';
 const isAmount = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
-const isBalanceUpdate = (v: unknown) => v === undefined || v === null || (isRecord(v) && isAmount(v.from) && isAmount(v.to));
+const isBalanceUpdate = (v: unknown) =>
+  v === undefined || v === null || (isRecord(v) && isAmount(v.from) && isAmount(v.to) && (v.account_id === undefined || isText(v.account_id)));
 /** A source: lower-case words joined by ":", like "import:csv". */
 const isSource = (v: unknown) => typeof v === 'string' && v.length <= 40 && /^[a-z][a-z0-9]*(?::[a-z0-9]+)*$/.test(v);
 
@@ -265,16 +268,17 @@ export async function editManualTxn(
 
 /**
  * Records on a row the balance update its add made (ManualTxn.balance_update),
- * wherever the row is now; nothing when it is gone. `account_id` is where it
- * was added, read first.
+ * wherever the row is now; nothing when it is gone. `account_id` is the
+ * account it was added to, whose balance moved, read first.
  */
 export async function noteBalanceUpdate(ctx: Ctx, id: string, account_id: string, update: { from: number; to: number }): Promise<void> {
   const found = (await findManualTxn(ctx, id, account_id)) ?? (await findManualTxn(ctx, id));
   if (!found) return;
+  const note = { from: update.from, to: update.to, account_id };
   await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
     const book = books.get(found.account_id) ?? null;
     if (!book?.rows.some((r) => r.id === id)) return new Map();
-    return new Map([[found.account_id, { ...book, rows: book.rows.map((r) => (r.id === id ? { ...r, balance_update: update } : r)) }]]);
+    return new Map([[found.account_id, { ...book, rows: book.rows.map((r) => (r.id === id ? { ...r, balance_update: note } : r)) }]]);
   });
 }
 

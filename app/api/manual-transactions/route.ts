@@ -38,10 +38,11 @@ import { loggable } from '@/lib/log-safe';
 // an add sent again (its answer lost on a phone's connection) finds its row
 // already there, writes nothing and answers with it (`added` false). A
 // request without an id gets a new one: a script that wants the same safety
-// sends its own. Sent again with another amount (corrected in the form after
-// the first answer was lost) while a balance moved with it, or is asked to,
-// it is refused with what was saved: the balance moved by the saved amount,
-// and changing the row quietly would leave the two apart.
+// sends its own. Sent again with another amount or on another account
+// (corrected in the form after the first answer was lost) while a balance
+// moved with it, or is asked to, it is refused with what was saved: the
+// balance moved on the saved account by the saved amount, and changing the
+// row quietly would leave the two apart.
 //
 // A manual account's balance stays what was typed. A new row moves it only
 // when the request asks (`update_balance: { from, to }`, the balance the form
@@ -185,16 +186,19 @@ export async function POST(req: Request) {
       row = there.row;
       const transaction = await shown(ctx, row, account);
       const moved = row.balance_update ?? null;
-      // Sent again with another amount (corrected after the first answer was
-      // lost): the balance moved, or is to move, by what was saved, so the
-      // row isn't changed to another amount here. Said, never done quietly.
-      if ((moved || update) && (row.amount !== fields.amount || row.currency !== fields.currency)) {
-        const saved = formatMoney(Math.abs(row.amount), row.currency);
+      // Sent again with another amount or on another account (corrected
+      // after the first answer was lost): the balance moved, or is to move,
+      // on the account and by the amount saved, so the row isn't changed here
+      // to one the balance doesn't match. Said, never done quietly.
+      if ((moved || update) && (row.amount !== fields.amount || row.currency !== fields.currency || there.account_id !== account.account_id)) {
+        const saved = `${formatMoney(Math.abs(row.amount), row.currency)} on ${transaction.account_name}`;
+        // The account whose balance moved: the one the row was added to.
+        const movedOn = !moved ? null : !moved.account_id || moved.account_id === account.account_id ? account.name : ((await getManualAccount(ctx, moved.account_id).catch(() => null))?.name ?? 'its account');
         return NextResponse.json(
           {
             error: moved
-              ? `This transaction was saved already, for ${saved}, and ${account.name}'s balance moved to ${formatMoney(moved.to, DEFAULT_CURRENCY)} with it, so nothing more was changed. To change the amount, edit the transaction, then update the balance from the account.`
-              : `This transaction was saved already, for ${saved}, so nothing more was changed and the balance wasn't updated. To change the amount, edit the transaction, then update the balance from the account.`,
+              ? `This transaction was saved already, for ${saved}, and ${movedOn}'s balance moved to ${formatMoney(moved.to, DEFAULT_CURRENCY)} with it, so nothing more was changed. To change it, edit the transaction, then update the balance from the account.`
+              : `This transaction was saved already, for ${saved}, so nothing more was changed and the balance wasn't updated. To change it, edit the transaction, then update the balance from the account.`,
             transaction,
             added: false,
             balance_updated: !!moved,

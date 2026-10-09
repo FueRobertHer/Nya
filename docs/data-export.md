@@ -312,7 +312,7 @@ Transactions you entered by hand on manual accounts (`lib/manual-txns.ts`), all 
 | `source` | Where it came from: `manual` for one entered in the app. |
 | `source_id` | The source's own id for it, from an import; `null` for one entered by hand. |
 | `import_id` | The import it came in with, so that import can be taken out whole; absent or `null` for one entered by hand (no import exists yet: #43). |
-| `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, and `to`, the one it became. Absent otherwise. |
+| `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, `to`, the one it became, and `account_id`, the account whose balance it was (absent on one noted before that was kept). Absent otherwise. |
 | `created_at`, `updated_at` | When it was entered, and last changed. |
 
 Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
