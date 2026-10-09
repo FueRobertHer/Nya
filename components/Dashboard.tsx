@@ -1610,6 +1610,7 @@ export default function Dashboard({
                       .map((a) => ({
                         name: a.name,
                         type: a.type,
+                        subtype: a.subtype,
                         balance: a.balance,
                         currency: a.currency,
                         liability: a.liability,

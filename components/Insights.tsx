@@ -12,6 +12,7 @@ import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 
@@ -89,6 +90,8 @@ const NO_IDLE_CASH: IdleCashAccount[] = [];
 export type InsightAccount = {
   name: string;
   type: string;
+  /** Plaid's, or a manual account's: `cash` marks cash on hand (lib/balance.ts). */
+  subtype?: string | null;
   balance: number | null;
   currency: string | null;
   liability?: {
@@ -172,8 +175,10 @@ export default function Insights({
     // Low balance on any checking/savings account. Keyed by position as well as
     // name: two accounts can share a name (a manual account tracking the same
     // institution as a linked one), and a duplicate React key would drop an alert.
+    // Not cash on hand (lib/balance.ts): a wallet running low is no risk of an
+    // overdraft.
     for (const [i, a] of accounts.entries()) {
-      if (a.type === 'depository' && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
+      if (a.type === 'depository' && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
         out.push({
           key: `low-${i}-${a.name}`,
           text: `Low balance: ${a.name} at ${formatMoney(a.balance, a.currency)}`,
