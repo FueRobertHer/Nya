@@ -11,8 +11,10 @@ import { useRef, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { Sheet } from './Sheet';
 import { formatMoney } from '@/lib/format';
-import { isCurrencyCode, parseAmountInput, DEFAULT_CURRENCY } from '@/lib/manual-txn-input';
+import { isCalendarDay, isCurrencyCode, knownCurrency, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import {
+  EARLIEST_PLANNED,
+  LATEST_PLANNED,
   MAX_ITEMS,
   MAX_NAME_CHARS,
   PLANNED_CADENCES,
@@ -86,7 +88,12 @@ export default function PlannedCard({
   const d = shown;
   const code = d ? d.currency.trim().toUpperCase() : '';
   const amount = d ? parseAmountInput(d.amount, isCurrencyCode(code) ? code : DEFAULT_CURRENCY) : null;
-  const ready = !!d && !!d.name.trim() && amount !== null && isCurrencyCode(code) && !!d.date;
+  // What the server checks (lib/planned.ts parsePlanned), checked here first,
+  // so a save is never refused with only "could not save" to say why.
+  const currencyOk = knownCurrency(code);
+  const amountOk = amount !== null && amount <= MAX_AMOUNT;
+  const dateOk = !!d && isCalendarDay(d.date) && d.date >= EARLIEST_PLANNED && d.date <= LATEST_PLANNED;
+  const ready = !!d && !!d.name.trim() && amountOk && currencyOk && dateOk;
 
   async function commit(next: PlannedItem[]) {
     if (!onSave) return;
@@ -219,6 +226,9 @@ export default function PlannedCard({
                 </select>
               </label>
             </div>
+            {d.amount.trim() !== '' && !amountOk && <div className="error">Enter an amount, like 212.50.</div>}
+            {code.length === 3 && !currencyOk && <div className="error">Enter a currency as its three-letter code, like USD or EUR.</div>}
+            {d.date !== '' && !dateOk && <div className="error">Pick a date between 2000 and 2100.</div>}
             <p className="panel-note">
               {d.cadence === 'once'
                 ? 'Counted once, on its date.'

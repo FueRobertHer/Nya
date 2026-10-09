@@ -131,10 +131,13 @@ export default function ForecastCard({
     (inst) => `${joinNames(included.filter((a) => a.institution === inst).map((a) => a.name))} at ${inst}`
   );
 
+  // The warning as typed: blank is none (only below zero warns).
+  const warnValue = warnDraft === null ? null : warnDraft.trim() === '' ? 0 : parseAmountInput(warnDraft, isCurrencyCode(code) ? code : DEFAULT_CURRENCY);
+  const warnOk = warnValue !== null && warnValue <= MAX_AMOUNT;
+
   async function saveWarn() {
-    if (!onSavePlanned || warnDraft === null) return;
-    const value = warnDraft.trim() === '' ? 0 : parseAmountInput(warnDraft, isCurrencyCode(code) ? code : DEFAULT_CURRENCY);
-    if (value === null || value > MAX_AMOUNT) return;
+    if (!onSavePlanned || warnValue === null || !warnOk) return;
+    const value = warnValue;
     setSavingWarn(true);
     try {
       if (await onSavePlanned({ ...planned, threshold: value })) setWarnDraft(null);
@@ -213,7 +216,7 @@ export default function ForecastCard({
                 disabled={savingWarn}
               />
             </label>
-            <button className="link-btn" onClick={saveWarn} disabled={savingWarn}>
+            <button className="link-btn" onClick={saveWarn} disabled={savingWarn || !warnOk}>
               {savingWarn ? 'Saving…' : 'Save'}
             </button>
             <button className="link-btn" onClick={() => setWarnDraft(null)} disabled={savingWarn}>

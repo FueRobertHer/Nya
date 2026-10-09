@@ -407,8 +407,8 @@ type Found = {
 };
 
 /** The rows that fit a schedule, one per scheduled date, judged by the rules
- *  in the header; null when they don't make a series. No amount rule: only
- *  whether they keep a schedule. */
+ *  in the header; null when they don't make a series. With `rule` their
+ *  amounts must agree too; without, only whether they keep a schedule. */
 function judge(cadence: Cadence, rows: Row[], fit: Fit, rule: AmountRule | null): Found | null {
   const spec = SPECS[cadence];
   const med = median(rows.map((r) => r.amount));
