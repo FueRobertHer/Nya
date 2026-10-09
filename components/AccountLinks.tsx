@@ -122,8 +122,9 @@ export default function AccountLinks({
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setError(refusalText(body.action, j));
-        // A forget that stopped part way may have changed some things already.
-        if (body.action === 'forget' && res.status >= 500) {
+        // A forget that stopped part way may have changed some things already
+        // (a 409 too: a record that kept changing, say).
+        if (body.action === 'forget' && (res.status === 409 || res.status >= 500)) {
           await load();
           onChanged();
         }
@@ -132,15 +133,15 @@ export default function AccountLinks({
       if (body.action === 'forget') {
         const j = await res.json().catch(() => ({}));
         const n = Number(j.unreadable_days) || 0;
-        const m = Number(j.unreadable_holdings_months) || 0;
         const damaged = [
           n > 0 ? `${n} day${n === 1 ? '' : 's'} of history` : null,
-          m > 0 ? `${m} month${m === 1 ? '' : 's'} of holdings history` : null,
-        ].filter(Boolean);
+          j.damaged_holdings === true ? 'some holdings history' : null,
+        ].filter((s): s is string => s !== null);
         if (damaged.length > 0) {
-          const one = n + m === 1;
+          const one = damaged.length === 1 && n <= 1;
+          const what = damaged.join(' and ');
           setNotice(
-            `Forgotten. ${damaged.join(' and ')} ${one ? 'is' : 'are'} damaged and can't be read, so ${
+            `Forgotten. ${what.charAt(0).toUpperCase()}${what.slice(1)} ${one ? 'is' : 'are'} damaged and can't be read, so ${
               one ? 'it was' : 'they were'
             } left as ${one ? 'it was' : 'they were'}.`
           );

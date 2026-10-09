@@ -679,6 +679,73 @@ function contract(b: Backend) {
     });
   });
 
+  // The repair of a damaged entry, once the person has confirmed it: only ever
+  // over bytes no one can read, never over what reads or is unrecognised.
+  describe('replaceUnreadable', () => {
+    for (const [how, flaw, make] of FLAWED) {
+      test(`${how}: ${flaw === 'unreadable' ? 'replaced' : 'left exactly as it is'}`, async () => {
+        const stored = await make();
+        await b.raw.hset(notesKey(), 'n1', stored);
+        expect(await notes.replaceUnreadable(A, 'n1', RENT)).toBe(flaw === 'unreadable');
+        if (flaw === 'unreadable') expect(await notes.get(A, 'n1')).toEqual(RENT);
+        else expect(await b.raw.hget(notesKey(), 'n1')).toBe(stored);
+      });
+    }
+
+    test('never over an entry that reads, nor where there is none', async () => {
+      await notes.set(A, 'n1', NOTE);
+      expect(await notes.replaceUnreadable(A, 'n1', RENT)).toBe(false);
+      expect(await notes.get(A, 'n1')).toEqual(NOTE);
+      expect(await notes.replaceUnreadable(A, 'n2', RENT)).toBe(false);
+      expect(await notes.has(A, 'n2')).toBe(false);
+    });
+
+    test('a value that would not read back is refused before anything is sent', async () => {
+      await b.raw.hset(notesKey(), 'n1', 'not-ciphertext-but-long-enough-to-be-tried');
+      let err: unknown;
+      expect(await sentBy(async () => (err = await notes.replaceUnreadable(A, 'n1', { text: 'x', amount: NaN }).catch((e) => e)))).toEqual([]);
+      expect(err).toBeInstanceOf(TypeError);
+      expect(await b.raw.hget(notesKey(), 'n1')).toBe('not-ciphertext-but-long-enough-to-be-tried');
+    });
+
+    test('a value written under another k0 is the deployment’s problem: thrown, and left as it is', async () => {
+      const stored = await underAnotherK0(JSON.stringify(NOTE));
+      await b.raw.hset(notesKey(), 'n1', stored);
+      expect(await notes.replaceUnreadable(A, 'n1', RENT).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+      expect(await b.raw.hget(notesKey(), 'n1')).toBe(stored);
+    });
+
+    test('an entry that changes between its read and its write keeps the change', async () => {
+      await b.raw.hset(notesKey(), 'n1', 'not-ciphertext-but-long-enough-to-be-tried');
+      const inner = client as Record<string, unknown>;
+      client = new Proxy(inner, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (prop !== 'eval') return typeof value === 'function' ? value.bind(target) : value;
+          return async (script: string, ...rest: unknown[]) => {
+            const out = await (value as (...a: unknown[]) => Promise<unknown>).call(target, script, ...rest);
+            // Someone else's write, just after the read.
+            if (script === READ_ENTRIES) await b.raw.hset(notesKey(), 'n1', 'other-damage-but-long-enough-to-be-tried');
+            return out;
+          };
+        },
+      });
+      try {
+        expect(await notes.replaceUnreadable(A, 'n1', RENT)).toBe(false);
+      } finally {
+        client = inner;
+      }
+      expect(await b.raw.hget(notesKey(), 'n1')).toBe('other-damage-but-long-enough-to-be-tried');
+    });
+
+    test('a storage failure is an error, and nothing changes', async () => {
+      await b.raw.hset(notesKey(), 'n1', 'not-ciphertext-but-long-enough-to-be-tried');
+      b.failNext('eval');
+      await expect(notes.replaceUnreadable(A, 'n1', RENT)).rejects.toThrow(/armed failure/);
+      expect(await b.raw.hget(notesKey(), 'n1')).toBe('not-ciphertext-but-long-enough-to-be-tried');
+    });
+  });
+
   describe('compressed stores, and the size ceiling', () => {
     const long: Note = { text: 'all work and no play '.repeat(500), amount: 1 };
 

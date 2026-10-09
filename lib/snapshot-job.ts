@@ -13,10 +13,15 @@
 // A run is marked "running" before it starts, so one the platform killed
 // shows as that rather than as nothing. A container already recorded for the
 // date is not run again (checked again once its lock is held, and a recorded
-// day is never overwritten), and one being run elsewhere (a second delivery
-// of the cron) is left to it, so the catch-up cron (/api/snapshot/catchup)
-// only does the containers that failed, came back unclean, were deferred, or
-// had nothing linked (in case something was linked since; no Plaid calls).
+// day is never overwritten by a worse outcome), and one being run elsewhere
+// (a second delivery of the cron) is left to it, so the catch-up cron
+// (/api/snapshot/catchup) only does the containers that failed, came back
+// unclean, were deferred, or had nothing linked (in case something was linked
+// since; no Plaid calls), and those recorded with `holdings_failed`: a day's
+// positions can't be fetched later, so the catch-up runs the day again for
+// them. That fetch is the free one a dashboard load makes (Plaid bills
+// holdings per Item per month), and the day's total it records again is as
+// measured as the first.
 // `attempts` counts the runs started; a run refused before starting (its
 // container no longer active) is stored as failed without adding one.
 // Entries older than RUNS_KEEP_DAYS are pruned.
@@ -86,7 +91,9 @@ export type WorkOutcome = { status: RunStatus; reason?: string; holdings_failed?
 
 export type ContainerOutcome = { container: ContainerId } & (
   | (WorkOutcome & { ms: number })
-  | { status: 'already' } // recorded earlier for this date
+  // Recorded earlier for this date. With holdings_failed: run again for its
+  // positions, which still could not all be written.
+  | { status: 'already'; holdings_failed?: number }
   | { status: 'running' } // being run by another invocation
   | { status: 'skipped'; reason: string } // not run, and nothing written
   | { status: 'deferred' } // not started in time; the catch-up run does it
@@ -164,6 +171,12 @@ function parseRun(value: unknown): RunRecord | null {
 
 export async function readRun(ctx: Ctx, date: string): Promise<RunRecord | null> {
   return parseRun(await redis().hget(runsKey(ctx), date));
+}
+
+/** Whether the date needs no run: recorded, positions and all. A day recorded
+ *  with `holdings_failed` is run again for them (see the header). */
+function finished(run: RunRecord | null): boolean {
+  return run?.status === 'recorded' && !run.holdings_failed;
 }
 
 /** The container's recorded runs, newest first. An unreadable entry is left
@@ -284,9 +297,20 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     const token = randomUUID();
     let locked = false;
     let outcome: WorkOutcome;
+    // The date's record as last read. A day recorded already is run again
+    // only for its positions, and is reported as recorded whatever that run
+    // comes to: a worse outcome never replaces its record (writeRun).
+    let prior: RunRecord | null = null;
+    const already = (run: RunRecord): ContainerOutcome => ({
+      container,
+      status: 'already',
+      ...(run.holdings_failed ? { holdings_failed: run.holdings_failed } : {}),
+    });
     try {
-      if ((await readRun(ctx, date))?.status === 'recorded') return { container, status: 'already' };
+      prior = await readRun(ctx, date);
+      if (finished(prior)) return { container, status: 'already' };
       if (clock() - started > budget) {
+        if (prior?.status === 'recorded') return already(prior);
         await writeRun(ctx, date, 'deferred', undefined, clock(), { onlyIfNew: true });
         return { container, status: 'deferred' };
       }
@@ -294,7 +318,8 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
       if (!locked) return { container, status: 'running' };
       // With the lock held: another run may have finished between the check
       // above and taking the lock.
-      if ((await readRun(ctx, date))?.status === 'recorded') {
+      prior = await readRun(ctx, date);
+      if (finished(prior)) {
         await release(ctx, token);
         return { container, status: 'already' };
       }
@@ -309,6 +334,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     }
     await writeRun(ctx, date, outcome.status, outcome.reason, clock(), { onlyIfNew: !locked, holdingsFailed: outcome.holdings_failed });
     if (locked) await release(ctx, token);
+    if (prior?.status === 'recorded' && outcome.status !== 'recorded') return already(prior);
     return { container, ...outcome, ms: clock() - t0 };
   };
 

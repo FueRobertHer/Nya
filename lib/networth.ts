@@ -216,9 +216,11 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
       is_cash_equivalent: securities[h.security_id]?.is_cash_equivalent ?? null,
     }));
     // For holdings history, from Plaid's own fields rather than the display
-    // ones above. Only here, where the call answered: a call that failed
-    // leaves it unset, and nothing is recorded for this institution.
-    result.holdings_observed = observeHoldings(holdingsRes.data, result.accounts);
+    // ones above. Only here, where the call answered, and only for a whole
+    // answer (observeHoldings): a call that failed, or an answer that is not
+    // whole, leaves it unset, and nothing is recorded for this institution.
+    const observed = observeHoldings(holdingsRes.data);
+    if (observed) result.holdings_observed = observed;
   } catch {
     // not a brokerage account, or investments not supported -- fine, skip
   }

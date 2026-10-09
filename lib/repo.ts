@@ -81,7 +81,10 @@
 //   ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR REMOVAL, and only once the
 // person confirms. MapStore.getAllReport names both kinds instead of throwing,
 // so a route can show what it read, offer to remove the unreadable ids, and
-// report the unrecognised ones as a problem to fix.
+// report the unrecognised ones as a problem to fix. MapStore.replaceUnreadable
+// is that removal with a value put in its place, in one step: it writes only
+// over an entry whose bytes are damaged and still the bytes it read, so it can
+// never replace one that reads, or one that is unrecognised.
 //   MapStore.getAllLenient is the one lenient read: it leaves out what it cannot
 // use (a deployment problem still throws). It is only for conveniences that
 // nothing writes, deletes or records on; say so where it is called.
@@ -275,6 +278,14 @@ export type MapStore<T> = Declared & {
    *  may therefore run more than once: it should only compute. Returns what was
    *  written. */
   update(ctx: Ctx, id: string, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null>;
+  /** The repair of an entry whose bytes are damaged, once the person has
+   *  confirmed removing it (see READS): writes `value` in its place, in one
+   *  step, only if it is unreadable and still holds the bytes read. Answers
+   *  false, writing nothing, when it reads fine, is unrecognised, is gone or
+   *  changed since it was read. A deployment problem is thrown, as by every
+   *  read, and a value it would refuse to write is refused before anything is
+   *  read. */
+  replaceUnreadable(ctx: Ctx, id: string, value: T): Promise<boolean>;
   /** Deletes entries, readable or not. Ids with no entry are ignored. */
   remove(ctx: Ctx, ...ids: string[]): Promise<void>;
   /** How many entries there are, readable or not (for count limits). */
@@ -691,6 +702,19 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     },
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
+    },
+    async replaceUnreadable(ctx, id, value) {
+      checkId(what, id);
+      const written = await encode(codec, serialize(codec, value));
+      checkSize(name, what, ctx, id.length + SHA1_HEX + written.length);
+      const [stored] = await readFields(ctx, [id]);
+      if (stored === null) return false;
+      // Thrown as it is when this deployment can't read it (a failed decrypt
+      // under k0 among them): that says nothing about the bytes.
+      const d = await decode(codec, stored);
+      if (d.ok || d.flaw !== 'unreadable') return false;
+      // The same compare-and-set as update(): only over the bytes just read.
+      return Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, sha1(stored), written])) === 1;
     },
   });
 }

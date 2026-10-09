@@ -34,11 +34,11 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
 import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
-import { forgetAccountHoldings } from './holdings-history';
+import { forgetAccountHoldings, forgetRecentHoldings } from './holdings-history';
 import { forgetCarried, pruneOrphanOverrides } from './overrides';
 import { storedAccountIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
-import { isOwedType } from './balance';
+import { isOwedType, isInvestmentType } from './balance';
 import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
 import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
@@ -581,13 +581,16 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * (foldHiddenAccount). A backfill that fetched before the institution was
  * disconnected sees it gone before writing, and writes nothing.
  *
- * `unreadableDates` are days of balances, and `unreadableHoldingsMonths`
- * months of holdings history, too damaged for anyone to read: left as they are.
+ * `unreadableDates` are days of balances too damaged for anyone to read, and
+ * `holdingsDamaged` says holdings records that could hold the account are
+ * (lib/holdings-history.ts forgetAccountHoldings): left as they are. Holdings
+ * records this version does not recognise stop the forget before anything is
+ * changed, for an account that could be in them (UnreadableEntriesError).
  */
 export async function forgetEarlierAccount(
   ctx: Ctx,
   id: string
-): Promise<{ changed: number; unreadableDates: string[]; unreadableHoldingsMonths: string[] }> {
+): Promise<{ changed: number; unreadableDates: string[]; holdingsDamaged: boolean }> {
   const [inputs, hidden, items] = await Promise.all([
     liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
     getHiddenAccounts(ctx),
@@ -608,6 +611,14 @@ export async function forgetEarlierAccount(
     }
   }
 
+  // What it held, from every month of holdings history. First, as the one
+  // step that stops for what is stored (an unrecognised record that may hold
+  // the account), so a forget it stops has changed nothing. An account known
+  // not to be an investment account holds no positions, so holdings records
+  // that can't be read never hold its forget back.
+  const type = inputs.directory[id]?.type ?? hidden.get(id)?.type ?? null;
+  const holdings = await forgetAccountHoldings(ctx, id, { mayHoldPositions: type === null || isInvestmentType(type) });
+
   if (found.hidden) {
     // Taken out of every past total for good, point by point, each in one step
     // (foldHiddenAccount). The random tag, kept in its hidden entry, holds
@@ -624,8 +635,6 @@ export async function forgetEarlierAccount(
     await setAccountHidden(ctx, id, '', false);
   }
   const result = await forgetAccountBalances(ctx, id);
-  // And what it held, from every month of holdings history.
-  const holdings = await forgetAccountHoldings(ctx, id);
   const dismissed = Object.keys((await redis().hgetall<Record<string, string>>(dismissedKey(ctx))) ?? {}).filter(
     (k) => k.startsWith(`${id}>`) || k.endsWith(`>${id}`)
   );
@@ -636,7 +645,7 @@ export async function forgetEarlierAccount(
   // read before the pass above could have written the account back, and a
   // recording of holdings already under way could have too.
   await forgetAccountBalances(ctx, id, { today: true });
-  const lateHoldings = await forgetAccountHoldings(ctx, id, { recent: true });
+  await forgetRecentHoldings(ctx, id);
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.
@@ -644,8 +653,7 @@ export async function forgetEarlierAccount(
   // Categories of its transactions that nothing can show any more (a failed
   // disconnect-time cleanup would otherwise leave them for good).
   await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
-  const unreadableHoldingsMonths = [...new Set([...holdings.unreadableMonths, ...lateHoldings.unreadableMonths])].sort();
-  return { ...result, unreadableHoldingsMonths };
+  return { ...result, holdingsDamaged: holdings.damaged };
 }
 
 /** Whether "None of these" is offered for an earlier account right now. */
