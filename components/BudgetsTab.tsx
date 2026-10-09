@@ -12,7 +12,8 @@ import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring } from '@/lib/recurring';
+import { detectRecurring, monthlyBillsTotal } from '@/lib/recurring';
+import { spendingByCategory } from '@/lib/totals';
 import { localMonth, instantDay } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
@@ -92,16 +93,12 @@ export default function BudgetsTab({
   // tab's totals are.
   const displayCurrency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
 
-  // Current-month spending per category.
-  const spendByCat = useMemo(() => {
-    const map: Record<string, number> = {};
-    (txns ?? []).forEach((t) => {
-      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || !countsInTotals(t, displayCurrency)) return;
-      const cat = t.category ?? 'other';
-      map[cat] = (map[cat] ?? 0) + t.amount;
-    });
-    return map;
-  }, [txns, thisMonth, displayCurrency]);
+  // Current-month spending per category (lib/totals.ts, which the API's
+  // budgets share).
+  const spendByCat = useMemo(
+    () => spendingByCategory(txns ?? [], (date) => date.slice(0, 7) === thisMonth, displayCurrency),
+    [txns, thisMonth, displayCurrency]
+  );
 
   // This month's spending in other currencies, named rather than added.
   const leftOut = useMemo(
@@ -139,14 +136,7 @@ export default function BudgetsTab({
   // The bills' monthly total adds up those in the budgets' currency; each bill
   // is listed in its own, and those in others are named.
   const { monthlyBills, billsLeftOut } = useMemo(() => {
-    let total = 0;
-    const others = new Map<string, number>();
-    for (const b of recurring) {
-      const c = b.currency ?? displayCurrency;
-      if (c === displayCurrency || displayCurrency === null) total += b.amount;
-      else if (c) others.set(c, (others.get(c) ?? 0) + 1);
-    }
-    const leftOut = [...others].map(([currency, count]) => ({ currency, count })).sort((a, b) => b.count - a.count);
+    const { total, leftOut } = monthlyBillsTotal(recurring, displayCurrency);
     return {
       monthlyBills: total,
       billsLeftOut: leftOutText(leftOut, displayCurrency, { noun: 'bill', where: 'this total', plural: false }),

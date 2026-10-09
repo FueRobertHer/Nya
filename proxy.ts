@@ -11,6 +11,9 @@ import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-heade
 //   - the cron endpoints (the snapshot and its catch-up, the nightly backup, the
 //     unused-Item check), via CRON_SECRET;
 //   - the manual-balance ingest, via INGEST_SECRET;
+//   - the read-only API (each /api/v1 endpoint, listed one by one), via a
+//     personal API token (lib/api-tokens.ts). It reads no cookie, so a session
+//     alone reaches none of it; a new endpoint is gated until it is added here;
 //   - Plaid's webhook, by verifying Plaid's signature (lib/plaid-webhook.ts);
 //   - the ops routes (export, rotate-master, reencrypt, containers), via
 //     OPS_SECRET, and off entirely unless OPS_ENABLED=1 (lib/ops.ts);
@@ -26,7 +29,7 @@ import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-heade
 // here too.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/budgets$|api/v1/spending$|api/v1/recurring$|api/v1/holdings$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 
