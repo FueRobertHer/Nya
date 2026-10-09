@@ -66,6 +66,10 @@ export default function PlannedCard({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Whether a save was tried since the sheet opened: an error left from an
+  // earlier save (marking a bill not recurring, say) shows on the card, not
+  // in a sheet that has not saved anything yet.
+  const [attempted, setAttempted] = useState(false);
   const shown = useLast(draft);
 
   const items = [...planned.items]
@@ -76,12 +80,14 @@ export default function PlannedCard({
   function startAdd() {
     setEditing(false);
     setConfirmDelete(false);
+    setAttempted(false);
     setDraft({ id: crypto.randomUUID(), name: '', kind: 'expense', amount: '', currency: currency ?? DEFAULT_CURRENCY, date: today, cadence: 'once' });
   }
 
   function startEdit(item: PlannedItem) {
     setEditing(true);
     setConfirmDelete(false);
+    setAttempted(false);
     setDraft({ ...item, amount: String(item.amount) });
   }
 
@@ -98,6 +104,7 @@ export default function PlannedCard({
   async function commit(next: PlannedItem[]) {
     if (!onSave) return;
     setSaving(true);
+    setAttempted(true);
     try {
       if (await onSave({ ...planned, items: next })) setDraft(null);
     } finally {
@@ -246,7 +253,7 @@ export default function PlannedCard({
                 : "Counted on each date from the first. A day past a month's end falls on its last day. For twice a month, add two monthly items."}{' '}
               Only the forecast and the calendar use it; your budgets and history don&apos;t change.
             </p>
-            {saveError && <div className="error">{saveError}</div>}
+            {attempted && saveError && <div className="error">{saveError}</div>}
             {confirmDelete ? (
               <>
                 <p className="panel-note">Delete {d.name.trim() || 'this item'}?</p>
