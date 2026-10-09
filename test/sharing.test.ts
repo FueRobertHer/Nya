@@ -823,6 +823,93 @@ describe('shares that end', () => {
   });
 });
 
+describe('a manual account’s transactions, shared', () => {
+  const add = async (date: string, amount: number, name: string, currency = 'USD', note: string | null = null, enteredAt = new Date()) => {
+    const { newManualTxn, addManualTxn } = await import('@/lib/manual-txns');
+    const { row } = await addManualTxn(TEST_CTX, newManualTxn('manual_house', { date, amount, currency, name, category: 'Home', note }, enteredAt));
+    return row;
+  };
+  const accountOf = (view: any, id: string) => view.accounts.find((a: any) => a.id === id);
+
+  test('are shown at the transactions level like a bank’s: the same 30 days, newest first, each in its own currency', async () => {
+    await add(daysAgo(5), 3000, 'Ramen', 'JPY');
+    await add(daysAgo(2), 40, 'Hardware store', 'USD', 'A NOTE OF MINE');
+    await add(daysAgo(45), 9, 'Too long ago');
+    await share({ acct_joint: 'transactions', manual_house: 'transactions' });
+    const [view] = await sharedWithPartner();
+    expect(accountOf(view, 'manual_house').transactions).toEqual([
+      { date: daysAgo(2), name: 'Hardware store', amount: 40, pending: false, currency: 'USD' },
+      { date: daysAgo(5), name: 'Ramen', amount: 3000, pending: false, currency: 'JPY' },
+    ]);
+    // A bank's rows carry their currency too.
+    expect(accountOf(view, 'acct_joint').transactions).toEqual([{ date: daysAgo(3), name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }]);
+    // What the owner says about a row is theirs: no note, no category.
+    expect(JSON.stringify(view)).not.toMatch(/A NOTE OF MINE|"category"|Home/);
+    // Below the transactions level, none.
+    await share({ manual_house: 'balance' });
+    expect(accountOf((await sharedWithPartner())[0], 'manual_house')).not.toHaveProperty('transactions');
+  });
+
+  test('none in the window is an empty list, and an account entered nothing on is the same', async () => {
+    await share({ manual_house: 'transactions' });
+    expect(accountOf((await sharedWithPartner())[0], 'manual_house').transactions).toEqual([]);
+    await add(daysAgo(40), 9, 'Too long ago');
+    expect(accountOf((await sharedWithPartner())[0], 'manual_house').transactions).toEqual([]);
+  });
+
+  test('the owner’s preview shows them exactly as the viewer gets them', async () => {
+    const { sharedWithMe, previewShare } = await import('@/lib/sharing');
+    await add(daysAgo(1), 18.5, 'Bakery', 'USD', null, new Date(Date.now() - 60_000));
+    await add(daysAgo(1), 7, 'Newsstand');
+    await share({ acct_joint: 'transactions', manual_house: 'transactions' });
+    const theirs = (await sharedWithMe('user_partner')).find((s) => s.connection === pair)!;
+    const mine = await previewShare('user_owner', pair);
+    expect(mine.view).toEqual({ accounts: theirs.accounts, expires_at: theirs.expires_at });
+    // The same day: the one entered last first, as the Activity tab lists them.
+    expect(accountOf(mine.view, 'manual_house').transactions.map((t: any) => t.name)).toEqual(['Newsstand', 'Bakery']);
+  });
+
+  test('a row the owner excluded from budgets and reports is shared all the same, unmarked', async () => {
+    const { setExcluded } = await import('@/lib/txn-annotations');
+    const row = await add(daysAgo(2), 40, 'Hardware store');
+    await setExcluded(TEST_CTX, row.id, true);
+    await setExcluded(TEST_CTX, 't_recent', true);
+    await share({ acct_joint: 'transactions', manual_house: 'transactions' });
+    const [view] = await sharedWithPartner();
+    expect(accountOf(view, 'manual_house').transactions.map((t: any) => t.name)).toEqual(['Hardware store']);
+    expect(accountOf(view, 'acct_joint').transactions.map((t: any) => t.name)).toEqual(['Blue Bottle']);
+    expect(JSON.stringify(view)).not.toMatch(/exclude/i);
+  });
+
+  test('a hidden manual account is left out, its transactions with it', async () => {
+    await add(daysAgo(2), 40, 'Hardware store');
+    await share({ acct_joint: 'balance', manual_house: 'transactions' });
+    await setAccountHidden(TEST_CTX, 'manual_house', 'other', true);
+    const [view] = await sharedWithPartner();
+    expect(view.accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+    expect(JSON.stringify(view)).not.toContain('Hardware store');
+    expect((await previewOf('user_owner')).body.view.accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+  });
+
+  test('a book that can’t be read says so for that account, never shows none, and the rest is still shared', async () => {
+    await share({ acct_joint: 'transactions', manual_house: 'transactions' });
+    await fake.hset(ctxKey('manual-transactions'), { manual_house: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const { result, logged } = await quietly(() => sharedWithPartner());
+    const house = accountOf(result[0], 'manual_house');
+    expect(house).toMatchObject({ level: 'transactions', balance: 300000, transactions_unreadable: true });
+    expect(house).not.toHaveProperty('transactions');
+    expect(accountOf(result[0], 'acct_joint').transactions).toHaveLength(1);
+    expect(logged.map((l) => l[0])).toEqual(['Shared data: a manual account’s transactions could not be read']);
+    // The preview says the same, as it is the same projection.
+    const { result: preview } = await quietly(() => previewOf('user_owner'));
+    expect(accountOf(preview.body.view, 'manual_house')).toMatchObject({ transactions_unreadable: true });
+    // And the record of showings says only its balance was shown.
+    expect((await ownerRecord())!.shown[0].read).toEqual({ acct_joint: 'transactions', manual_house: 'balance' });
+    // Nothing was changed to get there: the book is as it was.
+    expect(await fake.hget<string>(ctxKey('manual-transactions'), 'manual_house')).toBe('not-ciphertext-but-long-enough-to-be-tried');
+  });
+});
+
 describe('records of showings', () => {
   const SLOT = 15 * 60_000;
   const HOUR = 3_600_000;
@@ -1505,7 +1592,10 @@ describe('records of showings', () => {
   });
 
   test('is the only thing a read writes in the owner’s container, old-shaped records included', async () => {
-    await share({ acct_joint: 'transactions', manual_house: 'balance' });
+    const { newManualTxn, addManualTxn } = await import('@/lib/manual-txns');
+    // A manual account shared with its transactions, read from its own book.
+    await addManualTxn(TEST_CTX, newManualTxn('manual_house', { date: daysAgo(1), amount: 40, currency: 'USD', name: 'Hardware store', category: null, note: null }));
+    await share({ acct_joint: 'transactions', manual_house: 'transactions' });
     // A remembered account in the shape from before per-item records, which
     // the owner's own loads tidy away and someone else's read must not.
     await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
@@ -1518,7 +1608,7 @@ describe('records of showings', () => {
     };
     const before = snapshot();
     expect(Object.keys(before)).toContain(`${ctxKey('accounts:meta')} acct_legacy`);
-    await sharedWithPartner();
+    expect((await sharedWithPartner())[0].accounts.find((a: any) => a.id === 'manual_house').transactions).toHaveLength(1);
     const after = snapshot();
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
     expect(changed).toEqual([`${ctxKey('sharing-access-log')} ${await logIdOf()}`]);

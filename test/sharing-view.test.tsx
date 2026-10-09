@@ -1,6 +1,7 @@
 import { describe, expect, test, afterEach, setSystemTime } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SharingPanelView, SharedWithMeView, PreviewView, shortDate } from '@/components/Sharing';
+import { SharingPanelView, SharedWithMeView, PreviewView, shortDate, sharedTxnAmount } from '@/components/Sharing';
+import { formatMoney } from '@/lib/format';
 import {
   endAfterDays,
   endOfDay,
@@ -203,7 +204,7 @@ describe('what others share with me', () => {
               connection: 'c1',
               label: 'Olive',
               accounts: [
-                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false }] },
+                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }] },
                 { id: 'b', label: 'House', level: 'balance', balance: null, as_of: null, debt: false },
                 { id: 'c', label: 'Visa ••9999', level: 'balance', balance: 250, as_of: '2026-09-26', debt: true },
                 { id: 'd', label: 'Savings', level: 'exists', balance: null, as_of: null, debt: false },
@@ -226,27 +227,46 @@ describe('what others share with me', () => {
     expect(html).not.toMatch(/500\.00 owed/);
   });
 
-  test('a manual account shared with its transactions says those entered by hand aren’t shared yet, never that it has none', () => {
-    const html = renderToStaticMarkup(
-      <SharedWithMeView
-        data={{
-          shared: [
-            {
-              connection: 'c1',
-              label: 'Olive',
-              accounts: [
-                { id: 'manual_0b6f', label: 'Wallet', level: 'transactions', balance: 80, as_of: '2026-09-27T14:00:00.000Z', debt: false, transactions: [] },
-                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [] },
-              ],
-              expires_at: null,
-            },
-          ],
-        }}
-      />
+  test('a manual account’s transactions are shared like a bank’s; one with none in the window, or one that can’t be read, says so', () => {
+    const at = '2026-09-27T14:00:00.000Z';
+    const html = text(
+      renderToStaticMarkup(
+        <SharedWithMeView
+          data={{
+            shared: [
+              {
+                connection: 'c1',
+                label: 'Olive',
+                accounts: [
+                  { id: 'manual_0b6f', label: 'Wallet', level: 'transactions', balance: 80, as_of: at, debt: false, transactions: [{ date: '2026-09-26', name: 'Farmers market', amount: 23, pending: false, currency: 'USD' }] },
+                  { id: 'manual_1c7a', label: 'Cash abroad', level: 'transactions', balance: 40, as_of: at, debt: false, transactions: [] },
+                  { id: 'manual_2d8b', label: 'Old book', level: 'transactions', balance: 10, as_of: at, debt: false, transactions_unreadable: true },
+                  { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [] },
+                ],
+                expires_at: null,
+              },
+            ],
+          }}
+        />
+      )
     );
-    expect(html).toContain('Transactions entered by hand aren&#x27;t shared yet.');
-    // A bank's account with none in the last 30 days still says so.
-    expect(html.match(/Recent transactions \(0\)/g)).toHaveLength(1);
+    expect(html).toContain('Wallet');
+    expect(html).toContain('Recent transactions (1)');
+    // None in the window, a bank's or entered by hand: said so, not an empty list.
+    expect(html.match(/No transactions in the last 30 days\./g)).toHaveLength(2);
+    expect(html).not.toContain('Recent transactions (0)');
+    // A book that can't be read is never shown as having none.
+    expect(html).toContain('Old book');
+    expect(html).toContain("Its transactions can't be read, so they aren't shown.");
+    expect(html).not.toContain("aren't shared yet");
+  });
+
+  test('each shared transaction is shown in its own currency, nothing converted', () => {
+    expect(sharedTxnAmount({ amount: 12, currency: 'USD' })).toBe(formatMoney(-12, 'USD'));
+    expect(sharedTxnAmount({ amount: 1200, currency: 'JPY' })).toBe(formatMoney(-1200, 'JPY'));
+    expect(sharedTxnAmount({ amount: 1200, currency: 'JPY' })).not.toBe(formatMoney(-1200, 'USD'));
+    // A bank's row stored before its currency was kept: the main one.
+    expect(sharedTxnAmount({ amount: -5, currency: null })).toBe('$5.00');
   });
 });
 
@@ -498,7 +518,7 @@ describe('a connection’s end, preview and records in the drawer', () => {
 describe('what they see: the preview', () => {
   const view = {
     accounts: [
-      { id: 'a', label: 'Joint ••1111', level: 'transactions' as const, balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false }] },
+      { id: 'a', label: 'Joint ••1111', level: 'transactions' as const, balance: 500, as_of: '2026-09-27', debt: false, transactions: [{ date: '2026-09-25', name: 'Blue Bottle', amount: 12, pending: false, currency: 'USD' }] },
       { id: 'd', label: 'Savings', level: 'exists' as const, balance: null, as_of: null, debt: false },
     ],
     expires_at: endAfterDays(10),

@@ -22,6 +22,10 @@ export function widerLevel(a: Level, b: Level): Level {
   return LEVELS.indexOf(a) >= LEVELS.indexOf(b) ? a : b;
 }
 
+/** How far back shared transactions go, in days: a bank's and a manual
+ *  account's alike (lib/sharing.ts projectShare). */
+export const SHARED_TXN_DAYS = 30;
+
 /** The most days the access log keeps a showing (lib/access-log.ts). */
 export const ACCESS_LOG_DAYS = 90;
 

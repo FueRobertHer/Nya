@@ -81,8 +81,14 @@
 // what they call the owner (their words, not the owner's) and records nothing.
 //
 // Balances and transactions are what the owner's own loads and the nightly
-// snapshot stored; this never calls Plaid on the owner's behalf. Each
-// account's balance is its newest measured one, with its own date.
+// snapshot stored, and on a manual account what they entered by hand or
+// imported (lib/manual-txns.ts); this never calls Plaid on the owner's
+// behalf. Each account's balance is its newest measured one, with its own
+// date. Each shared transaction carries its currency, and nothing is
+// converted. A transaction its owner excluded from budgets and reports
+// (lib/txn-annotations.ts) is shared like any other: excluding changes their
+// own totals, not what the account holds, and like their categories and the
+// names they give merchants it is theirs, so it isn't shown either way.
 //
 // Hiding an account pauses its sharing: the share stays, and is honoured again
 // if the account is unhidden.
@@ -93,12 +99,13 @@ import { getContainer, isContainerId, type Ctx, type ContainerId } from './conta
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
 import { getManualAccounts } from './manual';
+import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredTxns, StateUnreadableError } from './transactions';
 import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
-import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
+import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARED_TXN_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
 
 export type { Level } from './share-rules';
 export type Share = {
@@ -110,8 +117,7 @@ export type Share = {
 
 export const connectionsKey = () => kEnv('connections');
 const inviteKey = (token: string) => kEnv(`invites:${createHash('sha256').update(token).digest('hex')}`);
-/** How far back shared transactions go. */
-export const SHARED_TXN_DAYS = 30;
+export { SHARED_TXN_DAYS } from './share-rules';
 /** How long an invite link works. */
 export const INVITE_HOURS = 72;
 const LABEL_MAX = 40;
@@ -931,7 +937,11 @@ export async function shareableAccounts(ctx: Ctx, opts: { readOnly?: boolean } =
   return out.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
 }
 
-export type SharedTxn = { date: string; name: string; amount: number; pending: boolean };
+/** One shared transaction, with Plaid's sign (positive is money out).
+ *  `currency`: its ISO code, Plaid's unofficial one (a cryptocurrency), or a
+ *  manual row's own; null only for a bank's row stored before its currency
+ *  was kept, which is taken to be in the main currency (lib/spending.ts). */
+export type SharedTxn = { date: string; name: string; amount: number; pending: boolean; currency: string | null };
 export type SharedAccount = {
   id: string;
   label: string;
@@ -943,7 +953,13 @@ export type SharedAccount = {
   as_of: string | null;
   /** Money owed (a card, a loan) rather than held. */
   debt: boolean;
+  /** At the transactions level: the last SHARED_TXN_DAYS days of them, newest
+   *  first, a bank's or a manual account's (entered by hand or imported). */
   transactions?: SharedTxn[];
+  /** At the transactions level, instead of `transactions`: a manual
+   *  account's can't be read (its book is damaged, or saved by a version this
+   *  one doesn't know), so none are shown, never an empty list in their place. */
+  transactions_unreadable?: true;
 };
 /** What someone is shown of one person's share: the projection
  *  (projectShare). */
@@ -1021,7 +1037,9 @@ type Projected = { view: ShareView; theirs: Ctx };
  * so an ended share can't surface even through an error; the owner off the
  * allowlist or gone; or nothing shared that they still have and can share.
  * Reads read-only: it changes nothing in the owner's container. Throws when
- * the owner's data can't be read, and both callers then show nothing from it.
+ * the owner's data can't be read, and both callers then show nothing from it,
+ * except a manual account's transactions, whose book can't be read on its
+ * own: that account says so (transactions_unreadable) and the rest is shown.
  */
 async function projectShare(c: Conn, owner: string, now: number): Promise<Projected | null> {
   const share = c.shares[owner];
@@ -1039,14 +1057,35 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
 
   const withTxns = new Set(granted.filter(([, level]) => level === 'transactions').map(([id]) => id));
   const txns = new Map<string, SharedTxn[]>();
+  const unreadableBooks = new Set<string>();
   if (withTxns.size > 0) {
     const since = new Date(now - SHARED_TXN_DAYS * 86_400_000).toISOString().slice(0, 10);
-    for (const item of await getItems(theirs)) {
-      for (const t of await readStoredTxns(theirs, item.item_id, { shown: true })) {
-        if (!withTxns.has(t.account_id) || t.date < since) continue;
-        const list = txns.get(t.account_id) ?? [];
-        list.push({ date: t.date, name: t.merchant_name ?? t.name, amount: t.amount, pending: t.pending });
-        txns.set(t.account_id, list);
+    // A bank's rows, as the owner's own loads stored them and the Activity
+    // tab shows them (a pending row its posted one replaced is left out).
+    if ([...withTxns].some((id) => !manual.has(id))) {
+      for (const item of await getItems(theirs)) {
+        for (const t of await readStoredTxns(theirs, item.item_id, { shown: true })) {
+          if (!withTxns.has(t.account_id) || t.date < since) continue;
+          const list = txns.get(t.account_id) ?? [];
+          list.push({ date: t.date, name: t.merchant_name ?? t.name, amount: t.amount, pending: t.pending, currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null });
+          txns.set(t.account_id, list);
+        }
+      }
+    }
+    // A manual account's rows, entered by hand or imported, from its own book
+    // (lib/manual-txns.ts), in the same window. Read strictly: a book that
+    // can't be read makes that account say its transactions can't be read,
+    // never that it has none, and the rest of the share is shown; a failure
+    // to reach storage throws, as every read here does.
+    for (const id of withTxns) {
+      if (!manual.has(id)) continue;
+      try {
+        const rows = ((await manualTxnStore.get(theirs, id))?.rows ?? []).filter((r) => r.date >= since).sort(newestEntered);
+        txns.set(id, rows.map((r) => ({ date: r.date, name: r.name, amount: r.amount, pending: false, currency: r.currency })));
+      } catch (err) {
+        if (!(err instanceof UnreadableEntriesError)) throw err;
+        console.error('Shared data: a manual account’s transactions could not be read', err.name);
+        unreadableBooks.add(id);
       }
     }
   }
@@ -1077,12 +1116,21 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
       as_of,
       debt: DEBT_TYPES.has((m ? m.type : types[id]) ?? ''),
       ...(level === 'transactions'
-        ? { transactions: (txns.get(id) ?? []).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) }
+        ? unreadableBooks.has(id)
+          ? { transactions_unreadable: true as const }
+          : { transactions: (txns.get(id) ?? []).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) }
         : {}),
     });
   }
   return { view: { accounts, expires_at: share.expires_at }, theirs };
 }
+
+/** Manual rows newest first, the most recently entered first within a day,
+ *  as the Activity tab lists them (lib/manual-txns.ts). */
+const newestEntered = (a: ManualTxn, b: ManualTxn) =>
+  (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) ||
+  (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0) ||
+  (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /**
  * Counts, in the owner's record (lib/access-log.ts), that the other person on
@@ -1109,7 +1157,8 @@ async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, now: number)
       return;
     }
     if (!log) return; // the connection went meanwhile: nothing to record
-    const read = Object.fromEntries(view.accounts.map((a) => [a.id, a.level]));
+    // What was shown: an account whose transactions couldn't be read showed its balance only.
+    const read = Object.fromEntries(view.accounts.map((a): [string, Level] => [a.id, a.transactions_unreadable ? 'balance' : a.level]));
     await accessLogStore.update(theirs, log.id, (current) => withShowing(current, now, read));
     if (!sameConnection(await redis().hget(connectionsKey(), c.id), c)) {
       await accessLogStore.remove(theirs, log.id);

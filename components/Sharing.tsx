@@ -25,7 +25,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatMoney } from '@/lib/format';
-import { ACCESS_LOG_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
+import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import {
   shortDate,
@@ -97,7 +97,11 @@ type SharedAccount = {
   balance: number | null;
   as_of: string | null;
   debt: boolean;
-  transactions?: { date: string; name: string; amount: number; pending: boolean }[];
+  /** At the transactions level, the last SHARED_TXN_DAYS days of them, each in
+   *  its own currency (null: the main one); or, instead, that a manual
+   *  account's can't be read. */
+  transactions?: { date: string; name: string; amount: number; pending: boolean; currency: string | null }[];
+  transactions_unreadable?: true;
 };
 /** What someone is shown of one person's share (lib/sharing.ts ShareView). */
 export type SharedView = { accounts: SharedAccount[]; expires_at: string | null };
@@ -767,10 +771,11 @@ export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
   );
 }
 
-// A manual account's id (lib/manual.ts MANUAL_ID_PREFIX, a module a client
-// component can't import). What is shared of one's transactions is its
-// bank's rows only for now, and it has none: its rows are entered by hand.
-const isManualAccount = (id: string) => id.startsWith('manual_');
+/** A shared transaction's amount, money out shown as a minus, in its own
+ *  currency: nothing is converted (a row with none is in the main one). */
+export function sharedTxnAmount(t: { amount: number; currency: string | null }): string {
+  return formatMoney(-t.amount, t.currency);
+}
 
 function shownBalance(a: SharedAccount): string {
   if (a.level === 'exists') return 'Balance not shared';
@@ -798,8 +803,10 @@ function SharedCard({ name, view, note }: { name: string; view: SharedView; note
             </span>
             <span className="incoming-account-value">{shownBalance(a)}</span>
           </div>
-          {a.transactions && a.transactions.length === 0 && isManualAccount(a.id) ? (
-            <div className="incoming-account-date">Transactions entered by hand aren&apos;t shared yet.</div>
+          {a.transactions_unreadable ? (
+            <div className="incoming-account-date">Its transactions can&apos;t be read, so they aren&apos;t shown.</div>
+          ) : a.transactions && a.transactions.length === 0 ? (
+            <div className="incoming-account-date">No transactions in the last {SHARED_TXN_DAYS} days.</div>
           ) : (
             a.transactions && (
               <button className="link-btn" onClick={() => setOpen(open === a.id ? null : a.id)}>
@@ -814,7 +821,7 @@ function SharedCard({ name, view, note }: { name: string; view: SharedView; note
                   {t.date} {t.name}
                   {t.pending ? ' (pending)' : ''}
                 </span>
-                <span>{formatMoney(-t.amount)}</span>
+                <span>{sharedTxnAmount(t)}</span>
               </div>
             ))}
         </div>
