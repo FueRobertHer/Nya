@@ -16,9 +16,19 @@ const SOURCES: readonly FieldDoc[] = [
   ['sources', 'Where the transactions come from: one entry per linked institution.'],
   ['sources[].institution', 'The institution’s name.'],
   ['sources[].synced_at', 'When its transactions were last synced from the bank (the app syncs them when it shows the Activity tab), or null when not known.'],
-  ['sources[].complete', 'False when its transactions couldn’t be read, or none are stored yet: the notes say which.'],
+  ['sources[].complete', 'False when its transactions couldn’t be read, or none are stored yet: the notes say which. A connection that brings in none (no_transactions) has none missing, so it is complete.'],
+  [
+    'sources[].no_transactions',
+    'Null when the connection brings in transactions. Otherwise why it brings in none: "investment_accounts" (it holds investment accounts only, whose activity is not spending), "no_cash_accounts" (it holds no bank account or card), "refused" (Plaid doesn’t provide transactions for its bank or card accounts, so their spending isn’t known), or "no_consent" (you didn’t allow Nya to see them; Allow transactions on the Accounts tab brings them in). An empty list or a zero total is never no spending on its own: the notes say what these leave out.',
+  ],
 ];
 const NOTES: FieldDoc = ['notes', 'Anything that couldn’t be read or is missing, in words for a person: an institution whose accounts couldn’t be read, say. Empty when all is well.'];
+/** For the answers built on transactions, which also say what connections
+ *  without them leave out (lib/no-transactions.ts). */
+const TXN_NOTES: FieldDoc = [
+  'notes',
+  'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out. Empty when there is nothing to say.',
+];
 const LEFT_OUT: readonly FieldDoc[] = [
   ['left_out', 'Transactions left out of these totals for being in another currency, by currency, most first. Nothing is converted.'],
   ['left_out[].currency', 'The currency.'],
@@ -26,7 +36,10 @@ const LEFT_OUT: readonly FieldDoc[] = [
   ['left_out_text', 'The same in words, or null when nothing was left out.'],
 ];
 
-const EXAMPLE_SOURCES = [{ institution: 'Chase', synced_at: '2026-10-09T08:02:11.000Z', complete: true }];
+const EXAMPLE_SOURCES = [
+  { institution: 'Chase', synced_at: '2026-10-09T08:02:11.000Z', complete: true, no_transactions: null },
+  { institution: 'Fidelity', synced_at: null, complete: true, no_transactions: 'investment_accounts' },
+];
 
 export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
   me: {
@@ -242,7 +255,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['has_more', 'There are more after this page.'],
       ['next_cursor', 'Pass it as cursor, with the same other parameters, for the next page; null on the last.'],
       ...SOURCES,
-      NOTES,
+      TXN_NOTES,
     ],
   },
 
@@ -254,6 +267,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         { name: 'food and drink', transactions: 212, last_date: '2026-10-08', budgeted: true, transfer: false },
         { name: 'transfer out', transactions: 24, last_date: '2026-10-01', budgeted: false, transfer: true },
       ],
+      sources: EXAMPLE_SOURCES,
       notes: [],
     },
     fields: [
@@ -264,7 +278,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['categories[].last_date', 'The newest one’s day, or null.'],
       ['categories[].budgeted', 'It has a monthly budget.'],
       ['categories[].transfer', 'Its transactions move money (transfers, loan payments): never counted as spending or income.'],
-      NOTES,
+      ...SOURCES,
+      TXN_NOTES,
     ],
   },
 
@@ -301,7 +316,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['excluded', 'This month’s transactions you left out of budgets and reports.'],
       ['exclusion_unknown', 'This month’s transactions whose exclusion couldn’t be read: counted, so a total may include one you excluded.'],
       ...SOURCES,
-      NOTES,
+      TXN_NOTES,
     ],
   },
 
@@ -346,7 +361,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['exclusion_unknown', 'Those whose exclusion couldn’t be read: counted, so a total may include one you excluded.'],
       ...LEFT_OUT,
       ...SOURCES,
-      NOTES,
+      TXN_NOTES,
     ],
   },
 
@@ -376,7 +391,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['monthly_total.left_out[].count', 'How many bills.'],
       ['due_soon_days', 'How many days ahead due_soon looks.'],
       ...SOURCES,
-      NOTES,
+      TXN_NOTES,
     ],
   },
 

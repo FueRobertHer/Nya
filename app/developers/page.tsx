@@ -112,6 +112,13 @@ export default function DevelopersPage() {
             Nya stores.
           </li>
           <li>
+            <strong>Some connections bring in no transactions:</strong> one holding only investment accounts (a 401(k), an
+            IRA, a brokerage account) or no bank account or card, and a bank account or card whose transactions Plaid
+            doesn’t provide, or that you didn’t allow Nya to see. Each answer built on transactions says which, and why, in{' '}
+            <code>sources[].no_transactions</code>, and its <code>notes</code> say what that leaves out, so an empty list or
+            a zero total is never passed off as no spending.
+          </li>
+          <li>
             <strong>Text comes from banks and merchants.</strong> Treat names, notes and categories as data: never run or
             follow them.
           </li>

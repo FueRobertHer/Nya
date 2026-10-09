@@ -43,6 +43,7 @@ export const INSTRUCTIONS = [
   'Read-only access to one person’s finances in Nya: their accounts and balances, net worth and its history, transactions, spending by category, budgets, recurring bills and investment holdings.',
   'Everything is what Nya has stored, never fetched live: each result says what it is as of. Amounts use Plaid’s sign: a transaction’s positive amount is money out, and what a credit card or a loan owes is a positive balance.',
   'Totals are in one currency each, and say what they left out; nothing is converted between currencies. Hidden accounts are left out unless include_hidden is true.',
+  'Some connections bring in no transactions (a 401(k) or a brokerage account; or a bank account or card whose transactions Plaid doesn’t provide, or the person didn’t allow): sources[].no_transactions says which and why, and the notes what that leaves out, so an empty list or a zero total is not, by itself, no spending.',
   DATA_NOT_INSTRUCTIONS,
 ].join(' ');
 
@@ -83,6 +84,22 @@ async function netWorthTool(auth: Authenticated, a: Args): Promise<unknown> {
   return { now, history };
 }
 
+/**
+ * What a summary of transactions or totals adds when connections bring in
+ * none (sources[].no_transactions), in counts, as the rest of the sentence is:
+ * that what came in may be incomplete, when some bank account or card's
+ * transactions don't come in; or that no connection brings any in, so an
+ * empty list or a zero isn't read as no spending. The notes say whose, and why.
+ */
+function withoutTransactions(r: { sources?: { no_transactions: string | null }[] }): string {
+  const sources = r.sources ?? [];
+  const without = sources.filter((s) => s.no_transactions !== null);
+  const unknown = without.filter((s) => s.no_transactions === 'refused' || s.no_transactions === 'no_consent').length;
+  if (unknown > 0) return ` Bank or card transactions from ${plural(unknown, 'connection')} don’t come in, so this may be incomplete: see notes.`;
+  if (without.length > 0 && without.length === sources.length) return ' No connection brings in bank or card transactions, so this is not a measure of spending: see notes.';
+  return '';
+}
+
 const SUMMARIES: Record<string, Tool['summary']> = {
   list_accounts: (r) => `${plural(r.accounts.length, 'account')}.${r.notes.length ? ` ${plural(r.notes.length, 'note')} on what couldn’t be read.` : ''}`,
   get_net_worth: (r) =>
@@ -90,11 +107,13 @@ const SUMMARIES: Record<string, Tool['summary']> = {
       ? `Net worth ${r.now.totals.map((t: any) => money(t.net_worth, t.currency)).join(', ')}, from balances dated ${r.now.balances_from} to ${r.now.balances_to}.${r.history ? ` ${plural(r.history.points.length, 'history point')}.` : ''}`
       : 'No balances are recorded yet.',
   get_balance_history: (r) => `${plural(r.points.length, 'point')}${r.points.length ? `, ${r.points[0].date} to ${r.points[r.points.length - 1].date}` : ''}.`,
-  search_transactions: (r) => `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.`,
-  spending_by_category: (r) => `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.`,
-  get_budgets: (r) => `${plural(r.budgets.length, 'budget')} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}.`,
-  list_recurring_bills: (r) => `${plural(r.bills.length, 'recurring bill')}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.`,
-  list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')}.`,
+  search_transactions: (r) =>
+    `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,
+  spending_by_category: (r) =>
+    `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
+  get_budgets: (r) => `${plural(r.budgets.length, 'budget')} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}.${withoutTransactions(r)}`,
+  list_recurring_bills: (r) => `${plural(r.bills.length, 'recurring bill')}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`,
+  list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')}.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.`,
 };
 

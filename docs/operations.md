@@ -1,6 +1,6 @@
 # Operations
 
-Runbooks for keeping the data safe: backups and restores, encryption keys, and containers. For setup see [deployment.md](deployment.md); for how the data is stored see [architecture.md](architecture.md).
+Runbooks for keeping the data safe: backups and restores, encryption keys, containers, and what a rollback must not undo. For setup see [deployment.md](deployment.md); for how the data is stored see [architecture.md](architecture.md).
 
 Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 404 unless `OPS_ENABLED=1`, accepts POST only, and compares `OPS_SECRET` in constant time. Set `OPS_ENABLED=1` only while you run an operation, then remove it and redeploy, so a leaked `OPS_SECRET` is useless on its own.
 
@@ -10,6 +10,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Plaid secrets in older logs](#plaid-secrets-in-older-logs)
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
+- [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 
 ## Backups
 
@@ -48,7 +49,7 @@ The copies live in Vercel, like the database. They protect against losing or dam
 
 Balances, transactions, budgets, goals and access tokens stay **encrypted** in the archive and cannot be read without `PLAID_ENCRYPTION_KEY` (and, once data keys are in use, `MASTER_KEY`; the data keys themselves are in the archive, encrypted with it). Keep a copy of those keys somewhere separate from both the archive and Vercel (a password manager, or on paper). Lose them and the backup cannot be read.
 
-Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks, the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
+Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
@@ -231,7 +232,7 @@ An export from before the move is refused by `bun run restore` from now on; rest
 
 **Don't run the re-encryption pass** (`/api/ops/reencrypt`) from step 4 until the old keys are deleted: it rewrites both copies differently, and every key would read as a conflict.
 
-**Rolling back** is redeploying the previous release, which reads only the old keys: anything the new release wrote is not there. Rolling forward again, the move carries across what changed only on one side; keys both releases wrote are conflicts to merge by hand. The shorter the time rolled back, the fewer. If you roll back with Vercel's Instant Rollback, later merges are not deployed to production until you undo it in the dashboard.
+**Rolling back** is redeploying the previous release, which reads only the old keys: anything the new release wrote is not there. Rolling forward again, the move carries across what changed only on one side; keys both releases wrote are conflicts to merge by hand. The shorter the time rolled back, the fewer. If you roll back with Vercel's Instant Rollback, later merges are not deployed to production until you undo it in the dashboard. A release from before containers also predates the brokerage option's check, so leave `PLAID_BROKERAGE_LINK` unset until the move is done and rolling back is no longer a plan (see [below](#rolling-back-once-the-brokerage-option-is-on)).
 
 **Preview** merges `main` automatically (`sync-preview.yml`), so it gets this release as soon as it merges. Its data is sandbox data: before merging, create its container (as above, in the preview environment), then wipe its old keys and re-link sandbox institutions after the merge, rather than moving them.
 
@@ -242,3 +243,9 @@ REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production 
 ```
 
 It is refused unless a report shows nothing left to copy, refresh or delete and no conflicts (the proof nothing written to the old keys is left behind), and afterwards every run is refused, so a run can never take the missing old keys for deletions to carry into the container.
+
+## Rolling back once the brokerage option is on
+
+Once `PLAID_BROKERAGE_LINK=1` is set and anyone has connected with **Connect a brokerage or retirement account** ([deployment.md](deployment.md#brokerage-and-retirement-connections)), **never roll back to a release from before the one that added it.** Those releases ask Plaid for every connection's transactions on every load, and on a connection made with the brokerage option that first call starts Plaid's Transactions product, billed monthly until the connection is removed, wherever the institution offers it. It can't be taken off a connection again. Turning the option off doesn't help: it only stops new connections. Rolling back to that release or any later one is safe.
+
+If you have to go back further, first find those connections. In the Upstash console, each container's `<prefix>:c:<id>:plaid:items` hash holds one record per connection, and the ones made with the brokerage option carry `"transactions_billed":false` (`null` means the lookup when it was linked failed, so it could be either). Disconnect each of them on the Accounts tab (**Manage**, then **Disconnect** on its card) before the rollback, and connect them again once you are back on a release with the check, linking each new account to the one it replaces ([features.md](features.md#removing-an-institution-and-adding-it-back)) so its history carries on. Or keep them, and accept the fee on each.

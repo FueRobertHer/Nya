@@ -28,7 +28,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, OTHER, DAY, daysAgo, SYNCED_AT, seedPerson, seedOther } = await import('./api-fixture');
+const { ctx, OTHER, DAY, daysAgo, SYNCED_AT, seedPerson, seedOther, connectWithoutTransactions } = await import('./api-fixture');
 const { createToken, revokeToken, REQUESTS_PER_MINUTE } = await import('@/lib/api-tokens');
 const { OPERATIONS } = await import('@/lib/api-ops');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -280,9 +280,9 @@ describe('transactions', () => {
     const dates = body.transactions.map((t: any) => t.date);
     expect(dates).toEqual([...dates].sort().reverse());
     expect(body.sources).toEqual([
-      { institution: 'Chase', synced_at: SYNCED_AT, complete: true },
-      { institution: 'Broker', synced_at: null, complete: true },
-      { institution: 'NewBank', synced_at: null, complete: false },
+      { institution: 'Chase', synced_at: SYNCED_AT, complete: true, no_transactions: null },
+      { institution: 'Broker', synced_at: null, complete: true, no_transactions: null },
+      { institution: 'NewBank', synced_at: null, complete: false, no_transactions: null },
     ]);
     expect(body.notes).toEqual(['NewBank: no transactions stored yet; open the app to load them']);
     expect(body).toMatchObject({ has_more: false, next_cursor: null, from: daysAgo(30), to: daysAgo(0) });
@@ -363,6 +363,63 @@ describe('categories, budgets and spending', () => {
     // Totalled in another currency on request.
     const eur = (await call('spending', `from=${daysAgo(9)}&currency=EUR`)).body;
     expect([eur.currency, eur.money_out]).toEqual(['EUR', 50]);
+  });
+});
+
+describe('connections that bring in no transactions (lib/item-products.ts)', () => {
+  const INVESTMENTS = { item_id: 'item_fidelity', name: 'Fidelity', accounts: [{ account_id: 'acc_401k', type: 'investment' }] };
+  const REFUSED = { item_id: 'item_cu', name: 'CreditUnion', accounts: [{ account_id: 'acc_cu', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } };
+  const UNALLOWED = { item_id: 'item_ally', name: 'Ally', accounts: [{ account_id: 'acc_ally', type: 'depository' }], refused: { code: 'ADDITIONAL_CONSENT_REQUIRED' } };
+  const sourceOf = (body: any, name: string) => body.sources.find((s: any) => s.institution === name);
+
+  test('each is named in sources, with why, from what is stored, and Plaid is never asked', async () => {
+    for (const c of [INVESTMENTS, REFUSED, UNALLOWED]) await connectWithoutTransactions(fake, c);
+    for (const name of ['transactions', 'categories', 'budgets', 'spending', 'recurring']) {
+      const { body } = await call(name);
+      expect([name, sourceOf(body, 'Fidelity')]).toEqual([name, { institution: 'Fidelity', synced_at: null, complete: true, no_transactions: 'investment_accounts' }]);
+      expect([name, sourceOf(body, 'CreditUnion').no_transactions, sourceOf(body, 'Ally').no_transactions]).toEqual([name, 'refused', 'no_consent']);
+      // One that brings its transactions in says so too.
+      expect([name, sourceOf(body, 'Chase').no_transactions]).toEqual([name, null]);
+    }
+  });
+
+  test('a bank account or card whose transactions don’t come in is named as missing from a list, and as not counted in a total', async () => {
+    for (const c of [INVESTMENTS, REFUSED, UNALLOWED]) await connectWithoutTransactions(fake, c);
+    const list = (await call('transactions')).body.notes;
+    expect(list).toContain("Plaid doesn't provide transactions for the bank or card accounts at CreditUnion, so they can't be shown.");
+    expect(list).toContain(
+      "You didn't allow Nya to see transactions from the bank or card accounts at Ally, so they can't be shown. To bring them in, choose Allow transactions on the Accounts tab."
+    );
+    for (const name of ['spending', 'budgets', 'recurring']) {
+      const notes: string[] = (await call(name)).body.notes;
+      expect([name, notes.includes("Plaid doesn't provide transactions for the bank or card accounts at CreditUnion, so they aren't counted.")]).toEqual([name, true]);
+      expect([name, notes.some((n) => n.startsWith("You didn't allow Nya to see transactions from the bank or card accounts at Ally, so they aren't counted."))]).toEqual([name, true]);
+    }
+    // Investment accounts beside a bank that brings transactions in leave nothing out: nothing is said.
+    expect(list.join(' ')).not.toContain('Fidelity');
+  });
+
+  test('a refusal stands as long as a sync would let it: once it lapses, the connection is only not loaded yet', async () => {
+    await connectWithoutTransactions(fake, { ...REFUSED, refused: { code: 'PRODUCTS_NOT_SUPPORTED', at: new Date(Date.now() - 31 * DAY).toISOString() } });
+    const { body } = await call('spending');
+    expect(sourceOf(body, 'CreditUnion')).toEqual({ institution: 'CreditUnion', synced_at: null, complete: false, no_transactions: null });
+    expect(body.notes).toContain('CreditUnion: no transactions stored yet; open the app to load them');
+  });
+
+  test('when no connection brings any in, and nothing was entered by hand, it says so instead of a zero', async () => {
+    fake.reset();
+    await registerTestContainer(fake);
+    token = (await createToken(ctx, 'Tests')).token;
+    await connectWithoutTransactions(fake, INVESTMENTS);
+    const { body } = await call('spending');
+    expect(body.money_out).toBe(0);
+    expect(body.notes).toEqual(['Your connected accounts are investment accounts, so no bank or card transactions come in. To see spending, connect a bank or card.']);
+    expect((await call('transactions')).body.notes).toEqual(body.notes);
+    // A bank account or card that doesn't bring them in is named, with what would.
+    await connectWithoutTransactions(fake, UNALLOWED);
+    expect((await call('budgets')).body.notes).toEqual([
+      "You didn't allow Nya to see transactions from the bank or card accounts at Ally, so no bank or card transactions come in. To see spending, choose Allow transactions on the Accounts tab.",
+    ]);
   });
 });
 

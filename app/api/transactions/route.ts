@@ -41,7 +41,18 @@ export async function GET(req: Request) {
     }
 
     const { transactions, notes, incomplete } = await finishActivity(ctx, plaid, hidden);
-    return NextResponse.json({ transactions, notes, incomplete, as_of: plaid.as_of, from_cache: fromCache });
+    // The connections without transactions are Plaid's part too: a manual
+    // account is not a connection. The views that count spending weigh them
+    // against these rows, manual ones included (lib/no-transactions.ts).
+    return NextResponse.json({
+      transactions,
+      notes,
+      incomplete,
+      without_transactions: plaid.without_transactions ?? [],
+      ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
+      as_of: plaid.as_of,
+      from_cache: fromCache,
+    });
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

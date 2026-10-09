@@ -175,6 +175,27 @@ export async function seedPerson(fake: FakeRedis) {
   ]);
 }
 
+/**
+ * A connection that brings in no transactions (lib/item-products.ts): linked
+ * without Plaid billing Transactions, with the accounts a load remembered,
+ * and, for a bank account or card Plaid refused a first sync for, the refusal
+ * that sync stored (`refused`: Plaid's code, and when, by default now).
+ */
+export async function connectWithoutTransactions(
+  fake: FakeRedis,
+  opts: { item_id: string; name: string; accounts: { account_id: string; type: string }[]; refused?: { code: string; at?: string } }
+) {
+  await saveItem(ctx, { item_id: opts.item_id, institution_name: opts.name, encrypted_access_token: await encrypt(`access-sandbox-${opts.item_id}`), transactions_billed: false });
+  await fake.hset(ctxKey('accounts:meta'), { [opts.item_id]: await remembered(opts.accounts.map((a) => ({ ...a, name: a.account_id }))) });
+  if (opts.refused) {
+    const cash = opts.accounts.filter((a) => a.type === 'depository' || a.type === 'credit').map((a) => a.account_id).sort();
+    await fake.set(
+      ctxKey(`txns:${opts.item_id}`),
+      await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at: opts.refused.at ?? new Date().toISOString(), code: opts.refused.code, accounts: cash } })
+    );
+  }
+}
+
 /** Someone else's container: none of it may ever show for the first one's token. */
 export async function seedOther(fake: FakeRedis) {
   await fake.hset(testKey('containers'), { [OTHER.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-02-01T00:00:00.000Z' }) });

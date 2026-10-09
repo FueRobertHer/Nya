@@ -19,6 +19,7 @@ import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
 import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
+import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
@@ -218,6 +219,7 @@ export default function MonthBreakdown({
   actionError = null,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -233,6 +235,11 @@ export default function MonthBreakdown({
   onToggleExcluded?: (t: Txn, excluded: boolean) => void;
   /** Why the last change to a transaction didn't save. */
   actionError?: string | null;
+  /** Connections that bring in no transactions (lib/no-transactions.ts): an
+   *  empty list says why rather than "no transactions", rows entered by hand
+   *  name them under the month instead, and a bank account or card whose
+   *  transactions don't come in is named under every month. */
+  withoutTransactions?: NoTransactionsView;
   /** Institutions whose rows this load lacks, or lacks the oldest of
    *  (/api/transactions), and connections whose transactions have stopped
    *  (their health): the month's totals say so (lib/month-coverage.ts). */
@@ -413,11 +420,23 @@ export default function MonthBreakdown({
   );
 
   if (!txns || (txns.length === 0 && notes.length === 0)) {
+    // Connections that can't bring any in are not an empty year.
+    const none = txns ? noSpending(withoutTransactions, txns.length) : null;
+    const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
     return (
       <>
         {addCard}
         <div className="card">
-          <p className="empty-note">No transactions in the last 12 months.</p>
+          <p className="empty-note">
+            {none
+              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? ", or add a transaction by hand" : ""}.`
+              : "No transactions in the last 12 months."}
+          </p>
+          {missing.map((n) => (
+            <div className="stale-note" key={n}>
+              {n}
+            </div>
+          ))}
         </div>
       </>
     );
@@ -427,8 +446,11 @@ export default function MonthBreakdown({
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
   const gapNotes = selected
-    ? monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10))
+    ? [...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
     : [];
+  // When only rows entered by hand are here, the connections that bring in
+  // none are named beside the totals: where they come from, not a warning.
+  const namedWithout = withoutNote(withoutTransactions, txns.length);
 
   return (
     <>
@@ -504,6 +526,7 @@ export default function MonthBreakdown({
           {unknownCount > 0 &&
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
           {leftOut && ` ${leftOut}`}
+          {namedWithout && ` ${namedWithout}`}
         </div>
         {gapNotes.map((n) => (
           <div className="stale-note" key={n}>

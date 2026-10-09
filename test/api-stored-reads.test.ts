@@ -160,6 +160,41 @@ describe('an Item’s rows as stored', () => {
     expect(await storedItemTransactions(ctx, ITEM)).toMatchObject({ coverage: 'complete', synced_at: null });
   });
 
+  test('a connection without Transactions is answered as a sync would answer it, from what is stored', async () => {
+    const unbilled = { ...ITEM, transactions_billed: false };
+    const remember = async (accounts: { account_id: string; type: string }[]) =>
+      fake.hset(ctxKey('accounts:meta'), { item_a: await encrypt(JSON.stringify(accounts.map((a) => ({ ...a, name: a.account_id })))) });
+    const refusal = async (code: string, accounts: string[], at = new Date().toISOString()) =>
+      fake.set(ctxKey('txns:item_a'), await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at, code, accounts } }));
+    type Read = Awaited<ReturnType<typeof storedItemTransactions>>;
+    const none = (noTransactions: Read['noTransactions']): Read => ({ txns: [], note: null, coverage: 'complete', synced_at: null, noTransactions });
+    const notYet: Read = { txns: [], note: 'Test Bank: no transactions stored yet; open the app to load them', coverage: 'missing', synced_at: null };
+
+    // Not known: no accounts remembered yet. The next sync decides.
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(notYet);
+    await remember([{ account_id: 'acc_401k', type: 'investment' }]);
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(none('investment_accounts'));
+    await remember([{ account_id: 'acc_loan', type: 'loan' }]);
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(none('no_cash_accounts'));
+    // A bank account: only a refusal that stands says it has none.
+    await remember([{ account_id: 'acc_chk', type: 'depository' }]);
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(notYet);
+    await refusal('PRODUCTS_NOT_SUPPORTED', ['acc_chk']);
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(none('refused'));
+    await refusal('ADDITIONAL_CONSENT_REQUIRED', ['acc_chk']);
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(none('no_consent'));
+    // A card added since the refusal, or a refusal past its time, is asked about again.
+    await remember([{ account_id: 'acc_chk', type: 'depository' }, { account_id: 'acc_card', type: 'credit' }]);
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(notYet);
+    await refusal('PRODUCTS_NOT_SUPPORTED', ['acc_card', 'acc_chk'], new Date(Date.now() - 31 * DAY).toISOString());
+    expect(await storedItemTransactions(ctx, unbilled)).toEqual(notYet);
+    // An Item Plaid bills Transactions on is synced whatever it holds.
+    await remember([{ account_id: 'acc_401k', type: 'investment' }]);
+    await fake.del(ctxKey('txns:item_a'));
+    expect(await storedItemTransactions(ctx, ITEM)).toEqual(notYet);
+    expect(syncPages).toEqual([]);
+  });
+
   test('a sync that saves stamps when, and the stamp survives the next', async () => {
     syncPages = [{ added: [], modified: [], removed: [], accounts: [], next_cursor: 'c2', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' }];
     await fake.set(ctxKey('txns:item_a'), await stored({ t1: row('t1', 'acct_1', 1, 5) }));

@@ -26,12 +26,19 @@ export type Incomplete = { institution_name: string; coverage: 'missing' | 'impo
 export type Stopped = { institution_name: string; last_ok_at: string | null };
 
 /** The connections whose transactions have stopped arriving, from the
- *  institutions the dashboard holds (manual ones have no connection). */
+ *  institutions the dashboard holds (manual ones have no connection). Not
+ *  those in `quiet`, by id: connections that hold no bank account or card
+ *  (lib/no-transactions.ts quietItemIds), which bring no transactions in to
+ *  stop, so a lapsed 401(k) leaves no month short. By id, not name: two
+ *  connections can share a name, and the other may well bring some in. */
 export function stoppedConnections(
-  institutions: { institution_name: string; manual?: boolean; health?: { state: string; last_ok_at: string | null } }[]
+  institutions: { item_id?: string; institution_name: string; manual?: boolean; health?: { state: string; last_ok_at: string | null } }[],
+  quiet: ReadonlySet<string> = new Set()
 ): Stopped[] {
   return institutions.flatMap((i) =>
-    !i.manual && i.health && STOPPED.has(i.health.state) ? [{ institution_name: i.institution_name, last_ok_at: i.health.last_ok_at }] : []
+    !i.manual && i.health && STOPPED.has(i.health.state) && !(i.item_id && quiet.has(i.item_id))
+      ? [{ institution_name: i.institution_name, last_ok_at: i.health.last_ok_at }]
+      : []
   );
 }
 

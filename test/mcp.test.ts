@@ -27,7 +27,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, daysAgo, seedPerson, txn, CHASE_TXNS } = await import('./api-fixture');
+const { ctx, daysAgo, seedPerson, txn, CHASE_TXNS, connectWithoutTransactions } = await import('./api-fixture');
 const { createToken, REQUESTS_PER_MINUTE } = await import('@/lib/api-tokens');
 const { TOOLS, PROTOCOL_VERSIONS, LATEST_PROTOCOL, SERVER_INFO, RPC } = await import('@/lib/mcp');
 const { operation } = await import('@/lib/api-ops');
@@ -226,6 +226,26 @@ describe('tools', () => {
     expect((await call('list_recurring_bills')).structuredContent.bills.map((b: any) => b.name)).toEqual(['Netflix']);
     expect((await call('get_holdings')).structuredContent.accounts[0].positions[0].ticker).toBe('VTI');
     expect((await call('list_categories')).structuredContent.categories.some((c: any) => c.name === 'housing')).toBe(true);
+  });
+
+  test('a summary says when connections bring in no transactions, in counts, never as no spending', async () => {
+    await connectWithoutTransactions(fake, { item_id: 'item_cu', name: 'CreditUnion', accounts: [{ account_id: 'acc_cu', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } });
+    for (const name of ['search_transactions', 'spending_by_category', 'get_budgets', 'list_recurring_bills', 'list_categories']) {
+      const result = await call(name);
+      expect([name, result.content[0].text]).toEqual([name, expect.stringContaining('Bank or card transactions from 1 connection don’t come in, so this may be incomplete: see notes.')]);
+      // The name is in the JSON, never in the sentence.
+      expect([name, result.content[0].text.includes('CreditUnion'), JSON.stringify(result.structuredContent).includes('CreditUnion')]).toEqual([name, false, true]);
+    }
+    // Only investment accounts, and nothing entered by hand: a zero is not spending.
+    fake.reset();
+    await registerTestContainer(fake);
+    token = (await createToken(ctx, 'Claude')).token;
+    await connectWithoutTransactions(fake, { item_id: 'item_fidelity', name: 'Fidelity', accounts: [{ account_id: 'acc_401k', type: 'investment' }] });
+    const spending = await call('spending_by_category');
+    expect(spending.content[0].text).toEndWith('over 0 transactions. No connection brings in bank or card transactions, so this is not a measure of spending: see notes.');
+    expect(spending.structuredContent.notes).toEqual(['Your connected accounts are investment accounts, so no bank or card transactions come in. To see spending, connect a bank or card.']);
+    // Without such connections, nothing is added.
+    expect((await call('list_accounts')).content[0].text).not.toContain('bring');
   });
 
   test('pages: 25 at a time unless asked, with a cursor back in', async () => {

@@ -13,6 +13,7 @@ import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
+import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 
 /**
  * A connection Plaid says will end on a date (lib/connection-state.ts,
@@ -111,14 +112,19 @@ export default function Insights({
   accounts,
   idleCash = NO_IDLE_CASH,
   reconnectSoon = NO_RECONNECTS,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
 }: {
   txns: Txn[] | null;
   budgets: Record<string, number>;
   accounts: InsightAccount[];
   idleCash?: IdleCashAccount[];
   reconnectSoon?: ReconnectSoon[];
+  /** Connections that bring in no transactions (lib/no-transactions.ts): a
+   *  bank account or card whose transactions don't come in leaves the budget
+   *  alerts and the pace short, as on the Activity and Budgets tabs. */
+  withoutTransactions?: NoTransactionsView;
 }) {
-  const { insights, leftOut } = useMemo(() => {
+  const { insights, leftOut, missing } = useMemo(() => {
     const out: Insight[] = [];
     const now = new Date();
     const thisMonthKey = localMonth(now);
@@ -319,8 +325,12 @@ export default function Insights({
     const shown = out.slice(0, MAX_INSIGHTS);
     // Said only beside a figure it is missing from.
     const fromSpending = shown.some((i) => i.key.startsWith('budget-') || i.key === 'pace' || i.key === 'biggest');
-    return { insights: shown, leftOut: fromSpending ? leftOut : null };
-  }, [txns, budgets, accounts, idleCash, reconnectSoon]);
+    return {
+      insights: shown,
+      leftOut: fromSpending ? leftOut : null,
+      missing: fromSpending ? missingMonthNotes(withoutTransactions) : [],
+    };
+  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions]);
 
   if (insights.length === 0) return null;
 
@@ -337,6 +347,11 @@ export default function Insights({
         ))}
       </ul>
       {leftOut && <div className="chart-note">{leftOut}</div>}
+      {missing.map((n) => (
+        <div className="stale-note" key={n}>
+          {n}
+        </div>
+      ))}
     </div>
   );
 }

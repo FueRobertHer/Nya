@@ -17,12 +17,19 @@
 //     excluding a transaction never drops the cache or waits on Plaid, a row
 //     added while a load was running can't be cached away, and a record that
 //     can't be read is only marked on its row, never a reason to stop caching.
+//
+// The banks' part also says which connections bring in no transactions, and
+// why (without_transactions, lib/item-products.ts), with how many connections
+// there are, so the app's views and the API say the same of them
+// (lib/no-transactions.ts).
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
 import { getOverrides, getCarried, carriedCategories } from './overrides';
 import { getRenames } from './renames';
 import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type Txn, type TxnCoverage } from './transactions';
+import type { NoTransactionsReason } from './item-products';
+import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
@@ -39,6 +46,14 @@ export type PlaidPayload = {
   // says so under every month it totals (#51). Empty on any payload that is
   // cached, since only a payload without notes is.
   incomplete?: { institution_name: string; coverage: 'missing' | 'importing' }[];
+  // The connections that bring in no transactions, and why (lib/item-products.ts):
+  // investment accounts only, no bank account or card, or a bank account Plaid
+  // doesn't provide transactions for. Not problems, so outside `notes`, and the
+  // payload stays cacheable. With `connections` (how many there are), the views
+  // that count spending say what is true rather than "no transactions" or a
+  // figure that looks complete (lib/no-transactions.ts).
+  without_transactions?: WithoutTransactions[];
+  connections?: number;
   as_of: string;
 };
 
@@ -48,8 +63,15 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
 }
 
 /** One institution's part in an assembly: how much of it is here, and, read
- *  from storage, as of when (null when not known, or synced just now). */
-export type BankSource = { item_id: string; institution_name: string; coverage: TxnCoverage; synced_at: string | null };
+ *  from storage, as of when (null when not known, or synced just now), and
+ *  why it brings in no transactions, when it doesn't (lib/item-products.ts). */
+export type BankSource = {
+  item_id: string;
+  institution_name: string;
+  coverage: TxnCoverage;
+  synced_at: string | null;
+  no_transactions: NoTransactionsReason | null;
+};
 
 /**
  * Categories and exclusions carried across a re-link (lib/overrides.ts,
@@ -139,8 +161,14 @@ export async function assembleBankRows(
   const incomplete = results.flatMap((r, i) =>
     r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
   );
+  // Not problems, so not notes, and they don't keep the answer from the cache.
+  // By id as well as name: the dashboard matches them to connection health by
+  // id, since two connections can share a name.
+  const without_transactions = results.flatMap((r, i) =>
+    r.noTransactions ? [{ item_id: items[i].item_id, institution_name: items[i].institution_name, reason: r.noTransactions }] : []
+  );
   return {
-    payload: { plaid_only: true, transactions, notes, incomplete, as_of: at },
+    payload: { plaid_only: true, transactions, notes, incomplete, without_transactions, connections: items.length, as_of: at },
     hidden: hiddenIds,
     // Same rule as net-worth: only clean payloads, so syncing or reauth
     // institutions get re-checked on the next load instead of hiding for the
@@ -151,6 +179,7 @@ export async function assembleBankRows(
       institution_name: item.institution_name,
       coverage: results[i].coverage,
       synced_at: results[i].synced_at,
+      no_transactions: results[i].noTransactions ?? null,
     })),
   };
 }

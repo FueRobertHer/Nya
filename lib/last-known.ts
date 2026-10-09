@@ -242,6 +242,30 @@ export async function rememberedIdsForItem(ctx: Ctx, item_id: string): Promise<s
 }
 
 /**
+ * The ids and types of one Item's remembered accounts, or null when none are
+ * remembered or the record can't be read. For the transactions sync, deciding
+ * whether a first call is worth making on an Item Plaid doesn't bill
+ * Transactions on, and whether a refusal is about every bank account and card
+ * it has (lib/item-products.ts). Lenient on purpose: nothing is written or
+ * deleted on the answer, and on a null the sync asks Plaid for a fresh account
+ * list instead (/accounts/get, which Plaid doesn't bill); only when that fails
+ * too does it say it could not check, leaving the load uncached.
+ */
+export async function rememberedKindsForItem(ctx: Ctx, item_id: string): Promise<{ account_id?: string; type: string }[] | null> {
+  try {
+    const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), item_id);
+    if (!blob) return null;
+    const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+    if (!Array.isArray(parsed)) return null;
+    return parsed.flatMap((a) =>
+      a && typeof a.type === 'string' ? [{ ...(typeof a.account_id === 'string' ? { account_id: a.account_id } : {}), type: a.type }] : []
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every Item's remembered account ids, in ONE read: the batch form of
  * rememberedIdsForItem (lib/vanished.ts). Upstash is HTTP, so per-Item reads
  * cost a round trip each on the uncached dashboard path.

@@ -24,6 +24,13 @@
 // transfers, cash withdrawals and loan payments left out (a bank's fees count),
 // and what was left out named.
 //
+// CONNECTIONS WITHOUT TRANSACTIONS (lib/item-products.ts: investment accounts
+// only, no bank account or card, or a bank account or card whose transactions
+// Plaid doesn't provide or the person didn't allow) are named in each answer
+// built on transactions (sources[].no_transactions), and its notes say what
+// they leave out, in the words the app's views use (lib/no-transactions.ts),
+// so an empty list or a zero is never passed off as no spending.
+//
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
@@ -48,6 +55,8 @@ import { readHealthForDisplay } from './connection-health';
 import { noticesStore } from './connection-records';
 import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
+import type { NoTransactionsReason } from './item-products';
+import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
 import { getBudgets } from './budgets';
 import { detectRecurring, upcomingBills, type RecurringBill } from './recurring';
 import { currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
@@ -474,21 +483,47 @@ function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
   };
 }
 
-/** Where an institution's transactions come from, and as of when. */
-export type ApiSource = { institution: string; synced_at: string | null; complete: boolean };
+/** Where an institution's transactions come from, and as of when; or why it
+ *  brings in none (lib/item-products.ts). */
+export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string> };
+type ActivityRead = { rows: Txn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView };
 
-/** The Activity tab's rows, as stored (lib/activity.ts), never syncing. */
+/** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
+ *  the connections that bring in none, as the app's views weigh them
+ *  (lib/no-transactions.ts). */
 async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
   const { transactions, notes } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     notes,
-    sources: bank.sources.map((s: BankSource) => ({ institution: s.institution_name, synced_at: s.synced_at, complete: s.coverage === 'complete' })),
+    sources: bank.sources.map((s: BankSource) => ({
+      institution: s.institution_name,
+      synced_at: s.synced_at,
+      complete: s.coverage === 'complete',
+      no_transactions: s.no_transactions,
+    })),
     hidden: bank.hidden,
+    view: noTransactionsView(bank.payload),
   };
+}
+
+/**
+ * What an answer built on transactions says of the connections that bring in
+ * none, in the words the app's views use (lib/no-transactions.ts), so an empty
+ * list or a zero is never passed off as no spending: when none brings any in
+ * and no row came from anywhere else, what is true of them and what would
+ * bring some in; when only rows entered by hand came in, the connections that
+ * hold no bank account or card; and each bank account or card whose
+ * transactions don't come in (Plaid doesn't provide them, or the person
+ * didn't allow them), as missing from a `list` or not counted in `totals`.
+ */
+function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
+  const none = noSpending(view, rows);
+  if (none) return [`${none.lead}, so no bank or card transactions come in. To see spending, ${none.remedy}.`];
+  const named = withoutNote(view, rows);
+  return [...(named ? [named] : []), ...(kind === 'list' ? missingEmptyNotes(view) : missingFigureNotes(view, 'uncounted'))];
 }
 
 /** Where a page ends: the order is the newest day first, then the latest
@@ -555,7 +590,7 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
     transactions: page,
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,
-    notes: activity.notes,
+    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
   };
 }
 
@@ -574,7 +609,7 @@ export type ApiCategory = {
 };
 
 /** The categories in use: on transactions in the window, or with a budget. */
-export async function readCategories(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; categories: ApiCategory[]; notes: string[] }> {
+export async function readCategories(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; categories: ApiCategory[]; sources: ApiSource[]; notes: string[] }> {
   const [activity, budgets] = await Promise.all([
     readActivity(ctx, !!opts.includeHidden),
     getBudgets(ctx).then(
@@ -591,12 +626,17 @@ export async function readCategories(ctx: Ctx, opts: { includeHidden?: boolean }
   }
   const budgeted = new Set(budgets.ok ? Object.keys(budgets.b) : []);
   for (const name of budgeted) if (!seen.has(name)) seen.set(name, { transactions: 0, last_date: null });
-  const notes = [...activity.notes, ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said'])];
+  const notes = [
+    ...activity.notes,
+    ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said']),
+    ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list'),
+  ];
   return {
     from: firstDay(),
     categories: [...seen]
       .map(([name, c]) => ({ name, ...c, budgeted: budgeted.has(name), transfer: isTransfer({ category: name, transaction_code: null }) }))
       .sort((a, b) => a.name.localeCompare(b.name)),
+    sources: activity.sources,
     notes,
   };
 }
@@ -636,7 +676,7 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
       return { category, budget, spent: tidy(s), remaining: tidy(budget - s), spent_share: budget > 0 ? Math.round((s / budget) * 1000) / 1000 : 0 };
     })
     .sort((a, b) => a.category.localeCompare(b.category));
-  const notes = [...activity.notes];
+  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   const cutoff = firstDay();
   if (`${opts.month}-01` < cutoff) notes.push(`Only transactions from ${cutoff} on are read, so this month's spending may be short`);
   return {
@@ -663,7 +703,7 @@ export type ApiSpending = Summary & { from: string; to: string; sources: ApiSour
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
-  const notes = [...activity.notes];
+  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   return {
     from: opts.from,
@@ -728,7 +768,7 @@ export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; t
     monthly_total: { currency, amount: tidy(total), left_out: leftOut },
     due_soon_days: DUE_SOON_DAYS,
     sources: activity.sources,
-    notes: activity.notes,
+    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')],
   };
 }
 
