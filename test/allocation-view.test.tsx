@@ -100,11 +100,12 @@ describe('the allocation by class', () => {
         inst('Questrade', [acct('ca', { balance: 5_000, currency: 'CAD' })]),
         inst('Chase', [], { error: true }),
       ],
-      holdings: [hold('us', 'VTI', 10_000), hold('us', 'NEW', null)],
+      holdings: [hold('us', 'VTI', 10_000), hold('us', 'NEW', null), { ticker: 'OLD', value: 5, name: 'Old' }],
       settings: null,
       currency: 'USD',
     });
     const t = text(renderToStaticMarkup(<AllocationNotes alloc={a} money={money} />));
+    expect(t).toContain("1 position belongs to no account Nya can show, so it isn't counted.");
     expect(t).toContain("Left out: CA$5,000, in another currency. Nya doesn't convert currencies.");
     expect(t).toContain("Chase couldn't be reached and isn't counted");
     expect(t).toContain("1 account at Vanguard couldn't be shown");

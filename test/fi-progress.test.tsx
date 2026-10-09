@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FiCard } from '@/components/PlanTab';
-import { FiProgressView } from '@/components/FiProgressCard';
+import { FiProgressView, ready } from '@/components/FiProgressCard';
 import { loadFiProgress } from '@/components/FiProgressLoader';
 import { PAYROLL_NOTE, wholeMoney, yearsToFiText } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type FirePlan } from '@/lib/fire/plan';
@@ -179,6 +179,19 @@ describe('the FI card on Home', () => {
       <FiProgressView figures={fiFigures(plan(), inputs({ flows: null }), 'USD')} plan={plan()} saved={false} repaired={false} inputs={inputs({ flows: null })} onOpenPlan={noop} />
     );
     expect(html).toBe('');
+  });
+
+  test('waits for the plan, the first transactions and workplace contributions, but keeps its place through a refresh', () => {
+    const base = { plan: 'loaded' as const, txns: [], txnsLoading: false, contributionsPending: false };
+    expect(ready(base)).toBe(true);
+    expect(ready({ ...base, plan: 'loading' })).toBe(false);
+    expect(ready({ ...base, plan: 'failed' })).toBe(false);
+    expect(ready({ ...base, txns: null, txnsLoading: true })).toBe(false);
+    // A refresh: transactions on screen while new ones load.
+    expect(ready({ ...base, txnsLoading: true })).toBe(true);
+    // Transactions that couldn't be loaded: what can be shown without them is.
+    expect(ready({ ...base, txns: null })).toBe(true);
+    expect(ready({ ...base, contributionsPending: true })).toBe(false);
   });
 
   test('a year that wasn’t a whole year says from when', () => {

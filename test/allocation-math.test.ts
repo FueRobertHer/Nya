@@ -232,6 +232,9 @@ describe('the allocation', () => {
     });
     expect(a.total).toBe(1);
     expect(a.accounts.map((r) => r.account_id)).toEqual(['s']);
+    // The hidden account's position is left out with it; the one naming no
+    // account at all is counted, never added.
+    expect(a.unattributed).toBe(1);
   });
 
   test('an account with no balance and no position counts nothing, and is counted', () => {

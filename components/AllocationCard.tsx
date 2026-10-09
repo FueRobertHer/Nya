@@ -183,9 +183,15 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
   const money = (n: number) => wholeMoney(n, currency);
   const editable = withSettings && !settings.saving;
   const current = settings.value ?? EMPTY_SETTINGS;
+  // Counts the person's saves, so the mix over time, which the server
+  // classifies with the saved splits, is read again after each one.
+  const [saves, setSaves] = useState(0);
   const saveSettings = async (next: AllocationSettings) => {
     const ok = await allocation.save(next);
-    if (ok) close();
+    if (ok) {
+      setSaves((n) => n + 1);
+      close();
+    }
     return ok;
   };
   const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, `${a.name} at ${i.name}`] as const))), [institutions]);
@@ -242,7 +248,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
         </>
       )}
 
-      <AllocationHistory currency={currency} settingsKey={withSettings ? JSON.stringify(current.funds) : null} accountNames={accountNames} />
+      <AllocationHistory currency={currency} version={saves} accountNames={accountNames} />
 
       <Sheet
         open={!!sheet}
@@ -564,6 +570,9 @@ export function AllocationNotes({ alloc, money }: { alloc: Allocation; money: (n
   }
   if (alloc.unpriced > 0) lines.push(`${alloc.unpriced} position${alloc.unpriced === 1 ? ' has' : 's have'} no value from the institution, so ${alloc.unpriced === 1 ? "it isn't" : "they aren't"} counted.`);
   if (alloc.noBalance > 0) lines.push(`${alloc.noBalance} account${alloc.noBalance === 1 ? ' has' : 's have'} no balance or position to count.`);
+  if (alloc.unattributed > 0) {
+    lines.push(`${alloc.unattributed} position${alloc.unattributed === 1 ? ' belongs' : 's belong'} to no account Nya can show, so ${alloc.unattributed === 1 ? "it isn't" : "they aren't"} counted. A refresh usually fixes this.`);
+  }
   if (lines.length === 0) return null;
   return (
     <>
@@ -943,8 +952,9 @@ export type HistoryState = { kind: 'loading' } | { kind: 'ready'; answer: Histor
 const recordedName = (day: string, at: string | null) => fmtDay(day, at);
 
 /** The over-time chart, from /api/allocation-history, read again when the
- *  person's splits change (they classify recorded days too). */
-export function AllocationHistory({ currency, settingsKey, accountNames }: { currency: string | null; settingsKey: string | null; accountNames: Map<string, string> }) {
+ *  person saves a change to their settings (`version`): the server classifies
+ *  recorded days with their splits, as they are saved. */
+export function AllocationHistory({ currency, version, accountNames }: { currency: string | null; version: number; accountNames: Map<string, string> }) {
   const [state, setState] = useState<HistoryState>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -965,7 +975,7 @@ export function AllocationHistory({ currency, settingsKey, accountNames }: { cur
     return () => {
       live = false;
     };
-  }, [currency, settingsKey, attempt]);
+  }, [currency, version, attempt]);
   return (
     <>
       <div className="plan-subhead">Over time</div>

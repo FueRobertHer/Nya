@@ -69,10 +69,16 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, institutio
   const repair = useMemo(() => repairPlan(stored ?? DEFAULT_PLAN), [stored]);
   const plan = repair.plan;
   const inputs = usePlanInputs({ txns, txnNotes, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
-  if (loaded === null || loaded === 'failed' || txnsLoading) return null;
-  // Contributions to workplace plans change savings; wait for them, rather
-  // than show a figure that changes a moment later.
-  if (inputs.contributions === null && workplacePlansOf(institutions).length > 0) return null;
+  if (
+    !ready({
+      plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
+      txns,
+      txnsLoading,
+      contributionsPending: inputs.contributions === null && workplacePlansOf(institutions).length > 0,
+    })
+  ) {
+    return null;
+  }
   return (
     <FiProgressView
       figures={fiFigures(plan, inputs, currency)}
@@ -83,6 +89,19 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, institutio
       onOpenPlan={onOpenPlan}
     />
   );
+}
+
+/**
+ * Whether the card has what it needs to show figures that won't change a
+ * moment later: the plan read (a plan that can't be read shows nothing, and
+ * the Plan tab says why), the first load of transactions done (a refresh
+ * keeps the card, with the transactions on screen, as the Plan tab does), and
+ * the contributions to workplace plans in, since they change savings.
+ */
+export function ready(s: { plan: 'loading' | 'failed' | 'loaded'; txns: Txn[] | null; txnsLoading: boolean; contributionsPending: boolean }): boolean {
+  if (s.plan !== 'loaded') return false;
+  if (s.txns === null && s.txnsLoading) return false;
+  return !s.contributionsPending;
 }
 
 /** The card itself, from figures already worked out. Null when there is no

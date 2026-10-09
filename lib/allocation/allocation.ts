@@ -166,6 +166,9 @@ export type Allocation = {
   unpriced: number;
   /** Accounts with no balance and no position to count. */
   noBalance: number;
+  /** Positions with a value that name no account the dashboard has (a
+   *  payload cached before positions carried their account): not counted. */
+  unattributed: number;
   caveats: AllocCaveat[];
 };
 
@@ -193,9 +196,21 @@ export function allocate(input: {
   let noBalance = 0;
   let anonymous = 0;
 
-  const held = new Map<string, AllocHolding[]>();
-  for (const h of input.holdings) if (h.account_id) held.set(h.account_id, [...(held.get(h.account_id) ?? []), h]);
   const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
+  // Positions by account. One naming no account the dashboard has can't be
+  // placed: counted, never added. A hidden account's are left out with it.
+  const known = new Set(input.institutions.flatMap((i) => i.accounts.map((a) => a.account_id)));
+  const held = new Map<string, AllocHolding[]>();
+  let unattributed = 0;
+  for (const h of input.holdings) {
+    if (!h.account_id || !known.has(h.account_id)) {
+      if (finite(h.value) && h.value !== 0) unattributed++;
+      continue;
+    }
+    let list = held.get(h.account_id);
+    if (!list) held.set(h.account_id, (list = []));
+    list.push(h);
+  }
   const leaveOut = (currency: string, amount: number) => other.set(currency, (other.get(currency) ?? 0) + amount);
 
   for (const inst of input.institutions) {
@@ -328,6 +343,7 @@ export function allocate(input: {
     otherCurrencies: [...other].map(([currency, amount]) => ({ currency, amount })).sort((x, y) => (x.currency < y.currency ? -1 : 1)),
     unpriced,
     noBalance,
+    unattributed,
     caveats,
   };
 }
