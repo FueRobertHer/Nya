@@ -103,7 +103,7 @@ import { getManualAccounts } from './manual';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
-import { readStoredItem, readStoredTxns, StateUnreadableError } from './transactions';
+import { readStoredItem, readStoredTxns, StateUnreadableError, type StoredAccount } from './transactions';
 import { rememberedAccountsByItem } from './last-known';
 import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
@@ -1141,7 +1141,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
  * live account has a record in), or, when that gave none, the account as the
  * last transactions sync stored it (lib/transactions.ts): its ISO code, then
  * Plaid's unofficial one (a cryptocurrency's). An account neither names is
- * left out. Strict, as every read here is: what can't be read throws.
+ * left out. Strict, as every read here is, but for the one lenient read below.
  */
 async function bankCurrencies(theirs: Ctx, ids: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -1155,14 +1155,28 @@ async function bankCurrencies(theirs: Ctx, ids: string[]): Promise<Map<string, s
       else unnamed.set(item_id, [...(unnamed.get(item_id) ?? []), a.account_id]);
     }
   }
+  let undecoded: StateUnreadableError | null = null;
   for (const [item_id, accountIds] of unnamed) {
-    const { accounts } = await readStoredItem(theirs, item_id);
+    let accounts: Record<string, StoredAccount>;
+    try {
+      ({ accounts } = await readStoredItem(theirs, item_id));
+    } catch (err) {
+      // LENIENT, and only here: a currency is how a balance is drawn, a
+      // convenience nothing writes, deletes or records on, so a transaction
+      // store that can't be decoded leaves these balances without one (shown
+      // in the main currency, as before) rather than hiding the whole share.
+      // Storage out of reach still throws, as everywhere here.
+      if (!(err instanceof StateUnreadableError && err.kind === 'decode')) throw err;
+      undecoded = err;
+      continue;
+    }
     for (const id of accountIds) {
       const b = accounts[id]?.balances;
       const code = b?.iso_currency_code ?? b?.unofficial_currency_code;
       if (code) out.set(id, code);
     }
   }
+  if (undecoded) console.error('Shared data: a balance’s currency could not be read, so it is shown in the main currency', undecoded.name);
   return out;
 }
 

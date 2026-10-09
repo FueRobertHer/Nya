@@ -161,6 +161,14 @@ const recordsOf = async (who: string, opts: { id?: string; tz?: string; all?: bo
 };
 /** `who`'s damaged records that no connection is matched to, as the drawer's list asks for them. */
 const damagedOf = async (who: string) => (await as(who, () => route('connections/access-log', 'GET'))).body;
+/** Everything stored in the owner's container, by key (and field), to see what a read changed. */
+const ownerData = () => {
+  const prefix = ctxKey('');
+  const out: Record<string, string> = {};
+  for (const [k, v] of (fake as any).strings) if (k.startsWith(prefix)) out[k] = v;
+  for (const [k, h] of (fake as any).hashes) if (k.startsWith(prefix)) for (const [f, v] of h) out[`${k} ${f}`] = v;
+  return out;
+};
 /** console.error, quietly, with what it was given. */
 async function quietly<R>(fn: () => Promise<R>): Promise<{ result: R; logged: unknown[][] }> {
   const logged: unknown[][] = [];
@@ -995,6 +1003,42 @@ describe('a shared balance, in its own currency', () => {
     expect(html).toContain('$30.00');
     expect((await previewOf('user_owner')).body.view.accounts).toEqual(from.accounts);
   });
+
+  test('a transaction store that can’t be read behind it leaves that balance in the main currency, and the share is shown', async () => {
+    // Its last load gave no currency, so the read looks in the transaction store, which is damaged.
+    await rememberAccounts(TEST_CTX, [{ item_id: 'item_a', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_joint', '1111'), balance: 500, currency: null }] } as any]);
+    await share({ acct_joint: 'balance', manual_house: 'balance' });
+    await fake.set(ctxKey('txns:item_a'), 'garbage');
+    const before = ownerData();
+    const { result: shared, logged } = await quietly(() => sharedWithPartner());
+    expect(shared).toHaveLength(1);
+    expect(shared[0].accounts.find((a: any) => a.id === 'acct_joint')).toMatchObject({ level: 'balance', balance: 500, currency: null });
+    expect(shared[0].accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ balance: 300000, currency: 'USD' });
+    expect(logged.map((l) => l[0])).toEqual(['Shared data: a balance’s currency could not be read, so it is shown in the main currency']);
+    // Nothing written but the record of the showing: the damaged store is as it was.
+    const after = ownerData();
+    expect(Object.keys(after).filter((k) => after[k] !== before[k])).toEqual([`${ctxKey('sharing-access-log')} ${await logIdOf()}`]);
+    expect(Object.keys(before).filter((k) => !(k in after))).toEqual([]);
+    // My preview shows the same.
+    const { result: preview } = await quietly(() => previewOf('user_owner'));
+    expect(preview.body.view.accounts).toEqual(shared[0].accounts);
+
+    // The store out of reach, though, says nothing of what it holds: the share fails, as before.
+    const realGet = fake.get.bind(fake);
+    (fake as any).get = async (key: string) => {
+      if (key === ctxKey('txns:item_a')) throw new Error('FakeRedis: out of reach');
+      return realGet(key);
+    };
+    try {
+      const { result: theirs, logged: failed } = await quietly(() => sharedWithPartner());
+      expect(theirs).toEqual([]);
+      expect(failed.map((l) => l[0])).toEqual(['Shared data could not be read for one connection']);
+      const { result: mine } = await quietly(() => previewOf('user_owner'));
+      expect(mine).toEqual({ status: 500, body: { error: 'Could not show what they see' } });
+    } finally {
+      delete (fake as any).get;
+    }
+  });
 });
 
 describe('records of showings', () => {
@@ -1688,19 +1732,12 @@ describe('records of showings', () => {
     // A remembered account in the shape from before per-item records, which
     // the owner's own loads tidy away and someone else's read must not.
     await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
-    const prefix = ctxKey('');
-    const snapshot = () => {
-      const out: Record<string, string> = {};
-      for (const [k, v] of (fake as any).strings) if (k.startsWith(prefix)) out[k] = v;
-      for (const [k, h] of (fake as any).hashes) if (k.startsWith(prefix)) for (const [f, v] of h) out[`${k} ${f}`] = v;
-      return out;
-    };
-    const before = snapshot();
+    const before = ownerData();
     expect(Object.keys(before)).toContain(`${ctxKey('accounts:meta')} acct_legacy`);
     const [read] = await sharedWithPartner();
     expect(read.accounts.find((a: any) => a.id === 'manual_house').transactions).toHaveLength(1);
     expect(read.accounts.find((a: any) => a.id === 'acct_joint').currency).toBe('USD');
-    const after = snapshot();
+    const after = ownerData();
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
     expect(changed).toEqual([`${ctxKey('sharing-access-log')} ${await logIdOf()}`]);
     expect(Object.keys(before).filter((k) => !(k in after))).toEqual([]);
