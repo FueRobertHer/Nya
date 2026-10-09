@@ -14,6 +14,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Manual accounts](#manual-accounts)
 - [Excluding a transaction](#excluding-a-transaction)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
+- [The API and the MCP server](#the-api-and-the-mcp-server)
 - [Planning](#planning)
 
 ## Connecting accounts
@@ -234,6 +235,18 @@ Plaid bills per linked institution (Item) per month for Transactions, Investment
 - **Unused connections (admin only).** A daily check (`/api/plaid/check-items`) flags a connection, in any account, once Plaid has been unable to read it for 60 days (login expired, consent withdrawn) or every account on it has been hidden for 60 days. **It never removes anything.** The admin, meaning whoever owns the deployment's own account (normally the first to sign in with Clerk, or the password holder), sees the flagged ones under Manage on the Accounts tab, labelled by owner. Other accounts see nothing and the route answers them with a 404. Review and disconnect asks for the institution's name, and the server checks the connection again first: if its owner has reconnected it or unhidden an account, or Plaid does not answer, nothing is removed. Any success starts the count again; an outage or timeout counts for nothing. Change the period with `PLAID_UNUSED_DAYS` (minimum 14).
 
 Liabilities and Investments are paid Plaid products: free in `sandbox`, but billed per Item per month in `production`, so enabling payment details or linking brokerages on many institutions has a running cost.
+
+## The API and the MCP server
+
+Programs you choose can read your data: a script, a spreadsheet, a dashboard of your own, or an AI assistant. Make a token in the **API tokens** card under **Manage** on the Accounts tab; it is shown once, with a copy button and a configuration to paste into an MCP client. The public **Developers** page (`/developers`) documents everything: each endpoint with an example request and answer and every field, the limits, the conventions, and how to add the MCP server to a client. How tokens are made, kept, checked and revoked is in [authentication.md](authentication.md#api-tokens).
+
+- **A read-only REST API** under `/api/v1`: who the token is (`me`), accounts, net worth and its history, transactions (searchable, a page at a time), categories, budgets, spending by category, recurring bills and holdings. A token is sent as `Authorization: Bearer nya_...`; errors have one shape, `{"error":{"code","message"}}`.
+- **An MCP server** at `/api/mcp`, over MCP's streamable HTTP transport (JSON-RPC 2.0, plain JSON answers, no sessions), with tools for the same reads: accounts, net worth now and over time, searching transactions, spending by category, budgets, recurring bills, categories and holdings. Each tool answers with a short summary and the same JSON the REST endpoint gives. What came from a bank or was typed in (merchant names, descriptions, account names) is only ever inside that JSON, and the server tells the assistant it is data, not instructions.
+- **Stored data only.** Nothing either one does calls Plaid: it reads what Nya has already saved, so asking often adds no Plaid calls. Answers say how fresh that is: each balance's date, when each institution's transactions were last brought in (for transactions and the totals built on them), and whether an account's connection needs you. Hidden accounts are left out unless asked for (`include_hidden=true`). Transactions are the app's own last 365 days, bank and manual alike, built exactly as the Activity tab builds them (`lib/activity.ts`), and every total is the one the Budgets tab shows (`lib/totals.ts`): in one currency, without transfers, ATM withdrawals or loan payments, and without what you excluded, which each answer counts and names.
+- **Plaid's sign convention**, the one Nya keeps: a positive transaction amount is money leaving the account, and what a credit card or loan owes is a positive balance.
+- **Version 1 is stable.** Fields may be added, but none removed, renamed or given a new meaning; a change that would do that comes as `/api/v2`, with version 1 kept beside it for at least six months.
+
+Each token may make 100 requests a minute, and one person may have 10 tokens. Writing (adding a transaction, changing a budget), signing in with OAuth instead of a token, webhooks, live balances and calls from web pages on other sites (no CORS) are not part of version 1.
 
 ## Planning
 

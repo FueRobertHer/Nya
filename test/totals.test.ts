@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { spendingByCategory, summarize, tidy, categoryOf, type TotalsRow } from '@/lib/totals';
-import { monthlyBillsTotal, type RecurringBill } from '@/lib/recurring';
 import { countsInTotals } from '@/lib/spending';
 
 // Totals over transactions (lib/totals.ts), shared by the Budgets tab and the
@@ -99,31 +98,5 @@ describe('a summary over a range', () => {
   test('categoryOf files a row without one under "other"', () => {
     expect(categoryOf({ category: null })).toBe('other');
     expect(categoryOf({ category: 'travel' })).toBe('travel');
-  });
-});
-
-describe('the bills’ monthly total', () => {
-  const bill = (amount: number, currency: string | null): RecurringBill => ({
-    name: 'x',
-    institution: 'Chase',
-    amount,
-    currency,
-    logo_url: null,
-    lastDate: '2026-10-01',
-    nextDate: '2026-11-01',
-    monthsSeen: 3,
-  });
-
-  test('adds the bills in the budgets’ currency (and those that say none), and names the rest', () => {
-    const { total, leftOut } = monthlyBillsTotal([bill(15.99, 'USD'), bill(9, null), bill(7, 'EUR'), bill(3, 'EUR'), bill(100, 'JPY')], 'USD');
-    expect(total).toBeCloseTo(24.99, 10); // as summed: the screen formats it, the API tidies it
-    expect(leftOut).toEqual([
-      { currency: 'EUR', count: 2 },
-      { currency: 'JPY', count: 1 },
-    ]);
-  });
-
-  test('with no currency to keep, every bill is added', () => {
-    expect(monthlyBillsTotal([bill(1, 'USD'), bill(2, 'EUR')], null)).toEqual({ total: 3, leftOut: [] });
   });
 });

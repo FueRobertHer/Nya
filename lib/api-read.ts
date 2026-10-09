@@ -49,7 +49,7 @@ import { noticesStore } from './connection-records';
 import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import { getBudgets } from './budgets';
-import { detectRecurring, monthlyBillsTotal, upcomingBills } from './recurring';
+import { detectRecurring, upcomingBills, type RecurringBill } from './recurring';
 import { currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
 import { spendingByCategory, summarize, tidy, categoryOf, type Summary } from './totals';
 import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
@@ -675,11 +675,15 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
 }
 
 // ---- Recurring bills ----
+//
+// The one place the API reads lib/recurring.ts: what it detects becomes the
+// API's shape here and nowhere else, so a change to the detection changes
+// this section alone.
 
 export type ApiRecurring = {
   /** Detected from the transactions (a merchant charging about monthly at a
    *  steady amount): an estimate, as is each next date. */
-  bills: { name: string; institution: string; amount: number; currency: string | null; last_date: string; next_date: string; months_seen: number; due_soon: boolean }[];
+  bills: { name: string; institution: string; amount: number; currency: string | null; last_date: string; next_date: string; due_soon: boolean }[];
   /** What the bills come to in a month, in the budgets' currency, and the
    *  bills left out of it for being in another. */
   monthly_total: { currency: string | null; amount: number; left_out: LeftOut };
@@ -691,12 +695,26 @@ export type ApiRecurring = {
 
 const DUE_SOON_DAYS = 7;
 
+/** The bills' monthly total in `currency`, added up as the Budgets tab adds
+ *  it (components/BudgetsTab.tsx): a bill that says no currency counts in
+ *  this one, and the bills in others are left out, counted by currency. */
+function billsTotal(bills: readonly RecurringBill[], currency: string | null): { total: number; leftOut: LeftOut } {
+  let total = 0;
+  const others = new Map<string, number>();
+  for (const b of bills) {
+    const c = b.currency ?? currency;
+    if (c === currency || currency === null) total += b.amount;
+    else if (c) others.set(c, (others.get(c) ?? 0) + 1);
+  }
+  return { total, leftOut: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count) };
+}
+
 export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; today?: string } = {}): Promise<ApiRecurring> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const bills = detectRecurring(activity.rows);
   const currency = totalsCurrency(activity.rows);
   const soon = new Set(upcomingBills(bills, DUE_SOON_DAYS, opts.today ?? utcDay(Date.now())));
-  const { total, leftOut } = monthlyBillsTotal(bills, currency);
+  const { total, leftOut } = billsTotal(bills, currency);
   return {
     bills: bills.map((b) => ({
       name: b.name,
@@ -705,7 +723,6 @@ export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; t
       currency: b.currency,
       last_date: b.lastDate,
       next_date: b.nextDate,
-      months_seen: b.monthsSeen,
       due_soon: soon.has(b),
     })),
     monthly_total: { currency, amount: tidy(total), left_out: leftOut },

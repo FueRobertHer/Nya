@@ -3,8 +3,8 @@ import { operation } from '@/lib/api-ops';
 
 // GET /api/v1/holdings: Each investment account’s latest recorded positions.
 // Read-only, with an API token (lib/api-tokens.ts), from stored data alone. Its
-// arguments are declared in lib/api-ops.ts and its answer is built in lib/api-
-// read.ts; both are documented on the developer page (app/developers).
+// arguments are declared in lib/api-spec.ts and its answer is built in
+// lib/api-read.ts; both are documented on the developer page (app/developers).
 
 const op = operation('holdings');
 

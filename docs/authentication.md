@@ -6,13 +6,14 @@ Nya has two ways to sign in. Without Clerk keys set, one shared password protect
 - [Signing in with Clerk](#signing-in-with-clerk)
 - [Sharing between people](#sharing-between-people)
 - [Demo accounts (Preview only)](#demo-accounts-preview-only)
+- [API tokens](#api-tokens)
 - [What is not covered](#what-is-not-covered)
 
 ## Password gate
 
 Deploying to Vercel gives the app a public HTTPS URL. Anyone who found it could otherwise view your balances or link their own account into your Redis store. So every route is gated by `proxy.ts` (Next's renamed middleware convention), which checks a signed, expiring session cookie. Logging in at `/login` sets that cookie for 30 days.
 
-The exceptions are the login page and API, the Security and Privacy pages (`/security`, `/privacy`, which read no stored data), the PWA assets needed for install, and routes that authenticate themselves: the crons (`CRON_SECRET`), the balance ingest (`INGEST_SECRET`), Plaid's webhook (its signature), the ops routes (`OPS_SECRET`, off unless `OPS_ENABLED=1`) and the demo sign-in. With Clerk on, `/sign-in` and `/not-allowed` are open too. The public pages still pass through the proxy, which gives every page its Content-Security-Policy ([deployment.md](deployment.md#security-headers-and-the-content-security-policy)). See the header of `proxy.ts`.
+The exceptions are the login page and API, the Security, Privacy and Developers pages (`/security`, `/privacy`, `/developers`, which read no stored data), the PWA assets needed for install, and routes that authenticate themselves: the crons (`CRON_SECRET`), the balance ingest (`INGEST_SECRET`), the read-only API and the MCP server (each `/api/v1` endpoint by name, and `/api/mcp`: a personal [API token](#api-tokens), never a cookie), Plaid's webhook (its signature), the ops routes (`OPS_SECRET`, off unless `OPS_ENABLED=1`) and the demo sign-in. With Clerk on, `/sign-in` and `/not-allowed` are open too. The public pages still pass through the proxy, which gives every page its Content-Security-Policy ([deployment.md](deployment.md#security-headers-and-the-content-security-policy)). See the header of `proxy.ts`.
 
 Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
 
@@ -94,8 +95,19 @@ They work only on Preview (`VERCEL_ENV=preview`) or a local `next dev`: set on P
 
 Before making Preview public (turning off Vercel's protection for it), give it its own database and `MASTER_KEY`, as described in [deployment.md](deployment.md#what-preview-runs-against).
 
+## API tokens
+
+A personal API token lets a program its owner chooses (a script, a dashboard, an AI assistant) read their data through the read-only API (`/api/v1`) and the MCP server (`/api/mcp`), which the public Developers page (`/developers`) documents. It works without a session, and changes nothing. Tokens are made, listed and revoked in the **API tokens** card, under **Manage** on the Accounts tab (`components/ApiTokens.tsx`, `app/api/api-tokens`, `lib/api-tokens.ts`).
+
+- **Making one needs a fresh sign-in**, as a data download does (`lib/fresh-sign-in.ts`): with Clerk, a sign-in from the last ten minutes, or Clerk asks the person to confirm it is them; with the shared password, the password again, whose wrong guesses count against the login's limit. A stolen session cookie alone can't make one. Each person may have 10.
+- **Shown once, then kept as a hash.** A token is `nya_<id>_<secret>_<container>`: 16 hex characters naming the token, 43 characters of secret, and the id of the container it reads. The card shows it once, with a copy button and a configuration for an MCP client. Nya keeps the SHA-256 of the secret, with the token's name and when it was made and last used, encrypted in the person's own container (`lib/api-token-store.ts`); the list shows the name, those dates and the token's first characters (`nya_` and the start of its id). The data download has each token's name and dates, never its id or hash ([data-export.md](data-export.md#api_tokens)).
+- **Checking one.** Every way a token can fail gets the same 401, after the same storage work: a malformed token, an unknown container or one being restored or archived, an unknown or revoked token, a wrong secret. The hashes are compared in constant time. Only once the secret matches is the rest checked, as signing in would: with Clerk, an owner of the container must still be on `CLERK_ALLOWED_USER_IDS`; with the shared password, the container must be this deployment's. Either failing is the same 401.
+- **Limited and read only.** Each token may make 100 requests a minute (a count per token, in the container, gone two minutes after the last request any of that person's tokens made); past that the answer is a 429 with `Retry-After`. Nothing a token reaches writes the person's data: the only writes are its own count and, at most once a minute, when it was last used.
+- **Ending one.** Revoking takes effect on the token's next request, and needs no fresh sign-in. Sign out everywhere ends sessions, not tokens, and so does changing `APP_PASSWORD`; taking someone off `CLERK_ALLOWED_USER_IDS` stops theirs at once; deleting an account deletes its tokens with the rest of its data.
+
 ## What is not covered
 
 - **The shared password is one secret for everyone who has it.** Anyone with it gets full access, including the ability to disconnect accounts. Sessions can be ended everywhere, but not one device at a time. Use Clerk for more than one person.
-- **Rate limiting covers signing in and data downloads only**: wrong passwords per IP (shared by the login and the password asked for before a download), demo sign-ins per IP, and five downloads of your data an hour per account. The other data routes already require a valid session.
+- **Rate limiting covers signing in, data downloads and API tokens only**: wrong passwords per IP (shared by the login and the password asked for before a download or a new API token), demo sign-ins per IP, five downloads of your data an hour per account, and 100 requests a minute per API token. The other data routes already require a valid session.
+- **An API token is a bearer credential.** Whoever holds one reads what it reads until it is revoked: signing out everywhere and changing `APP_PASSWORD` leave it working. Revoke it in the API tokens card.
 - **The on-device snapshot is readable without the app password.** The dashboard keeps its last-known snapshot in the browser's `localStorage` so the PWA opens instantly and shows balances offline. Someone with your unlocked phone can read it. That is acceptable for a personal device, but worth knowing. It is cleared on logout (and per signed-in account with Clerk).

@@ -1,10 +1,10 @@
 import { serve, methodNotAllowed } from '@/lib/api-http';
 import { operation } from '@/lib/api-ops';
 
-// GET /api/v1/transactions: Transactions, newest first, a page at a time. Read-
-// only, with an API token (lib/api-tokens.ts), from stored data alone. Its
-// arguments are declared in lib/api-ops.ts and its answer is built in lib/api-
-// read.ts; both are documented on the developer page (app/developers).
+// GET /api/v1/transactions: Transactions, newest first, a page at a time.
+// Read-only, with an API token (lib/api-tokens.ts), from stored data alone. Its
+// arguments are declared in lib/api-spec.ts and its answer is built in
+// lib/api-read.ts; both are documented on the developer page (app/developers).
 
 const op = operation('transactions');
 

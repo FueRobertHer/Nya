@@ -12,10 +12,10 @@ import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring, monthlyBillsTotal } from '@/lib/recurring';
-import { spendingByCategory } from '@/lib/totals';
+import { detectRecurring } from '@/lib/recurring';
 import { localMonth, instantDay } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { spendingByCategory } from '@/lib/totals';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 
@@ -136,7 +136,14 @@ export default function BudgetsTab({
   // The bills' monthly total adds up those in the budgets' currency; each bill
   // is listed in its own, and those in others are named.
   const { monthlyBills, billsLeftOut } = useMemo(() => {
-    const { total, leftOut } = monthlyBillsTotal(recurring, displayCurrency);
+    let total = 0;
+    const others = new Map<string, number>();
+    for (const b of recurring) {
+      const c = b.currency ?? displayCurrency;
+      if (c === displayCurrency || displayCurrency === null) total += b.amount;
+      else if (c) others.set(c, (others.get(c) ?? 0) + 1);
+    }
+    const leftOut = [...others].map(([currency, count]) => ({ currency, count })).sort((a, b) => b.count - a.count);
     return {
       monthlyBills: total,
       billsLeftOut: leftOutText(leftOut, displayCurrency, { noun: 'bill', where: 'this total', plural: false }),

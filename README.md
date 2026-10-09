@@ -24,6 +24,8 @@ When a bank connection breaks, Nya sends one email (and one reminder a week late
 
 Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
 
+Programs you choose can read it too: a read-only API under `/api/v1`, and an MCP server at `/api/mcp` for AI assistants, each with a personal token you make (and revoke) under **Manage**. Both serve what Nya has stored, never a live call to Plaid, and the public `/developers` page documents every endpoint and tool (see [The API and the MCP server](docs/features.md#the-api-and-the-mcp-server)).
+
 Two pages anyone can open without signing in, `/security` and `/privacy`, say in plain language how the data is protected, who can read what (whoever runs the deployment included), how long things are kept, and how to delete it. Every response carries security headers, and every page a Content-Security-Policy; see [Security headers](docs/deployment.md#security-headers-and-the-content-security-policy).
 
 ## Screenshots
@@ -102,8 +104,8 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 | Guide | What is in it |
 | --- | --- |
 | [Deployment](docs/deployment.md) | Plaid and Vercel setup, every environment variable, scheduled jobs, local development, security headers and the Content-Security-Policy, preview deployments. |
-| [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, the debt payoff plan, hiding accounts, unreachable institutions with connection health, Reconnect soon and email notices, manual accounts and scripted balances, keeping Plaid costs down, planning (the FI figures, the simulator, its data and its limits). |
-| [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion and its receipt, sharing, demo accounts. |
+| [Features in depth](docs/features.md) | Reconnecting and linking history, payment details, the debt payoff plan, hiding accounts, unreachable institutions with connection health, Reconnect soon and email notices, manual accounts and scripted balances, keeping Plaid costs down, the read-only API and the MCP server, planning (the FI figures, the simulator, its data and its limits). |
+| [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion and its receipt, sharing, demo accounts, API tokens. |
 | [Downloading your data](docs/data-export.md) | Getting everything Nya stores about you: the JSON and CSV formats field by field, what is left out, and how it differs from the operator backup. |
 | [Architecture](docs/architecture.md) | Storage and encryption, the storage seam new stores are built on, caching, how net-worth history is recorded and reconstructed, containers. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move. |

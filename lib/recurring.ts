@@ -93,23 +93,6 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
   return bills.sort((a, b) => b.amount - a.amount);
 }
 
-/**
- * The bills' monthly total in `currency` (the one the budgets are in), and the
- * bills left out of it for being in another, by currency: each bill is in one
- * currency, and a bill that says none is taken to be in this one. Shared by
- * the Budgets tab and the read-only API (lib/api-read.ts).
- */
-export function monthlyBillsTotal(bills: readonly RecurringBill[], currency: string | null): { total: number; leftOut: { currency: string; count: number }[] } {
-  let total = 0;
-  const others = new Map<string, number>();
-  for (const b of bills) {
-    const c = b.currency ?? currency;
-    if (c === currency || currency === null) total += b.amount;
-    else if (c) others.set(c, (others.get(c) ?? 0) + 1);
-  }
-  return { total, leftOut: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count) };
-}
-
 /** Bills whose estimated next charge falls within the next `days` days. */
 export function upcomingBills(
   bills: RecurringBill[],

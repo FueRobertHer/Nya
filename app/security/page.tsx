@@ -6,6 +6,7 @@ import { masterKeyConfigured } from '@/lib/crypto';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { sendsEmail } from '@/lib/notice-recipients';
+import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS } from '@/lib/api-limits';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -58,6 +59,10 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
         ],
       ] as [string, string][])
     : []),
+  [
+    'Programs you give an API token to',
+    'What the read-only API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins, and they can never change anything. An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.',
+  ],
   [
     'People you share with',
     'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
@@ -192,8 +197,8 @@ export default function SecurityPage() {
         <ul>
           <li>dates and times: which days have a recorded balance, and when things were saved;</li>
           <li>
-            ids: of your accounts, transactions and bank connections (random strings from Plaid), and of your sign-in
-            account;
+            ids: of your accounts, transactions and bank connections (random strings from Plaid), of your sign-in
+            account, and of your API tokens (random, and not enough to use one);
           </li>
           <li>the names of the banks you linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
@@ -206,7 +211,9 @@ export default function SecurityPage() {
         </ul>
         <p>
           The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes, and on
-          the demo, that of a device that used a demo account, for up to 10 minutes. These never go into backups.
+          the demo, that of a device that used a demo account, for up to 10 minutes. These never go into backups. And for
+          each API token, how many requests it made in the current minute, deleted when the token is revoked, or{' '}
+          {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.
         </p>
         <p>Encrypting these as well is planned.</p>
       </InfoSection>
@@ -277,6 +284,23 @@ export default function SecurityPage() {
           included, within seconds; changing the password does too. Each IP address gets 10 wrong passwords per 15
           minutes, then has to wait. If the database cannot be reached, that limit is skipped rather than locking
           everyone out.
+        </p>
+      </InfoSection>
+
+      <InfoSection title="API tokens">
+        <p>
+          A token you make under API tokens lets a program read your data through Nya’s read-only API and its MCP server
+          (see the <a href="/developers">Developers page</a>). Nya shows it once and never stores it: it keeps a SHA-256
+          hash of the token’s secret, inside your own data and encrypted with it, and checks a token by comparing hashes
+          in constant time. Every way a token can fail (malformed, revoked, wrong, or for data that can’t be reached) gets
+          the same answer, and until its secret has been checked, the same work, so a token can’t be used to find out
+          whose data exists.
+        </p>
+        <p>
+          Making one needs a fresh sign-in, as downloading your data does. A token can read but never change anything,
+          and makes at most {REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out
+          everywhere; with sign-in accounts it stops when you are taken off the list of people allowed in, and deleting
+          your account deletes every token with the rest of your data.
         </p>
       </InfoSection>
 

@@ -372,10 +372,44 @@ describe('recurring bills and holdings', () => {
     expect(res.status).toBe(200);
     const next = new Date(Date.parse(`${daysAgo(26)}T00:00:00Z`) + 31 * DAY).toISOString().slice(0, 10);
     expect(body).toMatchObject({
-      bills: [{ name: 'Netflix', institution: 'Chase', amount: 15.99, currency: 'USD', last_date: daysAgo(26), next_date: next, months_seen: 3, due_soon: true }],
+      bills: [{ name: 'Netflix', institution: 'Chase', amount: 15.99, currency: 'USD', last_date: daysAgo(26), next_date: next, due_soon: true }],
       monthly_total: { currency: 'USD', amount: 15.99, left_out: [] },
       due_soon_days: 7,
     });
+  });
+
+  test('the monthly total adds the bills in the totals’ currency, and names those in others, as the Budgets tab does', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const now = new Date().toISOString();
+    const charge = (n: number, name: string, amount: number, currency: string, days: number) => ({
+      id: `manual-txn:${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`,
+      account_id: 'manual_wallet',
+      date: daysAgo(days),
+      amount,
+      currency,
+      name,
+      category: 'entertainment',
+      note: null,
+      source: 'manual',
+      source_id: null,
+      created_at: now,
+      updated_at: now,
+    });
+    const before = (await manualTxnStore.get(ctx, 'manual_wallet'))!;
+    let n = 0;
+    const monthly = (name: string, amount: number, currency: string) => [20, 51, 82].map((d) => charge(++n, name, amount, currency, d));
+    await manualTxnStore.set(ctx, 'manual_wallet', {
+      ...before,
+      rows: [...before.rows, ...monthly('Radio', 9.99, 'EUR'), ...monthly('Papers', 4, 'EUR'), ...monthly('Gym', 1200, 'JPY')],
+    });
+    const { body } = await call('recurring');
+    expect(body.bills.map((b: { name: string; currency: string }) => [b.name, b.currency])).toEqual([
+      ['Gym', 'JPY'],
+      ['Netflix', 'USD'],
+      ['Radio', 'EUR'],
+      ['Papers', 'EUR'],
+    ]);
+    expect(body.monthly_total).toEqual({ currency: 'USD', amount: 15.99, left_out: [{ currency: 'EUR', count: 2 }, { currency: 'JPY', count: 1 }] });
   });
 
   test('holdings: the latest recorded positions, with the day they were recorded', async () => {

@@ -2,10 +2,10 @@ import { serve, methodNotAllowed } from '@/lib/api-http';
 import { operation } from '@/lib/api-ops';
 
 // GET /api/v1/me: The token you called with, and when your data in Nya began.
-// No sign-in id or email address. Read-only, with an API token (lib/api-
-// tokens.ts), from stored data alone. Its arguments are declared in lib/api-
-// ops.ts and its answer is built in lib/api-read.ts; both are documented on the
-// developer page (app/developers).
+// No sign-in id or email address. Read-only, with an API token
+// (lib/api-tokens.ts), from stored data alone. Its arguments are declared in
+// lib/api-spec.ts and its answer is built in lib/api-read.ts; both are
+// documented on the developer page (app/developers).
 
 const op = operation('me');
 

@@ -28,7 +28,7 @@ describe('the session gate', () => {
   // They are let through inside (below), but still pass through the proxy:
   // that is what gives a page its Content-Security-Policy.
   test('covers the public pages too', () => {
-    for (const path of ['/login', '/security', '/privacy']) expect(gated(path)).toBe(true);
+    for (const path of ['/login', '/security', '/privacy', '/developers']) expect(gated(path)).toBe(true);
   });
 });
 
@@ -45,8 +45,8 @@ describe('without a session', () => {
   });
   const call = (path: string, init?: ConstructorParameters<typeof NextRequest>[1]) => proxy(new NextRequest(`https://nya.test${path}`, init));
 
-  test('the login, security and privacy pages open, with their policy', async () => {
-    for (const path of ['/login', '/security', '/privacy']) {
+  test('the login, security, privacy and developer pages open, with their policy', async () => {
+    for (const path of ['/login', '/security', '/privacy', '/developers']) {
       const res = await call(path);
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
@@ -55,7 +55,7 @@ describe('without a session', () => {
   });
 
   test('only those exact paths', async () => {
-    for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/']) {
+    for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/developers/x', '/developer', '/']) {
       expect((await call(path)).headers.get('location')).toBe('https://nya.test/login');
     }
     expect((await call('/api/security')).status).toBe(401);

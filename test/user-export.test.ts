@@ -441,7 +441,7 @@ describe('everything stored, decrypted, and nothing else', () => {
   });
 
   test('API tokens: each one’s name and dates, never the token, its hash or its id, and an unreadable one stops the download', async () => {
-    const { createToken } = await import('@/lib/api-tokens');
+    const { createToken, parseToken } = await import('@/lib/api-tokens');
     const { apiTokenStore } = await import('@/lib/api-token-store');
     expect((await download()).api_tokens).toEqual([]);
     const first = await createToken(ctx, 'Raycast', new Date('2026-09-01T10:00:00.000Z'));
@@ -458,7 +458,11 @@ describe('everything stored, decrypted, and nothing else', () => {
       expect(text).not.toContain(id);
       expect(text).not.toContain(t.hash);
     }
-    for (const { token } of [first, second]) expect(text).not.toContain(token.split('_')[2].slice(0, 20));
+    // The secret by its place in the token: base64url, so it may hold "_" itself.
+    for (const { token } of [first, second]) {
+      expect(text).not.toContain(token);
+      expect(text).not.toContain(parseToken(token)!.secret);
+    }
     expect(doc.not_included.some((s: string) => s.startsWith('Your API tokens themselves, and the hashes'))).toBe(true);
     // Read strictly, as every store is: a damaged record fails the download, naming it.
     await fake.hset(ctxKey('api-tokens'), { [first.info.id]: DAMAGED });

@@ -82,13 +82,14 @@ describe('with Clerk on', () => {
     }
   });
 
-  test('so do the security and privacy pages, and the password login (which sends people to sign-in)', async () => {
-    for (const path of ['/security', '/privacy', '/login']) {
+  test('so do the security, privacy and developer pages, and the password login (which sends people to sign-in)', async () => {
+    for (const path of ['/security', '/privacy', '/developers', '/login']) {
       const res = await call(path);
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
     }
     expect((await call('/security/x')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fsecurity%2Fx');
+    expect((await call('/developers/x')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fdevelopers%2Fx');
   });
 
   test("pages get the policy, with Clerk's host from the publishable key; the API gets none", async () => {
