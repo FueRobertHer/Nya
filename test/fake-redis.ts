@@ -442,6 +442,14 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[1]);
       return 1;
     }
+    if (name === '-- nya:sharing-delete-orphan-log') {
+      // lib/sharing.ts DELETE_ORPHAN_LOG: the log field, only while the connection's record field is absent.
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const h = this.hashes.get(keys[0]);
+      if (h?.has(args[0]) || !h?.has(args[1])) return 0;
+      this.hdelNow(keys[0], [args[1]]);
+      return 1;
+    }
     if (name === '-- nya:sharing-delete-log-if') {
       // lib/sharing.ts DELETE_LOG_IF: the field, only while it holds the log id.
       if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');

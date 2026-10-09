@@ -494,10 +494,15 @@ const isLogField = (field: string) => {
  * knows the id even when the connection's first showing set it meanwhile.
  * That one is taken only while no newer connection between the same two
  * exists (a link accepted meanwhile), so a new connection's log id and
- * records are never touched. The log field goes only while it still holds
- * one of those ids (DELETE_LOG_IF); one that can't be read is left for a new
- * connection between the two to replace, since nothing can be found by it. A
- * showing recorded after this takes itself back (recordShowing). Never
+ * records are never touched. The log field goes while it still holds one of
+ * those ids (DELETE_LOG_IF), and whatever it holds once the connection's own
+ * record is gone (DELETE_ORPHAN_LOG): one that can't be read too, whose name,
+ * made from the two people's sign-in ids, would otherwise say they were
+ * connected. A connection made again writes its record and log field in one
+ * HSET, so neither step can touch its field. A blocked connection keeps its
+ * record, and so a damaged log field, until the block is lifted, which
+ * removes them both. A showing recorded after this takes itself back
+ * (recordShowing). Never
  * throws, since the connection is already gone: a container that can't be
  * reached now (being deleted, or restored), or a delete that fails, is left
  * to the nightly pass, which deletes every record whose connection has ended
@@ -514,12 +519,11 @@ async function forgetShowings(c: Conn): Promise<void> {
   } catch (err) {
     console.error('Sharing: a connection’s log id could not be read as it ended; the nightly pass deletes what it leaves', err instanceof Error ? err.name : err);
   }
-  for (const id of ids) {
-    try {
-      await deleteLogIf(c.id, id);
-    } catch (err) {
-      console.error('Sharing: a connection’s log id could not be deleted with it', err instanceof Error ? err.name : err);
-    }
+  try {
+    for (const id of ids) await deleteLogIf(c.id, id);
+    await redis().eval(DELETE_ORPHAN_LOG, [connectionsKey()], [c.id, logField(c.id)]);
+  } catch (err) {
+    console.error('Sharing: a connection’s log id could not be deleted with it', err instanceof Error ? err.name : err);
   }
   if (ids.size === 0) return;
   await Promise.all(
@@ -1153,6 +1157,15 @@ local v = redis.call('HGET', KEYS[1], ARGV[1])
 if not v or not string.find(v, ARGV[2], 1, true) then return 0 end
 redis.call('HDEL', KEYS[1], ARGV[1])
 return 1`;
+
+/** Deletes a connection's log field, whatever it holds, only while the
+ *  connection's own record field is absent, in one step: the connection has
+ *  ended, and one made again since writes both fields at once. ARGV[1] the
+ *  record field (the connection id), ARGV[2] the log field. The first line
+ *  names the script for the test double. */
+export const DELETE_ORPHAN_LOG = `-- nya:sharing-delete-orphan-log
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[2])`;
 
 async function deleteLogIf(id: string, logId: string): Promise<void> {
   await redis().eval(DELETE_LOG_IF, [connectionsKey()], [logField(id), `"id":"${logId}"`]);

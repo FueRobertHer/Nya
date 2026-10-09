@@ -1193,7 +1193,7 @@ describe('records of showings', () => {
       expect(await pairFields()).toEqual([]);
     });
 
-    test('from before records: a removal that can’t read the log id, and the showing that set it takes back its count and the field', async () => {
+    test('from before records: a removal that can’t reach the log field, and the showing that set it takes back its count and the field', async () => {
       const { sharedWithMe, removeConnection } = await import('@/lib/sharing');
       await share({ acct_joint: 'balance' });
       await fake.hdel(testKey('connections'), `${pair}|log`);
@@ -1208,7 +1208,9 @@ describe('records of showings', () => {
           delete (fake as any).hdel;
           deleting();
           await mayDelete;
-          fake.failNext('hget'); // and it won't be able to read the log id after
+          // And after, it won't be able to read the log field, or delete it.
+          fake.failNext('hget');
+          fake.failNext('eval');
         }
         return realHdel(key, ...fields);
       };
@@ -1274,6 +1276,69 @@ describe('records of showings', () => {
       // Nothing under the new connection's log id, which is untouched.
       expect(await records()).toEqual([]);
       expect(await logIdOf()).toBe(fresh);
+    });
+
+    test('a log field that can’t be read goes with its connection, removed or with an account deleted, and never with a new one', async () => {
+      const { dropConnectionsOf } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      // Removed: nothing named for the two is left.
+      await fake.hset(testKey('connections'), { [`${pair}|log`]: 'not json' });
+      expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+      expect(await pairFields()).toEqual([]);
+      // An account deleted: the same.
+      pair = await connect('user_owner', 'user_partner');
+      await fake.hset(testKey('connections'), { [`${pair}|log`]: 'not json' });
+      await dropConnectionsOf('user_partner');
+      expect(await pairFields()).toEqual([]);
+      // Blocked: kept with the record of the block, and gone when the block is lifted.
+      pair = await connect('user_owner', 'user_partner');
+      await fake.hset(testKey('connections'), { [`${pair}|log`]: 'not json' });
+      expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair, block: true }))).status).toBe(200);
+      expect((await pairFields()).sort()).toEqual([pair, `${pair}|label|user_owner`, `${pair}|log`].sort());
+      expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+      expect(await pairFields()).toEqual([]);
+    });
+
+    test('a connection’s log field goes only once its record has, on a real Redis too', async () => {
+      const { DELETE_ORPHAN_LOG } = await import('@/lib/sharing');
+      type Side = {
+        run: () => Promise<unknown>;
+        hset: (f: string, v: string) => Promise<unknown>;
+        hdel: (f: string) => Promise<unknown>;
+        fields: () => Promise<string[]>;
+      };
+      const sides: Side[] = [
+        {
+          run: () => fake.eval(DELETE_ORPHAN_LOG, ['k'], ['c1', 'c1|log']),
+          hset: (f, v) => fake.hset('k', { [f]: v }),
+          hdel: (f) => fake.hdel('k', f),
+          fields: async () => Object.keys((await fake.hgetall('k')) ?? {}).sort(),
+        },
+      ];
+      if (hasRedis) {
+        real ??= await startRedis();
+        const r = real.client;
+        sides.push({
+          run: () => r.send('EVAL', [DELETE_ORPHAN_LOG, '1', 'k', 'c1', 'c1|log']),
+          hset: (f, v) => r.send('HSET', ['k', f, v]),
+          hdel: (f) => r.send('HDEL', ['k', f]),
+          fields: async () => ((await r.send('HKEYS', ['k'])) as string[]).sort(),
+        });
+      }
+      for (const { run, hset, hdel, fields } of sides) {
+        // The connection there (one made again writes both at once): its log field stays, whatever it holds.
+        await hset('c1', '{"users":["a","b"]}');
+        await hset('c1|log', 'not json');
+        await hset('c2', 'another connection');
+        expect(Number(await run())).toBe(0);
+        expect(await fields()).toEqual(['c1', 'c1|log', 'c2']);
+        // Its record gone: the log field goes, and nothing else.
+        await hdel('c1');
+        expect(Number(await run())).toBe(1);
+        expect(await fields()).toEqual(['c2']);
+        expect(Number(await run())).toBe(0); // nothing left to delete
+        await hdel('c2');
+      }
     });
 
     test('the log field is deleted only while it holds the id that was written under, on a real Redis too', async () => {
@@ -1352,11 +1417,9 @@ describe('records of showings', () => {
     expect(await damagedOf('user_owner')).toEqual({ damaged: [], maybe_connected: true });
     await quietly(() => pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds()));
     expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([logId]);
-    // Removing them starts again: the record goes the next night, and the
-    // field, whose id can't be known, is left for connecting again to replace.
+    // Removing them starts again: the field goes with the connection, and the record the next night.
     expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
-    expect(await fake.hget<string>(testKey('connections'), `${pair}|log`)).toBe('not json');
-    expect((await connectionsOf('user_owner')).connections).toEqual([]);
+    expect(await fake.hget(testKey('connections'), `${pair}|log`)).toBeNull();
     await pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds());
     expect(await fake.hgetall(ctxKey('sharing-access-log'))).toBeNull();
     await connect('user_partner', 'user_owner');
