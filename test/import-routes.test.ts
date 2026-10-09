@@ -624,6 +624,21 @@ describe('the list of imports, and undo', () => {
   });
 });
 
+describe('one person’s imports are theirs alone', () => {
+  test('the route is behind the session gate, and another container sees and undoes nothing of them', async () => {
+    const { config } = await import('@/proxy');
+    expect(new RegExp(`^${config.matcher[0]}$`).test('/api/import')).toBe(true);
+    const { body } = await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'));
+    const OTHER = { container: '3f0b8c1e-6d2a-4b5c-9e7f-0a1b2c3d4e5f' } as typeof ctx;
+    const { listImports, undoImport, ImportNotFoundError } = await import('@/lib/import/commit');
+    expect(await listImports(OTHER, CHECKING.account_id)).toEqual([]);
+    expect(await importStore.count(OTHER)).toBe(0);
+    expect(await undoImport(OTHER, CHECKING.account_id, body.import_id).catch((e) => e)).toBeInstanceOf(ImportNotFoundError);
+    expect(await book()).toHaveLength(8);
+    expect((await importStore.get(ctx, body.import_id))?.account_id).toBe(CHECKING.account_id);
+  });
+});
+
 describe('racing other writers', () => {
   test('a row added between the preview and the import is matched against, never duplicated', async () => {
     const p = await preview(CHECKING.account_id, fixture('checking-ofx102.ofx'));
