@@ -376,11 +376,14 @@ export default function ImportSheet({
     () => (file?.format === 'csv' ? readCsvTable(file.text, { delimiter: options.csv?.delimiter, header_line: options.csv?.header_line }) : null),
     [file, options.csv?.delimiter, options.csv?.header_line]
   );
-  /** The file read with these answers, in the browser: for a CSV file, only
-   *  its first rows (CsvMapping counts the rest). */
+  /** The file read with these answers, in the browser, for the steps that
+   *  ask a question (the preview is the server's): for a CSV file, only its
+   *  first rows (CsvMapping counts the rest). */
+  const asking = step === 'statement' || step === 'order' || step === 'mapping';
   const read = useMemo<ReadResult | null>(
-    () => (file ? readImport(file.text, { format: file.format, options, thisYear, ...(csvTable ? { table: csvTable, limit: LIVE_ROWS } : {}) }) : null),
-    [file, options, thisYear, csvTable]
+    () =>
+      file && asking ? readImport(file.text, { format: file.format, options, thisYear, ...(csvTable ? { table: csvTable, limit: LIVE_ROWS } : {}) }) : null,
+    [file, options, thisYear, csvTable, asking]
   );
 
   /** Asks the server for the preview, with these answers and choices. */
@@ -416,7 +419,8 @@ export default function ImportSheet({
    *  the preview. `remembered` says a CSV's mapping came from the last file. */
   function proceed(next: ImportOptions, picked: Picked, remembered = false) {
     setOptions(next);
-    const r = readImport(picked.text, { format: picked.format, options: next, thisYear });
+    // What the file needs next is all this asks: a CSV file's first rows say it.
+    const r = readImport(picked.text, { format: picked.format, options: next, thisYear, ...(picked.format === 'csv' ? { limit: LIVE_ROWS } : {}) });
     if (r.status === 'error') {
       setError(r.error);
       setStep('pick');
@@ -1220,7 +1224,9 @@ export function PreviewView({
           </div>
         ))}
       {p.format === 'qif' && p.read.order_open && p.read.date_order && (
-        <DateOrderQuestion read={null} options={{ ...options, date_order: p.read.date_order }} onChange={(o) => o.date_order && onDateOrder(o.date_order)} />
+        <div style={{ marginTop: 8 }}>
+          <DateOrderQuestion read={null} options={{ ...options, date_order: p.read.date_order }} onChange={(o) => o.date_order && onDateOrder(o.date_order)} />
+        </div>
       )}
       {p.other_currencies.length > 0 && (
         <p className="panel-note">
