@@ -31,9 +31,11 @@
 // Otherwise the Item simply has no transactions: no rows, no note, nothing
 // wrong. Recurring bills, insights and budgets see no rows from it.
 //
-// What Plaid bills is read from /item/get's `billed_products` when the Item is
-// linked (app/api/exchange-public-token) and kept on its record
-// (StoredItem.billed_products in lib/storage.ts).
+// Whether Plaid bills Transactions is read from /item/get's `billed_products`
+// when the Item is linked (app/api/exchange-public-token) and kept on its
+// record (StoredItem.transactions_billed in lib/storage.ts). Only that one
+// fact, not Plaid's whole list: the record is plain text, and the list could
+// say more (that there is a loan at this bank, say) than the sync needs.
 
 /** How many days of transactions to ask Plaid for, both when a link token
  *  initializes Transactions and when a first sync does (Plaid's default is 90).
@@ -48,32 +50,26 @@ export function isLinkKind(v: unknown): v is LinkKind {
   return typeof v === 'string' && (LINK_KINDS as readonly string[]).includes(v);
 }
 
-/** Plaid's product names: lower case, digits and underscores. */
-const PRODUCT_NAME = /^[a-z][a-z0-9_]{0,39}$/;
-const MAX_PRODUCTS = 40;
-
 /**
- * Plaid's `billed_products` from an Item (as /item/get answers it), as it is
- * stored: product names only, each once, at most MAX_PRODUCTS. Null when the
- * answer has no list, which reads as "not known", never as "nothing billed".
+ * Whether an Item (as /item/get answers it) shows Plaid billing Transactions,
+ * from its `billed_products`, as it is stored. Null when the answer has no
+ * list, which reads as "not known", never as "not billed".
  */
-export function billedProductsOf(item: unknown): string[] | null {
+export function transactionsBilledOf(item: unknown): boolean | null {
   if (!item || typeof item !== 'object') return null;
   const billed = (item as { billed_products?: unknown }).billed_products;
   if (!Array.isArray(billed)) return null;
-  const names = billed.filter((p): p is string => typeof p === 'string' && PRODUCT_NAME.test(p));
-  return [...new Set(names)].slice(0, MAX_PRODUCTS);
+  return billed.includes('transactions');
 }
 
 /**
  * Whether Plaid already bills Transactions on the Item, so a sync cannot start
- * a charge. An Item with no record (`billed_products` absent) was linked before
- * Nya recorded it, through the only option there was, which required
+ * a charge. An Item with no record (`transactions_billed` absent) was linked
+ * before Nya recorded it, through the only option there was, which required
  * Transactions. One whose lookup failed (null) is not known to be billed.
  */
-export function transactionsBilled(item: { billed_products?: readonly string[] | null }): boolean {
-  if (item.billed_products === undefined) return true;
-  return Array.isArray(item.billed_products) && item.billed_products.includes('transactions');
+export function transactionsBilled(item: { transactions_billed?: boolean | null }): boolean {
+  return item.transactions_billed === undefined || item.transactions_billed === true;
 }
 
 /**

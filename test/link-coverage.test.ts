@@ -94,7 +94,7 @@ const { getAccountHistory, getRealSnapshotDates, isBackfillDone } = await import
 const { snapshotData } = await import('@/lib/snapshot-job');
 const { readHoldingsRange } = await import('@/lib/holdings-history');
 const { existingItemsAt } = await import('@/lib/existing-items');
-const { billedProductsOf, transactionsBilled, holdsTransactionAccounts, isLinkKind } = await import('@/lib/item-products');
+const { transactionsBilledOf, transactionsBilled, holdsTransactionAccounts, isLinkKind } = await import('@/lib/item-products');
 
 const checking = (id = 'acct_chk') => ({
   account_id: id,
@@ -144,15 +144,16 @@ const contribution = (id: string, account_id: string, date: string) => ({
 });
 
 /**
- * A linked Item: stored with what Plaid billed when it was linked (left out
- * for one linked before Nya recorded that), with its accounts, and remembered
- * as a dashboard load leaves it unless `remember` is false.
+ * A linked Item: stored with whether Plaid billed Transactions when it was
+ * linked (left out for one linked before Nya recorded that), with its
+ * accounts, and remembered as a dashboard load leaves it unless `remember` is
+ * false.
  */
 async function addItem(
   item_id: string,
   institution_name: string,
   accounts: any[],
-  opts: { billed?: string[] | null; txns?: any[] | string; remember?: boolean } = {}
+  opts: { billed?: boolean | null; txns?: any[] | string; remember?: boolean } = {}
 ) {
   const token = `token-${item_id}`;
   plaid.accounts[token] = accounts;
@@ -161,7 +162,7 @@ async function addItem(
     item_id,
     institution_name,
     encrypted_access_token: await encrypt(token),
-    ...('billed' in opts ? { billed_products: opts.billed } : {}),
+    ...('billed' in opts ? { transactions_billed: opts.billed } : {}),
   });
   if (opts.remember !== false) await remember(item_id, institution_name, accounts);
 }
@@ -174,7 +175,7 @@ async function remember(item_id: string, institution_name: string, accounts: any
 const addBank = () => addItem('item_bank', 'Bank', [checking()], { txns: [bankRow('t1', 'acct_chk'), bankRow('t2', 'acct_chk', daysAgo(20))] });
 /** A 401(k) plan linked through the brokerage option: Investments only. */
 const addRetirement = (opts: { remember?: boolean } = {}) =>
-  addItem('item_ret', 'Empower', [k401()], { billed: ['investments'], ...opts });
+  addItem('item_ret', 'Empower', [k401()], { billed: false, ...opts });
 const syncedTokens = () => plaid.syncCalls.map((c) => c.token);
 
 async function route(path: string, method: string, body?: unknown, query = '') {
@@ -198,24 +199,22 @@ beforeEach(async () => {
 });
 
 describe('which products an Item has', () => {
-  test("Plaid's billed list is kept as names only, once each; no list is unknown, never nothing", () => {
-    expect(billedProductsOf({ billed_products: ['investments', 'transactions', 'investments'] })).toEqual(['investments', 'transactions']);
-    expect(billedProductsOf({ billed_products: [] })).toEqual([]);
-    expect(billedProductsOf({ billed_products: ['investments', 7, null, 'NOT A NAME', '', 'x'.repeat(60)] })).toEqual(['investments']);
-    expect(billedProductsOf({ billed_products: Array.from({ length: 60 }, (_, i) => `p${i}`) })).toHaveLength(40);
+  test("whether Plaid bills Transactions, from its billed list; no list is unknown, never \"not billed\"", () => {
+    expect(transactionsBilledOf({ billed_products: ['investments', 'transactions'] })).toBe(true);
+    expect(transactionsBilledOf({ billed_products: ['investments', 'liabilities'], products: ['transactions'] })).toBe(false);
+    expect(transactionsBilledOf({ billed_products: [] })).toBe(false);
     for (const item of [{}, { billed_products: 'transactions' }, { billed_products: null }, null, undefined, 'item']) {
-      expect(billedProductsOf(item)).toBeNull();
+      expect(transactionsBilledOf(item)).toBeNull();
     }
   });
 
-  test('Transactions counts as billed on an Item linked before it was recorded, and only then without the name', () => {
+  test('Transactions counts as billed on an Item linked before it was recorded, and otherwise only when recorded so', () => {
     // Linked when the bank option, which requires Transactions, was the only one.
     expect(transactionsBilled({})).toBe(true);
-    expect(transactionsBilled({ billed_products: ['transactions', 'investments'] })).toBe(true);
-    expect(transactionsBilled({ billed_products: ['investments'] })).toBe(false);
-    expect(transactionsBilled({ billed_products: [] })).toBe(false);
+    expect(transactionsBilled({ transactions_billed: true })).toBe(true);
+    expect(transactionsBilled({ transactions_billed: false })).toBe(false);
     // A failed lookup is not known to be billed.
-    expect(transactionsBilled({ billed_products: null })).toBe(false);
+    expect(transactionsBilled({ transactions_billed: null })).toBe(false);
   });
 
   test('only checking, savings and cards are worth starting Transactions for', () => {
@@ -270,21 +269,27 @@ describe('the link token', () => {
 });
 
 describe('linking records what Plaid bills', () => {
-  test('from /item/get, beside the institution id', async () => {
-    plaid.items['token-p1'] = { institution_id: 'ins_9', products: ['investments'], billed_products: ['investments'] };
+  test('from /item/get, beside the institution id, and only whether it bills Transactions', async () => {
+    plaid.items['token-p1'] = { institution_id: 'ins_9', products: ['investments'], billed_products: ['investments', 'liabilities'] };
+    plaid.items['token-p2'] = { institution_id: 'ins_3', products: ['transactions'], billed_products: ['transactions'] };
     expect((await route('exchange-public-token', 'POST', { public_token: 'p1', institution_name: 'Empower' })).status).toBe(200);
-    expect(await getItems(ctx)).toMatchObject([{ item_id: 'item_p1', institution_id: 'ins_9', billed_products: ['investments'] }]);
+    expect((await route('exchange-public-token', 'POST', { public_token: 'p2', institution_name: 'Chase' })).status).toBe(200);
+    const items = Object.fromEntries((await getItems(ctx)).map((i) => [i.item_id, i]));
+    expect(items.item_p1).toMatchObject({ institution_id: 'ins_9', transactions_billed: false });
+    expect(items.item_p2).toMatchObject({ institution_id: 'ins_3', transactions_billed: true });
+    // The record is plain text, so Plaid's list itself (a loan here, say) isn't kept.
+    expect(JSON.stringify(items)).not.toContain('liabilities');
   });
 
   test('unknown when the lookup fails, and the Item still links', async () => {
     expect((await route('exchange-public-token', 'POST', { public_token: 'p2', institution_name: 'Empower' })).status).toBe(200);
-    expect(await getItems(ctx)).toMatchObject([{ item_id: 'item_p2', institution_id: null, billed_products: null }]);
+    expect(await getItems(ctx)).toMatchObject([{ item_id: 'item_p2', institution_id: null, transactions_billed: null }]);
   });
 
-  test('an answer without the list is unknown too, never "nothing billed"', async () => {
+  test('an answer without the list is unknown too, never "not billed"', async () => {
     plaid.items['token-p3'] = { institution_id: 'ins_9' };
     await route('exchange-public-token', 'POST', { public_token: 'p3', institution_name: 'Empower' });
-    expect((await getItems(ctx))[0].billed_products).toBeNull();
+    expect((await getItems(ctx))[0].transactions_billed).toBeNull();
   });
 });
 
@@ -315,7 +320,7 @@ describe('transactions from an Item without Transactions', () => {
   });
 
   test('a brokerage connection that holds a checking account starts Transactions, asking for two years', async () => {
-    await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: ['investments'], txns: [bankRow('c1', 'acct_cma')] });
+    await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: false, txns: [bankRow('c1', 'acct_cma')] });
     const first = await transactions();
     expect(first.body.notes).toEqual([]);
     expect(first.body.transactions.map((t: any) => t.transaction_id)).toEqual(['c1']);
@@ -326,7 +331,7 @@ describe('transactions from an Item without Transactions', () => {
   });
 
   test('once started, it keeps syncing, and showing what it stored, after the checking account goes', async () => {
-    await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: ['investments'], txns: [bankRow('c1', 'acct_cma')] });
+    await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: false, txns: [bankRow('c1', 'acct_cma')] });
     await transactions();
     plaid.accounts['token-item_fid'] = [k401()];
     await remember('item_fid', 'Fidelity', [k401()]);
@@ -350,7 +355,7 @@ describe('transactions from an Item without Transactions', () => {
       plaid.syncCalls.length = 0;
       (await import('@/lib/sessions')).forgetEpochs();
       await registerTestContainer(fake);
-      await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: ['investments'], txns: code });
+      await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: code });
       const res = await transactions();
       expect(res.body).toMatchObject({ transactions: [], notes: [] });
       expect(plaid.syncCalls).toHaveLength(1);
@@ -364,7 +369,7 @@ describe('transactions from an Item without Transactions', () => {
   test('on an Item that has Transactions the same answer is a fault, and says so', async () => {
     await addItem('item_bank', 'Bank', [checking()], { txns: 'PRODUCTS_NOT_SUPPORTED' });
     expect((await transactions()).body.notes).toEqual(['Bank: could not fetch transactions']);
-    await addItem('item_bank', 'Bank', [checking()], { billed: ['transactions'], txns: 'ADDITIONAL_CONSENT_REQUIRED' });
+    await addItem('item_bank', 'Bank', [checking()], { billed: true, txns: 'ADDITIONAL_CONSENT_REQUIRED' });
     expect((await transactions()).body.notes).toEqual(['Bank: could not fetch transactions']);
   });
 
@@ -406,7 +411,7 @@ describe('the estimated backfill', () => {
   });
 
   test('a cash account with no stream is held flat: no series of its own, and no total past what is known', async () => {
-    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: ['investments'], txns: 'PRODUCTS_NOT_SUPPORTED' });
+    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'PRODUCTS_NOT_SUPPORTED' });
     plaid.invRows['token-item_ret'] = flows('acct_401k');
     const res = await route('backfill', 'POST');
     expect(res.status).toBe(200);
@@ -420,7 +425,7 @@ describe('the estimated backfill', () => {
 
   test('beside a bank with a stream, it still gets no series of its own, and counts in the total at today’s balance', async () => {
     await addBank();
-    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: ['investments'], txns: 'PRODUCTS_NOT_SUPPORTED' });
+    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'PRODUCTS_NOT_SUPPORTED' });
     const res = await route('backfill', 'POST');
     expect(res.body.backfilled).toBeGreaterThan(0);
     // An empty stream would have drawn it as a balance that never moved.

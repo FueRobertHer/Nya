@@ -152,13 +152,14 @@ export type StoredItem = {
    *  institution already linked can be recognized even while this Item can't be
    *  read. Absent on Items linked before it was stored. */
   institution_id?: string | null;
-  /** The products Plaid was billing on the Item when it was linked (/item/get's
-   *  `billed_products`, Plaid's own names), so the transactions sync knows
-   *  whether a call would start billing Transactions (lib/item-products.ts).
-   *  Absent on Items linked before it was stored, all of which required
-   *  Transactions; null when the lookup failed. Plaintext like the name: it
-   *  says what kinds of data the connection carries, not what is in it. */
-  billed_products?: string[] | null;
+  /** Whether Plaid was billing Transactions on the Item when it was linked
+   *  (from /item/get's `billed_products`), so the transactions sync knows
+   *  whether a call would start that charge (lib/item-products.ts). Absent on
+   *  Items linked before it was stored, all of which required Transactions;
+   *  null when the lookup failed. Plain text, like the name, and listed on the
+   *  Security page with it: it says whether the connection brings in
+   *  transactions, nothing about what they are. */
+  transactions_billed?: boolean | null;
 };
 
 const ITEMS_HASH = (ctx: Ctx) => kc(ctx, 'plaid:items');
