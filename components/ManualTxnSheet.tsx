@@ -43,10 +43,12 @@ import {
  *  from its card), or one to edit. */
 export type ManualTxnTarget = { mode: 'add'; account_id: string | null } | { mode: 'edit'; txn: Txn };
 
-/** What the form needs of the dashboard's institutions: the manual ones. */
+/** What the form needs of the dashboard's institutions: the manual ones (not
+ *  those SimpleFIN feeds, `manual` too, whose rows are the bank's). */
 export type SheetInstitution = {
   institution_name: string;
   manual?: boolean;
+  connector?: string;
   accounts: { account_id: string; name: string; type: string; balance: number | null; currency: string | null; hidden?: boolean }[];
 };
 
@@ -132,7 +134,7 @@ export default function ManualTxnSheet({
   const accounts = useMemo<Account[]>(
     () =>
       institutions
-        .filter((i) => i.manual)
+        .filter((i) => i.manual && !i.connector)
         .flatMap((i) => i.accounts.filter((a) => !a.hidden).map((a) => ({ ...a, institution_name: i.institution_name }))),
     [institutions]
   );

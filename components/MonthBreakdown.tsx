@@ -21,6 +21,7 @@ import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
+import { isConnectorKind } from "@/lib/connectors/types";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -739,7 +740,9 @@ export default function MonthBreakdown({
                                 </option>
                               ))}
                             </select>
-                            {t.source && onEditTransaction && (
+                            {/* Not a row SimpleFIN brought: the bank's
+                                record, whose category alone is the person's. */}
+                            {t.source && !isConnectorKind(t.source) && onEditTransaction && (
                               <div className="rename-row">
                                 <button
                                   className="secondary"

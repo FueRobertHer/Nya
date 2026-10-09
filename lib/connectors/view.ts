@@ -6,7 +6,7 @@
 // what SimpleFIN offers with its balances to choose from, from memory, once.
 
 import type { ConnectorAccount, ConnectorConnection } from './store';
-import type { ConnectorKind, RemoteAnswer } from './types';
+import type { ConnectorKind, FailureKind, RemoteAnswer } from './types';
 import { connectorOf } from './registry';
 import { nyaBalance } from './institutions';
 import { connectorSite } from './health';
@@ -38,6 +38,8 @@ export type OfferView = {
 export type FetchView = {
   at: string;
   ok: boolean;
+  /** What kind of failure, when it failed (lib/connectors/types.ts). */
+  kind: FailureKind | null;
   /** Why it failed, in words for the person (the connector's own included). */
   message: string | null;
   /** What the connector reported, in its own words, with the tracked
@@ -95,6 +97,7 @@ export function connectionView(connection_id: string, conn: ConnectorConnection,
       ? {
           at: f.at,
           ok: f.failure === null,
+          kind: f.failure?.kind ?? null,
           message: f.failure?.message ?? null,
           problems: f.problems
             .filter((p) => p.accounts === null || p.accounts.length > 0)

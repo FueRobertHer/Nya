@@ -10,6 +10,10 @@
 // Also the "Reconnect soon" note an institution's card carries while Plaid
 // says its connection will end on a date (ReconnectSoonNote).
 //
+// The accounts SimpleFIN feeds are rows here too, with SimpleFIN's own words
+// and its own actions (lib/connectors/health.ts): fix it at SimpleFIN and
+// refresh, connect again with a new Setup Token, or choose accounts.
+//
 // Everything here reads the `health` the server attached to each institution
 // (lib/connection-state.ts); a payload from before it existed has none, and
 // the view says nothing about such an institution rather than guess.
@@ -20,12 +24,18 @@ import { formatMoney, dominantCurrency } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
 import { instantDay } from '@/lib/local-date';
 import { joinNames } from '@/lib/month-coverage';
+import { connectorBadge, connectorHealthText, connectorSideText, connectorSite } from '@/lib/connectors/health';
+import type { ConnectorAsk } from './Connectors';
 
 /** What the view needs of an institution, as /api/net-worth sends it. */
 export type HealthInstitution = {
   institution_name: string;
   item_id: string;
   manual?: boolean;
+  /** Accounts a connector the person brought feeds (SimpleFIN): `manual`
+   *  too, but with a connection whose health this view shows. */
+  connector?: string;
+  connection_id?: string;
   error: string | null;
   accounts: { name: string; mask: string | null; type: string; balance: number | null; currency: string | null; hidden?: boolean; stale?: boolean }[];
   health?: Health;
@@ -210,6 +220,7 @@ export default function ConnectionHealth({
   onReconnect,
   onRemove,
   onManageAccounts,
+  onConnector,
 }: {
   institutions: HealthInstitution[];
   /** The server could not read Plaid's warnings or the sync times. */
@@ -223,11 +234,13 @@ export default function ConnectionHealth({
   onReconnect: (item_id: string) => void;
   onRemove: (item_id: string) => void;
   onManageAccounts: (item_id: string) => void;
+  /** What a SimpleFIN row's button asks (components/Connectors.tsx). */
+  onConnector?: (ask: ConnectorAsk) => void;
 }) {
   const rows = useMemo(
     () =>
       institutions
-        .filter((i): i is HealthInstitution & { health: Health } => !i.manual && !!i.health)
+        .filter((i): i is HealthInstitution & { health: Health } => (!i.manual || !!i.connector) && !!i.health)
         .sort((a, b) => ORDER.indexOf(a.health.state) - ORDER.indexOf(b.health.state) || a.institution_name.localeCompare(b.institution_name)),
     [institutions]
   );
@@ -248,7 +261,20 @@ export default function ConnectionHealth({
   }, [focus, shown, onFocused]);
 
   if (!shown) return null;
-  return <ConnectionHealthView ref={ref} rows={rows} open={open} onToggle={() => setOpen((o) => !o)} unavailable={unavailable} connecting={connecting} onReconnect={onReconnect} onRemove={onRemove} onManageAccounts={onManageAccounts} />;
+  return (
+    <ConnectionHealthView
+      ref={ref}
+      rows={rows}
+      open={open}
+      onToggle={() => setOpen((o) => !o)}
+      unavailable={unavailable}
+      connecting={connecting}
+      onReconnect={onReconnect}
+      onRemove={onRemove}
+      onManageAccounts={onManageAccounts}
+      onConnector={onConnector}
+    />
+  );
 }
 
 /** The card itself, from rows already sorted: for tests, and the wrapper above. */
@@ -262,6 +288,7 @@ export function ConnectionHealthView({
   onReconnect,
   onRemove,
   onManageAccounts,
+  onConnector,
   now = Date.now(),
 }: {
   ref?: React.Ref<HTMLDivElement>;
@@ -273,6 +300,7 @@ export function ConnectionHealthView({
   onReconnect: (item_id: string) => void;
   onRemove: (item_id: string) => void;
   onManageAccounts: (item_id: string) => void;
+  onConnector?: (ask: ConnectorAsk) => void;
   now?: number;
 }) {
   const troubled = rows.filter((r) => r.health.state !== 'healthy').length;
@@ -313,13 +341,18 @@ export function ConnectionHealthView({
             {rows.map((inst) => {
               const h = inst.health;
               const name = inst.institution_name;
-              const text = healthText(name, h, inst, now);
-              const side = h.state === 'healthy' ? null : sideText(name, h);
+              // A connector's row speaks for it, in its own words.
+              const fed = h.cause === 'connector' && !!h.detail;
+              const text = fed ? connectorHealthText(name, h) : healthText(name, h, inst, now);
+              const side = h.state === 'healthy' ? null : fed ? connectorSideText(name, h) : sideText(name, h);
               return (
                 <li key={inst.item_id} className="health-row">
                   <div className="health-head">
-                    <span className="inst-name">{name}</span>
-                    <span className={`health-badge health-${TONES[h.state] ?? 'warn'}`}>{badgeOf(h, now)}</span>
+                    <span className="inst-name">
+                      {name}
+                      {fed && <span className="manual-badge">via {h.detail!.label}</span>}
+                    </span>
+                    <span className={`health-badge health-${TONES[h.state] ?? 'warn'}`}>{fed ? connectorBadge(h) : badgeOf(h, now)}</span>
                   </div>
                   {text && <p className="health-text">{text}</p>}
                   {h.unread && (
@@ -335,7 +368,11 @@ export function ConnectionHealthView({
                     {side ? ` · ${side}` : ''}
                     {h.code ? ` · Plaid code ${h.code}` : ''}
                   </div>
-                  <HealthAction inst={inst} connecting={connecting} onReconnect={onReconnect} onRemove={onRemove} onManageAccounts={onManageAccounts} />
+                  {fed ? (
+                    <ConnectorAction inst={inst} onConnector={onConnector} />
+                  ) : (
+                    <HealthAction inst={inst} connecting={connecting} onReconnect={onReconnect} onRemove={onRemove} onManageAccounts={onManageAccounts} />
+                  )}
                 </li>
               );
             })}
@@ -344,6 +381,61 @@ export function ConnectionHealthView({
       )}
     </div>
   );
+}
+
+/** What a SimpleFIN row offers: fixing it at SimpleFIN, then a Refresh;
+ *  connecting again with a new Setup Token; choosing accounts; a Refresh. */
+function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { health: Health }; onConnector?: (ask: ConnectorAsk) => void }) {
+  const d = inst.health.detail;
+  const id = d?.connection_id;
+  if (!d || !id || !onConnector) return null;
+  const site = connectorSite(d);
+  switch (d.issue) {
+    case 'refused':
+    case 'credentials':
+      return (
+        <div className="card-actions">
+          <button onClick={() => onConnector({ kind: 'token', connection_id: id })}>Connect again</button>
+        </div>
+      );
+    case 'missing':
+      return (
+        <div className="card-actions">
+          <button className="secondary" onClick={() => onConnector({ kind: 'accounts', connection_id: id })}>
+            Choose accounts
+          </button>
+        </div>
+      );
+    case 'gone':
+      return (
+        <div className="card-actions">
+          <button className="secondary" onClick={() => onConnector({ kind: 'disconnect', connection_id: id })}>
+            Disconnect
+          </button>
+        </div>
+      );
+    case 'reported':
+    case 'payment':
+    case 'down':
+    case 'answer':
+    case 'blocked':
+    case 'stale':
+    case 'waiting':
+      return (
+        <div className="card-actions">
+          {(d.issue === 'reported' || d.issue === 'payment') && site && (
+            <a className="connector-site" href={site} target="_blank" rel="noreferrer">
+              Open {d.label}
+            </a>
+          )}
+          <button className="secondary" onClick={() => onConnector({ kind: 'refresh', connection_id: id })}>
+            Refresh
+          </button>
+        </div>
+      );
+    default:
+      return null;
+  }
 }
 
 /** The one button a state offers, if any. */

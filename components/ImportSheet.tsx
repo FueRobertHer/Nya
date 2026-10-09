@@ -295,7 +295,8 @@ export default function ImportSheet({
   const accounts = useMemo<Account[]>(
     () =>
       institutions
-        .filter((i) => i.manual)
+        // Not the accounts SimpleFIN feeds: their transactions come from it.
+        .filter((i) => i.manual && !i.connector)
         .flatMap((i) => i.accounts.filter((a) => !a.hidden).map((a) => ({ ...a, institution_name: i.institution_name }))),
     [institutions]
   );
