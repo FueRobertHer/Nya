@@ -3,24 +3,53 @@
 // Read-only sharing between connected people (#45, lib/sharing.ts). Two parts:
 //   - the Sharing drawer (components/Sheet.tsx), opened from the Accounts tab
 //     or the account menu: an invite link to connect with someone, the people
-//     I'm connected with, and for each what I call them and what they see of
+//     I'm connected with, and for each what I call them, what they see of
 //     mine, per account (not shared, that it exists, balance, or balance and
-//     recent transactions), plus remove and block;
+//     recent transactions) and until when, a preview of exactly what they see,
+//     when they looked (the access log), plus remove and block;
 //   - "Shared by ...", on the Accounts tab whenever a connection shares
-//     something: their accounts, read-only.
+//     something: their accounts, read-only, and until when.
 // Only with Clerk on; with the shared password there's nobody to connect
-// with, and both parts render nothing.
+// with, and both parts render nothing. End dates and the access log's days
+// are in components/SharingDates.tsx.
 //
 // Class names avoid "share": ad blockers' social-share filters hide such
 // elements (Fanboy's list has ##.share-row).
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatMoney } from '@/lib/format';
+import { ACCESS_LOG_DAYS, type Level } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
+import {
+  shortDate,
+  endFor,
+  endAfterDays,
+  endLabel,
+  ended,
+  EndPicker,
+  WhenTheyLooked,
+  RENEW_DAYS,
+  type EndChoice,
+  type LoggedHour,
+} from './SharingDates';
 
-type Level = 'exists' | 'balance' | 'transactions';
+export { shortDate } from './SharingDates';
+
 export type Choice = Level | 'none';
-export type Connection = { id: string; label: string; introduced_as: string | null; since: string; sharing: Record<string, Level> };
+export type Connection = {
+  id: string;
+  label: string;
+  introduced_as: string | null;
+  since: string;
+  sharing: Record<string, Level>;
+  /** When what I share with them ends (an ISO time, which may have passed),
+   *  or null for no end. */
+  expires_at: string | null;
+  /** When they looked, by the hour, oldest first; null when the record can't
+   *  be used, and views_problem says why. */
+  views: LoggedHour[] | null;
+  views_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
+};
 export type SharingPayload = {
   enabled: boolean;
   connections?: Connection[];
@@ -39,21 +68,21 @@ function byInstitution(accounts: ShareableAccount[]): [string, ShareableAccount[
   }
   return [...groups.entries()];
 }
-export type SharedPayload = {
-  shared: {
-    connection: string;
-    label: string;
-    accounts: {
-      id: string;
-      label: string;
-      level: Level;
-      balance: number | null;
-      as_of: string | null;
-      debt: boolean;
-      transactions?: { date: string; name: string; amount: number; pending: boolean }[];
-    }[];
-  }[];
+
+type SharedAccount = {
+  id: string;
+  label: string;
+  level: Level;
+  balance: number | null;
+  as_of: string | null;
+  debt: boolean;
+  transactions?: { date: string; name: string; amount: number; pending: boolean }[];
 };
+/** What someone is shown of one person's share (lib/sharing.ts ShareView). */
+export type SharedView = { accounts: SharedAccount[]; expires_at: string | null };
+export type SharedPayload = { shared: (SharedView & { connection: string; label: string })[] };
+/** "What they see" (lib/sharing.ts previewShare): `view` null when they see nothing. */
+export type SharePreview = { connection: string; view: SharedView | null; unreadable?: true };
 export type Invite = { url: string; expires_at: string } | null;
 
 const LEVEL_LABEL: Record<Choice, string> = {
@@ -69,17 +98,6 @@ async function send(method: string, path: string, body: unknown): Promise<{ ok: 
 }
 
 const initial = (label: string) => (label.trim()[0] ?? '?').toUpperCase();
-
-/** "Sep 28", with the year only when it isn't this one. Takes a YYYY-MM-DD
- *  (a calendar day, shown as it is) or a full ISO time (an instant, shown as the
- *  day it was in the viewer's own time zone, not its UTC day). */
-export function shortDate(iso: string, now: Date = new Date()): string {
-  const isInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:/.test(iso);
-  const d = isInstant ? new Date(iso) : new Date(`${iso.slice(0, 10)}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return iso;
-  const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
-}
 
 function Chevron() {
   return (
@@ -115,16 +133,26 @@ async function sendLink(url: string, field: HTMLInputElement | null): Promise<bo
   return false;
 }
 
+/** The end choice a connection's settings open with: as saved, if it has one. */
+const savedChoice = (c: Connection): EndChoice => (c.expires_at ? 'keep' : 'none');
+
 /** The Sharing drawer. Loads each time it opens. */
 export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [data, setData] = useState<SharingPayload | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, Choice>>({});
   const [labelDraft, setLabelDraft] = useState('');
+  const [endChoice, setEndChoice] = useState<EndChoice>('none');
+  const [endDay, setEndDay] = useState('');
   const [invite, setInvite] = useState<Invite>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // "What they see": a level below the connection.
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<SharePreview | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const asked = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/connections').catch(() => null);
@@ -141,6 +169,7 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     }
     // Next time it opens at the top, with nothing half-done showing.
     setSelected(null);
+    setPreviewing(false);
     setInvite(null);
     setNotice('');
     setError('');
@@ -153,6 +182,9 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
       if (!c) return;
       setDraft(Object.fromEntries((data?.accounts ?? []).map((a) => [a.id, c.sharing[a.id] ?? 'none'])));
       setLabelDraft(c.label);
+      setEndChoice(savedChoice(c));
+      setEndDay('');
+      setPreviewing(false);
       setNotice('');
       setError('');
       setSelected(id);
@@ -178,37 +210,87 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     [load]
   );
 
+  // Always what is saved, never the draft: it is what they see.
+  const openPreview = useCallback(async (id: string) => {
+    asked.current = id;
+    setPreviewing(true);
+    setPreview(null);
+    setPreviewError('');
+    const res = await fetch(`/api/connections/preview?id=${encodeURIComponent(id)}`).catch(() => null);
+    const body = await res?.json().catch(() => null);
+    if (asked.current !== id) return; // another was asked for since
+    if (!res?.ok || !body) return setPreviewError(body?.error ?? 'Could not show what they see.');
+    setPreview(body);
+  }, []);
+
   const current = data?.connections?.find((c) => c.id === selected) ?? null;
+  const accounts = data?.accounts ?? [];
+  // Unsaved changes to what they see: the preview shows what is saved.
+  const unsaved =
+    !!current &&
+    (accounts.some((a) => (draft[a.id] ?? 'none') !== (current.sharing[a.id] ?? 'none')) ||
+      (endFor(endChoice, endDay) !== undefined && !(endChoice === 'none' && current.expires_at === null)));
+  const title = current ? (previewing ? `What ${current.label} sees` : current.label) : 'Sharing';
   return (
-    <Sheet open={open} title={current ? current.label : 'Sharing'} onClose={onClose} onBack={current ? () => setSelected(null) : undefined}>
-      <SharingPanelView
-        data={data}
-        current={current}
-        draft={draft}
-        labelDraft={labelDraft}
-        invite={invite}
-        busy={busy}
-        error={error}
-        notice={notice}
-        onOpen={openConnection}
-        onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
-        onLabel={setLabelDraft}
-        onInvite={async (fromName, theirLabel) => {
-          const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
-          if (body) setInvite(body);
-        }}
-        onSave={() => {
-          if (current) act('PUT', '/api/connections', { id: current.id, label: labelDraft, accounts: draft }, 'Saved.');
-        }}
-        onRemove={async (id, block) => {
-          const what = block
-            ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.'
-            : 'Remove them? Everything shared both ways ends.';
-          if (block !== null && !window.confirm(what)) return;
-          const done = await act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
-          if (done) setSelected(null);
-        }}
-      />
+    <Sheet
+      open={open}
+      title={title}
+      onClose={onClose}
+      onBack={current ? () => (previewing ? setPreviewing(false) : setSelected(null)) : undefined}
+    >
+      {current && previewing ? (
+        <PreviewView who={current.label} expiresAt={current.expires_at} preview={preview} error={previewError} unsaved={unsaved} />
+      ) : (
+        <SharingPanelView
+          data={data}
+          current={current}
+          draft={draft}
+          labelDraft={labelDraft}
+          endChoice={endChoice}
+          endDay={endDay}
+          invite={invite}
+          busy={busy}
+          error={error}
+          notice={notice}
+          onOpen={openConnection}
+          onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
+          onLabel={setLabelDraft}
+          onEndChoice={setEndChoice}
+          onEndDay={setEndDay}
+          onInvite={async (fromName, theirLabel) => {
+            const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
+            if (body) setInvite(body);
+          }}
+          onSave={async () => {
+            if (!current) return;
+            const expires_at = endFor(endChoice, endDay);
+            const saved = await act('PUT', '/api/connections', { id: current.id, label: labelDraft, accounts: draft, ...(expires_at !== undefined ? { expires_at } : {}) }, 'Saved.');
+            // What is saved now: a choice like "7 days" isn't sent again with the next save.
+            if (saved && expires_at !== undefined) setEndChoice(expires_at === null ? 'none' : 'keep');
+          }}
+          onRenew={async () => {
+            if (!current) return;
+            const expires_at = endAfterDays(RENEW_DAYS);
+            const renewed = await act('PUT', '/api/connections', { id: current.id, expires_at }, `Renewed until ${endLabel(expires_at)}.`);
+            if (renewed) setEndChoice('keep');
+          }}
+          onPreview={() => {
+            if (current) openPreview(current.id);
+          }}
+          onClearViews={async () => {
+            if (!current || !window.confirm('Clear the record of when they looked? It can’t be read, so nothing readable is lost.')) return;
+            await act('DELETE', '/api/connections/access-log', { id: current.id }, 'Cleared. Their next look starts a new record.');
+          }}
+          onRemove={async (id, block) => {
+            const what = block
+              ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.'
+              : 'Remove them? Everything shared both ways ends.';
+            if (block !== null && !window.confirm(what)) return;
+            const done = await act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
+            if (done) setSelected(null);
+          }}
+        />
+      )}
     </Sheet>
   );
 }
@@ -218,6 +300,8 @@ export function SharingPanelView({
   current,
   draft,
   labelDraft,
+  endChoice,
+  endDay,
   invite,
   busy,
   error,
@@ -225,8 +309,13 @@ export function SharingPanelView({
   onOpen,
   onChoose,
   onLabel,
+  onEndChoice,
+  onEndDay,
   onInvite,
   onSave,
+  onRenew,
+  onPreview,
+  onClearViews,
   onRemove,
 }: {
   data: SharingPayload | null;
@@ -234,6 +323,8 @@ export function SharingPanelView({
   current: Connection | null;
   draft: Record<string, Choice>;
   labelDraft: string;
+  endChoice: EndChoice;
+  endDay: string;
   invite: Invite;
   busy: boolean;
   error: string;
@@ -241,8 +332,15 @@ export function SharingPanelView({
   onOpen: (id: string) => void;
   onChoose: (id: string, c: Choice) => void;
   onLabel: (label: string) => void;
+  onEndChoice: (c: EndChoice) => void;
+  onEndDay: (day: string) => void;
   onInvite: (fromName: string, theirLabel: string) => void;
   onSave: () => void;
+  /** Gives an ended share another RENEW_DAYS, as it was. */
+  onRenew: () => void;
+  onPreview: () => void;
+  /** Clears an unreadable record of when they looked (after confirming). */
+  onClearViews: () => void;
   /** block: true blocks, false removes, null lifts a block (no confirmation). */
   onRemove: (id: string, block: boolean | null) => void;
 }) {
@@ -262,6 +360,7 @@ export function SharingPanelView({
   if (current) {
     // What they can see now: a share on an account I've since hidden is paused.
     const seen = accounts.filter((a) => current.sharing[a.id]).length;
+    const over = seen > 0 && ended(current.expires_at);
     return (
       <>
         <section className="panel-section">
@@ -276,11 +375,22 @@ export function SharingPanelView({
         </section>
         <section className="panel-section">
           <p className="section-label">What they can see</p>
-          <p className="panel-note" style={{ margin: '0 0 6px' }}>
-            {seen === 0
-              ? `${current.label} can’t see any of your accounts.`
-              : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, read-only.`}
-          </p>
+          {over ? (
+            <>
+              <p className="stale-note" style={{ margin: '0 0 6px' }}>
+                Ended {endLabel(current.expires_at!)}: {current.label} sees none of your accounts now. Your choices below are kept.
+              </p>
+              <button className="secondary" onClick={onRenew} disabled={busy} style={{ marginBottom: 6 }}>
+                Renew until {endLabel(endAfterDays(RENEW_DAYS))}
+              </button>
+            </>
+          ) : (
+            <p className="panel-note" style={{ margin: '0 0 6px' }}>
+              {seen === 0
+                ? `${current.label} can’t see any of your accounts.`
+                : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, read-only${current.expires_at ? `, until ${endLabel(current.expires_at)}` : ''}.`}
+            </p>
+          )}
           {accounts.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
           {byInstitution(accounts).map(([institution, list]) => (
             <div key={institution} className="institution-group">
@@ -299,10 +409,26 @@ export function SharingPanelView({
               ))}
             </div>
           ))}
-          <button onClick={onSave} disabled={busy} style={{ marginTop: 12 }}>
+          <EndPicker saved={current.expires_at} choice={endChoice} day={endDay} onChoice={onEndChoice} onDay={onEndDay} />
+          <button onClick={onSave} disabled={busy || (endChoice === 'date' && endFor('date', endDay) === undefined)} style={{ marginTop: 4 }}>
             {busy ? 'Saving…' : 'Save'}
           </button>
+          <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
+            See what {current.label} sees
+          </button>
           {status}
+        </section>
+        <section className="panel-section">
+          <p className="section-label">When they looked</p>
+          <WhenTheyLooked
+            who={current.label}
+            since={current.since}
+            views={current.views ?? null}
+            problem={current.views_problem ?? (current.views === undefined ? 'unavailable' : undefined)}
+            busy={busy}
+            onClear={onClearViews}
+          />
+          <p className="panel-note">Kept for {ACCESS_LOG_DAYS} days. Only you see this, and their card tells them you can.</p>
         </section>
         <section className="panel-section">
           <p className="section-label">Connection</p>
@@ -372,13 +498,19 @@ export function SharingPanelView({
           <div className="peer-list">
             {connections.map((c) => {
               const seen = accounts.filter((a) => c.sharing[a.id]).length;
+              const what =
+                seen === 0
+                  ? 'Sees none of your accounts'
+                  : ended(c.expires_at)
+                    ? `Ended ${endLabel(c.expires_at!)}`
+                    : `Sees ${seen} of your accounts${c.expires_at ? ` until ${endLabel(c.expires_at)}` : ''}`;
               return (
                 <button key={c.id} className="peer-item" onClick={() => onOpen(c.id)}>
                   <span className="avatar">{initial(c.label)}</span>
                   <span className="peer-item-text">
                     <span className="peer-item-name">{c.label}</span>
                     <span className="peer-item-meta">
-                      {seen === 0 ? 'Sees none of your accounts' : `Sees ${seen} of your accounts`} · since {shortDate(c.since)}
+                      {what} · since {shortDate(c.since)}
                     </span>
                   </span>
                   <Chevron />
@@ -410,6 +542,51 @@ export function SharingPanelView({
   );
 }
 
+/** "What they see": the card they get on their Accounts tab, from the same
+ *  projection, as it is saved now. Only their name for me is left out: it is
+ *  theirs, so the card says "you". */
+export function PreviewView({
+  who,
+  expiresAt,
+  preview,
+  error,
+  unsaved,
+}: {
+  /** What I call them. */
+  who: string;
+  /** When what I share with them ends, as saved: to say why they see nothing. */
+  expiresAt: string | null;
+  preview: SharePreview | null;
+  error: string;
+  /** The settings have changes not saved yet, which this doesn't show. */
+  unsaved: boolean;
+}) {
+  if (!preview) return error ? <div className="error">{error}</div> : <div className="spinner" role="status" aria-label="Loading" />;
+  const nothing = preview.unreadable
+    ? `Some of what you share can’t be read right now, so ${who} sees nothing of yours.`
+    : ended(expiresAt)
+      ? `Your share ended ${endLabel(expiresAt!)}, so ${who} sees nothing of yours.`
+      : `${who} sees nothing of yours.`;
+  return (
+    <>
+      <p className="panel-note" style={{ marginTop: 4 }}>
+        Exactly what {who} sees of yours right now, read-only, on their Accounts tab, with the dates they see. The card there carries their name
+        for you.
+      </p>
+      {unsaved && <p className="stale-note">You have changes you haven’t saved. This shows what is saved.</p>}
+      {preview.view ? (
+        <SharedCard
+          name="you"
+          view={preview.view}
+          note={<p className="panel-note">{preview.view.expires_at ? `Shared until ${endLabel(preview.view.expires_at)}. ` : ''}You can see when they look.</p>}
+        />
+      ) : (
+        <p className="empty-note">{nothing}</p>
+      )}
+    </>
+  );
+}
+
 export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
   const [data, setData] = useState<SharedPayload | null>(null);
   useEffect(() => {
@@ -421,51 +598,65 @@ export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
   return <SharedWithMeView data={data} />;
 }
 
-function shownBalance(a: SharedPayload['shared'][number]['accounts'][number]): string {
+function shownBalance(a: SharedAccount): string {
   if (a.level === 'exists') return 'Balance not shared';
   if (a.balance === null) return 'No balance yet';
   return `${formatMoney(a.balance)}${a.debt ? ' owed' : ''}`;
 }
 
-export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
+/** One person's shared accounts, read-only, as the one they're shared with
+ *  sees them (and the sharer, in "What they see"). */
+function SharedCard({ name, view, note }: { name: string; view: SharedView; note: ReactNode }) {
   const [open, setOpen] = useState<string | null>(null);
+  return (
+    <div className="card">
+      <div className="incoming-head">
+        <span className="avatar small">{initial(name)}</span>
+        <h3>Shared by {name}</h3>
+        <span className="pill">Read-only</span>
+      </div>
+      {view.accounts.map((a) => (
+        <div key={a.id} className="incoming-account">
+          <div className="peer-row">
+            <span>
+              <span className="incoming-account-name">{a.label}</span>
+              {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
+            </span>
+            <span className="incoming-account-value">{shownBalance(a)}</span>
+          </div>
+          {a.transactions && (
+            <button className="link-btn" onClick={() => setOpen(open === a.id ? null : a.id)}>
+              {open === a.id ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
+            </button>
+          )}
+          {open === a.id &&
+            a.transactions?.map((t, i) => (
+              <div key={i} className="incoming-txn">
+                <span>
+                  {t.date} {t.name}
+                  {t.pending ? ' (pending)' : ''}
+                </span>
+                <span>{formatMoney(-t.amount)}</span>
+              </div>
+            ))}
+        </div>
+      ))}
+      {note}
+    </div>
+  );
+}
+
+export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
   if (!data || data.shared.length === 0) return null;
   return (
     <>
       {data.shared.map((s) => (
-        <div key={s.connection} className="card">
-          <div className="incoming-head">
-            <span className="avatar small">{initial(s.label)}</span>
-            <h3>Shared by {s.label}</h3>
-            <span className="pill">Read-only</span>
-          </div>
-          {s.accounts.map((a) => (
-            <div key={a.id} className="incoming-account">
-              <div className="peer-row">
-                <span>
-                  <span className="incoming-account-name">{a.label}</span>
-                  {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
-                </span>
-                <span className="incoming-account-value">{shownBalance(a)}</span>
-              </div>
-              {a.transactions && (
-                <button className="link-btn" onClick={() => setOpen(open === a.id ? null : a.id)}>
-                  {open === a.id ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
-                </button>
-              )}
-              {open === a.id &&
-                a.transactions?.map((t, i) => (
-                  <div key={i} className="incoming-txn">
-                    <span>
-                      {t.date} {t.name}
-                      {t.pending ? ' (pending)' : ''}
-                    </span>
-                    <span>{formatMoney(-t.amount)}</span>
-                  </div>
-                ))}
-            </div>
-          ))}
-        </div>
+        <SharedCard
+          key={s.connection}
+          name={s.label}
+          view={s}
+          note={<p className="panel-note">{s.expires_at ? `Shared until ${endLabel(s.expires_at)}. ` : ''}{s.label} can see when you look.</p>}
+        />
       ))}
     </>
   );
