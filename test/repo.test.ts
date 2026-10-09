@@ -1377,6 +1377,39 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
     sent: () => upstash.sent,
   });
 
+  // The double has no clock, so a counter's last second and its end are
+  // checked here, on the server's own: so a change to the scripts can never
+  // quietly reopen a window about to end, nor keep an ended one shut.
+  describe("a counter store's window, on the clock", () => {
+    /** Waits for the counter's window to end, a few seconds at most. */
+    const ended = async () => {
+      for (let i = 0; i < 100 && Number(await send('EXISTS', [counterKey()])) === 1; i++) await Bun.sleep(25);
+      expect(Number(await send('EXISTS', [counterKey()]))).toBe(0);
+    };
+
+    test('under a second from its end, a window is left to end: neither a count nor a read gives it a fresh one', async () => {
+      for (let i = 0; i < 3; i++) await counter.take(A);
+      // Under half a second left, which TTL answers as 0.
+      await send('PEXPIRE', [counterKey(), '450']);
+      expect(Number(await send('TTL', [counterKey()]))).toBe(0);
+      expect(await counter.take(A)).toEqual({ count: 4, secondsLeft: 1 });
+      expect(Number(await send('PTTL', [counterKey()]))).toBeLessThanOrEqual(450);
+      expect(await counter.read(A)).toEqual({ count: 4, secondsLeft: 1 });
+      expect(Number(await send('PTTL', [counterKey()]))).toBeLessThanOrEqual(450);
+    });
+
+    test('once a window has ended it reads as none, and the next count starts a fresh one', async () => {
+      await counter.take(A);
+      await counter.take(A);
+      await send('PEXPIRE', [counterKey(), '200']);
+      await ended();
+      expect(await counter.read(A)).toEqual({ count: 0, secondsLeft: 0 });
+      expect(await send('EXISTS', [counterKey()])).toBe(0); // the read wrote nothing
+      expect(await counter.take(A)).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(Number(await send('TTL', [counterKey()]))).toBe(WINDOW);
+    });
+  });
+
   test('a key of the wrong type is an error, never empty, and is left as it is', async () => {
     await send('SET', [notesKey(), 'a string where the hash should be']);
     for (const op of [
