@@ -47,6 +47,9 @@ export type ForecastAccount = {
   updated_at?: string;
   /** Recovered from a past snapshot rather than fetched (lib/last-known.ts). */
   stale?: boolean;
+  /** A card's or loan's payment terms, where Plaid serves them: the calendar
+   *  marks the payment due (lib/calendar.ts duePayments). */
+  liability?: { minimum_payment: number | null; next_due_date: string | null };
 };
 
 /** What the forecast reads of an institution (/api/net-worth). */

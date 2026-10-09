@@ -33,6 +33,8 @@ import { totalNotes } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
+import type { RecurringRow } from '@/lib/recurring';
+import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
@@ -440,6 +442,8 @@ export default function Dashboard({
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
   // Connections that bring in no transactions, so the spending views say why.
   const [txnWithout, setTxnWithout] = useState<NoTransactionsView>(NO_CONNECTIONS_WITHOUT);
+  // The rows before the loaded year that recurring detection needs.
+  const [txnHistory, setTxnHistory] = useState<RecurringRow[]>([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
   // Connection health (components/ConnectionHealth.tsx): whether the server
   // could read Plaid's warnings, and whether a notice email's link opened it.
@@ -477,6 +481,21 @@ export default function Dashboard({
         empty: [],
         isValid: (v): v is Goal[] => Array.isArray(v),
         onChange: setGoalsState,
+      }),
+    []
+  );
+  // The forecast's planned items and dismissals (lib/planned.ts), saved whole
+  // the same way.
+  const [plannedState, setPlannedState] = useState<ListState<Planned>>(initialListState<Planned>(EMPTY_PLANNED));
+  const plannedItemsStore = useMemo(
+    () =>
+      createWholeListStore<Planned>({
+        url: '/api/planned-items',
+        field: 'planned',
+        noun: 'planned items',
+        empty: EMPTY_PLANNED,
+        isValid: isPlanned,
+        onChange: setPlannedState,
       }),
     []
   );
@@ -613,6 +632,7 @@ export default function Dashboard({
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
+      setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
     } catch {
       setTxnNotes(['Could not load transactions.']);
     } finally {
@@ -688,7 +708,8 @@ export default function Dashboard({
     loadTransactions();
     budgetsStore.load();
     goalsStore.load();
-  }, [loadTransactions, budgetsStore, goalsStore]);
+    plannedItemsStore.load();
+  }, [loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
 
   const renameVendor = useCallback(
     async (vendor_key: string, name: string) => {
@@ -1562,6 +1583,8 @@ export default function Dashboard({
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
+                  recurringHistory={txnHistory}
+                  dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
@@ -2245,6 +2268,14 @@ export default function Dashboard({
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
                 withoutTransactions={txnWithout}
+                // The forecast, the calendar and the recurring list.
+                recurringHistory={txnHistory}
+                institutions={institutions}
+                planned={plannedState.value}
+                plannedStatus={plannedState.status}
+                plannedError={plannedState.error}
+                plannedSaveError={plannedState.saveError}
+                onSavePlanned={plannedItemsStore.save}
               />
             )}
 

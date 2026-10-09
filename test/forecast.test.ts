@@ -251,41 +251,39 @@ describe('the what-if', () => {
 });
 
 describe('day zero is the viewer\'s day', () => {
-  const tz = process.env.TZ;
-  const inZone = <T>(zone: string, f: () => T): T => {
-    process.env.TZ = zone;
-    try {
-      return f();
-    } finally {
-      if (tz === undefined) delete process.env.TZ;
-      else process.env.TZ = tz;
-    }
-  };
+  /** The calendar day of an instant in a time zone, as a browser there has it. */
+  const dayIn = (at: Date, timeZone: string) => at.toLocaleDateString('en-CA', { timeZone });
 
-  test('late on the 9th in California, UTC is already the 10th; the forecast starts on the 9th', () => {
-    // 22:30 in Los Angeles on Oct 9 is 05:30 UTC on Oct 10.
-    const at = new Date('2026-10-10T05:30:00Z');
-    inZone('America/Los_Angeles', () => {
-      expect(at.toISOString().slice(0, 10)).toBe('2026-10-10');
-      const today = localDate(at);
-      expect(today).toBe('2026-10-09');
-      // A bill due on the 10th is tomorrow, not today.
-      const f = buildForecast(100, [ev('2026-10-10', -80)], today, 30);
-      expect(f.days[0]).toMatchObject({ date: '2026-10-09', balance: 100 });
-      expect(f.days[1]).toMatchObject({ date: '2026-10-10', balance: 20 });
-    });
+  test('late in the evening it is still that day, whatever UTC says', () => {
+    // Built from local parts, so this holds in whatever zone the tests run in.
+    const evening = new Date(2026, 9, 9, 22, 30);
+    const today = localDate(evening);
+    expect(today).toBe('2026-10-09');
+    // A bill due on the 10th is tomorrow, not today.
+    const f = buildForecast(100, [ev('2026-10-10', -80)], today, 30);
+    expect(f.days[0]).toMatchObject({ date: '2026-10-09', balance: 100 });
+    expect(f.days[1]).toMatchObject({ date: '2026-10-10', balance: 20 });
   });
 
-  test('early on the 10th in Auckland, UTC is still the 9th; the forecast starts on the 10th', () => {
+  test('in California UTC is already the 10th; the forecast starts on the 9th there', () => {
+    // 22:30 in Los Angeles on Oct 9 is 05:30 UTC on Oct 10.
+    const at = new Date('2026-10-10T05:30:00Z');
+    expect(at.toISOString().slice(0, 10)).toBe('2026-10-10');
+    const today = dayIn(at, 'America/Los_Angeles');
+    expect(today).toBe('2026-10-09');
+    expect(buildForecast(100, [ev('2026-10-10', -80)], today, 30).days[0].balance).toBe(100);
+  });
+
+  test('in Auckland UTC is still the 9th; a bill due on the 9th is a day late there, so it counts today', () => {
     // 09:30 in Auckland on Oct 10 is 20:30 UTC on Oct 9.
     const at = new Date('2026-10-09T20:30:00Z');
-    inZone('Pacific/Auckland', () => {
-      expect(localDate(at)).toBe('2026-10-10');
-      // A bill due on the 9th is a day late there, so it counts today.
-      const s = detectRecurring(monthly('2026-05', 5, 9).map((d) => row(d, 15.49)));
-      const { events } = forecastEvents({ series: s, planned: [], currency: 'USD', today: localDate(at), until: '2026-11-09' });
-      expect(events[0]).toMatchObject({ date: '2026-10-10', due: '2026-10-09', late: true });
-    });
+    const today = dayIn(at, 'Pacific/Auckland');
+    expect(today).toBe('2026-10-10');
+    const s = detectRecurring(monthly('2026-05', 5, 9).map((d) => row(d, 15.49)));
+    const { events } = forecastEvents({ series: s, planned: [], currency: 'USD', today, until: '2026-11-09' });
+    expect(events[0]).toMatchObject({ date: '2026-10-10', due: '2026-10-09', late: true });
+    // On UTC's day it would have been due today, not late.
+    expect(forecastEvents({ series: s, planned: [], currency: 'USD', today: '2026-10-09', until: '2026-11-09' }).events[0]).toMatchObject({ date: '2026-10-09' });
   });
 });
 
