@@ -565,6 +565,63 @@ export async function getAccountHistory(ctx: Ctx,
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
+/**
+ * The balances measured on each of `dates`, per account, for allocation over
+ * time (app/api/allocation-history): the real and partial layers only, never
+ * an estimate, by the precedence getAccountHistory reads them with. On a date,
+ * a partial measurement comes first for the accounts it names (recordSnapshot
+ * clears a day's partial map when it writes a real one, so a partial beside a
+ * real one is newer), then the real map. Keyed by the id each balance was
+ * recorded under: the caller follows links and leaves hidden accounts out.
+ *
+ * A date neither layer has is absent. A date whose map is damaged for good
+ * (unreadableForGood) is named in `unreadable`, never taken for a day with no
+ * balances; a failure that may pass (the key store unreachable) throws.
+ * Reads only the dates asked for, two commands in all.
+ */
+export async function readMeasuredBalances(
+  ctx: Ctx,
+  dates: readonly string[]
+): Promise<{ balances: Map<string, Record<string, number>>; unreadable: string[] }> {
+  const balances = new Map<string, Record<string, number>>();
+  const unreadable: string[] = [];
+  const wanted = [...new Set(dates)];
+  if (wanted.length === 0) return { balances, unreadable };
+  const [real, partial] = await Promise.all(
+    [ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx)].map(
+      async (key) => (await redis().hmget<Record<string, string | null>>(key, ...wanted)) ?? {}
+    )
+  );
+  /** A stored map's finite balances, or null when it is damaged for good. */
+  const open = async (blob: unknown): Promise<Record<string, number> | null> => {
+    try {
+      if (typeof blob !== 'string') throw new SyntaxError('a balance map is not stored as text');
+      const map = await decryptMap(blob);
+      const out: Record<string, number> = {};
+      for (const [id, value] of Object.entries(map ?? {})) if (typeof value === 'number' && Number.isFinite(value)) out[id] = value;
+      return out;
+    } catch (err) {
+      if (unreadableForGood(err)) return null;
+      throw err;
+    }
+  };
+  await Promise.all(
+    wanted.map(async (date) => {
+      const realBlob = real[date] ?? null;
+      const partialBlob = partial[date] ?? null;
+      if (realBlob === null && partialBlob === null) return;
+      const [r, p] = await Promise.all([realBlob === null ? {} : open(realBlob), partialBlob === null ? {} : open(partialBlob)]);
+      if (r === null || p === null) {
+        unreadable.push(date);
+        return;
+      }
+      balances.set(date, { ...r, ...p });
+    })
+  );
+  unreadable.sort();
+  return { balances, unreadable };
+}
+
 /** One day of a stored series, as the download of my data gives it. */
 export type StoredPoint = { date: string; value: number; estimated: boolean };
 

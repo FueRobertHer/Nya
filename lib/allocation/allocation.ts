@@ -100,6 +100,21 @@ export type AllocHolding = {
  *  balance and its positions is rounding, not money. */
 export const ROUNDING = 1;
 
+/** An amount smaller than half a cent is what adding and taking away
+ *  fractions leaves behind (0.1 + 0.2 - 0.3), not money: no row, share or
+ *  mix shows it. */
+export const RESIDUE = 0.005;
+
+/** Whether an amount is money to show, rather than rounding residue. */
+export const isMoney = (n: number) => Math.abs(n) >= RESIDUE;
+
+/** The accounts of an institution the allocation counts: its investment
+ *  accounts, hidden ones left out. One rule for today's allocation and the
+ *  accounts the mix over time is worked out for (lib/allocation/series.ts). */
+export function shownAccounts<A extends Pick<AllocAccount, 'type' | 'hidden'>>(inst: { accounts: readonly A[] }): A[] {
+  return inst.accounts.filter((a) => !a.hidden && isInvestmentType(a.type));
+}
+
 /** One security across the accounts that hold it, as one classification. */
 export type SecurityRow = {
   /** "ticker:VTI|...", "name:<name>|...", by how it was classified, or a key
@@ -227,7 +242,7 @@ export function allocate(input: {
   const leaveOut = (currency: string, amount: number) => other.set(currency, (other.get(currency) ?? 0) + amount);
 
   for (const inst of input.institutions) {
-    const shown = inst.accounts.filter((a) => !a.hidden && isInvestmentType(a.type));
+    const shown = shownAccounts(inst);
     const mightHold = shown.length > 0 || inst.accounts.length === 0;
     if (inst.error && !inst.staleAsOf && mightHold) caveats.push({ kind: 'unreachable', institution: inst.name });
     if (inst.missing > 0 && mightHold) caveats.push({ kind: 'missing', institution: inst.name, count: inst.missing });
@@ -411,9 +426,10 @@ export function shareLabel(amount: number, rounded: number, total: number): stri
 }
 
 /** The slots that hold anything, in display order, with their whole
- *  percents (null when the whole is zero or below). */
+ *  percents (null when the whole is zero or below). Rounding residue holds
+ *  nothing (RESIDUE). */
 export function shares<K extends string>(totals: Record<K, number>, order: readonly K[]): { slot: K; amount: number; pct: number | null; label: string | null }[] {
-  const held = order.filter((k) => totals[k] !== 0);
+  const held = order.filter((k) => isMoney(totals[k] ?? 0));
   const pcts = wholePercents(held.map((k) => totals[k]));
   const total = held.reduce((s, k) => s + totals[k], 0);
   return held.map((slot, i) => ({

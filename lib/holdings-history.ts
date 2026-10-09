@@ -846,6 +846,14 @@ function placer(opts: ReadOptions): (recordedAs: string) => { account: string; r
   };
 }
 
+/** The same placement for an id recorded somewhere else (a measured balance,
+ *  for allocation over time): under which account it goes, by the same links,
+ *  hidden accounts and ranking as recorded positions, or null for an id the
+ *  view leaves out. */
+export function placeRecorded(opts: ReadOptions): (recordedAs: string) => { account: string; rank: number } | null {
+  return placer(opts);
+}
+
 /** The month's days within [from, to], oldest first, each with its accounts in
  *  id order and its positions in the order the institution listed them. */
 function viewOf(month: HoldingsMonth, from: string, to: string, place: ReturnType<typeof placer>): HoldingsDay[] {

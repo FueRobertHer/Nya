@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AllocationCard, {
   AllocationHistoryChart,
+  seriesAccountsOf,
+  type HistoryAccount,
+  type HistoryAnswer,
   AllocationNotes,
   BucketView,
   ClassView,
@@ -264,42 +267,99 @@ describe('the mix over time', () => {
     date,
     classes,
     total: Object.values(classes).reduce((s, n) => s + (n ?? 0), 0),
-    accounts: 1,
-    empty: 0,
+    unlisted: 0,
     missing: [],
     otherCurrencies: {},
+    noCurrency: 0,
     unpriced: 0,
     ...over,
   });
-  const names = new Map([['b', 'IRA at Fidelity']]);
-  const ready = (days: SeriesDay[]) => ({ kind: 'ready' as const, answer: { currency: 'USD', first_recorded: days[0]?.date ?? null, first_recorded_at: null, last_recorded: null, days } });
+  const names = new Map([
+    ['b', 'IRA at Fidelity'],
+    ['k', '401(k) at Fidelity'],
+  ]);
+  const span = (account_id: string, first: string | null, last: string | null, shown = true, label: string | null = null): HistoryAccount => ({ account_id, shown, first, last, label });
+  const answer = (days: SeriesDay[], over: Partial<HistoryAnswer> = {}): HistoryAnswer => ({
+    currency: 'USD',
+    first_recorded: days[0]?.date ?? null,
+    first_recorded_at: null,
+    last_recorded: days.at(-1)?.date ?? null,
+    days,
+    accounts: [],
+    unreadable_days: [],
+    ...over,
+  });
+  const ready = (days: SeriesDay[], over: Partial<HistoryAnswer> = {}) => ({ kind: 'ready' as const, answer: answer(days, over) });
+  const body = (days: SeriesDay[], over: Partial<HistoryAnswer> = {}) => renderToStaticMarkup(<HistoryBody state={ready(days, over)} accountNames={names} onRetry={noop} />);
 
-  test('starts on the first recorded day, and says so', () => {
-    const t = text(renderToStaticMarkup(<HistoryBody state={ready([day('2026-09-30', { 'us-stocks': 60, bonds: 40 }), day('2026-10-02', { 'us-stocks': 70, bonds: 30 })])} accountNames={names} onRetry={noop} />));
+  test('starts on the first recorded day, and says so in the axis’s own dates', () => {
+    const t = text(body([day('2026-09-30', { 'us-stocks': 60, bonds: 40 }), day('2026-10-02', { 'us-stocks': 70, bonds: 30 })]));
     expect(t).toContain('Recorded from Sep 30, 2026, on 2 days: nothing is drawn before the first, or on a day nothing was recorded.');
+    expect(t).toContain('Each day is counted as the allocation above is, from the positions and balances recorded that day.');
     // The readout reads the last day until another is touched.
-    expect(t).toContain('70% US stocks, 30% bonds Oct 2, 2026 · $100 in positions');
+    expect(t).toContain('70% US stocks, 30% bonds Oct 2, 2026 · $100 counted');
   });
 
-  test('a day missing an account is marked, named, and in the table', () => {
-    const days = [day('2026-09-30', { 'us-stocks': 60, bonds: 40 }), day('2026-10-01', { 'us-stocks': 60 }, { missing: ['b'] }), day('2026-10-02', { 'us-stocks': 61, bonds: 39 })];
-    const html = renderToStaticMarkup(<HistoryBody state={ready(days)} accountNames={names} onRetry={noop} />);
+  test('says from when it is shown, when recording began before the year it reads', () => {
+    const t = text(body([day('2025-10-10', { bonds: 1 }), day('2026-10-09', { bonds: 1 })], { first_recorded: '2024-03-02' }));
+    expect(t).toContain('Recorded from Mar 2, 2024, shown from Oct 10, 2025, on 2 days');
+  });
+
+  test('an account not recorded since a day: the latest days are marked, and the readout and the notes say since when', () => {
+    const days = [day('2026-10-01', { 'us-stocks': 300, bonds: 100 }), day('2026-10-02', { 'us-stocks': 300, bonds: 100 }), day('2026-10-05', { bonds: 100 }, { missing: ['k'] }), day('2026-10-08', { bonds: 100 }, { missing: ['k'] })];
+    const html = body(days, { accounts: [span('k', '2026-10-01', '2026-10-02')] });
     const t = text(html);
-    expect(t).toContain("On 1 day (marked) IRA at Fidelity wasn't recorded, so the mix those days leaves it out.");
+    expect(t).toContain('100% bonds Oct 8, 2026 · $100 counted · leaves out 401(k) at Fidelity (not recorded since Oct 2, 2026)');
+    expect(t).toContain("401(k) at Fidelity hasn't been recorded since Oct 2, 2026, so the mix on the latest days leaves it out.");
+    expect(t).toContain("On 2 days (marked), the mix leaves out 401(k) at Fidelity, which wasn't recorded then.");
     expect(t).toContain('Missing an account');
-    expect(t).toContain('Oct 1, 2026 100% US stocks IRA at Fidelity not recorded');
-    expect(html).toContain('opacity="0.45"');
+    expect(html.match(/opacity="0.45"/g)).toHaveLength(2);
+    expect(html).toContain('leaving out 401(k) at Fidelity (not recorded since Oct 2, 2026)');
+  });
+
+  test('before an account was first recorded, and on a day between, each says which', () => {
+    const days = [day('2026-10-01', { bonds: 1 }, { missing: ['k'] }), day('2026-10-04', { bonds: 1, 'us-stocks': 3 }), day('2026-10-05', { 'us-stocks': 3 }, { missing: ['b'] }), day('2026-10-06', { bonds: 1, 'us-stocks': 3 })];
+    const t = text(body(days, { accounts: [span('b', '2026-10-04', '2026-10-06'), span('k', '2026-10-04', '2026-10-06')] }));
+    expect(t).toContain('Leaves out 401(k) at Fidelity (first recorded on Oct 4, 2026)');
+    expect(t).toContain('Leaves out IRA at Fidelity (not recorded that day)');
+    // Two accounts on different days: the note agrees with the accounts, not the days.
+    expect(t).toContain("On 2 days (marked), the mix leaves out accounts that weren't recorded then: 401(k) at Fidelity and IRA at Fidelity.");
+    expect(t).not.toContain("hasn't been recorded since");
+  });
+
+  test('two accounts behind at the end are each said with since when', () => {
+    const days = [day('2026-10-01', { bonds: 1 }), day('2026-10-08', { bonds: 1 }, { missing: ['b', 'k'] })];
+    const t = text(body(days, { accounts: [span('b', '2026-09-20', '2026-10-01'), span('k', '2026-10-01', '2026-10-01')] }));
+    expect(t).toContain("IRA at Fidelity (since Oct 1, 2026) and 401(k) at Fidelity (since Oct 1, 2026) haven't been recorded lately, so the mix on the latest days leaves them out.");
+  });
+
+  test('what the days count and leave out is said: money no position explains, accounts no longer linked, currencies, days that can’t be read', () => {
+    const days = [
+      day('2026-10-01', { 'us-stocks': 100, unclassified: 50 }, { unlisted: 50, noCurrency: 7, otherCurrencies: { CAD: 20 } }),
+      day('2026-10-02', { 'us-stocks': 100 }, { missing: ['gone'] }),
+      day('2026-10-03', { 'us-stocks': 100 }),
+    ];
+    const t = text(body(days, { accounts: [span('gone', '2026-10-01', '2026-10-03', false, 'Rollover IRA at Schwab')], unreadable_days: ['2026-09-30'] }));
+    expect(t).toContain("Unclassified includes money no position explains: an account tracked by hand, a balance beyond its positions, or an account whose positions didn't come that day.");
+    expect(t).toContain("Rollover IRA at Schwab isn't linked now, so on the days it was recorded it is counted from its positions alone.");
+    expect(t).toContain('Leaves out Rollover IRA at Schwab (not recorded that day)');
+    expect(t).toContain("Positions with no currency in an account that isn't linked now are left out: its currency isn't known.");
+    expect(t).toContain("Money in CAD is left out: Nya doesn't convert currencies.");
+    expect(t).toContain("1 recorded day couldn't be read, so it isn't drawn.");
   });
 
   test('nothing recorded, unreadable, or not loaded: each says so, never an empty chart', () => {
-    expect(text(renderToStaticMarkup(<HistoryBody state={ready([])} accountNames={names} onRetry={noop} />))).toContain('Nothing recorded yet. Plaid keeps no past holdings');
+    expect(text(body([]))).toContain('Nothing recorded yet. Plaid keeps no past holdings');
+    const damagedOnly = text(body([], { first_recorded: '2026-10-01', unreadable_days: ['2026-10-01', '2026-10-02'] }));
+    expect(damagedOnly).toContain('Nothing recorded can be shown yet.');
+    expect(damagedOnly).toContain("2 recorded days couldn't be read, so they aren't drawn.");
     const unreadable = text(
       renderToStaticMarkup(
         <HistoryBody state={{ kind: 'unreadable', message: 'Your saved allocation settings could not be read, so they were left untouched.' }} accountNames={names} onRetry={noop} />
       )
     );
     expect(unreadable).toContain("Your saved allocation settings could not be read, so they were left untouched. The mix over time can't be shown until it can be read.");
-    expect(renderToStaticMarkup(<AllocationHistoryChart days={[]} currency="USD" accountNames={names} />)).toBe('');
+    expect(renderToStaticMarkup(<AllocationHistoryChart days={[]} currency="USD" answer={{ accounts: [] }} nameOf={(id) => id} />)).toBe('');
     const failed = text(renderToStaticMarkup(<HistoryBody state={{ kind: 'failed' }} accountNames={names} onRetry={noop} />));
     expect(failed).toContain("couldn't be loaded");
     expect(failed).toContain('Try again');
@@ -313,8 +373,25 @@ describe('the mix over time', () => {
       { slot: 'us-stocks', share: 0.75 },
       { slot: 'bonds', share: 0.25 },
     ]);
-    const t = text(renderToStaticMarkup(<AllocationHistoryChart days={[d]} currency="USD" accountNames={names} />));
+    const t = text(renderToStaticMarkup(<AllocationHistoryChart days={[d]} currency="USD" answer={{ accounts: [] }} nameOf={(id) => id} />));
     expect(t).toContain("Money owed on a day (cash borrowed on margin, say) isn't drawn");
+  });
+
+  test('rounding residue is no share of a day', () => {
+    const d = day('2026-10-01', { 'us-stocks': 1_000, cash: 5.551115123125783e-17 });
+    expect(dayShares(d)).toEqual([{ slot: 'us-stocks', share: 1 }]);
+    expect(dayMixText(d)).toBe('100% US stocks');
+  });
+
+  test('asks for the accounts the allocation above shows, with each one’s currency and whether it is kept by hand', () => {
+    expect(seriesAccountsOf(institutions)).toEqual([
+      { account_id: 'brk', currency: 'USD', manual: false },
+      { account_id: 'k', currency: 'USD', manual: false },
+      { account_id: 'manual_1', currency: 'USD', manual: true },
+    ]);
+    // Hidden accounts and accounts that aren't investments aren't in it.
+    const more = [inst('Bank', [acct('chk', { type: 'depository' }), acct('ira', { hidden: true })], { item_id: 'x' })];
+    expect(seriesAccountsOf(more)).toEqual([]);
   });
 });
 

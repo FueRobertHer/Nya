@@ -1,44 +1,73 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
-import { getEffectiveHidden } from '@/lib/links';
-import { readHoldingsHistory, type HoldingsDay } from '@/lib/holdings-history';
+import { getEffectiveHidden, readKnownAccounts } from '@/lib/links';
+import { placeRecorded, readHoldingsHistory } from '@/lib/holdings-history';
+import { readMeasuredBalances } from '@/lib/history';
 import { allocationSettingsStore } from '@/lib/allocation-settings';
-import { overridesOf } from '@/lib/allocation/settings';
-import { allocationSeries, commonCurrency } from '@/lib/allocation/series';
+import { commonCurrency, KNOWN_ALWAYS, seriesBuilder, type SeriesAccount } from '@/lib/allocation/series';
 import { loggable } from '@/lib/log-safe';
 
 // Allocation over time (lib/allocation/series.ts): for each day holdings
-// history recorded (lib/holdings-history.ts), what the recorded positions
-// held by asset class, classified by the same rule as today's allocation,
+// history recorded (lib/holdings-history.ts), what the investment accounts
+// held by asset class, by today's allocation's own rules, from the positions
+// recorded that day and the balances measured beside them (lib/history.ts),
 // with the person's splits as they are now. Reads stored data only, no Plaid
 // calls.
 //
-//   GET /api/allocation-history?from=YYYY-MM-DD&to=YYYY-MM-DD&currency=USD
-//     { from, to, currency, first_recorded, first_recorded_at, last_recorded,
-//       last_recorded_at, days: [{ date, classes, total, accounts, empty,
-//       missing, otherCurrencies, unpriced }] }
+//   POST /api/allocation-history
+//     { from?, to?, currency?, accounts: [{ account_id, currency, manual }] }
+//   -> { from, to, currency, first_recorded, first_recorded_at,
+//        last_recorded, last_recorded_at,
+//        days: [{ date, classes, total, unlisted, missing, otherCurrencies,
+//                 noCurrency, unpriced }],
+//        accounts: [{ account_id, shown, first, last, label }],
+//        unreadable_days: [date] }
+//
+// `accounts` is the investment accounts today's allocation shows, with each
+// one's currency and whether it is tracked by hand, as the Plan tab has them:
+// the series is of those accounts, by the same rules, so it and the view
+// above it can't disagree about what is counted. A POST because that list is
+// the question, and can be longer than a URL. Ids are followed through
+// account links, and a hidden account is left out, as everywhere.
 //
 // Dates are UTC days, as holdings history's are. `to` defaults to today and
 // `from` to a year before it; a range is at most MAX_RANGE_DAYS long. Only
 // recorded days are in the answer, so nothing is ever drawn before the first
-// one, and a day missing an account recorded before and after it names it in
-// `missing`. Hidden accounts are left out, and account links followed, as
-// the holdings-history route does. `currency` is the one amounts are summed
-// in; positions priced in another are left out and summed by currency. Given
-// none, it is the one most recorded positions are in.
+// one. A day an expected account wasn't recorded on names it in `missing`:
+// an account listed is expected on every day from the first it was recorded
+// on, or the first the account directory knew it (lib/links.ts), so an
+// institution that stops answering never leaves its days drawn complete.
+// `accounts` says when each was recorded, for "not recorded since", and
+// names (`label`, from the directory) the ones no longer shown. `currency`
+// is the one amounts are summed in; given none, the one most listed accounts
+// are in.
 //
-// What can't be read is a 409 naming it, never an empty series.
+// The months are read in turn, and each reduced to its days' figures before
+// the next is read, so no more than a month of positions is held at once.
+//
+// What can't be read is a 409 naming it, never an empty series. A day whose
+// balances are damaged for good is left out and named (`unreadable_days`),
+// never counted as a day with no balances.
 
 /** A year and a day: the longest range one request reads. */
 const MAX_RANGE_DAYS = 366;
+/** More accounts than anyone has: a list longer is not one from the Plan tab. */
+const MAX_ACCOUNTS = 500;
+/** The longest body a list of MAX_ACCOUNTS takes, with room. */
+const MAX_BODY_CHARS = 200_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** An ISO 4217 code, as the accounts carry. */
-const CURRENCY = /^[A-Z]{3}$/;
+/** A currency code as accounts and positions carry them: ISO 4217, or one of
+ *  Plaid's unofficial codes (a cryptocurrency's, say). */
+const CURRENCY = /^[A-Z0-9]{2,12}$/;
+/** An account id: Plaid's, or Nya's for a manual account. Printable, no
+ *  spaces, bounded. */
+const ACCOUNT_ID = /^[A-Za-z0-9_:.=-]{1,128}$/;
 
 /** A real calendar day, as YYYY-MM-DD. */
-const isDay = (s: string) => DAY.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+const isDay = (s: unknown): s is string =>
+  typeof s === 'string' && DAY.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
@@ -79,25 +108,63 @@ function monthRanges(from: string, to: string): { from: string; to: string }[] {
   return out;
 }
 
-export async function GET(req: Request) {
-  const params = new URL(req.url).searchParams;
-  // Each parameter once: two answers to one question are refused, not picked from.
-  for (const name of ['from', 'to', 'currency']) {
-    if (params.getAll(name).length > 1) return bad(`Give ${name} once`);
+/** Every UTC day in [from, to]. */
+function daysIn(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let t = Date.parse(`${from}T00:00:00Z`); dayOf(t) <= to; t += DAY_MS) out.push(dayOf(t));
+  return out;
+}
+
+type Question = { from: string; to: string; currency: string | null; accounts: SeriesAccount[] };
+
+/** The question, strictly: exactly the fields above, each well formed, or
+ *  the reason it isn't. */
+function parseQuestion(body: unknown): Question | string {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'Send a JSON object';
+  const b = body as Record<string, unknown>;
+  const extra = Object.keys(b).filter((k) => !['from', 'to', 'currency', 'accounts'].includes(k));
+  if (extra.length) return `Unknown field: ${extra[0]}`;
+  if ((b.from !== undefined && !isDay(b.from)) || (b.to !== undefined && !isDay(b.to))) return 'from and to are dates, YYYY-MM-DD';
+  if (b.currency !== undefined && b.currency !== null && !(typeof b.currency === 'string' && CURRENCY.test(b.currency))) {
+    return 'currency is a currency code, such as USD';
   }
-  const fromParam = params.get('from');
-  const toParam = params.get('to');
-  if ((fromParam !== null && !isDay(fromParam)) || (toParam !== null && !isDay(toParam))) {
-    return bad('from and to are dates, YYYY-MM-DD');
+  if (!Array.isArray(b.accounts)) return 'accounts is a list of the accounts to show';
+  if (b.accounts.length > MAX_ACCOUNTS) return `At most ${MAX_ACCOUNTS} accounts`;
+  const accounts: SeriesAccount[] = [];
+  const seen = new Set<string>();
+  for (const raw of b.accounts) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Each account is an object';
+    const a = raw as Record<string, unknown>;
+    const keys = Object.keys(a);
+    if (keys.length !== 3 || !['account_id', 'currency', 'manual'].every((k) => keys.includes(k))) return 'Each account has account_id, currency and manual';
+    if (typeof a.account_id !== 'string' || !ACCOUNT_ID.test(a.account_id)) return 'An account_id is not one';
+    if (a.currency !== null && !(typeof a.currency === 'string' && CURRENCY.test(a.currency))) return "An account's currency is a currency code, or null";
+    if (typeof a.manual !== 'boolean') return 'manual is true or false';
+    if (seen.has(a.account_id)) return 'Each account once';
+    seen.add(a.account_id);
+    accounts.push({ account_id: a.account_id, currency: a.currency as string | null, manual: a.manual });
   }
-  const currencyParam = params.get('currency');
-  if (currencyParam !== null && !CURRENCY.test(currencyParam)) return bad('currency is a three-letter ISO code, such as USD');
-  const to = toParam ?? dayOf(Date.now());
+  const to = (b.to as string | undefined) ?? dayOf(Date.now());
   // A year, `to` included.
-  const from = fromParam ?? dayOf(Date.parse(`${to}T00:00:00Z`) - 364 * DAY_MS);
-  if (from > to) return bad('from is after to');
+  const from = (b.from as string | undefined) ?? dayOf(Date.parse(`${to}T00:00:00Z`) - 364 * DAY_MS);
+  if (from > to) return 'from is after to';
   const span = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS) + 1;
-  if (span > MAX_RANGE_DAYS) return bad(`A range is at most ${MAX_RANGE_DAYS} days`);
+  if (span > MAX_RANGE_DAYS) return `A range is at most ${MAX_RANGE_DAYS} days`;
+  return { from, to, currency: (b.currency as string | null | undefined) ?? null, accounts };
+}
+
+export async function POST(req: Request) {
+  const text = await req.text().catch(() => null);
+  if (text === null || text.length > MAX_BODY_CHARS) return bad('Send the accounts to show, as JSON');
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return bad('Send the accounts to show, as JSON');
+  }
+  const q = parseQuestion(body);
+  if (typeof q === 'string') return bad(q);
+  const { from, to } = q;
 
   try {
     const ctx = await dataCtx();
@@ -105,15 +172,67 @@ export async function GET(req: Request) {
     // out, and links followed so a re-linked account continues.
     const effective = await getEffectiveHidden(ctx);
     const opts = { links: effective.links ?? undefined, hidden: effective.hidden };
-    const [settings, head] = await Promise.all([allocationSettingsStore.get(ctx), readHoldingsHistory(ctx, null, opts)]);
-    // Nothing is read before the first recorded day, and each month is read
-    // on its own, so no one read carries more than a month of positions.
+    const place = placeRecorded(opts);
+    const [settings, head, directory] = await Promise.all([
+      allocationSettingsStore.get(ctx),
+      readHoldingsHistory(ctx, null, opts),
+      readKnownAccounts(ctx),
+    ]);
+
+    // The accounts listed, under the ids they are known by now, hidden ones
+    // left out: a list from before an account was hidden or re-linked is
+    // read as it is now.
+    const shown = new Map<string, SeriesAccount>();
+    for (const a of q.accounts) {
+      const placed = place(a.account_id);
+      if (placed && !shown.has(placed.account)) shown.set(placed.account, { ...a, account_id: placed.account });
+    }
+    // When the directory first knew each account, the earliest of its ids.
+    // One whose entry can't be read is taken to have been there all along:
+    // no day can be said to come before it existed, so none is drawn whole
+    // without it.
+    const knownFrom = new Map<string, string>();
+    const labels = new Map<string, string>();
+    for (const [id, k] of directory.known) {
+      const placed = place(id);
+      if (!placed) continue;
+      if (k.first_seen) {
+        const prev = knownFrom.get(placed.account);
+        if (!prev || k.first_seen < prev) knownFrom.set(placed.account, k.first_seen);
+      }
+      if (k.label && !labels.has(placed.account)) labels.set(placed.account, k.label);
+    }
+    for (const id of directory.unreadable) {
+      const placed = place(id);
+      if (placed && shown.has(placed.account)) knownFrom.set(placed.account, KNOWN_ALWAYS);
+    }
+
+    const currency = q.currency ?? commonCurrency([...shown.values()]);
+    const series = seriesBuilder({ shown: [...shown.values()], knownFrom, recorded: head.accounts, settings, currency });
+    const unreadableDays: string[] = [];
+    // Nothing is read before the first recorded day, and the months are read
+    // in turn, each reduced to its days' figures before the next.
     const start = head.span.first && head.span.first > from ? head.span.first : from;
     const months = head.span.first === null || start > to ? [] : monthRanges(start, to);
-    const reads = await Promise.all(months.map((m) => readHoldingsHistory(ctx, m, opts)));
-    const days: HoldingsDay[] = reads.flatMap((r) => r.days);
-    const currency = currencyParam ?? commonCurrency(days);
-    const series = allocationSeries(days, head.accounts, overridesOf(settings).splits, currency);
+    for (const m of months) {
+      const [{ days }, measured] = await Promise.all([readHoldingsHistory(ctx, m, opts), readMeasuredBalances(ctx, daysIn(m.from, m.to))]);
+      for (const day of days) {
+        if (measured.unreadable.includes(day.date)) {
+          unreadableDays.push(day.date);
+          continue;
+        }
+        // Each balance under the account it belongs to now; of two ids of
+        // one account on one day, the one its positions would be taken from.
+        const best = new Map<string, { rank: number; balance: number }>();
+        for (const [recordedAs, balance] of Object.entries(measured.balances.get(day.date) ?? {})) {
+          const placed = place(recordedAs);
+          if (!placed) continue;
+          const prev = best.get(placed.account);
+          if (!prev || placed.rank < prev.rank) best.set(placed.account, { rank: placed.rank, balance });
+        }
+        series.add(day, new Map([...best].map(([id, b]) => [id, b.balance])));
+      }
+    }
     return NextResponse.json({
       from,
       to,
@@ -122,7 +241,9 @@ export async function GET(req: Request) {
       first_recorded_at: head.span.first_at,
       last_recorded: head.span.last,
       last_recorded_at: head.span.last_at,
-      days: series,
+      days: series.days,
+      accounts: series.accounts().map((a) => ({ ...a, label: a.shown ? null : (labels.get(a.account_id) ?? null) })),
+      unreadable_days: unreadableDays,
     });
   } catch (err) {
     return failure(err);

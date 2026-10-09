@@ -49,8 +49,10 @@ import {
   allocate,
   bankCash,
   drift,
+  isMoney,
   planMix,
   shares,
+  shownAccounts,
   type AllocHolding,
   type AllocInstitution,
   type Allocation,
@@ -70,7 +72,7 @@ import {
   withFund,
   type AllocationSettings,
 } from '@/lib/allocation/settings';
-import type { SeriesDay } from '@/lib/allocation/series';
+import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
 import type { FirePlan } from '@/lib/fire/plan';
 
 /** The local day recovered balances were observed: the local day of the
@@ -195,6 +197,8 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
     return ok;
   };
   const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, `${a.name} at ${i.name}`] as const))), [institutions]);
+  // The accounts the mix over time is of: the ones the allocation above shows.
+  const seriesAccounts = useMemo(() => seriesAccountsOf(institutions), [institutions]);
   const hasAccounts = alloc.accounts.length > 0;
 
   return (
@@ -248,7 +252,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
         </>
       )}
 
-      <AllocationHistory currency={currency} version={saves} accountNames={accountNames} />
+      <AllocationHistory currency={currency} version={saves} accounts={seriesAccounts} accountNames={accountNames} />
 
       <Sheet
         open={!!sheet}
@@ -940,12 +944,19 @@ export function BucketForm({
 
 // Allocation over time
 
+/** An account the answer says was recorded, with the directory's name for
+ *  one the dashboard no longer shows. */
+export type HistoryAccount = SeriesAccountSpan & { label: string | null };
+
 export type HistoryAnswer = {
   currency: string | null;
   first_recorded: string | null;
   first_recorded_at: string | null;
   last_recorded: string | null;
   days: SeriesDay[];
+  accounts: HistoryAccount[];
+  /** Recorded days whose balances couldn't be read: not drawn. */
+  unreadable_days: string[];
 };
 
 export type HistoryState =
@@ -956,26 +967,48 @@ export type HistoryState =
   | { kind: 'unreadable'; message: string | null }
   | { kind: 'failed' };
 
-/** A recorded day as the viewer has it: its UTC date said as a date. */
-const recordedName = (day: string, at: string | null) => fmtDay(day, at);
+/** The accounts the mix over time is worked out for: those today's
+ *  allocation shows (lib/allocation/allocation.ts shownAccounts), each with
+ *  its currency and whether it is tracked by hand, as allocate reads them. */
+export function seriesAccountsOf(institutions: readonly AllocInstitution[]): SeriesAccount[] {
+  return institutions.flatMap((i) => shownAccounts(i).map((a) => ({ account_id: a.account_id, currency: a.currency ?? null, manual: i.item_id === null })));
+}
 
-/** The over-time chart, from /api/allocation-history, read again when the
- *  person saves a change to their settings (`version`): the server classifies
- *  recorded days with their splits, as they are saved. */
-export function AllocationHistory({ currency, version, accountNames }: { currency: string | null; version: number; accountNames: Map<string, string> }) {
+/** Whether an answer has the shape this reads. */
+function isHistoryAnswer(v: unknown): v is HistoryAnswer {
+  const a = v as HistoryAnswer | null;
+  return !!a && Array.isArray(a.days) && Array.isArray(a.accounts) && Array.isArray(a.unreadable_days);
+}
+
+/** The over-time chart, from /api/allocation-history, for the accounts today's
+ *  allocation shows (so both count the same accounts by the same rules), read
+ *  again when the person saves a change to their settings (`version`): the
+ *  server classifies recorded days with their splits, as they are saved. */
+export function AllocationHistory({
+  currency,
+  version,
+  accounts,
+  accountNames,
+}: {
+  currency: string | null;
+  version: number;
+  accounts: SeriesAccount[];
+  accountNames: Map<string, string>;
+}) {
   const [state, setState] = useState<HistoryState>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  // The question as text, so a new list of the same accounts asks nothing new.
+  const question = JSON.stringify({ ...(currency ? { currency } : {}), accounts });
   useEffect(() => {
     let live = true;
     setState({ kind: 'loading' });
-    const q = currency && /^[A-Z]{3}$/.test(currency) ? `?currency=${currency}` : '';
-    fetch(`/api/allocation-history${q}`)
+    fetch('/api/allocation-history', { method: 'POST', headers: { 'content-type': 'application/json' }, body: question })
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!live) return;
         if (res.status === 409) setState({ kind: 'unreadable', message: typeof body?.error === 'string' ? body.error : null });
-        else if (!res.ok || !body || !Array.isArray(body.days)) setState({ kind: 'failed' });
-        else setState({ kind: 'ready', answer: body as HistoryAnswer });
+        else if (!res.ok || !isHistoryAnswer(body)) setState({ kind: 'failed' });
+        else setState({ kind: 'ready', answer: body });
       })
       .catch(() => {
         if (live) setState({ kind: 'failed' });
@@ -983,13 +1016,36 @@ export function AllocationHistory({ currency, version, accountNames }: { currenc
     return () => {
       live = false;
     };
-  }, [currency, version, attempt]);
+  }, [question, version, attempt]);
   return (
     <>
       <div className="plan-subhead">Over time</div>
       <HistoryBody state={state} accountNames={accountNames} onRetry={() => setAttempt((n) => n + 1)} />
     </>
   );
+}
+
+/** Each account's name, for the over-time section: the dashboard's for one it
+ *  shows, the directory's for one it no longer does. */
+function historyNames(answer: HistoryAnswer, accountNames: Map<string, string>): (id: string) => string {
+  const labels = new Map(answer.accounts.map((a) => [a.account_id, a.label]));
+  return (id) => accountNames.get(id) ?? labels.get(id) ?? 'an account no longer linked';
+}
+
+/** Why an account isn't in a day's mix: "not recorded since Oct 2, 2026",
+ *  "first recorded on Oct 5, 2026", "not recorded that day". */
+export function missingWhy(account: HistoryAccount | undefined, date: string): string {
+  if (!account || account.first === null || account.last === null) return 'never recorded';
+  if (date < account.first) return `first recorded on ${dayName(account.first)}`;
+  if (date > account.last) return `not recorded since ${dayName(account.last)}`;
+  return 'not recorded that day';
+}
+
+/** The accounts a day's mix leaves out, each with why: for the readout and the
+ *  table. */
+export function missingOn(day: SeriesDay, answer: Pick<HistoryAnswer, 'accounts'>, nameOf: (id: string) => string): string {
+  const spans = new Map(answer.accounts.map((a) => [a.account_id, a]));
+  return names(day.missing.map((id) => `${nameOf(id)} (${missingWhy(spans.get(id), day.date)})`));
 }
 
 export function HistoryBody({ state, accountNames, onRetry }: { state: HistoryState; accountNames: Map<string, string>; onRetry: () => void }) {
@@ -1013,30 +1069,79 @@ export function HistoryBody({ state, accountNames, onRetry }: { state: HistorySt
     );
   }
   const { answer } = state;
+  const unreadable = answer.unreadable_days.length;
+  const unreadableNote =
+    unreadable > 0 ? `${unreadable} recorded day${unreadable === 1 ? '' : 's'} couldn't be read, so ${unreadable === 1 ? "it isn't" : "they aren't"} drawn.` : null;
   if (!answer.first_recorded || answer.days.length === 0) {
     return (
-      <p className="empty-note">
-        Nothing recorded yet. Plaid keeps no past holdings, so Nya records them each day it can fetch them, and the mix over time starts on the first of those days.
-      </p>
+      <>
+        <p className="empty-note">
+          {unreadable > 0
+            ? 'Nothing recorded can be shown yet.'
+            : 'Nothing recorded yet. Plaid keeps no past holdings, so Nya records them each day it can fetch them, and the mix over time starts on the first of those days.'}
+        </p>
+        {unreadableNote && <div className="as-of stale">{unreadableNote}</div>}
+      </>
     );
   }
-  const missingDays = answer.days.filter((d) => d.missing.length > 0);
-  const missingNames = names([...new Set(missingDays.flatMap((d) => d.missing))].map((id) => accountNames.get(id) ?? 'an account no longer shown'));
-  const other = [...new Set(answer.days.flatMap((d) => Object.keys(d.otherCurrencies)))];
+  const nameOf = historyNames(answer, accountNames);
+  const days = answer.days;
+  const last = days[days.length - 1];
+  const spans = new Map(answer.accounts.map((a) => [a.account_id, a]));
+  // Accounts the latest day leaves out, with when each was last recorded.
+  const behind = last.missing.map((id) => ({ name: nameOf(id), last: spans.get(id)?.last ?? null }));
+  const behindNote =
+    behind.length === 0
+      ? null
+      : behind.length === 1
+        ? behind[0].last
+          ? `${behind[0].name} hasn't been recorded since ${dayName(behind[0].last)}, so the mix on the latest days leaves it out.`
+          : `${behind[0].name} hasn't been recorded yet, so the mix leaves it out.`
+        : `${names(behind.map((b) => `${b.name} (${b.last ? `since ${dayName(b.last)}` : 'never recorded'})`))} haven't been recorded lately, so the mix on the latest days leaves them out.`;
+  const marked = days.filter((d) => d.missing.length > 0);
+  const markedIds = [...new Set(marked.flatMap((d) => d.missing))];
+  const markedNote =
+    marked.length === 0
+      ? null
+      : `On ${marked.length} day${marked.length === 1 ? '' : 's'} (marked), the mix leaves out ${
+          markedIds.length === 1 ? `${nameOf(markedIds[0])}, which wasn't recorded then` : `accounts that weren't recorded then: ${names(markedIds.map(nameOf))}`
+        }.`;
+  // Accounts the dashboard no longer shows, counted from their positions on
+  // the days they were recorded: within their span, and not missing.
+  const recordedOn = (a: HistoryAccount, d: SeriesDay) => a.first !== null && a.last !== null && d.date >= a.first && d.date <= a.last && !d.missing.includes(a.account_id);
+  const gone = answer.accounts.filter((a) => !a.shown && days.some((d) => recordedOn(a, d)));
+  const goneNote =
+    gone.length === 0
+      ? null
+      : `${names(gone.map((a) => nameOf(a.account_id)))} ${gone.length === 1 ? "isn't" : "aren't"} linked now, so on the days ${gone.length === 1 ? 'it was' : 'they were'} recorded ${
+          gone.length === 1 ? 'it is' : 'they are'
+        } counted from ${gone.length === 1 ? 'its' : 'their'} positions alone.`;
+  const other = [...new Set(days.flatMap((d) => Object.keys(d.otherCurrencies)))].sort();
+  const noCurrency = days.some((d) => isMoney(d.noCurrency));
+  const unlisted = days.some((d) => isMoney(d.unlisted));
+  const shownFrom = days[0].date > answer.first_recorded ? days[0].date : null;
   return (
     <>
       <p className="as-of">
-        Recorded from {recordedName(answer.first_recorded, answer.first_recorded_at)}, on {answer.days.length} day{answer.days.length === 1 ? '' : 's'}: nothing is drawn before
-        the first, or on a day nothing was recorded. From the positions recorded each day, so money an account doesn&apos;t list as a position isn&apos;t in it.
+        Recorded from {dayName(answer.first_recorded)}
+        {shownFrom ? `, shown from ${dayName(shownFrom)}` : ''}, on {days.length} day{days.length === 1 ? '' : 's'}: nothing is drawn before the first, or on a day
+        nothing was recorded. Each day is counted as the allocation above is, from the positions and balances recorded that day.
       </p>
-      <AllocationHistoryChart days={answer.days} currency={answer.currency} accountNames={accountNames} />
-      {missingDays.length > 0 && (
-        <div className="as-of stale">
-          On {missingDays.length} day{missingDays.length === 1 ? '' : 's'} (marked) {missingNames} {missingDays.length === 1 ? "wasn't" : "weren't always"} recorded, so the mix those days leaves{' '}
-          {missingDays.flatMap((d) => d.missing).length === 1 ? 'it' : 'them'} out.
-        </div>
+      <AllocationHistoryChart days={days} currency={answer.currency} answer={answer} nameOf={nameOf} />
+      {behindNote && <div className="as-of stale">{behindNote}</div>}
+      {markedNote && <div className="as-of stale">{markedNote}</div>}
+      {unlisted && (
+        <p className="panel-note">
+          Unclassified includes money no position explains: an account tracked by hand, a balance beyond its positions, or an account whose positions didn&apos;t
+          come that day. The allocation above names today&apos;s.
+        </p>
       )}
-      {other.length > 0 && <div className="as-of stale">Positions in {names(other)} are left out: Nya doesn&apos;t convert currencies.</div>}
+      {goneNote && <p className="panel-note">{goneNote}</p>}
+      {noCurrency && (
+        <div className="as-of stale">Positions with no currency in an account that isn&apos;t linked now are left out: its currency isn&apos;t known.</div>
+      )}
+      {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: Nya doesn&apos;t convert currencies.</div>}
+      {unreadableNote && <div className="as-of stale">{unreadableNote}</div>}
     </>
   );
 }
@@ -1051,9 +1156,10 @@ const DAY_MS = 86_400_000;
 const dayNum = (d: string) => Date.parse(`${d}T00:00:00Z`) / DAY_MS;
 
 /** The share of each class held on a day, of the positive amounts, in the
- *  classes' order: what a column of the chart is drawn from. */
+ *  classes' order: what a column of the chart is drawn from. Rounding
+ *  residue holds nothing. */
 export function dayShares(day: SeriesDay): { slot: Slot; share: number }[] {
-  const positive = SLOTS.map((slot) => ({ slot, amount: day.classes[slot] ?? 0 })).filter((x) => x.amount > 0);
+  const positive = SLOTS.map((slot) => ({ slot, amount: day.classes[slot] ?? 0 })).filter((x) => x.amount > 0 && isMoney(x.amount));
   const total = positive.reduce((s, x) => s + x.amount, 0);
   return total > 0 ? positive.map((x) => ({ slot: x.slot, share: x.amount / total })) : [];
 }
@@ -1061,7 +1167,8 @@ export function dayShares(day: SeriesDay): { slot: Slot; share: number }[] {
 /** "61% US stocks, 24% international stocks, 15% bonds": a day's mix, the
  *  largest first. */
 export function dayMixText(day: SeriesDay): string {
-  const rows = shares(day.classes as Record<Slot, number>, SLOTS.filter((s) => (day.classes[s] ?? 0) !== 0));
+  const totals = Object.fromEntries(SLOTS.map((s) => [s, day.classes[s] ?? 0])) as Record<Slot, number>;
+  const rows = shares(totals, SLOTS);
   if (rows.length === 0 || rows.some((r) => r.pct === null)) return 'nothing held to show as shares';
   return [...rows]
     .sort((a, b) => b.amount - a.amount)
@@ -1074,10 +1181,21 @@ export function dayMixText(day: SeriesDay): string {
  * calendar axis from the first recorded day to the last, so a day nothing
  * was recorded on is a gap and nothing is drawn before the first. A day
  * missing an account is drawn faint, with a mark under it. A readout above
- * the plot names the day being read (the last, until another is touched),
- * and a table of the same figures sits behind "Show as a table".
+ * the plot names the day being read (the last, until another is touched) and
+ * what it leaves out, and a table of the same figures sits behind "Show as a
+ * table".
  */
-export function AllocationHistoryChart({ days, currency, accountNames }: { days: SeriesDay[]; currency: string | null; accountNames: Map<string, string> }) {
+export function AllocationHistoryChart({
+  days,
+  currency,
+  answer,
+  nameOf,
+}: {
+  days: SeriesDay[];
+  currency: string | null;
+  answer: Pick<HistoryAnswer, 'accounts'>;
+  nameOf: (id: string) => string;
+}) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
   if (days.length === 0) return null;
@@ -1092,8 +1210,8 @@ export function AllocationHistoryChart({ days, currency, accountNames }: { days:
   const xs = days.map((d) => PAD_LEFT + (dayNum(d.date) - first) * slot + (slot - width) / 2);
   const i = active ?? days.length - 1;
   const day = days[i];
-  const negative = days.some((d) => Object.values(d.classes).some((v) => (v ?? 0) < 0));
-  const present = SLOTS.filter((s) => days.some((d) => (d.classes[s] ?? 0) > 0));
+  const negative = days.some((d) => Object.values(d.classes).some((v) => (v ?? 0) < 0 && isMoney(v ?? 0)));
+  const present = SLOTS.filter((s) => days.some((d) => (d.classes[s] ?? 0) > 0 && isMoney(d.classes[s] ?? 0)));
 
   function scrub(clientX: number) {
     const svg = svgRef.current;
@@ -1105,14 +1223,13 @@ export function AllocationHistoryChart({ days, currency, accountNames }: { days:
     setActive(best);
   }
 
-  const missing = day.missing.map((id) => accountNames.get(id) ?? 'an account no longer shown');
   return (
     <div>
       <div className="chart-readout chart-readout-stable alloc-readout">
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
-          {dayName(day.date)} · {wholeMoney(day.total, currency)} in positions
-          {missing.length ? ` · ${names(missing)} not recorded` : ''}
+          {dayName(day.date)} · {wholeMoney(day.total, currency)} counted
+          {day.missing.length ? ` · leaves out ${missingOn(day, answer, nameOf)}` : ''}
         </span>
       </div>
       <svg
@@ -1120,7 +1237,9 @@ export function AllocationHistoryChart({ days, currency, accountNames }: { days:
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Your mix on each of ${days.length} recorded days, from ${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)}. On the last: ${dayMixText(days[days.length - 1])}.`}
+        aria-label={`Your mix on each of ${days.length} recorded days, from ${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)}. On the last: ${dayMixText(days[days.length - 1])}${
+          days[days.length - 1].missing.length ? `, leaving out ${missingOn(days[days.length - 1], answer, nameOf)}` : ''
+        }.`}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -1182,7 +1301,7 @@ export function AllocationHistoryChart({ days, currency, accountNames }: { days:
             <tr>
               <th>Day</th>
               <th>Mix</th>
-              <th className="num">In positions</th>
+              <th className="num">Counted</th>
             </tr>
           </thead>
           <tbody>
@@ -1191,7 +1310,7 @@ export function AllocationHistoryChart({ days, currency, accountNames }: { days:
                 <td>{dayName(d.date)}</td>
                 <td>
                   {dayMixText(d)}
-                  {d.missing.length > 0 && <div className="alloc-sub">{names(d.missing.map((id) => accountNames.get(id) ?? 'an account no longer shown'))} not recorded</div>}
+                  {d.missing.length > 0 && <div className="alloc-sub">Leaves out {missingOn(d, answer, nameOf)}</div>}
                 </td>
                 <td className="num">{compactMoney(d.total, currency)}</td>
               </tr>
