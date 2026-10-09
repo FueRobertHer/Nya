@@ -190,16 +190,29 @@ describe('what a holdings answer records', () => {
 
   // The answer's own list, not the balance call's: an empty list then means
   // the answer spoke for the account and listed nothing.
-  test('an investment account the answer lists with no positions is seen holding nothing; a position names its own account', () => {
+  test('an investment account the answer lists with no positions is seen holding nothing', () => {
     const seen = observeHoldings({
-      accounts: [investment('acct_empty'), { account_id: 'acct_old_type', type: 'brokerage' }, { account_id: 'acct_checking', type: 'depository' }],
+      accounts: [investment('acct_empty'), { account_id: 'acct_old_type', type: 'brokerage' }],
       securities: [sec('vti')],
-      holdings: [hold('acct_elsewhere', 'vti')],
+      holdings: [hold('acct_old_type', 'vti')],
     })!;
-    expect(Object.keys(seen.accounts).sort()).toEqual(['acct_elsewhere', 'acct_empty', 'acct_old_type']);
+    expect(Object.keys(seen.accounts).sort()).toEqual(['acct_empty', 'acct_old_type']);
     expect(seen.accounts.acct_empty).toEqual([]);
+    expect(seen.accounts.acct_old_type).toHaveLength(1);
     // An answer that lists no account says nothing about any.
     expect(observeHoldings({ holdings: [], securities: [] })).toEqual({ accounts: {}, securities: {} });
+  });
+
+  // Forgetting an account of another type reads no holdings records
+  // (lib/links.ts forgetEarlierAccount), so it must never have any.
+  test('only an account the answer lists as an investment account is recorded, whatever a holding names', () => {
+    const seen = observeHoldings({
+      accounts: [investment('acct_ira'), { account_id: 'acct_cash', type: 'depository' }],
+      securities: [sec('vti'), sec('mmf')],
+      holdings: [hold('acct_ira', 'vti'), hold('acct_cash', 'mmf'), hold('acct_unlisted', 'vti')],
+    })!;
+    expect(Object.keys(seen.accounts)).toEqual(['acct_ira']);
+    expect(Object.keys(seen.securities)).toEqual(['vti']);
   });
 
   test('an answer with no list of holdings says nothing about any account', () => {
@@ -251,7 +264,11 @@ describe('what a holdings answer records', () => {
 
 describe('a month', () => {
   const seen = (positions: [string, string, number][], securities: any[] = [sec('vti'), sec('bnd'), sec('vmfxx', { type: 'cash', is_cash_equivalent: true })]) =>
-    observeHoldings({ securities, holdings: positions.map(([a, s, q]) => hold(a, s, { quantity: q })) })!;
+    observeHoldings({
+      accounts: [...new Set(positions.map(([a]) => a))].map(investment),
+      securities,
+      holdings: positions.map(([a, s, q]) => hold(a, s, { quantity: q })),
+    })!;
 
   test('names each security once, by number, and reads in the stored shape', () => {
     const month = withObservation(null, '2026-10', '2026-10-07', '2026-10-07T13:00:00.000Z', seen([['a1', 'vti', 1], ['a1', 'bnd', 2], ['a2', 'vti', 3]]))!;
@@ -423,6 +440,18 @@ describe('recording', () => {
       ['acct_1', 1],
       ['acct_empty', 0],
     ]);
+  });
+
+  // The balance call's type is the one the directory keeps, which forgetting
+  // goes by: an account it calls something else is never recorded, whatever
+  // the holdings answer says.
+  test('an account the balance call gives another type is not recorded', async () => {
+    const answered = broker(['acct_ira', 'acct_odd'], [hold('acct_ira', 'vti'), hold('acct_odd', 'vti')], [sec('vti')]);
+    answered.accounts[1].type = 'depository';
+    expect(await recordHoldings(ctx, [answered], at('2026-10-07T13:00:00Z'))).toEqual({ recorded: 1, failed: 0 });
+    const [day] = await readHoldingsRange(ctx, '2026-10-07', '2026-10-07');
+    expect(day.accounts.map((a) => a.account_id)).toEqual(['acct_ira']);
+    expect(await anyMonthNames('acct_odd')).toBe(false);
   });
 
   test('a fetch with no investment account touches no storage', async () => {
@@ -699,7 +728,14 @@ describe('strict reads', () => {
 
   test("a month stored under another month's id is unrecognised, not read as that month", async () => {
     const id = await recorded();
-    const other = withObservation(null, '2026-09', '2026-09-30', '2026-09-30T13:00:00.000Z', observeHoldings({ holdings: [hold('acct_1', 'vti')] })!);
+    const other = withObservation(
+      null,
+      '2026-09',
+      '2026-09-30',
+      '2026-09-30T13:00:00.000Z',
+      observeHoldings({ accounts: [investment('acct_1')], holdings: [hold('acct_1', 'vti')] })!
+    );
+    expect(other).not.toBeNull();
     await fake.hset(HISTORY, { [id]: await encodeJsonText(JSON.stringify(other)) });
     const err = await readHoldingsRange(ctx, '2026-09-01', '2026-10-31').catch((e) => e);
     expect(err).toBeInstanceOf(UnreadableEntriesError);
@@ -875,8 +911,9 @@ describe('forgetting an account', () => {
       '2026-07',
       '2026-07-15',
       '2026-07-15T13:00:00.000Z',
-      observeHoldings({ holdings: [hold('acct_gone', 'vti'), hold('acct_kept', 'vti')], securities: [sec('vti')] })!
+      observeHoldings({ accounts: [investment('acct_gone'), investment('acct_kept')], holdings: [hold('acct_gone', 'vti'), hold('acct_kept', 'vti')], securities: [sec('vti')] })!
     );
+    expect(orphan).not.toBeNull();
     await fake.hset(HISTORY, { 'orphan-month': await encodeJsonText(JSON.stringify(orphan)) });
     expect(await forgetAccountHoldings(ctx, 'acct_gone')).toEqual({ changed: 4, damaged: false });
     expect(await anyMonthNames('acct_gone')).toBe(false);
@@ -897,6 +934,50 @@ describe('forgetting an account', () => {
     await twoMonths();
     await fake.hset(INDEX, { index: 'damaged bytes' });
     expect(await forgetAccountHoldings(ctx, 'acct_never_recorded')).toEqual({ changed: 0, damaged: true });
+  });
+
+  test('an index gone missing beside a month that cannot be read counts as one that cannot be used', async () => {
+    await recordHoldings(ctx, [broker(['acct_gone'], [hold('acct_gone', 'vti')], [sec('vti')])], at('2026-09-07T13:00:00Z'));
+    await recordHoldings(ctx, [broker(['acct_kept'], [hold('acct_kept', 'vti')], [sec('vti')])], at('2026-10-07T13:00:00Z'));
+    const september = (await storedIndex()).months['2026-09'];
+    // September, which only the account to forget is in, as a later version
+    // wrote it; then the index is lost.
+    const plain = JSON.parse(await decryptJsonText((await fake.hget<string>(HISTORY, september))!));
+    plain.days['2026-09-07'].acct_gone.positions[0].vested_quantity = 1;
+    const unknown = await encodeJsonText(JSON.stringify(plain));
+    await fake.hset(HISTORY, { [september]: unknown });
+    await fake.hdel(INDEX, 'index');
+    const before = storedMonths();
+    // The index would have said whether it was recorded: it may be in there.
+    const err = await forgetAccountHoldings(ctx, 'acct_gone').catch((e) => e);
+    expect(err).toBeInstanceOf(UnreadableEntriesError);
+    expect([err.unreadable, err.unrecognised]).toEqual([[], [september]]);
+    expect(storedMonths()).toEqual(before);
+    // Damaged instead, it holds nothing anyone can read: passed, and said.
+    await fake.hset(HISTORY, { [september]: 'damaged' });
+    expect(await forgetAccountHoldings(ctx, 'acct_gone')).toEqual({ changed: 0, damaged: true });
+    // With every month readable, the months alone say who was recorded.
+    await fake.hdel(HISTORY, september);
+    expect(await forgetAccountHoldings(ctx, 'acct_gone')).toEqual({ changed: 0, damaged: false });
+  });
+
+  test('an account of another type, whose forget reads no holdings records, never had any recorded', async () => {
+    // The answer lists a cash account, typed depository, and a holding names it.
+    const accounts = [
+      { account_id: 'acct_ira', type: 'investment', balance: 1000 },
+      { account_id: 'acct_cash', type: 'depository', balance: 1000 },
+    ];
+    const answered = broker(['acct_ira'], [], [], {
+      accounts: accounts as any,
+      holdings_observed: observeHoldings({ accounts, holdings: [hold('acct_ira', 'vti'), hold('acct_cash', 'mmf')], securities: [sec('vti'), sec('mmf')] })!,
+    });
+    expect(await recordHoldings(ctx, [answered], at('2026-10-07T13:00:00Z'))).toEqual({ recorded: 1, failed: 0 });
+    await recordDirectory(ctx, [
+      { item_id: 'item_gone', institution_name: 'Bank', error: null, accounts: [{ account_id: 'acct_cash', type: 'depository', subtype: 'cash management' }] },
+    ] as any);
+    expect((await forgetEarlierAccount(ctx, 'acct_cash')).holdingsDamaged).toBe(false);
+    expect(await anyMonthNames('acct_cash')).toBe(false);
+    expect(await anyMonthNames('acct_ira')).toBe(true);
   });
 
   test('the second pass touches only the recent months', async () => {

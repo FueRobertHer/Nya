@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Redis } from '@upstash/redis';
@@ -42,6 +43,7 @@ const {
   UpdateConflictError,
   StoredValueTooLargeError,
   READ_ENTRIES,
+  READ_ENTRY_HASHED,
   UPDATE_ENTRY,
   COUNTER_READ,
   COUNTER_TAKE,
@@ -161,6 +163,11 @@ type Backend = {
     hget(key: string, field: string): Promise<string | null>;
     hset(key: string, field: string, value: string): Promise<void>;
     hgetall(key: string): Promise<Record<string, string>>;
+    /** Raw bytes into a hash field, which need not be text at all. */
+    hsetBytes(key: string, field: string, bytes: Uint8Array): Promise<void>;
+    /** Redis's own SHA-1 of a hash field's stored bytes (redis.sha1hex), or
+     *  null where there is none. */
+    storedSha1(key: string, field: string): Promise<string | null>;
     type(key: string): Promise<string>;
     /** Seconds left: -1 with no expiry, -2 with no key, as Redis answers. */
     ttl(key: string): Promise<number>;
@@ -725,7 +732,7 @@ function contract(b: Backend) {
           return async (script: string, ...rest: unknown[]) => {
             const out = await (value as (...a: unknown[]) => Promise<unknown>).call(target, script, ...rest);
             // Someone else's write, just after the read.
-            if (script === READ_ENTRIES) await b.raw.hset(notesKey(), 'n1', 'other-damage-but-long-enough-to-be-tried');
+            if (script === READ_ENTRY_HASHED) await b.raw.hset(notesKey(), 'n1', 'other-damage-but-long-enough-to-be-tried');
             return out;
           };
         },
@@ -736,6 +743,21 @@ function contract(b: Backend) {
         client = inner;
       }
       expect(await b.raw.hget(notesKey(), 'n1')).toBe('other-damage-but-long-enough-to-be-tried');
+    });
+
+    // A flipped bit in stored base64 is exactly this. The client reads the
+    // bytes decoded as UTF-8, with U+FFFD for what isn't, so its SHA-1 of what
+    // it read is not Redis's of what it holds, which the write compares.
+    test('damaged bytes that are not UTF-8 are replaced too', async () => {
+      const bytes = Buffer.concat([Buffer.from('dGhpcyBpcyBub3QgY2lwaGVydGV4dCBidXQgbG9uZw'), Buffer.from([0xc1]), Buffer.from('==')]);
+      await b.raw.hsetBytes(notesKey(), 'n1', bytes);
+      const read = (await b.raw.hget(notesKey(), 'n1'))!;
+      expect(read).toContain('\uFFFD');
+      expect(await b.raw.storedSha1(notesKey(), 'n1')).toBe(createHash('sha1').update(bytes).digest('hex'));
+      expect(createHash('sha1').update(read, 'utf8').digest('hex')).not.toBe(await b.raw.storedSha1(notesKey(), 'n1'));
+      expect((await notes.getAllReport(A)).unreadable).toEqual(['n1']);
+      expect(await notes.replaceUnreadable(A, 'n1', RENT)).toBe(true);
+      expect(await notes.get(A, 'n1')).toEqual(RENT);
     });
 
     test('a storage failure is an error, and nothing changes', async () => {
@@ -1067,6 +1089,8 @@ describe('the seam, on the test double', () => {
       hget: async (key, field) => fake.hashes.get(key)?.get(field) ?? null,
       hset: async (key, field, value) => void fake.hashes.set(key, new Map(fake.hashes.get(key)).set(field, value)),
       hgetall: async (key) => Object.fromEntries(fake.hashes.get(key) ?? []),
+      hsetBytes: async (key, field, bytes) => fake.hsetBytes(key, field, bytes),
+      storedSha1: async (key, field) => fake.storedSha1(key, field),
       type: async (key) => (fake.strings.has(key) ? 'string' : fake.hashes.has(key) ? 'hash' : 'none'),
       ttl: async (key) => (fake.strings.has(key) || fake.hashes.has(key) ? (fake.ttls.get(key) ?? -1) : -2),
       expire: async (key, seconds) => void fake.ttls.set(key, seconds),
@@ -1170,6 +1194,12 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
       hget: async (key, field) => (await send('HGET', [key, field])) as string | null,
       hset: async (key, field, value) => void (await send('HSET', [key, field, value])),
       hgetall: async (key) => (await send('HGETALL', [key])) as Record<string, string>,
+      // Bun's client sends a buffer as the bytes it holds.
+      hsetBytes: async (key, field, bytes) => void (await send('HSET', [key, field, bytes as unknown as string])),
+      storedSha1: async (key, field) =>
+        ((await send('EVAL', ["local v = redis.call('HGET', KEYS[1], ARGV[1]) if not v then return false end return redis.sha1hex(v)", '1', key, field])) as
+          | string
+          | null) ?? null,
       type: async (key) => String(await send('TYPE', [key])),
       ttl: async (key) => Number(await send('TTL', [key])),
       expire: async (key, seconds) => void (await send('EXPIRE', [key, String(seconds)])),
@@ -1249,12 +1279,14 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
         hget: await adapter.hget('h', 'f'),
         hgetall: await adapter.hgetall('h'),
         read: await adapter.eval(READ_ENTRIES, ['h'], ['f', 'missing']),
+        hashed: [await adapter.eval(READ_ENTRY_HASHED, ['h'], ['f']), await adapter.eval(READ_ENTRY_HASHED, ['h'], ['missing'])],
       };
       const theirs = {
         get: await viaRest.get('k'),
         hget: await viaRest.hget('h', 'f'),
         hgetall: await viaRest.hgetall('h'),
         read: await viaRest.eval(READ_ENTRIES, ['h'], ['f', 'missing']),
+        hashed: [await viaRest.eval(READ_ENTRY_HASHED, ['h'], ['f']), await viaRest.eval(READ_ENTRY_HASHED, ['h'], ['missing'])],
       };
       expect([v, ours]).toEqual([v, theirs]);
     }

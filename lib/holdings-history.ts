@@ -68,7 +68,12 @@
 //
 // THE STORED SHAPE IS CLOSED: a field this code does not know, at any level,
 // makes the value unrecognised (a later version wrote it), so an older version
-// never drops what a newer one added when it next writes the month.
+// never drops what a newer one added when it next writes the month. The price
+// is paid on a rollback: rolled back past a release that added a field, this
+// version stops recording into the months that release wrote until it is
+// back, and stops recording altogether if the field is in the index. So a new
+// field ships in two releases, the reader one release before the writer, and
+// a rollback always lands on a release that can read what was written.
 //
 // SIZE. Within a month a position names its security by number (its place in
 // the month's list of securities), not by Plaid's 37-character id: a day of a
@@ -176,8 +181,7 @@ export type HoldingsIndex = {
  *  (set by fetchHoldings in lib/networth.ts). */
 export type HoldingsObservation = {
   /** Account id -> its positions: every investment account the answer lists
-   *  (an empty list is an account it listed no positions for), and any other
-   *  account a position names. */
+   *  (an empty list is an account it listed no positions for), and no other. */
   accounts: Record<string, Position[]>;
   /** Security id -> its description, for those Plaid described. */
   securities: Record<string, HeldSecurity>;
@@ -330,9 +334,14 @@ const isKeyId = (v: unknown): v is string => typeof v === 'string' && v !== '' &
  *   - a holding naming its account but no security: that account is left out
  *     of the day, and the others are recorded.
  *
- * An investment account the answer lists (its own `accounts`, not the balance
- * call's) is recorded with no positions when none names it: the answer spoke
- * for it and listed nothing. That says nothing about its balance: money an
+ * Only the accounts the answer lists (its own `accounts`, not the balance
+ * call's) as investment accounts are recorded. A holding naming any other
+ * account, of another type or not listed, is left out with that account:
+ * Plaid lists holdings for investment accounts only, and forgetting an
+ * account of another type relies on its never having positions recorded
+ * (lib/links.ts forgetEarlierAccount). An investment account the answer lists
+ * is recorded with no positions when none names it: the answer spoke for it
+ * and listed nothing. That says nothing about its balance: money an
  * institution does not list as a position (cash, often) has no position, and
  * the balance recorded beside it (lib/history.ts) is what it was worth.
  */
@@ -357,6 +366,9 @@ export function observeHoldings(answer: unknown): HoldingsObservation | null {
   const short = new Set<string>();
   for (const h of answer.holdings) {
     if (!isRecord(h) || !isKeyId(h.account_id)) return null;
+    const list = held.get(h.account_id);
+    // Not an investment account the answer lists: never recorded.
+    if (!list) continue;
     if (!isKeyId(h.security_id)) {
       short.add(h.account_id);
       continue;
@@ -372,9 +384,7 @@ export function observeHoldings(answer: unknown): HoldingsObservation | null {
       currency: text(h.iso_currency_code),
       ...(unofficial ? { unofficial_currency: unofficial } : {}),
     };
-    const list = held.get(h.account_id);
-    if (list) list.push(position);
-    else held.set(h.account_id, [position]);
+    list.push(position);
   }
   for (const id of short) held.delete(id);
   // Described only where a position kept names it.
@@ -393,7 +403,7 @@ export function observeHoldings(answer: unknown): HoldingsObservation | null {
 export type ObservedInstitution = {
   error: string | null;
   manual?: boolean;
-  accounts: readonly { account_id: string; stale?: boolean }[];
+  accounts: readonly { account_id: string; type?: string | null; stale?: boolean }[];
   holdings_observed?: HoldingsObservation;
 };
 
@@ -401,7 +411,9 @@ export type ObservedInstitution = {
  * Everything a fetch measured, across its institutions: only those whose
  * holdings call answered in this fetch, never one with an error (its accounts
  * are empty or recovered), and never an account marked stale (recovered by
- * lib/last-known.ts), which no institution that answered should have.
+ * lib/last-known.ts), which no institution that answered should have. Nor an
+ * account the balance call gives another type than investment: that is the
+ * type the directory keeps, which forgetting goes by (observeHoldings).
  */
 export function measuredHoldings(institutions: readonly ObservedInstitution[]): HoldingsObservation {
   const accounts = new Map<string, Position[]>();
@@ -410,8 +422,9 @@ export function measuredHoldings(institutions: readonly ObservedInstitution[]): 
     const seen = inst.holdings_observed;
     if (!seen || inst.error || inst.manual) continue;
     const stale = new Set(inst.accounts.filter((a) => a.stale).map((a) => a.account_id));
+    const otherType = new Set(inst.accounts.filter((a) => typeof a.type === 'string' && !isInvestmentType(a.type)).map((a) => a.account_id));
     for (const [id, positions] of Object.entries(seen.accounts)) {
-      if (stale.has(id) || !isKeyId(id)) continue;
+      if (stale.has(id) || otherType.has(id) || !isKeyId(id)) continue;
       accounts.set(id, positions);
       for (const p of positions) {
         const s = own(seen.securities, p.security_id);
@@ -968,7 +981,8 @@ export type ForgotHoldings = {
  *     lib/history.ts);
  *   - an unrecognised entry is intact, and may hold the account. For an account
  *     that could be in it (found in a month, noted in the index, or any
- *     account while the index can't be used, since it could note any) it
+ *     account while the index can't be used: damaged, unrecognised, or
+ *     missing beside a month that can't be read, since it could note any) it
  *     stops the forget, changing nothing, to be run again once it can be read:
  *     removing it would lose the rest, and leaving it would keep the account.
  *     For an account the readable index never recorded, it is no reason to
@@ -983,7 +997,11 @@ export async function forgetAccountHoldings(ctx: Ctx, account_id: string): Promi
   const current = index.entries.get(INDEX_ID) ?? null;
   const holding = [...months.entries].filter(([, m]) => holdsAccount(m, account_id)).map(([id]) => id);
   const noted = !!current && !!own(current.accounts, account_id);
-  const indexUnusable = index.unreadable.length > 0 || index.unrecognised.length > 0;
+  // Whether the index can't say which accounts were ever recorded: it can't
+  // be read, or it is missing beside a month that can't be (which it would
+  // have named, with that month's accounts).
+  const indexUnusable =
+    index.unreadable.length > 0 || index.unrecognised.length > 0 || (!current && months.unreadable.length + months.unrecognised.length > 0);
   if (holding.length === 0 && !noted && !indexUnusable) return { changed: 0, damaged: false };
   const unrecognised = [...months.unrecognised, ...index.unrecognised];
   if (unrecognised.length > 0) {

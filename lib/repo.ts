@@ -337,12 +337,29 @@ return values`;
  * value is not sent back with its replacement. "" stands for "had none": the
  * seam never stores "", and update() stops at an unusable entry before it gets
  * here. Every write encrypts with a fresh IV, so any rewrite in between differs.
+ * update() hashes what it read on the client, which is the stored bytes: it
+ * only writes over a value that decoded, and ciphertext is ASCII.
+ * replaceUnreadable writes over damaged bytes, which need not be text at all,
+ * so it compares against Redis's own hash of them (READ_ENTRY_HASHED).
  */
 export const UPDATE_ENTRY = `-- nya:repo-update-entry
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if (cur and redis.sha1hex(cur) or '') ~= ARGV[2] then return 0 end
 if ARGV[3] == '' then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.call('HSET', KEYS[1], ARGV[1], ARGV[3]) end
 return 1`;
+
+/**
+ * Reads one field as READ_ENTRIES does, with Redis's own SHA-1 of the bytes it
+ * holds, for replaceUnreadable's compare-and-set. The client decodes what it
+ * reads as UTF-8 and replaces any byte sequence that isn't (Upstash's does,
+ * through a TextDecoder that never fails), so for damaged bytes its own SHA-1
+ * of what it read differs from the one UPDATE_ENTRY compares; this one is the
+ * same by construction. The hash is prefixed "v" too, so nothing parses it.
+ */
+export const READ_ENTRY_HASHED = `-- nya:repo-read-entry-hashed
+local v = redis.call('HGET', KEYS[1], ARGV[1])
+if not v then return {'', ''} end
+return {'v' .. v, 'v' .. redis.sha1hex(v)}`;
 
 /** The error a counter store's take answers for a stored count that is not
  *  one, so it can be told from storage failing. */
@@ -707,14 +724,19 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       checkId(what, id);
       const written = await encode(codec, serialize(codec, value));
       checkSize(name, what, ctx, id.length + SHA1_HEX + written.length);
-      const [stored] = await readFields(ctx, [id]);
-      if (stored === null) return false;
+      const answer = await redis().eval(READ_ENTRY_HASHED, [key(ctx)], [id]);
+      if (!Array.isArray(answer) || answer.length !== 2 || !answer.every((v) => typeof v === 'string')) {
+        throw new Error(`repo: unexpected answer reading ${name}`);
+      }
+      const [stored, hash] = answer as [string, string];
+      if (stored === '') return false;
       // Thrown as it is when this deployment can't read it (a failed decrypt
       // under k0 among them): that says nothing about the bytes.
-      const d = await decode(codec, stored);
+      const d = await decode(codec, stored.slice(1));
       if (d.ok || d.flaw !== 'unreadable') return false;
-      // The same compare-and-set as update(): only over the bytes just read.
-      return Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, sha1(stored), written])) === 1;
+      // The same compare-and-set as update(), only over the bytes just read,
+      // as Redis hashes them: what the client read may not be those bytes.
+      return Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, hash.slice(1), written])) === 1;
     },
   });
 }
