@@ -18,7 +18,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Format | File | What it holds |
 | --- | --- | --- |
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
-| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction stored from your banks, one per row. Those you entered by hand are in the JSON file. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction stored from your banks, one per row. Those on manual accounts, entered by hand or imported, are in the JSON file. |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
@@ -73,7 +73,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `hidden_accounts` | Accounts you hid. |
 | `net_worth_history` | Your net worth by day. |
 | `account_history` | Each account's balance by day. |
-| `transactions` | Every transaction stored from your banks. Those you entered by hand are in `manual-transactions`. |
+| `transactions` | Every transaction stored from your banks. Those on manual accounts, entered by hand or imported, are in `manual-transactions`. |
 | `category_overrides` | Every category you set on a transaction. |
 | `merchant_renames` | Every merchant you renamed. |
 | `investment_transactions` | Every stored investment transaction. |
@@ -144,7 +144,7 @@ Each account's own balance by day, one point per day, by the same rules the app'
 
 ### `transactions[]`
 
-Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions you entered by hand are in [`manual-transactions`](#manual-transactions)):
+Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions on manual accounts, entered by hand or imported, are in [`manual-transactions`](#manual-transactions)):
 
 | Field | Meaning |
 | --- | --- |
@@ -369,7 +369,7 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 ### `nya-transactions-<date>.csv`
 
-One row per transaction stored from your banks, newest first, with the [transaction fields](#transactions) flattened (transactions you entered by hand are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
+One row per transaction stored from your banks, newest first, with the [transaction fields](#transactions) flattened (transactions on manual accounts, entered by hand or imported, are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
 
 `date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`.
 

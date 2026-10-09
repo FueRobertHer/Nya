@@ -241,8 +241,8 @@ export default function MonthBreakdown({
   actionError?: string | null;
   /** Connections that bring in no transactions (lib/no-transactions.ts): an
    *  empty list says why rather than "no transactions", rows entered by hand
-   *  name them under the month instead, and a bank account or card whose
-   *  transactions don't come in is named under every month. */
+   *  or imported name them under the month instead, and a bank account or
+   *  card whose transactions don't come in is named under every month. */
   withoutTransactions?: NoTransactionsView;
   /** Institutions whose rows this load lacks, or lacks the oldest of
    *  (/api/transactions), and connections whose transactions have stopped
@@ -411,8 +411,8 @@ export default function MonthBreakdown({
     );
   }
 
-  // Entering a transaction by hand, on a manual account: first on the tab,
-  // where a phone reaches it without scrolling.
+  // Entering a transaction by hand or importing a file, on a manual account:
+  // first on the tab, where a phone reaches it without scrolling.
   const addCard = onAddTransaction && (
     <div className="card">
       {onImport ? (
@@ -442,7 +442,7 @@ export default function MonthBreakdown({
         <div className="card">
           <p className="empty-note">
             {none
-              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? ", or add a transaction by hand" : ""}.`
+              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? (onImport ? ", or add a transaction by hand or import a file" : ", or add a transaction by hand") : ""}.`
               : "No transactions in the last 12 months."}
           </p>
           {missing.map((n) => (

@@ -14,10 +14,11 @@
 // beside the rows, not as notes: nothing is wrong, so the payload stays
 // cacheable.
 //
-// Rows can come from elsewhere: transactions entered by hand on a manual
-// account (lib/manual-txns.ts), which is not a connection. With any of those,
-// there is spending to show, so nothing says there is none: the views show
-// the rows, and name the connections that bring in none (withoutNote).
+// Rows can come from elsewhere: transactions entered by hand or imported
+// from a file on a manual account (lib/manual-txns.ts), which is not a
+// connection. With any of those, there is spending to show, so nothing says
+// there is none: the views show the rows, and name the connections that
+// bring in none (withoutNote).
 
 import type { NoTransactionsReason } from './item-products';
 import { joinNames } from './month-coverage';
