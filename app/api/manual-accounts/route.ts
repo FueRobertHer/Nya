@@ -189,6 +189,12 @@ export async function DELETE(req: Request) {
     const rows = await removeAccountTxns(ctx, account_id);
     await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
     await removeManualAccount(ctx, account_id);
+    // Once more now that the account is gone: an add or a move that read it
+    // before it went can have written its book again meanwhile. Whatever
+    // writes after this finds the account gone and takes its row back out
+    // (app/api/manual-transactions).
+    const late = await removeAccountTxns(ctx, account_id);
+    if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
     // The account is gone, so a hidden entry naming it would linger forever.
     await pruneHidden(ctx, [account_id]);
     await invalidate(ctx, true);

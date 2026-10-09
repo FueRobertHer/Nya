@@ -637,23 +637,6 @@ export default function Dashboard({
     goalsStore.load();
   }, [loadTransactions, budgetsStore, goalsStore]);
 
-  const recategorize = useCallback(async (transaction_id: string, category: string) => {
-    // Optimistic local update; the server stores the override and clears its
-    // transactions cache so future loads agree.
-    setTxns((prev) =>
-      prev ? prev.map((t) => (t.transaction_id === transaction_id ? { ...t, category } : t)) : prev
-    );
-    try {
-      await fetch('/api/recategorize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transaction_id, category }),
-      });
-    } catch {
-      // Next refresh reverts if the write didn't land.
-    }
-  }, []);
-
   const renameVendor = useCallback(
     async (vendor_key: string, name: string) => {
       // Optimistically relabel every transaction from this vendor. An empty
@@ -682,8 +665,9 @@ export default function Dashboard({
     [loadTransactions]
   );
 
-  // Transactions entered by hand, and the exclude flag (components/transaction-edits.ts).
-  const txnEdits = useTransactionEdits({ setTxns, loadTransactions, loadNetWorth, requestBackfill });
+  // Transactions entered by hand, categories and the exclude flag
+  // (components/transaction-edits.ts).
+  const txnEdits = useTransactionEdits({ txns, setTxns, setTxnNotes, loadTransactions, loadNetWorth, requestBackfill });
 
   // `bypass` skips both duplicate checks for this run: the user has said the
   // institution they already have is a different login.
@@ -2082,7 +2066,7 @@ export default function Dashboard({
                 txns={txns}
                 notes={txnNotes}
                 loading={txnsLoading}
-                onRecategorize={recategorize}
+                onRecategorize={txnEdits.recategorize}
                 onRename={renameVendor}
                 // Only with a manual account to add to (hidden ones aren't offered).
                 onAddTransaction={

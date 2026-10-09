@@ -10,18 +10,27 @@
 // A manual account's balance is what was typed, and adding a transaction
 // doesn't change it. The form says so, and offers to update it as well, as an
 // explicit choice showing the balance before and after: the route records it
-// as the account's Update form would, and only from the balance shown here
-// (app/api/manual-transactions). Editing or deleting never moves it.
+// as the account's Update form would, and only from the balance shown here to
+// the one it says (app/api/manual-transactions). Editing or deleting never
+// moves it.
+//
+// SENT ONCE OR MORE. The new row's id is made when the form opens, and every
+// try sends it, so tapping Add again after an answer that never arrived
+// finds the row already saved rather than adding it twice, or moving the
+// balance twice. If the form was changed before that second tap, the saved
+// row is then changed to match it.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { categoryOptions, type Txn } from './MonthBreakdown';
+import type { TxnSaved } from './transaction-edits';
 import { isOwedType } from '@/lib/balance';
 import { formatMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import {
   balanceAfter,
   isCurrencyCode,
+  newManualTxnId,
   parseAmountInput,
   DEFAULT_CURRENCY,
   MAX_NOTE_CHARS,
@@ -42,6 +51,8 @@ export type SheetInstitution = {
 type Account = SheetInstitution['accounts'][number] & { institution_name: string };
 
 type Draft = {
+  /** A new row's id, made when the form opened; null when editing. */
+  id: string | null;
   direction: 'out' | 'in';
   amount: string;
   currency: string;
@@ -81,6 +92,22 @@ async function send(method: 'POST' | 'PATCH' | 'DELETE', body: unknown) {
   return { res, data: await res.json().catch(() => null) };
 }
 
+type Fields = { date: string; amount: number | null; currency: string; name: string; category: string | null; note: string | null };
+
+/** Whether a saved row isn't what the form says now (the server keeps a
+ *  payee's spaces single). */
+function differs(t: Txn, fields: Fields, account_id: string): boolean {
+  return (
+    t.date !== fields.date ||
+    t.amount !== fields.amount ||
+    t.iso_currency_code !== fields.currency ||
+    t.name !== fields.name.replace(/\s+/g, ' ') ||
+    (t.category ?? null) !== fields.category ||
+    (t.note ?? null) !== fields.note ||
+    t.account_id !== account_id
+  );
+}
+
 export default function ManualTxnSheet({
   target,
   institutions,
@@ -94,8 +121,9 @@ export default function ManualTxnSheet({
   /** The loaded transactions: the categories to offer, and past payees. */
   txns: Txn[] | null;
   onClose: () => void;
-  /** After any save or delete; `balanceChanged` when the balance moved too. */
-  onSaved: (result: { balanceChanged: boolean }) => void;
+  /** After any save or delete: the row as saved, or the one deleted, and
+   *  `balanceChanged` when the balance moved too. */
+  onSaved: (result: TxnSaved) => void;
   /** The balance changed since the dashboard loaded it: reload it. */
   onBalanceStale: () => void;
 }) {
@@ -135,6 +163,7 @@ export default function ManualTxnSheet({
       const t = target.txn;
       setCategoryTouched(true);
       setDraft({
+        id: null,
         direction: t.amount > 0 ? 'out' : 'in',
         amount: String(Math.abs(t.amount)),
         currency: t.iso_currency_code ?? DEFAULT_CURRENCY,
@@ -150,7 +179,18 @@ export default function ManualTxnSheet({
     setCategoryTouched(false);
     const last = readLastAccount();
     const start = target.account_id ?? (accounts.some((a) => a.account_id === last) ? last : accounts[0]?.account_id) ?? '';
-    setDraft({ direction: 'out', amount: '', currency: DEFAULT_CURRENCY, name: '', date: localDate(), account_id: start, category: '', note: '', updateBalance: false });
+    setDraft({
+      id: newManualTxnId(),
+      direction: 'out',
+      amount: '',
+      currency: DEFAULT_CURRENCY,
+      name: '',
+      date: localDate(),
+      account_id: start,
+      category: '',
+      note: '',
+      updateBalance: false,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
 
@@ -166,9 +206,13 @@ export default function ManualTxnSheet({
   if (!draft) return null;
 
   const set = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch });
-  const amount = parseAmountInput(draft.amount);
-  const signed = amount === null ? null : draft.direction === 'out' ? amount : -amount;
   const currency = draft.currency.trim().toUpperCase();
+  // Read, and rounded, in the currency's own units (a yen has no cents).
+  const amount = parseAmountInput(draft.amount, isCurrencyCode(currency) ? currency : DEFAULT_CURRENCY);
+  const signed = amount === null ? null : draft.direction === 'out' ? amount : -amount;
+  // Something that happened: today at the latest (the server allows a day
+  // more, for a clock in another time zone, and no further).
+  const future = !!draft.date && draft.date > localDate();
   const account = options.find((a) => a.account_id === draft.account_id) ?? null;
   const owed = account ? isOwedType(account.type) : false;
   // The balance can follow only a new transaction in the balance's own
@@ -177,7 +221,7 @@ export default function ManualTxnSheet({
   const after = balance === null ? null : balanceAfter(balance, signed!, owed);
   const negativeOwed = after !== null && owed && after < 0;
   const updating = draft.updateBalance && after !== null && !negativeOwed;
-  const ready = signed !== null && !!draft.name.trim() && !!draft.date && !!account && isCurrencyCode(currency);
+  const ready = signed !== null && !!draft.name.trim() && !!draft.date && !future && !!account && isCurrencyCode(currency);
   const busy = saving || done;
   const money = (n: number) => formatMoney(n, DEFAULT_CURRENCY);
 
@@ -196,23 +240,48 @@ export default function ManualTxnSheet({
       const { res, data } = edit
         ? await send('PATCH', {
             id: edit.transaction_id,
+            // Where the list shows it, so only that account's rows are read.
+            account_id: edit.account_id,
             ...fields,
             // Only a change of account moves it.
-            ...(draft!.account_id !== edit.account_id ? { account_id: draft!.account_id } : {}),
+            ...(draft!.account_id !== edit.account_id ? { move_to: draft!.account_id } : {}),
           })
-        : await send('POST', { account_id: draft!.account_id, ...fields, ...(updating ? { update_balance: { from: balance } } : {}) });
+        : await send('POST', {
+            id: draft!.id,
+            account_id: draft!.account_id,
+            ...fields,
+            ...(updating ? { update_balance: { from: balance, to: after } } : {}),
+          });
       if (res.ok) {
+        let transaction: Txn | undefined = data?.transaction;
+        // Already saved by an earlier try whose answer was lost: if the form
+        // was changed since, the saved row is changed to match it.
+        if (!edit && data?.added === false && transaction && differs(transaction, fields, draft!.account_id)) {
+          const fix = await send('PATCH', {
+            id: transaction.transaction_id,
+            account_id: transaction.account_id,
+            ...fields,
+            ...(draft!.account_id !== transaction.account_id ? { move_to: draft!.account_id } : {}),
+          });
+          if (!fix.res.ok) {
+            setError(fix.data?.error ?? 'It was saved as first sent, but the changes since could not be. Edit it from the list.');
+            setDone(true);
+            onSaved({ balanceChanged: data?.balance_updated === true, transaction });
+            return;
+          }
+          transaction = fix.data?.transaction ?? transaction;
+        }
         rememberAccount(draft!.account_id);
-        onSaved({ balanceChanged: data?.balance_updated === true });
+        onSaved({ balanceChanged: data?.balance_updated === true, transaction });
         onClose();
         return;
       }
       setError(data?.error ?? 'Could not save. Please try again.');
       // Saved, but the balance wasn't updated: say so, and offer nothing that
       // would add it again.
-      if (data?.transaction) {
+      if (data?.saved === true && data?.transaction) {
         setDone(true);
-        onSaved({ balanceChanged: false });
+        onSaved({ balanceChanged: false, transaction: data.transaction });
       }
       if (res.status === 409 && typeof data?.balance === 'number') onBalanceStale();
     } catch {
@@ -227,9 +296,9 @@ export default function ManualTxnSheet({
     setSaving(true);
     setError('');
     try {
-      const { res, data } = await send('DELETE', { id: edit.transaction_id });
+      const { res, data } = await send('DELETE', { id: edit.transaction_id, account_id: edit.account_id });
       if (res.ok) {
-        onSaved({ balanceChanged: false });
+        onSaved({ balanceChanged: false, removed: edit.transaction_id });
         onClose();
         return;
       }
@@ -314,8 +383,9 @@ export default function ManualTxnSheet({
         </datalist>
         <label className="field">
           Date
-          <input type="date" value={draft.date} onChange={(e) => set({ date: e.target.value })} disabled={busy} />
+          <input type="date" value={draft.date} max={localDate()} onChange={(e) => set({ date: e.target.value })} disabled={busy} />
         </label>
+        {future && <div className="error">The date can&apos;t be in the future.</div>}
         <label className="field">
           Account
           <select value={draft.account_id} onChange={(e) => set({ account_id: e.target.value, updateBalance: false })} disabled={busy}>
@@ -344,6 +414,11 @@ export default function ManualTxnSheet({
             ))}
           </select>
         </label>
+        {draft.direction === 'in' && !draft.category.startsWith('transfer') && (
+          <p className="panel-note" style={{ margin: 0 }}>
+            Cash taken out of another of your accounts? Choose transfer in, so it isn&apos;t counted as income.
+          </p>
+        )}
         <label className="field">
           Note
           <input value={draft.note} onChange={(e) => set({ note: e.target.value })} maxLength={MAX_NOTE_CHARS} placeholder="Optional" disabled={busy} />

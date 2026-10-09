@@ -39,8 +39,10 @@
 // Writes to the same id, like saves of a value store, are last-write-wins: a
 // get() followed by a set() loses a change saved in between. Where anything else
 // can change the same entry at the same time (a webhook, a rule, a second
-// device), change it with MapStore.update(), a compare-and-set that retries. A
-// value store is for data one person edits at a time.
+// device), change it with MapStore.update(), a compare-and-set that retries; for
+// a change that must land on several entries together or not at all (moving
+// something from one entry to another), MapStore.updateMany(). A value store
+// is for data one person edits at a time.
 //
 // DECLARING ONE, in a module under lib/:
 //
@@ -275,6 +277,19 @@ export type MapStore<T> = Declared & {
    *  may therefore run more than once: it should only compute. Returns what was
    *  written. */
   update(ctx: Ctx, id: string, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null>;
+  /** Changes several entries together, as one step: reads them (strictly),
+   *  computes with `fn` what to write to some of them (null deletes one;
+   *  an id left out of its answer is left as it is), and writes all of it
+   *  only if none of the entries read has changed meanwhile, else waits a
+   *  moment and runs `fn` again, a few times before UpdateConflictError. No
+   *  reader ever sees some of the writes without the others, and a failure
+   *  writes none of them. For a handful of entries (at most MANY_AT_ONCE).
+   *  Returns what was written. */
+  updateMany(
+    ctx: Ctx,
+    ids: Iterable<string>,
+    fn: (current: Map<string, T | null>) => Map<string, T | null> | Promise<Map<string, T | null>>
+  ): Promise<Map<string, T | null>>;
   /** Deletes entries, readable or not. Ids with no entry are ignored. */
   remove(ctx: Ctx, ...ids: string[]): Promise<void>;
   /** How many entries there are, readable or not (for count limits). */
@@ -332,6 +347,29 @@ local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if (cur and redis.sha1hex(cur) or '') ~= ARGV[2] then return 0 end
 if ARGV[3] == '' then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.call('HSET', KEYS[1], ARGV[1], ARGV[3]) end
 return 1`;
+
+/**
+ * Writes several fields of one hash, or deletes them, only if every one still
+ * holds what was read, each compared by SHA-1 as UPDATE_ENTRY compares one:
+ * all of the writes, or none. ARGV is a triple per field: its name, the SHA-1
+ * of what was read ("" for none), and what to write: "" deletes it, and "="
+ * leaves it as it is (it was read, so it is compared, but not written). The
+ * seam stores neither "" nor "=". One key, so one script on one node.
+ */
+export const UPDATE_ENTRIES = `-- nya:repo-update-entries
+for i = 1, #ARGV, 3 do
+  local cur = redis.call('HGET', KEYS[1], ARGV[i])
+  if (cur and redis.sha1hex(cur) or '') ~= ARGV[i + 1] then return 0 end
+end
+for i = 1, #ARGV, 3 do
+  local new = ARGV[i + 2]
+  if new == '' then redis.call('HDEL', KEYS[1], ARGV[i])
+  elseif new ~= '=' then redis.call('HSET', KEYS[1], ARGV[i], new) end
+end
+return 1`;
+
+/** The most entries one updateMany changes together. */
+export const MANY_AT_ONCE = 16;
 
 /** The error a counter store's take answers for a stored count that is not
  *  one, so it can be told from storage failing. */
@@ -664,6 +702,49 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     }
   };
 
+  const updateMany = async (
+    ctx: Ctx,
+    ids: Iterable<string>,
+    fn: (current: Map<string, T | null>) => Map<string, T | null> | Promise<Map<string, T | null>>
+  ): Promise<Map<string, T | null>> => {
+    const wanted = [...new Set([...ids].map((id) => checkId(what, id)))];
+    if (wanted.length > MANY_AT_ONCE) throw new TypeError(`updateMany changes at most ${MANY_AT_ONCE} ${what} at once.`);
+    if (wanted.length === 0) return new Map();
+    for (let attempt = 1; ; attempt++) {
+      const stored = await readFields(ctx, wanted);
+      const read = await decodeAll(wanted.flatMap((id, i) => (stored[i] === null ? [] : [[id, stored[i]] as const])));
+      if (read.unreadable.length > 0 || read.unrecognised.length > 0) {
+        throw new UnreadableEntriesError(what, read.unreadable, read.unrecognised, read.cause);
+      }
+      const current = new Map(wanted.map((id) => [id, read.values.get(id) ?? null] as const));
+      const next = await fn(current);
+      for (const id of next.keys()) {
+        if (!current.has(id)) throw new TypeError(`updateMany may only write the ${what} it read.`);
+      }
+      // Every entry is sent, so each is compared; only those with a change are
+      // written. Deleting an entry that isn't there changes nothing.
+      const args: string[] = [];
+      let chars = 0;
+      let writes = 0;
+      for (const [i, id] of wanted.entries()) {
+        let written = '=';
+        if (next.has(id)) {
+          const value = next.get(id) ?? null;
+          if (value !== null) written = await encode(codec, serialize(codec, value));
+          else if (stored[i] !== null) written = '';
+        }
+        if (written !== '=') writes++;
+        args.push(id, stored[i] === null ? '' : sha1(stored[i]!), written);
+        chars += id.length + SHA1_HEX + written.length;
+      }
+      if (writes === 0) return next;
+      checkSize(name, what, ctx, chars);
+      if (Number(await redis().eval(UPDATE_ENTRIES, [key(ctx)], args)) === 1) return next;
+      if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
+      await pause(attempt);
+    }
+  };
+
   return declare<MapStore<T>>({
     kind: 'map',
     name,
@@ -682,6 +763,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     set: (ctx, id, value) => setMany(ctx, [[id, value]]),
     setMany,
     update,
+    updateMany,
     async remove(ctx, ...ids) {
       for (const id of ids) checkId(what, id);
       if (ids.length > 0) await redis().hdel(key(ctx), ...ids);

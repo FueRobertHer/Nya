@@ -16,9 +16,11 @@
 // (lib/history.ts), which nothing rewrites for a past date. Callers rely on the
 // throw to mark the read as failed (see computeNetWorth() in lib/networth.ts).
 
+import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
+import { READ_ENTRIES, UPDATE_ENTRY } from './repo';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
@@ -147,6 +149,43 @@ export async function setManualBalance(ctx: Ctx, account_id: string, balance: nu
   if (!existing) return false;
   await saveManualAccount(ctx, { ...existing, balance, updated_at: new Date().toISOString() });
   return true;
+}
+
+/** What moveManualBalance did. */
+export type BalanceMove = 'moved' | 'already' | 'changed' | 'missing';
+
+/**
+ * Moves an account's balance from the figure a form showed (`from`) to the one
+ * it said it would become (`to`), to the cent, as one compare-and-set on this
+ * hash's field (the storage seam's scripts, lib/repo.ts: read exactly, then
+ * write only if unchanged since): 'moved' when it held `from` and now holds
+ * `to`, stamped now; 'already' when it holds `to` already, as after the same
+ * request sent again; 'changed' when it holds anything else, left as it is;
+ * 'missing' when the account is gone. A write landing between the read and the
+ * write (a scripted push, another device) is read again, never overwritten.
+ * Throws if the account can't be read.
+ */
+export async function moveManualBalance(ctx: Ctx, account_id: string, from: number, to: number, now: Date = new Date()): Promise<BalanceMove> {
+  const cents = (n: number) => Math.round(n * 100);
+  const key = ACCOUNTS_HASH(ctx);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
+    if (!raw) return 'missing';
+    const stored = raw.slice(1); // exactly as stored, past READ_ENTRIES's "v"
+    let account: ManualAccount;
+    try {
+      account = parseStoredAccount(account_id, await decrypt(stored));
+    } catch (err) {
+      throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+    }
+    if (cents(account.balance) === cents(to)) return 'already';
+    if (cents(account.balance) !== cents(from)) return 'changed';
+    const next = await encrypt(JSON.stringify({ ...account, balance: to, updated_at: now.toISOString() }));
+    const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return 'moved';
+  }
+  // It kept changing: whatever it holds now, it isn't what the form showed.
+  return 'changed';
 }
 
 // The synthetic-institution shape mirrors InstitutionResult in lib/networth.ts.

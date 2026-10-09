@@ -9,18 +9,18 @@
 // (mortgage/car payments are classic bills); transfers between own accounts
 // don't, and neither does a charge the person excluded (lib/spending.ts).
 // Grouped per institution so the same subscription showing on two linked
-// accounts isn't miscounted as twice-monthly.
+// accounts isn't miscounted as twice-monthly, and per currency, so a bill's
+// amount never adds up charges in two (nothing is converted).
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { dominantCurrency } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
-import { isExcluded, isMoneyMovement } from '@/lib/spending';
+import { currencyOf, isExcluded, isMoneyMovement } from '@/lib/spending';
 
 export type RecurringBill = {
   name: string;
   institution: string;
   amount: number; // typical (average) charge
-  currency: string | null; // of the charges (consistent within a merchant)
+  currency: string | null; // of the charges (one per bill: see the grouping)
   logo_url: string | null; // merchant logo, if any charge in the group carried one
   lastDate: string;
   nextDate: string; // estimated
@@ -40,7 +40,7 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
     // Loan payments intentionally still count (mortgage/car are classic bills);
     // only money moved (transfers, ATM, a bank's charges) is left out.
     if (isMoneyMovement(t)) continue;
-    const key = `${t.institution_name}::${t.name.toLowerCase().trim()}`;
+    const key = `${t.institution_name}::${t.name.toLowerCase().trim()}::${currencyOf(t) ?? ''}`;
     const list = groups.get(key);
     if (list) list.push(t);
     else groups.set(key, [t]);
@@ -81,7 +81,7 @@ export function detectRecurring(txns: Txn[]): RecurringBill[] {
       name: list[0].name,
       institution: list[0].institution_name,
       amount: avg,
-      currency: dominantCurrency(list),
+      currency: currencyOf(list[0]),
       logo_url: list.find((t) => t.logo_url)?.logo_url ?? null,
       lastDate: last,
       nextDate: addDays(last, cycle),

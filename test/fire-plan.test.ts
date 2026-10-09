@@ -486,6 +486,53 @@ describe('spending and savings from the trailing year', () => {
     expect(r.from).toBe(yearAgo);
   });
 
+  describe('cash is counted once', () => {
+    // $200 from the ATM (as Plaid files it in the US), and what it went on,
+    // entered by hand on a manual cash account.
+    const ATM = { date: '2026-10-01', amount: 200, category: 'transfer out', subcategory: 'withdrawal' };
+    const spent = (amount: number, over: Partial<Txn> = {}) =>
+      txn({ date: '2026-10-02', amount, source: 'manual', account_id: 'manual_wallet', account_name: 'Wallet', institution_name: 'Cash', ...over });
+    const flows = (rows: Txn[], cashAccounts = new Set(['manual_wallet'])) =>
+      trailingFlows([txn({ date: yearAgo, amount: 1_000 }), ...rows], today, { cashAccounts })!;
+
+    test('withdrawals alone are spending: cash taken out is spent', () => {
+      const r = flows([txn(ATM)]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 200, cashWithdrawn: 200, cashEntered: 0 });
+    });
+
+    test('the same cash, entered as it was spent, counts once', () => {
+      const r = flows([txn(ATM), spent(120), spent(80, { category: 'transportation' })]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 0, cashWithdrawn: 200, cashEntered: 200 });
+    });
+
+    test('some of it entered: the rest of what was withdrawn still counts', () => {
+      const r = flows([txn(ATM), spent(50)]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 150, cashEntered: 50 });
+    });
+
+    test('more entered than withdrawn: what was entered counts, the withdrawals no more', () => {
+      const r = flows([txn(ATM), spent(300)]);
+      expect(r.spending).toBe(1_300);
+      expect(r.cash).toBe(0);
+    });
+
+    test('over the whole year, so cash taken out at a month’s end and spent in the next isn’t counted twice', () => {
+      const r = flows([txn({ ...ATM, date: '2026-08-31' }), spent(200, { date: '2026-09-03' })]);
+      expect(r.spending).toBe(1_200);
+    });
+
+    test('only spending entered on a manual cash account is cash: a card Plaid can’t reach isn’t', () => {
+      const r = flows([txn(ATM), spent(50, { account_id: 'manual_card' })]);
+      expect(r.spending).toBe(1_250);
+      expect(r.cash).toBe(200);
+      // Nor a bank's own row on the account.
+      expect(flows([txn(ATM), spent(50, { source: undefined })]).cash).toBe(200);
+    });
+  });
+
   test("leaves the Activity tab's own rule as it was", () => {
     expect(isTransfer(txn({ amount: 1_500, category: 'loan payments', subcategory: 'mortgage payment' }))).toBe(true);
     expect(isTransfer(txn({ amount: 200, transaction_code: 'atm' }))).toBe(true);
@@ -588,10 +635,31 @@ describe('spending and savings from the trailing year', () => {
     expect(trailingFlows([], today)).toBeNull();
   });
 
-  test('flags spending summed across currencies', () => {
-    const r = trailingFlows([txn({ date: yearAgo, amount: 10 }), txn({ date: today, amount: 10, iso_currency_code: 'EUR' }), txn({ date: today, amount: 10 })], today)!;
+  test('sums one currency, and names the transactions in others instead of adding them', () => {
+    const r = trailingFlows(
+      [
+        txn({ date: yearAgo, amount: 10 }),
+        txn({ date: today, amount: 3_200, iso_currency_code: 'JPY' }),
+        txn({ date: today, amount: -50, category: 'income', iso_currency_code: 'EUR' }),
+        txn({ date: today, amount: 10 }),
+        // A transfer in another currency would count in nothing anyway: not named.
+        txn({ date: today, amount: 99, iso_currency_code: 'JPY', category: 'transfer out' }),
+      ],
+      today
+    )!;
     expect(r.currency).toBe('USD');
-    expect(r.mixedCurrency).toBe(true);
+    expect(r.spending).toBe(20);
+    expect(r.income).toBe(0);
+    expect(r.leftOut).toEqual([
+      { currency: 'EUR', count: 1 },
+      { currency: 'JPY', count: 1 },
+    ]);
+  });
+
+  test('a row with no currency code counts in the figures, taken to be in their currency', () => {
+    const r = trailingFlows([txn({ date: yearAgo, amount: 10 }), txn({ date: today, amount: 5, iso_currency_code: null })], today)!;
+    expect(r.spending).toBe(15);
+    expect(r.leftOut).toEqual([]);
   });
 
   test("reads which institutions couldn't be read from the transactions' notes", () => {

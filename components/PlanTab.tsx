@@ -50,6 +50,7 @@ import {
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { instantDay, localDate } from '@/lib/local-date';
+import { leftOutText } from '@/lib/spending';
 import {
   investedAssets,
   isWorkplacePlan,
@@ -291,7 +292,16 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   // What Nya measures, and what may be missing from it. "Today" is the
   // viewer's calendar day.
   const today = localDate();
-  const flows = useMemo(() => (txns ? trailingFlows(txns, today) : null), [txns, today]);
+  // Manual cash accounts, whose rows entered by hand are what cash withdrawals
+  // were spent on (lib/fire/inputs.ts trailingFlows).
+  const cashAccounts = useMemo(
+    () =>
+      new Set(
+        institutions.filter((i) => i.item_id === null).flatMap((i) => i.accounts.filter((a) => a.type === 'depository').map((a) => a.account_id))
+      ),
+    [institutions]
+  );
+  const flows = useMemo(() => (txns ? trailingFlows(txns, today, { cashAccounts }) : null), [txns, today, cashAccounts]);
   const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
   const assets = useMemo(() => investedAssets(institutions, plan.includeCash), [institutions, plan.includeCash]);
   const contributions = useWorkplaceContributions(institutions);
@@ -311,13 +321,12 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   const displayCurrency = assets.currency ?? flows?.currency ?? currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
   // Nothing is converted between currencies in this app: investments in one
-  // and spending in another can't be compared, nor added up within either.
+  // and spending in another can't be compared. Within either, only amounts in
+  // one currency are added up, and the notes beside them name the rest.
   const currencyNote =
     assets.currency && flows?.currency && assets.currency !== flows.currency
       ? `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Nya doesn't convert currencies, so the FI number and your assets can't be compared.`
-      : assets.mixedCurrency || flows?.mixedCurrency
-        ? "Your accounts use more than one currency; amounts are added without converting them."
-        : null;
+      : null;
 
   const engine = enginePlan(plan, view);
   const sim = 'sim' in engine ? engine.sim : null;
@@ -736,7 +745,19 @@ export function FiCard({
   } else {
     const parts: string[] = [];
     if (flows.loanPayments > 0) parts.push(`${money(flows.loanPayments)} of loan payments (principal counts as spending until the loan ends)`);
-    if (flows.cash > 0) parts.push(`${money(flows.cash)} of cash withdrawals`);
+    // Cash withdrawn and cash spending entered by hand are the same money:
+    // only the larger counts, and this says which (lib/fire/inputs.ts).
+    if (flows.cash > 0) {
+      parts.push(
+        flows.cashEntered > 0
+          ? `${money(flows.cash)} of cash withdrawals beyond the ${money(flows.cashEntered)} of cash spending you entered by hand, taken to be the same money`
+          : `${money(flows.cash)} of cash withdrawals`
+      );
+    }
+    const cashNote =
+      flows.cashWithdrawn > 0 && flows.cash === 0
+        ? ` Cash withdrawals (${money(flows.cashWithdrawn)}) aren't counted: the ${money(flows.cashEntered)} of cash spending you entered by hand is taken to be the same money.`
+        : '';
     // Refunds are taken off, so the total and the largest are said: an odd
     // large one (a deposit returned, an insurance payout) can be seen.
     const big = flows.largestRefund;
@@ -750,8 +771,9 @@ export function FiCard({
     const excluded = left > 0 ? ` Leaves out ${left} transaction${left === 1 ? '' : 's'} you excluded from budgets and reports.` : '';
     spendingNote = (
       <Notes
-        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.${excluded}`}
+        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.${cashNote}${excluded}`}
         warnings={[
+          leftOutText(flows.leftOut, flows.currency, { where: 'your spending or savings' }),
           flows.unclearLoans > 0
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
             : null,
@@ -818,7 +840,11 @@ export function FiCard({
     assetsNote = (
       <Notes
         source={`from ${what}${balancesAsOf ? `, balances as of ${fmtInstant(balancesAsOf)}` : ''}.`}
-        warnings={[...assetLines, measuredAssets.unknown > 0 ? `${measuredAssets.unknown} more had no balance to count, so this figure may be low.` : null]}
+        warnings={[
+          ...assetLines,
+          measuredAssets.unknown > 0 ? `${measuredAssets.unknown} more had no balance to count, so this figure may be low.` : null,
+          leftOutText(measuredAssets.leftOut, measuredAssets.currency, { noun: 'account', where: 'this figure', plural: false }),
+        ]}
       />
     );
   }

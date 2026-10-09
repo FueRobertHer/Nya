@@ -21,6 +21,8 @@ const flows: TrailingFlows = {
   loanPayments: 0,
   cash: 0,
   refunds: 0,
+  cashWithdrawn: 0,
+  cashEntered: 0,
   unclearLoans: 0,
   largestRefund: null,
   from: '2025-10-07',
@@ -30,7 +32,7 @@ const flows: TrailingFlows = {
   count: 400,
   excludedCount: 0,
   currency: 'USD',
-  mixedCurrency: false,
+  leftOut: [],
 };
 const measured: Measured = { spending: 40_000, savings: 30_000, assets: 250_000 };
 const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
@@ -42,7 +44,7 @@ const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   unknown: 0,
   caveats: [],
   currency: 'USD',
-  mixedCurrency: false,
+  leftOut: [],
   ...over,
 });
 const noPlans: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
@@ -149,6 +151,29 @@ describe('the FI card', () => {
       'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
     );
     expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
+  });
+
+  test('says which cash counted: withdrawals, or the cash spending entered by hand, never both', () => {
+    // Withdrawals only.
+    expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } })).toContain('Includes $1,200 of cash withdrawals.');
+    // Some entered by hand: the rest of what was withdrawn.
+    expect(card(plan(), { f: { ...flows, cash: 700, cashWithdrawn: 1_200, cashEntered: 500 } })).toContain(
+      'Includes $700 of cash withdrawals beyond the $500 of cash spending you entered by hand, taken to be the same money.'
+    );
+    // All of it entered: the withdrawals aren't counted, and it says so.
+    const t = card(plan(), { f: { ...flows, cash: 0, cashWithdrawn: 1_200, cashEntered: 1_500 } });
+    expect(t).toContain("Cash withdrawals ($1,200) aren't counted: the $1,500 of cash spending you entered by hand is taken to be the same money.");
+    expect(t).not.toContain('Includes');
+  });
+
+  test('names what another currency left out of spending and of assets', () => {
+    const t = card(plan(), {
+      f: { ...flows, leftOut: [{ currency: 'JPY', count: 2 }] },
+      a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }),
+    });
+    expect(t).toContain("2 transactions in JPY aren't in your spending or savings, which are in USD.");
+    expect(t).toContain("1 account in EUR isn't in this figure, which is in USD.");
+    expect(card(plan())).not.toContain("aren't in your spending");
   });
 
   test('says how many transactions the person excluded were left out of spending', () => {

@@ -8,14 +8,15 @@
 //
 // Transfers and loan payments are excluded (same rule as the rest of the
 // Activity tab, lib/spending.ts) so credit-card payments don't double-count,
-// and so is anything the person excluded. For the current
+// and so is anything the person excluded or in another currency than the
+// tab's totals (the Activity tab names what that left out). For the current
 // month the x-axis stops at today rather than trailing a flat line to
 // month-end.
 
 import { useMemo, useRef, useState } from 'react';
 import { type Txn } from './MonthBreakdown';
-import { countsInTotals } from '@/lib/spending';
-import { formatMoney, compactMoney, dominantCurrency } from '@/lib/format';
+import { countsInTotals, totalsCurrency } from '@/lib/spending';
+import { formatMoney, compactMoney } from '@/lib/format';
 
 const W = 340;
 const H = 150;
@@ -35,10 +36,19 @@ function niceTicks(min: number, max: number): number[] {
   return out;
 }
 
-export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: string }) {
+export default function MonthFlowChart({
+  txns,
+  month,
+  currency: given,
+}: {
+  txns: Txn[];
+  month: string;
+  /** The currency of the totals it sits with; else the one most of `txns` are in. */
+  currency?: string | null;
+}) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
-  const currency = useMemo(() => dominantCurrency(txns), [txns]);
+  const currency = useMemo(() => (given !== undefined ? given : totalsCurrency(txns)), [given, txns]);
 
   const geo = useMemo(() => {
     const [y, m] = month.split('-').map(Number);
@@ -52,7 +62,7 @@ export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: st
     const inByDay = new Array(lastDay + 1).fill(0);
     const outByDay = new Array(lastDay + 1).fill(0);
     for (const t of txns) {
-      if (!countsInTotals(t)) continue;
+      if (!countsInTotals(t, currency)) continue;
       const day = Number(t.date.slice(8, 10));
       if (day < 1 || day > lastDay) continue;
       if (t.amount < 0) inByDay[day] += -t.amount;
@@ -100,7 +110,7 @@ export default function MonthFlowChart({ txns, month }: { txns: Txn[]; month: st
       totalIn: ri,
       totalOut: ro,
     };
-  }, [txns, month]);
+  }, [txns, month, currency]);
 
   const { days, cumIn, cumOut, xs, y, inPath, outPath, baseY, ticks, lastDay, monthYear, totalIn, totalOut } = geo;
   const last = days.length - 1;

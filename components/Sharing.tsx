@@ -421,6 +421,11 @@ export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
   return <SharedWithMeView data={data} />;
 }
 
+// A manual account's id (lib/manual.ts MANUAL_ID_PREFIX, a module a client
+// component can't import). What is shared of one's transactions is its
+// bank's rows only for now, and it has none: its rows are entered by hand.
+const isManualAccount = (id: string) => id.startsWith('manual_');
+
 function shownBalance(a: SharedPayload['shared'][number]['accounts'][number]): string {
   if (a.level === 'exists') return 'Balance not shared';
   if (a.balance === null) return 'No balance yet';
@@ -448,7 +453,9 @@ export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
                 </span>
                 <span className="incoming-account-value">{shownBalance(a)}</span>
               </div>
-              {a.transactions && (
+              {a.transactions && a.transactions.length === 0 && isManualAccount(a.id) ? (
+                <div className="incoming-account-date">Transactions entered by hand aren&apos;t shared yet.</div>
+              ) : a.transactions && (
                 <button className="link-btn" onClick={() => setOpen(open === a.id ? null : a.id)}>
                   {open === a.id ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
                 </button>

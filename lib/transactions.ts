@@ -43,6 +43,9 @@ export type Txn = {
   institution_name: string;
   category: string | null;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
+  // Plaid's code for a currency with no ISO one (a cryptocurrency); absent on
+  // a payload cached before it was sent.
+  unofficial_currency_code?: string | null;
   vendor_key: string; // stable per-merchant key for vendor renames (see vendorKey)
   logo_url: string | null; // merchant logo for the row
   category_icon_url: string | null; // Plaid category icon
@@ -790,11 +793,16 @@ export async function syncItemTransactions(ctx: Ctx,
   /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
    *  Applied here because this is the last place account_id exists; a
    *  category set on the row itself still wins, in /api/transactions. */
-  carriedIn?: Map<string, string> | Promise<Map<string, string>>
+  carriedIn?: Map<string, string> | Promise<Map<string, string>>,
+  /** Exclusions carried across a re-link, by contentKey
+   *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
+   *  same reason; what the person says on the row itself still wins. */
+  carriedExclusionsIn?: Set<string> | Promise<Set<string>>
 ): Promise<{ txns: Txn[]; note: string | null }> {
   const { state, note } = await syncItem(ctx, item);
   if (!state) return { txns: [], note };
   const carried = await carriedIn;
+  const carriedExclusions = await carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name, which recurring detection and search
@@ -816,6 +824,7 @@ export async function syncItemTransactions(ctx: Ctx,
       institution_name: t.institution_name,
       category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
       iso_currency_code: t.iso_currency_code,
+      unofficial_currency_code: t.unofficial_currency_code ?? null,
       vendor_key: vendorKey(t),
       logo_url: t.logo_url,
       category_icon_url: t.personal_finance_category_icon_url,
@@ -832,6 +841,7 @@ export async function syncItemTransactions(ctx: Ctx,
       counterparty: resolveCounterparty(t),
       payment_processor: resolveProcessor(t),
       payment_reference: t.payment_meta?.reference_number ?? null,
+      ...(carriedExclusions?.size && !t.pending && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
     }));
   return { txns, note };
 }

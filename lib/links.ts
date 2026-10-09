@@ -35,6 +35,7 @@ import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
 import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
 import { forgetCarried, pruneOrphanOverrides } from './overrides';
+import { forgetCarriedAnnotations } from './txn-annotations';
 import { storedAccountIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType } from './balance';
@@ -621,6 +622,7 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   );
   if (dismissed.length > 0) await redis().hdel(dismissedKey(ctx), ...dismissed);
   await forgetCarried(ctx, id);
+  await forgetCarriedAnnotations(ctx, id);
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
   // read before the pass above could have written the account back.

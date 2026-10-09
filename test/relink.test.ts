@@ -93,6 +93,9 @@ const route = async (path: string, method: string, body?: unknown) => {
 };
 const categoryOf = async (name: string) =>
   (await route('transactions', 'GET')).body.transactions.find((t: any) => t.transaction_id === name)?.category;
+const excludedOf = async (name: string) =>
+  (await route('transactions', 'GET')).body.transactions.find((t: any) => t.transaction_id === name)?.excluded;
+const excludeRow = (transaction_id: string, excluded: boolean) => route('transaction-annotations', 'PATCH', { transaction_id, excluded });
 
 beforeEach(async () => {
   fake.reset();
@@ -157,6 +160,50 @@ describe('a re-link, end to end', () => {
     expect((await links.getEffectiveHidden(ctx, { describe: true })).forClient).toEqual([
       { account_id: 'acct_closed', type: 'depository', label: 'Chase Checking ••0001', disconnected: false },
     ]);
+  });
+
+  test('exclusions carry across once linked, as categories do, and unlinking undoes it', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old'), row('t_b', 'acct_old', { date: daysAgo(5), amount: 6 })], Date.now() - DAY);
+    await route('transactions', 'GET');
+    expect((await excludeRow('t_a', true)).status).toBe(200);
+    expect(await excludedOf('t_a')).toBe(true);
+    expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(200);
+    // The old ids die with the Item, and so do their records: what carries is
+    // kept by content, encrypted, under the earlier account.
+    expect(await fake.hgetall(ctxKey('transaction-annotations'))).toBeNull();
+    expect(await fake.hget(ctxKey('carried-annotations'), 'acct_old')).not.toBeNull();
+    await readd();
+
+    // Not the same account until the person says so.
+    expect(await excludedOf('n_a')).toBeUndefined();
+    expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' })).status).toBe(200);
+    expect(await excludedOf('n_a')).toBe(true);
+    expect(await excludedOf('n_b')).toBeUndefined(); // never excluded
+
+    await route('account-links', 'DELETE', { old: 'acct_old' });
+    expect(await excludedOf('n_a')).toBeUndefined();
+  });
+
+  test('what the person says on the new row itself wins over a carried exclusion', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    await excludeRow('t_a', true);
+    await route('disconnect', 'POST', { item_id: 'item_old' });
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    expect(await excludedOf('n_a')).toBe(true);
+    expect((await excludeRow('n_a', false)).body).toEqual({ transaction_id: 'n_a', excluded: false });
+    expect(await excludedOf('n_a')).toBeUndefined();
+  });
+
+  test('identical rows excluded one way and not the other carry nothing, rather than guess', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old'), row('t_a2', 'acct_old')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    await excludeRow('t_a', true);
+    await route('disconnect', 'POST', { item_id: 'item_old' });
+    await addItem('item_new', 'acct_new', [row('n_a', 'acct_new')]);
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    expect(await excludedOf('n_a')).toBeUndefined();
   });
 
   test('a category set on the new row itself wins over a carried one', async () => {
@@ -344,6 +391,7 @@ describe('forgetting an earlier account', () => {
     await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
     await route('transactions', 'GET');
     await route('recategorize', 'POST', { transaction_id: 't_a', category: 'treats' });
+    await route('transaction-annotations', 'PATCH', { transaction_id: 't_a', excluded: true });
     await route('disconnect', 'POST', { item_id: 'item_old' });
     await addItem('item_new', 'acct_other', []);
     for (const key of layers) await fake.hset(ctxKey(key), { '2026-01-01': await enc({ acct_old: 100, acct_other: 5 }) });
@@ -366,6 +414,7 @@ describe('forgetting an earlier account', () => {
     expect(JSON.parse(await decrypt((await fake.get<string>(ctxKey('history:accounts:est:flat')))!))).toEqual({ acct_other: 1 });
     expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).toBeNull();
     expect(await fake.hget(ctxKey('txn-category-carry'), 'acct_old')).toBeNull();
+    expect(await fake.hget(ctxKey('carried-annotations'), 'acct_old')).toBeNull();
     expect(await fake.hgetall(ctxKey('account-links:dismissed'))).toBeNull();
     expect(await fake.hget(ctxKey('accounts:meta'), 'item_old')).toBeNull();
     expect(await fake.hget(ctxKey('accounts:meta'), 'item_new')).not.toBeNull();

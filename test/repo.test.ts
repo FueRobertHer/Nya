@@ -43,6 +43,7 @@ const {
   StoredValueTooLargeError,
   READ_ENTRIES,
   UPDATE_ENTRY,
+  UPDATE_ENTRIES,
   COUNTER_READ,
   COUNTER_TAKE,
 } = await import('@/lib/repo');
@@ -676,6 +677,174 @@ function contract(b: Backend) {
       b.failNext('eval'); // the read
       await expect(notes.update(A, 'n1', bump)).rejects.toThrow(/armed failure/);
       expect(await notes.get(A, 'n1')).toEqual(NOTE);
+    });
+  });
+
+  describe('updateMany', () => {
+    test('changes several entries in one step, returning what it wrote; an entry it leaves out is left as it is', async () => {
+      await notes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', RENT],
+        ['keep', NOTE],
+      ]);
+      const seen: Map<string, Note | null>[] = [];
+      const written = await notes.updateMany(A, ['n1', 'n2', 'n3', 'keep'], (cur) => {
+        seen.push(cur);
+        return new Map([
+          ['n1', null],
+          ['n2', { ...cur.get('n2')!, amount: 1300 }],
+          ['n3', NOTE],
+        ]);
+      });
+      expect(seen).toEqual([
+        new Map<string, Note | null>([
+          ['n1', NOTE],
+          ['n2', RENT],
+          ['n3', null],
+          ['keep', NOTE],
+        ]),
+      ]);
+      expect(written).toEqual(
+        new Map<string, Note | null>([
+          ['n1', null],
+          ['n2', { ...RENT, amount: 1300 }],
+          ['n3', NOTE],
+        ])
+      );
+      expect([...(await notes.getAll(A))]).toEqual([
+        ['keep', NOTE],
+        ['n2', { ...RENT, amount: 1300 }],
+        ['n3', NOTE],
+      ]);
+    });
+
+    test('one read and one write; nothing to write sends only the read', async () => {
+      await notes.set(A, 'n1', NOTE);
+      expect(await sentBy(() => notes.updateMany(A, ['n1', 'n2'], (cur) => new Map([['n2', cur.get('n1')!]])))).toEqual(['eval', 'eval']);
+      expect(await sentBy(() => notes.updateMany(A, ['n1', 'n3'], () => new Map([['n3', null]])))).toEqual(['eval']);
+      expect(await sentBy(() => notes.updateMany(A, [], () => new Map()))).toEqual([]);
+    });
+
+    test('a write to an entry it read, landing between its read and its write, runs fn again: none is lost', async () => {
+      await notes.setMany(A, [
+        ['from', NOTE],
+        ['to', RENT],
+      ]);
+      let runs = 0;
+      // Moves "from" into "to", while someone else changes "to" mid-way.
+      const written = await notes.updateMany(A, ['from', 'to'], async (cur) => {
+        runs++;
+        if (runs === 1) await notes.set(A, 'to', { text: 'theirs', amount: 5 });
+        const from = cur.get('from')!;
+        const to = cur.get('to')!;
+        return new Map<string, Note | null>([
+          ['from', null],
+          ['to', { text: `${to.text}+${from.text}`, amount: to.amount + from.amount }],
+        ]);
+      });
+      expect(runs).toBe(2);
+      expect(written.get('to')).toEqual({ text: 'theirs+groceries', amount: 87.13 });
+      expect([...(await notes.getAll(A))]).toEqual([['to', { text: 'theirs+groceries', amount: 87.13 }]]);
+    });
+
+    test('an entry only read is compared too: a change to it runs fn again', async () => {
+      await notes.setMany(A, [
+        ['guard', NOTE],
+        ['n1', NOTE],
+      ]);
+      let runs = 0;
+      await notes.updateMany(A, ['guard', 'n1'], async (cur) => {
+        runs++;
+        if (runs === 1) await notes.set(A, 'guard', RENT);
+        return new Map([['n1', { text: cur.get('guard')!.text, amount: 1 }]]);
+      });
+      expect(runs).toBe(2);
+      expect(await notes.get(A, 'n1')).toEqual({ text: 'rent', amount: 1 });
+    });
+
+    test('it gives up when an entry keeps changing, and writes nothing', async () => {
+      await notes.setMany(A, [
+        ['from', NOTE],
+        ['to', RENT],
+      ]);
+      let runs = 0;
+      const err = await notes
+        .updateMany(A, ['from', 'to'], async () => {
+          runs++;
+          await notes.set(A, 'to', { text: 'theirs', amount: runs });
+          return new Map<string, Note | null>([
+            ['from', null],
+            ['to', NOTE],
+          ]);
+        })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(UpdateConflictError);
+      expect(err.status).toBe(409);
+      expect(runs).toBe(5);
+      expect(await notes.get(A, 'from')).toEqual(NOTE); // never taken out on its own
+      expect(await notes.get(A, 'to')).toEqual({ text: 'theirs', amount: 5 });
+    });
+
+    test('an entry it cannot use is named, and nothing is written', async () => {
+      await notes.set(A, 'n1', NOTE);
+      await b.raw.hset(notesKey(), 'n2', 'not-ciphertext-but-long-enough-to-be-tried');
+      const err = await notes.updateMany(A, ['n1', 'n2'], () => new Map([['n1', null]])).catch((e) => e);
+      expect(err).toBeInstanceOf(UnreadableEntriesError);
+      expect([err.unreadable, err.unrecognised]).toEqual([['n2'], []]);
+      expect(await notes.get(A, 'n1')).toEqual(NOTE);
+    });
+
+    test('a value that would not read back, or an entry it did not read, is refused before anything is sent', async () => {
+      await notes.set(A, 'n1', NOTE);
+      await expect(notes.updateMany(A, ['n1'], () => new Map([['n1', { text: 'x', amount: NaN }]]))).rejects.toThrow('Refusing to save test notes');
+      await expect(notes.updateMany(A, ['n1'], () => new Map([['other', NOTE]]))).rejects.toThrow('updateMany may only write the test notes it read.');
+      await expect(notes.updateMany(A, Array.from({ length: 17 }, (_, i) => `n${i}`), () => new Map())).rejects.toThrow('at most 16');
+      expect([...(await notes.getAll(A))]).toEqual([['n1', NOTE]]);
+    });
+
+    test('too large together: refused whole, nothing written or trimmed', async () => {
+      await notes.set(A, 'n1', NOTE);
+      process.env.MAX_TXN_BLOB_CHARS = '400';
+      const big = { text: 'x'.repeat(150), amount: 1 };
+      const { result } = await quietly(() =>
+        notes.updateMany(
+          A,
+          ['n1', 'n2'],
+          () =>
+            new Map([
+              ['n1', big],
+              ['n2', big],
+            ])
+        )
+      );
+      expect(result).toBeInstanceOf(StoredValueTooLargeError);
+      delete process.env.MAX_TXN_BLOB_CHARS;
+      expect([...(await notes.getAll(A))]).toEqual([['n1', NOTE]]);
+    });
+
+    test('a storage failure is an error, and nothing changes', async () => {
+      await notes.setMany(A, [
+        ['from', NOTE],
+        ['to', RENT],
+      ]);
+      b.failNext('eval');
+      const move = () =>
+        new Map<string, Note | null>([
+          ['from', null],
+          ['to', NOTE],
+        ]);
+      await expect(notes.updateMany(A, ['from', 'to'], move)).rejects.toThrow(/armed failure/);
+      expect([...(await notes.getAll(A))]).toEqual([
+        ['from', NOTE],
+        ['to', RENT],
+      ]);
+    });
+
+    test('the script compares every entry before it writes any', () => {
+      const [compare, write] = UPDATE_ENTRIES.split('for i = 1, #ARGV, 3 do').slice(1);
+      expect(compare).toContain('return 0');
+      expect(compare).not.toContain('HSET');
+      expect(write).toContain('HSET');
     });
   });
 

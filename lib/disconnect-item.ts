@@ -8,9 +8,10 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { getItems, removeItem, type StoredItem } from './storage';
 import { clearCaches } from './cache';
-import { clearItemTransactions, readStoredTxns } from './transactions';
+import { clearItemTransactions, contentKey, readStoredTxns, type StoredTxn } from './transactions';
 import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
+import { retireAnnotations } from './txn-annotations';
 import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
@@ -41,10 +42,25 @@ export async function disconnectItem(
   // re-link, BEFORE its store is deleted, so linking the re-added account
   // later carries the categories across (lib/overrides.ts). Best effort: a
   // failure costs that convenience, never the disconnect.
+  let stored: StoredTxn[] | null = null;
   try {
-    await retireOverrides(ctx, await readStoredTxns(ctx, item_id));
+    stored = await readStoredTxns(ctx, item_id);
+    await retireOverrides(ctx, stored);
   } catch (err) {
     console.error('disconnect: could not record categories to carry across a re-link', err instanceof Error ? err.message : err);
+  }
+  // And which of them were excluded from budgets and reports, the same way
+  // (lib/txn-annotations.ts), so a re-link doesn't quietly put a one-off back
+  // in every total. Best effort too.
+  try {
+    if (stored) {
+      await retireAnnotations(
+        ctx,
+        stored.map((t) => ({ transaction_id: t.transaction_id, account_id: t.account_id, key: contentKey(t.account_id, t), pending: t.pending }))
+      );
+    }
+  } catch (err) {
+    console.error('disconnect: could not record exclusions to carry across a re-link', err instanceof Error ? err.message : err);
   }
 
   await removeItem(ctx, item_id);

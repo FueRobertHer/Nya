@@ -8,9 +8,12 @@
 export const MAX_PAYEE_CHARS = 100; // as long as a vendor rename (app/api/rename)
 export const MAX_CATEGORY_CHARS = 60; // as long as a recategorization (app/api/recategorize)
 export const MAX_NOTE_CHARS = 500;
-/** How far ahead a date may be: a mistyped year (2062 for 2026) is refused,
- *  a bill entered a little ahead of time is not. */
-export const MAX_FUTURE_DAYS = 366;
+/** How far past the server's day a date may be: one day, because the server
+ *  counts days in UTC and a person east of it is already in tomorrow. Nothing
+ *  later: a transaction is something that happened, and one dated ahead would
+ *  count in a month's totals before it did (and open the Activity tab on a
+ *  month still to come). */
+export const MAX_FUTURE_DAYS = 1;
 /** The earliest date taken: earlier than any history an import could bring. */
 export const EARLIEST_DATE = '1900-01-01';
 /** The bound on an amount, the same as on a manual account's balance
@@ -20,6 +23,16 @@ export const MAX_AMOUNT = 1e12;
 /** Manual accounts are kept in US dollars (lib/manual.ts toInstitutions), so a
  *  transaction is too unless the person picks another currency. */
 export const DEFAULT_CURRENCY = 'USD';
+
+/** The start of every manual row's id. Not a Plaid id: Plaid's have no colon. */
+export const MANUAL_TXN_PREFIX = 'manual-txn:';
+
+/** A new row's id: the prefix and a random UUID. Minted by the quick-add form
+ *  when it opens, so sending the same add again finds its row already there
+ *  (lib/manual-txns.ts addManualTxn). */
+export function newManualTxnId(): string {
+  return `${MANUAL_TXN_PREFIX}${crypto.randomUUID()}`;
+}
 
 /** Where a row came from, in a few words for the transaction list. Rows
  *  entered in the app are 'manual'; imports (#43) and SimpleFIN add theirs. */
@@ -71,36 +84,85 @@ export function knownCurrency(code: string): boolean {
   return list('currency').includes(code);
 }
 
+/** How many decimal places an amount in the currency has: its minor unit, as
+ *  Intl knows it (2 for USD and EUR, 0 for JPY, 3 for KWD), or 2 for a code
+ *  Intl doesn't take. */
+export function minorDigits(currency: string): number {
+  try {
+    return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  } catch {
+    return 2;
+  }
+}
+
+/** The amount rounded to the currency's minor unit (half away from zero). */
+export function toMinorUnits(amount: number, currency: string): number {
+  const scale = 10 ** minorDigits(currency);
+  return (Math.sign(amount) * Math.round(Math.abs(amount) * scale)) / scale;
+}
+
+/** Whether the amount is a whole number of the currency's minor units: no
+ *  more precise than the currency allows. */
+export function inMinorUnits(amount: number, currency: string): boolean {
+  const scaled = Math.abs(amount) * 10 ** minorDigits(currency);
+  return Math.abs(scaled - Math.round(scaled)) < 1e-6;
+}
+
+/** Why an amount can't be in the currency, or null: more precise than its
+ *  minor unit (which includes smaller than one). */
+export function amountUnitsError(amount: number, currency: string): string | null {
+  if (inMinorUnits(amount, currency)) return null;
+  const d = minorDigits(currency);
+  return d === 0
+    ? `An amount in ${currency} is a whole number`
+    : `An amount in ${currency} has at most ${d} decimal place${d === 1 ? '' : 's'}`;
+}
+
 /**
- * An amount as typed, or null if it isn't one. No sign: the form asks whether
- * money went out or came in, since a phone's decimal keypad has no minus key.
- * That keypad shows the locale's decimal separator, so "12,50" is twelve and a
- * half. Thousands separators are taken too: with both marks, the last one is
- * the decimal point ("1,234.56", "1.234,56"); several of one mark only group
- * thousands ("1,234,567"); and a lone comma before exactly three digits, after
- * one to three that don't start with 0, groups thousands ("1,234" is 1234, as
- * typed in the US), since money is rarely written to three decimal places.
- * Zero is not an amount. The form shows what it read before anything is saved.
+ * An amount as typed, rounded to the currency's minor unit, or null if it
+ * isn't one. No sign: the form asks whether money went out or came in, since a
+ * phone's decimal keypad has no minus key. That keypad shows the locale's
+ * decimal separator, so "12,50" is twelve and a half.
+ *
+ * Thousands separators are taken only where they group properly, so a
+ * doubled or stray mark never turns into a hundredfold amount ("12..50",
+ * "12,,50", "12.5.0" and "1,2,3" are not amounts):
+ *   - with both marks, the last one is the decimal point, once, and the other
+ *     groups the digits before it in threes: "1,234.56", "1.234,56";
+ *   - one mark used several times groups in threes, with no decimals:
+ *     "1,234,567", "1.234.567";
+ *   - one mark used once is the decimal point ("12,50", "1.234"), except a
+ *     comma before exactly three digits, after one to three that don't start
+ *     with 0: "1,234" is 1234, as typed in the US, since money is rarely
+ *     written to three decimal places.
+ * Zero, and anything that rounds to it, is not an amount. The form shows what
+ * it read before anything is saved.
  */
-export function parseAmountInput(text: string): number | null {
-  const s = text.replace(/[\s ]/g, '');
+export function parseAmountInput(text: string, currency: string = DEFAULT_CURRENCY): number | null {
+  const s = text.replace(/[\s  ]/g, '');
   if (!/^[0-9.,]+$/.test(s) || !/\d/.test(s)) return null;
   const dots = s.split('.').length - 1;
   const commas = s.split(',').length - 1;
-  let normal: string;
+  let normal: string | null = null;
+  const grouped = (digits: string, mark: string) => new RegExp(`^\\d{1,3}(\\${mark}\\d{3})*$`).test(digits);
   if (dots > 0 && commas > 0) {
     const decimal = s.lastIndexOf('.') > s.lastIndexOf(',') ? '.' : ',';
-    if ((decimal === '.' ? dots : commas) !== 1) return null;
-    normal = s.split(decimal === '.' ? ',' : '.').join('').replace(',', '.');
-  } else if (commas === 1) {
-    normal = /^[1-9]\d{0,2},\d{3}$/.test(s) ? s.replace(',', '') : s.replace(',', '.');
-  } else if (commas > 1) {
-    normal = s.split(',').join('');
+    const group = decimal === '.' ? ',' : '.';
+    const at = s.lastIndexOf(decimal);
+    const [whole, fraction] = [s.slice(0, at), s.slice(at + 1)];
+    if ((decimal === '.' ? dots : commas) === 1 && grouped(whole, group) && /^\d*$/.test(fraction)) {
+      normal = `${whole.split(group).join('')}.${fraction}`;
+    }
+  } else if (dots + commas > 1) {
+    const mark = dots > 0 ? '.' : ',';
+    if (grouped(s, mark)) normal = s.split(mark).join('');
+  } else if (commas === 1 && /^[1-9]\d{0,2},\d{3}$/.test(s)) {
+    normal = s.replace(',', '');
   } else {
-    normal = dots > 1 ? s.split('.').join('') : s;
+    normal = s.replace(',', '.');
   }
-  if (!/^(\d+\.?\d*|\.\d+)$/.test(normal)) return null;
-  const n = Number(normal);
+  if (normal === null || !/^(\d+\.?\d*|\.\d+)$/.test(normal)) return null;
+  const n = toMinorUnits(Number(normal), currency);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
@@ -133,7 +195,7 @@ function readDate(v: unknown, today: string): Read<string> {
   if (typeof v !== 'string' || !DAY.test(v)) return fail('Enter the date as YYYY-MM-DD');
   if (!isCalendarDay(v)) return fail('That date is not a real day');
   if (v < EARLIEST_DATE) return fail(`The date can't be before ${EARLIEST_DATE}`);
-  if (v > addDays(today, MAX_FUTURE_DAYS)) return fail("The date can't be more than a year from today");
+  if (v > addDays(today, MAX_FUTURE_DAYS)) return fail("The date can't be in the future");
   return ok(v);
 }
 
@@ -181,11 +243,14 @@ const DEFAULTS: Partial<TxnFields> = { currency: DEFAULT_CURRENCY, category: nul
 
 /**
  * The fields of a request body, checked strictly: each must have the right
- * type, length and range. A new transaction (`partial` false) needs a date, an
- * amount and a payee, and takes USD and no category or note for those left
- * out. An edit (`partial` true) reads only the fields it carries; a category or
- * note sent as null is cleared. `today` is the server's day (UTC), which a date
- * may not be more than MAX_FUTURE_DAYS past.
+ * type, length and range, and an amount must be a whole number of its
+ * currency's minor units (a cent, a yen). A new transaction (`partial` false)
+ * needs a date, an amount and a payee, and takes USD and no category or note
+ * for those left out. An edit (`partial` true) reads only the fields it
+ * carries; a category or note sent as null is cleared, and an amount or a
+ * currency sent alone is checked against the other as stored
+ * (lib/manual-txns.ts editManualTxn). `today` is the server's day (UTC),
+ * which a date may not be more than MAX_FUTURE_DAYS past.
  */
 export function readTxnFields(
   body: Record<string, unknown>,
@@ -213,5 +278,10 @@ export function readTxnFields(
     if (!r.ok) return { error: r.error };
     fields[key] = r.value;
   }
-  return { fields: fields as Partial<TxnFields> };
+  const read = fields as Partial<TxnFields>;
+  if (read.amount !== undefined && read.currency !== undefined) {
+    const units = amountUnitsError(read.amount, read.currency);
+    if (units) return { error: units };
+  }
+  return { fields: read };
 }

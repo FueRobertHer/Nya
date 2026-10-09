@@ -33,6 +33,7 @@ const {
   removeAccountTxns,
   manualRowsForDisplay,
   readManualTxnsForDisplay,
+  noteBalanceUpdate,
   MANUAL_TXN_PREFIX,
 } = await import('@/lib/manual-txns');
 type ManualTxn = import('@/lib/manual-txns').ManualTxn;
@@ -81,8 +82,23 @@ async function quietly<T>(fn: () => Promise<T>): Promise<{ result: T | Error; lo
 
 beforeEach(() => {
   fake.reset();
+  delete (fake as any).eval; // a test's atNextWrite left armed
   delete process.env.MAX_TXN_BLOB_CHARS;
 });
+
+/** Runs `meanwhile` once, just before the next write of several entries
+ *  (MapStore.updateMany's script) reaches storage, as another device would;
+ *  or, with `fail`, makes that write fail, as a storage blip would. */
+function atNextWrite(opts: { meanwhile?: () => Promise<unknown>; fail?: boolean }) {
+  const original = fake.eval.bind(fake);
+  (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
+    if (!script.startsWith('-- nya:repo-update-entries')) return original(script, keys, args);
+    delete (fake as any).eval;
+    if (opts.fail) throw new Error('storage blip');
+    await opts.meanwhile?.();
+    return original(script, keys, args);
+  };
+}
 
 describe('what a manual transaction may hold', () => {
   const TODAY = '2026-10-08';
@@ -109,7 +125,9 @@ describe('what a manual transaction may hold', () => {
       [{ date: '10/05/2026' }, 'Enter the date as YYYY-MM-DD'],
       [{ date: 20261005 }, 'Enter the date as YYYY-MM-DD'],
       [{ date: '1899-12-31' }, "The date can't be before 1900-01-01"],
-      [{ date: '2027-10-10' }, "The date can't be more than a year from today"],
+      // After tomorrow: one day ahead is a clock in another time zone, no more.
+      [{ date: '2026-10-10' }, "The date can't be in the future"],
+      [{ date: '2027-10-08' }, "The date can't be in the future"],
       [{ name: '   ' }, 'Enter who was paid, or who paid you'],
       [{ name: 42 }, 'Enter who was paid, or who paid you'],
       [{ name: 'x'.repeat(101) }, 'The payee can be at most 100 characters'],
@@ -120,11 +138,28 @@ describe('what a manual transaction may hold', () => {
       [{ category: 'c'.repeat(61) }, 'The category can be at most 60 characters'],
       [{ note: 'n'.repeat(501) }, 'The note can be at most 500 characters'],
       [{ note: ['a'] }, 'Invalid note'],
+      // No more precise than the currency: a cent, a yen, a fils.
+      [{ amount: 10.999 }, 'An amount in USD has at most 2 decimal places'],
+      [{ amount: 0.001 }, 'An amount in USD has at most 2 decimal places'],
+      [{ amount: 1e-7 }, 'An amount in USD has at most 2 decimal places'],
+      [{ amount: 12.5, currency: 'JPY' }, 'An amount in JPY is a whole number'],
+      [{ amount: 1.2345, currency: 'KWD' }, 'An amount in KWD has at most 3 decimal places'],
     ];
     for (const [over, error] of bad) expect([over, read({ ...ok, ...over })]).toEqual([over, { error }]);
     // The bounds themselves are taken.
-    expect('fields' in read({ ...ok, date: '2027-10-09', amount: -MAX_BALANCE, name: 'x'.repeat(100) })).toBe(true);
+    expect('fields' in read({ ...ok, date: '2026-10-09', amount: -MAX_BALANCE, name: 'x'.repeat(100) })).toBe(true);
     expect('fields' in read({ ...ok, date: '1900-01-01' })).toBe(true);
+    expect('fields' in read({ ...ok, amount: 0.01 })).toBe(true);
+    expect('fields' in read({ ...ok, amount: 3200, currency: 'JPY' })).toBe(true);
+    expect('fields' in read({ ...ok, amount: 1.234, currency: 'KWD' })).toBe(true);
+  });
+
+  test('a currency has the minor unit Intl gives it', () => {
+    expect(['USD', 'EUR', 'JPY', 'KWD'].map(input.minorDigits)).toEqual([2, 2, 0, 3]);
+    expect(input.toMinorUnits(10.999, 'USD')).toBe(11);
+    expect(input.toMinorUnits(-0.125, 'USD')).toBe(-0.13); // half away from zero
+    expect(input.toMinorUnits(12.5, 'JPY')).toBe(13);
+    expect(input.toMinorUnits(1.2345, 'KWD')).toBe(1.235);
   });
 
   test('text is tidied as the rest of the app stores it: categories lower case, empty means none', () => {
@@ -152,7 +187,6 @@ describe('what a manual transaction may hold', () => {
       ['12.50', 12.5],
       ['12,50', 12.5], // a comma-decimal keypad
       ['12,5', 12.5],
-      ['0,125', 0.125],
       ['1,234', 1234], // a US thousands separator
       ['1,234.56', 1234.56],
       ['1.234,56', 1234.56],
@@ -168,8 +202,26 @@ describe('what a manual transaction may hold', () => {
       ['12a', null],
       ['1.2.3,4.5', null],
       ['1e5', null],
+      // A doubled or stray separator is a typo, never a hundredfold amount.
+      ['12..50', null],
+      ['12,,50', null],
+      ['12.5.0', null],
+      ['1.2.3', null],
+      ['12,34,56', null],
+      ['1,2,3', null],
+      ['1,234.5.6', null],
+      ['1.234,5,6', null],
+      [',50', 0.5],
+      // Rounded to the cent; nothing left is not an amount.
+      ['10.999', 11],
+      ['0,125', 0.13],
+      ['0.001', null],
     ];
     for (const [typed, expected] of cases) expect([typed, input.parseAmountInput(typed)]).toEqual([typed, expected]);
+    // In the currency's own units.
+    expect(input.parseAmountInput('12.5', 'JPY')).toBe(13);
+    expect(input.parseAmountInput('3,200', 'JPY')).toBe(3200);
+    expect(input.parseAmountInput('0,125', 'KWD')).toBe(0.125);
   });
 
   test('a balance moves the way the money went: down on an account, up on what is owed', () => {
@@ -221,12 +273,12 @@ describe('the store', () => {
     expect([...(await manualTxnStore.getAll(ctx)).keys()]).toEqual([CARD.account_id, WALLET.account_id]);
     expect(await findManualTxn(ctx, coffee.id)).toEqual({ account_id: WALLET.account_id, row: coffee });
 
-    const edited = await editManualTxn(ctx, coffee.id, { amount: 14, note: 'with a pastry' }, new Date('2026-10-06T10:00:00.000Z'));
+    const edited = await editManualTxn(ctx, coffee.id, { amount: 14, note: 'with a pastry' }, { now: new Date('2026-10-06T10:00:00.000Z') });
     expect(edited).toEqual({ ...coffee, amount: 14, note: 'with a pastry', updated_at: '2026-10-06T10:00:00.000Z' });
     expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows).toEqual([edited!]);
 
     // Moved onto the card: in its book, out of the wallet's (which goes, empty).
-    const moved = await editManualTxn(ctx, coffee.id, { account_id: CARD.account_id }, new Date('2026-10-07T10:00:00.000Z'));
+    const moved = await editManualTxn(ctx, coffee.id, { account_id: CARD.account_id }, { now: new Date('2026-10-07T10:00:00.000Z') });
     expect(moved).toMatchObject({ id: coffee.id, account_id: CARD.account_id, amount: 14, created_at: coffee.created_at });
     expect(await manualTxnStore.get(ctx, WALLET.account_id)).toBeNull();
     expect((await manualTxnStore.get(ctx, CARD.account_id))!.rows.map((r) => r.id)).toEqual([hotel.id, coffee.id]);
@@ -235,6 +287,78 @@ describe('the store', () => {
     expect(await deleteManualTxn(ctx, coffee.id)).toBe(false); // already gone
     expect(await editManualTxn(ctx, coffee.id, { amount: 1 })).toBeNull();
     expect((await manualTxnStore.get(ctx, CARD.account_id))!.rows).toEqual([hotel]);
+  });
+
+  describe('a move between accounts is one step', () => {
+    test('a write that fails leaves the row where it was, once; tried again, it moves', async () => {
+      const r = row(WALLET.account_id);
+      await addManualTxn(ctx, r);
+      atNextWrite({ fail: true });
+      await expect(editManualTxn(ctx, r.id, { account_id: CARD.account_id }, { from: WALLET.account_id })).rejects.toThrow('storage blip');
+      expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows).toEqual([r]);
+      expect(await manualTxnStore.get(ctx, CARD.account_id)).toBeNull();
+      const moved = await editManualTxn(ctx, r.id, { account_id: CARD.account_id }, { from: WALLET.account_id });
+      expect(moved).toMatchObject({ id: r.id, account_id: CARD.account_id });
+      expect(await manualTxnStore.get(ctx, WALLET.account_id)).toBeNull();
+      expect((await manualTxnStore.get(ctx, CARD.account_id))!.rows.map((x) => x.id)).toEqual([r.id]);
+    });
+
+    test('a delete landing during a move is never undone', async () => {
+      const r = row(WALLET.account_id);
+      await addManualTxn(ctx, r);
+      atNextWrite({ meanwhile: () => deleteManualTxn(ctx, r.id, WALLET.account_id) });
+      expect(await editManualTxn(ctx, r.id, { account_id: CARD.account_id }, { from: WALLET.account_id })).toBeNull();
+      expect(await manualTxnStore.count(ctx)).toBe(0);
+    });
+
+    test('an edit landing during a move goes with it, never lost', async () => {
+      const r = row(WALLET.account_id);
+      await addManualTxn(ctx, r);
+      atNextWrite({ meanwhile: () => editManualTxn(ctx, r.id, { note: 'edited on the phone' }, { from: WALLET.account_id }) });
+      const moved = await editManualTxn(ctx, r.id, { account_id: CARD.account_id }, { from: WALLET.account_id });
+      expect(moved).toMatchObject({ account_id: CARD.account_id, note: 'edited on the phone' });
+      expect((await manualTxnStore.get(ctx, CARD.account_id))!.rows).toEqual([moved!]);
+      expect(await manualTxnStore.get(ctx, WALLET.account_id)).toBeNull();
+    });
+
+    test('an add sent again after its row was moved is still one row', async () => {
+      const r = row(WALLET.account_id);
+      await addManualTxn(ctx, r);
+      await editManualTxn(ctx, r.id, { account_id: CARD.account_id });
+      // The route finds it anywhere first (app/api/manual-transactions); the
+      // store itself never adds an id its book already holds.
+      expect((await findManualTxn(ctx, r.id))!.account_id).toBe(CARD.account_id);
+    });
+  });
+
+  test('with the account a row is shown on, only that book is read', async () => {
+    const r = row(WALLET.account_id);
+    await addManualTxn(ctx, r);
+    await fake.hset(ctxKey('manual-transactions'), { [CARD.account_id]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    expect(await editManualTxn(ctx, r.id, { note: 'read one book' }, { from: WALLET.account_id })).toMatchObject({ note: 'read one book' });
+    // Not on the account named: deleted or moved meanwhile, as far as it can tell.
+    expect(await findManualTxn(ctx, r.id, 'manual_somewhere-else')).toBeNull();
+    expect(await deleteManualTxn(ctx, r.id, 'manual_somewhere-else')).toBe(false);
+    expect(await deleteManualTxn(ctx, r.id, WALLET.account_id)).toBe(true);
+  });
+
+  test('an amount no longer whole in its currency is refused, and nothing is written', async () => {
+    const r = row(WALLET.account_id); // 12.50 USD
+    await addManualTxn(ctx, r);
+    await expect(editManualTxn(ctx, r.id, { currency: 'JPY' })).rejects.toThrow('An amount in JPY is a whole number');
+    expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows).toEqual([r]);
+  });
+
+  test('the balance an add moved is noted on its row, wherever it is now', async () => {
+    const r = row(WALLET.account_id);
+    await addManualTxn(ctx, r);
+    await editManualTxn(ctx, r.id, { account_id: CARD.account_id });
+    await noteBalanceUpdate(ctx, r.id, WALLET.account_id, { from: 200, to: 187.5 });
+    expect((await findManualTxn(ctx, r.id))!.row.balance_update).toEqual({ from: 200, to: 187.5 });
+    // Gone: nothing to note, no error.
+    await deleteManualTxn(ctx, r.id);
+    await noteBalanceUpdate(ctx, r.id, WALLET.account_id, { from: 200, to: 187.5 });
+    expect(await manualTxnStore.count(ctx)).toBe(0);
   });
 
   test('kept encrypted and compressed: nothing a row holds is in the stored bytes', async () => {
@@ -250,11 +374,11 @@ describe('the store', () => {
     expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows.map((r) => r.name).sort()).toEqual(rows.map((r) => r.name).sort());
   });
 
-  test('a retried add is still one row', async () => {
+  test('an add sent again is still one row, as first saved, and says so', async () => {
     const r = row(WALLET.account_id);
-    await addManualTxn(ctx, r);
-    await addManualTxn(ctx, { ...r, amount: 13 });
-    expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows).toEqual([{ ...r, amount: 13 }]);
+    expect(await addManualTxn(ctx, r)).toEqual({ row: r, added: true });
+    expect(await addManualTxn(ctx, { ...r, amount: 13 })).toEqual({ row: r, added: false });
+    expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows).toEqual([r]);
   });
 
   test('each container keeps its own', async () => {

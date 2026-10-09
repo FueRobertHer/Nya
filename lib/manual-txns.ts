@@ -4,7 +4,8 @@
 // bank Plaid can't reach, a card used abroad. Later, rows imported from a file
 // (#43: CSV, OFX) or pulled through SimpleFIN land here too, each marked with
 // its `source` and the source's own id (`source_id`, an OFX FITID say), so a
-// re-import can tell what is already stored and a batch can be removed whole.
+// re-import can tell what is already stored, and with the import it came in
+// (`import_id`), so one import can be taken out whole.
 //
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the
@@ -16,10 +17,12 @@
 // never trimmed. Deleting the account deletes its book in one step, and an
 // account's rows are read with one decrypt.
 //
-// WHO WINS. Every change to a book goes through MapStore.update, a
-// compare-and-set: two devices adding to one account at once both land, and
-// so will an import running beside an edit. A row is found by its id, which
-// the client gets with it.
+// WHO WINS. Every change to a book is a compare-and-set (MapStore.updateMany):
+// two devices adding to one account at once both land, and so will an import
+// running beside an edit. Moving a row to another account changes both books
+// in that one step, so the row is always in exactly one of them: never both,
+// never neither, whatever fails or races. The client sends the account a row
+// is on with each edit or delete, so only that book is read.
 //
 // READS ARE STRICT. These rows feed spending totals, and imports will match
 // against them: an unreadable book is an error naming its account, never an
@@ -27,27 +30,31 @@
 // account's could not be read; a change to a book that cannot be read is
 // refused (409) and leaves it as it is.
 //
-// IDS. A row's id is "manual-txn:" and a random UUID, minted here: it is the
-// row's transaction_id on the Activity tab, and the key of anything said about
-// it (lib/txn-annotations.ts). Plaid's transaction ids are letters and digits,
-// so the colon keeps the two from ever colliding.
+// IDS. A row's id is "manual-txn:" and a random UUID, minted by the form when
+// it opens, so an add that is sent again (its answer lost on a phone's
+// connection) finds its row already there and changes nothing: one row, and a
+// balance moved once. It is the row's transaction_id on the Activity tab, and
+// the key of anything said about it (lib/txn-annotations.ts). Plaid's
+// transaction ids are letters and digits, so the colon keeps the two from
+// ever colliding.
 //
 // BALANCES STAY TYPED. A manual account's balance is what the person typed or
 // a script pushed; it feeds net worth and the real history layer
 // (lib/history.ts), and nothing here moves it. The quick-add form offers to
-// update it as well, which the route records as the same balance update the
-// account's Update form makes. The estimated history (lib/backfill.ts) keeps
+// update it as well: the route moves it from the figure the form showed to
+// the one it said, as one compare-and-set (lib/manual.ts moveManualBalance),
+// and notes the move on the row (balance_update), so the same add sent again
+// moves it once. The estimated history (lib/backfill.ts) keeps
 // holding manual accounts flat: rows typed beside a typed balance need not add
 // up to it, so walking the balance back through them would be invention.
 
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { getManualAccounts, toInstitutions, type ManualAccount } from './manual';
-import { isCalendarDay, isCurrencyCode, type TxnFields } from './manual-txn-input';
+import { amountUnitsError, isCalendarDay, isCurrencyCode, MANUAL_TXN_PREFIX, newManualTxnId, type TxnFields } from './manual-txn-input';
 import type { Txn } from './transactions';
 
-/** The start of every manual row's id. Not a Plaid id: Plaid's have no colon. */
-export const MANUAL_TXN_PREFIX = 'manual-txn:';
+export { MANUAL_TXN_PREFIX, newManualTxnId };
 
 /** One transaction on a manual account. Amounts use Plaid's sign: positive is
  *  money out. */
@@ -61,16 +68,19 @@ export type ManualTxn = TxnFields & {
   /** The source's own id for the row, for matching a re-import; null for one
    *  entered by hand. */
   source_id: string | null;
+  /** The import it came in with (#43), so that import can be taken out whole;
+   *  absent or null for one entered by hand. */
+  import_id?: string | null;
+  /** The balance update its add made, once made ("Also update the balance"):
+   *  from the figure the form showed to the one it said. Absent when it made
+   *  none. Kept so the same add sent again never moves the balance twice. */
+  balance_update?: { from: number; to: number } | null;
   created_at: string;
   updated_at: string;
 };
 
 /** One account's rows, in the order they were added. */
 export type ManualTxnBook = { version: 1; rows: ManualTxn[] };
-
-export function newManualTxnId(): string {
-  return `${MANUAL_TXN_PREFIX}${crypto.randomUUID()}`;
-}
 
 /** A manual row's id: the prefix, then characters the seam takes in a field
  *  name (an annotation is kept under it), 200 in all at most. */
@@ -82,6 +92,8 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const isInstant = (v: unknown) => typeof v === 'string' && !Number.isNaN(Date.parse(v));
 const isText = (v: unknown) => typeof v === 'string';
 const isTextOrNull = (v: unknown) => v === null || typeof v === 'string';
+const isAmount = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+const isBalanceUpdate = (v: unknown) => v === undefined || v === null || (isRecord(v) && isAmount(v.from) && isAmount(v.to));
 /** A source: lower-case words joined by ":", like "import:csv". */
 const isSource = (v: unknown) => typeof v === 'string' && v.length <= 40 && /^[a-z][a-z0-9]*(?::[a-z0-9]+)*$/.test(v);
 
@@ -106,6 +118,8 @@ export function isManualTxn(v: unknown): v is ManualTxn {
     isTextOrNull(v.note) &&
     isSource(v.source) &&
     isTextOrNull(v.source_id) &&
+    (v.import_id === undefined || isTextOrNull(v.import_id)) &&
+    isBalanceUpdate(v.balance_update) &&
     isInstant(v.created_at) &&
     isInstant(v.updated_at)
   );
@@ -132,28 +146,65 @@ export const manualTxnStore = defineMapStore<ManualTxnBook>('manual-transactions
   compress: true, // a book can hold years of rows
 });
 
-/** A row entered in the app, stamped now. */
-export function newManualTxn(account_id: string, fields: TxnFields, now: Date = new Date()): ManualTxn {
+/** A row entered in the app, stamped now, under the id its form made. */
+export function newManualTxn(account_id: string, fields: TxnFields, now: Date = new Date(), id: string = newManualTxnId()): ManualTxn {
   const at = now.toISOString();
-  return { id: newManualTxnId(), account_id, ...fields, source: 'manual', source_id: null, created_at: at, updated_at: at };
+  return { id, account_id, ...fields, source: 'manual', source_id: null, created_at: at, updated_at: at };
 }
 
-/** Adds a row to its account's book (a row already there under its id is
- *  replaced, so a retried add is still one row). */
-export async function addManualTxn(ctx: Ctx, row: ManualTxn): Promise<void> {
-  await manualTxnStore.update(ctx, row.account_id, (book) => ({
-    version: 1,
-    rows: [...(book?.rows ?? []).filter((r) => r.id !== row.id), row],
-  }));
+/** A change a stored row can't take (an amount more precise than its
+ *  currency): refused before anything is written. */
+export class InvalidTxnError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidTxnError';
+  }
 }
 
 /**
- * Where a row is kept, read strictly: its account and the row, or null when no
- * book has it. When it isn't in any book that could be read and some could
- * not, this cannot say it is gone, and throws UnreadableEntriesError naming
- * those books.
+ * Adds a row to its account's book, once: if a row is already there under its
+ * id (the same add sent again, its first answer lost), nothing is written, and
+ * the answer says so (`added` false) with the row as stored.
  */
-export async function findManualTxn(ctx: Ctx, id: string): Promise<{ account_id: string; row: ManualTxn } | null> {
+export async function addManualTxn(ctx: Ctx, row: ManualTxn): Promise<{ row: ManualTxn; added: boolean }> {
+  let result = { row, added: true };
+  await manualTxnStore.updateMany(ctx, [row.account_id], (books) => {
+    const book = books.get(row.account_id) ?? null;
+    const there = book?.rows.find((r) => r.id === row.id);
+    result = there ? { row: there, added: false } : { row, added: true };
+    return there ? new Map() : new Map([[row.account_id, { version: 1 as const, rows: [...(book?.rows ?? []), row] }]]);
+  });
+  return result;
+}
+
+/**
+ * Where a row with this id is kept among the books that can be read, or null:
+ * for an add, to tell the same add sent again (the id is on that account
+ * already) from an id that is on another account. A book that can't be read
+ * is passed over: it can't hold an id a form has only just made.
+ */
+export async function locateManualTxn(ctx: Ctx, id: string): Promise<{ account_id: string; row: ManualTxn } | null> {
+  const { entries } = await manualTxnStore.getAllReport(ctx);
+  for (const [account_id, book] of entries) {
+    const row = book.rows.find((r) => r.id === id);
+    if (row) return { account_id, row };
+  }
+  return null;
+}
+
+/**
+ * Where a row is kept, read strictly: its account and the row, or null. With
+ * `account_id` (the account the client shows it on) only that book is read,
+ * and a row not in it is gone from there (deleted or moved meanwhile).
+ * Without it every book is read, and when the row isn't in any that could be
+ * read and some could not, this can't say it is gone: it throws
+ * UnreadableEntriesError naming those books.
+ */
+export async function findManualTxn(ctx: Ctx, id: string, account_id?: string): Promise<{ account_id: string; row: ManualTxn } | null> {
+  if (account_id !== undefined) {
+    const row = (await manualTxnStore.get(ctx, account_id))?.rows.find((r) => r.id === id);
+    return row ? { account_id, row } : null;
+  }
   const { entries, unreadable, unrecognised } = await manualTxnStore.getAllReport(ctx);
   for (const [account_id, book] of entries) {
     const row = book.rows.find((r) => r.id === id);
@@ -169,40 +220,60 @@ export async function findManualTxn(ctx: Ctx, id: string): Promise<{ account_id:
 export type ManualTxnChanges = Partial<TxnFields> & { account_id?: string };
 
 /**
- * Changes a row, wherever it is kept, and returns it as saved, or null when it
- * no longer exists. A new account_id moves it: it is copied into that
- * account's book first and only then taken out of the old one, so a failure in
- * between leaves it in both (shown once, the moved copy, by
- * manualRowsForDisplay) rather than in neither, and repeating the edit
- * finishes the move. The target account must exist (the route checks).
+ * Changes a row and returns it as saved, or null when it no longer exists
+ * where it was looked for. `from` is the account the client shows it on (only
+ * that book is read); without it every book is. A new account_id moves it:
+ * out of one book and into the other in one step (MapStore.updateMany), from
+ * the row as it is at that moment, so a delete or an edit landing meanwhile
+ * is neither undone nor lost. The target account must exist (the route
+ * checks). An amount no longer whole in the row's currency (a currency
+ * changed alone, say) throws InvalidTxnError, and nothing is written.
  */
-export async function editManualTxn(ctx: Ctx, id: string, changes: ManualTxnChanges, now: Date = new Date()): Promise<ManualTxn | null> {
-  const found = await findManualTxn(ctx, id);
+export async function editManualTxn(
+  ctx: Ctx,
+  id: string,
+  changes: ManualTxnChanges,
+  opts: { from?: string; now?: Date } = {}
+): Promise<ManualTxn | null> {
+  const found = await findManualTxn(ctx, id, opts.from);
   if (!found) return null;
-  const target = changes.account_id ?? found.account_id;
-  const at = now.toISOString();
+  const source = found.account_id;
+  const target = changes.account_id ?? source;
+  const at = (opts.now ?? new Date()).toISOString();
+  let saved: ManualTxn | null = null;
+  await manualTxnStore.updateMany(ctx, [source, target], (books) => {
+    saved = null; // this may run more than once
+    const book = books.get(source) ?? null;
+    const row = book?.rows.find((r) => r.id === id);
+    // Deleted or moved by another device since it was found: nothing to change.
+    if (!book || !row) return new Map();
+    const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
+    const units = amountUnitsError(next.amount, next.currency);
+    if (units) throw new InvalidTxnError(units);
+    saved = next;
+    if (target === source) return new Map([[source, { ...book, rows: book.rows.map((r) => (r.id === id ? next : r)) }]]);
+    const into = books.get(target) ?? null;
+    return new Map([
+      [source, withoutRow(book, id)],
+      [target, { version: 1 as const, rows: [...(into?.rows ?? []), next] }],
+    ]);
+  });
+  return saved;
+}
 
-  if (target === found.account_id) {
-    let saved: ManualTxn | null = null;
-    await manualTxnStore.update(ctx, target, (book) => {
-      saved = null; // update may run this more than once
-      const row = book?.rows.find((r) => r.id === id);
-      // Deleted or moved by another device since it was found: nothing to change.
-      if (!book || !row) return book;
-      const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
-      saved = next;
-      return { ...book, rows: book.rows.map((r) => (r.id === id ? next : r)) };
-    });
-    return saved;
-  }
-
-  const moved: ManualTxn = { ...found.row, ...changes, id, account_id: target, updated_at: at };
-  await manualTxnStore.update(ctx, target, (book) => ({
-    version: 1,
-    rows: [...(book?.rows ?? []).filter((r) => r.id !== id), moved],
-  }));
-  await manualTxnStore.update(ctx, found.account_id, (book) => withoutRow(book, id));
-  return moved;
+/**
+ * Records on a row the balance update its add made (ManualTxn.balance_update),
+ * wherever the row is now; nothing when it is gone. `account_id` is where it
+ * was added, read first.
+ */
+export async function noteBalanceUpdate(ctx: Ctx, id: string, account_id: string, update: { from: number; to: number }): Promise<void> {
+  const found = (await findManualTxn(ctx, id, account_id)) ?? (await findManualTxn(ctx, id));
+  if (!found) return;
+  await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
+    const book = books.get(found.account_id) ?? null;
+    if (!book?.rows.some((r) => r.id === id)) return new Map();
+    return new Map([[found.account_id, { ...book, rows: book.rows.map((r) => (r.id === id ? { ...r, balance_update: update } : r)) }]]);
+  });
 }
 
 /** A book with one row taken out: null (no book at all) when none is left. */
@@ -213,12 +284,18 @@ function withoutRow(book: ManualTxnBook | null, id: string): ManualTxnBook | nul
   return rows.length > 0 ? { ...book, rows } : null;
 }
 
-/** Deletes a row wherever it is kept. False when it no longer exists. */
-export async function deleteManualTxn(ctx: Ctx, id: string): Promise<boolean> {
-  const found = await findManualTxn(ctx, id);
+/** Deletes a row: from the book of `from` (the account the client shows it
+ *  on), or wherever it is kept. False when it isn't there. */
+export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Promise<boolean> {
+  const found = await findManualTxn(ctx, id, from);
   if (!found) return false;
-  await manualTxnStore.update(ctx, found.account_id, (book) => withoutRow(book, id));
-  return true;
+  let removed = false;
+  await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
+    const book = books.get(found.account_id) ?? null;
+    removed = !!book?.rows.some((r) => r.id === id);
+    return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
+  });
+  return removed;
 }
 
 /**
@@ -259,13 +336,48 @@ const NO_PLAID_DETAIL = {
   payment_reference: null,
 } as const;
 
+/** The institution each account is shown under, as the Accounts tab groups
+ *  them (lib/manual.ts toInstitutions). */
+function institutionsOf(accounts: ManualAccount[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const inst of toInstitutions(accounts)) for (const a of inst.accounts) out.set(a.account_id, inst.institution_name);
+  return out;
+}
+
+/** One manual row as the Activity tab shows a transaction. */
+function toDisplay(row: ManualTxn, account: ManualAccount, institution: string): Txn {
+  return {
+    transaction_id: row.id,
+    date: row.date,
+    name: row.name,
+    amount: row.amount,
+    pending: false,
+    account_name: account.name,
+    institution_name: institution,
+    category: row.category,
+    iso_currency_code: row.currency,
+    vendor_key: '',
+    ...NO_PLAID_DETAIL,
+    source: row.source,
+    account_id: row.account_id,
+    note: row.note,
+  };
+}
+
+/** One row as the Activity tab shows it, on its account, for a route's answer
+ *  (the next load groups the institution with the rest). */
+export function manualRowForDisplay(account: ManualAccount, row: ManualTxn): Txn {
+  return toDisplay(row, account, institutionsOf([account]).get(account.account_id) ?? 'Manual');
+}
+
 /**
  * Every manual row the Activity tab shows, as it shows a transaction: rows of
  * accounts that exist and aren't hidden, dated on or after `cutoff` (the same
  * window as Plaid's rows), labelled with the account's name and institution as
  * the Accounts tab groups them, newest first (by date, then the most recently
- * entered). A row found in two books (a move interrupted) is shown once, the
- * copy saved last. The category and payee are the row's own: an edit changes
+ * entered). A row repeated across books (only a restored or hand-written book
+ * could hold one) is shown once, the copy saved last. The category and payee
+ * are the row's own: an edit changes
  * the row, so no category override or vendor rename applies (vendor_key is
  * empty, which hides the rename field).
  */
@@ -274,8 +386,9 @@ export function manualRowsForDisplay(
   books: Map<string, ManualTxnBook>,
   opts: { hidden: Set<string>; cutoff: string }
 ): Txn[] {
-  const institutionOf = new Map<string, string>();
-  for (const inst of toInstitutions(accounts)) for (const a of inst.accounts) institutionOf.set(a.account_id, inst.institution_name);
+  const institutionOf = institutionsOf(accounts);
+  // A row is in one book only (a move changes both in one step); a book
+  // restored from a backup could still repeat one, which shows once.
   const byId = new Map<string, { row: ManualTxn; account: ManualAccount }>();
   for (const account of accounts) {
     if (opts.hidden.has(account.account_id)) continue;
@@ -292,22 +405,7 @@ export function manualRowsForDisplay(
         (a.row.created_at < b.row.created_at ? 1 : a.row.created_at > b.row.created_at ? -1 : 0) ||
         (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0)
     )
-    .map(({ row, account }) => ({
-      transaction_id: row.id,
-      date: row.date,
-      name: row.name,
-      amount: row.amount,
-      pending: false,
-      account_name: account.name,
-      institution_name: institutionOf.get(account.account_id) ?? 'Manual',
-      category: row.category,
-      iso_currency_code: row.currency,
-      vendor_key: '',
-      ...NO_PLAID_DETAIL,
-      source: row.source,
-      account_id: row.account_id,
-      note: row.note,
-    }));
+    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual'));
 }
 
 /**
@@ -344,8 +442,7 @@ export async function readManualTxnsForDisplay(
   }
   const { entries, unreadable, unrecognised } = report.value;
   const flawed = new Set([...unreadable, ...unrecognised]);
-  const institutionOf = new Map<string, string>();
-  for (const inst of toInstitutions(accounts.value)) for (const a of inst.accounts) institutionOf.set(a.account_id, inst.institution_name);
+  const institutionOf = institutionsOf(accounts.value);
   const notes = accounts.value
     .filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id))
     .map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions entered for ${a.name} couldn't be read`);

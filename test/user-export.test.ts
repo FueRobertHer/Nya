@@ -619,6 +619,7 @@ describe('stores built on the storage seam', () => {
     const keys = Object.keys(doc);
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'carried-annotations',
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
