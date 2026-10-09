@@ -129,7 +129,7 @@ Plaid Link and Clerk load scripts, frames and connections that only a live sessi
 4. Go through every flow:
    - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows, and on Preview with a demo button too;
    - open the account menu, **Manage account**, each page of the account window (Data & privacy included), then sign out from it;
-   - **Connect an account** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank);
+   - **Connect a bank or card** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank), then **Connect a brokerage or retirement account** once too;
    - **Reconnect** and **Add or remove accounts** on a connected institution;
    - the Activity tab (merchant logos and category icons) and the Budgets tab;
    - the **Application** tab: the service worker is registered.

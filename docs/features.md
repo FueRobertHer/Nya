@@ -14,15 +14,22 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 
 ## Connecting accounts
 
-Log in, then click **Connect an Account**. Click it again for each additional institution. Each one is added to your dashboard with a running net worth total.
+Log in, then pick one of the two ways to connect, on the Accounts tab or on the empty state before anything is connected. Use it again for each additional institution. Each one is added to your dashboard with a running net worth total.
 
-Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside **Connect an account** and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
+- **Connect a bank or card**: checking, savings, credit cards and loans, with their transactions.
+- **Connect a brokerage or retirement account**: 401(k)s, IRAs and brokerage accounts, with their holdings and investment activity, including plans and brokerages the bank option can't find.
+
+There are two because one Plaid connection request can't cover both. Plaid's Link lets you pick only an institution that offers every product the request asks for, and a request must ask for at least one. The bank option asks for Transactions, so a 401(k) recordkeeper that offers Investments but not Transactions never appears in its list. The brokerage option asks for Investments instead, which plain banks don't offer, and asks for Transactions only where an account you share supports it.
+
+So a brokerage or retirement connection brings in no spending transactions unless you share a checking, savings or card account through it at an institution that offers them; then they come in as a bank's do. Otherwise there is simply nothing from it in Activity, Budgets or recurring bills, with no warning about it, and its balances, holdings, daily snapshot and estimated history work as for any other institution. [Keeping Plaid costs down](#keeping-plaid-costs-down) says why Nya then never asks Plaid for them.
+
+Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside the two ways to connect and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
 
 ### More accounts at an institution you already have
 
 To add (or remove) accounts at an institution that's already connected, tap **Manage** on the Accounts tab, then **Add or remove accounts** on its card. This opens Plaid's account picker on the connection you already have, so it stays one connection: no duplicate accounts, and no second connection for Plaid to bill.
 
-If you start **Connect an Account** and pick an institution you've already connected, Nya stops before you sign in and offers to add the accounts to the existing connection instead. Choose **It's a different login** for a genuinely separate login (a joint or business login, say); that one gets its own connection.
+If you start connecting and pick an institution you've already connected, either way and whichever way the existing connection was made, Nya stops before you sign in and offers to add the accounts to the existing connection instead. Choose **It's a different login** for a genuinely separate login (a joint or business login, say); that one gets its own connection, made the way you started. A checking or card account added to a brokerage or retirement connection brings its transactions with it, where the institution offers them.
 
 When Plaid notices new accounts at a connected institution (it needs webhooks, below), the card says so and offers **Review accounts**, which opens the same picker.
 
@@ -62,7 +69,7 @@ Disconnecting ends the connection at Plaid as well as in Nya, but it can't reach
 
 Credit cards and loans show what they actually cost: purchase APR, minimum payment, and next due date on the account row, with statement balance, last payment, accrued interest, escrow and payoff or maturity date when the row is expanded. A payment coming due within a week, or one already overdue, also surfaces as an alert on the Home tab.
 
-This comes from Plaid's Liabilities product, which has to be enabled on an institution before it will return anything. Newly connected institutions get it automatically. Institutions you linked before this existed don't, so they show an **Enable payment details** button on their card: tap it, log back in through Plaid, and the terms appear.
+This comes from Plaid's Liabilities product, which has to be enabled on an institution before it will return anything. Newly connected institutions get it automatically, through either way of connecting. Institutions you linked before this existed don't, so they show an **Enable payment details** button on their card: tap it, log back in through Plaid, and the terms appear.
 
 That button goes through Link's *update mode*, which re-authenticates the institution you already have rather than adding a second one: the item keeps its id, and its stored transaction history survives. Not every institution supports the product; where it isn't supported the button says so rather than failing silently, and where there's simply nothing to report (no cards or loans) no button appears at all.
 
@@ -128,7 +135,7 @@ A related case: an account that disappears from an otherwise successful fetch (a
 
 ## Manual accounts
 
-Plaid's coverage is wide but uneven: small credit unions, HSAs, 401k recordkeepers, foreign banks, and anything that isn't a financial institution at all (property, crypto held off-exchange) may simply not be linkable. Those get tracked by hand.
+Plaid's coverage is wide but uneven: small credit unions, HSAs, some 401k recordkeepers (try **Connect a brokerage or retirement account** first), foreign banks, and anything that isn't a financial institution at all (property, crypto held off-exchange) may simply not be linkable. Those get tracked by hand.
 
 Click **Add a manual account** (on the Accounts tab, or on the empty state before anything is connected), give it a name, an institution, a type, and a balance. Accounts sharing an institution name group into one card. From then on it behaves like a linked account: it counts toward net worth, appears in the Accounts tab, is selectable as a savings-goal source, and gets its own balance history chart.
 
@@ -156,11 +163,12 @@ This is the escape hatch for filling Plaid's gaps however you like. Some options
 Plaid bills per linked institution (Item) per month for Transactions, Investments and Liabilities, and per request for its live-balance call. Nya is built to stay on the cheap side of that:
 
 - **One connection per login.** Adding accounts at an institution you already have goes through Plaid's account picker on that connection rather than creating a second one (see [More accounts at an institution you already have](#more-accounts-at-an-institution-you-already-have)).
-- **Balances come from `/accounts/get`**, the balances Plaid already holds, not the billed live-balance call. They are as fresh as the last transactions update, which is plenty for a daily net-worth snapshot. The cost is that the header's Refresh button re-reads from Plaid but cannot pull a truly live balance.
+- **Transactions only where it is used.** A brokerage or retirement connection asks Plaid for Transactions only "if supported", which Plaid's reference says it adds, and bills, only when you share an account type that supports it: checking, savings and cards, never a 401(k), IRA or brokerage account. Nya keeps to the same rule. A first call for an Item's transactions adds the product (and its monthly fee) to an Item that lacks it, so Nya makes that call only for a connection that holds a checking, savings or card account, and never for one that holds only investment accounts. It learns whether Plaid already bills Transactions on a connection when you link it (from Plaid's own record of the connection); connections linked before this was recorded all came from the bank option, which always included it.
+- **Balances come from `/accounts/get`**, the balances Plaid already holds, not the billed live-balance call. They are as fresh as Plaid's last update of the connection, about daily for a healthy one whether it carries Transactions or only Investments, which is plenty for a daily net-worth snapshot. The cost is that the header's Refresh button re-reads from Plaid but cannot pull a truly live balance.
 - **Webhooks** (optional). Set `PLAID_WEBHOOK_URL` to the public URL of `/api/plaid/webhook` on your deployment and Plaid tells Nya when new data is ready. Nya then serves dashboard loads from its own stored data for up to six hours instead of fifteen minutes, and drops that stored copy the moment Plaid says something changed. Refresh still goes to Plaid. Webhooks are verified against Plaid's signature; an unsigned request does nothing. Items linked before you set it are registered by the daily check below, or by reconnecting them.
 - **Unused connections (admin only).** A daily check (`/api/plaid/check-items`) flags a connection, in any account, once Plaid has been unable to read it for 60 days (login expired, consent withdrawn) or every account on it has been hidden for 60 days. **It never removes anything.** The admin, meaning whoever owns the deployment's own account (normally the first to sign in with Clerk, or the password holder), sees the flagged ones under Manage on the Accounts tab, labelled by owner. Other accounts see nothing and the route answers them with a 404. Review and disconnect asks for the institution's name, and the server checks the connection again first: if its owner has reconnected it or unhidden an account, or Plaid does not answer, nothing is removed. Any success starts the count again; an outage or timeout counts for nothing. Change the period with `PLAID_UNUSED_DAYS` (minimum 14).
 
-Liabilities and Investments are paid Plaid products: free in `sandbox`, but billed per Item per month in `production`, so enabling payment details or linking brokerages on many institutions has a running cost.
+Liabilities and Investments are paid Plaid products: free in `sandbox`, but billed per Item per month in `production`, so enabling payment details or linking brokerages on many institutions has a running cost. A brokerage or retirement connection is billed for Investments from the day it is linked, since that is the product it asks for, as a bank connection is for Transactions.
 
 ## Planning
 
