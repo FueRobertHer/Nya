@@ -125,6 +125,17 @@ describe('the allocation by tax bucket', () => {
     expect(t).toContain("Old pension · Manual accounts Unclassified $10,000, unclassified: its institution didn't say what kind of account it is.");
     expect(t).toContain('A 401(k) can hold Roth money');
   });
+
+  test('an account counted at a recovered balance says from when', () => {
+    const a = allocate({
+      institutions: [inst('Fidelity', [acct('f', { name: '401(k)', subtype: '401k', balance: 70_000 })], { error: true, staleAsOf: '2026-10-01' })],
+      holdings: [],
+      settings: null,
+      currency: 'USD',
+    });
+    const t = text(renderToStaticMarkup(<BucketView alloc={a} money={money} editable open={noop} />));
+    expect(t).toContain("401(k) · Fidelity Tax-deferred $70,000, its balance on Oct 1, 2026 (Fidelity couldn't be reached since), from its type (401k).");
+  });
 });
 
 describe('drift', () => {
@@ -282,7 +293,13 @@ describe('the mix over time', () => {
 
   test('nothing recorded, unreadable, or not loaded: each says so, never an empty chart', () => {
     expect(text(renderToStaticMarkup(<HistoryBody state={ready([])} accountNames={names} onRetry={noop} />))).toContain('Nothing recorded yet. Plaid keeps no past holdings');
-    expect(text(renderToStaticMarkup(<HistoryBody state={{ kind: 'unreadable' }} accountNames={names} onRetry={noop} />))).toContain("couldn't be read");
+    const unreadable = text(
+      renderToStaticMarkup(
+        <HistoryBody state={{ kind: 'unreadable', message: 'Your saved allocation settings could not be read, so they were left untouched.' }} accountNames={names} onRetry={noop} />
+      )
+    );
+    expect(unreadable).toContain("Your saved allocation settings could not be read, so they were left untouched. The mix over time can't be shown until it can be read.");
+    expect(renderToStaticMarkup(<AllocationHistoryChart days={[]} currency="USD" accountNames={names} />)).toBe('');
     const failed = text(renderToStaticMarkup(<HistoryBody state={{ kind: 'failed' }} accountNames={names} onRetry={noop} />));
     expect(failed).toContain("couldn't be loaded");
     expect(failed).toContain('Try again');

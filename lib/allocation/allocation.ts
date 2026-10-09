@@ -96,10 +96,11 @@ export type AllocHolding = {
  *  balance and its positions is rounding, not money. */
 export const ROUNDING = 1;
 
-/** One security across the accounts that hold it. */
+/** One security across the accounts that hold it, as one classification. */
 export type SecurityRow = {
-  /** "ticker:VTI", "name:<name>", or a key of its own for a holding with
-   *  neither, which can't be classified by hand. */
+  /** "ticker:VTI|...", "name:<name>|...", by how it was classified, or a key
+   *  of its own for a holding with neither, which can't be classified by
+   *  hand. */
   key: string;
   ticker: string | null;
   name: string | null;
@@ -139,6 +140,10 @@ export type AccountRow = {
   amount: number | null;
   /** Its currency, when it is left out for being in another. */
   otherCurrency: string | null;
+  /** When its institution couldn't be reached and its balance was recovered:
+   *  the day it is from, and the moment, when known. */
+  staleAsOf: string | null;
+  staleAsOfAt: string | null;
 };
 
 /** Why the allocation may be short. */
@@ -221,7 +226,17 @@ export function allocate(input: {
 
     for (const a of shown) {
       const bucket = accountBucket(a.subtype, chosen.get(a.account_id));
-      const row: AccountRow = { account_id: a.account_id, name: a.name, institution: inst.name, subtype: a.subtype ?? null, bucket, amount: null, otherCurrency: null };
+      const row: AccountRow = {
+        account_id: a.account_id,
+        name: a.name,
+        institution: inst.name,
+        subtype: a.subtype ?? null,
+        bucket,
+        amount: null,
+        otherCurrency: null,
+        staleAsOf: inst.error ? inst.staleAsOf : null,
+        staleAsOfAt: inst.error ? (inst.staleAsOfAt ?? null) : null,
+      };
       accounts.push(row);
       const positions = held.get(a.account_id) ?? [];
       if (!inCurrency(a.currency)) {
@@ -282,7 +297,11 @@ export function allocate(input: {
         if (k.split) for (const [c, part] of spread(h.value, k.split)) classes[c] += part;
         else classes.unclassified += h.value;
         const id = securityKey(h);
-        const key = id === null ? `none:${anonymous++}` : 'ticker' in id ? `ticker:${id.ticker}` : `name:${nameKey(id.name)}`;
+        // By security and by how it was classified: the same ticker can be
+        // flagged as cash at one institution and not at another, and each
+        // row must say what its money is.
+        const how = k.split ? `${k.by}:${JSON.stringify(k.split)}` : `none:${k.why}`;
+        const key = id === null ? `none:${anonymous++}` : `${'ticker' in id ? `ticker:${id.ticker}` : `name:${nameKey(id.name)}`}|${how}`;
         const r = rows.get(key);
         if (r) {
           r.amount += h.value;

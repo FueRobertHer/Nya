@@ -84,6 +84,20 @@ describe('the allocation', () => {
     expect(a.accounts.find((r) => r.account_id === 'brk')!.bucket).toMatchObject({ bucket: 'tax-deferred', from: 'you', subtype: 'taxable' });
   });
 
+  test('the same ticker classified two ways is two rows, each saying what its money is', () => {
+    const a = allocate({
+      institutions: [inst('A', [acct('a', { balance: 10 })]), inst('B', [acct('b', { balance: 5 })])],
+      holdings: [hold('a', 'XYZ', 10, { security_type: 'mutual fund', is_cash_equivalent: true }), hold('b', 'XYZ', 5, { security_type: 'mutual fund' })],
+      settings: null,
+      currency: 'USD',
+    });
+    expect(a.securities.map((s) => [s.ticker, s.amount, s.classified])).toEqual([
+      ['XYZ', 10, { split: { cash: 100 }, by: 'cash' }],
+      ['XYZ', 5, { split: null, why: 'fund' }],
+    ]);
+    expect(a.classes).toMatchObject({ cash: 10, unclassified: 5 });
+  });
+
   test('a balance more than its positions: the difference is unclassified, never assumed cash', () => {
     const a = allocate({ institutions: [inst('Schwab', [acct('s', { name: 'Schwab', balance: 10_500 })])], holdings: [hold('s', 'VTI', 10_000)], settings: null, currency: 'USD' });
     expect(a.classes.cash).toBe(0);

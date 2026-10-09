@@ -539,7 +539,7 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
               key={a.account_id}
               label={`${a.name} · ${a.institution}`}
               value={BUCKET_NAMES[b.bucket]}
-              note={`${a.amount !== null ? `${money(a.amount)}, ` : a.otherCurrency ? `in ${a.otherCurrency}, left out, ` : ''}${note}.`}
+              note={`${a.amount !== null ? `${money(a.amount)}${a.staleAsOf ? `, its balance on ${fmtDay(a.staleAsOf, a.staleAsOfAt)} (${a.institution} couldn't be reached since)` : ''}, ` : a.otherCurrency ? `in ${a.otherCurrency}, left out, ` : ''}${note}.`}
               action={
                 <ActionButton onClick={() => open({ kind: 'bucket', account_id: a.account_id, label: a.name, bucket: b })} disabled={!editable} label={`Change the bucket of ${a.name}`}>
                   Change
@@ -946,7 +946,13 @@ export type HistoryAnswer = {
   days: SeriesDay[];
 };
 
-export type HistoryState = { kind: 'loading' } | { kind: 'ready'; answer: HistoryAnswer } | { kind: 'unreadable' } | { kind: 'failed' };
+export type HistoryState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; answer: HistoryAnswer }
+  /** What is stored can't be read: the server's words, which name it (the
+   *  holdings records, or the settings that classify them). */
+  | { kind: 'unreadable'; message: string | null }
+  | { kind: 'failed' };
 
 /** A recorded day as the viewer has it: its UTC date said as a date. */
 const recordedName = (day: string, at: string | null) => fmtDay(day, at);
@@ -965,7 +971,7 @@ export function AllocationHistory({ currency, version, accountNames }: { currenc
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!live) return;
-        if (res.status === 409) setState({ kind: 'unreadable' });
+        if (res.status === 409) setState({ kind: 'unreadable', message: typeof body?.error === 'string' ? body.error : null });
         else if (!res.ok || !body || !Array.isArray(body.days)) setState({ kind: 'failed' });
         else setState({ kind: 'ready', answer: body as HistoryAnswer });
       })
@@ -987,7 +993,12 @@ export function AllocationHistory({ currency, version, accountNames }: { currenc
 export function HistoryBody({ state, accountNames, onRetry }: { state: HistoryState; accountNames: Map<string, string>; onRetry: () => void }) {
   if (state.kind === 'loading') return <p className="empty-note">Loading what has been recorded…</p>;
   if (state.kind === 'unreadable') {
-    return <p className="empty-note">Your holdings records couldn&apos;t be read, so the mix over time can&apos;t be shown. An investment account&apos;s own line on the Accounts tab says more.</p>;
+    return (
+      <p className="empty-note">
+        {state.message ?? 'What Nya has stored for it could not be read, so they were left untouched.'} The mix over time can&apos;t be shown until it can be
+        read.
+      </p>
+    );
   }
   if (state.kind === 'failed') {
     return (
@@ -1067,6 +1078,7 @@ export function dayMixText(day: SeriesDay): string {
 export function AllocationHistoryChart({ days, currency, accountNames }: { days: SeriesDay[]; currency: string | null; accountNames: Map<string, string> }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
+  if (days.length === 0) return null;
   const first = dayNum(days[0].date);
   const span = dayNum(days[days.length - 1].date) - first + 1;
   const plotW = W - PAD_LEFT - PAD_RIGHT;
