@@ -77,16 +77,27 @@ export function forgetEmails(): void {
 }
 
 export async function clerkUserAllowed(userId: string, now: number = Date.now()): Promise<boolean> {
-  if (!userId) return false;
+  return (await clerkUserAccess(userId, now)) === 'allowed';
+}
+
+/**
+ * Whether an account may sign in, as clerkUserAllowed decides it, but saying
+ * when it couldn't be told: 'unknown' when only its emails could let it in
+ * and Clerk couldn't give them (with no answer recent enough to use). For a
+ * caller that must not take an outage for a refusal: an API token
+ * (lib/api-tokens.ts) is answered "try again later" then, not "revoked".
+ */
+export async function clerkUserAccess(userId: string, now: number = Date.now()): Promise<'allowed' | 'denied' | 'unknown'> {
+  if (!userId) return 'denied';
   const { ids, emails } = allowlist();
-  if (ids.has(userId)) return true;
+  if (ids.has(userId)) return 'allowed';
   // Preview's demo accounts (lib/demo.ts), wherever demos are on.
-  if (isDemoUser(userId)) return true;
-  if (emails.size === 0) return false;
+  if (isDemoUser(userId)) return 'allowed';
+  if (emails.size === 0) return 'denied';
   try {
-    return (await emailsOf(userId, now)).some((e) => emails.has(e));
+    return (await emailsOf(userId, now)).some((e) => emails.has(e)) ? 'allowed' : 'denied';
   } catch (err) {
     console.error('Allowlist: the account’s emails could not be read from Clerk', err instanceof Error ? err.name : err);
-    return false;
+    return 'unknown';
   }
 }

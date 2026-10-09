@@ -74,6 +74,7 @@ import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
+import { apiTokenStore } from './api-token-store';
 import { declaredStores } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
@@ -221,6 +222,18 @@ export const SECTIONS: readonly ExportSection[] = [
     mentions: (goals) => goals.map((g) => g.account_id),
   }),
   section({
+    key: 'api_tokens',
+    what: 'API tokens',
+    // Each token's name and dates: what the person called it, and when it was
+    // made and last read their data. Never its secret, which Nya doesn't keep,
+    // nor the hash it keeps of it (a credential, so the store itself is not
+    // exportable), nor its id, which is part of the token.
+    read: async ({ ctx }) =>
+      [...(await apiTokenStore.getAll(ctx)).values()]
+        .map((t) => ({ label: t.label, created_at: t.created_at, last_used_at: t.last_used_at }))
+        .sort((a, b) => byCodePoint(a.created_at, b.created_at) || byCodePoint(a.label, b.label)),
+  }),
+  section({
     key: 'sharing',
     what: 'sharing settings',
     // With the shared password there is nobody to share with: null, unless
@@ -252,7 +265,7 @@ const readIds = (shown: Showing[] | null) => (shown ?? []).flatMap((s) => Object
 export function declaredSections(): ExportSection[] {
   const covered = new Set(SECTIONS.flatMap((s) => s.covers ?? []));
   return declaredStores().flatMap((store): ExportSection[] =>
-    store.exportable && store.kind !== 'counter' && !covered.has(store.name)
+    store.exportable && store.kind !== 'counter' && store.kind !== 'counter-map' && !covered.has(store.name)
       ? [{ key: store.name, what: store.what, read: ({ ctx }) => readDeclared(store, ctx) }]
       : []
   );
@@ -482,6 +495,7 @@ export type UserExport = {
 export function notIncluded(people: boolean): string[] {
   return [
     'Bank access tokens: the credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya, so they are left out.',
+    'Your API tokens themselves, and the hashes Nya keeps to check them: credentials, not your data. Each token’s name and when it was made and last used are in, under api_tokens.',
     people
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
       : 'The app password: a credential, not your data.',

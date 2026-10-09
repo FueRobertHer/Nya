@@ -1,8 +1,8 @@
 // lib/rate-limit.ts
 //
 // Counters that turn a request away once it has been made too often. Each is
-// a fixed window that starts with its first count and expires with it. Two of
-// them:
+// a fixed window that starts with its first count and expires with it. Three
+// of them:
 //
 //   - WRONG PASSWORDS, per IP, environment-wide: the login (app/api/login) and
 //     the password asked for again before a download of my data
@@ -14,6 +14,28 @@
 //     share it, and counted with its expiry in one step (COUNT_IN_WINDOW).
 //     Fails open if Redis is unreachable, as the login always has: being able
 //     to sign in beats a rate limit.
+//   - API TOKENS THAT DON'T WORK, per IP, environment-wide (lib/api-http.ts):
+//     a request to the read-only API or the MCP server whose token is in the
+//     right form but doesn't check out costs two reads, so an address that
+//     sends a flood of them (API_AUTH_MAX_FAILURES in lib/api-limits.ts, set
+//     well above anything a misconfigured client or a shared address sends)
+//     is turned away for the rest of the window at the cost of one read each,
+//     the count's. Every request with a token in the right form, good ones
+//     too, reads the count first: one read more. Like the wrong passwords, it
+//     runs before any container is known, so it is the same kind of
+//     environment-wide counter (ratelimit:api:<ip>), counted and read with
+//     its expiry in one step as the wrong passwords are (COUNT_IN_WINDOW,
+//     READ_IN_WINDOW), and never backed up. A token
+//     not even in the right form costs nothing and isn't counted. Fails open,
+//     as the login's does: a limit that can't be read is no reason to refuse
+//     a good token.
+//
+// BY ADDRESS, from X-Forwarded-For's first entry. On Vercel the platform sets
+// that header, so the first entry is the client's address. Anywhere else, run
+// Nya only behind a proxy that sets the header itself, overwriting what the
+// client sent: one that appends to it lets a client choose its address, to
+// slip a limit or aim it at someone else's, and with no header at all every
+// client shares one count ("unknown").
 //   - DOWNLOADS OF MY DATA, per container (app/api/my-data), a counter store on
 //     the storage seam (downloadCount). Each download decrypts everything the
 //     person has, so a script holding a fresh sign-in can't pull it in a
@@ -24,6 +46,7 @@ import { redis, kEnv } from './storage';
 import { defineCounterStore } from './repo';
 import type { Ctx } from './containers';
 import { DOWNLOADS_PER_WINDOW, DOWNLOAD_WINDOW_SECONDS } from './download-limit';
+import { API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS } from './api-limits';
 
 // ---- Counting by address ----
 
@@ -95,6 +118,39 @@ export async function clearWrongPasswords(req: Request): Promise<void> {
     await redis().del(loginKey(req));
   } catch {
     // Counter just expires on its own.
+  }
+}
+
+// ---- API tokens that don't work ----
+
+// The numbers live where the developer page can read them too (lib/api-limits.ts).
+export { API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS };
+
+function apiFailureKey(req: Request): string {
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  // Environment-wide: it runs before any container is known.
+  return kEnv(`ratelimit:api:${ip}`);
+}
+
+/** Whether this IP has sent too many tokens that don't work, for now, read
+ *  with its window's end (READ_IN_WINDOW: a count found without one is given
+ *  one). False when the counter can't be read (fails open, see the header). */
+export async function tokenFailuresExhausted(req: Request): Promise<boolean> {
+  try {
+    const failures = await redis().eval(READ_IN_WINDOW, [apiFailureKey(req)], [String(API_AUTH_WINDOW_SECONDS)]);
+    return Number(failures) >= API_AUTH_MAX_FAILURES;
+  } catch {
+    return false;
+  }
+}
+
+/** Counts one token that didn't work, with its window's end, in one step
+ *  (COUNT_IN_WINDOW): a count can never be left without one. Best effort. */
+export async function countTokenFailure(req: Request): Promise<void> {
+  try {
+    await redis().eval(COUNT_IN_WINDOW, [apiFailureKey(req)], [String(API_AUTH_WINDOW_SECONDS)]);
+  } catch {
+    // Best-effort counter.
   }
 }
 

@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt } from './crypto';
+import { encrypt, decrypt, MalformedCiphertextError, DecryptFailedError } from './crypto';
 import { READ_ENTRIES, UPDATE_ENTRY } from './repo';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
@@ -38,6 +38,9 @@ export type ManualType = (typeof MANUAL_TYPES)[number];
 /** Guards against a fat-fingered paste blowing up the chart scale. Shared by
  *  every write path so the UI, the PUT and the ingest route agree. */
 export const MAX_BALANCE = 1e12;
+
+/** The one currency manual balances are kept in, for now (toInstitutions). */
+export const MANUAL_CURRENCY = 'USD';
 
 export type ManualAccount = {
   account_id: string;
@@ -116,6 +119,44 @@ export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
     })
   );
   return accounts.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Every manual account that can be read, and the ids of those that can't: for
+ * a display that names what it can't show (the read-only API's accounts and
+ * net worth, lib/api-read.ts), never for a figure that is recorded or written
+ * on, which must use getManualAccounts. An account is unreadable when its
+ * stored bytes are damaged for good (not ciphertext, ciphertext that fails to
+ * authenticate, or not an account's shape); a failure that may pass (Redis or
+ * the key store unreachable) still throws.
+ */
+export async function getManualAccountsReport(ctx: Ctx): Promise<{ accounts: ManualAccount[]; unreadable: string[] }> {
+  const map = await redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx));
+  const accounts: ManualAccount[] = [];
+  const unreadable: string[] = [];
+  await Promise.all(
+    Object.entries(map ?? {}).map(async ([id, blob]) => {
+      let plaintext: string;
+      try {
+        plaintext = await decrypt(blob);
+      } catch (err) {
+        if (!(err instanceof MalformedCiphertextError || err instanceof DecryptFailedError)) throw err;
+        unreadable.push(id);
+        return;
+      }
+      try {
+        accounts.push(parseStoredAccount(id, plaintext));
+      } catch {
+        unreadable.push(id); // not JSON, or not an account's shape
+      }
+    })
+  );
+  return { accounts: accounts.sort((a, b) => a.name.localeCompare(b.name)), unreadable: unreadable.sort() };
+}
+
+/** Whether a manual account by this id is stored, without reading it. */
+export async function manualAccountExists(ctx: Ctx, account_id: string): Promise<boolean> {
+  return Number(await redis().hexists(ACCOUNTS_HASH(ctx), account_id)) === 1;
 }
 
 /** One account by id, or null if it doesn't exist. Throws on read failure, same as above. */
@@ -277,7 +318,7 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       balance: a.balance,
       // Manual accounts are USD-only for now, matching the rest of the
       // account-level figures (net worth, balances, goals).
-      currency: 'USD',
+      currency: MANUAL_CURRENCY,
       updated_at: a.updated_at,
     });
   }

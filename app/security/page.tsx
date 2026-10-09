@@ -6,6 +6,7 @@ import { masterKeyConfigured } from '@/lib/crypto';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { sendsEmail } from '@/lib/notice-recipients';
+import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -58,6 +59,10 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
         ],
       ] as [string, string][])
     : []),
+  [
+    'Programs you give an API token to',
+    'What the read-only API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins, and they can never change anything. An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.',
+  ],
   [
     'People you share with',
     'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
@@ -131,9 +136,10 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
         newest {backups.min_kept} are always kept, so if backups ever stop, the last ones are not deleted.
       </p>
       <p>
-        A backup holds the same kinds of data as the database: the encrypted values and the plain text listed above
-        {envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read without the keys
-        kept in the server’s environment.
+        A backup holds the same kinds of data as the database, apart from API tokens: the encrypted values and the plain
+        text listed above{envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read
+        without the keys kept in the server’s environment. API tokens are never backed up, so restoring a backup ends every
+        token, and none revoked before it can work again.
       </p>
     </>
   );
@@ -192,8 +198,8 @@ export default function SecurityPage() {
         <ul>
           <li>dates and times: which days have a recorded balance, and when things were saved;</li>
           <li>
-            ids: of your accounts, transactions and bank connections (random strings from Plaid), and of your sign-in
-            account;
+            ids: of your accounts, transactions and bank connections (random strings from Plaid), of your sign-in
+            account, and of your API tokens (random, and not enough to use one);
           </li>
           <li>the names of the banks you linked, and whether Plaid included transactions when each connection was linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
@@ -205,8 +211,11 @@ export default function SecurityPage() {
           </li>
         </ul>
         <p>
-          The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes, and on
-          the demo, that of a device that used a demo account, for up to 10 minutes. These never go into backups.
+          The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes; of a
+          device that sent API tokens that didn’t work, for up to {API_AUTH_WINDOW_SECONDS / 60} minutes; and on the demo,
+          that of a device that used a demo account, for up to 10 minutes. These never go into backups. And for each API
+          token, how many requests it made in the current minute, deleted when the token is revoked, or{' '}
+          {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.
         </p>
         <p>Encrypting these as well is planned.</p>
       </InfoSection>
@@ -277,6 +286,27 @@ export default function SecurityPage() {
           included, within seconds; changing the password does too. Each IP address gets 10 wrong passwords per 15
           minutes, then has to wait. If the database cannot be reached, that limit is skipped rather than locking
           everyone out.
+        </p>
+      </InfoSection>
+
+      <InfoSection title="API tokens">
+        <p>
+          A token you make under API tokens lets a program read your data through Nya’s read-only API and its MCP server
+          (see the <a href="/developers">Developers page</a>). Nya shows it once and never stores it: it keeps a SHA-256
+          hash of the token’s secret, inside your own data and encrypted with it, and checks a token by comparing hashes
+          in constant time. A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong
+          secret, or another person’s data), and one whose secret doesn’t match costs the same work whoever’s data it
+          names, so a token can’t be used to find out whose data exists. Only a token whose secret checks out is told
+          more: that its data is being restored, say, and to try again later. Requests with
+          tokens that don’t work are counted by the address they come from, which is turned away for a while after too
+          many.
+        </p>
+        <p>
+          Making one needs a fresh sign-in, as downloading your data does. A token can read but never change anything,
+          and makes at most {REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out
+          everywhere or a change of the shared password; with sign-in accounts it stops when the account that made it is
+          taken off the list of people allowed in. Deleting your account deletes every token with the rest of your data,
+          and restoring a backup ends every token, since backups leave them out.
         </p>
       </InfoSection>
 

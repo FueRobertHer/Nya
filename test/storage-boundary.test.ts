@@ -143,7 +143,12 @@ const FROZEN_PREFIXES = [
  * the seam builds its key in lib/repo.ts from its declared name, so it never
  * adds one. Like LEGACY, this only shrinks. "ratelimit:login:x" moved with
  * the login's limiter from app/api/login/route.ts to lib/rate-limit.ts (see
- * LEGACY): a move, not a new name.
+ * LEGACY): a move, not a new name. The one name added since,
+ * "ratelimit:api:x", was approved with the API's review: a limit per address
+ * on tokens that don't work, counted before any container is known, which the
+ * seam (containers only) can't hold. It is the login's own pattern, beside it,
+ * under the family already listed, and test/rate-limit-keys.test.ts holds it
+ * to the environment's.
  */
 const FROZEN_KEY_NAMES = [
   'account-links in lib/link-core.ts',
@@ -191,6 +196,7 @@ const FROZEN_KEY_NAMES = [
   'owners in lib/owners.ts',
   'plaid:items in lib/storage.ts',
   'plaid:new-accounts in lib/new-accounts.ts',
+  'ratelimit:api:x in lib/rate-limit.ts',
   'ratelimit:demo:x in app/api/demo/sign-in/route.ts',
   'ratelimit:login:x in lib/rate-limit.ts',
   'sessions:epoch in lib/sessions.ts',

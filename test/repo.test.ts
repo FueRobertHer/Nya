@@ -35,6 +35,7 @@ const {
   defineValueStore,
   defineMapStore,
   defineCounterStore,
+  defineCounterMapStore,
   forgetDeclaredStore,
   StoredDataUnreadableError,
   UnreadableEntriesError,
@@ -96,8 +97,9 @@ const bigList = defineValueStore<Note[]>('seam-contract-big-list', { what: 'test
 const bigNotes = defineMapStore<Note>('seam-contract-big-notes', { what: 'test notes', isValid: isNote, exportable: true, compress: true });
 const WINDOW = 600;
 const counter = defineCounterStore('seam-contract-counter', { what: 'test counts', windowSeconds: WINDOW });
+const counters = defineCounterMapStore('seam-contract-counters', { what: 'test counts', windowSeconds: WINDOW });
 afterAll(() => {
-  for (const s of [list, notes, bigList, bigNotes, counter]) forgetDeclaredStore(s.name);
+  for (const s of [list, notes, bigList, bigNotes, counter, counters]) forgetDeclaredStore(s.name);
   client = recordedFake;
 });
 
@@ -106,6 +108,7 @@ const B = { container: '3f0b8c1e-6d2a-4b5c-9e7f-0a1b2c3d4e5f' } as typeof TEST_C
 const listKey = (ctx = A) => ctxKey('seam-contract-list', ctx);
 const notesKey = (ctx = A) => ctxKey('seam-contract-notes', ctx);
 const counterKey = (ctx = A) => ctxKey('seam-contract-counter', ctx);
+const countersKey = (ctx = A) => ctxKey('seam-contract-counters', ctx);
 const NOTE: Note = { text: 'groceries', amount: 82.13 };
 const RENT: Note = { text: 'rent', amount: 1200 };
 
@@ -1169,6 +1172,92 @@ function contract(b: Backend) {
     });
   });
 
+  describe('a counter map store', () => {
+    // Windows are measured by the caller's clock, so these pass their own.
+    const T0 = Date.parse('2026-10-09T12:00:00.000Z');
+    const at = (seconds: number) => T0 + seconds * 1000;
+    const endOf = (start: number) => T0 / 1000 + start + WINDOW;
+
+    test('the first count of an id starts its window; later ones count in it without moving its end', async () => {
+      expect(await counters.take(A, 't1', at(0))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await counters.take(A, 't1', at(100))).toEqual({ count: 2, secondsLeft: WINDOW - 100 });
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`2:${endOf(0)}`);
+      // The hash outlives every window in it, and goes on its own.
+      expect(await b.raw.ttl(countersKey())).toBe(2 * WINDOW);
+    });
+
+    test('each id counts on its own, in one hash for the container', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't1', at(1));
+      expect(await counters.take(A, 't2', at(2))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.hgetall(countersKey())).toEqual({ t1: `2:${endOf(0)}`, t2: `1:${endOf(2)}` });
+    });
+
+    test('a window that has ended starts again, from that count', async () => {
+      for (let i = 0; i < 3; i++) await counters.take(A, 't1', at(i));
+      expect(await counters.take(A, 't1', at(WINDOW))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`1:${endOf(WINDOW)}`);
+    });
+
+    test('a window ending further ahead than any could (a clock that moved back) starts again; one a little ahead is kept', async () => {
+      await b.raw.hset(countersKey(), 't1', `9:${endOf(0) + 5 * WINDOW}`);
+      expect(await counters.take(A, 't1', at(0))).toEqual({ count: 1, secondsLeft: WINDOW });
+      // Started by a clock 30 seconds ahead of this one: still that window,
+      // and never more than a window left.
+      await b.raw.hset(countersKey(), 't2', `4:${endOf(30)}`);
+      expect(await counters.take(A, 't2', at(0))).toEqual({ count: 5, secondsLeft: WINDOW });
+    });
+
+    test('counts racing each other are each counted once', async () => {
+      const counts = await Promise.all(Array.from({ length: 25 }, () => counters.take(A, 't1', at(0))));
+      expect(counts.map((c) => c.count).sort((x, y) => x - y)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`25:${endOf(0)}`);
+    });
+
+    test('each container counts on its own', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't1', at(0));
+      expect(await counters.take(B, 't1', at(0))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`2:${endOf(0)}`);
+    });
+
+    test('remove forgets those ids\' windows and no other', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't2', at(0));
+      await counters.remove(A, 't1', 'never-counted');
+      expect(await b.raw.hgetall(countersKey())).toEqual({ t2: `1:${endOf(0)}` });
+      expect(await counters.take(A, 't1', at(1))).toEqual({ count: 1, secondsLeft: WINDOW });
+      await counters.remove(A);
+      expect(Object.keys(await b.raw.hgetall(countersKey())).sort()).toEqual(['t1', 't2']);
+    });
+
+    test('a count that is not one is damaged: an error naming its id, never no count, and left as it is, with an end', async () => {
+      for (const damaged of ['abc', '3', '0:5', '3:', '-1:5', '1.5:7', '01:5', '']) {
+        await b.raw.hset(countersKey(), 't1', damaged);
+        const err = await counters.take(A, 't1', at(0)).catch((e) => e);
+        expect([damaged, err instanceof UnreadableEntriesError, err.unreadable, err.unrecognised]).toEqual([damaged, true, ['t1'], []]);
+        expect(await b.raw.hget(countersKey(), 't1')).toBe(damaged);
+        // Written by hand with no expiry, it gets one, so it can't stay for good.
+        expect(await b.raw.ttl(countersKey())).toBe(2 * WINDOW);
+      }
+    });
+
+    test('storage failing is an error, never no count', async () => {
+      await counters.take(A, 't1', at(0));
+      b.failNext('eval');
+      expect((await notBlamed(() => counters.take(A, 't1', at(1)))).message).toContain('armed failure');
+      expect(await counters.take(A, 't1', at(2))).toEqual({ count: 2, secondsLeft: WINDOW - 2 });
+    });
+
+    test('each count is one atomic step, and ids are opaque', async () => {
+      expect(await sentBy(() => counters.take(A, 't1', at(0)))).toEqual(['eval']);
+      for (const id of ['', 'has space', 'x'.repeat(201), '__proto__']) {
+        await expect(counters.take(A, id, at(0))).rejects.toThrow('Invalid id');
+        await expect(counters.remove(A, id)).rejects.toThrow('Invalid id');
+      }
+    });
+  });
+
   describe("evolving a store's shape", () => {
     type V1 = { name: string };
     type V2 = { name: string; color: string };
@@ -1526,14 +1615,20 @@ describe('the key inventory', () => {
     expect(classify(`${c}txns:item-1`)).toBe('string');
     expect(classify(`${c}plaid:items`)).toBe('items');
     expect(classify(`${c}snapshot:runs`)).toBe('plain');
-    const stored = { value: 'string', map: 'hash', counter: 'plain' } as const;
+    const stored = { value: 'string', map: 'hash', counter: 'plain', 'counter-map': 'plain' } as const;
     for (const store of declaredStores()) {
-      expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, false]);
+      // In backups unless declared out of them, which lib/export.ts agrees with.
+      expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, !store.backedUp]);
       expect(classify(`${c}${store.name}`)).toBe(stored[store.kind]);
     }
+    // Only the API's tokens and their counts are left out: a restore must never revive a revoked token.
+    expect(declaredStores().filter((s) => !s.backedUp).map((s) => s.name).sort()).toEqual(['api-requests', 'api-tokens']);
     // A counter is a plain integer, which the re-encryption pass leaves alone.
     expect(classify(`${c}seam-contract-counter`)).toBe('plain');
     expect(classify('seam-contract-counter')).toBeNull();
+    // A counter map is a hash of plain counts, which the pass leaves alone too.
+    expect(classify(`${c}seam-contract-counters`)).toBe('plain');
+    expect(classify('seam-contract-counters')).toBeNull();
   });
 
   test('a name that is not a plain key family, or that something else claims, is refused, and nothing is declared', () => {
@@ -1562,6 +1657,12 @@ describe('the key inventory', () => {
       expect(() => defineMapStore(name, { what: 'test notes', isValid: isNote, exportable: false })).toThrow(why);
       expect(declaredStore(name)).toBeNull();
     }
+    // Out of backups only where lib/export.ts leaves the key out too.
+    expect(() => defineMapStore('seam-contract-unbacked', { what: 'test notes', isValid: isNote, exportable: false, backup: false })).toThrow(
+      'declared out of backups, but lib/export.ts would back it up'
+    );
+    expect(() => defineCounterMapStore('seam-contract-unbacked', { what: 'test counts', windowSeconds: 60, backup: false })).toThrow('declared out of backups');
+    expect(declaredStore('seam-contract-unbacked')).toBeNull();
   });
 
   test('declaring a name again replaces the store, unless it is another kind', () => {
@@ -1586,6 +1687,7 @@ describe('the catalogue', () => {
       ['seam-contract-big-list', 'value', 'test notes', true],
       ['seam-contract-big-notes', 'map', 'test notes', true],
       ['seam-contract-counter', 'counter', 'test counts', false],
+      ['seam-contract-counters', 'counter-map', 'test counts', false],
       ['seam-contract-list', 'value', 'test notes', true],
       ['seam-contract-notes', 'map', 'test notes', false],
     ]);
@@ -1623,7 +1725,7 @@ describe('the catalogue', () => {
    *  string. Imports, types and other mentions are not calls. */
   function declarationsIn(src: string): (string | null)[] {
     const out: (string | null)[] = [];
-    for (const m of src.matchAll(/\bdefine(?:Value|Map|Counter)Store\b/g)) {
+    for (const m of src.matchAll(/\bdefine(?:Value|Map|CounterMap|Counter)Store\b/g)) {
       let i = m.index! + m[0].length;
       const skipSpace = () => {
         while (/\s/.test(src[i] ?? '')) i++;
@@ -1649,7 +1751,7 @@ describe('the catalogue', () => {
     return out;
   }
   /** Renaming defineMapStore on import would hide its declarations from the scan. */
-  const aliases = (src: string) => [...src.matchAll(/\bdefine(?:Value|Map|Counter)Store\s+as\b/g)].length;
+  const aliases = (src: string) => [...src.matchAll(/\bdefine(?:Value|Map|CounterMap|Counter)Store\s+as\b/g)].length;
 
   const sources = files.filter((f) => rel(f) !== 'lib/repo.ts').map((f) => ({ file: rel(f), src: code(f) }));
   const declarations = sources.flatMap(({ file, src }) => declarationsIn(src).map((name) => ({ file, name })));
@@ -1666,10 +1768,12 @@ describe('the catalogue', () => {
       const c = defineMapStore(name, opts);
       type T = ReturnType<typeof defineMapStore>;
       export const d = defineCounterStore('sends', { what: 'sends', windowSeconds: 60 });
+      export const e = defineCounterMapStore('calls', { what: 'calls', windowSeconds: 60 });
     `.replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
-    expect(declarationsIn(sample)).toEqual(['rules', 'settings', null, 'sends']);
+    expect(declarationsIn(sample)).toEqual(['rules', 'settings', null, 'sends', 'calls']);
     expect(aliases(`import { defineMapStore as declareMap } from './repo';`)).toBe(1);
     expect(aliases(`import { defineCounterStore as counter } from './repo';`)).toBe(1);
+    expect(aliases(`import { defineCounterMapStore as counters } from './repo';`)).toBe(1);
     expect(aliases(sample)).toBe(0);
     expect(files.some((f) => rel(f) === 'proxy.ts')).toBe(true); // the walk reaches the root
   });

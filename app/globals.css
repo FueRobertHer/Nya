@@ -2811,6 +2811,84 @@ button.plan-edit:disabled {
   margin-top: 8px;
 }
 
+/* --- API tokens (components/ApiTokens.tsx) --- */
+
+.api-token-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.api-token {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.api-token:first-child {
+  border-top: none;
+}
+
+.api-token-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.api-token-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.api-token > button {
+  width: auto;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.api-token-problem .link-btn {
+  margin-left: 4px;
+}
+
+.api-token-config {
+  width: 100%;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.api-token-made .button-pair,
+.api-token-new > button {
+  margin-top: 12px;
+}
+
+/* --- the developer page (app/developers) --- */
+
+.info-section pre {
+  max-width: 100%;
+  margin: 0 0 12px;
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.api-endpoint h2 code {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.api-endpoint h3 {
+  margin: 16px 0 8px;
+}
+
 /* --- allocation (components/AllocationCard.tsx), on the Plan tab, and the FI
    card on Home (components/FiProgressCard.tsx) --- */
 
