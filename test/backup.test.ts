@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
+import * as httpsModule from 'node:https';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 const fake = new FakeRedis();
@@ -58,23 +59,27 @@ mock.module('@vercel/blob', () => ({
   },
 }));
 
-// node's https client, serving the blobs kept above.
-mock.module('node:https', () => ({
-  get: (url: string, options: any, cb: (res: any) => void) => {
-    urlReads.push({ url, headers: options.headers });
-    const req = new EventEmitter();
-    if (hangReads) {
-      options.signal?.addEventListener('abort', () => req.emit('error', new Error('aborted')));
-      return req;
-    }
-    const b = blobs.get(decodeURIComponent(new URL(url).pathname.slice(1)));
-    const res: any = Readable.from(b ? [Buffer.from(corruptReads ? b.body.slice(0, -2) + '\n' : b.body)] : []);
-    res.statusCode = b ? 200 : 404;
-    res.headers = {};
-    queueMicrotask(() => cb(res));
+// node's https client, serving the blobs kept above. Only `get` is replaced:
+// mock.module registers process-wide, so every other export of the real module
+// stays (copied before the mock replaces it), as storageMock keeps every export
+// of lib/storage (test/fake-redis.ts). The connectors' requests
+// (lib/connectors/http.ts) use the real `request`.
+const realHttps = { ...httpsModule };
+const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
+  urlReads.push({ url, headers: options.headers });
+  const req = new EventEmitter();
+  if (hangReads) {
+    options.signal?.addEventListener('abort', () => req.emit('error', new Error('aborted')));
     return req;
-  },
-}));
+  }
+  const b = blobs.get(decodeURIComponent(new URL(url).pathname.slice(1)));
+  const res: any = Readable.from(b ? [Buffer.from(corruptReads ? b.body.slice(0, -2) + '\n' : b.body)] : []);
+  res.statusCode = b ? 200 : 404;
+  res.headers = {};
+  queueMicrotask(() => cb(res));
+  return req;
+};
+mock.module('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
 const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');

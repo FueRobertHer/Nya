@@ -98,8 +98,9 @@ export type Cause =
   | 'no_accounts' // NO_ACCOUNTS: the bank reports no open accounts
   | 'vanished'; // accounts missing from an otherwise good answer (lib/vanished.ts)
 
-/** Where the problem is. */
-export type Side = 'none' | 'you' | 'bank' | 'plaid' | 'nya' | 'unknown';
+/** Where the problem is. 'connector' is a service the person brought
+ *  themselves, such as SimpleFIN (lib/connectors/), named where it is shown. */
+export type Side = 'none' | 'you' | 'bank' | 'plaid' | 'nya' | 'unknown' | 'connector';
 
 /** What to offer: reconnect through update mode, wait, remove and connect
  *  again, remove, resolve a closed account, or nothing. */
