@@ -12,6 +12,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
   - [Reconnect soon](#reconnect-soon)
   - [Email notices](#email-notices)
 - [Manual accounts](#manual-accounts)
+- [Importing files](#importing-files)
 - [Excluding a transaction](#excluding-a-transaction)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 - [Planning](#planning)
@@ -197,7 +198,7 @@ A transaction entered by hand shows in the Activity tab with its account's name 
 
 **Saved once.** The form gives the transaction its id when it opens, so tapping **Add** again after an answer that never arrived (a phone losing its connection) finds it already saved: one transaction, and the balance moved once. If you changed the amount or the account before tapping again and the balance moved (or was to move) with it, nothing more is changed and the form says what was saved, so the transaction and the balance never disagree; edit the transaction, then update the balance from the account. Two transactions of the same amount added at the same moment on two devices each move the balance once: the second is saved, and says its balance wasn't updated. Moving a transaction to another account changes both accounts in one step, so it is never on both, or on neither, whatever fails.
 
-Each account's transactions are stored together, encrypted and compressed, on the storage seam (`lib/manual-txns.ts`); one account holds some 80,000 of them, and a save that would not fit is refused whole rather than trimmed. Each carries where it came from and that source's own id, so the planned file import (#43) can tell a transaction it already has from a new one, and room for the import it came in, so one import can be taken out whole. They are in the [download of your data](data-export.md#manual-transactions).
+Each account's transactions are stored together, encrypted and compressed, on the storage seam (`lib/manual-txns.ts`); one account holds some 80,000 of them, and a save that would not fit is refused whole rather than trimmed. Each carries where it came from and that source's own id, so a [file import](#importing-files) can tell a transaction it already has from a new one, and the import it came in, so one import can be taken out whole. They are in the [download of your data](data-export.md#manual-transactions).
 
 ### Updating balances from a script
 
@@ -215,6 +216,53 @@ This is the escape hatch for filling Plaid's gaps however you like. Some options
 - **OFX Direct Connect**, the pre-Plaid standard, is still enabled at many credit unions (often needing a separate enrollment and PIN) and is scriptable with [`ofxtools`](https://github.com/csingley/ofxtools). Check the [GnuCash bank list](https://wiki.gnucash.org/wiki/OFX_Direct_Connect_Bank_Settings) for a given institution. The industry is migrating away from it, so treat it as a bonus where it exists.
 - **Other aggregators** (Teller, MX, Akoya, Finicity) generally have *narrower* long-tail coverage than Plaid, so they rarely help with the exact institutions Plaid is missing.
 - **Scraping your own account** is possible but a maintenance treadmill: MFA and device binding break it, bank logins from datacenter IPs get flagged (so it can't run on Vercel), most bank terms prohibit automated access, and the failure mode is a locked account rather than a stale number. If you do it, run it on your own machine and push the result here rather than storing bank credentials in this app.
+
+## Importing files
+
+A way in without bank logins: the file your bank lets you download. Import it into a [manual account](#manual-accounts) with **Import** on the account's row (Accounts tab) or **Import a file** on the Activity tab. Importing into a linked account, where the file overlaps what Plaid synced, isn't possible yet (#52).
+
+### Formats
+
+- **OFX and QFX** are best, and most US banks offer one beside CSV. Each transaction carries the bank's own id (FITID), so importing a period again, or one that overlaps, adds nothing twice, and every field has a defined meaning, so there is nothing to map. OFX 1.x (SGML) and 2.x (XML) are read, bank and credit card statements alike, including files that bend the standard (a whole file on one line, elements left unended, a bank's own extra tags). A file holding several statements (checking and savings in one download) asks which to import. The preview names the statement's account by its last four digits, and a file for another account than the one this account's last OFX file was for is caught: nothing is imported until you say it's the right file. Investment statements aren't read.
+- **CSV** needs a row of column names. You say which column is the date, the description and the amount (or separate money-out and money-in columns), and optionally a category, notes and a currency; with one amount column, whether money out is written negative or positive. The first rows show how they read as you choose. Dates are read in ISO (2026-09-30), US (09/30/2026) and UK or European (30/09/2026, 30.09.2026) form, or with the month named in English (30 Sep 2026); when every date in the file fits both the US and the UK order (a short file early in a month), the sheet asks which, and never guesses. Fields can be separated by commas, semicolons, tabs or vertical bars, and quoted with commas, quotes and line breaks inside; a byte order mark, decimal commas with grouping (1.234,56) and a bank's summary lines above the table are fine. The account remembers the mapping by column name, so the next file from the same bank imports in one tap.
+- **QIF**, Quicken's older format: `!Type:Bank` and `!Type:CCard` (and cash and other accounts, written the same way), with Quicken's dates ("1/2'26", "1/ 2'26", two-digit years) and the same question when every date fits both orders. A transfer to another of your accounts ("L[Savings]") is a transfer in or out, so it stays out of spending; Quicken's opening balance isn't a transaction and isn't imported. A file of several accounts asks which.
+
+A file is read as UTF-8, UTF-16 or Windows-1252, the old Western encoding OFX 1.x and many European banks still use, so accented names come through.
+
+### Getting an OFX file from your bank
+
+On your bank's website, open the account and look for **Download**, **Export** or **Download transactions** (often beside the statements or the transaction search). Choose the dates, then **Quicken (QFX)** or **Web Connect**, **Microsoft Money** or **OFX**: they are the same format. Without one, choose **CSV**. Some banks offer downloads only on their full website, not in their app.
+
+### The preview
+
+Before anything is stored, the sheet shows how many transactions are new, how many the account already has, how many the file lists twice, and the lines that can't be read, each with its line number and why (no date, an amount that isn't one, a date in the future, an amount more precise than its currency allows); then the first rows as they will be read, the dates covered, the currency, and the money in and out of the new rows. **Import** adds the new rows in one step: a file is never half imported, and rows that arrived meanwhile from another device are matched against too.
+
+Imported transactions are ordinary manual transactions. They show on the Activity tab ("imported from OFX"), count in totals, budgets, insights, recurring bills and the Plan, follow the currency rule, and can be recategorized, edited, moved or excluded. Their category is the file's own (a CSV category column, a QIF category), lower-cased; an OFX file carries none, so a transfer or a card payment counts as spending or income until you give it a category (transfer in or out, loan payments). A description longer than a typed one may be (100 characters) is shortened, and the full text is kept with the import.
+
+### Matching what is already there
+
+- An OFX transaction is already there when the account has one with the same FITID, from an earlier OFX or QFX import, even if you edited it since. A FITID the file lists twice is the bank listing one transaction twice: it is imported once.
+- Otherwise, and for CSV and QIF, a transaction is already there when the account has one with the same date, amount, currency and description (lower-cased, letters and digits only), transactions you typed in included. Two identical transactions on one day (two coffees) are two: each stored one matches one in the file, and the rest are new. One imported from a CSV or QIF file is recognized by what the file said when it was imported, so editing it doesn't make the next file bring it back.
+- Matching is exact. A bank's CSV and its OFX describe the same transaction differently, so they can't be matched against each other: import one format into an account.
+
+### Undo
+
+The account's past imports are listed under the file picker, each with its file, when it was imported, how many transactions it added and the dates they cover. **Undo** removes every transaction the import added, wherever it is now (one moved to another manual account too) and whether you edited it since or not: the confirmation says how many, and how many were changed or moved. Exclusions on them go too. The balance stays as it is. Deleting a manual account deletes its imports with it.
+
+### The balance
+
+An import never changes the account's balance by itself. An OFX statement carries its ledger balance and the day it is as of; when that day is today or yesterday, the preview offers **Also set the balance** to it, unticked. Ticked, it is recorded as the account's **Update** form records a balance, and only from the balance the preview showed: if that changed since, nothing is imported. An older statement's balance is shown, never set, since setting it would record a past figure as today's. It is offered only in US dollars, which manual balances are kept in, and only onto an account of the statement's kind (a card statement onto a credit card), since its sign means opposite things on a card and a bank account.
+
+### Limits
+
+- A file of up to 3 MB and 10,000 transactions (four years of a busy account is about 7,000). A larger one is refused whole: export a shorter period and import it in parts.
+- An account holds some 80,000 transactions; an import that would take it past the size a stored value may have is refused whole, never trimmed.
+- 100 previews, imports and undos an hour, per person.
+- Every field is checked as a typed transaction's is: dates from 1900 to tomorrow, amounts in whole minor units of their currency (a cent, a yen), and lengths.
+
+### What is kept
+
+Each import keeps the file's records as the file had them (an OFX transaction's fields, a CSV line's cells, a QIF record's lines), what became of each and why a line couldn't be read, with the file's name, the format, the account and when: if a transaction looks wrong years later, what the bank's file said settles it. The records, not the file: they are what can be set beside a row, and a file's other statements and accounts aren't this account's. They are encrypted, in your [download](data-export.md#imports), and go with the import's undo or the account. A file is never written to a log.
 
 ## Excluding a transaction
 
@@ -253,7 +301,7 @@ Each input says where it came from, over what dates, and what may be missing fro
 
 - **Annual spending**: the last 365 days of money out, with the first and last day shown beside it. It starts from the Activity tab's rule, which leaves out transfers between your own accounts and card payments (paying a card off settles purchases already counted on the card), and then counts what that rule leaves out for reasons that don't hold for planning (`lib/fire/inputs.ts`; the Activity tab's own totals are unchanged):
   - **Loan payments** that Plaid's detail says are on a mortgage, car, student or personal loan. Their principal is really saving, but it is spending until the loan ends, which is what a plan starting today has to fund. The label says how much of the figure they are; if a loan ends before you stop working, type your own figure. The loan account's side of a payment (money in) is never counted, so a payment from one linked account to another counts once.
-  - **Cash withdrawals** (at an ATM or a teller): cash taken out is spent. If you enter what you spend in cash by hand, on a manual account marked **Cash on hand**, the withdrawals and those transactions are the same money, so over the year only the larger counts, never both: the cash spending you entered always, and the withdrawals only for what is beyond it. Over the whole year, so cash taken out at the end of one month and spent in the next isn't counted twice, and if you have only just begun entering cash, the withdrawals before that still count. Only an account marked so: spending entered on a manual checking account at a bank Plaid can't reach is not cash, and never cancels a withdrawal. The label says which it did, and on which accounts; with withdrawals counted beside spending entered on an account not marked as cash, it says how to mark one.
+  - **Cash withdrawals** (at an ATM or a teller): cash taken out is spent. If you enter what you spend in cash by hand (or import it), on a manual account marked **Cash on hand**, the withdrawals and those transactions are the same money, so over the year only the larger counts, never both: the cash spending you entered always, and the withdrawals only for what is beyond it. Over the whole year, so cash taken out at the end of one month and spent in the next isn't counted twice, and if you have only just begun entering cash, the withdrawals before that still count. Only an account marked so: spending entered on a manual checking account at a bank Plaid can't reach is not cash, and never cancels a withdrawal. The label says which it did, and on which accounts; with withdrawals counted beside spending entered on an account not marked as cash, it says how to mark one.
   - **Refunds**: money back in a spending category (food, shopping, travel, bills and the like) is taken off spending rather than counted as income, which would overstate both. Money in under income, a transfer or "other" is never a refund. The total and the largest refund are shown beside the figure, so an odd large one (a deposit returned, an insurance payout) can be seen and typed over.
 
   A transaction you [excluded](#excluding-a-transaction) counts in none of the figures, and the label says how many were left out. Paying a card off never counts, whatever the row was recategorized as: it settles purchases already counted on the card. Anything else filed under loan payments (no detail, Plaid's "other payment", which can be a store card, or a row recategorized there whose detail says something else, a card payoff among them) can't be told from a card payment, so it is left out and its total is named beside the figure, never guessed. A pending charge whose posted version has arrived was already dropped. With less than a year of history the total is scaled up to a year, and the label says from how many days or months. Under four weeks gives no figure.

@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions` and `transaction-annotations`. |
 
 ### `institutions[]`
 
@@ -295,9 +295,40 @@ What each investment account held, day by day, as recorded from Plaid's holdings
 
 An account with an empty `positions[]` was listed by that day's holdings answer with no positions, which is not to say it held nothing: money an institution doesn't list as a position (cash, often) has none, and the account's balance that day is in `account_history`. A day missing for an account was not recorded: its institution couldn't be reached, say, or its answer was incomplete, which is never recorded as a whole day. Hidden accounts are here like the others (see `hidden_accounts`). Account ids are as recorded: positions recorded under an account's earlier id, before a reconnect, keep that id, and `account_links` says which ids are the same account.
 
+#### `imports`
+
+Each file you imported into a manual account ([Importing files](features.md#importing-files)): one entry per import, `id` the import's own (`import:` and a random id, the `import_id` of the transactions it added in [`manual-transactions`](#manual-transactions)), and `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `account_id` | The manual account it was imported into. |
+| `format`, `source` | `ofx` (OFX or QFX), `csv` or `qif`, and the `source` its transactions carry (`import:ofx`, `import:csv`, `import:qif`). |
+| `file_name`, `file_bytes`, `encoding` | The file's name as your device gave it, its size in bytes, and how its text was read: `utf-8`, `utf-16le`, `utf-16be` or `windows-1252`. The file itself is not kept. |
+| `imported_at` | When it was imported. |
+| `currency`, `first_date`, `last_date` | The currency most of its transactions are in, and the days they cover. |
+| `counts` | `imported` (added), `present` (already in the account), `repeated` (listed twice in the file) and `unreadable` (lines that couldn't be read). |
+| `read` | How it was read: `options`, what you chose (the statement, a CSV's columns by number, how money out is written, the order of the dates, the decimal mark, the currency, whether amounts were read the other way round), and what was found: `date_order`, `decimal`, and a CSV's `delimiter`, `header_line` and the lines `skipped` above it. |
+| `statement` | For an OFX file, the statement imported: `kind` (`bank` or `creditcard`), `label`, `bank_id` (its routing number), `mask` (the account number's last four characters: the whole number is never kept), `type`, `currency`, `start` and `end` (the days it covers), and `ledger` (`amount` as the file wrote it, which on a card is negative while money is owed, and `as_of`). For a QIF file holding several accounts, the one chosen (its `label`). `null` otherwise. |
+| `columns` | A CSV file's column names, or `null`. |
+| `balance_update` | When the import also set the account's balance to the statement's: `from`, `to`, and the statement's `as_of`. Absent otherwise. |
+| `records[]` | Every transaction the file held, in file order: `line` (where it starts in the file), `outcome` (`imported`, `present`, `repeated` or `unreadable`), `row_id` (the transaction it became, or the one it was found as), `reason` (why it couldn't be read), and `raw`, the record as the file had it: an OFX transaction's fields by their tags (`TRNTYPE`, `DTPOSTED`, `TRNAMT`, `FITID`, `NAME`, `MEMO` and any others), a CSV line's cells, or a QIF record's lines. |
+
+A field over 1,000 characters is cut to that length in `raw` (its line wasn't read). Undoing the import deletes its entry, and so does deleting the account.
+
+#### `import-settings`
+
+How the last file imported into each manual account was read, so the next one from the same bank needs no questions: one entry per account (`id` its account id), with `version` (1), `updated_at`, and for each format imported into it:
+
+- `csv`: `columns` (`date`, `description`, `amount` or `debit` and `credit`, `category`, `note` and `currency`, each the name of the column it was read from), `sign` (`negative-out` or `positive-out`: how money out was written in one amount column), `decimal`, `date_order` (`mdy` or `dmy`, or `null` when the dates didn't depend on one), `delimiter` and `currency`.
+- `ofx`: `statement`, the account the statement was for (`kind`, `bank_id`, `mask` and `type`, so a file for another account is caught), and `flip`, whether amounts were read the other way round.
+- `qif`: `date_order`, `decimal`, `flip` and `currency`.
+
+Deleting the account deletes its entry.
+
 #### `manual-transactions`
 
-Transactions you entered by hand on manual accounts (`lib/manual-txns.ts`), all of them, not just the year the Activity tab shows. One entry per manual account: `id` is the account's id (as in `manual_accounts`), and `value` holds `version` (the shape's version: 1) and `rows`, the account's transactions in the order they were added:
+Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or imported from a file, all of them, not just the year the Activity tab shows. One entry per manual account: `id` is the account's id (as in `manual_accounts`), and `value` holds `version` (the shape's version: 1) and `rows`, the account's transactions in the order they were added:
 
 | Field | Meaning |
 | --- | --- |
@@ -309,9 +340,9 @@ Transactions you entered by hand on manual accounts (`lib/manual-txns.ts`), all 
 | `name` | Who was paid, or who paid you. |
 | `category` | Its category, or `null`. |
 | `note` | Your note, or `null`. |
-| `source` | Where it came from: `manual` for one entered in the app. |
-| `source_id` | The source's own id for it, from an import; `null` for one entered by hand. |
-| `import_id` | The import it came in with, so that import can be taken out whole; absent or `null` for one entered by hand (no import exists yet: #43). |
+| `source` | Where it came from: `manual` for one entered in the app; `import:ofx`, `import:csv` or `import:qif` for one imported from a file. |
+| `source_id` | The source's own id for it, which is how a later file recognizes it: an OFX file's FITID; for a CSV or QIF file, which have no ids, what the file said when it was imported (its date, currency, amount in the currency's smallest unit and its description, lower-cased with only letters and digits, joined by `\|`). `null` for one entered by hand. |
+| `import_id` | The import it came in with (in [`imports`](#imports)), so that import can be taken out whole; absent or `null` for one entered by hand. |
 | `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, `to`, the one it became, and `account_id`, the account whose balance it was (absent on one noted before that was kept). Absent otherwise. |
 | `created_at`, `updated_at` | When it was entered, and last changed. |
 
@@ -378,7 +409,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: `download-count`, the counter behind the five downloads an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)). The others are left out: `download-count`, the counter behind the five downloads an hour, `import-requests`, the counter behind the hundred file imports and previews an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only.
 
@@ -393,7 +424,7 @@ There are two exports, and they are kept apart on purpose (#55): one that did bo
 | Values | Decrypted, in documented fields | Encrypted, byte for byte as stored, and unreadable without the keys; dates, account and transaction ids, bank names and the merchant names you renamed are in plain text ([operations.md](operations.md#taking-a-backup-by-hand)) |
 | Formats | JSON, CSV | NDJSON of raw database keys, with a checksum |
 | Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records) |
-| Restores | Not yet: an import is planned (#43) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
+| Restores | Not yet: restoring from this file is planned (#43). Files from your bank can be imported, into a manual account ([features.md](features.md#importing-files)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
 | Gets it | You, after a fresh sign-in, 5 an hour | The operator, with `OPS_SECRET`, or the nightly cron |
 
 Deleting your account deletes your data now, and the nightly backups expire it later; the receipt at the end gives the date ([authentication.md](authentication.md#deleting-an-account)). A file you downloaded is yours, and deleting your account doesn't reach it.
