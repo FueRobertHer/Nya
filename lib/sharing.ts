@@ -34,7 +34,10 @@
 // records. The records live exactly as long as the connection: removing or
 // blocking it, or either account being deleted, deletes them on both sides
 // (forgetShowings), and the nightly pass deletes any a removal that stopped
-// part way left.
+// part way left. A removal deletes the connection first and only then reads
+// its log id, and a showing checks the connection again after writing and
+// takes back what it wrote if it is gone, so between them every interleaving
+// leaves nothing behind (recordShowing).
 //
 // Stored environment-wide (connections live between containers, so in none):
 //   <env>:connections  field "<id>"              {users: [a, b], status, blocked_by?, created_at}
@@ -48,7 +51,8 @@
 // a release from before shares could end reads it as sharing nothing, so
 // rolling back past this can end a share early but never extend one.
 // Every field of a connection is in one hash, so removing one (the breakup
-// case) is a single HDEL: every share both ways ends at once, none missed.
+// case) is a single HDEL of all but its log field: every share both ways ends
+// at once, none missed.
 // Blocking keeps the connection's record, marked blocked, which is what stops
 // a new invite between the two from connecting them again. A connection's id
 // is derived from the pair, so there is only ever one per pair; it never
@@ -58,12 +62,13 @@
 // THE BOUNDARY. This module is the only place that reads another person's
 // container. It builds that person's Ctx itself, from the owners map. It
 // passes it to read functions, which change nothing there (projectShare reads
-// read-only), and to the two writes it makes in another person's container,
-// both in the access log, both under the connection's own log id and nothing
-// else: recordShowing, when someone's app loads what that person shares with
-// them, and forgetShowings, when the connection ends. Nothing this module
-// returns carries the Ctx or the other person's user id, and no route ever
-// gets one to write with.
+// read-only, and readRecord reads their record of showings to me), and to the
+// two writes it makes in another person's container, both in the access log,
+// both under the connection's own log id and nothing else: recordShowing,
+// when someone's app loads what that person shares with them, and
+// forgetShowings, when the connection ends. Nothing this module returns
+// carries the Ctx or the other person's user id, and no route ever gets one
+// to write with.
 // Everything is filtered to the shared accounts here, on the server, before it
 // leaves: the browser never receives an account it wasn't shared, not even to
 // hide it. An account the owner has since hidden, or no longer has, is left
@@ -92,8 +97,8 @@ import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredTxns, StateUnreadableError } from './transactions';
 import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
-import { accessLogStore, withShowing, keptShowings, type AccessLog, type Showing } from './access-log';
-import { isLevel, SHARE_END_MAX_DAYS, type Level } from './share-rules';
+import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
+import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
 
 export type { Level } from './share-rules';
 export type Share = {
@@ -445,13 +450,15 @@ export async function removeConnection(me: string, id: string, opts: { block?: b
   if (c.meta.status === 'blocked' && c.meta.blocked_by !== me) throw new SharingRefused('No such connection.');
   const [a, b] = c.meta.users;
   if (!opts.block) {
-    await redis().hdel(connectionsKey(), ...fieldsOf(id, c.meta.users));
+    // The connection first: from then on nothing is shown on it. Its log
+    // field after, by forgetShowings, which reads it only then.
+    await redis().hdel(connectionsKey(), ...fieldsOf(id, c.meta.users).filter((f) => f !== logField(id)));
   } else {
     // Blocked first, so nothing is read in between; then the rest, keeping
     // only my name for them (my blocked list shows it).
     const meta: Meta = { ...c.meta, status: 'blocked', blocked_by: me };
     await redis().hset(connectionsKey(), { [id]: JSON.stringify(meta) });
-    await redis().hdel(connectionsKey(), labelField(id, other(c, me)), introField(id, a), introField(id, b), shareField(id, a), shareField(id, b), logField(id));
+    await redis().hdel(connectionsKey(), labelField(id, other(c, me)), introField(id, a), introField(id, b), shareField(id, a), shareField(id, b));
   }
   await forgetShowings(c);
 }
@@ -464,31 +471,48 @@ export async function dropConnectionsOf(userId: string): Promise<number> {
   const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
   const theirs = (await allConnections()).filter((c) => c.meta.users.includes(userId));
   const ids = new Set(theirs.map((c) => c.id));
-  const fields = Object.keys(raw).filter((f) => ids.has(f.split('|')[0]));
+  // The connections first, as in removeConnection; each one's log field
+  // after, by forgetShowings.
+  const fields = Object.keys(raw).filter((f) => ids.has(f.split('|')[0]) && !isLogField(f));
   if (fields.length > 0) await redis().hdel(connectionsKey(), ...fields);
   await Promise.all(theirs.map(forgetShowings));
   return theirs.filter((c) => c.meta.status === 'active').length;
 }
 
+const isLogField = (field: string) => {
+  const [, kind, user] = field.split('|');
+  return kind === 'log' && !user;
+};
+
 /**
  * Deletes a connection's records of showings on both sides, by its log id,
  * without reading them: they live exactly as long as the connection. One of
- * the two writes this module makes in someone else's container. Runs after
- * the connection's fields are gone, so a showing recorded meanwhile is caught
- * here or by recordShowing's own check. Never throws, since the connection is
+ * the two writes this module makes in someone else's container. Runs once the
+ * connection's other fields are gone, and reads its log field only then, so
+ * it knows the id even when the connection's first showing set it meanwhile,
+ * and deletes the field, then the records. A showing recorded after that
+ * takes itself back (recordShowing). Never throws, since the connection is
  * already gone: a container that can't be reached now (being deleted, or
  * restored), or a delete that fails, is left to the nightly pass, which
  * deletes every record whose connection has ended (lib/access-log.ts
  * pruneAccessLog). So is a damaged log field, whose id can't be known.
  */
 async function forgetShowings(c: Conn): Promise<void> {
-  const log = c.log;
-  if (!log || log === 'damaged') return;
+  let log: LogRef | null;
+  try {
+    log = parseLog(await redis().hget(connectionsKey(), logField(c.id)));
+    await redis().hdel(connectionsKey(), logField(c.id));
+  } catch (err) {
+    console.error('Sharing: a connection’s log id could not be read or deleted with it; the nightly pass deletes its records', err instanceof Error ? err.name : err);
+    return;
+  }
+  if (!log) return;
+  const id = log.id;
   await Promise.all(
     c.meta.users.map(async (user) => {
       try {
         const ctx = await theirCtx(user);
-        if (ctx) await accessLogStore.remove(ctx, log.id);
+        if (ctx) await accessLogStore.remove(ctx, id);
       } catch (err) {
         console.error('Sharing: a record of showings could not be deleted with its connection; the nightly pass will', err instanceof Error ? err.name : err);
       }
@@ -496,162 +520,253 @@ async function forgetShowings(c: Conn): Promise<void> {
   );
 }
 
+/** What the nightly pass goes by (connectionLogIds), read from the
+ *  connections as they are. */
+export type ConnectionLogIds = {
+  /** The log ids records may be kept under: those of the connections there
+   *  are, and of any whose record can't be read but whose log id can. */
+  live: Set<string>;
+  /** The people on a connection whose log id can't be read: a record in one
+   *  of their containers could be that connection's. */
+  unsafeUsers: Set<string>;
+  /** A connection whose record and log id both can't be read: a record in
+   *  any container could be its. */
+  everywhere: boolean;
+  /** The ids of the connections with a field that can't be read. */
+  damaged: string[];
+};
+
 /**
  * The log ids of the connections there are, for the nightly pass that
  * deletes records whose connection has ended (lib/access-log.ts
- * pruneAccessLog). Null when they can't all be read, so nothing is deleted on
- * the answer: a connection whose record or log field can't be parsed could
- * own any record. A blocked connection has none (blocking deletes them).
+ * pruneAccessLog), and what a field that can't be read leaves unsafe to
+ * delete: a connection's record that can't be read (its people unknown) keeps
+ * its log id live if that can be read, and makes every container unsafe if it
+ * can't; a log id that can't be read makes its two people's containers unsafe.
+ * A blocked connection has no records (blocking deletes them). A status this
+ * version doesn't know is kept as if active. Null, logged, when the
+ * connections can't be read at all.
  */
-export async function connectionLogIds(): Promise<Set<string> | null> {
+export async function connectionLogIds(): Promise<ConnectionLogIds | null> {
+  let raw: Record<string, unknown>;
   try {
-    const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
-    const metas = new Map<string, Meta>();
-    const logs = new Map<string, unknown>();
-    for (const [field, value] of Object.entries(raw)) {
-      const [id, kind, user] = field.split('|');
-      if (!kind) {
-        const meta = parseMeta(value);
-        if (!meta) return null;
-        metas.set(id, meta);
-      } else if (kind === 'log' && !user) logs.set(id, value);
-    }
-    const live = new Set<string>();
-    for (const [id, value] of logs) {
-      // Left behind by a removal, or blocked: ended.
-      if (metas.get(id)?.status !== 'active') continue;
-      const log = parseLog(value);
-      if (!log) return null;
-      live.add(log.id);
-    }
-    return live;
+    raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
   } catch (err) {
     console.error('Sharing: the connections could not be read for the nightly pass', err instanceof Error ? err.name : err);
     return null;
   }
+  const metas = new Map<string, Meta | 'damaged'>();
+  const logs = new Map<string, unknown>();
+  for (const [field, value] of Object.entries(raw)) {
+    const [id, kind] = field.split('|');
+    if (!kind) metas.set(id, parseMeta(value) ?? 'damaged');
+    else if (isLogField(field)) logs.set(id, value);
+  }
+  const out: ConnectionLogIds = { live: new Set(), unsafeUsers: new Set(), everywhere: false, damaged: [] };
+  for (const [id, meta] of metas) {
+    const stored = logs.get(id);
+    const log = stored === undefined ? null : (parseLog(stored) ?? 'damaged');
+    if (meta === 'damaged') {
+      out.damaged.push(id);
+      if (log === 'damaged') out.everywhere = true;
+      else if (log) out.live.add(log.id);
+      continue;
+    }
+    if (meta.status === 'blocked' || !log) continue; // nothing kept under it
+    if (log === 'damaged') {
+      out.damaged.push(id);
+      for (const user of meta.users) out.unsafeUsers.add(user);
+    } else out.live.add(log.id);
+  }
+  out.damaged.sort();
+  return out;
+}
+
+/**
+ * What the nightly pass in one container may go by (lib/access-log.ts
+ * pruneAccessLog): the live log ids, read fresh for each container, after its
+ * records are, or null when a record there could be that of a connection with
+ * a field that can't be read (connectionLogIds), or the connections can't be
+ * read. One of these per nightly run (lib/snapshot-job.ts), which says once
+ * which connections can't be read, and what that keeps.
+ */
+export function nightlyLogIds(): (ctx: Ctx) => Promise<ReadonlySet<string> | null> {
+  let told = false;
+  return async (ctx) => {
+    const known = await connectionLogIds();
+    if (!known) return null;
+    if (known.damaged.length > 0 && !told) {
+      told = true;
+      const one = known.damaged.length === 1;
+      const kept = `no record of an ended connection is deleted ${known.everywhere ? 'in any container' : `in the containers of the people on ${one ? 'it' : 'them'}`} until ${one ? 'it is' : 'they are'} fixed, only showings past ${ACCESS_LOG_DAYS} days`;
+      console.error(
+        `Sharing: ${one ? 'a connection has a field' : `${known.damaged.length} connections have fields`} that can't be read (${known.damaged.join(', ')}); ${
+          known.everywhere || known.unsafeUsers.size > 0 ? kept : `the records under ${one ? 'its log id are' : 'their log ids are'} kept until ${one ? 'it is' : 'they are'} fixed`
+        }`
+      );
+    }
+    if (known.everywhere) return null;
+    for (const user of known.unsafeUsers) {
+      if (String(await redis().hget(ownersKey(), user)) === ctx.container) return null;
+    }
+    return known.live;
+  };
 }
 
 // ---- Records of showings ----
 
-/** One side's record on a connection: its quarter hours, oldest first, or
- *  why it can't be had: "unreadable" (damaged), "unrecognised" (intact, but
- *  not understood), "unavailable" (couldn't be reached just now). */
-export type RecordRead = { showings: Showing[] } | { showings: null; problem: 'unreadable' | 'unrecognised' | 'unavailable' };
+export type { RecordProblem, RecordSummary } from './share-rules';
 
-type Records = {
-  /** By connection id: its log id and when its records began (both null
-   *  before the first, on a connection from before records), and its two
-   *  records. */
-  byConnection: Map<string, { logId: string | null; since: string | null; toThem: RecordRead; toMe: RecordRead }>;
-  /** What else is in my own records: those of connections that ended, until
-   *  the nightly pass deletes them, by log id. */
-  ended: { entries: Map<string, AccessLog>; unreadable: string[]; unrecognised: string[] };
-};
+/** One side's record on a connection: its quarter hours, oldest first, or
+ *  why it can't be had. */
+export type RecordRead = { showings: Showing[] } | { showings: null; problem: RecordProblem };
 
 const unreadableAs = (err: unknown, id: string): RecordRead | null =>
   err instanceof UnreadableEntriesError ? { showings: null, problem: err.unreadable.includes(id) ? 'unreadable' : 'unrecognised' } : null;
 
-/**
- * Both records on each of my active connections: mine (when what I share was
- * shown to them), from my container, and theirs (when what they share was
- * shown to me), read from theirs through the boundary, the same record they
- * see. An entry that can't be used is named, never read as no showings.
- * `strict` (the download): a failure to reach storage throws. Otherwise (the
- * drawer, which only shows them) it reads as "unavailable", so the rest of the
- * drawer still works.
- */
-async function readRecords(me: string, ctx: Ctx, conns: Conn[], strict: boolean): Promise<Records> {
-  const active = conns.filter((c) => c.meta.status === 'active' && c.meta.users.includes(me));
-  let mine: Awaited<ReturnType<typeof accessLogStore.getAllReport>> | null = null;
+const noRecordId: RecordRead = { showings: null, problem: 'record_id_unreadable' };
+
+/** The record under `logId` in the container `where` gives: named when it
+ *  can't be used, never read as no showings. A failure to reach storage
+ *  throws when `strict` (the download), and otherwise reads as
+ *  "unavailable", so the rest of the drawer still works. */
+async function readRecord(where: () => Promise<Ctx | null>, logId: string, strict: boolean): Promise<RecordRead> {
   try {
-    mine = await accessLogStore.getAllReport(ctx);
+    const at = await where();
+    if (!at) return { showings: null, problem: 'unavailable' };
+    return { showings: (await accessLogStore.get(at, logId))?.shown ?? [] };
   } catch (err) {
+    const named = unreadableAs(err, logId);
+    if (named) return named;
     if (strict) throw err;
-    console.error('Sharing: my records of showings could not be read', err instanceof Error ? err.name : err);
+    console.error('Sharing: a record of showings could not be read', err instanceof Error ? err.name : err);
+    return { showings: null, problem: 'unavailable' };
   }
+}
+
+/** Both records on one of my connections, for the drawer. */
+export type ConnectionRecords = {
+  connection: string;
+  /** The log id my record is under, to clear it by when it can't be read;
+   *  null before the first record, or when the log field can't be read. */
+  record_id: string | null;
+  /** When its records began, or null before the first (a connection from
+   *  before records), or when the log field can't be read. */
+  record_since: string | null;
+  /** When what I share was shown to them: my record. */
+  shown_to_them: RecordSummary;
+  /** When what they share was shown to me: their record, the same one they see. */
+  shown_to_me: RecordSummary;
+};
+
+/**
+ * For my Sharing drawer, when I open one of my connections: both records on
+ * it, mine (when what I share was shown to them) from my container, and
+ * theirs (when what they share was shown to me) from theirs, through the
+ * boundary, the same record they see. Each as the days it has in `timeZone`
+ * (shownByDay), the newest RECORD_FIRST_DAYS of them, or all with `all`, and
+ * how many there are, so what is sent stays small however much a record
+ * holds: never a record's rows. Its own request, apart from the connection
+ * list, so no record can stand between me and Remove or Block. Only shown:
+ * nothing is written or deleted on what this returns.
+ */
+export async function connectionRecords(
+  me: string,
+  ctx: Ctx,
+  id: string,
+  opts: { timeZone: string; all?: boolean },
+  now: number = Date.now()
+): Promise<ConnectionRecords> {
+  const c = await connectionOf(me, id);
+  if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
+  const summary = (r: RecordRead): RecordSummary => {
+    if (!r.showings) return { days: null, problem: r.problem };
+    const days = shownByDay(keptShowings({ shown: r.showings }, now), opts.timeZone);
+    return { days: opts.all ? days : days.slice(0, RECORD_FIRST_DAYS), total_days: days.length };
+  };
+  const log = c.log;
+  if (log === 'damaged') {
+    return { connection: c.id, record_id: null, record_since: null, shown_to_them: summary(noRecordId), shown_to_me: summary(noRecordId) };
+  }
+  if (!log) {
+    const none = summary({ showings: [] });
+    return { connection: c.id, record_id: null, record_since: null, shown_to_them: none, shown_to_me: none };
+  }
+  const [toThem, toMe] = await Promise.all([
+    readRecord(async () => ctx, log.id, false),
+    readRecord(() => theirCtx(other(c, me)), log.id, false),
+  ]);
+  return { connection: c.id, record_id: log.id, record_since: log.since, shown_to_them: summary(toThem), shown_to_me: summary(toMe) };
+}
+
+/**
+ * For my Sharing drawer's list: the ids of my records that can't be read and
+ * that none of my connections is matched to, which I can clear once I confirm
+ * (lib/access-log.ts clearUnreadableAccessLog). `maybe_connected` when one of
+ * my connections has a log id that can't be read, so one of these could be
+ * its record. Decodes my records only when there is one my connections don't
+ * account for, which is rare: a removal deletes its records at once. Its own
+ * request, apart from the connection list, as in connectionRecords.
+ */
+export async function damagedRecords(me: string, ctx: Ctx): Promise<{ damaged: string[]; maybe_connected: boolean }> {
+  const mine = (await allConnections()).filter((c) => c.meta.status === 'active' && c.meta.users.includes(me));
+  const own = new Set(mine.flatMap((c) => (c.log && c.log !== 'damaged' ? [c.log.id] : [])));
+  const maybe_connected = mine.some((c) => c.log === 'damaged');
+  const [count, present] = await Promise.all([
+    accessLogStore.count(ctx),
+    Promise.all([...own].map((id) => accessLogStore.has(ctx, id))).then((has) => has.filter(Boolean).length),
+  ]);
+  if (count === present) return { damaged: [], maybe_connected };
+  const report = await accessLogStore.getAllReport(ctx);
+  return { damaged: report.unreadable.filter((id) => !own.has(id)), maybe_connected };
+}
+
+type Records = {
+  /** By connection id: its log id and when its records began (both null
+   *  before the first, on a connection from before records, or when its log
+   *  field can't be read), and its two records. */
+  byConnection: Map<string, { since: string | null; toThem: RecordRead; toMe: RecordRead }>;
+  /** What else is in my own records, under no connection's log id: a
+   *  connection's that ended, until the nightly pass deletes it, or that of a
+   *  connection of mine whose log field can't be read. */
+  unmatched: { entries: Map<string, AccessLog>; unreadable: string[]; unrecognised: string[] };
+};
+
+/**
+ * Both records on each of my active connections, whole, for the download
+ * (mySharing), and every other record of mine. Strict: a failure to reach
+ * storage throws, and an entry that can't be used is named, never read as
+ * no showings.
+ */
+async function readRecords(me: string, ctx: Ctx, conns: Conn[]): Promise<Records> {
+  const active = conns.filter((c) => c.meta.status === 'active' && c.meta.users.includes(me));
+  const mine = await accessLogStore.getAllReport(ctx);
   const byConnection: Records['byConnection'] = new Map();
   const own = new Set<string>();
   for (const c of active) {
     const log = c.log;
     if (log === 'damaged') {
-      const damaged: RecordRead = { showings: null, problem: 'unreadable' };
-      byConnection.set(c.id, { logId: null, since: null, toThem: damaged, toMe: damaged });
+      byConnection.set(c.id, { since: null, toThem: noRecordId, toMe: noRecordId });
       continue;
     }
     if (!log) {
-      byConnection.set(c.id, { logId: null, since: null, toThem: { showings: [] }, toMe: { showings: [] } });
+      byConnection.set(c.id, { since: null, toThem: { showings: [] }, toMe: { showings: [] } });
       continue;
     }
     own.add(log.id);
-    const toThem: RecordRead = !mine
-      ? { showings: null, problem: 'unavailable' }
-      : mine.unreadable.includes(log.id)
-        ? { showings: null, problem: 'unreadable' }
-        : mine.unrecognised.includes(log.id)
-          ? { showings: null, problem: 'unrecognised' }
-          : { showings: mine.entries.get(log.id)?.shown ?? [] };
-    let toMe: RecordRead;
-    try {
-      const theirs = await theirCtx(other(c, me));
-      toMe = theirs ? { showings: (await accessLogStore.get(theirs, log.id))?.shown ?? [] } : { showings: null, problem: 'unavailable' };
-    } catch (err) {
-      const named = unreadableAs(err, log.id);
-      if (named) toMe = named;
-      else if (strict) throw err;
-      else {
-        console.error('Sharing: a record of showings could not be read', err instanceof Error ? err.name : err);
-        toMe = { showings: null, problem: 'unavailable' };
-      }
-    }
-    byConnection.set(c.id, { logId: log.id, since: log.since, toThem, toMe });
+    const toThem: RecordRead = mine.unreadable.includes(log.id)
+      ? { showings: null, problem: 'unreadable' }
+      : mine.unrecognised.includes(log.id)
+        ? { showings: null, problem: 'unrecognised' }
+        : { showings: mine.entries.get(log.id)?.shown ?? [] };
+    const toMe = await readRecord(() => theirCtx(other(c, me)), log.id, true);
+    byConnection.set(c.id, { since: log.since, toThem, toMe });
   }
-  const ended: Records['ended'] = { entries: new Map(), unreadable: [], unrecognised: [] };
-  if (mine) {
-    for (const [id, log] of mine.entries) if (!own.has(id)) ended.entries.set(id, log);
-    ended.unreadable = mine.unreadable.filter((id) => !own.has(id));
-    ended.unrecognised = mine.unrecognised.filter((id) => !own.has(id));
-  }
-  return { byConnection, ended };
-}
-
-/** What the drawer shows of each connection's records, by connection id. */
-export type RecordFields = {
-  /** The log id my record is under, to clear it by when it can't be read;
-   *  null before the first record, or when the log field can't be read. */
-  record_id: string | null;
-  /** When its records began, or null before the first (a connection from
-   *  before records). */
-  record_since: string | null;
-  /** When what I share was shown to them: my record. */
-  shown_to_them: Showing[] | null;
-  shown_to_them_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
-  /** When what they share was shown to me: their record, the same one they see. */
-  shown_to_me: Showing[] | null;
-  shown_to_me_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
-};
-
-const fieldsFor = (r: RecordRead, now: number, name: 'shown_to_them' | 'shown_to_me') =>
-  r.showings ? { [name]: keptShowings({ shown: r.showings }, now) } : { [name]: null, [`${name}_problem`]: r.problem };
-
-/**
- * For my Sharing drawer: both records on each of my active connections, kept
- * quarter hours only, and the ids of any record of mine that can't be read and
- * belongs to no connection of mine now, which I can clear once I confirm
- * (lib/access-log.ts clearUnreadableAccessLog). Only shown: nothing is written
- * or deleted on what this returns.
- */
-export async function myRecords(me: string, ctx: Ctx, now: number = Date.now()): Promise<{ connections: Map<string, RecordFields>; damaged: string[] }> {
-  const { byConnection, ended } = await readRecords(me, ctx, await allConnections(), false);
-  const connections = new Map<string, RecordFields>();
-  for (const [id, r] of byConnection) {
-    connections.set(id, {
-      record_id: r.logId,
-      record_since: r.since,
-      ...fieldsFor(r.toThem, now, 'shown_to_them'),
-      ...fieldsFor(r.toMe, now, 'shown_to_me'),
-    } as RecordFields);
-  }
-  return { connections, damaged: ended.unreadable };
+  const unmatched: Records['unmatched'] = { entries: new Map(), unreadable: [], unrecognised: [] };
+  for (const [id, log] of mine.entries) if (!own.has(id)) unmatched.entries.set(id, log);
+  unmatched.unreadable = mine.unreadable.filter((id) => !own.has(id));
+  unmatched.unrecognised = mine.unrecognised.filter((id) => !own.has(id));
+  return { byConnection, unmatched };
 }
 
 /** My side of sharing, for the download of my data (lib/user-export.ts). */
@@ -670,22 +785,24 @@ export type MySharing = {
     /** When it ends (an ISO time, which may have passed), or null for no end. */
     shared_until: string | null;
     /** When the records of showings on this connection began, or null
-     *  before the first. */
+     *  before the first, or when its log field can't be read. */
     record_since: string | null;
     /** Each time what I share was shown to them (my record), oldest first, or
      *  null when it can't be read (shown_to_them_problem says why). */
     shown_to_them: Showing[] | null;
-    shown_to_them_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
+    shown_to_them_problem?: RecordProblem;
     /** Each time what they share was shown to me: their record, the same one
      *  they see. */
     shown_to_me: Showing[] | null;
-    shown_to_me_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
+    shown_to_me_problem?: RecordProblem;
   }[];
   /** People I blocked, by what I called them. */
   blocked: { name: string }[];
-  /** My records of showings on connections that have ended, until the nightly
-   *  pass deletes them: the quarter hours, or why a record can't be read. */
-  ended: ({ shown_to_them: Showing[] } | { shown_to_them: null; problem: 'unreadable' | 'unrecognised' })[];
+  /** My records under no connection's log id: a connection's that ended,
+   *  until the nightly pass deletes it, or that of a connection whose log
+   *  field can't be read (it says so): the quarter hours, or why a record
+   *  can't be read. */
+  unmatched: ({ shown_to_them: Showing[] } | { shown_to_them: null; problem: 'unreadable' | 'unrecognised' })[];
 };
 
 /**
@@ -707,8 +824,8 @@ export type MySharing = {
  */
 export async function mySharing(me: string | null, ctx: Ctx): Promise<MySharing | null> {
   const all = me ? (await allConnections()).filter((c) => c.meta.users.includes(me)) : [];
-  const { byConnection, ended } = await readRecords(me ?? '', ctx, all, true);
-  if (!me && ended.entries.size + ended.unreadable.length + ended.unrecognised.length === 0) return null;
+  const { byConnection, unmatched } = await readRecords(me ?? '', ctx, all);
+  if (!me && unmatched.entries.size + unmatched.unreadable.length + unmatched.unrecognised.length === 0) return null;
   const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
   const recordFields = (r: RecordRead, name: 'shown_to_them' | 'shown_to_me') =>
     r.showings ? { [name]: r.showings } : { [name]: null, [`${name}_problem`]: r.problem };
@@ -736,10 +853,10 @@ export async function mySharing(me: string | null, ctx: Ctx): Promise<MySharing 
       .filter((c) => c.meta.status === 'blocked' && c.meta.blocked_by === me)
       .map((c) => ({ name: c.labels[me!] ?? 'Someone' }))
       .sort(byName),
-    ended: [
-      ...[...ended.entries.values()].map((log) => ({ shown_to_them: log.shown })),
-      ...ended.unreadable.map(() => ({ shown_to_them: null, problem: 'unreadable' as const })),
-      ...ended.unrecognised.map(() => ({ shown_to_them: null, problem: 'unrecognised' as const })),
+    unmatched: [
+      ...[...unmatched.entries.values()].map((log) => ({ shown_to_them: log.shown })),
+      ...unmatched.unreadable.map(() => ({ shown_to_them: null, problem: 'unreadable' as const })),
+      ...unmatched.unrecognised.map(() => ({ shown_to_them: null, problem: 'unrecognised' as const })),
     ],
   };
 }
@@ -946,39 +1063,74 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
  * someone else's container. Under the connection's log id, the quarter hour,
  * a count, and the accounts and levels the read returned, none of it taken
  * from the request. A connection from before records gets its log id here,
- * the first time (HSETNX, so two at once agree on one). Best effort: a
- * failure is logged, and never fails the read.
+ * the first time (logFor). Best effort: a failure is logged, and never fails
+ * the read.
+ *
+ * A removal deletes the connection, and only then reads its log id, deletes
+ * that and then the records (forgetShowings). So after writing, this looks
+ * again: if the connection is gone, or is another one now (made again between
+ * the same two), what it wrote is taken back, record and log field, the field
+ * only if it still holds this id. Whichever runs last deletes what the other
+ * left, in every order. While the connection is still this one, nothing is
+ * taken back, whatever its log field says.
  */
 async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, now: number): Promise<void> {
   try {
     const log = await logFor(c, now);
-    if (!log) {
+    if (log === 'damaged') {
       console.error('Sharing: a showing was not recorded: the connection’s log field can’t be read');
       return;
     }
+    if (!log) return; // the connection went meanwhile: nothing to record
     const read = Object.fromEntries(view.accounts.map((a) => [a.id, a.level]));
     await accessLogStore.update(theirs, log.id, (current) => withShowing(current, now, read));
-    // A removal deletes the connection, then its records. One that ran in
-    // between would leave this record behind it: so look again, after the
-    // write, and take it back. One of the two deletes always sees it.
-    if (!(await stillLogged(c.id, log.id))) await accessLogStore.remove(theirs, log.id);
+    if (!sameConnection(await redis().hget(connectionsKey(), c.id), c)) {
+      await accessLogStore.remove(theirs, log.id);
+      await deleteLogIf(c.id, log.id);
+    }
   } catch (err) {
     console.error('A showing of shared data could not be recorded', err instanceof Error ? err.name : err);
   }
 }
 
-/** The connection's log, made now if it has none yet (one from before
- *  records): whoever asks first sets it, and everyone reads that one. Null
- *  when its field can't be read. */
-async function logFor(c: Conn, now: number): Promise<LogRef | null> {
-  if (c.log === 'damaged') return null;
+/**
+ * The connection's log. One from before records gets one now: whoever asks
+ * first sets it (HSETNX), and everyone reads that one. Then the connection
+ * is checked to still be the one this showing read, so nothing is ever
+ * written under another connection's log id (one made since, between the
+ * same two); if it is gone, a field this set is deleted again. Null when the
+ * connection went meanwhile; "damaged" when its field can't be read.
+ */
+async function logFor(c: Conn, now: number): Promise<LogRef | 'damaged' | null> {
   if (c.log) return c.log;
-  await redis().hsetnx(connectionsKey(), logField(c.id), JSON.stringify(newLog(now)));
-  return parseLog(await redis().hget(connectionsKey(), logField(c.id)));
+  const mine = newLog(now);
+  const set = Number(await redis().hsetnx(connectionsKey(), logField(c.id), JSON.stringify(mine))) === 1;
+  const raw = await redis().hget(connectionsKey(), logField(c.id));
+  if (!sameConnection(await redis().hget(connectionsKey(), c.id), c)) {
+    if (set) await deleteLogIf(c.id, mine.id);
+    return null;
+  }
+  if (raw === null || raw === undefined) return null; // deleted by a removal under way
+  return parseLog(raw) ?? 'damaged';
 }
 
-/** Whether the connection is still there, active, with this log id. */
-async function stillLogged(id: string, logId: string): Promise<boolean> {
-  const [meta, log] = await Promise.all([redis().hget(connectionsKey(), id), redis().hget(connectionsKey(), logField(id))]);
-  return parseMeta(meta)?.status === 'active' && parseLog(log)?.id === logId;
+/** Whether a stored connection record is `c`'s, still active: the same two
+ *  people, connected at the same time (a connection made again between them
+ *  has a later one). */
+function sameConnection(raw: unknown, c: Conn): boolean {
+  const meta = parseMeta(raw);
+  return meta?.status === 'active' && meta.created_at === c.meta.created_at && meta.users.join('|') === c.meta.users.join('|');
+}
+
+/** Deletes a connection's log field only while it holds `logId`, in one
+ *  step: never one a new connection between the same two has written since.
+ *  The first line names the script for the test double. */
+export const DELETE_LOG_IF = `-- nya:sharing-delete-log-if
+local v = redis.call('HGET', KEYS[1], ARGV[1])
+if not v or not string.find(v, ARGV[2], 1, true) then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+return 1`;
+
+async function deleteLogIf(id: string, logId: string): Promise<void> {
+  await redis().eval(DELETE_LOG_IF, [connectionsKey()], [logField(id), `"id":"${logId}"`]);
 }

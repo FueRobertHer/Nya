@@ -20,8 +20,11 @@
 //
 // Each run also prunes the container's records of showings (lib/access-log.ts):
 // the nightly pass that holds them to ACCESS_LOG_DAYS even where nothing is
-// shown again, and deletes those whose connection has ended. It goes first and
-// never throws, so neither costs the other.
+// shown again, and deletes those whose connection has ended, going by the
+// connections as they are when each container's records have been read
+// (lib/sharing.ts nightlyLogIds, one per run, so a connection field that
+// can't be read is logged once a run). It goes first and never throws, so
+// neither costs the other.
 //
 // "snapshot:" keys describe this environment's cron, not the data: exports
 // leave them out and a restore keeps the target's own (lib/export.ts,
@@ -47,7 +50,7 @@ import { rememberAccounts } from './last-known';
 import { recordDirectory } from './links';
 import { clearCaches } from './cache';
 import { pruneAccessLog } from './access-log';
-import { connectionLogIds } from './sharing';
+import { nightlyLogIds } from './sharing';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
@@ -220,8 +223,8 @@ async function pruneRuns(ctx: Ctx, now: number): Promise<void> {
  * partly failed one still records the accounts that answered, for their own
  * charts: on a day the app is not opened this is the only fetch.
  */
-export async function snapshotData(ctx: Ctx): Promise<{ status: RunStatus; reason?: string }> {
-  await pruneAccessLog(ctx, Date.now(), connectionLogIds);
+export async function snapshotData(ctx: Ctx, live = nightlyLogIds()): Promise<{ status: RunStatus; reason?: string }> {
+  await pruneAccessLog(ctx, Date.now(), live);
   const { institutions, netWorth } = await computeNetWorth(ctx);
   const recorded = await recordFetch(ctx, institutions, netWorth);
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
@@ -253,7 +256,8 @@ export type RunOptions = {
 /** Runs every container in the registry for the date (see the header). */
 export async function runSnapshots(registry: Registry, opts: RunOptions): Promise<SnapshotReport> {
   const clock = opts.clock ?? Date.now;
-  const work = opts.work ?? snapshotData;
+  const live = nightlyLogIds();
+  const work = opts.work ?? ((ctx: Ctx) => snapshotData(ctx, live));
   const budget = opts.budgetMs ?? START_BUDGET_MS;
   const date = opts.scheduledFor;
   const started = opts.startedAt ?? clock();

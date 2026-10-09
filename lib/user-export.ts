@@ -230,7 +230,7 @@ export const SECTIONS: readonly ExportSection[] = [
     // them. Not shown_to_me: those are theirs.
     mentions: (sharing) => [
       ...(sharing?.connections.flatMap((c) => [...c.shared.map((s) => s.account_id), ...readIds(c.shown_to_them)]) ?? []),
-      ...(sharing?.ended.flatMap((e) => readIds(e.shown_to_them)) ?? []),
+      ...(sharing?.unmatched.flatMap((e) => readIds(e.shown_to_them)) ?? []),
     ],
     covers: [accessLogStore.name],
   }),

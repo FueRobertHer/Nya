@@ -10,17 +10,27 @@ import {
   lastDay,
   ended,
   endFor,
-  shownDays,
-  describeRead,
+  describeLevels,
+  deviceTimeZone,
   timesText,
   shownText,
   localDay,
   RENEW_DAYS,
-  type Showing,
 } from '@/components/SharingDates';
 
 const noop = () => {};
-const panel = (data: any, opts: { current?: any; draft?: Record<string, any>; invite?: any; error?: string; endChoice?: any; endDay?: string } = {}) =>
+type PanelOpts = {
+  current?: any;
+  draft?: Record<string, any>;
+  invite?: any;
+  error?: string;
+  endChoice?: any;
+  endDay?: string;
+  records?: any;
+  recordsFailed?: boolean;
+  damaged?: any;
+};
+const panel = (data: any, opts: PanelOpts = {}) =>
   renderToStaticMarkup(
     <SharingPanelView
       data={data}
@@ -42,6 +52,10 @@ const panel = (data: any, opts: { current?: any; draft?: Record<string, any>; in
       onSave={noop}
       onRenew={noop}
       onPreview={noop}
+      records={opts.records ?? null}
+      recordsFailed={opts.recordsFailed ?? false}
+      onShowAll={noop}
+      damaged={opts.damaged ?? null}
       onClearRecord={noop}
       onClearDamaged={noop}
       onRemove={noop}
@@ -54,11 +68,21 @@ const pat = {
   since: '2026-09-28',
   sharing: { a: 'exists', hidden_one: 'balance' },
   expires_at: null,
+};
+/** How many accounts at each level. */
+const lv = (exists = 0, balance = 0, transactions = 0) => ({ exists, balance, transactions });
+/** One day of a record, as the server sends it. */
+const day = (d: string, times: number, levels = lv(0, 1, 0)) => ({ day: d, times, levels });
+const empty = { days: [], total_days: 0 };
+/** Both records on Pat's connection, as the drawer gets them when it opens. */
+const recs = (them: any = empty, me: any = empty, extra: Record<string, unknown> = {}) => ({
+  connection: 'c1',
   record_id: 'f'.repeat(32),
   record_since: '2026-09-28T10:00:00.000Z',
-  shown_to_them: [],
-  shown_to_me: [],
-};
+  shown_to_them: them,
+  shown_to_me: me,
+  ...extra,
+});
 const accounts = [{ id: 'a', label: 'Chase Checking ••1111' }];
 /** The page as text, tags dropped and the apostrophes React escapes put back. */
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
@@ -157,9 +181,10 @@ describe('the sharing drawer', () => {
   });
 
   test('uses no class an ad blocker hides', () => {
+    const damaged = { damaged: ['a'.repeat(32)], maybe_connected: false };
     const html =
-      panel({ enabled: true, connections: [pat], blocked: [{ id: 'c9', label: 'Ex' }], accounts, damaged_records: ['a'.repeat(32)] }, { current: pat }) +
-      panel({ enabled: true, connections: [pat], accounts, damaged_records: ['a'.repeat(32)] });
+      panel({ enabled: true, connections: [pat], blocked: [{ id: 'c9', label: 'Ex' }], accounts }, { current: pat, records: recs({ days: [day('2026-10-04', 1)], total_days: 9 }) }) +
+      panel({ enabled: true, connections: [pat], accounts }, { damaged });
     expect(html).not.toMatch(/class="[^"]*\bshare/);
   });
 });
@@ -295,59 +320,24 @@ describe('when a share ends', () => {
 });
 
 describe('when it was shown', () => {
-  const shown: Showing[] = [
-    { at: '2026-10-04T06:00:00.000Z', times: 2, read: { a: 'balance' } },
-    { at: '2026-10-04T15:00:00.000Z', times: 1, read: { a: 'transactions', b: 'balance' } },
-    { at: '2026-10-04T20:00:00.000Z', times: 2, read: { a: 'balance', c: 'exists' } },
-  ];
-
-  test('quarter hours become the reader’s own days, newest first, each account at the widest level that day', () => {
-    inZone('America/Los_Angeles'); // 11 PM on Oct 3, then 8 AM and 1 PM on Oct 4
-    expect(shownDays(shown)).toEqual([
-      { day: '2026-10-04', times: 3, read: { a: 'transactions', b: 'balance', c: 'exists' } },
-      { day: '2026-10-03', times: 2, read: { a: 'balance' } },
-    ]);
-    inZone('Asia/Tokyo'); // 3 PM on Oct 4, then midnight and 5 AM on Oct 5
-    expect(shownDays(shown).map((d) => [d.day, d.times])).toEqual([
-      ['2026-10-05', 3],
-      ['2026-10-04', 2],
-    ]);
+  test('says how many times, and what, widest first', () => {
+    expect([1, 2, 3, 10].map(timesText)).toEqual(['once', 'twice', '3 times', '10 times']);
+    expect(describeLevels(lv(0, 2, 0))).toBe('balances of 2 accounts');
+    expect(describeLevels(lv(0, 0, 1))).toBe('the balance and transactions of 1 account');
+    expect(describeLevels(lv(2, 1, 1))).toBe('the balance and transactions of 1 account, the balance of 1 account and that 2 accounts exist');
+    expect(describeLevels(lv(1, 0, 0))).toBe('that 1 account exists');
+    expect(describeLevels(lv())).toBe('');
+    const now = new Date('2026-10-08T12:00:00');
+    expect(shownText(day('2026-10-04', 3, lv(0, 2, 0)), now)).toBe('Shown 3 times on Oct 4, balances of 2 accounts.');
+    expect(shownText(day('2026-10-04', 1, lv()), now)).toBe('Shown once on Oct 4.');
     expect(localDay(new Date(2026, 0, 5))).toBe('2026-01-05');
   });
 
-  test('half and three quarter hour time zones get each in the right day', () => {
-    // 00:10 on Oct 5 in Kolkata (UTC+5:30) is 18:40 UTC on Oct 4, counted in
-    // the quarter hour from 18:30: midnight there, Oct 5. By the hour, it
-    // would have been 11:30 PM on Oct 4.
+  test('the drawer asks for the days of this device’s own time zone', () => {
     inZone('Asia/Kolkata');
-    const kolkata: Showing[] = [
-      { at: '2026-10-04T18:30:00.000Z', times: 1, read: { a: 'balance' } },
-      { at: '2026-10-04T18:15:00.000Z', times: 2, read: { a: 'balance' } }, // 11:45 PM on Oct 4
-    ];
-    expect(shownDays(kolkata).map((d) => [d.day, d.times])).toEqual([
-      ['2026-10-05', 1],
-      ['2026-10-04', 2],
-    ]);
-    // Kathmandu, UTC+5:45: 18:15 UTC is midnight on Oct 5.
-    inZone('Asia/Kathmandu');
-    expect(shownDays([{ at: '2026-10-04T18:15:00.000Z', times: 1, read: {} }, { at: '2026-10-04T18:00:00.000Z', times: 1, read: {} }]).map((d) => d.day)).toEqual([
-      '2026-10-05',
-      '2026-10-04',
-    ]);
-  });
-
-  test('says how many times, and what, widest first', () => {
-    expect([1, 2, 3, 10].map(timesText)).toEqual(['once', 'twice', '3 times', '10 times']);
-    expect(describeRead({ a: 'balance', b: 'balance' })).toBe('balances of 2 accounts');
-    expect(describeRead({ a: 'transactions' })).toBe('the balance and transactions of 1 account');
-    expect(describeRead({ a: 'exists', b: 'balance', c: 'transactions', d: 'exists' })).toBe(
-      'the balance and transactions of 1 account, the balance of 1 account and that 2 accounts exist'
-    );
-    expect(describeRead({ a: 'exists' })).toBe('that 1 account exists');
-    expect(describeRead({})).toBe('');
-    const now = new Date('2026-10-08T12:00:00');
-    expect(shownText({ day: '2026-10-04', times: 3, read: { a: 'balance', b: 'balance' } }, now)).toBe('Shown 3 times on Oct 4, balances of 2 accounts.');
-    expect(shownText({ day: '2026-10-04', times: 1, read: {} }, now)).toBe('Shown once on Oct 4.');
+    expect(deviceTimeZone()).toBe('Asia/Kolkata');
+    inZone('America/St_Johns');
+    expect(deviceTimeZone()).toBe('America/St_Johns');
   });
 });
 
@@ -389,18 +379,12 @@ describe('a connection’s end, preview and records in the drawer', () => {
     expect(panel({ enabled: true, connections: [pat], accounts }, { current: pat })).toContain('See what Pat sees');
   });
 
-  test('both records: what was shown to them, by my days, newest first, and what was shown to me', () => {
-    inZone('UTC');
-    const c = {
-      ...pat,
-      shown_to_them: [
-        { at: '2026-10-02T09:00:00.000Z', times: 1, read: { a: 'transactions' } },
-        { at: '2026-10-04T13:15:00.000Z', times: 2, read: { a: 'balance', b: 'balance' } },
-        { at: '2026-10-04T18:45:00.000Z', times: 1, read: { a: 'balance' } },
-      ],
-      shown_to_me: [{ at: '2026-10-03T08:30:00.000Z', times: 4, read: { x: 'exists' } }],
-    };
-    const html = text(panel({ enabled: true, connections: [c], accounts }, { current: c }));
+  test('both records: what was shown to them, by day, newest first, and what was shown to me', () => {
+    const records = recs(
+      { days: [day('2026-10-04', 3, lv(0, 2, 0)), day('2026-10-02', 1, lv(0, 0, 1))], total_days: 2 },
+      { days: [day('2026-10-03', 4, lv(1, 0, 0))], total_days: 1 }
+    );
+    const html = text(panel({ enabled: true, connections: [pat], accounts }, { current: pat, records }));
     const toThem = html.slice(html.indexOf('Shown to them'), html.indexOf('Shown to you'));
     const toMe = html.slice(html.indexOf('Shown to you'));
     const oct4 = `Shown 3 times on ${shortDate('2026-10-04')}, balances of 2 accounts.`;
@@ -414,62 +398,77 @@ describe('a connection’s end, preview and records in the drawer', () => {
     expect(toMe).toContain(`Shown 4 times on ${shortDate('2026-10-03')}, that 1 account exists.`);
     expect(toMe).toContain('Pat’s record of each time what they share was shown to you: the same one they see.');
     expect(toMe).not.toContain(oct4);
-    // Many days: the latest five, then the rest on request, saying whether they are open.
-    const many = { ...pat, shown_to_them: Array.from({ length: 8 }, (_, i) => ({ at: `2026-09-0${i + 1}T12:00:00.000Z`, times: 1, read: { a: 'balance' } })) };
-    const long = panel({ enabled: true, connections: [many], accounts }, { current: many });
+    // Five days came, of eight: "Show all" asks for the rest, and says whether they are open.
+    const many = recs({ days: Array.from({ length: 5 }, (_, i) => day(`2026-09-0${8 - i}`, 1)), total_days: 8 });
+    const long = panel({ enabled: true, connections: [pat], accounts }, { current: pat, records: many });
     expect(text(long).match(/Shown once/g)).toHaveLength(5);
     expect(long).toContain('<button class="link-btn" aria-expanded="false">Show all 8 days</button>');
+    // Five or fewer in all: nothing more to show.
+    expect(panel({ enabled: true, connections: [pat], accounts }, { current: pat, records })).not.toContain('Show all');
+  });
+
+  test('the connection and its controls are there before its records, and whether they load or not', () => {
+    for (const opts of [{}, { recordsFailed: true }]) {
+      const html = text(panel({ enabled: true, connections: [pat], accounts }, { current: pat, ...opts }));
+      for (const control of ['What you call them', 'Chase Checking ••1111', 'How long they can see it', 'Save', 'See what Pat sees', 'Remove', 'Block']) {
+        expect(html).toContain(control);
+      }
+      const shownToThem = html.slice(html.indexOf('Shown to them'), html.indexOf('Shown to you'));
+      if ('recordsFailed' in opts) expect(shownToThem).toContain('This record couldn’t be loaded. Try again later.');
+      else expect(shownToThem).toContain('Loading…');
+    }
   });
 
   test('a record with nothing in it says nothing was recorded, and since when, never that they haven’t looked', () => {
-    const empty = (record_since: string | null) => {
-      const c = { ...pat, record_since, shown_to_them: [], shown_to_me: [] };
-      return text(panel({ enabled: true, connections: [c], accounts }, { current: c }));
-    };
+    const none = (record_since: string | null) => text(panel({ enabled: true, connections: [pat], accounts }, { current: pat, records: recs(empty, empty, { record_since }) }));
     const since = new Date(Date.now() - 3 * DAY).toISOString();
-    expect(empty(since).match(new RegExp(`Nothing recorded since ${shortDate(since)}\\.`, 'g'))).toHaveLength(2);
-    expect(empty('2025-01-01T00:00:00.000Z').match(/Nothing recorded in the last 90 days\./g)).toHaveLength(2);
+    expect(none(since).match(new RegExp(`Nothing recorded since ${shortDate(since)}\\.`, 'g'))).toHaveLength(2);
+    expect(none('2025-01-01T00:00:00.000Z').match(/Nothing recorded in the last 90 days\./g)).toHaveLength(2);
     // A connection from before records: none has begun yet.
-    expect(empty(null).match(/Nothing recorded yet\./g)).toHaveLength(2);
-    for (const t of [empty(since), empty(null)]) expect(t).not.toMatch(/hasn’t looked|haven’t looked|not looked/);
+    expect(none(null).match(/Nothing recorded yet\./g)).toHaveLength(2);
+    for (const t of [none(since), none(null)]) expect(t).not.toMatch(/hasn’t looked|haven’t looked|not looked/);
   });
 
   test('a record that can’t be shown says why, and only my own damaged one can be cleared', () => {
-    const shown = (fields: Record<string, unknown>) => {
-      const c = { ...pat, ...fields };
-      return text(panel({ enabled: true, connections: [c], accounts }, { current: c }));
-    };
-    const damaged = shown({ shown_to_them: null, shown_to_them_problem: 'unreadable' });
+    const problem = (p: string) => ({ days: null, problem: p });
+    const shown = (records: any) => text(panel({ enabled: true, connections: [pat], accounts }, { current: pat, records }));
+    const damaged = shown(recs(problem('unreadable')));
     expect(damaged).toContain('This record can’t be read, so new showings aren’t being recorded. Clearing it starts a new one; nothing readable is lost.');
     expect(damaged).toContain('Clear the record');
-    const theirs = shown({ shown_to_me: null, shown_to_me_problem: 'unreadable' });
+    const theirs = shown(recs(empty, problem('unreadable')));
     expect(theirs).toContain('Pat’s record of this can’t be read, so new showings aren’t being recorded.');
-    expect(theirs).not.toContain('Clear the record');
-    const odd = shown({ shown_to_them: null, shown_to_them_problem: 'unrecognised' });
+    const odd = shown(recs(problem('unrecognised')));
     expect(odd).toContain('This record was saved by another version of Nya and can’t be shown here. It is kept as it is, and new showings aren’t recorded until it can be read.');
-    const away = shown({ shown_to_them: null, shown_to_them_problem: 'unavailable' });
-    expect(away).toContain('This record couldn’t be loaded. Try again later.');
-    const missing = shown({ shown_to_them: undefined, shown_to_me: undefined }); // a server that sent nothing about them
-    expect(missing.match(/couldn’t be loaded/g)).toHaveLength(2);
-    // Its log field damaged too: no id to clear it by.
-    const noId = shown({ record_id: null, shown_to_them: null, shown_to_them_problem: 'unreadable' });
-    for (const t of [theirs, odd, away, missing, noId]) expect(t).not.toContain('Clear the record');
+    const away = shown(recs(problem('unavailable'), problem('unavailable')));
+    expect(away.match(/This record couldn’t be loaded\. Try again later\./g)).toHaveLength(2);
+    // The connection's record id can't be read: what is true, and nothing to clear that wouldn't help.
+    const noId = shown(recs(problem('record_id_unreadable'), problem('record_id_unreadable'), { record_id: null, record_since: null }));
+    expect(noId).toContain(
+      'The id this connection’s records are kept under can’t be read, so they can’t be shown, and new showings aren’t recorded. Removing Pat and connecting again starts new records.'
+    );
+    expect(noId).toContain('Pat’s record of this can’t be shown either.');
+    for (const t of [theirs, odd, away, noId]) expect(t).not.toContain('Clear the record');
     // Never "nothing recorded" for a record that can't be shown.
     const toThem = (t: string) => t.slice(t.indexOf('Shown to them'), t.indexOf('Shown to you'));
     const toMe = (t: string) => t.slice(t.indexOf('Shown to you'), t.indexOf('Connection Remove'));
-    for (const t of [damaged, odd, away, missing]) expect(toThem(t)).not.toContain('Nothing recorded');
-    for (const t of [theirs, missing]) expect(toMe(t)).not.toContain('Nothing recorded');
+    for (const t of [damaged, odd, away, noId]) expect(toThem(t)).not.toContain('Nothing recorded');
+    for (const t of [theirs, away, noId]) expect(toMe(t)).not.toContain('Nothing recorded');
     expect(toMe(damaged)).toContain('Nothing recorded');
   });
 
-  test('records of mine that can’t be read and belong to no one I’m connected with now can be cleared', () => {
-    const one = text(panel({ enabled: true, connections: [pat], accounts, damaged_records: ['a'.repeat(32)] }));
+  test('records of mine that can’t be read and that no connection is matched to can be cleared, said as truly as Nya knows it', () => {
+    const list = (damaged: any) => text(panel({ enabled: true, connections: [pat], accounts }, { damaged }));
+    const one = list({ damaged: ['a'.repeat(32)], maybe_connected: false });
     expect(one).toContain('A record of showings from someone you’re no longer connected with can’t be read.');
     expect(one).toContain('Clear it');
-    const two = text(panel({ enabled: true, connections: [], accounts, damaged_records: ['a'.repeat(32), 'b'.repeat(32)] }));
+    const two = list({ damaged: ['a'.repeat(32), 'b'.repeat(32)], maybe_connected: false });
     expect(two).toContain('2 records of showings from people you’re no longer connected with can’t be read.');
     expect(two).toContain('Clear them');
-    expect(text(panel({ enabled: true, connections: [pat], accounts, damaged_records: [] }))).not.toContain('can’t be read');
+    // One of my connections has a record id that can't be read: it could be that one's.
+    expect(list({ damaged: ['a'.repeat(32)], maybe_connected: true })).toContain(
+      'A record of showings can’t be read, and Nya can’t tell whose it is: someone you’re no longer connected with, or someone whose record id can’t be read.'
+    );
+    for (const nothing of [{ damaged: [], maybe_connected: false }, null]) expect(list(nothing)).not.toContain('can’t be read');
   });
 });
 

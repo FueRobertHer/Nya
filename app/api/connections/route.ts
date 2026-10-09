@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { signedInCtx, containerUnavailable } from '@/lib/data-ctx';
-import { myConnections, myRecords, removeConnection, saveConnection, shareableAccounts, SharingRefused } from '@/lib/sharing';
+import { myConnections, removeConnection, saveConnection, shareableAccounts, SharingRefused } from '@/lib/sharing';
 
-// My connections and what I share on each (lib/sharing.ts), with both
-// records of showings on each (lib/access-log.ts): when what I share was
-// shown to them, and when what they share was shown to me. Only with Clerk on:
-// the shared password has one user and nobody to connect with.
+// My connections and what I share on each (lib/sharing.ts). Only with Clerk
+// on: the shared password has one user and nobody to connect with. No record
+// of showings is read here, so none can stand between me and Remove or
+// Block: the drawer asks for each connection's records on their own
+// (connections/records), and for the damaged ones apart (connections/access-log).
 
 async function handle(fn: () => Promise<NextResponse>, what: string): Promise<NextResponse> {
   try {
@@ -23,14 +24,8 @@ export async function GET() {
   return handle(async () => {
     const me = await signedInCtx();
     if (!me) return NextResponse.json({ enabled: false });
-    const [mine, accounts, records] = await Promise.all([myConnections(me.userId), shareableAccounts(me.ctx), myRecords(me.userId, me.ctx)]);
-    // Each by what I call them, never by who they are: a record holds only
-    // the connection's log id.
-    const connections = mine.connections.map((c) => ({ ...c, ...records.connections.get(c.id) }));
-    return NextResponse.json(
-      { enabled: true, connections, blocked: mine.blocked, accounts, damaged_records: records.damaged },
-      { headers: { 'Cache-Control': 'no-store' } }
-    );
+    const [mine, accounts] = await Promise.all([myConnections(me.userId), shareableAccounts(me.ctx)]);
+    return NextResponse.json({ enabled: true, connections: mine.connections, blocked: mine.blocked, accounts }, { headers: { 'Cache-Control': 'no-store' } });
   }, 'read');
 }
 

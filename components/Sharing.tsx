@@ -7,7 +7,11 @@
 //     mine, per account (not shared, that it exists, balance, or balance and
 //     recent transactions) and until when, a preview of exactly what they see,
 //     both records of showings (when what I share was shown to them, and when
-//     what they share was shown to me), plus remove and block;
+//     what they share was shown to me), plus remove and block. The list and
+//     those controls load without any record: each connection's records are
+//     asked for on their own when it is opened, as days in this device's time
+//     zone, a few at a time, so no record can stand between anyone and Remove
+//     or Block;
 //   - "Shared by ...", on the Accounts tab whenever a connection shares
 //     something: their accounts, read-only, and until when. They are fetched
 //     only once that part of the page is on screen, since each fetch is
@@ -21,7 +25,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatMoney } from '@/lib/format';
-import { ACCESS_LOG_DAYS, type Level } from '@/lib/share-rules';
+import { ACCESS_LOG_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import {
   shortDate,
@@ -31,9 +35,9 @@ import {
   ended,
   EndPicker,
   ShowingsRecord,
+  deviceTimeZone,
   RENEW_DAYS,
   type EndChoice,
-  type Showing,
 } from './SharingDates';
 
 export { shortDate } from './SharingDates';
@@ -48,28 +52,31 @@ export type Connection = {
   /** When what I share with them ends (an ISO time, which may have passed),
    *  or null for no end. */
   expires_at: string | null;
-  /** My record's id, to clear it by when it can't be read; null before the
-   *  first record. */
-  record_id: string | null;
-  /** When the connection's records began, or null before the first. */
-  record_since: string | null;
-  /** When what I share was shown to them, by the quarter hour, oldest first;
-   *  null when my record can't be used, and the problem says why. */
-  shown_to_them: Showing[] | null;
-  shown_to_them_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
-  /** When what they share was shown to me: their record, the same one they see. */
-  shown_to_me: Showing[] | null;
-  shown_to_me_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
 };
 export type SharingPayload = {
   enabled: boolean;
   connections?: Connection[];
   blocked?: { id: string; label: string }[];
   accounts?: { id: string; label: string; institution?: string; name?: string }[];
-  /** My records that can't be read and belong to no connection of mine now,
-   *  by id: clearable once I confirm. */
-  damaged_records?: string[];
 };
+/** Both records of showings on one connection (lib/sharing.ts
+ *  connectionRecords), asked for when it is opened. */
+export type ConnectionRecords = {
+  connection: string;
+  /** My record's id, to clear it by when it can't be read; null before the
+   *  first record, or when the connection's record id can't be read. */
+  record_id: string | null;
+  /** When the connection's records began, or null before the first. */
+  record_since: string | null;
+  /** When what I share was shown to them: my record. */
+  shown_to_them: RecordSummary;
+  /** When what they share was shown to me: their record, the same one they see. */
+  shown_to_me: RecordSummary;
+};
+/** My records that can't be read and that none of my connections is matched
+ *  to, by id, clearable once I confirm; `maybe_connected` when one of my
+ *  connections has a record id that can't be read, so one may be its. */
+export type DamagedRecords = { damaged: string[]; maybe_connected: boolean };
 
 type ShareableAccount = NonNullable<SharingPayload['accounts']>[number];
 
@@ -169,6 +176,13 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
   // Which preview request is the latest: an older answer that comes back
   // after a newer one (go back, save, look again) is dropped.
   const asked = useRef(0);
+  // The open connection's records, asked for on their own when it opens, and
+  // the damaged records no connection is matched to, asked for apart: neither
+  // can stop the list and its controls loading. The latest records request
+  // wins, as with the preview.
+  const [records, setRecords] = useState<{ id: string; data: ConnectionRecords | null; failed: boolean } | null>(null);
+  const askedRecords = useRef(0);
+  const [damaged, setDamaged] = useState<DamagedRecords | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/connections').catch(() => null);
@@ -178,9 +192,26 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     setData(body);
     setSelected((s) => (s && body.connections?.some((c) => c.id === s) ? s : null));
   }, []);
+  const loadDamaged = useCallback(async () => {
+    const res = await fetch('/api/connections/access-log').catch(() => null);
+    const body = res?.ok ? await res.json().catch(() => null) : null;
+    // Without an answer the notice is left out: the rest works as it was.
+    setDamaged(body && Array.isArray(body.damaged) ? body : null);
+  }, []);
+  const loadRecords = useCallback(async (id: string, all = false) => {
+    const mine = ++askedRecords.current;
+    // "Show all" keeps what is there while the rest comes.
+    setRecords((r) => (all && r?.id === id ? r : { id, data: null, failed: false }));
+    const zone = encodeURIComponent(deviceTimeZone());
+    const res = await fetch(`/api/connections/records?id=${encodeURIComponent(id)}&tz=${zone}${all ? '&all=1' : ''}`).catch(() => null);
+    const body: ConnectionRecords | null = res?.ok ? await res.json().catch(() => null) : null;
+    if (askedRecords.current !== mine) return; // another was asked for since
+    setRecords((r) => (body ? { id, data: body, failed: false } : { id, data: r?.id === id ? r.data : null, failed: true }));
+  }, []);
   useEffect(() => {
     if (open) {
       load();
+      loadDamaged();
       return;
     }
     // Next time it opens at the top, with nothing half-done showing.
@@ -189,7 +220,8 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     setInvite(null);
     setNotice('');
     setError('');
-  }, [open, load]);
+    setRecords(null);
+  }, [open, load, loadDamaged]);
 
   // Opening a connection starts its draft from what is saved.
   const openConnection = useCallback(
@@ -204,8 +236,9 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
       setNotice('');
       setError('');
       setSelected(id);
+      loadRecords(id);
     },
-    [data]
+    [data, loadRecords]
   );
 
   const act = useCallback(
@@ -254,9 +287,9 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
       setBusy(false);
       if (failed) setError(failed);
       else setNotice(ids.length === 1 ? 'Cleared.' : 'Cleared them.');
-      await load();
+      await Promise.all([load(), loadDamaged(), ...(selected ? [loadRecords(selected)] : [])]);
     },
-    [load]
+    [load, loadDamaged, loadRecords, selected]
   );
 
   const current = data?.connections?.find((c) => c.id === selected) ?? null;
@@ -313,11 +346,19 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
           onPreview={() => {
             if (current) openPreview(current.id);
           }}
+          records={records && current && records.id === current.id ? records.data : null}
+          recordsFailed={!!(records && current && records.id === current.id && records.failed)}
+          onShowAll={() => {
+            if (current) loadRecords(current.id, true);
+          }}
+          damaged={damaged}
           onClearRecord={(id) => clearRecords([id], 'Clear this record? It can’t be read, so nothing readable is lost, and the next showing starts a new one.')}
           onClearDamaged={() =>
             clearRecords(
-              data?.damaged_records ?? [],
-              'Clear what can’t be read? It belongs to no one you’re connected with now, and nothing readable is lost.'
+              damaged?.damaged ?? [],
+              damaged?.maybe_connected
+                ? 'Clear what can’t be read? Nothing readable is lost.'
+                : 'Clear what can’t be read? It belongs to no one you’re connected with now, and nothing readable is lost.'
             )
           }
           onRemove={async (id, block) => {
@@ -354,6 +395,10 @@ export function SharingPanelView({
   onSave,
   onRenew,
   onPreview,
+  records,
+  recordsFailed,
+  onShowAll,
+  damaged,
   onClearRecord,
   onClearDamaged,
   onRemove,
@@ -379,6 +424,15 @@ export function SharingPanelView({
   /** Gives an ended share another RENEW_DAYS, as it was. */
   onRenew: () => void;
   onPreview: () => void;
+  /** The open connection's records: null while they load, or when they
+   *  couldn't be (recordsFailed). */
+  records: ConnectionRecords | null;
+  recordsFailed: boolean;
+  /** Asks for every day of the open connection's records. */
+  onShowAll: () => void;
+  /** My damaged records no connection is matched to, or null when that
+   *  isn't known (still loading, or it couldn't be). */
+  damaged: DamagedRecords | null;
   /** Clears my unreadable record on a connection, by its id (after confirming). */
   onClearRecord: (id: string) => void;
   /** Clears my unreadable records that belong to no connection now (after
@@ -464,13 +518,19 @@ export function SharingPanelView({
         <section className="panel-section">
           <p className="section-label">Shown to them</p>
           <ShowingsRecord
+            key={`them-${current.id}`}
             who={current.label}
             mine
-            since={current.record_since ?? null}
-            showings={current.shown_to_them ?? null}
-            problem={current.shown_to_them_problem ?? (current.shown_to_them === undefined ? 'unavailable' : undefined)}
+            since={records?.record_since ?? null}
+            summary={records?.shown_to_them ?? null}
+            failed={recordsFailed}
             busy={busy}
-            onClear={current.shown_to_them_problem === 'unreadable' && current.record_id ? () => onClearRecord(current.record_id!) : undefined}
+            onClear={
+              records && records.shown_to_them.days === null && records.shown_to_them.problem === 'unreadable' && records.record_id
+                ? () => onClearRecord(records.record_id!)
+                : undefined
+            }
+            onShowAll={onShowAll}
           />
           <p className="panel-note">
             Counted each time their app loads what you share, which it does when that part of their Accounts tab comes into view. Kept{' '}
@@ -480,12 +540,14 @@ export function SharingPanelView({
         <section className="panel-section">
           <p className="section-label">Shown to you</p>
           <ShowingsRecord
+            key={`me-${current.id}`}
             who={current.label}
             mine={false}
-            since={current.record_since ?? null}
-            showings={current.shown_to_me ?? null}
-            problem={current.shown_to_me_problem ?? (current.shown_to_me === undefined ? 'unavailable' : undefined)}
+            since={records?.record_since ?? null}
+            summary={records?.shown_to_me ?? null}
+            failed={recordsFailed}
             busy={busy}
+            onShowAll={onShowAll}
           />
           <p className="panel-note">{current.label}’s record of each time what they share was shown to you: the same one they see.</p>
         </section>
@@ -507,22 +569,26 @@ export function SharingPanelView({
 
   const connections = data.connections ?? [];
   const blocked = data.blocked ?? [];
-  const damaged = data.damaged_records ?? [];
+  const unmatched = damaged?.damaged ?? [];
   return (
     <>
       <section className="panel-section">
         <p className="panel-note" style={{ marginTop: 0 }}>
           They see only the accounts you choose, read-only. Nobody else in the app can find you.
         </p>
-        {damaged.length > 0 && (
+        {unmatched.length > 0 && (
           <>
             <p className="stale-note">
-              {damaged.length === 1
-                ? 'A record of showings from someone you’re no longer connected with can’t be read.'
-                : `${damaged.length} records of showings from people you’re no longer connected with can’t be read.`}
+              {damaged?.maybe_connected
+                ? unmatched.length === 1
+                  ? 'A record of showings can’t be read, and Nya can’t tell whose it is: someone you’re no longer connected with, or someone whose record id can’t be read.'
+                  : `${unmatched.length} records of showings can’t be read, and Nya can’t tell whose they are: people you’re no longer connected with, or someone whose record id can’t be read.`
+                : unmatched.length === 1
+                  ? 'A record of showings from someone you’re no longer connected with can’t be read.'
+                  : `${unmatched.length} records of showings from people you’re no longer connected with can’t be read.`}
             </p>
             <button className="secondary" onClick={onClearDamaged} disabled={busy} style={{ marginTop: 10 }}>
-              {damaged.length === 1 ? 'Clear it' : 'Clear them'}
+              {unmatched.length === 1 ? 'Clear it' : 'Clear them'}
             </button>
           </>
         )}

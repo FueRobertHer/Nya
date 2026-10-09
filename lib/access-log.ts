@@ -25,9 +25,11 @@
 // COUNTED BY THE QUARTER HOUR (ACCESS_LOG_SLOT_MINUTES), in UTC: one row per
 // quarter hour, with how many times it was shown in it and, for each account,
 // the widest level it was shown at. Ten loads in a quarter hour are one row.
-// Every time zone in use is a whole number of quarter hours from UTC, so the
-// drawer can put each row in its reader's own day exactly
-// (components/SharingDates.tsx).
+// Every time zone in use is a whole number of quarter hours from UTC, so each
+// row falls in exactly one of its reader's days: the drawer gets a record as
+// days in the reader's own time zone, grouped here (shownByDay), a few at a
+// time, never the rows themselves, so what it is sent stays small however
+// much a record holds.
 //
 // KEPT FOR ACCESS_LOG_DAYS AT MOST. Every write drops what is older, and every
 // night the snapshot (lib/snapshot-job.ts) prunes each record in the
@@ -44,7 +46,7 @@
 
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
-import { ACCESS_LOG_DAYS, ACCESS_LOG_SLOT_MINUTES, isLevel, widerLevel, type Level } from './share-rules';
+import { ACCESS_LOG_DAYS, ACCESS_LOG_SLOT_MINUTES, LEVELS, isLevel, widerLevel, type Level, type ShownDay } from './share-rules';
 
 /** One quarter hour of a record. */
 export type Showing = {
@@ -131,6 +133,47 @@ export function withShowing(current: AccessLog | null, now: number, read: Record
   return { shown: shown.slice(-MAX_SLOTS) };
 }
 
+/** A time zone a device sent, or null: an IANA name ("Asia/Kolkata") or
+ *  another name or offset the server's time zone data knows, never anything
+ *  it would have to guess at. */
+export function timeZoneOf(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 64 || !/^[A-Za-z0-9_+\-/:]+$/.test(raw)) return null;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: raw });
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A record's quarter hours as days in `timeZone` (timeZoneOf), newest first:
+ * for each day, how many times it was shown, and how many accounts at each
+ * level, each account once, at the widest level shown that day. Every time
+ * zone in use is a whole number of quarter hours from UTC, so a quarter hour
+ * never straddles two days.
+ */
+export function shownByDay(shown: Showing[], timeZone: string): ShownDay[] {
+  const format = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const days = new Map<string, { times: number; read: Record<string, Level> }>();
+  for (const s of shown) {
+    const parts: Record<string, string> = {};
+    for (const p of format.formatToParts(new Date(s.at))) parts[p.type] = p.value;
+    const day = `${parts.year}-${parts.month}-${parts.day}`;
+    const d = days.get(day) ?? { times: 0, read: {} };
+    d.times += s.times;
+    for (const [id, level] of Object.entries(s.read)) d.read[id] = d.read[id] ? widerLevel(d.read[id], level) : level;
+    days.set(day, d);
+  }
+  return [...days.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .map(([day, d]) => {
+      const levels = Object.fromEntries(LEVELS.map((l) => [l, 0])) as Record<Level, number>;
+      for (const level of Object.values(d.read)) levels[level]++;
+      return { day, times: d.times, levels };
+    });
+}
+
 /**
  * Removes my record under `id`, only if it is unreadable (damaged bytes, so
  * nothing readable is lost), for the drawer's "Clear", which the person
@@ -161,16 +204,18 @@ export async function clearUnreadableAccessLog(ctx: Ctx, id: string): Promise<bo
  * showing recorded meanwhile is kept. Unreadable and unrecognised records of a
  * connection that is still there are left alone.
  *
- * `live` gives the log ids of the connections there are, or null when they
- * can't all be read: then no record is deleted for its connection. It is read
+ * `live` gives the log ids of the connections there are, or null when a record
+ * in this container could belong to a connection whose fields can't be read
+ * (lib/sharing.ts nightlyLogIds): then no record is deleted for its
+ * connection, and only the quarter hours past ACCESS_LOG_DAYS go. It is read
  * after the records, so a record is only ever judged by connections read after
  * it was: a new connection's log id is saved before anything is written under
  * it. Never throws: a failure is logged, and the next night tries again.
  */
-export async function pruneAccessLog(ctx: Ctx, now: number, live: () => Promise<ReadonlySet<string> | null>): Promise<void> {
+export async function pruneAccessLog(ctx: Ctx, now: number, live: (ctx: Ctx) => Promise<ReadonlySet<string> | null>): Promise<void> {
   try {
     const report = await accessLogStore.getAllReport(ctx);
-    const known = await live();
+    const known = await live(ctx);
     if (known) {
       const ended = [...report.entries.keys(), ...report.unreadable, ...report.unrecognised].filter((id) => !known.has(id));
       if (ended.length > 0) await accessLogStore.remove(ctx, ...ended);

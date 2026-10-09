@@ -10,13 +10,14 @@
 //     time. The choices: no end, 7 or 30 days, tax season (from January to
 //     April only, through Apr 30), or a date.
 //   - when it was shown: the records of showings (lib/access-log.ts), counted
-//     by the quarter hour in UTC, grouped into the reader's own days, "Shown
-//     3 times on Oct 4, balances of 2 accounts". Every time zone in use is a
-//     whole number of quarter hours from UTC, so each quarter hour falls in
-//     exactly one of the reader's days.
+//     by the quarter hour in UTC, which the server sends as days in the
+//     reader's own time zone (lib/sharing.ts connectionRecords), a few at a
+//     time: "Shown 3 times on Oct 4, balances of 2 accounts". Every time zone
+//     in use is a whole number of quarter hours from UTC, so each quarter hour
+//     falls in exactly one of the reader's days.
 
 import { useState } from 'react';
-import { ACCESS_LOG_DAYS, widerLevel, type Level } from '@/lib/share-rules';
+import { ACCESS_LOG_DAYS, RECORD_FIRST_DAYS, type Level, type RecordSummary, type ShownDay } from '@/lib/share-rules';
 
 /** "Sep 28", with the year only when it isn't this one. Takes a YYYY-MM-DD
  *  (a calendar day, shown as it is) or a full ISO time (an instant, shown as the
@@ -163,25 +164,13 @@ export function EndPicker({
 
 // ---- When it was shown ----
 
-/** One quarter hour of a record, as the server sends it. */
-export type Showing = { at: string; times: number; read: Record<string, Level> };
-/** One of the reader's days: how many times it was shown, and each account
- *  at the widest level shown that day. */
-export type ShownDay = { day: string; times: number; read: Record<string, Level> };
-
-/** The quarter hours grouped into this device's days, newest first. */
-export function shownDays(shown: Showing[]): ShownDay[] {
-  const days = new Map<string, ShownDay>();
-  for (const s of shown) {
-    const at = new Date(s.at);
-    if (Number.isNaN(at.getTime())) continue;
-    const day = localDay(at);
-    const d = days.get(day) ?? { day, times: 0, read: {} };
-    d.times += s.times;
-    for (const [id, level] of Object.entries(s.read)) d.read[id] = d.read[id] ? widerLevel(d.read[id], level) : level;
-    days.set(day, d);
+/** This device's time zone, for the server to put showings in its days. */
+export function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
   }
-  return [...days.values()].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
 }
 
 /** "once", "twice", "3 times". */
@@ -189,11 +178,10 @@ export function timesText(n: number): string {
   return n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`;
 }
 
-/** What was shown, widest first: "the balance and transactions of 1
- *  account, balances of 2 accounts and that 1 account exists". */
-export function describeRead(read: Record<string, Level>): string {
-  const n = { exists: 0, balance: 0, transactions: 0 };
-  for (const level of Object.values(read)) n[level]++;
+/** What was shown, widest first, from how many accounts were shown at each
+ *  level: "the balance and transactions of 1 account, balances of 2 accounts
+ *  and that 1 account exists". */
+export function describeLevels(n: Record<Level, number>): string {
   const parts = [
     n.transactions === 1 ? 'the balance and transactions of 1 account' : n.transactions > 1 ? `balances and transactions of ${n.transactions} accounts` : '',
     n.balance === 1 ? 'the balance of 1 account' : n.balance > 1 ? `balances of ${n.balance} accounts` : '',
@@ -204,72 +192,88 @@ export function describeRead(read: Record<string, Level>): string {
 
 /** "Shown 3 times on Oct 4, balances of 2 accounts." */
 export function shownText(d: ShownDay, now: Date = new Date()): string {
-  const what = describeRead(d.read);
+  const what = describeLevels(d.levels);
   return `Shown ${timesText(d.times)} on ${shortDate(d.day, now)}${what ? `, ${what}` : ''}.`;
 }
 
-/** Days shown before "Show all". */
-const FIRST_DAYS = 5;
-
 /**
- * One record of showings on a connection: by day, or, when it has none, that
- * nothing was recorded (never that nothing was shown: a record only knows what
- * it counted, and only since it began), or why it can't be shown. `mine` is
- * my own record (when what I share was shown to them), which only I can
- * clear, and only when it is unreadable; otherwise theirs, of showings to me.
+ * One record of showings on a connection: by day, the newest
+ * RECORD_FIRST_DAYS first and the rest on "Show all" (fetched then), or, when
+ * it has none, that nothing was recorded (never that nothing was shown: a
+ * record only knows what it counted, and only since it began), or why it
+ * can't be shown. `mine` is my own record (when what I share was shown to
+ * them), which only I can clear, and only when it is unreadable; otherwise
+ * theirs, of showings to me. `summary` is null while it loads.
  */
 export function ShowingsRecord({
   who,
   mine,
   since,
-  showings,
-  problem,
+  summary,
+  failed,
   busy,
   onClear,
+  onShowAll,
 }: {
   /** What I call them. */
   who: string;
   mine: boolean;
   /** When the connection's records began, or null before the first. */
   since: string | null;
-  showings: Showing[] | null;
-  problem?: 'unreadable' | 'unrecognised' | 'unavailable';
+  summary: RecordSummary | null;
+  /** It couldn't be loaded. */
+  failed: boolean;
   busy: boolean;
   /** Clears my unreadable record (after confirming); absent when it can't be. */
   onClear?: () => void;
+  /** Asks for every day of it, when not all are here yet. */
+  onShowAll: () => void;
 }) {
   const [all, setAll] = useState(false);
-  if (showings === null) {
-    if (problem === 'unreadable') {
-      return mine ? (
-        <>
-          <p className="stale-note" style={{ marginTop: 0 }}>
-            This record can’t be read, so new showings aren’t being recorded. Clearing it starts a new one; nothing readable is lost.
-          </p>
-          {onClear && (
-            <button className="secondary" onClick={onClear} disabled={busy} style={{ marginTop: 10 }}>
-              Clear the record
-            </button>
-          )}
-        </>
-      ) : (
-        <p className="stale-note" style={{ marginTop: 0 }}>
-          {who}’s record of this can’t be read, so new showings aren’t being recorded.
-        </p>
-      );
-    }
-    if (problem === 'unrecognised') {
-      return (
-        <p className="stale-note" style={{ marginTop: 0 }}>
-          {mine ? 'This record' : `${who}’s record of this`} was saved by another version of Nya and can’t be shown here. It is kept as it is, and new
-          showings aren’t recorded until it can be read.
-        </p>
-      );
-    }
-    return <p className="stale-note" style={{ marginTop: 0 }}>This record couldn’t be loaded. Try again later.</p>;
+  const note = (text: string) => (
+    <p className="stale-note" style={{ marginTop: 0 }}>
+      {text}
+    </p>
+  );
+  if (!summary) {
+    if (failed) return note('This record couldn’t be loaded. Try again later.');
+    return (
+      <p className="panel-note" style={{ marginTop: 0 }} role="status">
+        Loading…
+      </p>
+    );
   }
-  const days = shownDays(showings);
-  if (days.length === 0) {
+  if (summary.days === null) {
+    switch (summary.problem) {
+      case 'unreadable':
+        return mine ? (
+          <>
+            {note('This record can’t be read, so new showings aren’t being recorded. Clearing it starts a new one; nothing readable is lost.')}
+            {onClear && (
+              <button className="secondary" onClick={onClear} disabled={busy} style={{ marginTop: 10 }}>
+                Clear the record
+              </button>
+            )}
+          </>
+        ) : (
+          note(`${who}’s record of this can’t be read, so new showings aren’t being recorded.`)
+        );
+      case 'unrecognised':
+        return note(
+          `${mine ? 'This record' : `${who}’s record of this`} was saved by another version of Nya and can’t be shown here. It is kept as it is, and new showings aren’t recorded until it can be read.`
+        );
+      case 'record_id_unreadable':
+        return mine
+          ? note(
+              `The id this connection’s records are kept under can’t be read, so they can’t be shown, and new showings aren’t recorded. Removing ${who} and connecting again starts new records.`
+            )
+          : note(`${who}’s record of this can’t be shown either.`);
+      default:
+        return note('This record couldn’t be loaded. Try again later.');
+    }
+  }
+  const days = summary.days;
+  if (summary.total_days === 0) {
     const recent = since !== null && Date.now() - Date.parse(since) < ACCESS_LOG_DAYS * 86_400_000;
     return (
       <p className="panel-note" style={{ marginTop: 0 }}>
@@ -277,7 +281,8 @@ export function ShowingsRecord({
       </p>
     );
   }
-  const shown = all ? days : days.slice(0, FIRST_DAYS);
+  const shown = all ? days : days.slice(0, RECORD_FIRST_DAYS);
+  const waiting = all && days.length < summary.total_days;
   return (
     <>
       <ul className="shown-list">
@@ -285,9 +290,21 @@ export function ShowingsRecord({
           <li key={d.day}>{shownText(d)}</li>
         ))}
       </ul>
-      {days.length > FIRST_DAYS && (
-        <button className="link-btn" onClick={() => setAll(!all)} aria-expanded={all}>
-          {all ? 'Show fewer' : `Show all ${days.length} days`}
+      {waiting && (
+        <p className="panel-note" role="status">
+          {failed ? 'The rest couldn’t be loaded. Try again later.' : 'Loading the rest…'}
+        </p>
+      )}
+      {summary.total_days > RECORD_FIRST_DAYS && (
+        <button
+          className="link-btn"
+          aria-expanded={all}
+          onClick={() => {
+            if (!all && days.length < summary.total_days) onShowAll();
+            setAll(!all);
+          }}
+        >
+          {all ? 'Show fewer' : `Show all ${summary.total_days} days`}
         </button>
       )}
     </>

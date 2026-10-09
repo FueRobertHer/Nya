@@ -461,7 +461,7 @@ describe('everything stored, decrypted, and nothing else', () => {
         },
       ],
       blocked: [{ name: 'Pest' }],
-      ended: [],
+      unmatched: [],
     });
     const text = JSON.stringify(doc);
     // Their settings are theirs: what they call me, how they introduced
@@ -491,7 +491,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     const { accessLogStore } = await import('@/lib/access-log');
     await fake.hset(ctxKey('sharing-access-log'), { [LOG_ID]: DAMAGED });
     await fake.hset(ctxKey('sharing-access-log', FRIEND), { [LOG_ID]: DAMAGED });
-    // And two of mine whose connection has ended, until the nightly pass deletes them.
+    // And two of mine that no connection is matched to: ended, until the nightly pass deletes them.
     await accessLogStore.set(ctx, 'a'.repeat(32), MY_RECORD);
     await fake.hset(ctxKey('sharing-access-log'), { ['b'.repeat(32)]: DAMAGED });
     const sharing = (await download()).sharing as any;
@@ -502,7 +502,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       shown_to_me: null,
       shown_to_me_problem: 'unreadable',
     });
-    expect(sharing.ended).toEqual([{ shown_to_them: MY_RECORD.shown }, { shown_to_them: null, problem: 'unreadable' }]);
+    expect(sharing.unmatched).toEqual([{ shown_to_them: MY_RECORD.shown }, { shown_to_them: null, problem: 'unreadable' }]);
     expect(JSON.stringify(sharing)).not.toContain('a'.repeat(32));
   });
 
@@ -516,6 +516,22 @@ describe('everything stored, decrypted, and nothing else', () => {
       shown_to_me: null,
       shown_to_me_problem: 'unavailable',
     });
+  });
+
+  test('sharing: a connection whose record id can’t be read says so, and its record is filed as matched to no connection, never as ended', async () => {
+    await fake.hset(testKey('connections'), { [`${CONN}|log`]: 'not json' });
+    const sharing = (await download()).sharing as any;
+    expect(sharing.connections[0]).toMatchObject({
+      name: 'Sam',
+      record_since: null,
+      shown_to_them: null,
+      shown_to_them_problem: 'record_id_unreadable',
+      shown_to_me: null,
+      shown_to_me_problem: 'record_id_unreadable',
+    });
+    // Mine is still in the file, whole, where a record no connection is matched to goes.
+    expect(sharing.unmatched).toEqual([{ shown_to_them: MY_RECORD.shown }]);
+    expect(sharing).not.toHaveProperty('ended');
   });
 
   test('sharing: storage out of reach fails the download, never reads as no showings', async () => {
@@ -543,7 +559,7 @@ describe('everything stored, decrypted, and nothing else', () => {
 
   test('with the shared password there is no sharing, and the file says so', async () => {
     // Records of showings left from when it had accounts are still in it.
-    expect((await download(null)).sharing).toEqual({ connections: [], blocked: [], ended: [{ shown_to_them: MY_RECORD.shown }] });
+    expect((await download(null)).sharing).toEqual({ connections: [], blocked: [], unmatched: [{ shown_to_them: MY_RECORD.shown }] });
     await fake.del(ctxKey('sharing-access-log'));
     const doc = await download(null);
     expect(doc.sharing).toBeNull();

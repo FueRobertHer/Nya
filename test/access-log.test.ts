@@ -2,9 +2,9 @@ import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, unscopedDataKeys } from './fake-redis';
 
 // The records of showings (lib/access-log.ts): their arithmetic (one row per
-// quarter hour, the widest level shown, what is kept), their shape, their
-// size at the bound, writes racing each other, and the clearing and nightly
-// pruning on the storage seam. The writes a viewer's read makes, both sides'
+// quarter hour, the widest level shown, what is kept, the days they make in a
+// reader's own time zone), their shape, their size at the bound, writes racing
+// each other, and the clearing and nightly pruning on the storage seam. The writes a viewer's read makes, both sides'
 // views of them, and their life with the connection are in
 // test/sharing.test.ts.
 
@@ -14,7 +14,7 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { accessLogStore, slotOf, keptShowings, withShowing, isAccessLog, clearUnreadableAccessLog, pruneAccessLog } = await import('@/lib/access-log');
+const { accessLogStore, slotOf, keptShowings, withShowing, isAccessLog, clearUnreadableAccessLog, pruneAccessLog, shownByDay, timeZoneOf } = await import('@/lib/access-log');
 const { ACCESS_LOG_DAYS, ACCESS_LOG_SLOT_MINUTES } = await import('@/lib/share-rules');
 const { declaredStore } = await import('@/lib/stores');
 const { encrypt } = await import('@/lib/crypto');
@@ -82,6 +82,48 @@ describe('counting showings', () => {
   test('one in a quarter hour before the newest (two clocks disagreeing) goes in its place', () => {
     const current = withShowing(withShowing(null, T + SLOT, { a: 'balance' }), T, { a: 'balance' });
     expect(current.shown.map((s) => s.at)).toEqual([slotOf(T), slotOf(T + SLOT)]);
+  });
+});
+
+describe('the days a record makes, in its reader’s own time zone', () => {
+  const levels = (exists = 0, balance = 0, transactions = 0) => ({ exists, balance, transactions });
+  const shown: Showing[] = [
+    { at: '2026-10-04T06:00:00.000Z', times: 2, read: { a: 'balance' } },
+    { at: '2026-10-04T15:00:00.000Z', times: 1, read: { a: 'transactions', b: 'balance' } },
+    { at: '2026-10-04T20:00:00.000Z', times: 2, read: { a: 'balance', c: 'exists' } },
+  ];
+
+  test('newest first, each account counted once, at the widest level shown that day', () => {
+    // 11 PM on Oct 3, then 8 AM and 1 PM on Oct 4.
+    expect(shownByDay(shown, 'America/Los_Angeles')).toEqual([
+      { day: '2026-10-04', times: 3, levels: levels(1, 1, 1) },
+      { day: '2026-10-03', times: 2, levels: levels(0, 1, 0) },
+    ]);
+    // 3 PM on Oct 4, then midnight and 5 AM on Oct 5.
+    expect(shownByDay(shown, 'Asia/Tokyo').map((d) => [d.day, d.times])).toEqual([
+      ['2026-10-05', 3],
+      ['2026-10-04', 2],
+    ]);
+    expect(shownByDay([], 'UTC')).toEqual([]);
+  });
+
+  test('half and three quarter hour time zones get each quarter hour in the right day', () => {
+    // 00:10 on Oct 5 in Kolkata (UTC+5:30) is 18:40 UTC on Oct 4, counted in
+    // the quarter hour from 18:30: midnight there, Oct 5. By the hour, it
+    // would have been 11:30 PM on Oct 4.
+    const day = (zone: string, iso: string) => shownByDay([{ at: slotOf(Date.parse(iso)), times: 1, read: { a: 'balance' } }], zone)[0].day;
+    expect(day('Asia/Kolkata', '2026-10-04T18:40:00.000Z')).toBe('2026-10-05');
+    expect(day('Asia/Kolkata', '2026-10-04T18:20:00.000Z')).toBe('2026-10-04'); // 11:50 PM
+    expect(day('Asia/Kathmandu', '2026-10-04T18:20:00.000Z')).toBe('2026-10-05'); // UTC+5:45: 00:05
+    expect(day('America/St_Johns', '2026-10-05T02:40:00.000Z')).toBe('2026-10-05'); // UTC-2:30 in summer: 00:10
+    expect(day('Pacific/Chatham', '2026-10-04T10:50:00.000Z')).toBe('2026-10-05'); // UTC+13:45: 00:35
+  });
+
+  test('only a time zone the server knows, as a device would send it', () => {
+    for (const zone of ['UTC', 'Asia/Kolkata', 'America/Argentina/Buenos_Aires', 'Etc/GMT+5']) expect(timeZoneOf(zone)).toBe(zone);
+    for (const bad of [undefined, null, 42, '', 'Mars/Olympus', 'America/New_York ', 'Asia/Kolkata; drop', '../../etc/passwd', 'x'.repeat(65)]) {
+      expect(timeZoneOf(bad)).toBeNull();
+    }
   });
 });
 

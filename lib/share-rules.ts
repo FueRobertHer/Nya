@@ -27,9 +27,31 @@ export const ACCESS_LOG_DAYS = 90;
 
 /** How finely the access log counts: by the quarter hour, in UTC. Every time
  *  zone in use is a whole number of quarter hours from UTC, so each quarter
- *  hour falls inside one day wherever its reader is, and the drawer can put
- *  every showing in the reader's own day exactly. */
+ *  hour falls inside one day wherever its reader is, and every showing can be
+ *  put in the reader's own day exactly. */
 export const ACCESS_LOG_SLOT_MINUTES = 15;
+
+/** One day of a record of showings, in its reader's own time zone, as the
+ *  drawer gets it (lib/sharing.ts connectionRecords): how many times it was
+ *  shown that day, and how many accounts were shown at each level, each
+ *  account once, at the widest level shown that day. Counts, not ids, so a
+ *  day is the same small size however many accounts were shown. */
+export type ShownDay = { day: string; times: number; levels: Record<Level, number> };
+
+/** How many of a record's days the drawer shows before "Show all", and so
+ *  asks for first. */
+export const RECORD_FIRST_DAYS = 5;
+
+/** Why a record of showings can't be had: "unreadable" (damaged),
+ *  "unrecognised" (intact, but not understood), "unavailable" (couldn't be
+ *  reached just now), or "record_id_unreadable" (the connection's log field
+ *  is damaged, so which record is its can't be known). */
+export type RecordProblem = 'unreadable' | 'unrecognised' | 'unavailable' | 'record_id_unreadable';
+
+/** One record of showings as the drawer gets it: the days it has, in the
+ *  reader's own time zone, newest first, and how many there are in all; or
+ *  why it can't be shown. */
+export type RecordSummary = { days: ShownDay[]; total_days: number } | { days: null; problem: RecordProblem };
 
 /**
  * How far ahead a share's end can be, in days. The drawer's date picker goes

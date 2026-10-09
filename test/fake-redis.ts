@@ -413,6 +413,14 @@ export class FakeRedis {
       this.hash(keys[0]).set(args[0], args[1]);
       return 1;
     }
+    if (name === '-- nya:sharing-delete-log-if') {
+      // lib/sharing.ts DELETE_LOG_IF: the field, only while it holds the log id.
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.hashes.get(keys[0])?.get(args[0]);
+      if (value === undefined || !value.includes(args[1])) return 0;
+      this.hdelNow(keys[0], [args[0]]);
+      return 1;
+    }
     if (name === '-- nya:history-delete-if') {
       if ((this.hashes.get(keys[0])?.get(args[0]) ?? null) !== args[1]) return 0;
       this.hdelNow(keys[0], [args[0]]);

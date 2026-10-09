@@ -1,6 +1,7 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys, testKey } from './fake-redis';
+import { startRedis, type RealRedis } from './real-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -38,6 +39,7 @@ const { setAccountHidden } = await import('@/lib/hidden');
 const { recordSnapshot } = await import('@/lib/history');
 const { ctxKey } = await import('./fake-redis');
 const { slotOf, accessLogStore, pruneAccessLog } = await import('@/lib/access-log');
+const { ACCESS_LOG_DAYS } = await import('@/lib/share-rules');
 
 const account = (id: string, mask: string) => ({
   account_id: id,
@@ -147,6 +149,18 @@ const ownerRecord = async (id = pair) => {
 };
 /** Someone's container, as the owners map has it. */
 const containerOf = async (who: string) => ({ container: await (await import('@/lib/owners')).ownerContainer(who) }) as any;
+/** Both records on a connection, as `who`'s drawer asks for them when it opens
+ *  it, and how many bytes the answer is. */
+const recordsOf = async (who: string, opts: { id?: string; tz?: string; all?: boolean } = {}) => {
+  const { GET } = await import('@/app/api/connections/records/route');
+  clerk.signedIn = who;
+  const query = new URLSearchParams({ id: opts.id ?? pair, tz: opts.tz ?? 'UTC', ...(opts.all ? { all: '1' } : {}) });
+  const res = await GET(new Request(`http://x/api/connections/records?${query}`));
+  const text = await res.text();
+  return { status: res.status, body: JSON.parse(text), bytes: Buffer.byteLength(text) };
+};
+/** `who`'s damaged records that no connection is matched to, as the drawer's list asks for them. */
+const damagedOf = async (who: string) => (await as(who, () => route('connections/access-log', 'GET'))).body;
 /** console.error, quietly, with what it was given. */
 async function quietly<R>(fn: () => Promise<R>): Promise<{ result: R; logged: unknown[][] }> {
   const logged: unknown[][] = [];
@@ -188,22 +202,19 @@ describe('finding people: nobody can', () => {
     const mine = await connectionsOf('user_partner');
     const [conn] = mine.connections;
     expect(mine.connections).toEqual([
-      {
-        id: pair,
-        label: 'Someone',
-        introduced_as: null,
-        since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-        sharing: {},
-        expires_at: null,
-        // Its records of showings: a random id, begun when they connected, empty so far.
-        record_id: expect.stringMatching(/^[0-9a-f]{32}$/),
-        record_since: conn.since,
-        shown_to_them: [],
-        shown_to_me: [],
-      },
+      { id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {}, expires_at: null },
     ]);
-    expect(mine.damaged_records).toEqual([]);
-    expect(JSON.stringify(mine)).not.toContain('user_owner');
+    // Its records of showings come on their own: a random id, begun when they connected, empty so far.
+    const records = (await recordsOf('user_partner')).body;
+    expect(records).toEqual({
+      connection: pair,
+      record_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+      record_since: conn.since,
+      shown_to_them: { days: [], total_days: 0 },
+      shown_to_me: { days: [], total_days: 0 },
+    });
+    expect(await damagedOf('user_partner')).toEqual({ damaged: [], maybe_connected: false });
+    expect(JSON.stringify([mine, records])).not.toContain('user_owner');
     await share({ acct_joint: 'balance' });
     expect(JSON.stringify(await sharedWithPartner())).not.toContain('user_owner');
   });
@@ -814,7 +825,11 @@ describe('shares that end', () => {
 
 describe('records of showings', () => {
   const SLOT = 15 * 60_000;
+  const HOUR = 3_600_000;
   const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
+  const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+  const levels = (exists = 0, balance = 0, transactions = 0) => ({ exists, balance, transactions });
+  const none = { days: [], total_days: 0 };
 
   test('each read is counted for the owner, with the accounts and levels it returned, and both of them see it', async () => {
     const { sharedWithMe } = await import('@/lib/sharing');
@@ -824,11 +839,11 @@ describe('records of showings', () => {
     await sharedWithMe('user_partner', now);
     const expected = [{ at: slotOf(now), times: 1, read: { acct_joint: 'transactions' as const, manual_house: 'exists' as const } }];
     expect(await ownerRecord()).toEqual({ shown: expected });
-    // The owner sees it on the connection; the partner sees the same record of showings to them.
-    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toEqual(expected);
-    expect((await connectionsOf('user_partner')).connections[0].shown_to_me).toEqual(expected);
+    // The owner sees it, by day; the partner sees the same record, of showings to them.
+    const day = { day: utcDay(now), times: 1, levels: levels(1, 0, 1) };
+    expect((await recordsOf('user_owner')).body).toMatchObject({ shown_to_them: { days: [day], total_days: 1 }, shown_to_me: none });
     // And not the other way round: nothing of the partner's was shown to the owner.
-    expect((await connectionsOf('user_owner')).connections[0].shown_to_me).toEqual([]);
+    expect((await recordsOf('user_partner')).body).toMatchObject({ shown_to_them: none, shown_to_me: { days: [day], total_days: 1 } });
   });
 
   test('ten in a quarter hour are one row with a count, at the widest level each account was shown at', async () => {
@@ -858,17 +873,111 @@ describe('records of showings', () => {
     expect(await total()).toBe(3);
   });
 
+  test('the drawer gets days in the reader’s own time zone, the newest few, and all of them on asking', async () => {
+    await share({ acct_joint: 'balance' });
+    const logId = (await logIdOf())!;
+    const base = Math.floor(Date.now() / DAY) * DAY - 10 * DAY; // midnight UTC, ten days ago
+    await accessLogStore.set(TEST_CTX, logId, {
+      shown: [
+        // 23:45 and then midnight in Kolkata (UTC+5:30): two days there, one in UTC.
+        { at: slotOf(base + 18 * HOUR + 15 * 60_000), times: 2, read: { acct_joint: 'balance' } },
+        { at: slotOf(base + 18 * HOUR + 30 * 60_000), times: 1, read: { acct_joint: 'transactions' } },
+        // Noon UTC on each of the seven days after.
+        ...Array.from({ length: 7 }, (_, i) => ({ at: slotOf(base + (i + 1) * DAY + 12 * HOUR), times: 1, read: { acct_joint: 'balance' as const } })),
+      ],
+    });
+    const D = (k: number) => utcDay(base + k * DAY);
+    const kolkata = (await recordsOf('user_owner', { tz: 'Asia/Kolkata', all: true })).body.shown_to_them;
+    expect(kolkata.total_days).toBe(8);
+    expect(kolkata.days.slice(-2)).toEqual([
+      { day: D(1), times: 2, levels: levels(0, 0, 1) },
+      { day: D(0), times: 2, levels: levels(0, 1, 0) },
+    ]);
+    const utc = (await recordsOf('user_owner', { tz: 'UTC', all: true })).body.shown_to_them;
+    expect(utc.days.slice(-2)).toEqual([
+      { day: D(1), times: 1, levels: levels(0, 1, 0) },
+      { day: D(0), times: 3, levels: levels(0, 0, 1) },
+    ]);
+    // First, only the newest five, and how many there are.
+    const first = (await recordsOf('user_owner', { tz: 'Asia/Kolkata' })).body.shown_to_them;
+    expect(first).toEqual({ days: kolkata.days.slice(0, 5), total_days: 8 });
+    expect(first.days.map((d: any) => d.day)).toEqual([D(7), D(6), D(5), D(4), D(3)]);
+    // A time zone that isn't one, or no id, is refused; someone else's connection is not theirs to read.
+    for (const tz of ['Mars/Olympus', '', 'America/New_York; drop', 'x'.repeat(65)]) expect((await recordsOf('user_owner', { tz })).status).toBe(400);
+    expect((await recordsOf('user_owner', { id: 'not-an-id' })).status).toBe(400);
+    expect((await recordsOf('user_third')).status).toBe(409);
+  });
+
+  test('a connection with both records full keeps the list small, and what the drawer gets of the records bounded', async () => {
+    const { ownerContainer } = await import('@/lib/owners');
+    delete process.env.MAX_TXN_BLOB_CHARS; // the app's own ceiling, whatever another file set (put back after each test)
+    await share({ acct_joint: 'transactions', manual_house: 'balance' });
+    const logId = (await logIdOf())!;
+    const partnerCtx = { container: await ownerContainer('user_partner') } as any;
+    // Every quarter hour of the 90 days, each naming ten accounts with Plaid-length ids.
+    const read = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`${'Bx'.repeat(17)}${String(i).padStart(3, '0')}`, 'transactions' as const]));
+    const now = Date.now();
+    const shown = [];
+    for (let t = now - ACCESS_LOG_DAYS * DAY + SLOT; t <= now; t += SLOT) shown.push({ at: slotOf(t), times: 3, read });
+    expect(shown.length).toBe(8640);
+    await accessLogStore.set(TEST_CTX, logId, { shown });
+    await accessLogStore.set(partnerCtx, logId, { shown });
+    const sized = async (res: Promise<Response>) => {
+      const r = await res;
+      const text = await r.text();
+      return { status: r.status, body: JSON.parse(text), bytes: Buffer.byteLength(text) };
+    };
+    // The list and its controls: no record in it, however big they get.
+    const { GET } = await import('@/app/api/connections/route');
+    clerk.signedIn = 'user_owner';
+    const list = await sized(GET());
+    expect(list.status).toBe(200);
+    expect(list.bytes).toBeLessThan(4 * 1024);
+    expect(JSON.stringify(list.body)).not.toMatch(/shown|record/);
+    // The records: days, counted, a few at a time, or all 91 days of them.
+    const first = await recordsOf('user_owner');
+    expect(first.body.shown_to_them.days).toHaveLength(5);
+    expect(first.body.shown_to_them.total_days).toBe(91);
+    expect(first.bytes).toBeLessThan(2 * 1024);
+    const all = await recordsOf('user_owner', { all: true });
+    expect(all.body.shown_to_me.days).toHaveLength(91);
+    expect(all.bytes).toBeLessThan(24 * 1024);
+  });
+
+  test('no record, however it fails, can stop the list and its controls loading', async () => {
+    await share({ acct_joint: 'balance' });
+    await sharedWithPartner();
+    const realHgetall = fake.hgetall.bind(fake);
+    const realEval = fake.eval.bind(fake);
+    const out = () => {
+      throw new Error('FakeRedis: out of reach');
+    };
+    (fake as any).hgetall = async (key: string) => (key.endsWith(':sharing-access-log') ? out() : realHgetall(key));
+    (fake as any).eval = async (script: string, keys: string[], args: string[]) => (keys[0]?.endsWith(':sharing-access-log') ? out() : realEval(script, keys, args));
+    try {
+      const list = await connectionsOf('user_owner');
+      expect(list.connections.map((c: any) => c.id)).toEqual([pair]);
+      // The records themselves say they couldn't be loaded, on their own.
+      const { result } = await quietly(() => recordsOf('user_owner'));
+      expect(result.body).toMatchObject({ shown_to_them: { days: null, problem: 'unavailable' }, shown_to_me: { days: null, problem: 'unavailable' } });
+      expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+    } finally {
+      delete (fake as any).hgetall;
+      delete (fake as any).eval;
+    }
+  });
+
   test('kept 90 days at most: dropped by the next showing, or by the nightly pass', async () => {
-    const { sharedWithMe, connectionLogIds } = await import('@/lib/sharing');
+    const { sharedWithMe, nightlyLogIds } = await import('@/lib/sharing');
     const now = Date.now();
     await share({ acct_joint: 'balance' });
     const logId = (await logIdOf())!;
     const old = { at: slotOf(now - 91 * DAY), times: 7, read: { acct_joint: 'balance' as const } };
     await accessLogStore.set(TEST_CTX, logId, { shown: [old] });
     // Shown as nothing in the meantime.
-    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toEqual([]);
+    expect((await recordsOf('user_owner')).body.shown_to_them).toEqual(none);
     // Gone the next night, with nothing for anyone to do.
-    await pruneAccessLog(TEST_CTX, now, connectionLogIds);
+    await pruneAccessLog(TEST_CTX, now, nightlyLogIds());
     expect(await ownerRecord()).toBeNull();
     // Or at the next showing.
     await accessLogStore.set(TEST_CTX, logId, { shown: [old] });
@@ -888,45 +997,173 @@ describe('records of showings', () => {
     await as('user_owner', () => route('connections', 'DELETE', { id: pair }));
     await connect('user_partner', 'user_owner');
     expect(await logIdOf()).not.toBe(first);
-    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ shown_to_them: [], shown_to_me: [] });
+    expect((await recordsOf('user_owner')).body).toMatchObject({ shown_to_them: none, shown_to_me: none });
   });
 
   test('a connection from before records gets its id at its first showing, and two at once agree on one', async () => {
     const { sharedWithMe } = await import('@/lib/sharing');
     await share({ acct_joint: 'balance' });
     await fake.hdel(testKey('connections'), `${pair}|log`); // as connections were before records
-    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ record_id: null, record_since: null, shown_to_them: [], shown_to_me: [] });
+    expect((await recordsOf('user_owner')).body).toEqual({ connection: pair, record_id: null, record_since: null, shown_to_them: none, shown_to_me: none });
     const now = Date.now();
     await Promise.all([sharedWithMe('user_partner', now), sharedWithMe('user_partner', now)]);
     const logId = (await logIdOf())!;
     expect(logId).toMatch(/^[0-9a-f]{32}$/);
     expect(await accessLogStore.get(TEST_CTX, logId)).toEqual({ shown: [{ at: slotOf(now), times: 2, read: { acct_joint: 'balance' } }] });
     expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([logId]);
-    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ record_id: logId, record_since: new Date(now).toISOString() });
+    expect((await recordsOf('user_owner')).body).toMatchObject({ record_id: logId, record_since: new Date(now).toISOString() });
   });
 
-  test('a removal that lands while a showing is being counted leaves no record behind', async () => {
-    const { sharedWithMe } = await import('@/lib/sharing');
-    await share({ acct_joint: 'balance' });
-    const logId = (await logIdOf())!;
-    const realEval = fake.eval.bind(fake);
-    (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
-      const answer = await realEval(script, keys, args);
-      // Between the count's read and its write: the whole removal runs, and
-      // finds no record yet to delete.
-      if (script.startsWith('-- nya:repo-read-entries') && keys[0] === ctxKey('sharing-access-log')) {
-        (fake as any).eval = realEval;
-        expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+  describe('a removal racing a showing leaves nothing behind, whatever the order', () => {
+    const hasRedis = Bun.which('redis-server') !== null;
+    let real: RealRedis | null = null;
+    afterAll(() => real?.stop());
+    const pairFields = async () => Object.keys((await fake.hgetall(testKey('connections'))) ?? {}).filter((f) => f.startsWith(pair));
+    const records = async () => Object.keys((await fake.hgetall(ctxKey('sharing-access-log'))) ?? {});
+
+    test('the removal runs between the count’s read and its write', async () => {
+      const { sharedWithMe } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      const realEval = fake.eval.bind(fake);
+      (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
+        const answer = await realEval(script, keys, args);
+        // Between the count's read and its write: the whole removal runs, and
+        // finds no record yet to delete.
+        if (script.startsWith('-- nya:repo-read-entries') && keys[0] === ctxKey('sharing-access-log')) {
+          delete (fake as any).eval;
+          expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+        }
+        return answer;
+      };
+      try {
+        expect(await sharedWithMe('user_partner')).toHaveLength(1);
+      } finally {
+        delete (fake as any).eval;
       }
-      return answer;
-    };
-    try {
-      expect(await sharedWithMe('user_partner')).toHaveLength(1);
-    } finally {
-      (fake as any).eval = realEval;
-    }
-    expect(await accessLogStore.get(TEST_CTX, logId)).toBeNull();
-    expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log'))) ?? {})).toEqual([]);
+      expect(await records()).toEqual([]);
+      expect(await pairFields()).toEqual([]);
+    });
+
+    test('a removal that stops before it reads the log id: the showing that wrote takes back its record and the log field', async () => {
+      const { sharedWithMe, removeConnection } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      const realEval = fake.eval.bind(fake);
+      (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
+        const answer = await realEval(script, keys, args);
+        if (script.startsWith('-- nya:repo-update-entry') && keys[0] === ctxKey('sharing-access-log')) {
+          delete (fake as any).eval;
+          // Written. Now a removal deletes the connection, and fails to read its log id.
+          fake.failNext('hget');
+          await quietly(() => removeConnection('user_owner', pair));
+          expect(await pairFields()).toEqual([`${pair}|log`]);
+          expect(await records()).toHaveLength(1);
+        }
+        return answer;
+      };
+      try {
+        expect(await sharedWithMe('user_partner')).toHaveLength(1);
+      } finally {
+        delete (fake as any).eval;
+      }
+      expect(await records()).toEqual([]);
+      expect(await pairFields()).toEqual([]);
+    });
+
+    test('from before records: the first showing, whole, just before the removal deletes the connection', async () => {
+      const { sharedWithMe } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      await fake.hdel(testKey('connections'), `${pair}|log`);
+      const realHdel = fake.hdel.bind(fake);
+      let ran = false;
+      (fake as any).hdel = async (key: string, ...fields: string[]) => {
+        if (!ran && key === testKey('connections') && fields.includes(pair)) {
+          ran = true;
+          // The removal has read the connection, with no log id yet. Now the
+          // partner's whole read, count and check run before it deletes anything.
+          expect(await sharedWithMe('user_partner')).toHaveLength(1);
+          expect(await records()).toHaveLength(1);
+        }
+        return realHdel(key, ...fields);
+      };
+      try {
+        expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+      } finally {
+        delete (fake as any).hdel;
+      }
+      expect(ran).toBe(true);
+      expect(await records()).toEqual([]);
+      expect(await pairFields()).toEqual([]);
+    });
+
+    test('from before records: the first showing sets the log id just after the removal finished', async () => {
+      const { sharedWithMe } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      await fake.hdel(testKey('connections'), `${pair}|log`);
+      const realHsetnx = (fake as any).hsetnx.bind(fake);
+      let ran = false;
+      (fake as any).hsetnx = async (key: string, field: string, value: string) => {
+        if (!ran) {
+          ran = true;
+          // The partner's read has the connection; the whole removal runs before its log id is set.
+          expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+        }
+        return realHsetnx(key, field, value);
+      };
+      try {
+        await sharedWithMe('user_partner');
+      } finally {
+        delete (fake as any).hsetnx;
+      }
+      expect(ran).toBe(true);
+      expect(await records()).toEqual([]);
+      expect(await pairFields()).toEqual([]);
+    });
+
+    test('a showing begun before the two connected again is never counted on the new connection', async () => {
+      const { sharedWithMe } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      await fake.hdel(testKey('connections'), `${pair}|log`);
+      const realHsetnx = (fake as any).hsetnx.bind(fake);
+      let fresh = '';
+      (fake as any).hsetnx = async (key: string, field: string, value: string) => {
+        if (!fresh) {
+          // Removed, and connected again, while this showing was under way.
+          expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+          await Bun.sleep(2); // a later moment to connect at
+          await connect('user_partner', 'user_owner');
+          fresh = (await logIdOf())!;
+        }
+        return realHsetnx(key, field, value);
+      };
+      try {
+        await sharedWithMe('user_partner');
+      } finally {
+        delete (fake as any).hsetnx;
+      }
+      // Nothing under the new connection's log id, which is untouched.
+      expect(await records()).toEqual([]);
+      expect(await logIdOf()).toBe(fresh);
+    });
+
+    test('the log field is deleted only while it holds the id that was written under, on a real Redis too', async () => {
+      const { DELETE_LOG_IF } = await import('@/lib/sharing');
+      const holds = JSON.stringify({ id: 'a'.repeat(32), since: new Date().toISOString() });
+      type Side = { run: (args: string[]) => Promise<unknown>; set: (v: string) => Promise<unknown>; get: () => Promise<unknown> };
+      const sides: Side[] = [{ run: (args) => fake.eval(DELETE_LOG_IF, ['k'], args), set: (v) => fake.hset('k', { f: v }), get: () => fake.hget('k', 'f') }];
+      if (hasRedis) {
+        real ??= await startRedis();
+        const r = real.client;
+        sides.push({ run: (args) => r.send('EVAL', [DELETE_LOG_IF, '1', 'k', ...args]), set: (v) => r.send('HSET', ['k', 'f', v]), get: () => r.send('HGET', ['k', 'f']) });
+      }
+      for (const { run, set, get } of sides) {
+        await set(holds);
+        expect(Number(await run(['f', `"id":"${'b'.repeat(32)}"`]))).toBe(0); // a new connection's
+        expect(await get()).toBe(holds);
+        expect(Number(await run(['f', `"id":"${'a'.repeat(32)}"`]))).toBe(1);
+        expect(await get()).toBeNull();
+        expect(Number(await run(['f', `"id":"${'a'.repeat(32)}"`]))).toBe(0); // gone already
+      }
+    });
   });
 
   test('a failing write never fails the read, and is logged', async () => {
@@ -945,8 +1182,8 @@ describe('records of showings', () => {
     await fake.hset(ctxKey('sharing-access-log'), { [logId]: DAMAGED });
     const { result } = await quietly(() => sharedWithPartner());
     expect(result.map((s: any) => s.connection)).toEqual([pair]);
-    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ record_id: logId, shown_to_them: null, shown_to_them_problem: 'unreadable' });
-    expect((await connectionsOf('user_partner')).connections[0]).toMatchObject({ shown_to_me: null, shown_to_me_problem: 'unreadable' });
+    expect((await recordsOf('user_owner')).body).toMatchObject({ record_id: logId, shown_to_them: { days: null, problem: 'unreadable' } });
+    expect((await recordsOf('user_partner')).body).toMatchObject({ shown_to_me: { days: null, problem: 'unreadable' } });
     const clear = (who: string, id: string) => as(who, () => route('connections/access-log', 'DELETE', { id }));
     expect((await clear('user_owner', 'nope')).status).toBe(400);
     // Only the owner's own: the partner has no such record to clear.
@@ -954,37 +1191,106 @@ describe('records of showings', () => {
     expect((await clear('user_owner', logId)).status).toBe(200);
     expect((await clear('user_owner', logId)).status).toBe(409); // nothing damaged left
     await sharedWithPartner();
-    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toHaveLength(1);
+    expect((await recordsOf('user_owner')).body.shown_to_them.total_days).toBe(1);
     // A record that reads is never cleared.
     expect((await clear('user_owner', logId)).status).toBe(409);
-    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toHaveLength(1);
+    expect((await recordsOf('user_owner')).body.shown_to_them.total_days).toBe(1);
   });
 
-  test('a damaged record that belongs to no connection now is listed, and can be cleared', async () => {
+  test('a damaged record that belongs to no connection now is listed, on its own, and can be cleared', async () => {
     const stray = 'f'.repeat(32);
+    expect(await damagedOf('user_owner')).toEqual({ damaged: [], maybe_connected: false });
     await fake.hset(ctxKey('sharing-access-log'), { [stray]: DAMAGED });
-    expect((await connectionsOf('user_owner')).damaged_records).toEqual([stray]);
+    expect(await damagedOf('user_owner')).toEqual({ damaged: [stray], maybe_connected: false });
     expect((await as('user_owner', () => route('connections/access-log', 'DELETE', { id: stray }))).status).toBe(200);
-    expect((await connectionsOf('user_owner')).damaged_records).toEqual([]);
+    expect(await damagedOf('user_owner')).toEqual({ damaged: [], maybe_connected: false });
   });
 
-  test('the nightly pass deletes a record whose connection has ended, and nothing while a connection can’t be read', async () => {
-    const { connectionLogIds } = await import('@/lib/sharing');
+  test('a connection whose record id can’t be read says so, offers nothing that wouldn’t help, and its record is kept', async () => {
+    const { nightlyLogIds } = await import('@/lib/sharing');
     await share({ acct_joint: 'balance' });
     await sharedWithPartner();
     const logId = (await logIdOf())!;
-    // Left by a removal that stopped part way.
-    const stray = 'e'.repeat(32);
-    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { acct_joint: 'balance' as const } }] };
-    await accessLogStore.set(TEST_CTX, stray, record);
-    // A connection whose record can't be read could own it: kept.
-    await fake.hset(testKey('connections'), { ['0'.repeat(24)]: 'not json' });
-    expect(await connectionLogIds()).toBeNull();
-    await pruneAccessLog(TEST_CTX, Date.now(), connectionLogIds);
-    expect(await accessLogStore.get(TEST_CTX, stray)).toEqual(record);
-    await fake.hdel(testKey('connections'), '0'.repeat(24));
-    await pruneAccessLog(TEST_CTX, Date.now(), connectionLogIds);
+    await fake.hset(testKey('connections'), { [`${pair}|log`]: 'not json' });
+    const unknown = { days: null, problem: 'record_id_unreadable' };
+    expect((await recordsOf('user_owner')).body).toEqual({ connection: pair, record_id: null, record_since: null, shown_to_them: unknown, shown_to_me: unknown });
+    // Showings go unrecorded, and say why.
+    const { logged } = await quietly(() => sharedWithPartner());
+    expect(logged.map((l) => l[0])).toEqual(['Sharing: a showing was not recorded: the connection’s log field can’t be read']);
+    // Its record may be one the drawer can't tell apart: it says so, and the nightly pass keeps it.
+    expect(await damagedOf('user_owner')).toEqual({ damaged: [], maybe_connected: true });
+    await quietly(() => pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds()));
     expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([logId]);
+    // Removing them starts again: the field goes with the connection, and the record the next night.
+    expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+    expect(await logIdOf()).toBeNull();
+    await pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds());
+    expect(await fake.hgetall(ctxKey('sharing-access-log'))).toBeNull();
+  });
+
+  describe('the nightly pass', () => {
+    const stray = 'e'.repeat(32);
+    const at = slotOf(Date.now());
+    const record = () => ({ shown: [{ at, times: 1, read: { acct_joint: 'balance' as const } }] });
+    const strays = async (ctx: any) => Object.keys((await fake.hgetall(ctxKey('sharing-access-log', ctx))) ?? {});
+
+    test('deletes a record whose connection has ended, and keeps the live ones', async () => {
+      const { nightlyLogIds } = await import('@/lib/sharing');
+      await share({ acct_joint: 'balance' });
+      await sharedWithPartner();
+      const logId = (await logIdOf())!;
+      await accessLogStore.set(TEST_CTX, stray, record()); // left by a removal that stopped part way
+      await pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds());
+      expect(await strays(TEST_CTX)).toEqual([logId]);
+    });
+
+    test('a connection whose own record can’t be read keeps only its log id from deletion', async () => {
+      const { nightlyLogIds } = await import('@/lib/sharing');
+      const kept = 'a'.repeat(32);
+      await fake.hset(testKey('connections'), { ['0'.repeat(24)]: 'not json', [`${'0'.repeat(24)}|log`]: JSON.stringify({ id: kept, since: new Date().toISOString() }) });
+      await accessLogStore.setMany(TEST_CTX, [
+        [kept, record()],
+        [stray, record()],
+      ]);
+      const { logged } = await quietly(() => pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds()));
+      expect(await strays(TEST_CTX)).toEqual([kept]);
+      expect(String(logged[0][0])).toContain(`(${'0'.repeat(24)}); the records under its log id are kept until it is fixed`);
+    });
+
+    test('a log id that can’t be read keeps records only in its two people’s containers', async () => {
+      const { nightlyLogIds } = await import('@/lib/sharing');
+      const third = await containerOf('user_third');
+      await share({ acct_joint: 'balance' });
+      await fake.hset(testKey('connections'), { [`${pair}|log`]: 'not json' });
+      await accessLogStore.set(TEST_CTX, stray, record());
+      await accessLogStore.set(third, stray, record());
+      const live = nightlyLogIds();
+      const { logged } = await quietly(async () => {
+        await pruneAccessLog(TEST_CTX, Date.now(), live);
+        await pruneAccessLog(third, Date.now(), live);
+      });
+      expect(await strays(TEST_CTX)).toEqual([stray]); // the owner's: could be that connection's
+      expect(await strays(third)).toEqual([]); // nobody on it: deleted
+      expect(logged.map((l) => String(l[0]))).toEqual([expect.stringContaining('in the containers of the people on it until it is fixed')]);
+    });
+
+    test('a connection with nothing that can be read stops the deletion everywhere, says so once a run, and the 90 days still hold', async () => {
+      const { nightlyLogIds } = await import('@/lib/sharing');
+      const third = await containerOf('user_third');
+      await fake.hset(testKey('connections'), { ['0'.repeat(24)]: 'not json', [`${'0'.repeat(24)}|log`]: 'not json either' });
+      const old = { at: slotOf(Date.now() - 91 * DAY), times: 1, read: { acct_joint: 'balance' as const } };
+      for (const ctx of [TEST_CTX, third]) await accessLogStore.set(ctx, stray, { shown: [old, ...record().shown] });
+      const live = nightlyLogIds();
+      const { logged } = await quietly(async () => {
+        await pruneAccessLog(TEST_CTX, Date.now(), live);
+        await pruneAccessLog(third, Date.now(), live);
+      });
+      for (const ctx of [TEST_CTX, third]) expect(await accessLogStore.get(ctx, stray)).toEqual(record()); // kept, the old quarter hour gone
+      expect(logged).toHaveLength(1);
+      expect(String(logged[0][0])).toContain('in any container until it is fixed');
+      // A new run says so again.
+      expect((await quietly(() => pruneAccessLog(TEST_CTX, Date.now(), nightlyLogIds()))).logged).toHaveLength(1);
+    });
   });
 
   test('names the connection by what the owner calls them, never who they are', async () => {
@@ -993,8 +1299,10 @@ describe('records of showings', () => {
     await as('user_partner', () => route('connections', 'PUT', { id: pair, label: 'THEIR-NAME-FOR-ME' }));
     await sharedWithPartner();
     const mine = await connectionsOf('user_owner');
-    expect(mine.connections[0]).toMatchObject({ label: 'Pat', shown_to_them: [expect.objectContaining({ times: 1 })] });
-    expect(JSON.stringify(mine)).not.toMatch(/user_partner|THEIR-NAME-FOR-ME/);
+    expect(mine.connections[0]).toMatchObject({ label: 'Pat' });
+    const records = (await recordsOf('user_owner')).body;
+    expect(records.shown_to_them.days[0].times).toBe(1);
+    expect(JSON.stringify([mine, records])).not.toMatch(/user_partner|THEIR-NAME-FOR-ME/);
     expect(JSON.stringify(await ownerRecord())).not.toMatch(/user_|THEIR-NAME-FOR-ME|Pat/);
   });
 
