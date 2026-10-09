@@ -15,6 +15,7 @@ import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
 import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
+import { forgetConnection } from './connection-health';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
 
@@ -111,6 +112,15 @@ export async function disconnectItem(
   // And any "new accounts available" prompt, which could only offer to add
   // accounts to an Item that no longer exists.
   await clearNewAccounts(ctx, item_id);
+  // And its health: Plaid's warnings, its last sync, and the email bookkeeping
+  // of a break (lib/connection-health.ts), so no email follows a removal. Best
+  // effort: a record left behind is inert, and the daily job drops records of
+  // connections that are gone (lib/connection-notices.ts).
+  try {
+    await forgetConnection(ctx, item_id);
+  } catch (err) {
+    console.error('disconnect: could not forget the connection’s health records', err instanceof Error ? err.name : typeof err);
+  }
   // Its accounts stay in the account directory, so that if the same
   // institution is added back, even months later, they can be matched to
   // the new ones (lib/links.ts): nothing to do here.

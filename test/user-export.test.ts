@@ -620,6 +620,9 @@ describe('stores built on the storage seam', () => {
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
       'carried-annotations',
+      'connection-notices',
+      'connection-syncs',
+      'connection-warnings',
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
@@ -695,6 +698,25 @@ describe('stores built on the storage seam', () => {
     const { planFunding: _, ...older } = plan;
     await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
     expect((await download())['fire-plan']).toEqual(plan);
+  });
+
+  // Review: the record of the emails Nya sent about the person's own bank
+  // connections, Plaid's warnings about them and when each last answered are
+  // about that person, and /privacy names them, so they are in the download.
+  test('how each bank connection is doing is in it: the notices, the warnings and the last syncs', async () => {
+    const { noticesStore, warningsStore, syncsStore } = await import('@/lib/connection-records');
+    const notice = { episode: 'e1', since: '2026-10-01T13:00:00.000Z', state: 'needs_reauth' as const, side: 'you' as const, notified_at: '2026-10-01T13:00:00.000Z', reminded_at: null, told: ['needs_reauth' as const] };
+    const warning = { kind: 'pending_disconnect' as const, received_at: '2026-10-02T00:00:00.000Z', ends_at: '2026-10-09T00:00:00.000Z', ends_estimated: true, reason: 'INSTITUTION_MIGRATION' };
+    await noticesStore.set(ctx, 'item_chase', notice);
+    await warningsStore.set(ctx, 'item_amex', warning);
+    await syncsStore.set(ctx, 'item_amex', { at: '2026-10-08T13:00:00.000Z' });
+    await noticesStore.set(OTHER, 'item_other', { ...notice, episode: 'OTHER-PERSON-EPISODE' });
+    const doc = await download();
+    expect(doc['connection-notices']).toEqual([{ id: 'item_chase', value: notice }]);
+    expect(doc['connection-warnings']).toEqual([{ id: 'item_amex', value: warning }]);
+    expect(doc['connection-syncs']).toEqual([{ id: 'item_amex', value: { at: '2026-10-08T13:00:00.000Z' } }]);
+    expect(JSON.stringify(doc)).not.toContain('OTHER-PERSON-EPISODE');
+    expect(doc.not_included.join(' ')).not.toContain('how each bank connection is doing');
   });
 
   test('no store on the seam is named like a part of the file already there', async () => {

@@ -17,8 +17,14 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
 import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency } from "@/lib/spending";
-import { localMonth } from "@/lib/local-date";
+import { instantDay, localMonth } from "@/lib/local-date";
+import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { sourceLabel } from "@/lib/manual-txn-input";
+
+// Stable empty defaults, as in Insights: a fresh literal per render would be
+// a new identity each time.
+const NO_GAPS: Incomplete[] = [];
+const NO_STOPPED: Stopped[] = [];
 
 export type Txn = {
   transaction_id: string;
@@ -210,6 +216,8 @@ export default function MonthBreakdown({
   onEditTransaction,
   onToggleExcluded,
   actionError = null,
+  incomplete = NO_GAPS,
+  stopped = NO_STOPPED,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -225,6 +233,11 @@ export default function MonthBreakdown({
   onToggleExcluded?: (t: Txn, excluded: boolean) => void;
   /** Why the last change to a transaction didn't save. */
   actionError?: string | null;
+  /** Institutions whose rows this load lacks, or lacks the oldest of
+   *  (/api/transactions), and connections whose transactions have stopped
+   *  (their health): the month's totals say so (lib/month-coverage.ts). */
+  incomplete?: Incomplete[];
+  stopped?: Stopped[];
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
@@ -412,6 +425,10 @@ export default function MonthBreakdown({
 
   const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
+  // A total that looks finished but may not be says so, under the total.
+  const gapNotes = selected
+    ? monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10))
+    : [];
 
   return (
     <>
@@ -488,6 +505,11 @@ export default function MonthBreakdown({
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
           {leftOut && ` ${leftOut}`}
         </div>
+        {gapNotes.map((n) => (
+          <div className="stale-note" key={n}>
+            {n}
+          </div>
+        ))}
       </div>
 
       {categories.length > 0 && (

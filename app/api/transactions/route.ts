@@ -30,6 +30,11 @@ type PlaidPayload = {
   plaid_only: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
+  // The institutions whose rows are not all here, by name: none at all this
+  // time (`missing`), or older ones still arriving (`importing`). Activity
+  // says so under every month it totals (#51). Empty on any payload that is
+  // cached, since only a payload without notes is.
+  incomplete?: { institution_name: string; coverage: 'missing' | 'importing' }[];
   as_of: string;
 };
 
@@ -106,8 +111,12 @@ async function assemblePlaid(ctx: Ctx): Promise<{ payload: PlaidPayload; hidden:
     if (renamed) t.name = renamed;
   }
   const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
+  // Every one of these comes with a note, so a payload holding any is never cached.
+  const incomplete = results.flatMap((r, i) =>
+    r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
+  );
   return {
-    payload: { plaid_only: true, transactions, notes, as_of: new Date().toISOString() },
+    payload: { plaid_only: true, transactions, notes, incomplete, as_of: new Date().toISOString() },
     hidden: hiddenIds,
     // Same rule as net-worth: only clean payloads, so syncing or reauth
     // institutions get re-checked on the next load instead of hiding for the
@@ -165,8 +174,11 @@ export async function GET(req: Request) {
       else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
     }
     const notes = [...plaid.notes, ...manual.notes];
+    // The institutions whose rows aren't all here (Plaid's part: a manual
+    // account has no connection, so it is never incomplete).
+    const incomplete = plaid.incomplete ?? [];
 
-    return NextResponse.json({ transactions, notes, as_of: plaid.as_of, from_cache: fromCache });
+    return NextResponse.json({ transactions, notes, incomplete, as_of: plaid.as_of, from_cache: fromCache });
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

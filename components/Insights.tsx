@@ -12,6 +12,50 @@ import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
 import { localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
+
+/**
+ * A connection Plaid says will end on a date (lib/connection-state.ts,
+ * "reconnect soon"). Its card says so from the day Plaid warns; Home raises it
+ * too once the date is RECONNECT_ALERT_DAYS away.
+ */
+export type ReconnectSoon = {
+  item_id: string;
+  institution_name: string;
+  /** When it ends (an ISO time). */
+  ends_at: string;
+  /** True when that is an estimate rather than Plaid's own figure. */
+  ends_estimated?: boolean;
+};
+
+const NO_RECONNECTS: ReconnectSoon[] = [];
+
+/** The Home alerts for connections ending within RECONNECT_ALERT_DAYS, soonest
+ *  first, at most two: calendar days on the viewer's own calendar, as the
+ *  due-date alerts below count them. */
+export function reconnectAlerts(soon: ReconnectSoon[], now: Date = new Date()): { key: string; text: string; days: number }[] {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const out: { key: string; text: string; days: number }[] = [];
+  for (const s of soon) {
+    const end = new Date(s.ends_at);
+    if (Number.isNaN(end.getTime())) continue;
+    const days = Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime() - midnight) / 86_400_000);
+    if (days > RECONNECT_ALERT_DAYS) continue;
+    // An estimate (Plaid gave no time) is said as one.
+    const day = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const when = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${s.ends_estimated ? 'about ' : ''}${days} days`;
+    const said =
+      days < 0
+        ? s.ends_estimated
+          ? `Plaid expected its connection to end around ${day}`
+          : `Plaid said its connection would end on ${day}`
+        : s.ends_estimated
+          ? `Plaid expects its connection to end ${when}`
+          : `Plaid says its connection ends ${when}`;
+    out.push({ key: `reconnect-${s.item_id}`, text: `Reconnect ${s.institution_name}: ${said}`, days });
+  }
+  return out.sort((a, b) => a.days - b.days).slice(0, 2);
+}
 
 /**
  * An investment account with more cash sitting in it than looks deliberate,
@@ -66,11 +110,13 @@ export default function Insights({
   budgets,
   accounts,
   idleCash = NO_IDLE_CASH,
+  reconnectSoon = NO_RECONNECTS,
 }: {
   txns: Txn[] | null;
   budgets: Record<string, number>;
   accounts: InsightAccount[];
   idleCash?: IdleCashAccount[];
+  reconnectSoon?: ReconnectSoon[];
 }) {
   const { insights, leftOut } = useMemo(() => {
     const out: Insight[] = [];
@@ -82,6 +128,10 @@ export default function Insights({
     const displayCurrency = totalsCurrency(txns ?? []);
 
     // --- alerts first: they're the actionable ones ---
+
+    // A connection about to end, first of all: missed, it stops syncing and
+    // every number from that bank goes stale.
+    for (const a of reconnectAlerts(reconnectSoon, now)) out.push({ key: a.key, text: a.text, tone: 'warn' });
 
     // Over / approaching budget (worst offenders first, max 2).
     if (txns) {
@@ -270,7 +320,7 @@ export default function Insights({
     // Said only beside a figure it is missing from.
     const fromSpending = shown.some((i) => i.key.startsWith('budget-') || i.key === 'pace' || i.key === 'biggest');
     return { insights: shown, leftOut: fromSpending ? leftOut : null };
-  }, [txns, budgets, accounts, idleCash]);
+  }, [txns, budgets, accounts, idleCash, reconnectSoon]);
 
   if (insights.length === 0) return null;
 

@@ -12,19 +12,25 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // which is hoisted above the imports below it.
 let plaidRows: Record<string, unknown>[] = [];
 let syncs = 0;
+// Plaid's error code for the next syncs, as when a connection needs reconnecting.
+let plaidError: string | null = null;
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
-    transactionsSync: async () => (syncs++, {
-      data: {
-        added: plaidRows,
-        modified: [],
-        removed: [],
-        accounts: [{ account_id: 'acct_chk', name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '0001', balances: { current: 1000, available: 1000, limit: null, iso_currency_code: 'USD' } }],
-        next_cursor: 'cursor-1',
-        has_more: false,
-        transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
-      },
-    }),
+    transactionsSync: async () => {
+      syncs++;
+      if (plaidError) throw { response: { data: { error_code: plaidError } } };
+      return {
+        data: {
+          added: plaidRows,
+          modified: [],
+          removed: [],
+          accounts: [{ account_id: 'acct_chk', name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '0001', balances: { current: 1000, available: 1000, limit: null, iso_currency_code: 'USD' } }],
+          next_cursor: 'cursor-1',
+          has_more: false,
+          transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
+        },
+      };
+    },
   },
 }));
 
@@ -119,6 +125,7 @@ beforeEach(async () => {
   await registerTestContainer(fake);
   plaidRows = [];
   syncs = 0;
+  plaidError = null;
   delete (fake as any).eval; // a test's atNextScript left armed
   delete (fake as any).hdel;
   for (const a of [WALLET, CARD]) await saveManualAccount(ctx, a);
@@ -770,6 +777,21 @@ describe('in /api/transactions', () => {
     ({ body } = await list());
     expect(body.from_cache).toBe(true);
     expect(flags()).toEqual({ p1: true, p2: null, [t.transaction_id]: true });
+  });
+
+  test('an institution that couldn’t be read is named as incomplete, beside the manual rows, which never are; nothing is cached', async () => {
+    plaidRows = [plaid({ transaction_id: 'p1' })];
+    const t = (await post({ account_id: WALLET.account_id, ...FIELDS })).body.transaction;
+    plaidError = 'ITEM_LOGIN_REQUIRED';
+    const { body } = await quietly(() => list(true));
+    expect(body.incomplete).toEqual([{ institution_name: 'Big Bank', coverage: 'missing' }]);
+    expect(body.notes).toEqual([expect.stringContaining('Big Bank')]);
+    expect(ids(body)).toEqual([t.transaction_id]);
+    expect((await quietly(() => list())).body.from_cache).toBe(false);
+    // Once it answers again, nothing is incomplete, and that answer is cached.
+    plaidError = null;
+    expect((await list()).body).toMatchObject({ incomplete: [], from_cache: false });
+    expect((await list()).body).toMatchObject({ incomplete: [], from_cache: true });
   });
 
   test('a manual account whose rows can’t be read is named in a note, Plaid’s rows still show and are still cached', async () => {

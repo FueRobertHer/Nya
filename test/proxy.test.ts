@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { NextRequest } from 'next/server';
 
 const { config, proxy } = await import('@/proxy');
@@ -58,6 +59,21 @@ describe('without a session', () => {
       expect((await call(path)).headers.get('location')).toBe('https://nya.test/login');
     }
     expect((await call('/api/security')).status).toBe(401);
+  });
+
+  // Review should-fix 1: a notice email's link (lib/connection-notices.ts),
+  // opened while logged out, still ends on the Connection health card.
+  test('the link from a notice email comes back to the Connection health card once logged in; nothing else is passed', async () => {
+    expect((await call('/?view=connections')).headers.get('location')).toBe('https://nya.test/login?view=connections');
+    expect((await call('/?view=connections&utm_source=email')).headers.get('location')).toBe('https://nya.test/login?view=connections');
+    for (const path of ['/?view=other', '/?next=https://evil.example', '/settings?view=connections', '//evil.example/?view=connections']) {
+      expect([path, (await call(path)).headers.get('location')]).toEqual([path, 'https://nya.test/login']);
+    }
+    // The login page reads only that flag, and goes to the card or Home.
+    const page = readFileSync(new URL('../app/login/page.tsx', import.meta.url), 'utf8');
+    expect(page).toContain("get('view') === 'connections' ? CONNECTIONS_PATH : '/'");
+    expect(page).toContain('router.push(afterLogin());');
+    expect(page).not.toMatch(/router\.push\((?!afterLogin\(\))/);
   });
 
   test('the policy carries a nonce made here, passed on to the page', async () => {

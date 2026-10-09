@@ -131,10 +131,12 @@ export async function pruneHidden(ctx: Ctx, account_ids: string[]): Promise<void
 }
 
 type MarkableAccount = { account_id: string; balance: number | null; type: string; hidden?: boolean };
-type MarkableInstitution = { accounts: MarkableAccount[] };
+type MarkableInstitution = { accounts: MarkableAccount[]; unshown_accounts?: { account_id: string }[] };
 
 /**
- * Marks each account `hidden` and returns the net worth EXCLUDING them.
+ * Marks each account `hidden` and returns the net worth EXCLUDING them. The
+ * accounts a broken institution can't show, which its connection health names
+ * (lib/last-known.ts), leave the hidden ones out, as every total does.
  *
  * Separate from computeNetWorth(), which the daily snapshot cron and the ingest
  * route also call: if it read the hidden set, a transient Redis error on an
@@ -147,6 +149,11 @@ export function applyHidden(institutions: MarkableInstitution[], hidden: HiddenM
       a.hidden = hidden.has(a.account_id);
       if (a.hidden || a.balance == null) continue;
       visible += signedContribution(a.type, a.balance);
+    }
+    if (inst.unshown_accounts) {
+      const shown = inst.unshown_accounts.filter((a) => !hidden.has(a.account_id));
+      if (shown.length > 0) inst.unshown_accounts = shown;
+      else delete inst.unshown_accounts;
     }
   }
   return visible;

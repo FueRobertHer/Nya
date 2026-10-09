@@ -13,9 +13,14 @@ import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
 import { detectRecurring } from '@/lib/recurring';
-import { localMonth } from '@/lib/local-date';
+import { localMonth, instantDay } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
+
+// Stable empty defaults, as in Insights.
+const NO_GAPS: Incomplete[] = [];
+const NO_STOPPED: Stopped[] = [];
 
 export type Budgets = Record<string, number>;
 
@@ -46,6 +51,8 @@ export default function BudgetsTab({
   onSaveGoals,
   accounts,
   loading,
+  incomplete = NO_GAPS,
+  stopped = NO_STOPPED,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
@@ -66,6 +73,11 @@ export default function BudgetsTab({
   onSaveGoals: (next: Goal[]) => Promise<boolean>;
   accounts: GoalAccount[];
   loading: boolean;
+  /** What may leave this month's spending short, as Activity says it
+   *  (lib/month-coverage.ts): a spent figure that looks finished but isn't
+   *  makes a budget look safer than it is. */
+  incomplete?: Incomplete[];
+  stopped?: Stopped[];
 }) {
   const [editing, setEditing] = useState<string | null>(null); // category being edited
   const [editAmount, setEditAmount] = useState('');
@@ -299,6 +311,12 @@ export default function BudgetsTab({
         )}
 
         {leftOut && <div className="chart-note">{leftOut}</div>}
+        {totalBudget > 0 &&
+          monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)).map((n) => (
+            <div className="stale-note" key={n}>
+              {n}
+            </div>
+          ))}
       </div>
 
       <GoalsCard

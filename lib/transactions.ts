@@ -29,6 +29,9 @@ import { loggable } from './log-safe';
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
 export const TXN_SCHEMA_VERSION = 2;
 
+/** How much of an institution's history a sync returned (syncItemTransactions). */
+export type TxnCoverage = 'complete' | 'importing' | 'missing';
+
 // Display shape sent to the client: a flat set of scalars projected from
 // StoredTxn (`name` is merchant_name || raw name), so the Activity views get
 // subcategory, channel, location, time and the real merchant behind a
@@ -619,12 +622,12 @@ function toStoredAccount(a: AccountBase): StoredAccount {
  * full retained `state` (callers slice to the window they need), plus a `note`
  * when something is off. `state` is null only on a hard stop (reauth, fresh
  * Item still syncing, unrecoverable error); a non-null `state` with a `note`
- * means usable-but-partial (e.g. the initial pull hit the page cap). Prior
- * stored state is left untouched on a hard stop.
+ * means usable-but-partial (e.g. the initial pull hit the page cap, which also
+ * sets `importing`). Prior stored state is left untouched on a hard stop.
  */
 async function syncItem(ctx: Ctx, 
   item: StoredItem
-): Promise<{ state: ItemState | null; note: string | null }> {
+): Promise<{ state: ItemState | null; note: string | null; importing?: boolean }> {
   let access_token: string;
   try {
     access_token = await decrypt(item.encrypted_access_token);
@@ -766,6 +769,7 @@ async function syncItem(ctx: Ctx,
       return {
         state,
         note: `${item.institution_name}: still importing older transactions — refresh again shortly`,
+        importing: true,
       };
     }
     return { state, note: null };
@@ -786,6 +790,11 @@ async function syncItem(ctx: Ctx,
  * sent to the client, and everything derived from the array (Activity list,
  * month totals, budgets, insights, recurring bills) follows. The persisted store
  * is untouched, so unhiding brings every row back.
+ *
+ * `coverage` says how much of the institution's history the rows are, for the
+ * months Activity totals (#51): all of it; `importing`, older rows still
+ * arriving; or `missing`, none at all this time (a hard stop above), so every
+ * month is short by whatever it holds.
  */
 export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
@@ -798,9 +807,9 @@ export async function syncItemTransactions(ctx: Ctx,
    *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
    *  same reason; what the person says on the row itself still wins. */
   carriedExclusionsIn?: Set<string> | Promise<Set<string>>
-): Promise<{ txns: Txn[]; note: string | null }> {
-  const { state, note } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note };
+): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage }> {
+  const { state, note, importing } = await syncItem(ctx, item);
+  if (!state) return { txns: [], note, coverage: 'missing' };
   const carried = await carriedIn;
   const carriedExclusions = await carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
@@ -843,7 +852,7 @@ export async function syncItemTransactions(ctx: Ctx,
       payment_reference: t.payment_meta?.reference_number ?? null,
       ...(carriedExclusions?.size && !t.pending && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
     }));
-  return { txns, note };
+  return { txns, note, coverage: importing ? 'importing' : 'complete' };
 }
 
 /**

@@ -24,6 +24,10 @@ import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import ManualTxnSheet from './ManualTxnSheet';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
+import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
+import { totalNotes } from './total-notes';
+import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
+import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
@@ -136,6 +140,12 @@ type Institution = {
   // charted point for three days with nothing to explain it.
   unconfirmed_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
+  // The connection's health: state, when it last synced, whose side a problem
+  // is on and what to do (lib/connection-state.ts). Optional: a payload
+  // cached before it existed has none, and nothing is said then.
+  health?: Health;
+  // The accounts a broken card can't show, by name, for the health view.
+  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
 };
 
 // One manually-tracked account as the API returns it (see lib/manual.ts).
@@ -412,7 +422,17 @@ export default function Dashboard({
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // Institutions whose transactions this load lacks, for Activity's month notes.
+  const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
+  // Connection health (components/ConnectionHealth.tsx): whether the server
+  // could read Plaid's warnings, and whether a notice email's link opened it.
+  const [healthUnavailable, setHealthUnavailable] = useState(false);
+  const [healthFocus, setHealthFocus] = useState(false);
+  const clearHealthFocus = useCallback(() => setHealthFocus(false), []);
+  // The Item update mode is open on, so its success can be recorded
+  // (app/api/item-reconnected).
+  const reconnectingItemRef = useRef<string | null>(null);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   // Budgets and goals are each saved as one whole list, so their loading and
@@ -520,6 +540,7 @@ export default function Dashboard({
       setHiddenMeta(data.hidden ?? []);
       setAsOf(data.as_of ?? null);
       setBackupProblem(data.backup_problem ?? null);
+      setHealthUnavailable(!!data.health_unavailable);
       setConnected(data.institutions.length > 0);
 
       // First open with a near-empty chart: backfill estimated history from
@@ -574,6 +595,7 @@ export default function Dashboard({
       const data = await res.json();
       setTxns(data.transactions);
       setTxnNotes(data.notes ?? []);
+      setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
     } catch {
       setTxnNotes(['Could not load transactions.']);
     } finally {
@@ -633,6 +655,15 @@ export default function Dashboard({
     loadNetWorth();
   }, [loadNetWorth]);
 
+  // A notice email links to /?view=connections: open the Accounts tab at the
+  // connection health card, then drop the query, so a reload doesn't jump there.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('view') !== 'connections') return;
+    setTab('accounts');
+    setHealthFocus(true);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
+
   // Everything else loads in parallel with net worth (no waterfall): transactions
   // feed Activity and insights, budgets/goals feed the Budgets tab. All are cheap
   // on the server (cached or Redis-only) and empty when nothing is connected.
@@ -672,7 +703,7 @@ export default function Dashboard({
 
   // Transactions entered by hand, categories and the exclude flag
   // (components/transaction-edits.ts).
-  const txnEdits = useTransactionEdits({ txns, setTxns, setTxnNotes, loadTransactions, loadNetWorth, requestBackfill });
+  const txnEdits = useTransactionEdits({ txns, setTxns, setTxnNotes, setTxnIncomplete, loadTransactions, loadNetWorth, requestBackfill });
 
   // `bypass` skips both duplicate checks for this run: the user has said the
   // institution they already have is a different login.
@@ -730,6 +761,7 @@ export default function Dashboard({
     const data = await res.json();
     setConnecting(false);
     if (data.link_token) {
+      reconnectingItemRef.current = item_id;
       setLinkMode('update');
       setLinkToken(data.link_token);
     } else {
@@ -752,6 +784,7 @@ export default function Dashboard({
     const data = await res.json();
     setConnecting(false);
     if (data.link_token) {
+      reconnectingItemRef.current = item_id;
       setLinkMode('update');
       setLinkToken(data.link_token);
     } else {
@@ -914,8 +947,19 @@ export default function Dashboard({
       if (linkMode === 'update') {
         // Update mode re-authenticates the existing Item -- no new Item is
         // created and the access token doesn't change, so there's nothing
-        // to exchange. Just clear the token and refresh.
+        // to exchange. Clear the token, tell the server the connection was
+        // repaired (its "Reconnect soon" warning and any email about a break
+        // are done with), then refresh.
         setLinkToken(null);
+        const repaired = reconnectingItemRef.current;
+        reconnectingItemRef.current = null;
+        if (repaired) {
+          await fetch('/api/item-reconnected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_id: repaired }),
+          }).catch(() => null);
+        }
         loadNetWorth(true);
         return;
       }
@@ -1060,39 +1104,31 @@ export default function Dashboard({
     if (goalsStore.get().status === 'error' && !goalsStore.get().saving) goalsStore.load();
   }, [loadNetWorth, loadTransactions, txns, budgetsStore, goalsStore]);
 
-  // Institutions showing recovered balances. Surfaced on the hero too, not just
-  // on their own cards: the number someone actually reads is the total, and
-  // "this is real but a few days old" is a caveat on the total.
-  const staleInstitutions = useMemo(
-    () => institutions.filter((i) => i.stale_as_of),
+  // What the hero total is missing, named (components/total-notes.ts). Surfaced
+  // on the hero, not just on the cards: the number someone actually reads is
+  // the total. In order: institutions showing recovered balances ("real but a
+  // few days old"); recovered but short some rows; accounts that answered
+  // before and didn't this time, at institutions otherwise fine (history is
+  // paused until that resolves); and institutions that failed and could NOT be
+  // recovered, so the total is short by all of each. Those last are MORE wrong
+  // than the stale ones, so every such case is said, with when it was last seen.
+  const missingNotes = useMemo(
+    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }),
     [institutions]
   );
 
-  // Institutions that failed and could NOT be recovered, so the hero is short by
-  // all of them. Every such case, not just ones with a named reason (too old,
-  // nothing remembered, ids changed at reauth): these are MORE wrong than the
-  // stale ones, and disclosing only the recovered case would be backwards.
-  const uncountedInstitutions = useMemo(
-    () => institutions.filter((i) => i.error && !i.stale_as_of),
+  // Connections Plaid says will end on a date, for the Home alert (Insights).
+  const reconnectSoon = useMemo(
+    () =>
+      institutions.flatMap((i) =>
+        i.health?.state === 'reconnect_soon' && i.health.ends_at
+          ? [{ item_id: i.item_id, institution_name: i.institution_name, ends_at: i.health.ends_at, ends_estimated: i.health.ends_estimated }]
+          : []
+      ),
     [institutions]
   );
-
-  // Recovered, but short some rows. Called out at the hero and not just on the
-  // card, because "short some rows" is a statement about the total, and the
-  // total is what someone actually reads.
-  const incompleteCount = useMemo(
-    () => institutions.reduce((n, i) => n + (i.stale_missing ?? 0), 0),
-    [institutions]
-  );
-
-  // Accounts that answered before and didn't this time, at institutions that are
-  // otherwise fine. Surfaced on the hero like the stale cases: the total is what
-  // gets read, and this caveat says it is short by what those accounts held, with
-  // the chart frozen until the absence resolves.
-  const vanishedCount = useMemo(
-    () => institutions.reduce((n, i) => n + (i.unconfirmed_missing ?? 0), 0),
-    [institutions]
-  );
+  // Connections whose transactions have stopped arriving, for Activity's months.
+  const stoppedTxns = useMemo(() => stoppedConnections(institutions), [institutions]);
 
   // The last recorded day, when recording has stalled (see lib/history-status.ts).
   const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
@@ -1414,35 +1450,11 @@ export default function Dashboard({
                       {refreshing ? ' · refreshing…' : ''}
                     </div>
                   )}
-                  {staleInstitutions.length > 0 && (
-                    <div className="as-of stale">
-                      {staleInstitutions.length === 1
-                        ? `${staleInstitutions[0].institution_name} ${
-                            staleInstitutions[0].needs_reauth ? 'needs reconnecting' : "couldn't refresh"
-                          }; its balances are from ${fmtStaleDay(staleInstitutions[0].stale_as_of!, staleInstitutions[0].stale_as_of_at)}`
-                        : `${staleInstitutions.length} institutions couldn't refresh; showing their last known balances`}
+                  {missingNotes.map((note) => (
+                    <div className="as-of stale" key={note}>
+                      {note}
                     </div>
-                  )}
-                  {incompleteCount > 0 && (
-                    <div className="as-of stale">
-                      {incompleteCount} account{incompleteCount === 1 ? '' : 's'} couldn&apos;t be
-                      shown, so this total is incomplete
-                    </div>
-                  )}
-                  {vanishedCount > 0 && (
-                    <div className="as-of stale">
-                      {vanishedCount} account{vanishedCount === 1 ? '' : 's'} stopped reporting, so
-                      this total is short by {vanishedCount === 1 ? 'it' : 'them'} · history is
-                      paused until that settles
-                    </div>
-                  )}
-                  {uncountedInstitutions.length > 0 && (
-                    <div className="as-of stale">
-                      {uncountedInstitutions.length === 1
-                        ? `${uncountedInstitutions[0].institution_name} couldn't be reached and isn't counted in this total`
-                        : `${uncountedInstitutions.length} institutions couldn't be reached and aren't counted in this total`}
-                    </div>
-                  )}
+                  ))}
                 </div>
 
                 <div className="card">
@@ -1477,6 +1489,7 @@ export default function Dashboard({
                   txns={txns}
                   budgets={budgets}
                   idleCash={idleCashAccounts}
+                  reconnectSoon={reconnectSoon}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
@@ -1527,6 +1540,25 @@ export default function Dashboard({
                   </div>
                   {error && <div className="error">{error}</div>}
                 </div>
+
+                {/* Every linked institution's health, last good sync and the
+                    action for it, in one place. Open whenever one needs
+                    attention, and from a notice email's link. */}
+                <ConnectionHealth
+                  institutions={institutions}
+                  unavailable={healthUnavailable}
+                  connecting={connecting}
+                  focus={healthFocus}
+                  onFocused={clearHealthFocus}
+                  onReconnect={startReconnect}
+                  onManageAccounts={startManageAccounts}
+                  onRemove={(item_id) => {
+                    const target = institutions.find((i) => i.item_id === item_id);
+                    if (!target) return;
+                    setDisconnectInput('');
+                    setDisconnectTarget(target);
+                  }}
+                />
 
                 {/* Behind Manage accounts, like the other account upkeep, so
                     it doesn't take space in the everyday view; mounting only
@@ -1879,6 +1911,10 @@ export default function Dashboard({
                         </>
                       )}
 
+                      {/* Plaid's week of notice that this connection will end:
+                          the badge, the date and Reconnect, while it still works. */}
+                      <ReconnectSoonNote inst={inst} connecting={connecting} onReconnect={startReconnect} />
+
                       {/* Recovering the balances adds a date to the error; it
                           does not replace the error. The distinction matters:
                           "could not fetch balances" usually clears itself,
@@ -1961,7 +1997,7 @@ export default function Dashboard({
                         (!inst.manual && (manageMode || inst.new_accounts_available))) && (
                         <div className="card-actions">
                           {inst.needs_reauth && (
-                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
+                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
                               Reconnect
                             </button>
                           )}
@@ -2086,6 +2122,8 @@ export default function Dashboard({
                 onEditTransaction={txnEdits.openEdit}
                 onToggleExcluded={txnEdits.toggleExcluded}
                 actionError={txnEdits.error}
+                incomplete={txnIncomplete}
+                stopped={stoppedTxns}
               />
             )}
 
@@ -2116,6 +2154,8 @@ export default function Dashboard({
                   }))
                 )}
                 loading={txnsLoading}
+                incomplete={txnIncomplete}
+                stopped={stoppedTxns}
               />
             )}
 

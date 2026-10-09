@@ -33,7 +33,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 
 **Never written down.** The stores are read and decrypted in memory, and the file's text is written out a piece at a time as it streams to your browser, never held whole on the server. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. The download itself is not encrypted, so keep the file somewhere safe.
 
-**Not built yet.** Protecting the file with a passphrase of your own (today it is plain JSON or CSV), an OFX file for the money apps that import those, and an email telling you a download happened (#51): there is no email provider yet, and the route marks where that email is sent once there is.
+**Not built yet.** Protecting the file with a passphrase of your own (today it is plain JSON or CSV), an OFX file for the money apps that import those, and an email telling you a download happened (#51): Nya can send email now (the notices about bank connections, `lib/mail.ts`), but a download doesn't send one yet, and the route marks where it would.
 
 ## What is not in it
 
@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today five: `carried-annotations`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `manual-transactions` and `transaction-annotations`. |
 
 ### `institutions[]`
 
@@ -230,6 +230,38 @@ Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `accou
 ### Stores built on the storage seam
 
 Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. They are read as strictly as everything else: if any entry can't be read, nothing is downloaded and the error names the store. They are in the JSON file only.
+
+#### `connection-notices`
+
+The record of each problem with one of your bank connections that Nya kept for its emails (#51): one entry per connection that has a problem now, under the connection's `item_id`. It goes once the connection works again, or is reconnected or removed.
+
+| Field | Meaning |
+| --- | --- |
+| `episode` | An id Nya made for this problem, which the email's idempotency key is built from. |
+| `since` | When the daily job first saw it. |
+| `state` | What it was when last seen: `reconnect_soon`, `needs_reauth`, `outage`, `relink` or `closed` ([Connection health](features.md#connection-health)). |
+| `side` | Whose side it was on then: `you`, `bank`, `plaid`, `nya` or `unknown`. Absent from a record kept before it was. |
+| `notified_at` | When Nya last emailed you about it, or `null` if it hasn't. |
+| `reminded_at` | When it sent that email's one reminder, or `null`. |
+| `told` | The states its emails were about, in order. Absent from a record kept before it was. |
+| `due_since` | When its next email first became due, while it hasn't gone. |
+| `held_at` | When that email was held back, because the same problem reached several accounts at once and looked like a fault in Nya's setup or at Plaid. It goes three days later if the problem is still there. |
+
+#### `connection-syncs`
+
+When each of your bank connections last answered without an error, under its `item_id`: `at`, a time. It is the "Last synced" date on the Connection health card. It goes when the connection is removed.
+
+#### `connection-warnings`
+
+Plaid's warnings that a working connection is going to end, under its `item_id`, as Nya recorded them from Plaid's webhook. It goes once the connection is reconnected or removed, or answers past the end it named.
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `pending_expiration`: the consent you gave the bank runs out. `pending_disconnect`: the bank is ending the connection. |
+| `received_at` | When the first warning arrived. |
+| `ends_at` | When the connection ends: Plaid's time for a pending expiration; for a pending disconnect, which carries none, Nya's estimate, a week after the warning. |
+| `ends_estimated` | Whether `ends_at` is Nya's estimate. |
+| `reason` | Plaid's reason for a pending disconnect (`INSTITUTION_MIGRATION`), or `null`. |
 
 #### `fire-plan`
 

@@ -372,3 +372,26 @@ describe('the Activity tab opens on this month', () => {
     expect(t).not.toContain('Rent (entered ahead)');
   });
 });
+
+describe('beside the notes on incomplete months', () => {
+  // A month a bank couldn't be read for (lib/month-coverage.ts) still counts
+  // what it has by the shared rule, and says both what it left out and what
+  // may be missing. A manual account is never incomplete: it has no connection.
+  const RAMEN = txn({ transaction_id: 'ramen', name: 'Ramen', amount: 3200, iso_currency_code: 'JPY', source: 'manual', account_id: 'manual_w' });
+  const CASH = txn({ transaction_id: 'cash', name: 'Market', amount: 20, source: 'manual', account_id: 'manual_w' });
+  const incomplete = [{ institution_name: 'Chase', coverage: 'missing' as const }];
+
+  test('the Activity tab', () => {
+    const t = text(activity([...MONTH, RAMEN, CASH], { incomplete }));
+    expect(t).toContain('Out $50.00');
+    expect(t).toContain("1 transaction in JPY isn't in these totals, which are in USD.");
+    expect(t).toContain("Doesn't include Chase: its transactions couldn't be loaded, so this month may be incomplete.");
+  });
+
+  test('the budgets', () => {
+    const t = text(renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [COUNTED, RAMEN, CASH], budgets: { 'food and drink': 600 }, incomplete })));
+    expect(t).toContain('food and drink $50.00 of $600.00');
+    expect(t).toContain("1 transaction in JPY isn't in these budgets, which are in USD.");
+    expect(t).toContain("Doesn't include Chase");
+  });
+});
