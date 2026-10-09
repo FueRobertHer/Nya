@@ -517,7 +517,8 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain('Programs you give an API token to What the read-only API and the MCP server serve (the Developers page lists it)');
     expect(page).toContain('until you revoke the token. Never your sign-in or your bank logins, and they can never change anything.');
     expect(page).toContain('Nya shows it once and never stores it: it keeps a SHA-256 hash of the token’s secret, inside your own data and encrypted with it');
-    expect(page).toContain('Every way a token can fail (unknown, revoked, a wrong secret, or another person’s data) gets the same answer after the same work');
+    expect(page).toContain('A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong secret, or another person’s data)');
+    expect(page).toContain('one whose secret doesn’t match costs the same work whoever’s data it names');
     expect(page).toContain('Only a token whose secret checks out is told more: that its data is being restored, say, and to try again later.');
     expect(page).toContain('Requests with tokens that don’t work are counted by the address they come from');
     expect(page).toContain('Making one needs a fresh sign-in, as downloading your data does.');

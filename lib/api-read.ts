@@ -905,25 +905,43 @@ export type ApiHoldingsAccount = {
   }[];
 };
 
+export type ApiHoldings = {
+  accounts: ApiHoldingsAccount[];
+  /** False when connections are missing (missing_accounts): their accounts,
+   *  and their positions, couldn't be read or haven't been loaded. */
+  complete: boolean;
+  missing_accounts: ApiMissing[];
+  notes: string[];
+};
+
 /**
  * Each investment account's latest RECORDED positions (lib/holdings-history.ts),
  * with the day they were recorded: what the nightly snapshot and the person's
  * loads kept, never a fresh fetch. Plaid keeps no history of holdings, so an
- * account is known only from the day recording began.
+ * account is known only from the day recording began. With `accountId`, that
+ * one account's; an id no account has is NotFound, but one that may be at a
+ * connection whose accounts couldn't be read, or haven't been loaded, is said
+ * to be so (complete: false, with the connections named), never "no such
+ * account".
  */
-export async function readHoldings(
-  ctx: Ctx,
-  opts: { includeHidden?: boolean; accountId?: string } = {}
-): Promise<{ accounts: ApiHoldingsAccount[]; notes: string[] }> {
+export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; accountId?: string } = {}): Promise<ApiHoldings> {
   const read = await accountsRead(ctx, !!opts.includeHidden);
   const base = { links: read.links, ...(opts.includeHidden ? {} : { hidden: read.hidden }) };
+  // Manual accounts hold no positions: only a connection missing can hide some.
+  const missing = read.missing.filter((m) => m.account_id === null);
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
-    throw new NotFound(
-      read.hidden.has(opts.accountId) && !opts.includeHidden
-        ? 'That account is hidden: ask with include_hidden=true to see it.'
-        : 'No linked investment account has that id. The ids are in /api/v1/accounts.'
-    );
+    if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
+    if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
+    return {
+      accounts: [],
+      complete: false,
+      missing_accounts: missing,
+      notes: [
+        ...read.notes,
+        'That account isn’t among the accounts that could be read: it may be at a connection whose accounts couldn’t be read or haven’t been loaded yet, so its holdings can’t be given',
+      ],
+    };
   }
   const accounts = await Promise.all(
     investment.map(async (a): Promise<ApiHoldingsAccount> => {
@@ -953,5 +971,7 @@ export async function readHoldings(
       };
     })
   );
-  return { accounts, notes: read.notes };
+  // One account asked for and found: nothing of it is missing.
+  const short = opts.accountId === undefined ? missing : [];
+  return { accounts, complete: short.length === 0, missing_accounts: short, notes: read.notes };
 }

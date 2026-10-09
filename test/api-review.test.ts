@@ -210,6 +210,36 @@ describe('a damaged record elsewhere', () => {
   });
 });
 
+describe('holdings for one account whose connection can’t be read, or hasn’t been loaded', () => {
+  test('are said to be missing, with the connection named, never “no such account”, over REST and MCP', async () => {
+    expect((await call('holdings', 'account_id=acc_ira')).body).toMatchObject({ accounts: [{ account_id: 'acc_ira' }], complete: true, missing_accounts: [] });
+    await fake.hset(ctxKey('accounts:meta'), { item_broker: DAMAGED });
+    await quietly(async () => {
+      const { res, body } = await call('holdings', 'account_id=acc_ira');
+      expect(res.status).toBe(200);
+      expect(body.accounts).toEqual([]);
+      expect(body.complete).toBe(false);
+      expect(body.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable' });
+      expect(body.notes).toContain(
+        'That account isn’t among the accounts that could be read: it may be at a connection whose accounts couldn’t be read or haven’t been loaded yet, so its holdings can’t be given'
+      );
+      // Its history answers as well, as it did.
+      expect((await call('balance-history', 'account_id=acc_ira')).res.status).toBe(200);
+      const result = await tool('get_holdings', { account_id: 'acc_ira' });
+      expect(result.isError ?? false).toBe(false);
+      expect(result.content[0].text).toBe('0 investment accounts. Incomplete: the accounts of 1 connection couldn’t be read; 1 connection hasn’t been loaded yet. See missing_accounts and notes.');
+      // All holdings: short of the same, and said so.
+      expect((await call('holdings')).body).toMatchObject({ complete: false });
+    });
+  });
+
+  test('an id no account has, with every connection read, is still a 404', async () => {
+    await fake.hdel(ctxKey('plaid:items'), 'item_new');
+    expect((await call('holdings', 'account_id=does_not_exist')).res.status).toBe(404);
+    expect((await call('holdings')).body).toMatchObject({ complete: true, missing_accounts: [] });
+  });
+});
+
 describe('an account_id', () => {
   test('that no account has, or had, is a 404, never an empty history', async () => {
     const { res, body } = await call('balance-history', 'account_id=does_not_exist');
@@ -217,7 +247,6 @@ describe('an account_id', () => {
     expect(body).toEqual({ error: { code: 'not_found', message: 'No account has that id. The ids are in /api/v1/accounts.' } });
     const result = await tool('get_balance_history', { account_id: 'does_not_exist' });
     expect(result.isError).toBe(true);
-    expect((await call('holdings', 'account_id=does_not_exist')).res.status).toBe(404);
   });
 
   test('of an account with no history yet is an empty series, and holdings take one account', async () => {

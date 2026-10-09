@@ -24,8 +24,15 @@ export const REQUESTS_PER_MINUTE = 100;
 export const RATE_WINDOW_SECONDS = 60;
 
 /** Requests with tokens that don't work, per address, before it is turned
- *  away for the rest of the window (lib/rate-limit.ts). */
-export const API_AUTH_MAX_FAILURES = 30;
+ *  away for the rest of the window (lib/rate-limit.ts). A flood limit, not a
+ *  guessing one: a 256-bit secret can't be guessed, so this only bounds what
+ *  garbage costs. 600 in 10 minutes is one a second, held for ten minutes:
+ *  a forgotten script retrying a revoked token every few seconds stays far
+ *  under it, as do several behind one office, VPN, carrier or CI address,
+ *  while a flood (dozens a second) reaches it within a minute. Until then a
+ *  failure costs three commands (two reads and the count), so an address
+ *  costs at most 1,800 in a window before each request costs one read. */
+export const API_AUTH_MAX_FAILURES = 600;
 export const API_AUTH_WINDOW_SECONDS = 10 * 60;
 
 /** Transactions per page of /api/v1/transactions: the default, and the most. */

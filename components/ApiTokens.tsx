@@ -237,7 +237,9 @@ export function ApiTokensView({
         A token lets a program you choose read your data: a script, a dashboard, or an AI assistant through Nya’s MCP
         server. It can’t change anything, and reads only what the <a href="/developers">developer page</a> lists. Anyone
         holding it can read all of that, so keep it secret, and revoke any you no longer use.{' '}
-        {needsPassword ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens.' : 'Signing out everywhere doesn’t revoke tokens.'}
+        {needsPassword
+          ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens. Turning on sign-in accounts does: make new ones once you sign in.'
+          : 'Signing out everywhere doesn’t revoke tokens.'}
       </p>
 
       {list.kind === 'loading' && <p className="panel-note">Loading your tokens…</p>}

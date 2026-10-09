@@ -19,8 +19,10 @@
 //
 // A token that isn't in a token's form is a 401 before anything is read; one
 // in the right form that doesn't work is counted against its address
-// (lib/rate-limit.ts), which is turned away for a while past the limit, before
-// any read. When the token was last used is written down at most once a
+// (lib/rate-limit.ts). Past a flood's worth, the address is turned away for
+// the rest of the window before the token's own reads: each request then
+// costs one read, the count's, which every request with a token in the right
+// form makes. When the token was last used is written down at most once a
 // minute per token; requests that start together write it once
 // (lib/api-tokens.ts noteUse).
 //

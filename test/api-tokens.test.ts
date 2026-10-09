@@ -132,6 +132,10 @@ describe('a token', () => {
     ]) {
       expect([bad, parseToken(bad)]).toEqual([bad, null]);
     }
+    // A secret is base64url, so it may hold "_" and "-" anywhere: read by place, never split on them.
+    const tricky = '_'.repeat(20) + '-'.repeat(20) + 'a_b';
+    expect(parseToken(formatToken('0123456789abcdef', tricky, TEST_CONTAINER as any))).toEqual({ id: '0123456789abcdef', secret: tricky, container: MINE });
+    expect(parseToken(formatToken('0123456789abcdef', `${'x'.repeat(42)}_`, TEST_CONTAINER as any))!.secret).toBe(`${'x'.repeat(42)}_`);
     expect(bearerToken(`Bearer ${good}`)).toBe(good);
     expect(bearerToken(`bearer ${good}`)).toBe(good);
     expect(bearerToken(`Bearer  ${good} `)).toBe(good);
@@ -495,6 +499,15 @@ describe('the API’s door (lib/api-http.ts admit)', () => {
     expect((await ask(bearer(token), '198.51.100.4')).status).toBe(200);
     // The count is the environment's, by address, and ends on its own.
     expect(await fake.ttl(testKey('ratelimit:api:203.0.113.7'))).toBeGreaterThan(0);
+  });
+
+  test('a forgotten script polling with a revoked token never locks out a good one from the same address', async () => {
+    const old = await createToken(ctx, 'Old');
+    const { token } = await createToken(ctx, 'New');
+    await revokeToken(ctx, old.info.id);
+    // Every three seconds for ten minutes: 200 failures.
+    for (let i = 0; i < 200; i++) expect((await ask(bearer(old.token))).status).toBe(401);
+    expect((await ask(bearer(token))).status).toBe(200);
   });
 
   test('a good token whose data is being restored is a 503 to try again, never a 401', async () => {

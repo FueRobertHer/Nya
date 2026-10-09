@@ -60,6 +60,9 @@ describe('API tokens, on screen', () => {
     expect(t).toContain('Signing out everywhere doesn’t revoke tokens.');
     // With the shared password, the natural move after a leak is a new password: that doesn't end them either.
     expect(text(view({ needsPassword: true }))).toContain('Signing out everywhere, or changing the app password, doesn’t revoke tokens.');
+    // Moving to sign-in accounts does: nobody vouches for a token the password made.
+    expect(text(view({ needsPassword: true }))).toContain('Turning on sign-in accounts does: make new ones once you sign in.');
+    expect(text(view())).not.toContain('Turning on sign-in accounts');
     expect(view()).toContain('href="/developers"');
     expect(t).toContain(`Up to ${MAX_TOKENS} tokens, and ${REQUESTS_PER_MINUTE} requests a minute each.`);
     expect(t).toContain('No tokens yet.');

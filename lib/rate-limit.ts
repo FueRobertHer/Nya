@@ -15,14 +15,24 @@
 //     always has: being able to sign in beats a rate limit.
 //   - API TOKENS THAT DON'T WORK, per IP, environment-wide (lib/api-http.ts):
 //     a request to the read-only API or the MCP server whose token is in the
-//     right form but doesn't check out costs reads, so an address that sends
-//     too many is turned away before any is made, and a flood of made-up
-//     tokens can't become a flood of database reads. Like the wrong
-//     passwords, it runs before any container is known, so it is the same
-//     kind of environment-wide counter (ratelimit:api:<ip>), never backed up.
-//     A token not even in the right form costs nothing and isn't counted.
-//     Fails open, as the login's does: a limit that can't be read is no
-//     reason to refuse a good token.
+//     right form but doesn't check out costs two reads, so an address that
+//     sends a flood of them (API_AUTH_MAX_FAILURES in lib/api-limits.ts, set
+//     well above anything a misconfigured client or a shared address sends)
+//     is turned away for the rest of the window at the cost of one read each,
+//     the count's. Every request with a token in the right form, good ones
+//     too, reads the count first: one read more. Like the wrong passwords, it
+//     runs before any container is known, so it is the same kind of
+//     environment-wide counter (ratelimit:api:<ip>), never backed up. A token
+//     not even in the right form costs nothing and isn't counted. Fails open,
+//     as the login's does: a limit that can't be read is no reason to refuse
+//     a good token.
+//
+// BY ADDRESS, from X-Forwarded-For's first entry. On Vercel the platform sets
+// that header, so the first entry is the client's address. Anywhere else, run
+// Nya only behind a proxy that sets the header itself, overwriting what the
+// client sent: one that appends to it lets a client choose its address, to
+// slip a limit or aim it at someone else's, and with no header at all every
+// client shares one count ("unknown").
 //   - DOWNLOADS OF MY DATA, per container (app/api/my-data), a counter store on
 //     the storage seam (downloadCount). Each download decrypts everything the
 //     person has, so a script holding a fresh sign-in can't pull it in a

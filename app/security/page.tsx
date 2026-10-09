@@ -294,9 +294,10 @@ export default function SecurityPage() {
           A token you make under API tokens lets a program read your data through Nya’s read-only API and its MCP server
           (see the <a href="/developers">Developers page</a>). Nya shows it once and never stores it: it keeps a SHA-256
           hash of the token’s secret, inside your own data and encrypted with it, and checks a token by comparing hashes
-          in constant time. Every way a token can fail (unknown, revoked, a wrong secret, or another person’s data) gets
-          the same answer after the same work, so a token can’t be used to find out whose data exists. Only a token whose
-          secret checks out is told more: that its data is being restored, say, and to try again later. Requests with
+          in constant time. A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong
+          secret, or another person’s data), and one whose secret doesn’t match costs the same work whoever’s data it
+          names, so a token can’t be used to find out whose data exists. Only a token whose secret checks out is told
+          more: that its data is being restored, say, and to try again later. Requests with
           tokens that don’t work are counted by the address they come from, which is turned away for a while after too
           many.
         </p>
