@@ -100,8 +100,11 @@ describe('the history before the loaded year', () => {
       date: daysAgo(395),
       name: 'Amazon Prime',
       amount: 139,
+      account_name: 'Checking',
+      account_type: 'depository',
       institution_name: 'Big Bank',
       category: null,
+      subcategory: null,
       iso_currency_code: 'USD',
       unofficial_currency_code: null,
       transaction_code: null,
@@ -130,23 +133,36 @@ describe('the history before the loaded year', () => {
     expect(ids(body.recurring_history)).toEqual(['biz_then']);
   });
 
-  test('an exclusion is marked on them, and detection leaves them out', async () => {
+  test('an excluded one is not sent, and detection leaves it out', async () => {
     await call(annotations.PATCH, 'PATCH', { transaction_id: 'prime_then', excluded: true });
     const body = await list();
-    const then = body.recurring_history.find((t: { transaction_id: string }) => t.transaction_id === 'prime_then');
-    expect(then.excluded).toBe(true);
+    expect(ids(body.recurring_history)).toEqual(['biz_then']);
     expect(detectRecurring([...body.transactions, ...body.recurring_history]).filter((s) => s.name === 'Amazon Prime')).toEqual([]);
   });
 
-  test('from the cache too, and a payload cached before they were sent has none', async () => {
+  test('chosen once exclusions are applied: an excluded row never keeps the others from being sent', async () => {
+    // Four older charges at a renewal's price is one too many to send; with
+    // one of them excluded, the other three go, from the cache as fresh.
+    plaidRows.push(
+      plaid({ transaction_id: 'dom_now', date: daysAgo(20), amount: 18, name: 'DOMAINS', merchant_name: 'Domains' }),
+      ...[400, 430, 460, 490].map((d) => plaid({ transaction_id: `dom_${d}`, date: daysAgo(d), amount: 18, name: 'DOMAINS', merchant_name: 'Domains' }))
+    );
+    expect(ids((await list()).recurring_history).filter((id: string) => id.startsWith('dom'))).toEqual([]);
+    await call(annotations.PATCH, 'PATCH', { transaction_id: 'dom_400', excluded: true });
+    expect(ids((await list(false)).recurring_history).filter((id: string) => id.startsWith('dom'))).toEqual(['dom_430', 'dom_460', 'dom_490']);
+    expect(ids((await list()).recurring_history).filter((id: string) => id.startsWith('dom'))).toEqual(['dom_430', 'dom_460', 'dom_490']);
+  });
+
+  test('from the cache too; a payload cached before rows carried their account is synced again', async () => {
     await list();
     let body = await list(false);
     expect(body.from_cache).toBe(true);
     expect(ids(body.recurring_history)).toEqual(['biz_then', 'prime_then']);
+    expect(body.transactions.every((t: { account_type?: string }) => t.account_type === 'depository')).toBe(true);
     await writeCache(ctx, CacheKey.Transactions, { plaid_only: true, transactions: [], notes: [], as_of: 'then' });
     body = await list(false);
-    expect(body.from_cache).toBe(true);
-    expect(body.recurring_history).toEqual([]);
+    expect(body.from_cache).toBe(false);
+    expect(ids(body.recurring_history)).toEqual(['biz_then', 'prime_then']);
   });
 
   test('a manual account\'s rows from before the year are sent the same way', async () => {

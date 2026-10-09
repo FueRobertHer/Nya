@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { buildForecast, cashPosition, forecastEvents, forecastNotes, withPurchase, type ForecastEvent, type ForecastInstitution } from '@/lib/forecast';
-import { detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
+import { buildForecast, cashPosition, countsInForecast, forecastEvents, forecastNotes, withPurchase, type ForecastEvent, type ForecastInstitution, type PendingRow } from '@/lib/forecast';
+import { addDays, detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
 import type { PlannedItem } from '@/lib/planned';
 import { localDate } from '@/lib/local-date';
 
@@ -8,11 +8,15 @@ import { localDate } from '@/lib/local-date';
 // arithmetic and the lowest point, what moves it and what it leaves out, the
 // what-if, and the viewer's own day as day zero.
 
+// On the checking account unless a test says otherwise: the forecast counts
+// only what leaves or reaches cash.
 const row = (date: string, amount: number, over: Partial<RecurringRow> = {}): RecurringRow => ({
   date,
   name: 'Netflix',
   amount,
   institution_name: 'Chase',
+  account_name: 'Checking',
+  account_type: 'depository',
   category: 'entertainment',
   transaction_code: null,
   iso_currency_code: 'USD',
@@ -92,7 +96,64 @@ describe('where it starts', () => {
   });
 
   test('no cash accounts: nothing to start from', () => {
-    expect(cashPosition([inst({ accounts: [acct({ type: 'credit' })] })])).toEqual({ currency: null, start: 0, included: [], leftOut: [], noBalance: [] });
+    expect(cashPosition([inst({ accounts: [acct({ type: 'credit' })] })])).toEqual({
+      currency: null,
+      balances: 0,
+      pending: { amount: 0, count: 0 },
+      start: 0,
+      included: [],
+      leftOut: [],
+      noBalance: [],
+    });
+  });
+
+  describe('less what is still pending on them', () => {
+    const pending = (amount: number, over: Partial<PendingRow> = {}): PendingRow => ({
+      date: '2026-10-08',
+      name: 'Whole Foods',
+      amount,
+      pending: true,
+      account_name: 'Checking',
+      account_type: 'depository',
+      institution_name: 'Chase',
+      iso_currency_code: 'USD',
+      transaction_code: null,
+      category: 'food and drink',
+      ...over,
+    });
+    const chase = () => [inst({ accounts: [acct({ balance: 1200 }), acct({ account_id: 'sav', name: 'Savings', balance: 500 }), acct({ account_id: 'card', name: 'Sapphire', type: 'credit', balance: 300 })] })];
+
+    test('a bank leaves pending charges out of its balance, but they are spent', () => {
+      // The reviewer's case: 1,200 in checking, 900 pending, rent of 1,000 in three days.
+      const p = cashPosition([inst({ accounts: [acct({ balance: 1200 })] })], [pending(400), pending(500, { name: 'Target' })]);
+      expect(p).toMatchObject({ balances: 1200, pending: { amount: 900, count: 2 }, start: 300 });
+      const f = buildForecast(p.start, [ev('2026-10-12', -1000)], '2026-10-09', 30, 0, 'USD');
+      expect(f.lowest).toEqual({ date: '2026-10-12', balance: -700 });
+      expect(f.belowZero).toBe('2026-10-12');
+    });
+
+    test('not posted rows, deposits, a card\'s charges, another currency or another account', () => {
+      const p = cashPosition(chase(), [
+        pending(40, { pending: false }),
+        // A deposit isn't money to spend yet; a paycheck pending stays expected.
+        pending(-2000, { name: 'Payroll', category: 'income' }),
+        pending(75, { account_name: 'Sapphire', account_type: 'credit' }),
+        pending(10, { iso_currency_code: 'EUR' }),
+        pending(12, { institution_name: 'Ally' }),
+        pending(9.99, { account_name: 'Savings' }),
+      ]);
+      expect(p.pending).toEqual({ amount: 9.99, count: 1 });
+      expect(p.start).toBe(1690.01);
+    });
+
+    test('a transfer between two of them, pending on both sides, moves nothing; one to elsewhere is spent', () => {
+      const p = cashPosition(chase(), [
+        pending(250, { name: 'Transfer to savings', category: 'transfer out' }),
+        pending(-250, { name: 'Transfer from checking', category: 'transfer in', account_name: 'Savings', date: '2026-10-09' }),
+        pending(100, { name: 'To brokerage', category: 'transfer out' }),
+      ]);
+      expect(p.pending).toEqual({ amount: 100, count: 1 });
+    });
   });
 });
 
@@ -100,16 +161,17 @@ describe('day by day', () => {
   test('each day is the one before it plus that day\'s amounts, and the lowest point is the first day it is reached', () => {
     const f = buildForecast(
       1000,
-      [ev('2026-10-12', -15.49), ev('2026-10-15', 2000), ev('2026-10-15', -1500), ev('2026-10-20', -1100), ev('2026-10-25', -400.01)],
+      [ev('2026-10-12', -15.49), ev('2026-10-15', 2000), ev('2026-10-16', -1500), ev('2026-10-20', -1100), ev('2026-10-25', -400.01)],
       '2026-10-09',
       30
     );
     expect(f.days).toHaveLength(31);
-    expect(f.days[0]).toEqual({ date: '2026-10-09', balance: 1000, events: [] });
+    expect(f.days[0]).toEqual({ date: '2026-10-09', low: 1000, balance: 1000, events: [] });
     const at = (d: string) => f.days.find((x) => x.date === d)!.balance;
     expect(at('2026-10-11')).toBe(1000);
     expect(at('2026-10-12')).toBe(984.51);
-    expect(at('2026-10-15')).toBe(1484.51);
+    expect(at('2026-10-15')).toBe(2984.51);
+    expect(at('2026-10-16')).toBe(1484.51);
     expect(at('2026-10-20')).toBe(384.51);
     expect(at('2026-10-25')).toBe(-15.5);
     expect(f.lowest).toEqual({ date: '2026-10-25', balance: -15.5 });
@@ -118,10 +180,29 @@ describe('day by day', () => {
     expect(f.days[30].date).toBe('2026-11-08');
   });
 
+  test('on a day with money in and out, the money out is counted first: the dip is the one to plan for', () => {
+    // Rent and pay both expected on the 15th: which comes first isn't known.
+    const f = buildForecast(300, [ev('2026-10-15', 2000), ev('2026-10-15', -1500)], '2026-10-09', 30, 100);
+    const day = f.days.find((d) => d.date === '2026-10-15')!;
+    expect(day).toMatchObject({ low: -1200, balance: 800 });
+    expect(f.lowest).toEqual({ date: '2026-10-15', balance: -1200 });
+    expect(f.belowZero).toBe('2026-10-15');
+    expect(f.belowThreshold).toBe('2026-10-15');
+    // A day with money in only never dips.
+    expect(buildForecast(300, [ev('2026-10-15', 2000)], '2026-10-09', 30).days[6]).toMatchObject({ low: 300, balance: 2300 });
+  });
+
   test('counted in cents: a hundred dimes are exactly ten dollars', () => {
     const f = buildForecast(0.3, Array.from({ length: 100 }, () => ev('2026-10-10', 0.1)), '2026-10-09', 30);
     expect(f.end).toBe(10.3);
     expect(buildForecast(0.1, [ev('2026-10-09', 0.2)], '2026-10-09', 0).days[0].balance).toBe(0.3);
+  });
+
+  test("counted in the currency's own minor unit: fils for KWD, whole yen", () => {
+    // 10.125 KWD is ten dinars and 125 fils, not 10.13.
+    const kwd = buildForecast(100, [ev('2026-10-10', -10.125), ev('2026-10-11', -0.001)], '2026-10-09', 30, 0, 'KWD');
+    expect(kwd.end).toBe(89.874);
+    expect(buildForecast(1000, [ev('2026-10-10', -333)], '2026-10-09', 30, 0, 'JPY').end).toBe(667);
   });
 
   test('with nothing going out, the lowest point is today, and ties go to the earliest day', () => {
@@ -162,6 +243,45 @@ describe('day by day', () => {
 });
 
 describe('what moves it', () => {
+  test('only cash: a card\'s own charges are never taken out beside the card\'s payment', () => {
+    // The reviewer's case: Netflix and Spotify on a card, and the card's
+    // autopay of exactly those from checking. Only the autopay leaves cash.
+    const months = ['2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
+    const card = { account_name: 'Sapphire', account_type: 'credit' };
+    const rows = months.flatMap((m) => [
+      row(`${m}-12`, 15.49, card),
+      row(`${m}-20`, 10.99, { name: 'Spotify', ...card }),
+      row(`${m}-25`, -26.48, { name: 'Payment Thank You', category: 'loan payments', ...card }),
+      row(`${m}-25`, 26.48, { name: 'CHASE CREDIT CRD AUTOPAY', category: 'loan payments', subcategory: 'credit card payment' }),
+      // A statement credit on the card is not cash coming in either.
+      row(`${m}-03`, -5, { name: 'Card perk credit', category: 'income', ...card }),
+    ]);
+    const s = detectRecurring(rows);
+    expect(s.map((x) => [x.name, x.accountType])).toEqual([
+      ['CHASE CREDIT CRD AUTOPAY', 'depository'],
+      ['Netflix', 'credit'],
+      ['Spotify', 'credit'],
+      ['Card perk credit', 'credit'],
+    ]);
+    expect(s.map(countsInForecast)).toEqual([true, false, false, false]);
+    const { events } = forecastEvents({ series: s, planned: [], currency: 'USD', today: '2026-10-09', until: '2026-11-08' });
+    expect(events.map((e) => [e.date, e.name, e.amount])).toEqual([['2026-10-25', 'CHASE CREDIT CRD AUTOPAY', -26.48]]);
+    expect(buildForecast(1000, events, '2026-10-09', 30, 0, 'USD').end).toBe(973.52);
+  });
+
+  test('a series on an account of unknown type, varying pay and pay that stopped are left out and named', () => {
+    const unknown = detectRecurring(monthly('2026-04', 6, 12).map((d) => row(d, 15.49, { account_type: null })));
+    const gigs = [800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700].map((a, i) => row(addDays('2026-04-24', i * 14), -a, { name: 'Gig pay', category: 'income' }));
+    const varies = detectRecurring(gigs);
+    expect(varies[0].agreement).toBe('varies');
+    const gone = detectRecurring(monthly('2026-03', 5, 1).map((d) => row(d, -3000, { name: 'Old job', category: 'income' })));
+    const out = forecastEvents({ series: [...unknown, ...varies, ...gone], planned: [], currency: 'USD', today: '2026-10-09', until: '2026-11-08' });
+    expect(out.events).toEqual([]);
+    expect(out.unplaced.map((x) => x.name)).toEqual(['Netflix']);
+    expect(out.varied.map((x) => x.name)).toEqual(['Gig pay']);
+    expect(out.lapsed.map((x) => x.name)).toEqual(['Old job']);
+  });
+
   const series = () => [
     ...detectRecurring(monthly('2026-04', 6, 12).map((d) => row(d, 15.49))),
     ...detectRecurring(monthly('2026-04', 6, 1).map((d) => row(d, -3000, { name: 'Payroll', category: 'income' }))),
@@ -300,7 +420,7 @@ describe('day zero is the viewer\'s day', () => {
 });
 
 describe('what it says it may be missing', () => {
-  const days = { snapshot: (d: string) => `snap ${d}`, instant: (iso: string) => `day ${iso.slice(0, 10)}` };
+  const days = { snapshot: (d: string) => `snap ${d}`, instant: (iso: string) => `day ${iso.slice(0, 10)}`, day: (d: string) => `on ${d}` };
   const notes = (institutions: ForecastInstitution[], extra: Partial<Parameters<typeof forecastNotes>[0]> = {}) =>
     forecastNotes({ institutions, position: cashPosition(institutions), eventsLeftOut: [], today: '2026-10-09', days, ...extra });
 
@@ -311,6 +431,38 @@ describe('what it says it may be missing', () => {
   test('a balance recovered from an earlier day, and an institution not reached', () => {
     expect(notes([inst({ error: 'x', needs_reauth: true, stale_as_of: '2026-10-03' })])).toEqual(['Chase needs reconnecting, so this starts from its balances on snap 2026-10-03.']);
     expect(notes([inst(), inst({ institution_name: 'Ally', error: 'x', accounts: [] })])).toEqual(["Ally couldn't be reached, so any checking or savings there isn't in this forecast."]);
+    // Its accounts remembered: the cash ones are named, the rest needn't be.
+    expect(
+      notes([
+        inst(),
+        inst({ institution_name: 'Ally', error: 'x', accounts: [], unshown_accounts: [{ name: 'Joint checking', type: 'depository' }, { name: 'Ally card', type: 'credit' }] }),
+      ])
+    ).toEqual(["Ally couldn't be reached, so Joint checking there isn't in this forecast."]);
+    expect(notes([inst(), inst({ institution_name: 'Ally', error: 'x', accounts: [], unshown_accounts: [{ name: 'Ally card', type: 'credit' }] })])).toEqual([]);
+  });
+
+  test('checking or savings a bank could not show, or that stopped reporting', () => {
+    // Recovered, short its savings, named.
+    expect(
+      notes([inst({ error: 'x', stale_as_of: '2026-10-03', stale_missing: 1, unshown_accounts: [{ name: 'Savings', type: 'depository' }] })])
+    ).toEqual([
+      "Chase couldn't refresh, so this starts from its balances on snap 2026-10-03.",
+      "Savings at Chase couldn't be shown, so its balance isn't in this forecast.",
+    ]);
+    // A payload from before the names were sent: counted.
+    expect(notes([inst({ error: 'x', stale_as_of: '2026-10-03', stale_missing: 2 })])[1]).toBe("2 accounts at Chase couldn't be shown, so any cash in them isn't in this forecast.");
+    // Missing from an otherwise good fetch.
+    expect(notes([inst({ unconfirmed_missing: 1 })])).toEqual(["1 account at Chase stopped reporting, so any cash in it isn't in this forecast."]);
+  });
+
+  test('pay that stopped coming or varies too much, and a series on an account of unknown type', () => {
+    const pay = detectRecurring(monthly('2026-03', 6, 1).map((d) => row(d, -3000, { category: 'income' })))[0];
+    const one = (name: string) => ({ ...pay, name, lastDate: '2026-08-01' });
+    expect(notes([inst()], { series: { lapsed: [one('Old job')], varied: [one('Gig pay')], unplaced: [one('Netflix'), one('Spotify')] } })).toEqual([
+      "Old job hasn't come since on 2026-08-01, so it isn't in this forecast. If it still comes, add it as planned income.",
+      'Gig pay comes on a schedule, but its amount varies too much to forecast, so it isn\'t in this. Add what you expect as planned income.',
+      "Netflix and Spotify are on an account whose type isn't known, so they aren't in this forecast.",
+    ]);
   });
 
   test('a connection that stopped syncing, or whose transactions are missing or arriving', () => {

@@ -7,11 +7,15 @@ import type { PlannedItem } from '@/lib/planned';
 // transactions and what is expected from today, and the two figures a day
 // carries, never added together.
 
+// On the checking account unless a test says otherwise: the expected figure
+// counts what the forecast counts.
 const row = (date: string, amount: number, over: Partial<RecurringRow> = {}): RecurringRow => ({
   date,
   name: 'Netflix',
   amount,
   institution_name: 'Chase',
+  account_name: 'Checking',
+  account_type: 'depository',
   category: 'entertainment',
   transaction_code: null,
   iso_currency_code: 'USD',
@@ -109,6 +113,34 @@ describe('a day\'s entries and figures', () => {
       '2026-12-15 Payroll',
       '2026-12-15 Cloud',
     ]);
+  });
+
+  test('what the forecast leaves out is listed with why, never added: a card\'s charge, an account of unknown type, varying pay', () => {
+    const card = detectRecurring(monthly('2026-04', 6, 18).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
+    const unknown = detectRecurring(monthly('2026-04', 6, 18).map((d) => row(d, 40, { name: 'Gym', account_name: '', account_type: null })));
+    const gigs = [800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700];
+    const varies = detectRecurring(gigs.map((a, i) => row(scheduleDates({ unit: 'day', every: 14, start: '2026-04-24' }, '2100-01-01', 12)[i], -a, { name: 'Gig pay', category: 'income' })));
+    const m = calendarMonth({ month: '2026-10', today: '2026-10-09', txns: [], series: [...card, ...unknown, ...varies], planned: [], currency: 'USD' });
+    const day = m.days.get('2026-10-18')!;
+    expect(day.entries.map((e) => [e.name, e.off, e.account, e.accountType])).toEqual([
+      ['Gym', 'unknown-account', undefined, null],
+      ['Spotify', 'not-cash', 'Sapphire', 'credit'],
+    ]);
+    expect(day.expected).toBeNull();
+    expect(m.days.get('2026-10-09')!.entries.map((e) => [e.name, e.off])).toEqual([['Gig pay', 'varies']]);
+    expect(m.days.get('2026-10-09')!.expected).toBeNull();
+  });
+
+  test("figures are added in the currency's own minor unit", () => {
+    const kwd = calendarMonth({
+      month: '2026-10',
+      today: '2026-10-09',
+      txns: [txn({ amount: 10.125, iso_currency_code: 'KWD' }), txn({ transaction_id: 'u', amount: 0.001, iso_currency_code: 'KWD' })],
+      series: [],
+      planned: [],
+      currency: 'KWD',
+    });
+    expect(kwd.days.get('2026-10-05')!.posted).toBe(-10.126);
   });
 
   test('a dismissed series isn\'t on it', () => {

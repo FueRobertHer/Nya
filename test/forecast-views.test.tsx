@@ -36,6 +36,7 @@ function txn(over: Partial<Txn>): Txn {
     amount: 10,
     pending: false,
     account_name: 'Checking',
+    account_type: 'depository',
     institution_name: 'Chase',
     category: 'food and drink',
     iso_currency_code: 'USD',
@@ -64,6 +65,8 @@ const row = (date: string, amount: number, over: Partial<RecurringRow> = {}): Re
   name: 'Netflix',
   amount,
   institution_name: 'Chase',
+  account_name: 'Checking',
+  account_type: 'depository',
   category: 'entertainment',
   transaction_code: null,
   iso_currency_code: 'USD',
@@ -93,16 +96,44 @@ describe('the forecast', () => {
   test('is labelled an estimate, starts from the cash accounts it names, and gives its lowest point', () => {
     const t = card();
     expect(t).toContain('Cash forecast estimate');
-    expect(t).toContain('Starts from $900.00 today in Checking at Chase.');
-    // Rent on the 15th takes it to -$600, pay on the 25th back up.
-    expect(t).toContain('-$600.00 lowest, on Oct 15 (estimated)');
-    expect(t).toContain('Drops below zero on Oct 15.');
-    expect(t).toContain('Ends $1,400.00 on Nov 8.');
+    expect(t).toContain('Starts from $900.00 in Checking at Chase.');
+    // Rent on the 15th takes it to -$600, pay on the 25th back up: dates
+    // after today are expectations.
+    expect(t).toContain('-$600.00 lowest, around Oct 15 (estimated)');
+    expect(t).toContain('Expected to drop below zero around Oct 15.');
+    expect(t).toContain('Expected to end near $1,400.00 on Nov 8.');
     expect(t).toContain(
-      "An estimate from the bills and income Nya expects and what you planned. Everyday spending and money moved to your other accounts aren't in it, and a card's payment only when it repeats at a steady amount."
+      "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first."
     );
     expect(t).toContain('What if I buy');
     expect(t).toContain('Warns below $100.00');
+  });
+
+  test('starts from the balance less what is still pending, and says when the balances are from', () => {
+    const pending = [txn({ transaction_id: 'p1', amount: 143.27, pending: true }), txn({ transaction_id: 'p2', amount: 20, pending: true, account_name: 'Sapphire', account_type: 'credit' })];
+    const t = card({ txns: pending, balancesAsOf: '2026-10-09T14:15:00' });
+    expect(t).toContain('Starts from $756.73: $900.00 in Checking at Chase, less $143.27 still pending.');
+    expect(t).toMatch(/Balances as of 2:15\sPM\./);
+    // Painted from what this device saved, before a load replaced it.
+    const saved = card({ balancesAsOf: '2026-10-07T15:12:00', balancesSaved: true });
+    expect(saved).toMatch(/Those are the balances saved on Oct 7 at 3:12\sPM, the last time they loaded; anything since isn't in it\./);
+  });
+
+  test('a failed transactions load says so, never that nothing is coming', () => {
+    const t = card({ failed: true, series: [] });
+    expect(t).toContain("Transactions couldn't be loaded, so no bills or income are in this: it is your balance and what you planned.");
+    expect(t).not.toContain('still loading');
+  });
+
+  test('a warning set in another currency is not read as this one', () => {
+    const t = card({ planned: { ...EMPTY_PLANNED, threshold: { amount: 500, currency: 'EUR' } } });
+    expect(t).toContain('Warns below $100.00');
+    expect(t).toContain('Your warning of €500.00 was set in EUR, and this forecast is in USD, so it warns below $100.00 until you change it.');
+  });
+
+  test('pay that stopped coming is named, not dropped unseen', () => {
+    const old = detectRecurring(monthly('2026-03', 5, 1).map((d) => row(d, -3000, { name: 'Old job', category: 'income' })));
+    expect(card({ series: [...series(), ...old] })).toContain("Old job hasn't come since Jul 1, so it isn't in this forecast. If it still comes, add it as planned income.");
   });
 
   test('with pay expected today, the lowest is the balance now, not an estimate', () => {
@@ -124,10 +155,13 @@ describe('the forecast', () => {
   });
 
   test('a warning below the person\'s own figure, before it would go below zero', () => {
-    const t = card({ institutions: [chase({ accounts: [{ account_id: 'chk', name: 'Checking', type: 'depository', balance: 1700, currency: 'USD' }] })], planned: { ...EMPTY_PLANNED, threshold: 500 } });
-    expect(t).toContain('Below $500.00 from Oct 15.');
+    const t = card({
+      institutions: [chase({ accounts: [{ account_id: 'chk', name: 'Checking', type: 'depository', balance: 1700, currency: 'USD' }] })],
+      planned: { ...EMPTY_PLANNED, threshold: { amount: 500, currency: 'USD' } },
+    });
+    expect(t).toContain('Expected below $500.00 from around Oct 15.');
     expect(t).toContain('Warns below $500.00');
-    expect(t).not.toContain('Drops below zero');
+    expect(t).not.toContain('drop below zero');
   });
 
   test('planned items count, and what it may be missing is said', () => {
@@ -137,7 +171,7 @@ describe('the forecast', () => {
       institutions: [chase({ needs_reauth: true, error: 'x', stale_as_of: '2026-10-03' })],
       stopped: [{ institution_name: 'Chase', last_ok_at: '2026-10-03T12:00:00Z' }],
     });
-    expect(t).toContain('Ends $1,187.50 on Nov 8.');
+    expect(t).toContain('Expected to end near $1,187.50 on Nov 8.');
     expect(t).toContain('Chase needs reconnecting, so this starts from its balances on Oct 3.');
     expect(t).toContain("Chase hasn't synced since");
   });
@@ -176,7 +210,23 @@ describe('the calendar', () => {
     expect(t).toContain('October 2026');
     expect(t).toContain('Friday, October 9');
     expect(t).toContain('Nothing expected.');
-    expect(t).toContain('Days gone by show what posted; from today, what is expected, an estimate. A payment due on a card or loan is marked, not added.');
+    expect(t).toContain(
+      "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added."
+    );
+  });
+
+  test('a failed transactions load says so on the days gone by, never "Nothing posted"', () => {
+    const t = view({ txns: null, failed: true, today: '2026-10-09' });
+    expect(t).toContain("Transactions couldn't be loaded, so what posted isn't shown.");
+    expect(t).not.toContain('Nothing posted');
+    expect(view({ txns: null })).toContain('Transactions are still loading.');
+  });
+
+  test('a card\'s own charge is listed on its day but not added, and says why', () => {
+    const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
+    const t = view({ series: spotify, txns: [] });
+    expect(t).toContain("Spotify bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
+    expect(t).not.toContain('Expected · -$10.99');
   });
 
   test('today\'s list says why a posted row isn\'t in the day\'s figure', () => {
@@ -207,20 +257,43 @@ describe('the calendar', () => {
     expect(html).toContain('aria-label="Monday, October 5, posted -$30.00"');
     expect(html).toContain('aria-label="Thursday, October 15, expected -$1,500.00"');
     expect(html).toContain('aria-label="Sunday, October 25, expected +$2,000.00"');
+    // In the cell, whole units and a thousand shortened, to fit a phone's column.
+    expect(html).toContain('>-$30</span>');
+    expect(html).toContain('>-$1.5K</span>');
+    expect(html).toContain('>+$2K</span>');
   });
 });
 
 describe('the recurring list', () => {
   const list = (over: Partial<Parameters<typeof RecurringCard>[0]> = {}) =>
-    text(renderToStaticMarkup(<RecurringCard series={series()} today={TODAY} currency="USD" dismissed={[]} onDismiss={async () => true} {...over} />));
+    text(renderToStaticMarkup(<RecurringCard series={series()} today={TODAY} currency="USD" dismissed={new Set()} onDismiss={async () => true} {...over} />));
 
   test('bills and income apart, each with its cadence, how often it was seen, and when it is next expected', () => {
     const t = list();
     expect(t).toContain('Recurring ~$1,500.00/mo out');
     expect(t).toContain('Bills');
-    expect(t).toContain('Rent Chase · Monthly · seen 6 times · next ~Oct 15 $1,500.00');
+    expect(t).toContain('Rent Chase · Checking · Monthly · seen 6 times · next ~Oct 15 $1,500.00');
     expect(t).toContain('Income · ~$2,000.00/mo in');
-    expect(t).toContain('Payroll Chase · Monthly · seen 6 times · next ~Oct 25 +$2,000.00');
+    expect(t).toContain('Payroll Chase · Checking · Monthly · seen 6 times · next ~Oct 25 +$2,000.00');
+  });
+
+  test('pay that varies too much, and a payment that pays a card, are listed but not in the monthly figures', () => {
+    const gigs = [800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700];
+    const varies = detectRecurring(gigs.map((a, i) => row(scheduleDates({ unit: 'day', every: 14, start: '2026-04-24' }, '2100-01-01', 12)[i], -a, { name: 'Gig pay', category: 'income' })));
+    const autopay = detectRecurring(monthly('2026-04', 6, 25).map((d) => row(d, 500, { name: 'Card autopay', category: 'loan payments', subcategory: 'credit card payment' })));
+    const t = list({ series: [...autopay, ...varies] });
+    expect(t).toContain('amount varies');
+    expect(t).toContain('pays a card');
+    expect(t).not.toContain('/mo out');
+    expect(t).not.toContain('/mo in');
+  });
+
+  test('when the planned items could not be loaded, it says why nothing can be marked', () => {
+    expect(list({ status: 'error' })).toContain("Your planned items couldn't be loaded, so this can't be saved now.");
+  });
+
+  test('a failed transactions load says so', () => {
+    expect(list({ series: [], failed: true })).toContain("Transactions couldn't be loaded, so no bills or income can be found.");
   });
 
   test('a late one, and one that seems to have ended, say so; the ended one is out of the monthly figure', () => {
@@ -232,8 +305,8 @@ describe('the recurring list', () => {
 
   test('one marked not recurring is listed apart, to restore', () => {
     const s = series();
-    const t = list({ series: s, dismissed: [s[0].id] });
-    expect(t).not.toContain('Rent Chase · Monthly');
+    const t = list({ series: s, dismissed: new Set([s[0].id]) });
+    expect(t).not.toContain('Rent Chase · Checking · Monthly');
     expect(t).toContain('1 marked not recurring · Show');
   });
 
@@ -282,6 +355,7 @@ describe('on the Budgets tab', () => {
       renderToStaticMarkup(
         <BudgetsTab
           txns={txns}
+          series={detectRecurring(txns)}
           budgets={{}}
           onSave={async () => true}
           goals={[]}
@@ -295,7 +369,7 @@ describe('on the Budgets tab', () => {
       )
     );
     for (const heading of ['Cash forecast', 'Calendar', 'Recurring', 'Planned']) expect(t).toContain(heading);
-    expect(t).toContain('Rent Chase · Monthly · seen 6 times');
+    expect(t).toContain('Rent Chase · Checking · Monthly · seen 6 times');
   });
 });
 
@@ -306,8 +380,9 @@ describe('Home\'s upcoming bills', () => {
   const from = addMonths(next.slice(0, 7), -3);
   const dates = scheduleDates({ unit: 'month', every: 1, days: [Number(next.slice(8))], month: from, slot: 0 }, addDays(today, -1));
   const bills = dates.map((d, i) => txn({ transaction_id: `gym-${i}`, date: d, name: 'Gym', amount: 40, category: 'personal care' }));
+  // Detected once, by the dashboard, and handed down.
   const home = (over: Partial<Parameters<typeof Insights>[0]> = {}) =>
-    text(renderToStaticMarkup(<Insights txns={bills} budgets={{}} accounts={[]} {...over} />));
+    text(renderToStaticMarkup(<Insights txns={bills} series={detectRecurring(over.txns ?? bills)} budgets={{}} accounts={[]} {...over} />));
   const day = new Date(`${next}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
   test('use the date the cadence names', () => {
@@ -325,6 +400,6 @@ describe('Home\'s upcoming bills', () => {
     const thisYear = [txn({ transaction_id: 'prime-1', date: addDays(renewal, -365), name: 'Prime', amount: 139, category: 'general merchandise' })];
     const before = [row(addDays(renewal, -730), 139, { name: 'Prime', category: 'general merchandise' })];
     expect(home({ txns: thisYear })).not.toContain('Prime');
-    expect(home({ txns: thisYear, recurringHistory: before })).toContain('Upcoming: Prime (~$139.00)');
+    expect(home({ txns: thisYear, series: detectRecurring([...thisYear, ...before]) })).toContain('Upcoming: Prime (~$139.00)');
   });
 });

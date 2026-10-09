@@ -5,7 +5,10 @@
 // posted, as the Activity tab counts each day; from today on, the bills and
 // income expected, the items planned, and the card and loan payments Plaid
 // says are due. Tap a day for its list. The two figures are never added
-// together: one is the bank's record, the other an estimate.
+// together: one is the bank's record, the other an estimate, and the expected
+// one counts what the forecast counts (a card's own charges are listed, not
+// added). A cell's figure is in whole units, a thousand and up shortened, so
+// it fits a phone's narrow column; the day's list has the cents.
 
 import { useMemo, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
@@ -22,10 +25,38 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 const MONTHS_BACK = 12;
 const MONTHS_AHEAD = 12;
 
-/** "+$1.2K", "-$15": a day's figure in a cell. */
-function compactSigned(n: number, currency: string | null): string {
-  if (Math.abs(n) < 0.005) return compactMoney(0, currency);
-  return `${n < 0 ? '-' : '+'}${compactMoney(Math.abs(n), currency)}`;
+/** "+$1.2K", "-$143": a day's figure in a cell, in whole units (the day's
+ *  list has the cents), a thousand and up shortened. */
+function cellFigure(n: number, currency: string | null): string {
+  const abs = Math.abs(n);
+  const sign = Math.round(abs) === 0 ? '' : n < 0 ? '-' : '+';
+  if (abs >= 1000) return `${sign}${compactMoney(abs, currency)}`;
+  if (currency) {
+    try {
+      return `${sign}${new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(Math.round(abs))}`;
+    } catch {
+      return `${sign}${Math.round(abs)} ${currency}`;
+    }
+  }
+  return `${sign}$${Math.round(abs)}`;
+}
+
+/** Why an expected amount isn't in its day's figure (lib/calendar.ts). */
+function offText(e: CalendarEntry): string | null {
+  switch (e.off) {
+    case 'currency':
+      return `in ${e.currency}, not in the day's figure`;
+    case 'not-cash':
+      return e.accountType === 'credit'
+        ? `on ${e.account ? `the ${e.account} card` : 'a card'}, not in the day's figure: the card's payment is what leaves cash`
+        : `on ${e.account || 'an account'}, not a cash account, not in the day's figure`;
+    case 'unknown-account':
+      return "on an account of unknown type, not in the day's figure";
+    case 'varies':
+      return "its amount varies, not in the day's figure";
+    default:
+      return null;
+  }
 }
 
 function monthTitle(month: string): string {
@@ -56,8 +87,11 @@ function dotsOf(entries: CalendarEntry[]): string[] {
   return ['income', 'bill', 'planned', 'due'].filter((k) => kinds.has(k));
 }
 
+const NO_TXNS: Txn[] = [];
+
 export default function CalendarView({
   txns,
+  failed = false,
   series,
   planned,
   dismissed,
@@ -65,9 +99,13 @@ export default function CalendarView({
   today,
   currency,
 }: {
-  txns: Txn[];
+  /** Null while transactions load, or when they couldn't be (`failed`). */
+  txns: Txn[] | null;
+  failed?: boolean;
   series: RecurringSeries[];
   planned: PlannedItem[];
+  /** The series the person said aren't recurring (lib/recurring.ts
+   *  dismissedSeries). */
   dismissed: ReadonlySet<string>;
   /** For the payments due on cards and loans. */
   institutions: ForecastInstitution[];
@@ -82,9 +120,12 @@ export default function CalendarView({
 
   const dues = useMemo(() => duePayments(institutions), [institutions]);
   const view = useMemo(
-    () => calendarMonth({ month, today, txns, series, planned, dismissed, dues, currency }),
+    () => calendarMonth({ month, today, txns: txns ?? NO_TXNS, series, planned, dismissed, dues, currency }),
     [month, today, txns, series, planned, dismissed, dues, currency]
   );
+  // Days gone by can't say what posted until transactions are in.
+  const unknownPast = txns === null;
+  const pastNote = failed ? "Transactions couldn't be loaded, so what posted isn't shown." : 'Transactions are still loading.';
 
   const first = addMonths(thisMonth, -MONTHS_BACK);
   const last = addMonths(thisMonth, MONTHS_AHEAD);
@@ -176,7 +217,7 @@ export default function CalendarView({
             >
               <span className="cal-num">{Number(date.slice(8))}</span>
               <span className={`cal-fig${figure === null ? '' : figure > 0 ? ' in' : figure < 0 ? ' out' : ''}${estimated ? ' estimated' : ''}`}>
-                {figure === null ? '' : compactSigned(figure, currency)}
+                {figure === null ? '' : cellFigure(figure, currency)}
               </span>
               <span className="cal-dots" aria-hidden="true">
                 {dots.map((k) => (
@@ -187,6 +228,8 @@ export default function CalendarView({
           );
         })}
       </div>
+
+      {unknownPast && month <= thisMonth && <p className={failed ? 'error' : 'stale-note'}>{pastNote}</p>}
 
       <div className="cal-legend" aria-hidden="true">
         <span>
@@ -208,7 +251,10 @@ export default function CalendarView({
           <div className="inst-header">
             <div className="inst-name">{dayTitle(day.date)}</div>
           </div>
-          {day.entries.length === 0 && <p className="empty-note">{day.date < today ? 'Nothing posted.' : 'Nothing expected.'}</p>}
+          {day.entries.length === 0 && (
+            <p className="empty-note">{day.date < today ? (unknownPast ? pastNote : 'Nothing posted.') : 'Nothing expected.'}</p>
+          )}
+          {day.entries.length > 0 && day.date <= today && unknownPast && <p className="empty-note">{pastNote}</p>}
           {posted.length > 0 && (
             <>
               <div className="recurring-section">
@@ -243,7 +289,7 @@ export default function CalendarView({
                         <div className="type-tag">
                           {e.source === 'planned' ? 'planned' : e.source === 'income' ? 'income' : 'bill'} · {cadenceText(e.cadence, e.source)}
                           {e.late && e.due ? ` · due ${fmtDay(e.due)}, not in yet` : ''}
-                          {e.uncounted ? ` · in ${e.currency}, not in the day's figure` : ''}
+                          {offText(e) ? ` · ${offText(e)}` : ''}
                         </div>
                       </td>
                       <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}>{amountOf(e)}</td>
@@ -275,7 +321,8 @@ export default function CalendarView({
       )}
 
       <div className="chart-note">
-        Days gone by show what posted; from today, what is expected, an estimate. A payment due on a card or loan is marked, not added.
+        Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the
+        forecast counts it; a card&apos;s own charges and the payments due on cards and loans are listed, not added.
       </div>
     </div>
   );

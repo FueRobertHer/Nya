@@ -366,6 +366,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string):
     amount: row.amount,
     pending: false,
     account_name: account.name,
+    account_type: account.type,
     institution_name: institution,
     category: row.category,
     iso_currency_code: row.currency,

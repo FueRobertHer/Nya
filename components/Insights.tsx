@@ -9,7 +9,7 @@
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring, upcomingBills, type RecurringRow } from '@/lib/recurring';
+import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
@@ -30,7 +30,7 @@ export type ReconnectSoon = {
 };
 
 const NO_RECONNECTS: ReconnectSoon[] = [];
-const NO_HISTORY: RecurringRow[] = [];
+const NO_SERIES: RecurringSeries[] = [];
 const NO_DISMISSED: string[] = [];
 
 /** The Home alerts for connections ending within RECONNECT_ALERT_DAYS, soonest
@@ -115,7 +115,7 @@ export default function Insights({
   idleCash = NO_IDLE_CASH,
   reconnectSoon = NO_RECONNECTS,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
-  recurringHistory = NO_HISTORY,
+  series = NO_SERIES,
   dismissed = NO_DISMISSED,
 }: {
   txns: Txn[] | null;
@@ -127,10 +127,12 @@ export default function Insights({
    *  bank account or card whose transactions don't come in leaves the budget
    *  alerts and the pace short, as on the Activity and Budgets tabs. */
   withoutTransactions?: NoTransactionsView;
-  /** The rows before the loaded year that recurring detection needs, so a
-   *  yearly bill coming up is said (/api/transactions `recurring_history`). */
-  recurringHistory?: RecurringRow[];
-  /** Detected bills the person said aren't recurring (lib/planned.ts). */
+  /** The bills and income detected (lib/recurring.ts), once for the whole
+   *  dashboard, from the year loaded and the rows before it a yearly charge
+   *  needs. */
+  series?: RecurringSeries[];
+  /** Detected bills the person said aren't recurring, as saved
+   *  (lib/planned.ts), matched to series by dismissedSeries. */
   dismissed?: string[];
 }) {
   const { insights, leftOut, missing } = useMemo(() => {
@@ -260,7 +262,8 @@ export default function Insights({
     if (txns) {
       const seen = new Set<string>();
       const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      for (const { series: b, due, late } of upcomingBills(detectRecurring([...txns, ...recurringHistory]), 7, localDate(now), new Set(dismissed))) {
+      const gone = new Set(dismissedSeries(series, dismissed).keys());
+      for (const { series: b, due, late } of upcomingBills(series, 7, localDate(now), gone)) {
         if (seen.has(b.name)) continue;
         seen.add(b.name);
         const amount = `~${formatMoney(b.amount, b.currency ?? displayCurrency)}`;
@@ -343,7 +346,7 @@ export default function Insights({
       leftOut: fromSpending ? leftOut : null,
       missing: fromSpending ? missingMonthNotes(withoutTransactions) : [],
     };
-  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions, recurringHistory, dismissed]);
+  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed]);
 
   if (insights.length === 0) return null;
 

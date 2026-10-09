@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   addDays,
   cadenceLabel,
+  dayIso,
   dayNumber,
   detectRecurring,
+  dismissedSeries,
   expectedDates,
   monthlyFrom,
   olderRowsForDetection,
@@ -160,12 +162,23 @@ describe('each cadence, from what a bank posts', () => {
     expect(four.seen).toBe(4);
   });
 
-  test('yearly, from two renewals a year apart, at a raised price', () => {
-    const s = only([row('2024-11-03', 119, { name: 'Amazon Prime' }), row('2025-11-02', 139, { name: 'Amazon Prime' })]);
+  test('yearly, from two renewals a year apart at exactly the same price', () => {
+    const s = only([row('2024-11-03', 139, { name: 'Amazon Prime' }), row('2025-11-02', 139, { name: 'Amazon Prime' })]);
     expect(s.cadence).toBe('yearly');
-    // Two seen: the latest is the price now.
     expect(s.amount).toBe(139);
     expect(s.nextDate).toBe('2026-11-02');
+  });
+
+  test('two renewals are too little for a yearly charge at a raised price, or at a restaurant', () => {
+    expect(detectRecurring([row('2024-11-03', 119, { name: 'Amazon Prime' }), row('2025-11-02', 139, { name: 'Amazon Prime' })])).toEqual([]);
+    // Within 2% isn't the same amount for two: two visits a year apart.
+    expect(detectRecurring([row('2025-04-23', 268.9, { name: 'Shop 1292' }), row('2025-10-22', 269.22, { name: 'Shop 1292' })])).toEqual([]);
+    // Even at the same amount, a restaurant or a gas station is chance.
+    for (const category of ['food and drink', 'transportation'])
+      expect(detectRecurring([row('2025-03-10', 64, { name: 'Nopa', category }), row('2026-03-12', 64, { name: 'Nopa', category })])).toEqual([]);
+    // Twice a year from two, with nothing else from the merchant between.
+    expect(only([row('2026-01-10', 640, { name: 'Progressive', category: 'general services' }), row('2026-07-10', 640, { name: 'Progressive', category: 'general services' })]).cadence).toBe('semiannual');
+    expect(detectRecurring([row('2026-01-10', 640, { name: 'Progressive' }), row('2026-04-02', 35, { name: 'Progressive' }), row('2026-07-10', 640, { name: 'Progressive' })])).toEqual([]);
   });
 
   test('a cadence is labelled, and comes to a monthly figure', () => {
@@ -245,6 +258,16 @@ describe('what is not a bill', () => {
     const amounts = [10.79, 10.81, 10.79, 10.83, 10.79];
     expect(only(monthly('2026-05', 5, 22).map((d, i) => row(d, amounts[i], { name: 'Spotify' }))).cadence).toBe('monthly');
   });
+
+  test('at the fewest charges, the same amount means exactly the same; a varying amount needs one more', () => {
+    const three = (amounts: number[]) => monthly('2026-06', amounts.length, 22).map((d, i) => row(d, amounts[i], { name: 'Joe\'s Deli' }));
+    expect(detectRecurring(three([12.45, 12.45, 12.45]))).toHaveLength(1);
+    expect(detectRecurring(three([10.79, 10.81, 10.79]))).toEqual([]);
+    expect(detectRecurring(three([10.79, 10.81, 10.79, 10.83]))).toHaveLength(1);
+    // A phone bill with its taxes: similar, from four.
+    expect(detectRecurring(three([64.2, 71.9, 66.4]))).toEqual([]);
+    expect(only(three([64.2, 71.9, 66.4, 69.1])).agreement).toBe('similar');
+  });
 });
 
 describe('the evidence a series is judged on', () => {
@@ -268,6 +291,20 @@ describe('the evidence a series is judged on', () => {
     const rows = monthly('2025-10', 12, 14).map((d, i) => row(d, i < 9 ? 15.49 : 17.99));
     const s = only(rows);
     expect(s.amount).toBe(17.99);
+  });
+
+  test('a big price change is the series going on at its new price, never a charge that came "not in yet"', () => {
+    // The reviewer's cases: a promotion ending (9.99 to 15.99), insurance 50 to 80.
+    const stream = only(monthly('2025-11', 12, 7).map((d, i) => row(d, i >= 10 ? 15.99 : 9.99, { name: 'StreamCo' })));
+    expect(stream).toMatchObject({ amount: 15.99, previousAmount: 9.99, seen: 12, lastDate: '2026-10-07', nextDate: '2026-11-07' });
+    expect(expectedDates(stream, '2026-10-09', '2026-12-31').status).toBe('due');
+    const insure = only(['2026-06-07', '2026-07-07', '2026-08-07', '2026-09-07', '2026-10-07'].map((d, i) => row(d, i < 3 ? 50 : 80, { name: 'InsureCo' })));
+    expect(insure).toMatchObject({ amount: 80, previousAmount: 50, nextDate: '2026-11-07' });
+    // One charge at a new price: until a second, the series is the old
+    // price's, but that charge counts for its date.
+    const once = only(monthly('2025-11', 11, 7).map((d, i) => row(d, i === 10 ? 15.99 : 9.99, { name: 'StreamCo' })));
+    expect(once).toMatchObject({ amount: 9.99, lastDate: '2026-09-07', nextDate: '2026-10-07' });
+    expect(expectedDates(once, '2026-09-20', '2026-10-31')).toEqual({ status: 'due', dates: [{ date: '2026-10-07', due: '2026-10-07', late: false }] });
   });
 
   test('Apple billing two subscriptions and the odd app is two bills', () => {
@@ -313,6 +350,127 @@ describe('the evidence a series is judged on', () => {
     expect(s.lastDate).toBe('2026-10-13');
     expect(s.seen).toBe(7);
     expect(s.nextDate).toBe('2026-11-20');
+  });
+
+  test('an extra charge is not taken for next month\'s bill paid early', () => {
+    // The reviewer's case: a water bill of 50 on the 1st, and a 45 repair fee
+    // on Sep 20. October's bill is still expected.
+    const water = (extra: [string, number]) =>
+      only([...['2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01'].map((d) => row(d, 50, { name: 'City Water' })), row(extra[0], extra[1], { name: 'City Water' })]);
+    for (const extra of [
+      ['2026-09-20', 45],
+      // At the bill's own amount, but eleven days early: more than twice the tolerance.
+      ['2026-09-20', 50],
+      // Early by more than the tolerance, at another amount.
+      ['2026-09-25', 45],
+    ] as [string, number][]) {
+      const s = water(extra);
+      expect(s.nextDate).toBe('2026-10-01');
+      expect(expectedDates(s, '2026-09-25', '2026-11-24').dates.map((d) => d.date)).toEqual(['2026-10-01', '2026-11-01']);
+    }
+    // Six days early at its amount, with nothing else: paid early.
+    expect(water(['2026-09-25', 50]).nextDate).toBe('2026-11-01');
+    // Within the tolerance it is on time, whatever its amount: that date's.
+    expect(water(['2026-09-28', 45]).nextDate).toBe('2026-11-01');
+  });
+
+  test('two cards at one bank are two series, whether charged on one day or two', () => {
+    // The reviewer's case: two people, each with Netflix on their own Chase card.
+    const months = ['2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
+    const card = (date: string, account_name: string) => row(date, 15.49, { account_name, account_type: 'credit' });
+    const sameDay = detectRecurring(months.flatMap((m) => [card(`${m}-05`, 'Card A'), card(`${m}-05`, 'Card B')]));
+    expect(sameDay.map((s) => [s.account, s.cadence, s.seen])).toEqual([
+      ['Card A', 'monthly', 7],
+      ['Card B', 'monthly', 7],
+    ]);
+    const twoDays = detectRecurring(months.flatMap((m) => [card(`${m}-05`, 'Card A'), card(`${m}-20`, 'Card B')]));
+    expect(twoDays.map((s) => [s.account, s.cadence, s.nextDate])).toEqual([
+      ['Card A', 'monthly', '2026-10-05'],
+      ['Card B', 'monthly', '2026-10-20'],
+    ]);
+    expect(new Set(twoDays.map((s) => s.id)).size).toBe(2);
+  });
+
+  test('a charge still pending counts for its date; a deposit still pending does not', () => {
+    const rows = monthly('2026-04', 6, 12).map((d) => row(d, 15.49));
+    const s = only([...rows, row('2026-10-12', 15.49, { pending: true })]);
+    expect(s).toMatchObject({ lastDate: '2026-10-12', pending: true, seen: 6, nextDate: '2026-11-12' });
+    expect(expectedDates(s, '2026-10-14', '2026-11-30').dates.map((d) => d.date)).toEqual(['2026-11-12']);
+    // Pending at a new price, from a merchant with one series: still that date's.
+    expect(only([...rows, row('2026-10-12', 17.99, { pending: true })]).nextDate).toBe('2026-11-12');
+    // A paycheck still pending isn't added where the forecast starts, so it
+    // stays expected.
+    const pay = monthly('2026-04', 6, 1).map((d) => row(d, -3000, { name: 'Payroll', category: 'income' }));
+    const p = only([...pay, row('2026-10-01', -3000, { name: 'Payroll', category: 'income', pending: true })]);
+    expect(p.nextDate).toBe('2026-10-01');
+    expect(p.pending).toBeUndefined();
+  });
+
+  test('pay that varies is found every time, around its median, from its first deposit in the window', () => {
+    // The reviewer's case: hourly pay every two weeks, 1,200 to 1,800, ten seeds.
+    for (let s = 1; s <= 10; s++) {
+      let seed = s * 31337;
+      const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+      const rows: RecurringRow[] = [];
+      for (let d = dayNumber('2025-10-03'); d < dayNumber('2026-10-09'); d += 14)
+        rows.push(row(dayIso(d), -Math.round((1200 + rand() * 600) * 100) / 100, { name: 'HOURLY PAY', category: 'income' }));
+      const pay = only(rows);
+      expect(pay).toMatchObject({ kind: 'income', cadence: 'biweekly', agreement: 'median', firstDate: '2026-02-06', nextDate: '2026-10-16' });
+      expect(pay.amount).toBeGreaterThan(1200);
+      expect(pay.amount).toBeLessThan(1800);
+      expect(expectedDates(pay, '2026-10-09', '2026-11-08').status).toBe('due');
+    }
+    // A bill is never judged that loosely: the same swings, charged.
+    let seed = 31337;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+    const charges = everyDays('2025-10-03', 14, 27).map((d) => row(d, Math.round((1200 + rand() * 600) * 100) / 100, { name: 'Contractor' }));
+    expect(detectRecurring(charges)).toEqual([]);
+  });
+
+  test('a raise in steady pay is followed as a price change is', () => {
+    const pay = everyDays('2026-03-27', 14, 13).map((d, i) => row(d, i < 10 ? -2000 : -2200, { name: 'Payroll', category: 'income' }));
+    expect(only(pay)).toMatchObject({ cadence: 'biweekly', agreement: 'same', amount: 2200, previousAmount: 2000 });
+  });
+
+  test('pay on a schedule at amounts too varied to forecast is listed as varying', () => {
+    const gigs = [800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700];
+    const s = only(everyDays('2026-04-24', 14, 12).map((d, i) => row(d, -gigs[i], { name: 'Gig pay', category: 'income' })));
+    expect(s).toMatchObject({ agreement: 'varies', cadence: 'biweekly', nextDate: '2026-10-09' });
+  });
+
+  test('a payment that pays a card off is marked so', () => {
+    const rows = monthly('2026-04', 6, 25).map((d) => row(d, 35, { name: 'CHASE CREDIT CRD AUTOPAY', category: 'loan payments', subcategory: 'credit card payment' }));
+    expect(only(rows).paysCard).toBe(true);
+    expect(only(monthly('2026-04', 6, 1).map((d) => row(d, 1850, { name: 'Mortgage', category: 'loan payments', subcategory: 'mortgage payment' }))).paysCard).toBeUndefined();
+  });
+
+  test('a dismissal holds as new charges come in, amounts move and a series is found anew', () => {
+    // Apple: iCloud and a music plan under one name, and the odd app.
+    const apple = (months: number, music: number) => {
+      const dates = monthly('2026-01', months, 7);
+      return [
+        ...dates.map((d) => row(d, 2.99, { name: 'Apple' })),
+        ...dates.map((d) => row(addDays(d, 10), music, { name: 'Apple' })),
+        row('2026-03-02', 4.99, { name: 'Apple' }),
+      ];
+    };
+    const before = detectRecurring(apple(6, 10.99));
+    const icloud = before.find((s) => s.amount === 2.99)!;
+    const saved = [icloud.id];
+    // A month on, and the music plan's price up a dollar: the dismissal still
+    // names iCloud, and only iCloud.
+    const after = detectRecurring(apple(7, 11.99));
+    const gone = dismissedSeries(after, saved);
+    expect([...gone.keys()].map((id) => after.find((s) => s.id === id)!.amount)).toEqual([2.99]);
+    expect(gone.get([...gone.keys()][0])).toBe(saved[0]);
+    // A utility bill whose amount moves every month keeps its dismissal too.
+    const bill = (amounts: number[]) => detectRecurring(monthly('2026-01', amounts.length, 9).map((d, i) => row(d, amounts[i], { name: 'PG&E' })));
+    const first = bill([80, 92, 85, 88]);
+    const later = bill([80, 92, 85, 88, 97, 93]);
+    expect(first[0].id).not.toBe(later[0].id);
+    expect([...dismissedSeries(later, [first[0].id]).keys()]).toEqual([later[0].id]);
+    // A dismissal names one series: two saved are two.
+    expect(dismissedSeries(after, [icloud.id, icloud.id.replace(/\|299$/, '|1099')]).size).toBe(2);
   });
 
   test('bills come first, then income, each largest first', () => {

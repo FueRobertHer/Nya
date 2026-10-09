@@ -51,7 +51,7 @@ const planned = (over: Partial<Planned> = {}): Planned => ({ ...EMPTY_PLANNED, i
 
 describe('a save is checked field by field', () => {
   test('a valid plan comes back as it went in, names trimmed and anything else dropped', () => {
-    const p = planned({ dismissed: ['bill|Chase|netflix|USD'], threshold: 250 });
+    const p = planned({ dismissed: ['bill|Chase|Sapphire|netflix|USD|1549'], threshold: { amount: 250, currency: 'USD' } });
     expect(parsePlanned(JSON.parse(JSON.stringify(p)))).toEqual({ ok: p });
     const sent = { ...p, extra: 'x', items: [{ ...item({ name: '  Car registration  ' }), color: 'red' }] };
     expect(parsePlanned(sent)).toEqual({ ok: p });
@@ -91,9 +91,12 @@ describe('a save is checked field by field', () => {
     ['a dismissal twice', planned({ dismissed: ['a', 'a'] })],
     ['a dismissal too long', planned({ dismissed: ['x'.repeat(501)] })],
     ['too many dismissals', planned({ dismissed: Array.from({ length: MAX_DISMISSED + 1 }, (_, i) => `s${i}`) })],
-    ['a negative threshold', planned({ threshold: -1 })],
-    ['a threshold as text', planned({ threshold: '100' as never })],
-    ['an endless threshold', planned({ threshold: Infinity })],
+    ['a threshold without its currency', planned({ threshold: 100 as never })],
+    ['a negative threshold', planned({ threshold: { amount: -1, currency: 'USD' } })],
+    ['a threshold as text', planned({ threshold: { amount: '100' as never, currency: 'USD' } })],
+    ['an endless threshold', planned({ threshold: { amount: Infinity, currency: 'USD' } })],
+    ['a threshold in no currency', planned({ threshold: { amount: 100, currency: 'USX' } })],
+    ['a threshold in cents of a yen', planned({ threshold: { amount: 100.5, currency: 'JPY' } })],
   ];
   for (const [what, raw] of bad) {
     test(`refuses ${what}`, () => {
@@ -108,7 +111,8 @@ describe('a save is checked field by field', () => {
 
   test('a stored value is read by its shape and types, not today\'s ranges', () => {
     expect(isPlanned(EMPTY_PLANNED)).toBe(true);
-    expect(isPlanned(planned({ threshold: 5 }))).toBe(true);
+    expect(isPlanned(planned({ threshold: { amount: 5, currency: 'USD' } }))).toBe(true);
+    expect(isPlanned(planned({ threshold: 5 as never }))).toBe(false);
     // A range a later release might widen still reads...
     expect(isPlanned(planned({ items: [item({ name: 'x'.repeat(200), amount: 1e15 })] }))).toBe(true);
     // ...but a shape or a cadence this code doesn't know does not.
@@ -118,10 +122,17 @@ describe('a save is checked field by field', () => {
     expect(isPlanned(null)).toBe(false);
   });
 
-  test('the low-balance warning defaults to the Home tab\'s figure', () => {
-    expect(thresholdOf(EMPTY_PLANNED)).toBe(DEFAULT_THRESHOLD);
+  test('the low-balance warning defaults to the Home tab\'s figure, in the forecast\'s currency', () => {
+    expect(thresholdOf(EMPTY_PLANNED, 'USD')).toEqual({ amount: DEFAULT_THRESHOLD, set: false });
     expect(DEFAULT_THRESHOLD).toBe(100);
-    expect(thresholdOf({ threshold: 0 })).toBe(0);
+    expect(thresholdOf({ threshold: { amount: 0, currency: 'USD' } }, 'USD')).toEqual({ amount: 0, set: true });
+  });
+
+  test('a warning set in another currency is never read as the forecast\'s own', () => {
+    // Set at 500 when the cash was in dollars; most of it is in euros now.
+    const set = { amount: 500, currency: 'USD' };
+    expect(thresholdOf({ threshold: set }, 'EUR')).toEqual({ amount: DEFAULT_THRESHOLD, set: false, other: set });
+    expect(thresholdOf({ threshold: set }, 'USD')).toEqual({ amount: 500, set: true });
   });
 });
 
@@ -237,7 +248,7 @@ describe('the route', () => {
 
   test('a save keeps what was there when the next one is refused', async () => {
     await put({ planned: planned() });
-    expect((await put({ planned: planned({ threshold: -5 }) })).status).toBe(400);
+    expect((await put({ planned: planned({ threshold: { amount: -5, currency: 'USD' } }) })).status).toBe(400);
     expect(await plannedStore.get(TEST_CTX)).toEqual(planned());
   });
 

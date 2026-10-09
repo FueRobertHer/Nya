@@ -12,14 +12,20 @@
 //     counts it (every row but one the person excluded), in the totals'
 //     currency only: a row in another is listed, not added.
 //   - Expected: the forecast's own amounts for the day (lib/forecast.ts), in
-//     its currency. A payment due on a card or loan is marked on its day but
-//     never added: the forecast doesn't count it either, since it may already
-//     be a detected bill, and what will be paid (the minimum, the statement,
-//     something between) is the person's to decide.
+//     its currency: bills and income on cash accounts, and the items planned.
+//     A bill charged to a card is listed on its day but not added, as the
+//     forecast doesn't add it: the card's payment is what leaves cash. So is
+//     pay whose amount varies too much to forecast, and a series on an account
+//     whose type isn't known. A payment due on a card or loan is marked on its
+//     day but never added: the forecast doesn't count it either, since it may
+//     already be a detected bill, and what will be paid (the minimum, the
+//     statement, something between) is the person's to decide.
+// Figures are added in whole minor units of the currency (cents, yen).
 
 import { addDays, expectedDates, type Cadence, type RecurringSeries } from './recurring';
 import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { currencyOf, inCurrency, isExcluded } from './spending';
+import { minorScale } from './forecast';
 
 /** What the calendar reads of a transaction (the Activity tab's Txn). */
 export type CalendarTxn = {
@@ -61,11 +67,18 @@ export type CalendarEntry = {
   late?: boolean;
   /** Expected and late: its scheduled date. */
   due?: string;
+  /** A series': the account it is on, and that account's type. */
+  account?: string;
+  accountType?: string | null;
   pending?: boolean;
   excluded?: boolean;
   /** Listed but not in the day's figure: another currency, a transaction the
    *  person excluded, or a payment due (see the header). */
   uncounted?: boolean;
+  /** Why an expected one isn't in the figure: another currency, an account
+   *  that isn't cash (a card's charge) or whose type isn't known, or pay that
+   *  varies too much to forecast. */
+  off?: 'currency' | 'not-cash' | 'unknown-account' | 'varies';
 };
 
 export type CalendarDay = {
@@ -113,8 +126,6 @@ export function monthWeeks(month: string): (string | null)[][] {
   return weeks;
 }
 
-const cents = (n: number) => Math.round(n * 100);
-
 /** One month of the calendar (see the header). */
 export function calendarMonth(opts: {
   month: string;
@@ -128,6 +139,7 @@ export function calendarMonth(opts: {
   currency: string | null;
 }): CalendarMonth {
   const { month, today, currency } = opts;
+  const scale = minorScale(currency);
   const all = monthDays(month);
   const first = all[0];
   const last = all[all.length - 1];
@@ -156,6 +168,17 @@ export function calendarMonth(opts: {
     const expected: CalendarEntry[] = [];
     for (const s of opts.series) {
       if (opts.dismissed?.has(s.id)) continue;
+      // What the forecast leaves out is listed, with why (see the header).
+      const off: CalendarEntry['off'] =
+        s.accountType === null
+          ? 'unknown-account'
+          : s.accountType !== 'depository'
+            ? 'not-cash'
+            : s.agreement === 'varies'
+              ? 'varies'
+              : inCurrency({ iso_currency_code: s.currency }, currency)
+                ? undefined
+                : 'currency';
       for (const d of expectedDates(s, today, last).dates) {
         if (d.date < from) continue;
         expected.push({
@@ -168,7 +191,9 @@ export function calendarMonth(opts: {
           source: s.kind,
           cadence: s.cadence,
           ...(d.late ? { late: true, due: d.due } : {}),
-          ...(inCurrency({ iso_currency_code: s.currency }, currency) ? {} : { uncounted: true }),
+          ...(s.account ? { account: s.account } : {}),
+          accountType: s.accountType,
+          ...(off ? { uncounted: true, off } : {}),
         });
       }
     }
@@ -183,7 +208,7 @@ export function calendarMonth(opts: {
           ref: item.id,
           source: 'planned',
           cadence: item.cadence,
-          ...(inCurrency({ iso_currency_code: item.currency }, currency) ? {} : { uncounted: true }),
+          ...(inCurrency({ iso_currency_code: item.currency }, currency) ? {} : { uncounted: true, off: 'currency' as const }),
         });
     // On each day, money in first, then out, largest first.
     expected.sort((a, b) => Number(a.amount! < 0) - Number(b.amount! < 0) || Math.abs(b.amount!) - Math.abs(a.amount!));
@@ -209,10 +234,10 @@ export function calendarMonth(opts: {
     let expected: number | null = null;
     for (const e of list) {
       if (e.uncounted || e.amount === null) continue;
-      if (e.kind === 'posted') posted = (posted ?? 0) + cents(e.amount);
-      else if (e.kind === 'expected') expected = (expected ?? 0) + cents(e.amount);
+      if (e.kind === 'posted') posted = (posted ?? 0) + Math.round(e.amount * scale);
+      else if (e.kind === 'expected') expected = (expected ?? 0) + Math.round(e.amount * scale);
     }
-    days.set(date, { date, entries: list, posted: posted === null ? null : posted / 100, expected: expected === null ? null : expected / 100 });
+    days.set(date, { date, entries: list, posted: posted === null ? null : posted / scale, expected: expected === null ? null : expected / scale });
   }
   return { month, weeks: monthWeeks(month), days };
 }

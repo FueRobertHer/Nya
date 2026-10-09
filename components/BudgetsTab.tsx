@@ -15,7 +15,7 @@ import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring, type RecurringRow } from '@/lib/recurring';
+import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
 import { EMPTY_PLANNED, type Planned, type PlannedItem } from '@/lib/planned';
@@ -31,7 +31,7 @@ import PlannedCard from './PlannedCard';
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
-const NO_HISTORY: RecurringRow[] = [];
+const NO_SERIES: RecurringSeries[] = [];
 const NO_INSTITUTIONS: ForecastInstitution[] = [];
 const NO_ITEMS: PlannedItem[] = [];
 const NO_DISMISSED: string[] = [];
@@ -61,8 +61,11 @@ export default function BudgetsTab({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
-  recurringHistory = NO_HISTORY,
+  series: detected = null,
+  txnsFailed = false,
   institutions = NO_INSTITUTIONS,
+  balancesAsOf = null,
+  balancesSaved = false,
   planned = EMPTY_PLANNED,
   plannedStatus = 'ready',
   plannedError = null,
@@ -98,12 +101,19 @@ export default function BudgetsTab({
    *  nothing against it, never "$0 of" it; a bank account Plaid doesn't
    *  provide transactions for is named under the month. */
   withoutTransactions?: NoTransactionsView;
-  /** The rows from before the loaded year that recurring detection needs
-   *  (/api/transactions `recurring_history`). */
-  recurringHistory?: RecurringRow[];
+  /** The bills and income detected (lib/recurring.ts), once for the whole
+   *  dashboard, from the year loaded and the rows before it a yearly charge
+   *  needs; null until transactions load. */
+  series?: RecurringSeries[] | null;
+  /** Transactions couldn't be loaded: said, never shown as "nothing". */
+  txnsFailed?: boolean;
   /** Every institution as the dashboard last loaded it, for the forecast's
    *  cash accounts and the calendar's payments due. */
   institutions?: ForecastInstitution[];
+  /** When those balances were loaded, and whether they are the ones saved on
+   *  this device from an earlier visit (components/Dashboard.tsx). */
+  balancesAsOf?: string | null;
+  balancesSaved?: boolean;
   /** The planned items, dismissals and warning (lib/planned.ts), loaded and
    *  saved whole like the budgets. */
   planned?: Planned;
@@ -167,16 +177,18 @@ export default function BudgetsTab({
     [budgets, spendByCat]
   );
 
-  // Bills and income detected from the year loaded and the rows before it a
-  // yearly charge needs (lib/recurring.ts), for the recurring list, the
+  // Bills and income detected (lib/recurring.ts), for the recurring list, the
   // forecast and the calendar alike.
-  const series = useMemo(() => (txns ? detectRecurring([...txns, ...recurringHistory]) : []), [txns, recurringHistory]);
+  const series = detected ?? NO_SERIES;
   // Until the planned items load, no item counts and nothing is dismissed: the
-  // forecast says so.
+  // forecast says so. A dismissal follows its series as amounts move
+  // (lib/recurring.ts dismissedSeries): the series' ids, and what each was
+  // saved as, to restore it.
   const ready = plannedStatus === 'ready';
   const items = ready ? planned.items : NO_ITEMS;
   const dismissedIds = ready ? planned.dismissed : NO_DISMISSED;
-  const dismissed = useMemo(() => new Set(dismissedIds), [dismissedIds]);
+  const gone = useMemo(() => dismissedSeries(series, dismissedIds), [series, dismissedIds]);
+  const dismissed = useMemo(() => new Set(gone.keys()), [gone]);
   // A planned item starts in the forecast's currency: the cash accounts'.
   const plannedCurrency = useMemo(() => cashPosition(institutions).currency ?? displayCurrency, [institutions, displayCurrency]);
   const today = localDate();
@@ -384,16 +396,22 @@ export default function BudgetsTab({
         series={series}
         planned={planned}
         plannedStatus={plannedStatus}
+        dismissed={dismissed}
         onSavePlanned={onSavePlanned}
         today={today}
-        loading={txns === null}
+        txns={txns ?? undefined}
+        loading={txns === null && !txnsFailed}
+        failed={txnsFailed}
+        balancesAsOf={balancesAsOf}
+        balancesSaved={balancesSaved}
         incomplete={incomplete}
         stopped={stopped}
         withoutTransactions={withoutTransactions}
       />
 
       <CalendarView
-        txns={txns ?? []}
+        txns={txns}
+        failed={txnsFailed}
         series={series}
         planned={items}
         dismissed={dismissed}
@@ -406,15 +424,20 @@ export default function BudgetsTab({
         series={series}
         today={today}
         currency={displayCurrency}
-        dismissed={dismissedIds}
+        dismissed={dismissed}
         status={plannedStatus}
         saveError={plannedSaveError}
         onDismiss={
           onSavePlanned &&
-          ((id, dismiss) =>
-            onSavePlanned({ ...planned, dismissed: dismiss ? [...planned.dismissed.filter((d) => d !== id), id] : planned.dismissed.filter((d) => d !== id) }))
+          ((s, dismiss) => {
+            const saved = gone.get(s.id);
+            const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
+            return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
+          })
         }
         noSpending={noSpending}
+        loading={txns === null && !txnsFailed}
+        failed={txnsFailed}
       />
 
       <PlannedCard

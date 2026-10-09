@@ -64,6 +64,11 @@ export type Txn = {
   amount: number; // Plaid convention: positive = money leaving the account
   pending: boolean;
   account_name: string;
+  // Plaid's type for the account (depository | credit | loan | investment |
+  // other), or a manual account's own, so the cash forecast counts only what
+  // leaves or reaches checking and savings (lib/forecast.ts). Null when the
+  // account's type isn't known; absent on a row built before it was sent.
+  account_type?: string | null;
   institution_name: string;
   category: string | null;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
@@ -107,8 +112,11 @@ export type OlderTxn = Pick<
   | 'date'
   | 'name'
   | 'amount'
+  | 'account_name'
+  | 'account_type'
   | 'institution_name'
   | 'category'
+  | 'subcategory'
   | 'iso_currency_code'
   | 'unofficial_currency_code'
   | 'transaction_code'
@@ -1011,6 +1019,7 @@ export async function syncItemTransactions(ctx: Ctx,
       amount: t.amount,
       pending: t.pending,
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+      account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
       category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
       iso_currency_code: t.iso_currency_code,
@@ -1044,8 +1053,11 @@ export async function syncItemTransactions(ctx: Ctx,
       date: t.date,
       name: t.merchant_name || t.name,
       amount: t.amount,
+      account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+      account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
       category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      subcategory: humanizeSubcategory(t.personal_finance_category),
       iso_currency_code: t.iso_currency_code,
       unofficial_currency_code: t.unofficial_currency_code ?? null,
       transaction_code: t.transaction_code ?? null,

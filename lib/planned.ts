@@ -39,27 +39,35 @@ export type PlannedItem = {
   cadence: PlannedCadence;
 };
 
+/** The figure the forecast warns below, with the currency it was set in. */
+export type Threshold = { amount: number; currency: string };
+
 export type Planned = {
   version: 1;
   items: PlannedItem[];
-  /** The ids of detected series the person said aren't recurring
-   *  (lib/recurring.ts RecurringSeries.id). */
+  /** The ids of detected series the person said aren't recurring, as they
+   *  were when dismissed (lib/recurring.ts RecurringSeries.id): a group and
+   *  an amount, matched to a series by dismissedSeries. */
   dismissed: string[];
-  /** Warn when the forecast drops below this, in the forecast's currency;
-   *  null for the default (DEFAULT_THRESHOLD). Below zero always warns. */
-  threshold: number | null;
+  /** Warn when the forecast drops below this; null for the default
+   *  (DEFAULT_THRESHOLD, in the forecast's currency). Kept with its currency,
+   *  so a forecast that comes to be in another never reads it as its own.
+   *  Below zero always warns. */
+  threshold: Threshold | null;
 };
 
 export const EMPTY_PLANNED: Planned = { version: 1, items: [], dismissed: [], threshold: null };
 
-/** The low-balance warning before the person sets one: the Home tab's own
- *  low-balance line (components/Insights.tsx) speaks at the same figure. */
+/** The low-balance warning before the person sets one, in the forecast's
+ *  currency: the Home tab's own low-balance line (components/Insights.tsx)
+ *  speaks at the same figure. */
 export const DEFAULT_THRESHOLD = 100;
 
 export const MAX_ITEMS = 100;
 export const MAX_NAME_CHARS = 60;
 export const MAX_DISMISSED = 500;
-/** A series id is its kind, institution, merchant and currency: generous. */
+/** A series id is its kind, institution, account, merchant, currency and
+ *  amount: generous. */
 export const MAX_DISMISSED_CHARS = 500;
 /** The first and last day an item may fall on. */
 export const EARLIEST_PLANNED = '2000-01-01';
@@ -83,8 +91,14 @@ export function isPlanned(v: unknown): v is Planned {
     p.items.every(isPlannedItemShape) &&
     Array.isArray(p.dismissed) &&
     p.dismissed.every((d) => typeof d === 'string') &&
-    (p.threshold === null || (typeof p.threshold === 'number' && Number.isFinite(p.threshold)))
+    (p.threshold === null || isThresholdShape(p.threshold))
   );
+}
+
+function isThresholdShape(v: unknown): v is Threshold {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const t = v as Record<string, unknown>;
+  return typeof t.amount === 'number' && Number.isFinite(t.amount) && typeof t.currency === 'string';
 }
 
 function isPlannedItemShape(v: unknown): v is PlannedItem {
@@ -134,8 +148,9 @@ function parseItem(raw: unknown, at: number): Parsed<PlannedItem> {
  * saved: at most MAX_ITEMS items, each with a random id (no two the same), a
  * one-line name, a kind, a positive amount in its currency's minor units, a
  * known currency, a real date and a cadence; at most MAX_DISMISSED dismissed
- * ids, none empty or repeated; a threshold of zero or more, or null. Names
- * are trimmed; nothing else is changed, and anything else sent is dropped.
+ * ids, none empty or repeated; a threshold of zero or more in a known
+ * currency's minor units, or null. Names are trimmed; nothing else is
+ * changed, and anything else sent is dropped.
  */
 export function parsePlanned(raw: unknown): Parsed<Planned> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { error: 'Invalid planned items' };
@@ -159,14 +174,31 @@ export function parsePlanned(raw: unknown): Parsed<Planned> {
     if (typeof d !== 'string' || !d || d.length > MAX_DISMISSED_CHARS || dismissed.has(d)) return { error: 'Invalid dismissed list' };
     dismissed.add(d);
   }
-  const t = r.threshold;
-  if (t !== null && (typeof t !== 'number' || !Number.isFinite(t) || t < 0 || t > MAX_AMOUNT)) return { error: 'Invalid low-balance warning' };
+  const t = parseThreshold(r.threshold);
+  if (t === undefined) return { error: 'Invalid low-balance warning' };
   return { ok: { version: 1, items, dismissed: [...dismissed], threshold: t } };
 }
 
-/** The low-balance warning in force. */
-export function thresholdOf(planned: Pick<Planned, 'threshold'>): number {
-  return planned.threshold ?? DEFAULT_THRESHOLD;
+/** A warning as a save sends it (null, or an amount and its currency), or
+ *  undefined when it can't be saved. */
+function parseThreshold(raw: unknown): Threshold | null | undefined {
+  if (raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const t = raw as Record<string, unknown>;
+  if (typeof t.currency !== 'string' || !knownCurrency(t.currency)) return undefined;
+  if (typeof t.amount !== 'number' || !Number.isFinite(t.amount) || t.amount < 0 || t.amount > MAX_AMOUNT) return undefined;
+  if (amountUnitsError(t.amount, t.currency)) return undefined;
+  return { amount: t.amount, currency: t.currency };
+}
+
+/** The low-balance warning in force for a forecast in `currency`: the one
+ *  set, when it was set in that currency; otherwise the default, with the one
+ *  set in another currency as `other`, for the forecast to say so. */
+export function thresholdOf(planned: Pick<Planned, 'threshold'>, currency: string | null): { amount: number; set: boolean; other?: Threshold } {
+  const t = planned.threshold;
+  if (!t) return { amount: DEFAULT_THRESHOLD, set: false };
+  if (currency === null || t.currency === currency) return { amount: t.amount, set: true };
+  return { amount: DEFAULT_THRESHOLD, set: false, other: t };
 }
 
 /** A repeating item's schedule, from its date; null for a one-off. */

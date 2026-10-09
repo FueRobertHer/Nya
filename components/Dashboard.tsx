@@ -33,7 +33,7 @@ import { totalNotes } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
-import type { RecurringRow } from '@/lib/recurring';
+import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
@@ -455,6 +455,11 @@ export default function Dashboard({
   // The rows before the loaded year that recurring detection needs.
   const [txnHistory, setTxnHistory] = useState<RecurringRow[]>([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
+  // The last transactions load failed: the forecast and the calendar say so.
+  const [txnsFailed, setTxnsFailed] = useState(false);
+  // The balances shown are the ones saved on this device, not yet replaced
+  // by a load: the forecast says when they are from.
+  const [balancesSaved, setBalancesSaved] = useState(false);
   // Connection health (components/ConnectionHealth.tsx): whether the server
   // could read Plaid's warnings, and whether a notice email's link opened it.
   const [healthUnavailable, setHealthUnavailable] = useState(false);
@@ -584,6 +589,7 @@ export default function Dashboard({
       setHistory(data.history ?? []);
       setHiddenMeta(data.hidden ?? []);
       setAsOf(data.as_of ?? null);
+      setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
       setHealthUnavailable(!!data.health_unavailable);
       setConnected(data.institutions.length > 0);
@@ -635,6 +641,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnsFailed(true);
         return;
       }
       const data = await res.json();
@@ -643,8 +650,10 @@ export default function Dashboard({
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
       setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
+      setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnsFailed(true);
     } finally {
       setTxnsLoading(false);
     }
@@ -692,6 +701,7 @@ export default function Dashboard({
           setHistory(Array.isArray(snap.history) ? snap.history : []);
           setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
           setAsOf(snap.as_of ?? null);
+          setBalancesSaved(true);
           setConnected(snap.institutions.length > 0);
           setLoading(false);
         }
@@ -1231,6 +1241,9 @@ export default function Dashboard({
   // Not a connection that holds no bank account or card: it brings no
   // transactions in, so its lapse leaves no month short (lib/no-transactions.ts).
   const stoppedTxns = useMemo(() => stoppedConnections(institutions, quietItemIds(txnWithout)), [institutions, txnWithout]);
+  // Recurring bills and income, detected once (lib/recurring.ts) for Home and
+  // the Budgets tab, from the year loaded and the rows before it.
+  const recurring = useMemo(() => (txns ? detectRecurring([...txns, ...txnHistory]) : null), [txns, txnHistory]);
   // Connections whose transactions weren't allowed: their card offers to.
   const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);
 
@@ -1625,7 +1638,7 @@ export default function Dashboard({
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
-                  recurringHistory={txnHistory}
+                  series={recurring ?? undefined}
                   dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
@@ -2328,8 +2341,11 @@ export default function Dashboard({
                 stopped={stoppedTxns}
                 withoutTransactions={txnWithout}
                 // The forecast, the calendar and the recurring list.
-                recurringHistory={txnHistory}
+                series={recurring}
+                txnsFailed={txnsFailed && txns === null}
                 institutions={institutions}
+                balancesAsOf={asOf}
+                balancesSaved={balancesSaved}
                 planned={plannedState.value}
                 plannedStatus={plannedState.status}
                 plannedError={plannedState.error}

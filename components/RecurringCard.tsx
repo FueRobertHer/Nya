@@ -1,13 +1,14 @@
 'use client';
 
 // Recurring bills and income on the Budgets tab (lib/recurring.ts): each with
-// its cadence, how many times it was seen, its typical amount and when it is
-// next expected, bills and income apart. One whose scheduled dates went by
-// with nothing arriving is listed last as possibly ended, and is left out of
-// the monthly figures. Tap one for "Not recurring", which dismisses it from
-// here, the forecast, the calendar and Home's upcoming bills; it is saved
-// with the planned items (lib/planned.ts), and the dismissed are listed to
-// restore. The monthly figures add up what is in the totals' currency.
+// its account, cadence, how many times it was seen, its typical amount and
+// when it is next expected, bills and income apart. One whose scheduled dates
+// went by with nothing arriving is listed last as possibly ended, and is left
+// out of the monthly figures, as is pay whose amount varies too much to
+// forecast. Tap one for "Not recurring", which dismisses it from here, the
+// forecast, the calendar and Home's upcoming bills; it is saved with the
+// planned items (lib/planned.ts), and the dismissed are listed to restore.
+// The monthly figures add up what is in the totals' currency.
 
 import { useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
@@ -34,27 +35,33 @@ export default function RecurringCard({
   saveError = null,
   onDismiss,
   noSpending = null,
+  loading = false,
+  failed = false,
 }: {
   series: RecurringSeries[];
   /** The viewer's day (lib/local-date.ts). */
   today: string;
   /** The totals' currency, for the monthly figures and amounts without one. */
   currency: string | null;
-  /** Ids dismissed as not recurring. */
-  dismissed: readonly string[];
+  /** The series dismissed as not recurring (lib/recurring.ts
+   *  dismissedSeries). */
+  dismissed: ReadonlySet<string>;
   /** The planned items' state: dismissing waits until they have loaded. */
   status?: ListStatus;
   saveError?: string | null;
   /** Saves a dismissal (true) or a restore (false); resolves true once saved. */
-  onDismiss?: (id: string, dismiss: boolean) => Promise<boolean>;
+  onDismiss?: (series: RecurringSeries, dismiss: boolean) => Promise<boolean>;
   /** No connection brings in transactions: what to say instead. */
   noSpending?: NoSpending | null;
+  /** Transactions are still loading, or couldn't be loaded. */
+  loading?: boolean;
+  failed?: boolean;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const gone = new Set(dismissed);
+  const gone = dismissed;
   const until = addDays(today, NEXT_WITHIN_DAYS);
   const rows: Row[] = series
     .filter((s) => !gone.has(s.id))
@@ -69,12 +76,15 @@ export default function RecurringCard({
   const income = ordered('income');
   const dismissedRows = series.filter((s) => gone.has(s.id));
 
+  // In a monthly figure: still coming, its amount known, and not a card's
+  // payment (its card's bills are counted where they are charged).
+  const inTotal = (r: Row) => r.status !== 'ended' && r.series.agreement !== 'varies' && !r.series.paysCard;
   // A month's worth of what is still coming, in one currency; the rest named.
   const monthly = (list: Row[]) => {
     let total = 0;
     const others = new Map<string, number>();
     for (const r of list) {
-      if (r.status === 'ended') continue;
+      if (!inTotal(r)) continue;
       const c = r.series.currency ?? currency;
       if (c === currency || currency === null) total += perMonth(r.series);
       else if (c) others.set(c, (others.get(c) ?? 0) + 1);
@@ -92,17 +102,27 @@ export default function RecurringCard({
     .join(' ');
 
   const canEdit = status === 'ready' && !!onDismiss && !busy;
+  // Why the buttons are off, said where they are.
+  const why =
+    status === 'error'
+      ? "Your planned items couldn't be loaded, so this can't be saved now."
+      : status === 'loading'
+        ? 'Your planned items are still loading.'
+        : !onDismiss
+          ? "This can't be changed here."
+          : null;
 
-  async function toggle(id: string, dismiss: boolean) {
+  async function toggle(s: RecurringSeries, dismiss: boolean) {
     if (!onDismiss) return;
     setBusy(true);
     try {
-      if (await onDismiss(id, dismiss)) setOpen(null);
+      if (await onDismiss(s, dismiss)) setOpen(null);
     } finally {
       setBusy(false);
     }
   }
 
+  const where = (s: RecurringSeries) => (s.account ? `${s.institution} · ${s.account}` : s.institution);
   const line = (r: Row) => {
     const s = r.series;
     const when =
@@ -113,8 +133,31 @@ export default function RecurringCard({
           : r.next
             ? `next ~${fmtDay(r.next)}`
             : '';
-    return `${s.institution} · ${cadenceLabel(s.cadence)} · seen ${s.seen} times${when ? ` · ${when}` : ''}`;
+    return [
+      where(s),
+      cadenceLabel(s.cadence),
+      `seen ${s.seen} times`,
+      s.pending ? `latest ${fmtDay(s.lastDate)}, pending` : null,
+      s.agreement === 'varies' ? 'amount varies' : null,
+      s.paysCard ? 'pays a card' : null,
+      when || null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   };
+  // What the forecast makes of it, for the open row.
+  const counted = (s: RecurringSeries) =>
+    s.paysCard
+      ? "It pays a card off, so it isn't in the monthly total here, where the card's own bills are; the forecast counts it, as the money leaving your checking."
+      : s.agreement === 'varies'
+      ? 'Its amount varies too much to forecast, so the forecast leaves it out and says so.'
+      : s.accountType === 'credit'
+        ? `Charged to ${s.account || 'a card'}: the forecast counts the card's payment from your checking instead, when that repeats at a steady amount.`
+        : s.accountType && s.accountType !== 'depository'
+          ? `On ${s.account || 'an account'}, which isn't checking or savings, so the forecast doesn't count it.`
+          : s.accountType === null
+            ? "The account it's on isn't known, so the forecast doesn't count it."
+            : null;
 
   const table = (list: Row[]) => (
     <table>
@@ -154,13 +197,17 @@ export default function RecurringCard({
                 {isOpen && (
                   <div className="txn-edit" onClick={(e) => e.stopPropagation()}>
                     <p className="panel-note" style={{ marginTop: 4 }}>
-                      Seen {s.seen} times from {fmtDay(s.firstDate)} to {fmtDay(s.lastDate)}, about {formatMoney(s.amount, s.currency ?? currency)} each time.
+                      Seen {s.seen} times from {fmtDay(s.firstDate)} to {fmtDay(s.lastDate)}, about {formatMoney(s.amount, s.currency ?? currency)}{' '}
+                      {s.agreement === 'median' ? 'each time, the median of the last half year' : 'each time'}
+                      {s.previousAmount !== undefined ? `, ${formatMoney(s.previousAmount, s.currency ?? currency)} before its price changed` : ''}.
+                      {counted(s) ? ` ${counted(s)}` : ''}
                     </p>
                     <div className="card-actions" style={{ marginTop: 8 }}>
-                      <button className="secondary" disabled={!canEdit} onClick={() => toggle(s.id, true)}>
+                      <button className="secondary" disabled={!canEdit} onClick={() => toggle(s, true)}>
                         Not recurring
                       </button>
                     </div>
+                    {why && <p className="panel-note">{why}</p>}
                   </div>
                 )}
               </td>
@@ -179,17 +226,22 @@ export default function RecurringCard({
     <div className="card">
       <div className="inst-header">
         <div className="inst-name">Recurring</div>
-        {bills.some((r) => r.status !== 'ended') && <div className="inst-total">~{formatMoney(billsMonthly.total, currency)}/mo out</div>}
+        {bills.some(inTotal) && <div className="inst-total">~{formatMoney(billsMonthly.total, currency)}/mo out</div>}
       </div>
 
       {saveError && <p className="stale-note">{saveError}</p>}
+      {status === 'error' && series.length > 0 && <p className="stale-note">{why}</p>}
 
-      {rows.length === 0 && noSpending ? (
+      {failed && series.length === 0 ? (
+        <p className="error">Transactions couldn&apos;t be loaded, so no bills or income can be found.</p>
+      ) : loading && series.length === 0 ? (
+        <p className="empty-note">Transactions are still loading.</p>
+      ) : rows.length === 0 && noSpending ? (
         <p className="empty-note">{noSpending.lead}, so there are no bills to detect.</p>
       ) : rows.length === 0 ? (
         <p className="empty-note">
-          No recurring bills or income detected yet. They show up once a merchant has charged, or paid you, a consistent amount on a
-          regular schedule: three times for most, twice for a yearly charge.
+          No recurring bills or income detected yet. They show up once a merchant has charged, or paid you, the same amount on a
+          regular schedule three times (four when the amount varies a little), or a yearly charge twice at exactly the same amount.
         </p>
       ) : (
         <>
@@ -203,7 +255,7 @@ export default function RecurringCard({
             <>
               <div className="recurring-section">
                 Income
-                {income.some((r) => r.status !== 'ended') && <span> · ~{formatMoney(incomeMonthly.total, currency)}/mo in</span>}
+                {income.some(inTotal) && <span> · ~{formatMoney(incomeMonthly.total, currency)}/mo in</span>}
               </div>
               {table(income)}
             </>
@@ -221,20 +273,22 @@ export default function RecurringCard({
               {dismissedRows.map((s) => (
                 <li key={s.id}>
                   <span>
-                    {s.name} <span className="type-tag">{s.institution} · {cadenceLabel(s.cadence)}</span>
+                    {s.name} <span className="type-tag">{where(s)} · {cadenceLabel(s.cadence)}</span>
                   </span>
-                  <button className="link-btn" disabled={!canEdit} onClick={() => toggle(s.id, false)}>
+                  <button className="link-btn" disabled={!canEdit} onClick={() => toggle(s, false)}>
                     Restore
                   </button>
                 </li>
               ))}
             </ul>
           )}
+          {showDismissed && why && <p className="panel-note">{why}</p>}
         </div>
       )}
 
       <div className="chart-note">
         Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.
+        {bills.some((r) => r.series.accountType === 'credit') && ' Bills charged to a card are in this total, and the forecast counts the card\'s payment instead.'}
         {leftOut && ` ${leftOut}`}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
+import { dataCtx } from '@/lib/data-ctx';
+import { storeFailure } from '@/lib/store-failure';
 import { plannedStore } from '@/lib/planned-store';
 import { EMPTY_PLANNED, parsePlanned } from '@/lib/planned';
 
@@ -11,28 +11,12 @@ import { EMPTY_PLANNED, parsePlanned } from '@/lib/planned';
 // checking every field. The forecast itself is worked out in the browser and
 // never stored.
 
-/** The answer for an error, as every route on the storage seam gives it. */
-function failure(err: unknown, doing: string): NextResponse {
-  const unavailable = containerUnavailable(err);
-  if (unavailable) return unavailable;
-  if (err instanceof StoredDataUnreadableError) {
-    console.error('Stored planned items unreadable:', describeUnreadable(err));
-    // 409, not 500, and flagged: the client must not show "none" and let the
-    // next save replace what is there.
-    return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
-  }
-  // Nothing was written (too large to store, say): the seam's message.
-  if (err instanceof StoreRefusedError) return NextResponse.json({ error: err.message }, { status: err.status });
-  console.error(err);
-  return NextResponse.json({ error: `Failed to ${doing} planned items` }, { status: 500 });
-}
-
 export async function GET() {
   try {
     const ctx = await dataCtx();
     return NextResponse.json({ planned: (await plannedStore.get(ctx)) ?? EMPTY_PLANNED });
   } catch (err) {
-    return failure(err, 'load');
+    return storeFailure(err, 'Failed to load planned items');
   }
 }
 
@@ -50,6 +34,6 @@ export async function PUT(req: Request) {
     await plannedStore.set(ctx, parsed.ok);
     return NextResponse.json({ planned: parsed.ok });
   } catch (err) {
-    return failure(err, 'save');
+    return storeFailure(err, 'Failed to save planned items');
   }
 }

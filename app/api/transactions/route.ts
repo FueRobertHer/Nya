@@ -28,14 +28,29 @@ import { loggable } from '@/lib/log-safe';
 // BEFORE THE YEAR. A yearly charge is seen twice only in two years, so the
 // rows from before the lookback that recurring detection can use go beside
 // the year's, as `recurring_history` (lib/recurring.ts olderRowsForDetection):
-// compact, from merchants that charged this year too and rarely enough to need
-// it, with the same categories, renames and exclusions. Nothing else reads them.
+// compact, from merchants charged this year only once or twice, at an amount
+// charged this year too, with the same categories, renames and exclusions.
+// The cache keeps a wider set, chosen before the person's own exclusions are
+// applied, and each answer narrows it after them, so an excluded row never
+// keeps another from being sent. Nothing else reads them.
+//
+// ACCOUNT TYPES. Every row carries its account's name and type (depository,
+// credit, loan, investment), so the cash forecast counts only what leaves or
+// reaches checking and savings, never a card's own charges beside the card's
+// payment (lib/forecast.ts).
+
+/** What Plaid's part of the cache keeps of the rows before the year: wider
+ *  than an answer sends (lib/recurring.ts olderRowsForDetection), since the
+ *  person's exclusions, applied after, may change which merchants qualify. */
+const CACHED_HISTORY = { recent: 4, older: 6 };
 
 /** What is cached: Plaid's rows as assembled. `plaid_only` tells it from the
  *  payload cached before, which held the manual rows too and must not be
- *  merged with them again: that one is a miss. */
+ *  merged with them again, and `account_types` from one cached before rows
+ *  carried their account's type: either is a miss. */
 type PlaidPayload = {
   plaid_only: true;
+  account_types: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -61,7 +76,14 @@ type Ctx = Awaited<ReturnType<typeof dataCtx>>;
 
 function isPlaidPayload(v: unknown): v is PlaidPayload {
   const p = v as Partial<PlaidPayload> | null;
-  return !!p && p.plaid_only === true && Array.isArray(p.transactions) && Array.isArray(p.notes) && typeof p.as_of === 'string';
+  return (
+    !!p &&
+    p.plaid_only === true &&
+    p.account_types === true &&
+    Array.isArray(p.transactions) &&
+    Array.isArray(p.notes) &&
+    typeof p.as_of === 'string'
+  );
 }
 
 /**
@@ -144,12 +166,13 @@ async function assemblePlaid(ctx: Ctx): Promise<{ payload: PlaidPayload; hidden:
   return {
     payload: {
       plaid_only: true,
+      account_types: true,
       transactions,
       notes,
       incomplete,
       without_transactions,
       connections: items.length,
-      older: olderRowsForDetection(transactions, older),
+      older: olderRowsForDetection(transactions, older, CACHED_HISTORY),
       as_of: new Date().toISOString(),
     },
     hidden: hiddenIds,
@@ -197,24 +220,28 @@ export async function GET(req: Request) {
     // Manual rows come in newest entered first, so within a day without times
     // they follow Plaid's in that order.
     const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);
-    const history: OlderTxn[] = [
+    // The rows before the year that could be sent: Plaid's, as cached, and
+    // the manual accounts', compact (see BEFORE THE YEAR).
+    const candidates: OlderTxn[] = [
       ...(plaid.older ?? []),
-      ...olderRowsForDetection(
-        transactions,
-        manual.txns.filter((t) => t.date < cutoff && !t.pending).map((t) => ({
+      ...manual.txns
+        .filter((t) => t.date < cutoff && !t.pending)
+        .map((t) => ({
           transaction_id: t.transaction_id,
           date: t.date,
           name: t.name,
           amount: t.amount,
+          account_name: t.account_name,
+          account_type: t.account_type ?? null,
           institution_name: t.institution_name,
           category: t.category,
+          subcategory: t.subcategory,
           iso_currency_code: t.iso_currency_code,
           unofficial_currency_code: t.unofficial_currency_code ?? null,
           transaction_code: t.transaction_code,
           vendor_key: t.vendor_key,
           logo_url: t.logo_url,
-        }))
-      ),
+        })),
     ];
 
     // Left out of budgets and reports (lib/spending.ts), still listed: what the
@@ -222,12 +249,15 @@ export async function GET(req: Request) {
     // re-link (already on the row). A row whose record couldn't be read is
     // marked as not known: it counts, and the Activity tab says a total may
     // include one the person excluded.
-    for (const t of [...transactions, ...history]) {
+    for (const t of [...transactions, ...candidates]) {
       const own = exclusions.records.get(t.transaction_id);
       if (own === true) t.excluded = true;
       else if (own === false) delete t.excluded;
       else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
     }
+    // Chosen once the exclusions are on the rows, so an excluded row neither
+    // counts toward a merchant's limit nor is sent.
+    const history = olderRowsForDetection(transactions, candidates);
     const notes = [...plaid.notes, ...manual.notes];
     // The institutions whose rows aren't all here (Plaid's part: a manual
     // account has no connection, so it is never incomplete).

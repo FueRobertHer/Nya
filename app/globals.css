@@ -3141,6 +3141,15 @@ button.plan-edit:disabled {
   font-style: italic;
 }
 
+/* The narrowest phones (320 px wide): a day's cell is 34 px, so its figure
+   is set a size smaller and tighter to fit, as "-$143" or "+$3.5K". */
+@media (max-width: 340px) {
+  .cal-fig {
+    font-size: 9px;
+    letter-spacing: -0.03em;
+  }
+}
+
 .cal-dots {
   display: flex;
   gap: 3px;
