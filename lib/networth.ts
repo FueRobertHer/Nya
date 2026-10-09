@@ -14,6 +14,7 @@ import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
 import { loadVanishedInputs, applyVanished } from './vanished';
 import { recordSnapshot, recordPartialAccounts } from './history';
+import { CAUSES, classifyFailure, isoTime, reconnectFixes, type ConnectionHealth, type Failure } from './connection-state';
 import { observeHoldings, recordHoldings, type HoldingsObservation, type HoldingsRecorded } from './holdings-history';
 
 /**
@@ -97,6 +98,20 @@ export type InstitutionResult = {
   /** Plaid has found accounts at this Item that the user hasn't shared yet
    *  (lib/new-accounts.ts). Set by /api/net-worth only. */
   new_accounts_available?: boolean;
+  /** Why the fetch failed, set alongside `error` for a Plaid Item: the cause,
+   *  whose side it is on, and Plaid's error code (lib/connection-state.ts). */
+  failure?: Failure;
+  /** When the Item's consent at the bank expires, as Plaid reported it on this
+   *  fetch (an ISO time), for the institutions that have one. */
+  consent_expires_at?: string | null;
+  /** The connection's health (lib/connection-state.ts). Set by /api/net-worth
+   *  on the response only, never stored in the cache, for the reason
+   *  new_accounts_available isn't: a webhook can change it at any time. */
+  health?: ConnectionHealth;
+  /** The accounts this institution is known to have that its card can't show
+   *  (no balance could be recovered for them), by name and mask, so the health
+   *  view can say which accounts a failure affects. Set by fillFromLastKnown. */
+  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
 };
 
 /**
@@ -128,6 +143,7 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
     access_token = await decrypt(item.encrypted_access_token);
   } catch {
     result.error = 'Could not decrypt stored credentials';
+    result.failure = { cause: 'credentials', side: 'nya', code: null };
     return result;
   }
 
@@ -139,10 +155,16 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
     const balanceRes = await withRateLimitRetry(() => plaidClient.accountsGet({ access_token }));
     // Served from what Plaid holds, a broken Item may answer 200 with the problem
     // on the Item instead of failing. Treat that as the failure it is, or the
-    // reconnect prompt would never appear.
-    const itemError = balanceRes.data.item?.error?.error_code;
-    if (itemError === 'ITEM_LOGIN_REQUIRED') throw { response: { data: { error_code: itemError } } };
+    // reconnect prompt would never appear: any of the codes that mean the person
+    // must sign in again (lib/connection-state.ts), ITEM_LOGIN_REQUIRED first.
+    const itemError = balanceRes.data.item?.error;
+    if (itemError && CAUSES[classifyFailure({ code: itemError.error_code, type: itemError.error_type, responded: true }).cause].state === 'needs_reauth') {
+      throw { response: { data: { error_code: itemError.error_code, error_type: itemError.error_type } } };
+    }
     result.institution_id = balanceRes.data.item?.institution_id ?? result.institution_id;
+    // Where the bank's consent runs out on a date (some OAuth institutions), so
+    // the health view can say "reconnect soon" even without Plaid's webhook.
+    result.consent_expires_at = isoTime(balanceRes.data.item?.consent_expiration_time);
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
       name: a.name,
@@ -159,13 +181,13 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
       persistent_account_id: a.persistent_account_id ?? null,
     }));
   } catch (err: any) {
-    const code = err?.response?.data?.error_code;
-    if (code === 'ITEM_LOGIN_REQUIRED') {
-      result.needs_reauth = true;
-      result.error = 'This account needs to be reconnected';
-    } else {
-      result.error = 'Could not fetch balances';
-    }
+    // One mapping of Plaid's codes (lib/connection-state.ts) decides both the
+    // Reconnect button and what the health view says. No answer at all (a
+    // timeout, the network) has no response.
+    const data = err?.response?.data;
+    result.failure = classifyFailure({ code: data?.error_code, type: data?.error_type, responded: err?.response !== undefined });
+    result.needs_reauth = reconnectFixes(result.failure.cause);
+    result.error = result.needs_reauth ? 'This account needs to be reconnected' : 'Could not fetch balances';
     // Balances failed -- holdings would fail identically (same access token/item), skip the extra call.
     return result;
   }

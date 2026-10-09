@@ -9,6 +9,7 @@ Nya runs on Vercel, with Upstash Redis for storage and Plaid for bank data. Bun 
 - [5. Local development](#5-local-development)
 - [6. Deploy](#6-deploy)
 - [7. Install on your phone](#7-install-on-your-phone)
+- [Email notices](#email-notices)
 - [Security headers and the Content-Security-Policy](#security-headers-and-the-content-security-policy)
 - [Preview deployments](#preview-deployments)
 
@@ -52,6 +53,9 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `CONTAINER_ID` | optional | Which container this deployment serves. See [operations.md](operations.md#containers). |
 | `REDIS_PREFIX` | optional | Overrides the key namespace (defaults to the Vercel environment name, or `dev` locally). |
 | `DEMO_USER_IDS` | optional | Preview only: one-click demo accounts. |
+| `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
+| `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Without it nothing is sent, and `/privacy` and `/security` name no email service. Ignored with Clerk, where each account's notices go to its own verified address. |
+| `APP_URL` | optional | The app's public `https` address, for the link in a notice email (`http://localhost:3000` works locally). Unset, the email says to open Nya without a link. |
 
 ## 4. Scheduled jobs
 
@@ -59,7 +63,7 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 
 | Time (UTC) | Route | Job |
 | --- | --- | --- |
-| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot. |
+| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, and sends the [email notices](#email-notices) about its connections. |
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
@@ -100,6 +104,24 @@ Vercel gives you a free HTTPS domain automatically.
 **iPhone (Safari):** open your deployed URL, tap the Share icon, then **Add to Home Screen**.
 
 **Android (Chrome):** open your deployed URL, open the menu, then **Install app**.
+
+## Email notices
+
+When a bank connection needs you (a sign-in to redo, a connection to remove and make again, Plaid's warning that it will end, or an outage that has lasted three days), the daily snapshot emails once, again only if what it needs changes, and once more a week later if it still needs you. How that is decided is in [features.md](features.md#email-notices). Email goes through [Resend](https://resend.com)'s HTTP API, with no SDK (`lib/mail.ts`).
+
+1. Create a Resend account and verify the domain you will send from (Resend's Domains page lists the DNS records to add).
+2. Create an API key with sending access only, and set it as `RESEND_API_KEY` (mark it Sensitive in Vercel).
+3. Set `MAIL_FROM` to an address on that domain, on its own or with a name: `Nya <alerts@example.com>`.
+4. Set `APP_URL` to the app's public address, so each email links straight to the Connection health card.
+5. With the shared password, set `NOTIFY_EMAIL` to the address to tell. With Clerk, nothing to set: each account's notices go to its primary email address once Clerk has verified it, and to nobody else. Preview's demo accounts are never emailed.
+
+The notices come from the daily snapshot, and crons run only on the production deployment ([Scheduled jobs](#4-scheduled-jobs)), so only production sends them. The record of what was sent is in the backups, so a restored copy doesn't send those again.
+
+An email names the institution and what to do, and for a connection about to end, the day it ends as a UTC date, which is why it says "around". It never carries a balance, an amount or an account number. A send that fails is logged with Resend's status (never the message or the address) and tried again by the next run, at most one email per container per run; one that has nobody to go to is logged as that. Without `RESEND_API_KEY` and `MAIL_FROM`, nothing is sent and the Connection health card on the Accounts tab is the only place a broken connection shows.
+
+The emails go once every container's snapshot has run, so they never use the snapshots' time. They have 30 seconds in all, ending at the latest 285 seconds into the run (inside its 300-second limit), and each is started only if finding the recipient (3 seconds at most) and the send (4 seconds at most) can both end in time. They go one at a time, at most two a second (Resend's default rate limit); a 429 is waited out once when Resend asks for 2 seconds or less. What doesn't fit, and everything after Resend itself fails (no answer, a 5xx, still rate limited), waits for the next run, unmarked: the catch-up two hours later for an account whose snapshot came back unclean, which a broken connection's does, otherwise the next day.
+
+**What the log tells you.** Problems on Nya's side are never emailed to anyone, so the log is where they show: each run lists the connections that fail for a reason on Nya's side, with Plaid's codes (`Connection notices: N connection(s) in M container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (12))`). `INVALID_ACCESS_TOKEN` across every connection means `PLAID_ENV`, `PLAID_CLIENT_ID` or `PLAID_SECRET` is not the set the connections were made with, a Preview value on Production, say; `INVALID_API_KEYS`, that the client id and secret don't match. Put the settings back and the connections work as before: don't remove them, which would delete their stored transactions and leave them live, and billed, at Plaid. When emails about a cause on Plaid's side or one Nya can't place first become due on the same run in three or more containers with the same Plaid code, the run holds them back and says so, with the code and the day they go (`... those 3 email(s) are held back until October 7 (UTC), and go with that day's run if the problem is still there`); each later run says what is still held. Fix the setup in those three days and the breaks end with nothing sent; otherwise each email goes once, and is never held again. Holds are recorded within the run's mail deadline, a few at a time: one left unrecorded only means that email isn't held, and it goes with the next run. An email about a sign-in or a bank's own problem is never held.
 
 ## Security headers and the Content-Security-Policy
 

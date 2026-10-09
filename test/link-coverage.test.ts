@@ -511,6 +511,19 @@ describe('the daily snapshot', () => {
     expect(res.body.history.at(-1)).toMatchObject({ date: today() });
     expect(plaid.syncCalls).toHaveLength(0);
   });
+
+  test('connection health shows it healthy, and no month is named incomplete for it', async () => {
+    await addBank();
+    await addRetirement();
+    const res = await route('net-worth', 'GET', undefined, '?refresh=1');
+    const card = res.body.institutions.find((i: any) => i.item_id === 'item_ret');
+    expect(card.health).toMatchObject({ state: 'healthy', cause: 'ok', action: 'none' });
+    expect(card.health.last_ok_at).not.toBeNull();
+    // Having no transactions is not having them missing (lib/month-coverage.ts).
+    const txns = await transactions();
+    expect(txns.body.incomplete).toEqual([]);
+    expect(txns.body.notes).toEqual([]);
+  });
 });
 
 describe('update mode on a brokerage connection', () => {

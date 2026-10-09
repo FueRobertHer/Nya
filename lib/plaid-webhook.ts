@@ -9,15 +9,20 @@
 // the JWT's key id. Anything that fails is refused, so an unauthenticated
 // caller can only ever get a 401, never a cache flush.
 //
-// What a webhook does: drop the container's cached payloads. That is all. The
-// next dashboard load then fetches from Plaid, and until then loads are served
-// from storage (lib/cache.ts). Dropping a cache cannot lose data, which is what
-// makes it safe to do on the say-so of a verified webhook.
+// What a webhook does: drop the container's cached payloads. The next
+// dashboard load then fetches from Plaid, and until then loads are served from
+// storage (lib/cache.ts). Dropping a cache cannot lose data, which is what
+// makes it safe to do on the say-so of a verified webhook. Besides that, three
+// ITEM webhooks are remembered, none of which can change a balance or the
+// history: NEW_ACCOUNTS_AVAILABLE (lib/new-accounts.ts), and Plaid's early
+// warnings that a connection will end, PENDING_EXPIRATION and
+// PENDING_DISCONNECT, which LOGIN_REPAIRED clears (lib/connection-health.ts).
 
 import { createHash, createPublicKey, timingSafeEqual, verify } from 'node:crypto';
 import { plaidClient } from './plaid';
 import { clearCaches } from './cache';
 import { markNewAccounts } from './new-accounts';
+import { clearRepaired, recordWarning } from './connection-health';
 import type { Ctx } from './containers';
 
 /** A webhook older than this is refused (Plaid's own guidance is 5 minutes). */
@@ -162,13 +167,22 @@ export function invalidates(body: { webhook_type?: unknown; webhook_code?: unkno
  */
 export async function applyWebhook(
   ctx: Ctx,
-  body: { webhook_type?: unknown; webhook_code?: unknown; item_id?: unknown }
+  body: { webhook_type?: unknown; webhook_code?: unknown; item_id?: unknown; consent_expiration_time?: unknown; reason?: unknown },
+  now: number = Date.now()
 ): Promise<boolean> {
   if (!invalidates(body)) return false;
-  // Remembered so the card can offer to add them to this Item, rather than the
-  // user connecting the institution a second time to get at them.
-  if (body.webhook_type === 'ITEM' && body.webhook_code === 'NEW_ACCOUNTS_AVAILABLE' && typeof body.item_id === 'string') {
-    await markNewAccounts(ctx, body.item_id);
+  if (body.webhook_type === 'ITEM' && typeof body.item_id === 'string') {
+    // Remembered so the card can offer to add them to this Item, rather than the
+    // user connecting the institution a second time to get at them.
+    if (body.webhook_code === 'NEW_ACCOUNTS_AVAILABLE') await markNewAccounts(ctx, body.item_id);
+    // Plaid's week of notice that the connection will end, shown as "Reconnect
+    // soon" and emailed by the daily job (lib/connection-notices.ts). A failure
+    // to record it answers 500, so Plaid sends it again.
+    if (body.webhook_code === 'PENDING_EXPIRATION' || body.webhook_code === 'PENDING_DISCONNECT') {
+      await recordWarning(ctx, body.item_id, body, now);
+    }
+    // Repaired elsewhere (update mode in another app, say): nothing to warn of.
+    if (body.webhook_code === 'LOGIN_REPAIRED') await clearRepaired(ctx, body.item_id);
   }
   await clearCaches(ctx);
   return true;

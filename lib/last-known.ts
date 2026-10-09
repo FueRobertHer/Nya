@@ -80,7 +80,16 @@ type Fillable = {
   stale_too_old?: string;
   stale_too_old_at?: string;
   stale_missing?: number;
+  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
 };
+
+/** Names the remembered accounts a broken institution's card can't show, so
+ *  the connection health view can say which accounts are affected. Ids, names
+ *  and masks only, as every healthy card already shows them: no balance. The
+ *  id is so a hidden one can be left out (applyHidden in lib/hidden.ts). */
+function noteUnshown(inst: Fillable, accounts: RememberedAccount[]): void {
+  if (accounts.length > 0) inst.unshown_accounts = accounts.map((a) => ({ account_id: a.account_id, name: a.name, mask: a.mask }));
+}
 
 /**
  * Records how to draw every account of every institution that answered.
@@ -322,7 +331,11 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     // account known by an earlier id isn't found under it.
     getLinks(ctx).catch(() => new Map<string, Link>()),
   ]);
-  if (!last) return [];
+  if (!last) {
+    // Nothing to recover from, but which accounts are missing is still known.
+    for (const inst of broken) noteUnshown(inst, byItem[inst.item_id] ?? []);
+    return [];
+  }
   // A link whose old id is live again is paused (see effectiveLinks): following
   // it would give that account the new id's balance and count one twice.
   const liveIds = new Set(
@@ -350,6 +363,7 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     const remembered = byItem[inst.item_id] ?? [];
 
     const accounts = [];
+    const unshown: RememberedAccount[] = [];
     for (const m of remembered) {
       // An account this Item has but the snapshot doesn't. The reason is
       // unknowable from here:
@@ -369,7 +383,10 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
       const balance = sameAccountIds(m.account_id, activeLinks)
         .map((id) => last.balances[id])
         .find((b) => typeof b === 'number');
-      if (typeof balance !== 'number') continue;
+      if (typeof balance !== 'number') {
+        unshown.push(m);
+        continue;
+      }
       accounts.push({
         account_id: m.account_id,
         name: m.name,
@@ -393,13 +410,17 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     }
     const missing = remembered.length - accounts.length;
 
-    if (accounts.length === 0) continue;
+    if (accounts.length === 0) {
+      noteUnshown(inst, remembered);
+      continue;
+    }
 
     if (tooOld) {
       // Balances exist but are past the age limit. Say so instead of a bare
       // $0.00 card, which would look like never having had them.
       inst.stale_too_old = last.date;
       if (takenAt) inst.stale_too_old_at = takenAt;
+      noteUnshown(inst, remembered);
       continue;
     }
 
@@ -407,6 +428,7 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     inst.stale_as_of = last.date;
     if (takenAt) inst.stale_as_of_at = takenAt;
     if (missing > 0) inst.stale_missing = missing;
+    noteUnshown(inst, unshown);
     filled.push({ item_id: inst.item_id, as_of: last.date, accounts: accounts.length, missing });
   }
 

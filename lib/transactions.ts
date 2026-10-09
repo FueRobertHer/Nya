@@ -37,6 +37,9 @@ import { rememberedTypesForItem } from './last-known';
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
 export const TXN_SCHEMA_VERSION = 2;
 
+/** How much of an institution's history a sync returned (syncItemTransactions). */
+export type TxnCoverage = 'complete' | 'importing' | 'missing';
+
 // Display shape sent to the client: a flat set of scalars projected from
 // StoredTxn (`name` is merchant_name || raw name), so the Activity views get
 // subcategory, channel, location, time and the real merchant behind a
@@ -618,6 +621,8 @@ type SyncOutcome = {
   /** Set when the Item has no Transactions to sync (lib/item-products.ts):
    *  nothing to show and nothing wrong, so there is no note. */
   noTransactions?: true;
+  /** The initial pull hit the page cap: older rows are still arriving. */
+  importing?: boolean;
 };
 
 type SyncOptions = {
@@ -663,8 +668,8 @@ async function accountTypes(
  * when something is off. `state` is null only on a hard stop (reauth, fresh
  * Item still syncing, unrecoverable error) or for an Item with no Transactions
  * (`noTransactions`, with no note); a non-null `state` with a `note` means
- * usable-but-partial (e.g. the initial pull hit the page cap). Prior stored
- * state is left untouched on a hard stop.
+ * usable-but-partial (e.g. the initial pull hit the page cap, which also sets
+ * `importing`). Prior stored state is left untouched on a hard stop.
  */
 async function syncItem(ctx: Ctx,
   item: StoredItem,
@@ -840,6 +845,7 @@ async function syncItem(ctx: Ctx,
       return {
         state,
         note: `${item.institution_name}: still importing older transactions — refresh again shortly`,
+        importing: true,
       };
     }
     return { state, note: null };
@@ -860,6 +866,11 @@ async function syncItem(ctx: Ctx,
  * sent to the client, and everything derived from the array (Activity list,
  * month totals, budgets, insights, recurring bills) follows. The persisted store
  * is untouched, so unhiding brings every row back.
+ *
+ * `coverage` says how much of the institution's history the rows are, for the
+ * months Activity totals (#51): all of it; `importing`, older rows still
+ * arriving; or `missing`, none at all this time (a hard stop above), so every
+ * month is short by whatever it holds.
  */
 export async function syncItemTransactions(ctx: Ctx, 
   item: StoredItem,
@@ -868,9 +879,11 @@ export async function syncItemTransactions(ctx: Ctx,
    *  Applied here because this is the last place account_id exists; a
    *  category set on the row itself still wins, in /api/transactions. */
   carriedIn?: Map<string, string> | Promise<Map<string, string>>
-): Promise<{ txns: Txn[]; note: string | null }> {
-  const { state, note } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note };
+): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage }> {
+  const { state, note, importing, noTransactions } = await syncItem(ctx, item);
+  // An Item with no Transactions holds all of its (no) rows: nothing is
+  // missing from a month on its account, so it is never named as incomplete.
+  if (!state) return { txns: [], note, coverage: noTransactions ? 'complete' : 'missing' };
   const carried = await carriedIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
@@ -910,7 +923,7 @@ export async function syncItemTransactions(ctx: Ctx,
       payment_processor: resolveProcessor(t),
       payment_reference: t.payment_meta?.reference_number ?? null,
     }));
-  return { txns, note };
+  return { txns, note, coverage: importing ? 'importing' : 'complete' };
 }
 
 /**
