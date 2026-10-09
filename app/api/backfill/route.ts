@@ -45,6 +45,14 @@ import { loggable } from '@/lib/log-safe';
 //   loans / manual       Flat at today's value: amortization isn't in the
 //                        transaction stream and typed balances have no stream
 //                        (rows entered by hand need not add up to one).
+//   depository / credit  Flat too, on an Item with no Transactions at all (one
+//   without a stream     linked as a brokerage, see lib/item-products.ts): there
+//                        is nothing to walk. It still counts as a cash account
+//                        for where the total series may stop (below).
+//
+// An Item with no Transactions is not a reason to wait: readItemTransactions
+// answers it with no rows and no note, and its investment accounts are walked
+// from their own flows like any other.
 //
 // Plaid's sign convention: a positive amount is money leaving the account. For
 // the net-worth total every transaction's effect is exactly -amount for both
@@ -101,7 +109,9 @@ export async function POST() {
         const access_token = await decrypt(item.encrypted_access_token);
         // Stored balances, not the billed live balance call: see lib/networth.ts.
         const bal = await plaidClient.accountsGet({ access_token });
-        const { txns, note } = await readItemTransactions(ctx, item, LOOKBACK_DAYS);
+        // The accounts just fetched decide whether an Item Plaid doesn't bill
+        // Transactions on is worth a first call (lib/item-products.ts).
+        const { txns, note, hasTransactions } = await readItemTransactions(ctx, item, LOOKBACK_DAYS, bal.data.accounts);
 
         // Investment activity, only where there's an investment account to
         // explain, and only as a bonus: its failure is NOT a `note`. Most Items
@@ -128,6 +138,7 @@ export async function POST() {
           accounts: bal.data.accounts,
           txns,
           note,
+          hasTransactions,
           invTxns: inv?.walkRows ?? [],
           invCoveredIds: inv?.coveredIds ?? new Set<string>(),
           invPending: inv?.pending ?? false,
@@ -156,11 +167,21 @@ export async function POST() {
     // unset, the client's next load recomputes.
     const invPending = perItem.some((p) => p.invPending);
 
-    for (const { accounts, txns, invTxns, invCoveredIds } of perItem) {
+    // Whether some cash account had no stream to walk (an Item with no
+    // Transactions): held flat, and never given a series of its own, since an
+    // empty stream would read as a balance that didn't move.
+    let streamlessCash = false;
+
+    for (const { accounts, txns, hasTransactions, invTxns, invCoveredIds } of perItem) {
       for (const a of accounts) {
         const current = a.balances.current ?? 0;
         totalNow += signedContribution(a.type, current);
         if (a.type === 'depository' || a.type === 'credit') {
+          // Not walked, so it falls into the flat-held `rest` below.
+          if (!hasTransactions) {
+            streamlessCash = true;
+            continue;
+          }
           walkType[a.account_id] = a.type;
           cashIds.add(a.account_id);
           balances[a.account_id] = current;
@@ -196,8 +217,9 @@ export async function POST() {
     // account with no activity all year also leaves oldestTxn null, and walking
     // a real cash balance past its horizon would freeze it. That case gets today
     // as its cash horizon: no total points, but the investment accounts still get
-    // their own series.
-    if (!oldestTxn && cashIds.size === 0) oldestTxn = oldestInvTxn;
+    // their own series. So does a cash account with no stream at all, for the
+    // same reason: its past balance is just as unknown.
+    if (!oldestTxn && cashIds.size === 0 && !streamlessCash) oldestTxn = oldestInvTxn;
     else if (!oldestTxn && oldestInvTxn) oldestTxn = isoDaysAgo(0);
 
     // Manual accounts can't be walked backward: their balances are typed, and

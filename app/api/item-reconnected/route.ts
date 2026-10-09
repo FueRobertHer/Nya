@@ -3,6 +3,7 @@ import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
 import { clearRepaired } from '@/lib/connection-health';
 import { clearCaches } from '@/lib/cache';
+import { forgetRefusal } from '@/lib/transactions';
 import { StoreRefusedError } from '@/lib/repo';
 import { loggable } from '@/lib/log-safe';
 
@@ -13,7 +14,10 @@ import { loggable } from '@/lib/log-safe';
 // changes is what Nya remembers about the connection's health. Plaid's warning
 // and the email bookkeeping of the break are forgotten, so the card stops
 // saying "Reconnect soon" and a later break gets a notice of its own
-// (lib/connection-health.ts). The caches go too, so the reload that follows
+// (lib/connection-health.ts). So does a remembered refusal of its first
+// transactions call (lib/transactions.ts forgetRefusal): consent to share
+// transactions may have been given just now, so the next load asks Plaid again
+// rather than in up to 30 days. The caches go too, so the reload that follows
 // fetches.
 //
 // It only ever removes this container's own records of an Item it holds, so a
@@ -36,6 +40,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unknown item' }, { status: 404 });
     }
     await clearRepaired(ctx, item_id);
+    // Best effort: one that can't be forgotten lapses by itself.
+    await forgetRefusal(ctx, item_id);
     await clearCaches(ctx);
     return NextResponse.json({ ok: true });
   } catch (err) {

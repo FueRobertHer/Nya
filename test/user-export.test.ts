@@ -139,7 +139,8 @@ const enc = async (value: unknown) => encrypt(typeof value === 'string' ? value 
 async function seedPerson() {
   await fake.hset(ctxKey('plaid:items'), {
     item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('access-sandbox-SECRET-a') }),
-    item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt('access-sandbox-SECRET-b') }),
+    // Linked as a brokerage: whether Plaid included transactions when it was linked is bookkeeping, left out.
+    item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt('access-sandbox-SECRET-b'), transactions_billed: false }),
   });
   await fake.hset(ctxKey('accounts:meta'), {
     item_a: await enc([
@@ -575,7 +576,7 @@ describe('everything stored, decrypted, and nothing else', () => {
 
   test('the machinery is left out: cursors, caches, timings, counters', async () => {
     const text = JSON.stringify(await download());
-    for (const machinery of ['cursor-SECRET', 'CACHED-SECRET', 'acc_vanished', '2026-01-03T13:00:00.000Z', TEST_CTX.container]) {
+    for (const machinery of ['cursor-SECRET', 'CACHED-SECRET', 'acc_vanished', '2026-01-03T13:00:00.000Z', TEST_CTX.container, 'transactions_billed']) {
       expect(text).not.toContain(machinery);
     }
     // The flat balances behind estimated totals are not an account's history.

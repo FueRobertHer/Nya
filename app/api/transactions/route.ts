@@ -5,6 +5,7 @@ import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
 import { getRenames } from '@/lib/renames';
 import { syncItemTransactions, LOOKBACK_DAYS, type Txn } from '@/lib/transactions';
+import type { WithoutTransactions } from '@/lib/no-transactions';
 import { getEffectiveHidden, type Link } from '@/lib/links';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { readManualTxnsForDisplay } from '@/lib/manual-txns';
@@ -35,6 +36,14 @@ type PlaidPayload = {
   // says so under every month it totals (#51). Empty on any payload that is
   // cached, since only a payload without notes is.
   incomplete?: { institution_name: string; coverage: 'missing' | 'importing' }[];
+  // The connections that bring in no transactions, and why (lib/item-products.ts):
+  // investment accounts only, no bank account or card, or a bank account Plaid
+  // doesn't provide transactions for. Not problems, so outside `notes`, and the
+  // payload stays cacheable. With `connections` (how many there are), the views
+  // that count spending say what is true rather than "no transactions" or a
+  // figure that looks complete (lib/no-transactions.ts).
+  without_transactions?: WithoutTransactions[];
+  connections?: number;
   as_of: string;
 };
 
@@ -115,8 +124,22 @@ async function assemblePlaid(ctx: Ctx): Promise<{ payload: PlaidPayload; hidden:
   const incomplete = results.flatMap((r, i) =>
     r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
   );
+  // Not problems, so not notes, and they don't keep the answer from the cache.
+  // By id as well as name: the dashboard matches them to connection health by
+  // id, since two connections can share a name.
+  const without_transactions = results.flatMap((r, i) =>
+    r.noTransactions ? [{ item_id: items[i].item_id, institution_name: items[i].institution_name, reason: r.noTransactions }] : []
+  );
   return {
-    payload: { plaid_only: true, transactions, notes, incomplete, as_of: new Date().toISOString() },
+    payload: {
+      plaid_only: true,
+      transactions,
+      notes,
+      incomplete,
+      without_transactions,
+      connections: items.length,
+      as_of: new Date().toISOString(),
+    },
     hidden: hiddenIds,
     // Same rule as net-worth: only clean payloads, so syncing or reauth
     // institutions get re-checked on the next load instead of hiding for the
@@ -178,7 +201,18 @@ export async function GET(req: Request) {
     // account has no connection, so it is never incomplete).
     const incomplete = plaid.incomplete ?? [];
 
-    return NextResponse.json({ transactions, notes, incomplete, as_of: plaid.as_of, from_cache: fromCache });
+    // The connections without transactions are Plaid's part too: a manual
+    // account is not a connection. The views that count spending weigh them
+    // against these rows, manual ones included (lib/no-transactions.ts).
+    return NextResponse.json({
+      transactions,
+      notes,
+      incomplete,
+      without_transactions: plaid.without_transactions ?? [],
+      ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
+      as_of: plaid.as_of,
+      from_cache: fromCache,
+    });
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

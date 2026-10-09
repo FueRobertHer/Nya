@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { Txn } from './MonthBreakdown';
 import type { ManualTxnTarget } from './ManualTxnSheet';
 import type { Incomplete } from '@/lib/month-coverage';
+import { noTransactionsView, type NoTransactionsView } from '@/lib/no-transactions';
 
 /** Newest first, as /api/transactions orders them; the sort is stable. */
 function newestFirst(a: Txn, b: Txn): number {
@@ -40,6 +41,7 @@ export function useTransactionEdits({
   setTxns,
   setTxnNotes,
   setTxnIncomplete,
+  setTxnWithout,
   loadTransactions,
   loadNetWorth,
   requestBackfill,
@@ -49,6 +51,9 @@ export function useTransactionEdits({
   setTxnNotes: Dispatch<SetStateAction<string[]>>;
   /** The institutions whose rows aren't all in the list (/api/transactions). */
   setTxnIncomplete: Dispatch<SetStateAction<Incomplete[]>>;
+  /** The connections that bring in no transactions, as the same answer says
+   *  (lib/no-transactions.ts). */
+  setTxnWithout?: (view: NoTransactionsView) => void;
   loadTransactions: () => unknown;
   loadNetWorth: (force?: boolean) => Promise<unknown>;
   requestBackfill: (reload: () => void) => void;
@@ -84,10 +89,11 @@ export function useTransactionEdits({
       setTxns(data.transactions);
       setTxnNotes(Array.isArray(data.notes) ? data.notes : []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
+      setTxnWithout?.(noTransactionsView(data));
     } catch {
       // The list shown is the server's answer to the save; the next load reads it again.
     }
-  }, [setTxns, setTxnNotes, setTxnIncomplete]);
+  }, [setTxns, setTxnNotes, setTxnIncomplete, setTxnWithout]);
 
   /** After a save or delete: the row in the list, or out of it, at once, and
    *  when the balance moved too, net worth as after the account's Update form:

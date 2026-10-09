@@ -195,7 +195,7 @@ export default function SecurityPage() {
             ids: of your accounts, transactions and bank connections (random strings from Plaid), and of your sign-in
             account;
           </li>
-          <li>the names of the banks you linked;</li>
+          <li>the names of the banks you linked, and whether Plaid included transactions when each connection was linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
           <li>
             for sharing: the names you and the people you connect with gave each other, which accounts each of you
