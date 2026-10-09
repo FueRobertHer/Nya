@@ -248,12 +248,12 @@ export default function Insights({
     // deduped by name -- the same bill on two linked accounts is one bill).
     if (txns) {
       const seen = new Set<string>();
-      for (const b of upcomingBills(detectRecurring(txns), 7)) {
+      for (const { series: b, due } of upcomingBills(detectRecurring(txns), 7)) {
         if (seen.has(b.name)) continue;
         seen.add(b.name);
         out.push({
           key: `bill-${b.name}`,
-          text: `Upcoming: ${b.name} (~${formatMoney(b.amount, b.currency ?? displayCurrency)}) around ${new Date(`${b.nextDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+          text: `Upcoming: ${b.name} (~${formatMoney(b.amount, b.currency ?? displayCurrency)}) around ${new Date(`${due}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
           tone: 'neutral',
         });
         if (seen.size >= 2) break;

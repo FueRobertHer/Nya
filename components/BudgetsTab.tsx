@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring } from '@/lib/recurring';
+import { cadenceLabel, detectRecurring, perMonth } from '@/lib/recurring';
 import { localMonth, instantDay } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
@@ -141,7 +141,7 @@ export default function BudgetsTab({
     [budgets, spendByCat]
   );
 
-  const recurring = useMemo(() => (txns ? detectRecurring(txns) : []), [txns]);
+  const recurring = useMemo(() => (txns ? detectRecurring(txns).filter((s) => s.kind === 'bill') : []), [txns]);
 
   // The bills' monthly total adds up those in the budgets' currency; each bill
   // is listed in its own, and those in others are named.
@@ -150,7 +150,7 @@ export default function BudgetsTab({
     const others = new Map<string, number>();
     for (const b of recurring) {
       const c = b.currency ?? displayCurrency;
-      if (c === displayCurrency || displayCurrency === null) total += b.amount;
+      if (c === displayCurrency || displayCurrency === null) total += perMonth(b);
       else if (c) others.set(c, (others.get(c) ?? 0) + 1);
     }
     const leftOut = [...others].map(([currency, count]) => ({ currency, count })).sort((a, b) => b.count - a.count);
@@ -393,7 +393,7 @@ export default function BudgetsTab({
                       <div className="txn-text">
                         {b.name}
                         <div className="type-tag">
-                          {b.institution} · {b.monthsSeen} months · next ~{fmtDay(b.nextDate)}
+                          {b.institution} · {cadenceLabel(b.cadence)} · seen {b.seen} times · next ~{fmtDay(b.nextDate)}
                         </div>
                       </div>
                     </div>

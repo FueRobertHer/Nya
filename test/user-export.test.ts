@@ -749,6 +749,7 @@ describe('stores built on the storage seam', () => {
       'fire-plan',
       'holdings:history',
       'manual-transactions',
+      'planned-items',
       'transaction-annotations',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
