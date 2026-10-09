@@ -13,6 +13,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
   - [Email notices](#email-notices)
 - [Manual accounts](#manual-accounts)
 - [Excluding a transaction](#excluding-a-transaction)
+- [Recurring bills and the cash forecast](#recurring-bills-and-the-cash-forecast)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 - [Planning](#planning)
 
@@ -234,6 +235,51 @@ A one-off can swamp a month: a car bought outright, a deposit paid and returned,
 Excluding changes nothing stored about the transaction itself, and never a balance, net worth or the history behind the chart: the money did move. Which transactions count in a total is decided in one place (`lib/spending.ts`), and the exclusion is kept in one record per transaction (`lib/txn-annotations.ts`), where notes, tags and a reviewed state can join it later. Including one again is recorded too, so what you said about the transaction itself beats an exclusion carried across a re-link, and will beat a rule.
 
 A bank's fee (Plaid's "bank charge", a maintenance or overdraft fee) is spending, not a transfer: it counts in every total, the budgets and recurring-bill detection included, where a monthly fee worth getting rid of shows up.
+
+## Recurring bills and the cash forecast
+
+The Budgets tab finds the bills and income that repeat, says when each is next expected, and carries your cash forward over the next 30, 60 or 90 days, with a calendar of what posted and what is coming. Home's upcoming bills come from the same detection.
+
+### What counts as recurring
+
+A charge or a deposit repeats on one of these cadences: weekly, every 2 weeks, twice a month (two days of the month, like the 1st and the 15th), every 4 weeks, monthly, every 2 months, every 3 months, twice a year and yearly. Each cadence is a schedule: a fixed step in days, or one or two days of the month in every first, second, third, sixth or twelfth month. Deposits are found the same way as charges, so payroll every other Friday or on the 15th and the last day shows as income, apart from the bills.
+
+A merchant's charges are recurring on a cadence when they fit its schedule (`lib/recurring.ts`):
+
+- **On time, within a few days.** A charge may land up to 2 days from its scheduled date for weekly, 3 for every 2 or 4 weeks and twice a month, 4 for monthly, and up to 14 for yearly, since weekends and holidays move a bank's posting and a yearly renewal drifts a little.
+- **Most of them fit.** At least 75% of the merchant's charges fit, one per scheduled date, and at least 75% of the scheduled dates between the first and the last have one. A gym that also sells smoothies still has its membership found, and a skipped month is allowed; a store visited on no schedule fits nothing.
+- **Enough of them.** Four for weekly and twice a month, three for most cadences, two for twice a year and yearly.
+- **A consistent amount.** The charges of the last year (at least the last two) lie within 25% of their median, or within 5 units of the currency for a small subscription whose tax moves by cents, with the one farthest out forgiven among five or more (a bonus paycheck, a prorated first bill). This is what keeps a grocery store you visit every week from being called a bill: its timing may be weekly, its amounts are not.
+
+The typical amount shown is the median of the last three (the latest of two), so a price rise shows from its second charge. Evidence is taken from a window before the merchant's latest charge: half a year for weekly, a year for most cadences, longer for twice a year and yearly. When a due date moves (from the 5th to the 20th, say) or a payroll changes cadence, the charges since the change are judged on their own, but only if those before it kept a schedule too, so a restaurant visited at random whose last few visits happen to line up is not a bill. A merchant billing several subscriptions under one name (Apple's iCloud and a music plan, with the odd app) is split by amount, and each run of the same amount (within 2%, or 50 cents) is judged on its own: a subscription repeats its price exactly, a store's trips don't.
+
+What never counts: money moved between your accounts, cash taken out, a pending charge, a transaction you [excluded](#excluding-a-transaction), and a card payment received on the card's side. Loan payments and bank fees are bills, as before. Charges are grouped by institution, merchant and currency, so the same subscription on two linked cards is two series, and no amount adds up two currencies.
+
+Each series shows its cadence, how many times it was seen, its typical amount and the next date its schedule names. A bill on the 31st is expected on the 30th of a 30-day month and the 28th of February (the 29th in a leap year), and on the 31st again after; a yearly charge on February 29th falls on the 28th in other years. One that is late but within its days is "not in yet" and expected today; past them, that date is taken as skipped. Two scheduled dates gone by with nothing arriving (one, for cadences longer than a month) and the series "may have ended": it is listed last and left out of the monthly figures, the forecast and the calendar.
+
+A yearly charge is seen twice only in two years, and the Activity tab loads one. So `/api/transactions` also sends, beside the year, the rows from up to 800 days back that detection can use (`recurring_history`): from merchants that charged this year too, at most three times in the year before, compact, with your categories, renames, exclusions and hidden accounts applied as to every row. They are cached with Plaid's part, and nothing else reads them.
+
+The earlier detection found roughly monthly charges only, at a consistent amount over three months, with no check of their timing. The monthly bills it found are still found, with their cadence now. Charges at no regular interval (a copay a few times a year) were listed then and aren't now, and a bill whose due date moved is judged on its new date once it has charged there a few times.
+
+Tap a series for **Not recurring**: it leaves the list, the forecast, the calendar and Home's upcoming bills. Those marked are listed under the rest, where **Restore** brings each back.
+
+### Planned items
+
+Expenses and income you know are coming (a car registration, a tax refund, rent from a room you let) are added under **Planned** on the Budgets tab: a name, money out or in, the amount and its currency, the date, and whether it repeats (weekly, every 2 weeks, monthly, every 3 months, every 6 months or yearly). Twice a month is two monthly items, so neither date is a guess. A monthly item on the 31st falls on each shorter month's last day. Planned items count in the forecast and the calendar only: budgets, totals and history don't change.
+
+They are kept with the series marked not recurring and the forecast's warning, as one encrypted value per account on the storage seam (`lib/planned-store.ts`, `app/api/planned-items`), saved whole like budgets and goals, and checked field by field on every save: at most 100 items, each with a name of one line up to 60 characters, a positive amount in its currency's smallest unit, a known three-letter currency and a real date between 2000 and 2100. They are in the [download of your data](data-export.md#planned-items).
+
+### The cash forecast
+
+The forecast starts from today's balance of your cash accounts: checking, savings and cash on hand (Plaid's depository accounts, and manual ones of that type), not hidden ones, each at the balance the Accounts tab shows, and names them. It is in one currency, the one most of those accounts are in; accounts in another, and any without a balance, are left out and named. From there it moves day by day, in whole cents, through each detected bill (out) and income (in) on the dates its schedule names, and each planned item, through today and the next 30, 60 or 90 days. It gives the lowest point and its day, and warns in red when the balance drops below zero, or in amber below a figure you set (it starts at $100, the figure Home's low-balance alert uses, and is saved with the planned items).
+
+It is an estimate, drawn dashed and labelled so. Everyday spending isn't in it, and neither is a card's payment unless it repeats at a steady amount (then it is a detected bill), which the card says. It says what it may be missing, as the Home total does: balances recovered from an earlier day, an institution that couldn't be reached, a connection that stopped syncing or whose transactions couldn't be loaded or are still arriving, a bank whose transactions Plaid doesn't provide or you didn't allow, a typed balance not updated for a week, and anything left out for its currency. It is worked out in the browser from what the dashboard already loaded, and never stored or sent anywhere: it never becomes history. Day zero is your own day, not the server's or UTC's.
+
+**What if I buy…** asks about one purchase: an amount and a day within the forecast's range. The drawer shows the new lowest point beside the old one, whether the balance would drop below zero or the warning, and the forecast with and without the purchase. Nothing is saved.
+
+### The calendar
+
+A month a page, Sunday first, from a year back to a year ahead. Each day carries a figure and a dot for each kind of thing on it. Days gone by show what posted: money in less money out, as the Activity tab's day heading counts it (every transaction but those you excluded, in the totals' currency). From today on they show what is expected: bills, income and planned items, with the forecast's amounts. The two figures are never added together, since one is the bank's record and the other an estimate. A card's or loan's payment due is marked on its day with its minimum, from Plaid's payment details, but never added: it may already be a detected bill, and what you will pay is yours to decide. Tap a day for its list.
 
 ## Keeping Plaid costs down
 
