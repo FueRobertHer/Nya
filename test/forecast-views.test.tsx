@@ -177,6 +177,19 @@ describe('the calendar', () => {
     expect(t).toContain('Days gone by show what posted; from today, what is expected, an estimate. A payment due on a card or loan is marked, not added.');
   });
 
+  test('today\'s list says why a posted row isn\'t in the day\'s figure', () => {
+    const t = view({
+      txns: [
+        txn({ transaction_id: 'a', name: 'Corner shop', amount: 30 }),
+        txn({ transaction_id: 'b', name: 'Ramen', amount: 3200, iso_currency_code: 'JPY' }),
+        txn({ transaction_id: 'c', name: 'Work trip', amount: 400, excluded: true }),
+      ],
+    });
+    expect(t).toContain('Posted · -$30.00');
+    expect(t).toContain("Ramen in JPY, not in the day's figure");
+    expect(t).toContain("Work trip excluded, not in the day's figure");
+  });
+
   test('each day\'s cell carries its figure: what posted before today, what is expected after', () => {
     const html = renderToStaticMarkup(
       <CalendarView

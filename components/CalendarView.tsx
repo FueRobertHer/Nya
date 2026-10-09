@@ -101,6 +101,16 @@ export default function CalendarView({
   const due = day?.entries.filter((e) => e.kind === 'due') ?? [];
 
   const amountOf = (e: CalendarEntry) => (e.amount === null ? '' : signedMoney(e.amount, e.currency ?? currency));
+  // Why a posted row is quieter: pending, excluded, or in another currency,
+  // and so not in the day's figure.
+  const postedTags = (e: CalendarEntry) =>
+    [
+      e.pending ? 'pending' : null,
+      e.excluded ? "excluded, not in the day's figure" : null,
+      !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
 
   return (
     <div className="card">
@@ -210,7 +220,7 @@ export default function CalendarView({
                     <tr key={`p-${e.ref}`} className={e.uncounted ? 'cal-uncounted' : undefined}>
                       <td>
                         {e.name}
-                        {(e.pending || e.excluded) && <div className="type-tag">{e.pending ? 'pending' : 'excluded'}</div>}
+                        {postedTags(e) && <div className="type-tag">{postedTags(e)}</div>}
                       </td>
                       <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}>{amountOf(e)}</td>
                     </tr>
