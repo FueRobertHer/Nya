@@ -60,11 +60,28 @@ function fullYear(text: string, apostrophe: boolean, thisYear: number): number |
   return 2000 + n > thisYear + 1 ? 1900 + n : 2000 + n;
 }
 
-/** How a date can be read: as one day whatever the order, or as the day each
- *  order makes of it (null where that order makes no real day). */
-export type DateReading = { kind: 'fixed'; day: string } | { kind: 'ordered'; mdy: string | null; dmy: string | null };
+/** How a date is written: ISO's year-month-day, the same run together, with
+ *  the month named, or numbers with the year last (whose order a file
+ *  settles, or the person). */
+export type DateStyle = 'iso' | 'compact' | 'named' | DateOrder;
 
-const fixed = (day: string | null): DateReading | null => (day ? { kind: 'fixed', day } : null);
+/** The styles, as the import sheet says how a file's dates were read. */
+export const DATE_STYLE_NAMES: Record<DateStyle, string> = {
+  iso: 'year-month-day (2026-09-30)',
+  compact: 'year, month and day run together (20260930)',
+  named: 'with the month named (30 Sep 2026)',
+  mdy: DATE_ORDER_NAMES.mdy,
+  dmy: DATE_ORDER_NAMES.dmy,
+};
+
+/** How a date can be read: as one day whatever the order (with how it is
+ *  written; 'numeric' for numbers that read the same either way), or as the
+ *  day each order makes of it (null where that order makes no real day). */
+export type DateReading =
+  | { kind: 'fixed'; day: string; style: 'iso' | 'compact' | 'named' | 'numeric' }
+  | { kind: 'ordered'; mdy: string | null; dmy: string | null };
+
+const fixed = (day: string | null, style: 'iso' | 'compact' | 'named' | 'numeric'): DateReading | null => (day ? { kind: 'fixed', day, style } : null);
 
 /** A time after a date, which a day doesn't need: "14:22", "2:22 PM", "14:22:01.5Z". */
 const TIME = /(?:[T\s]+\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:\s*[AaPp]\.?[Mm]\.?)?(?:\s*(?:Z|[+-]\d{2}:?\d{2}|UTC|GMT))?)$/;
@@ -81,8 +98,8 @@ export function readDateText(input: string, thisYear: number): DateReading | nul
   // Quicken pads with spaces ("1/ 2'26"); nothing else needs them kept.
   s = s.replace(/\s*([/.\-'])\s*/g, '$1');
   let m: RegExpExecArray | null;
-  if ((m = /^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})\.?$/.exec(s))) return fixed(dayOf(+m[1], +m[3], +m[4]));
-  if ((m = /^(\d{4})(\d{2})(\d{2})$/.exec(s))) return fixed(dayOf(+m[1], +m[2], +m[3]));
+  if ((m = /^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})\.?$/.exec(s))) return fixed(dayOf(+m[1], +m[3], +m[4]), 'iso');
+  if ((m = /^(\d{4})(\d{2})(\d{2})$/.exec(s))) return fixed(dayOf(+m[1], +m[2], +m[3]), 'compact');
   if ((m = /^(\d{1,2})([-/.])(\d{1,2})(?:\2|('))(\d{1,4})\.?$/.exec(s))) {
     const year = fullYear(m[5], m[4] === "'", thisYear);
     if (year === null) return null;
@@ -92,22 +109,37 @@ export function readDateText(input: string, thisYear: number): DateReading | nul
     const dmy = dayOf(year, b, a);
     if (!mdy && !dmy) return null;
     // The same day either way decides nothing.
-    if (mdy && mdy === dmy) return { kind: 'fixed', day: mdy };
+    if (mdy && mdy === dmy) return { kind: 'fixed', day: mdy, style: 'numeric' };
     return { kind: 'ordered', mdy, dmy };
   }
   // The month named: "30 Sep 2026", "30-Sep-26", "30. September 2026".
   if ((m = /^(\d{1,2})[-.\s]*([A-Za-z]{3,9})\.?[-.,\s]*(\d{2}|\d{4})$/.exec(s))) {
     const month = MONTHS[m[2].toLowerCase()];
     const year = fullYear(m[3], false, thisYear);
-    return month && year ? fixed(dayOf(year, month, Number(m[1]))) : null;
+    return month && year ? fixed(dayOf(year, month, Number(m[1])), 'named') : null;
   }
   // "Sep 30, 2026", "September 30 2026", "Sep 30th, 2026".
   if ((m = /^([A-Za-z]{3,9})\.?[-.\s]*(\d{1,2})(?:st|nd|rd|th)?,?[-.\s]*(\d{2}|\d{4})$/.exec(s))) {
     const month = MONTHS[m[1].toLowerCase()];
     const year = fullYear(m[3], false, thisYear);
-    return month && year ? fixed(dayOf(year, month, Number(m[2]))) : null;
+    return month && year ? fixed(dayOf(year, month, Number(m[2])), 'named') : null;
   }
   return null;
+}
+
+/** How most of these dates are written, numbers read in `order` (for the
+ *  sheet's "dates read as"), or null when none reads. */
+export function dateStyle(texts: Iterable<string>, order: DateOrder | null, thisYear: number): DateStyle | null {
+  const counts = new Map<DateStyle, number>();
+  for (const t of texts) {
+    const r = readDateText(t, thisYear);
+    if (!r) continue;
+    const style: DateStyle | null = r.kind === 'ordered' || r.style === 'numeric' ? order : r.style;
+    if (style) counts.set(style, (counts.get(style) ?? 0) + 1);
+  }
+  let best: DateStyle | null = null;
+  for (const [style, n] of counts) if (best === null || n > counts.get(best)!) best = style;
+  return best;
 }
 
 /** What the dates of a column (or a QIF file) say about their order. */

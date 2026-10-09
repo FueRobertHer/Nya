@@ -382,7 +382,7 @@ describe('a CSV file', () => {
   test('a European file: decimal commas, day first, euros, its summary lines counted', async () => {
     const options = { csv: { columns: { date: 0, description: 2, amount: 7, note: 4, currency: 8 }, sign: 'negative-out' } };
     const p = (await preview(CHECKING.account_id, fixture('giro-semicolon.csv'), options, 'giro.csv')).body.preview;
-    expect(p).toMatchObject({ currency: 'EUR', counts: { new: 6 }, read: { date_order: 'dmy', decimal: ',', delimiter: ';', header_line: 13, skipped: 9 }, encoding: 'windows-1252' });
+    expect(p).toMatchObject({ currency: 'EUR', counts: { new: 6 }, read: { date_order: 'dmy', date_style: 'dmy', decimal: ',', delimiter: ';', header_line: 13, skipped: 9 }, encoding: 'windows-1252' });
     expect(p.rows[1]).toMatchObject({ name: 'Stadtwerke München', amount: 89, currency: 'EUR', date: '2026-09-29' });
   });
 

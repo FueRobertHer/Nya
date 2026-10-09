@@ -11,7 +11,7 @@
 
 import { MAX_IMPORT_ROWS, type FileFormat, type Problem, type RawRecord } from './record';
 import { detectFormat } from './text';
-import { detectDateOrder, type DateDetection, type DateOrder } from './dates';
+import { dateStyle, detectDateOrder, type DateDetection, type DateOrder, type DateStyle } from './dates';
 import { detectDecimalMark, type DecimalMark } from './amounts';
 import { accountMask, ofxRecords, parseOfx, statementLabel, type OfxStatement } from './ofx';
 import { parseQif, qifRecords, qifValues, sectionLabel, type QifSection } from './qif';
@@ -87,6 +87,8 @@ export type ReadResult =
         date_order: DateOrder | null;
         /** Whether the order mattered: some dates depend on one. */
         dates_ordered: boolean;
+        /** How most of the dates are written, as read (CSV and QIF). */
+        date_style: DateStyle | null;
         decimal: DecimalMark | null;
         /** OFX: most debits are positive, so the signs look reversed. */
         reversed_hint: boolean;
@@ -153,7 +155,7 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
       records: read.records,
       problems: [...file.problems, ...read.problems],
       statement: ofxInfo(s),
-      read: { date_order: null, dates_ordered: false, decimal: null, reversed_hint: !o.flip && read.reversedHint },
+      read: { date_order: null, dates_ordered: false, date_style: null, decimal: null, reversed_hint: !o.flip && read.reversedHint },
     };
   }
   if (format === 'qif') {
@@ -175,7 +177,13 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
       records: read.records,
       problems: [...file.problems, ...read.problems],
       statement: file.sections.length > 1 ? qifInfo(s) : null,
-      read: { date_order, dates_ordered: detection.ambiguous || detection.mixed || detection.order !== null, decimal, reversed_hint: false },
+      read: {
+        date_order,
+        dates_ordered: detection.ambiguous || detection.mixed || detection.order !== null,
+        date_style: dateStyle(dates, date_order, opts.thisYear),
+        decimal,
+        reversed_hint: false,
+      },
     };
   }
   const table = readCsvTable(text, { delimiter: o.csv?.delimiter, header_line: o.csv?.header_line });
@@ -207,6 +215,7 @@ export function readImport(text: string, opts: { format?: FileFormat; options: I
     read: {
       date_order,
       dates_ordered: detection.ambiguous || detection.mixed || detection.order !== null,
+      date_style: dateStyle(dates, date_order, opts.thisYear),
       decimal,
       reversed_hint: false,
       table: shown,

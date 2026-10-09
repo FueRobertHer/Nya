@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decodeFile, detectFormat, formatFromName } from '@/lib/import/text';
-import { dateFor, detectDateOrder, ofxDay, readDateText } from '@/lib/import/dates';
+import { dateFor, dateStyle, detectDateOrder, ofxDay, readDateText } from '@/lib/import/dates';
 import { detectDecimalMark, readAmount } from '@/lib/import/amounts';
 import { accountMask, ofxRecords, parseOfx } from '@/lib/import/ofx';
 import { columnsFromNames, columnsProblem, csvRecords, detectDelimiter, guessColumns, namesOf, readCsvTable, splitCsv, type CsvTable } from '@/lib/import/csv';
@@ -73,22 +73,34 @@ describe('reading a file as text', () => {
 
 describe('dates', () => {
   test('ISO, compact and named-month dates are one day whatever the order', () => {
-    for (const [text, day] of [
-      ['2026-09-30', '2026-09-30'],
-      ['2026/9/3', '2026-09-03'],
-      ['2026.09.30', '2026-09-30'],
-      ['20260930', '2026-09-30'],
-      ['2026-09-30 14:22:01', '2026-09-30'],
-      ['2026-09-30T14:22:01+02:00', '2026-09-30'],
-      ['30 Sep 2026', '2026-09-30'],
-      ['30-Sep-26', '2026-09-30'],
-      ['30. September 2026', '2026-09-30'],
-      ['Sep 30, 2026', '2026-09-30'],
-      ['September 3rd 2026', '2026-09-03'],
-      ['05/05/2026', '2026-05-05'], // the same either way
+    for (const [text, day, style] of [
+      ['2026-09-30', '2026-09-30', 'iso'],
+      ['2026/9/3', '2026-09-03', 'iso'],
+      ['2026.09.30', '2026-09-30', 'iso'],
+      ['20260930', '2026-09-30', 'compact'],
+      ['2026-09-30 14:22:01', '2026-09-30', 'iso'],
+      ['2026-09-30T14:22:01+02:00', '2026-09-30', 'iso'],
+      ['30 Sep 2026', '2026-09-30', 'named'],
+      ['30-Sep-26', '2026-09-30', 'named'],
+      ['30. September 2026', '2026-09-30', 'named'],
+      ['Sep 30, 2026', '2026-09-30', 'named'],
+      ['September 3rd 2026', '2026-09-03', 'named'],
+      ['05/05/2026', '2026-05-05', 'numeric'], // the same either way
     ] as const) {
-      expect(readDateText(text, YEAR), text).toEqual({ kind: 'fixed', day });
+      expect(readDateText(text, YEAR), text).toEqual({ kind: 'fixed', day, style });
     }
+  });
+
+  test('how a file’s dates are written, for the sheet to say: the style most of them have, numbers in the order read', () => {
+    expect(dateStyle(['2026-09-30', '2026-10-01', '30 Sep 2026'], null, YEAR)).toBe('iso');
+    expect(dateStyle(['30/09/2026', '05/05/2026', '01/02/2026'], 'dmy', YEAR)).toBe('dmy');
+    expect(dateStyle(['01/02/2026'], null, YEAR)).toBeNull(); // an order nobody gave yet
+    expect(dateStyle(['not a date'], 'mdy', YEAR)).toBeNull();
+    // As the readings report it.
+    expect(ready(fixture('checking.qif')).read.date_style).toBe('mdy');
+    expect(ready(fixture('card-debit-credit.csv'), { csv: { columns: { date: 0, description: 3, debit: 5, credit: 6 }, sign: 'negative-out' } }).read.date_style).toBe('iso');
+    expect(ready(fixture('giro-semicolon.csv'), { csv: { columns: { date: 0, description: 2, amount: 7 }, sign: 'negative-out' } }).read.date_style).toBe('dmy');
+    expect(ready(fixture('card-ofx220.ofx')).read.date_style).toBeNull();
   });
 
   test('a numeric date with the year last is read in each order it fits', () => {

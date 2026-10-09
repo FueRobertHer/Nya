@@ -33,7 +33,7 @@ import { MAX_FILE_BYTES, MAX_IMPORT_ROWS, type FileFormat } from '@/lib/import/r
 import { decodeFile, detectFormat, FORMAT_NAMES } from '@/lib/import/text';
 import { readImport, type CsvSummary, type ImportOptions, type ReadResult, type StatementInfo } from '@/lib/import/read';
 import { normalizeRecords } from '@/lib/import/normalize';
-import { DATE_ORDER_NAMES, type DateOrder } from '@/lib/import/dates';
+import { DATE_ORDER_NAMES, DATE_STYLE_NAMES, type DateOrder, type DateStyle } from '@/lib/import/dates';
 import { DECIMAL_NAMES, type DecimalMark } from '@/lib/import/amounts';
 import { columnsFromNames, DELIMITER_NAMES, DELIMITERS, guessColumns, readCsvTable, splitCsv, type CsvColumns, type CsvSign, type Delimiter } from '@/lib/import/csv';
 
@@ -72,7 +72,7 @@ export type Preview = {
   format: FileFormat;
   encoding: string;
   statement: StatementInfo | null;
-  read: { date_order: DateOrder | null; dates_ordered: boolean; decimal: DecimalMark | null; delimiter?: Delimiter; header_line?: number; skipped?: number };
+  read: { date_order: DateOrder | null; dates_ordered: boolean; date_style?: DateStyle | null; decimal: DecimalMark | null; delimiter?: Delimiter; header_line?: number; skipped?: number };
   counts: { new: number; present: number; repeated: number; unreadable: number };
   rows: { line: number | null; date: string; name: string; amount: number; currency: string; category: string | null; note: string | null; outcome: Outcome }[];
   problems: { line: number; reason: string }[];
@@ -799,6 +799,11 @@ export function CsvMapping({
           })}
         </div>
         {(read?.status === 'date_order' || (read?.status === 'ready' && read.read.dates_ordered)) && <DateOrderQuestion read={read} options={options} onChange={setOptions} />}
+        {read?.status === 'ready' && !read.read.dates_ordered && read.read.date_style && (
+          <p className="panel-note" style={{ marginTop: 0 }}>
+            Dates are read as {DATE_STYLE_NAMES[read.read.date_style]}.
+          </p>
+        )}
       </div>
 
       {read?.status === 'mapping' && read.problem && <div className="error">{read.problem}</div>}
@@ -888,7 +893,7 @@ export function PreviewView({
     FORMAT_NAMES[p.format],
     p.statement?.label ?? null,
     p.encoding === 'windows-1252' ? 'Windows-1252 text' : null,
-    p.read.dates_ordered && p.read.date_order ? `dates ${DATE_ORDER_NAMES[p.read.date_order]}` : null,
+    p.read.date_style ? `dates ${DATE_STYLE_NAMES[p.read.date_style]}` : null,
     p.read.decimal === ',' ? 'decimal comma' : null,
   ].filter(Boolean);
   return (

@@ -257,6 +257,7 @@ function readOf(options: ImportOptions, read: Ready): Record<string, unknown> {
   return {
     options,
     date_order: read.read.date_order,
+    date_style: read.read.date_style,
     decimal: read.read.decimal,
     ...(read.read.table ? { delimiter: read.read.table.delimiter, header_line: read.read.table.header_line, skipped: read.read.skipped ?? 0 } : {}),
   };
@@ -291,6 +292,7 @@ function previewOf(
     read: {
       date_order: read.read.date_order,
       dates_ordered: read.read.dates_ordered,
+      date_style: read.read.date_style,
       decimal: read.read.decimal,
       ...(read.read.table ? { delimiter: read.read.table.delimiter, header_line: read.read.table.header_line, skipped: read.read.skipped ?? 0 } : {}),
     },

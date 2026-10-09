@@ -72,6 +72,9 @@ describe('the preview', () => {
     expect(t).toContain('1 listed twice in the file · 2 lines can’t be read');
     expect(t).toContain('in USD');
     expect(t).toContain('Read as OFX, Checking ending 4567, Windows-1252 text.');
+    expect(text(preview({ format: 'csv', statement: null, encoding: 'utf-8', read: { date_order: 'dmy', dates_ordered: true, date_style: 'dmy', decimal: ',' } }))).toContain(
+      'Read as CSV, dates day/month/year (UK, Europe), decimal comma.'
+    );
     expect(t).toContain('Line 12: Its date (2026-13-45) can’t be read.');
     expect(t).toContain('Line 30: It has no amount.');
     // The rows as the Activity tab shows amounts: money in signed plus.
@@ -130,6 +133,8 @@ describe('the mapping step of a CSV file', () => {
     expect(t).toContain('CAPITAL ONE MOBILE PYMT');
     expect(t).toContain('+$500.00');
     expect(t).toContain('11 rows read');
+    // The format its dates were found in, shown.
+    expect(t).toContain('Dates are read as year-month-day (2026-09-30).');
     expect(html).toContain('Transaction Date');
     expect(html).not.toContain('<table');
   });
