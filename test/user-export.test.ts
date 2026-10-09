@@ -680,16 +680,17 @@ describe('stores built on the storage seam', () => {
     const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
     expect(declaredSections().map((s) => s.key)).toContain('fire-plan');
     expect((await download())['fire-plan']).toBeNull(); // never saved
-    const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 52_000, bankFunded: ['acc_solo'] };
+    const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 52_000, planFunding: [{ account_id: 'acc_solo', paidFrom: 'bank' as const }] };
     await firePlanStore.set(ctx, plan);
     const doc = await download();
     expect(doc['fire-plan']).toEqual(plan);
     const written = JSON.parse([...exportFile(doc, 'json').pieces()].join(''));
     expect(written['fire-plan']).toEqual(plan);
-    // Saved before a field existed: as the tab reads it, the field filled in.
-    const { bankFunded: _, ...older } = plan;
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(older)));
-    expect((await download())['fire-plan']).toEqual({ ...plan, bankFunded: [] });
+    // Saved before the three-way switch, with the two-way one's list: as the
+    // tab reads it, those plans paid from the bank.
+    const { planFunding: _, ...older } = plan;
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
+    expect((await download())['fire-plan']).toEqual(plan);
   });
 
   test('no store on the seam is named like a part of the file already there', async () => {

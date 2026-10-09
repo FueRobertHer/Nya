@@ -45,7 +45,7 @@ const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   mixedCurrency: false,
   ...over,
 });
-const noPlans: WorkplaceSavings = { total: 0, measured: [], added: [], matched: [], fromBank: [], partial: [], problems: [], unmeasured: [] };
+const noPlans: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
 
 /** Markup as text, tags dropped and entities decoded, for reading sentences. */
 const text = (html: string) =>
@@ -191,25 +191,33 @@ describe('the FI card', () => {
     expect(t).toContain('Invested assets may be low');
   });
 
-  test('savings say what was added for workplace plans, what was not and why, and what could not be measured', () => {
+  test('savings say what was added for each workplace plan and what counted, what was not and why, and what could not be measured', () => {
     const t = card(plan(), {
-      workplaceCount: 4,
+      workplaceCount: 5,
       workplace: {
         ...noPlans,
-        total: 12_000,
-        measured: ['Fidelity 401(k)'],
-        added: [{ name: 'Fidelity 401(k)', amount: 12_000 }],
-        matched: [{ name: 'Vanguard Solo 401(k)', amount: 10_000 }],
+        total: 14_000,
+        plans: [
+          { name: 'Fidelity 401(k)', paidFrom: 'payroll', added: 12_000, count: 24, largest: { date: '2026-03-13', amount: 1_000 }, matched: 0 },
+          { name: 'Vanguard Solo 401(k)', paidFrom: null, added: 2_000, count: 1, largest: { date: '2026-06-02', amount: 2_000 }, matched: 10_000 },
+        ],
         fromBank: ['Schwab SEP'],
         partial: [{ name: 'Fidelity 401(k)', from: '2026-04-01' }],
+        shortHistory: [{ name: 'Empower 457(b)', from: '2026-03-03' }],
         unmeasured: ['TSP TSP'],
       },
     });
-    expect(t).toContain('over the same 12 months, plus $12,000 paid into Fidelity 401(k) through payroll.');
-    expect(t).toContain('$10,000 paid into Vanguard Solo 401(k) matched transfers out of your accounts, which already count as saved, so it isn\'t added again.');
+    expect(t).toContain('over the same 12 months, plus $14,000 paid into Fidelity 401(k) and Vanguard Solo 401(k).');
+    expect(t).toContain('Fidelity 401(k): 24 contributions added, $12,000, the largest $1,000 on Mar 13, 2026, all of them, as it is set as paid through payroll.');
+    expect(t).toContain('Vanguard Solo 401(k): 1 contribution added, $2,000, the largest $2,000 on Jun 2, 2026.');
+    expect(t).toContain(
+      "$10,000 more paid into Vanguard Solo 401(k) matched transfers from your bank to investment and retirement funds, which already count as saved, so it isn't added again."
+    );
+    expect(t).toContain("How Vanguard Solo 401(k) is paid into isn't set: if you pay into it from your bank account, say so under Edit, or it may count twice.");
+    expect(t).not.toContain("How Fidelity 401(k) is paid into isn't set");
     expect(t).toContain('Schwab SEP is set as paid from your bank, so nothing paid into it is added again.');
-    expect(t).toContain('If you pay into it from your bank account, turn off "Paid through payroll" for it under Edit, or it counts twice.');
     expect(t).toContain('Fidelity 401(k) is counted from Apr 1, 2026');
+    expect(t).toContain('Nya has activity for Empower 457(b) from Mar 3, 2026.');
     expect(t).toContain("Contributions to TSP TSP couldn't be measured, so this figure may be low.");
     expect(card(plan(), { workplace: null, workplaceCount: null })).toContain('Checking contributions to workplace plans');
   });
@@ -497,18 +505,42 @@ describe('income and one-offs', () => {
 });
 
 describe('a saved plan this version cannot use as it is', () => {
-  test('says what is used instead, and offers to save it', () => {
+  test('says what is used instead, and that only "Save it this way" saves it', () => {
     const t = text(
       renderToStaticMarkup(
-        <RepairCard fixed={[{ field: 'withdrawalRate' }, { field: 'income', item: 'Pension' }]} editable onSave={noop} />
+        <RepairCard
+          fixed={[{ field: 'withdrawalRate' }, { field: 'income', item: { label: 'Pension', amount: 2e7, age: 65 } }]}
+          editable
+          onSave={noop}
+          money={money}
+        />
       )
     );
     expect(t).toContain('Your saved plan has values this version of Nya can\'t use: the withdrawal rate and the income "Pension".');
-    expect(t).toContain('the figures below use the defaults instead and leave out what is named');
+    expect(t).toContain('The figures below use the defaults instead and leave out what is named.');
+    expect(t).toContain('Nothing is saved until you choose Save it this way, and editing is paused until then, so nothing is dropped by accident.');
     expect(t).toContain('Save it this way');
-    expect(text(renderToStaticMarkup(<RepairCard fixed={[{ field: 'horizon' }]} editable onSave={noop} />))).toContain(
+    expect(text(renderToStaticMarkup(<RepairCard fixed={[{ field: 'horizon' }]} editable onSave={noop} money={money} />))).toContain(
       'has a value this version of Nya can\'t use: the length.'
     );
+  });
+
+  test('names an income or one-off with no label by what it was', () => {
+    const t = text(
+      renderToStaticMarkup(
+        <RepairCard
+          fixed={[
+            { field: 'income', item: { label: '   ', amount: 24_000, age: 67 } },
+            { field: 'expenses', item: { label: '', amount: 30_000, age: 60 } },
+          ]}
+          editable
+          onSave={noop}
+          money={money}
+        />
+      )
+    );
+    expect(t).toContain('an income of $24,000 a year from age 67 and a one-off of $30,000 at age 60.');
+    expect(t).not.toContain('"   "');
   });
 
   test('a rate the formulas cannot take leaves the figures out, never crashes the card', () => {
@@ -539,10 +571,10 @@ describe('a saved plan this version cannot use as it is', () => {
 });
 
 describe('the savings sheet', () => {
-  test('gives each workplace plan a "Paid through payroll" switch, on unless the plan says otherwise, and says when to turn it off', () => {
+  test('lets each workplace plan be set as paid through payroll, from the bank, or not set, and says what each means', () => {
     const html = renderToStaticMarkup(
       <FigureForm
-        plan={plan({ bankFunded: ['solo'] })}
+        plan={plan({ planFunding: [{ account_id: 'solo', paidFrom: 'bank' }] })}
         onSave={async () => true}
         onDone={noop}
         editable
@@ -557,11 +589,13 @@ describe('the savings sheet', () => {
       />
     );
     const t = text(html);
-    expect(t).toContain('Turn "Paid through payroll" off for a plan you pay into from your bank account');
-    expect(t).toContain('Fidelity 401(k): paid through payroll');
-    expect(t).toContain('Vanguard Solo 401(k): paid through payroll');
-    // Checked for the 401(k), not for the plan set as paid from the bank.
-    expect(html.match(/<input type="checkbox"[^>]*>/g)!.map((i) => i.includes('checked'))).toEqual([true, false]);
+    expect(t).toContain('Payroll : every contribution is added');
+    expect(t).toContain('My bank : none is, since the transfers that paid for them already count as saved');
+    expect(t).toContain('Not set : a contribution is added unless a transfer from your bank to investment and retirement funds paid for it.');
+    expect(html).toContain('aria-label="How Fidelity 401(k) is paid into"');
+    // Which choice is pressed for each: not set for the 401(k), the bank for the Solo 401(k).
+    const pressed = [...html.matchAll(/aria-pressed="true"[^>]*>([^<]+)</g)].map((m) => m[1]);
+    expect(pressed).toEqual(['Nya’s figure', 'Not set', 'My bank']);
   });
 });
 

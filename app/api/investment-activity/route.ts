@@ -52,7 +52,7 @@ export async function GET(req: Request) {
     const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
     // An entry cached before the Plan tab's fields existed is a miss, so the
     // tab never reads their absence as "nothing contributed" or "a whole year".
-    if (cached && 'contributions_12m_rows' in cached) return NextResponse.json({ ...cached, from_cache: true });
+    if (cached && 'contributions_12m_activity_from' in cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const sync = await syncInvestments(ctx, item);
     // Newest first, explicitly: the store has no order of its own.
@@ -116,6 +116,11 @@ export async function GET(req: Request) {
     const contributions_12m_rows = contributed
       ? contributed.map((t) => ({ date: t.date, amount: contributedAmount(t, counted) })).reverse() // oldest first
       : null;
+    // The verified record can reach back further than the institution's own
+    // history (it may keep less), so when the account's oldest row is inside
+    // the year, that day is said too: "Nya has activity for it from" is true
+    // either way. Same UTC days as the rest.
+    const contributions_12m_activity_from = flowsKnown && oldest! > yearAgo ? oldest : null;
 
     // Said in full here so the client can print it as is. A fetch failure
     // serves what is stored (and says so only if there is any); a storage
@@ -136,6 +141,7 @@ export async function GET(req: Request) {
       contributions_12m_from,
       contributions_12m_partial,
       contributions_12m_rows,
+      contributions_12m_activity_from,
       note,
     };
 

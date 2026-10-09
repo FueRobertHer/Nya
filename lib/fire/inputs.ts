@@ -44,9 +44,10 @@
 // Nya's verified investment transactions. Contributions to brokerages and
 // IRAs are not added: they are usually paid from a bank account, where
 // income minus spending has already counted them. Nothing is counted twice:
-// a contribution that a transfer out of a bank account paid for (the same
-// amount within days) is not added, and neither is anything paid into a plan
-// the person says they fund from their bank ("Paid through payroll" off).
+// the person can say how each plan is paid into (through payroll: every
+// contribution is added; from a bank: none is), and for a plan they haven't
+// said, a contribution that a transfer to investment and retirement funds
+// paid for (the same amount within days) is not added.
 //
 // INVESTED ASSETS are the balances of investment accounts (and, if asked,
 // checking and savings), not hidden, as the Accounts tab shows them, with
@@ -54,6 +55,7 @@
 
 import { type Txn } from '@/components/MonthBreakdown';
 import { isExcluded, isTransfer } from '@/lib/spending';
+import type { PlanFunding } from './plan';
 import { isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 
@@ -386,63 +388,108 @@ export type PlanContributions = {
   partial: boolean;
   /** Each contribution the amount sums, to tell which a bank transfer paid for. */
   rows: Payment[];
+  /** The first day the institution has any activity for the account, when
+   *  that is inside the year although the record covers all of it: the
+   *  institution may keep less history than that (lib/invstore.ts). */
+  activityFrom: string | null;
   /** A problem reading its activity (lib/invstore.ts), shown as is. */
   note: string | null;
+};
+
+/** One workplace plan's part of savings. */
+export type PlanSavings = {
+  /** "Institution name". */
+  name: string;
+  /** As the person set it; null when not set (contributions are matched
+   *  against transfers to investment and retirement funds). */
+  paidFrom: 'payroll' | null;
+  /** Added to savings, from this many contributions, the largest named so
+   *  the person can see what counted. */
+  added: number;
+  count: number;
+  largest: Payment | null;
+  /** Paid for by a transfer to investment and retirement funds: already
+   *  counted as saved, so not added again (only when not set). */
+  matched: number;
 };
 
 export type WorkplaceSavings = {
   /** What is added to savings, summed. */
   total: number;
-  /** Plans whose contributions were added, by "institution name", with how much. */
-  measured: string[];
-  added: { name: string; amount: number }[];
-  /** Contributions that a transfer out of a bank account paid for, by plan:
-   *  already counted as saved, so not added again. */
-  matched: { name: string; amount: number }[];
-  /** Plans the person pays from a bank account ("Paid through payroll" off):
-   *  nothing of theirs is added. */
+  /** Each plan measured and not set as paid from a bank, in order. */
+  plans: PlanSavings[];
+  /** Plans the person set as paid from a bank: nothing of theirs is added. */
   fromBank: string[];
   /** Plans measured over less than the whole year, with the day they start. */
   partial: { name: string; from: string }[];
+  /** Plans whose institution has activity only from a day inside the year
+   *  (it may keep less history): said, since some may be missing. */
+  shortHistory: { name: string; from: string }[];
   /** Plans measured, but whose activity was read with a problem: may be short. */
   problems: { name: string; note: string }[];
   /** Plans that couldn't be measured at all. */
   unmeasured: string[];
 };
 
-/** A transfer out pays for a contribution when the amounts agree to within a
+/** A transfer pays for a contribution when the amounts agree to within a
  *  dollar or 1%, whichever is more, and the days to within this many. */
 export const MATCH_DAYS = 5;
 const sameAmount = (a: number, b: number) => Math.abs(a - b) <= Math.max(1, 0.01 * Math.max(a, b));
 
-/** Money moved out of your accounts over the trailing year (planFlow
- *  "transfer", money out): where a payment into a plan from a bank account
- *  shows on the bank's side. */
+/** Plaid's detail for money moved to investment and retirement funds: the
+ *  only transfers out that can have paid for a contribution. A move to
+ *  savings, or to another person, never did. */
+const RETIREMENT_TRANSFER = 'investment and retirement funds';
+
+/** Transfers out of your accounts to investment and retirement funds over
+ *  the trailing year: where a payment into a plan from a bank account shows
+ *  on the bank's side. Counted as transfers (planFlow), so already saved. */
 export function transfersOut(txns: Txn[], today: string): Payment[] {
   const end = dayNumber(today);
   const start = end - (TRAILING_DAYS - 1);
   return txns
     .filter((t) => {
       const d = dayNumber(t.date);
-      return d >= start && d <= end && t.amount > 0 && planFlow(t) === 'transfer';
+      return (
+        d >= start &&
+        d <= end &&
+        t.amount > 0 &&
+        (t.subcategory ?? '').toLowerCase() === RETIREMENT_TRANSFER &&
+        planFlow(t) === 'transfer'
+      );
     })
     .map((t) => ({ date: t.date, amount: t.amount }));
 }
 
 /**
  * The trailing year's contributions to workplace plans, as added to savings,
- * with what was left out and what is short named. A contribution that a
- * transfer out of a bank account paid for (see MATCH_DAYS) is not added, and
- * each transfer pays for one contribution at most, across every plan; nothing
- * paid into a plan in `fromBank` is added at all.
+ * with what was left out and what is short named.
+ *
+ * A plan set as paid from a bank adds nothing; one set as paid through
+ * payroll adds every contribution. For a plan not set, a contribution that a
+ * transfer to investment and retirement funds paid for (see MATCH_DAYS) is not
+ * added. A transfer the plan records as several contributions on one day (a
+ * deferral and an employer share) is matched by their sum. Each transfer pays
+ * for one contribution, or one day's, at most, across every plan.
  */
-export function workplaceSavings(plans: PlanContributions[], bank: { transfersOut: Payment[]; fromBank: string[] }): WorkplaceSavings {
-  const out: WorkplaceSavings = { total: 0, measured: [], added: [], matched: [], fromBank: [], partial: [], problems: [], unmeasured: [] };
+export function workplaceSavings(plans: PlanContributions[], bank: { transfersOut: Payment[]; funding: PlanFunding[] }): WorkplaceSavings {
+  const out: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
   const used = new Set<number>();
   const transfers = bank.transfersOut.map((t, i) => ({ ...t, i, day: dayNumber(t.date) }));
+  /** The nearest unused transfer of this amount within MATCH_DAYS, taken. */
+  const take = (amount: number, day: number): boolean => {
+    let best: (typeof transfers)[number] | null = null;
+    for (const t of transfers) {
+      if (used.has(t.i) || !sameAmount(amount, t.amount) || !(Math.abs(t.day - day) <= MATCH_DAYS)) continue;
+      if (!best || Math.abs(t.day - day) < Math.abs(best.day - day)) best = t;
+    }
+    if (best) used.add(best.i);
+    return !!best;
+  };
   for (const p of plans) {
     const label = `${p.institution} ${p.name}`;
-    if (bank.fromBank.includes(p.account_id)) {
+    const paidFrom = bank.funding.find((f) => f.account_id === p.account_id)?.paidFrom ?? null;
+    if (paidFrom === 'bank') {
       out.fromBank.push(label);
       continue;
     }
@@ -450,30 +497,39 @@ export function workplaceSavings(plans: PlanContributions[], bank: { transfersOu
       out.unmeasured.push(label);
       continue;
     }
-    let added = 0;
+    const rows = p.rows.filter((r) => r.amount > 0);
+    const kept: Payment[] = [];
     let matched = 0;
-    if (p.rows.length === 0) added = Math.max(0, p.amount);
-    for (const row of p.rows) {
-      if (!(row.amount > 0)) continue;
-      const day = dayNumber(row.date);
-      let best: (typeof transfers)[number] | null = null;
-      for (const t of transfers) {
-        if (used.has(t.i) || !sameAmount(row.amount, t.amount) || !(Math.abs(t.day - day) <= MATCH_DAYS)) continue;
-        if (!best || Math.abs(t.day - day) < Math.abs(best.day - day)) best = t;
+    if (paidFrom === 'payroll') kept.push(...rows);
+    else {
+      // One by one, then what is left of each day together.
+      const left: Payment[] = [];
+      for (const row of rows) {
+        if (take(row.amount, dayNumber(row.date))) matched += row.amount;
+        else left.push(row);
       }
-      if (best) {
-        used.add(best.i);
-        matched += row.amount;
-      } else added += row.amount;
+      const byDay = new Map<string, Payment[]>();
+      for (const row of left) byDay.set(row.date, [...(byDay.get(row.date) ?? []), row]);
+      for (const [date, group] of byDay) {
+        const sum = group.reduce((t, r) => t + r.amount, 0);
+        if (group.length > 1 && take(sum, dayNumber(date))) matched += sum;
+        else kept.push(...group);
+      }
+    }
+    let added = kept.reduce((t, r) => t + r.amount, 0);
+    let largest = kept.reduce<Payment | null>((m, r) => (m === null || r.amount > m.amount ? r : m), null);
+    let count = kept.length;
+    // A total with no contributions listed (an older answer): added as it is.
+    if (rows.length === 0 && p.amount > 0) {
+      added = p.amount;
+      largest = null;
+      count = 0;
     }
     out.total += added;
-    if (added > 0) {
-      out.measured.push(label);
-      out.added.push({ name: label, amount: added });
-    }
-    if (matched > 0) out.matched.push({ name: label, amount: matched });
+    out.plans.push({ name: label, paidFrom, added, count, largest, matched });
     if (p.note) out.problems.push({ name: label, note: p.note });
     if (p.partial && p.from) out.partial.push({ name: label, from: p.from });
+    else if (p.activityFrom) out.shortHistory.push({ name: label, from: p.activityFrom });
   }
   return out;
 }

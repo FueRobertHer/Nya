@@ -2617,6 +2617,16 @@ button.plan-edit:disabled {
   margin: 0 0 12px;
 }
 
+/* A workplace plan's name over its three-way setting, in the savings sheet. */
+.plan-funding {
+  margin-top: 12px;
+}
+
+.plan-funding-name {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
 /* --- manual transactions and exclusions (components/ManualTxnSheet.tsx, components/MonthBreakdown.tsx) --- */
 
 /* Spent or received: the chosen one in the accent, like a pressed action. */

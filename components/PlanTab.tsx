@@ -209,7 +209,7 @@ function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContri
     Promise.all(
       wanted.map(async (p): Promise<PlanContributions> => {
         const base = { account_id: p.account_id, name: p.name, institution: p.institution };
-        const none = { ...base, amount: null, from: null, partial: false, rows: [], note: null };
+        const none = { ...base, amount: null, from: null, partial: false, rows: [], activityFrom: null, note: null };
         try {
           const res = await fetch(`/api/investment-activity?id=${encodeURIComponent(p.account_id)}&item_id=${encodeURIComponent(p.item_id)}`);
           if (!res.ok) return none;
@@ -223,6 +223,7 @@ function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContri
             rows: Array.isArray(rows)
               ? rows.filter((r): r is Payment => typeof r?.date === 'string' && typeof r?.amount === 'number' && Number.isFinite(r.amount))
               : [],
+            activityFrom: typeof data?.contributions_12m_activity_from === 'string' ? data.contributions_12m_activity_from : null,
             note: typeof data?.note === 'string' ? data.note : null,
           };
         } catch {
@@ -282,7 +283,10 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   const stored = state.value ?? DEFAULT_PLAN;
   const repair = useMemo(() => repairPlan(stored), [stored]);
   const plan = repair.plan;
-  const editable = state.status === 'ready' && !state.saving;
+  // While a repair waits, nothing but "Save it this way" saves: a save from
+  // anywhere else would commit it unseen, dropping what it leaves out.
+  const repairing = repair.fixed.length > 0;
+  const editable = state.status === 'ready' && !state.saving && !repairing;
 
   // What Nya measures, and what may be missing from it. "Today" is the
   // viewer's calendar day.
@@ -295,8 +299,8 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
   // isn't counted twice (lib/fire/inputs.ts workplaceSavings).
   const bankOut = useMemo(() => (txns ? transfersOut(txns, today) : []), [txns, today]);
   const workplace = useMemo(
-    () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, fromBank: plan.bankFunded }) : null),
-    [contributions, bankOut, plan.bankFunded]
+    () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, funding: plan.planFunding }) : null),
+    [contributions, bankOut, plan.planFunding]
   );
   const view = fiView(plan, {
     spending: flows?.spending ?? null,
@@ -468,7 +472,9 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         </div>
       )}
       {state.saveError && <div className="error plan-save-error">{state.saveError}</div>}
-      {repair.fixed.length > 0 && <RepairCard fixed={repair.fixed} editable={editable} onSave={() => void store.save(plan)} />}
+      {repairing && (
+        <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving} onSave={() => void store.save(plan)} money={money} />
+      )}
 
       <FiCard
         plan={plan}
@@ -598,18 +604,25 @@ const REPAIR_NAMES: Record<string, string> = {
   ceiling: 'the ceiling',
   income: 'other income',
   expenses: 'one-off expenses',
-  bankFunded: 'the plans paid from your bank',
+  planFunding: 'how a workplace plan is paid into',
 };
 
-/** A saved plan this release can't use as it is, and what the tab uses instead. */
-export function RepairCard({ fixed, editable, onSave }: { fixed: Repair[]; editable: boolean; onSave: () => void }) {
+/** What a repair changed, in words: an income or one-off by its label, or by
+ *  what it was when it has none. */
+function repairName(f: Repair, money: (n: number) => string): string {
+  if (!f.item) return REPAIR_NAMES[f.field] ?? f.field;
+  const label = f.item.label.trim();
+  if (f.field === 'income') return label ? `the income "${label}"` : `an income of ${money(f.item.amount)} a year from age ${f.item.age}`;
+  return label ? `the one-off "${label}"` : `a one-off of ${money(f.item.amount)} at age ${f.item.age}`;
+}
+
+/** A saved plan this release can't use as it is, and what the tab uses
+ *  instead. Saved only from here: editing is paused until then, so no other
+ *  save commits it unseen. */
+export function RepairCard({ fixed, editable, onSave, money }: { fixed: Repair[]; editable: boolean; onSave: () => void; money: (n: number) => string }) {
   const whole = fixed.some((f) => f.field === 'plan');
-  const what = names(
-    fixed.map((f) =>
-      f.item !== undefined ? `${f.field === 'income' ? 'the income' : 'the one-off'} "${f.item}"` : REPAIR_NAMES[f.field] ?? f.field
-    )
-  );
-  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'bankFunded');
+  const what = names(fixed.map((f) => repairName(f, money)));
+  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding');
   return (
     <div className="card">
       <div className="error" style={{ marginTop: 0 }}>
@@ -619,8 +632,8 @@ export function RepairCard({ fixed, editable, onSave }: { fixed: Repair[]; edita
       </div>
       <p className="panel-note">
         {whole
-          ? 'Saving any change replaces it with what you see here.'
-          : `Until you change ${fixed.length === 1 ? 'it' : 'them'}, the figures below use the defaults instead${dropped ? ' and leave out what is named' : ''}, and saving any change keeps that. Everything else is as you saved it.`}
+          ? 'Nothing is saved until you choose Save it this way, and editing is paused until then.'
+          : `The figures below use the defaults instead${dropped ? ' and leave out what is named' : ''}. Nothing is saved until you choose Save it this way, and editing is paused until then, so nothing is dropped by accident. Everything else is as you saved it.`}
       </p>
       <button className="secondary" style={{ marginTop: 12 }} onClick={onSave} disabled={!editable}>
         Save it this way
@@ -753,29 +766,39 @@ export function FiCard({
   if (savings.source === 'typed') savingsNote = 'typed by you';
   else if (!flows) savingsNote = txnsLoading ? 'loading your transactions…' : 'needs a year of transactions';
   else {
-    // What was added for workplace plans, and what wasn't, so it is never
-    // counted twice (lib/fire/inputs.ts workplaceSavings).
-    const added = workplace?.added ?? [];
+    // What was added for each workplace plan, what counted and what didn't,
+    // so nothing is counted twice unseen (lib/fire/inputs.ts workplaceSavings).
+    const plans = workplace?.plans ?? [];
+    const addedTo = plans.filter((x) => x.added > 0).map((x) => x.name);
     const fromBank = workplace?.fromBank ?? [];
-    const plans = added.length ? `, plus ${money(workplace!.total)} paid into ${names(workplace!.measured)} through payroll` : '';
+    const plus = addedTo.length ? `, plus ${money(workplace!.total)} paid into ${names(addedTo)}` : '';
+    const planLines = plans.flatMap((x) => [
+      x.added > 0
+        ? x.count > 0
+          ? `${x.name}: ${x.count} contribution${x.count === 1 ? '' : 's'} added, ${money(x.added)}${x.largest ? `, the largest ${money(x.largest.amount)} on ${dayName(x.largest.date)}` : ''}${x.paidFrom === 'payroll' ? ', all of them, as it is set as paid through payroll' : ''}.`
+          : `${x.name}: ${money(x.added)} added.`
+        : null,
+      x.matched > 0
+        ? `${money(x.matched)} more paid into ${x.name} matched transfers from your bank to investment and retirement funds, which already count as saved, so it isn't added again.`
+        : null,
+      x.paidFrom === null && x.added > 0
+        ? `How ${x.name} is paid into isn't set: if you pay into it from your bank account, say so under Edit, or it may count twice.`
+        : null,
+    ]);
     savingsNote = (
       <Notes
-        source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plans}.`}
+        source={`an estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}.`}
         warnings={[
           workplaceCount === null ? 'Checking contributions to workplace plans…' : null,
           workplaceCount === 0
             ? "Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data."
             : null,
-          ...(workplace?.matched ?? []).map(
-            (m) => `${money(m.amount)} paid into ${m.name} matched transfers out of your accounts, which already count as saved, so it isn't added again.`
-          ),
+          ...planLines,
           fromBank.length
             ? `${names(fromBank)} ${fromBank.length === 1 ? 'is' : 'are'} set as paid from your bank, so nothing paid into ${fromBank.length === 1 ? 'it' : 'them'} is added again.`
             : null,
-          added.length
-            ? `If you pay into ${added.length === 1 ? 'it' : 'one of them'} from your bank account, turn off "Paid through payroll" for it under Edit, or it counts twice.`
-            : null,
           ...(workplace?.partial ?? []).map((p) => `${p.name} is counted from ${dayName(p.from)}, when Nya's record of it starts.`),
+          ...(workplace?.shortHistory ?? []).map((p) => `Nya has activity for ${p.name} from ${dayName(p.from)}.`),
           workplace && workplace.unmeasured.length ? `Contributions to ${names(workplace.unmeasured)} couldn't be measured, so this figure may be low.` : null,
           ...(workplace?.problems ?? []).map((p) => `${p.name}'s activity couldn't all be read, so this figure may be low.`),
           unreadText(unread, 'off'),

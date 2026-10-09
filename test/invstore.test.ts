@@ -544,6 +544,7 @@ describe('/api/investment-activity', () => {
     expect(body.contributions_12m).toBe(750);
     expect(body.contributions_12m_from).toBe(daysAgo(364));
     expect(body.contributions_12m_partial).toBe(false);
+    expect(body.contributions_12m_activity_from).toBeNull(); // activity from before the year
     // Each one, oldest first, so the tab can leave out one a bank transfer paid for.
     expect(body.contributions_12m_rows).toEqual([
       { date: daysAgo(100), amount: 500 },
@@ -561,6 +562,9 @@ describe('/api/investment-activity', () => {
     expect(quiet.contributions_12m).toBe(500);
     expect(quiet.contributions_12m_from).toBe(daysAgo(364));
     expect(quiet.contributions_12m_partial).toBe(false);
+    // But the institution's own history may be shorter than the record, so
+    // the first day it has activity, inside the year, is said too.
+    expect(quiet.contributions_12m_activity_from).toBe(daysAgo(100));
 
     // A record that starts 100 days ago (the sync is fresh, so it stays so).
     const state = await readInvStore(ctx, 'item1');
@@ -596,10 +600,11 @@ describe('/api/investment-activity', () => {
             from: body.contributions_12m_from,
             partial: body.contributions_12m_partial,
             rows: body.contributions_12m_rows,
+            activityFrom: body.contributions_12m_activity_from,
             note: body.note,
           },
         ],
-        { transfersOut: [], fromBank: [] }
+        { transfersOut: [], funding: [] }
       );
       expect(w.partial).toEqual([]);
       expect(w.total).toBe(500);
