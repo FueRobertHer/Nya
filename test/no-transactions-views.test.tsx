@@ -5,28 +5,34 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
+import Insights from '@/components/Insights';
 import { FiCard } from '@/components/PlanTab';
 import { RedirectChoices, madeTheOtherWay, type RedirectItem } from '@/components/ConnectRedirect';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type Measured } from '@/lib/fire/plan';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import {
+  missingEmptyNotes,
+  missingFigureNotes,
+  missingMonthNotes,
+  missingWhat,
   noSpending,
   noTransactionsView,
-  refusedEmptyNote,
-  refusedFigureNote,
-  refusedMonthNote,
+  quietItemIds,
   withoutNote,
   type NoTransactionsView,
 } from '@/lib/no-transactions';
+import { stoppedConnections } from '@/lib/month-coverage';
 import type { Txn } from '@/lib/transactions';
 
 // Connections that bring in no transactions (lib/no-transactions.ts): what
-// Activity, budgets and the Plan say for them instead of an empty year, a $0
-// budget or a figure waiting for transactions that won't come, and that none
-// of it is said when rows entered by hand bring spending in; and the
-// already-connected sheet (components/ConnectRedirect.tsx), which must not
-// leave someone at a connection made the other way with no way on.
+// Activity, budgets, Home's insights and the Plan say for them instead of an
+// empty year, a $0 budget or a figure waiting for transactions that won't
+// come; that none of it is said when rows entered by hand bring spending in;
+// that a lapsed one holding no bank account or card is never named as missing
+// transactions; and the already-connected sheet
+// (components/ConnectRedirect.tsx), which must not leave someone at a
+// connection made the other way with no way on.
 
 const noop = () => {};
 const text = (html: string) =>
@@ -60,6 +66,9 @@ const refusedOnly: NoTransactionsView = {
 };
 /** A bank that brings transactions, beside one Plaid refused. */
 const refusedBeside: NoTransactionsView = { without: [{ institution_name: 'Acme CU', reason: 'refused' }], connections: 2 };
+/** A bank that brings transactions, beside one whose transactions weren't allowed. */
+const unallowedBeside: NoTransactionsView = { without: [{ institution_name: 'Fidelity', reason: 'no_consent' }], connections: 2 };
+const ALLOW = 'To bring them in, reconnect Fidelity and allow transactions.';
 
 const INVESTMENTS_LEAD = 'Your connected accounts are investment accounts';
 
@@ -69,7 +78,8 @@ describe('what /api/transactions says about them', () => {
       noTransactionsView({
         without_transactions: [
           { institution_name: 'Empower', reason: 'investment_accounts' },
-          { institution_name: 'Acme CU', reason: 'refused' },
+          { item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused' },
+          { item_id: 7, institution_name: 'Fidelity', reason: 'no_consent' },
           { institution_name: 'Odd', reason: 'something new' },
           { reason: 'refused' },
           null,
@@ -80,7 +90,8 @@ describe('what /api/transactions says about them', () => {
     ).toEqual({
       without: [
         { institution_name: 'Empower', reason: 'investment_accounts' },
-        { institution_name: 'Acme CU', reason: 'refused' },
+        { item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused' },
+        { institution_name: 'Fidelity', reason: 'no_consent' },
       ],
       connections: 3,
     });
@@ -125,18 +136,62 @@ describe('what /api/transactions says about them', () => {
 
   test('a refused bank account is named, once, wherever spending is counted', () => {
     const twice: NoTransactionsView = { without: [...refusedBeside.without, ...refusedBeside.without], connections: 3 };
-    expect(refusedMonthNote(twice)).toBe(
-      "Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete."
-    );
-    expect(refusedEmptyNote(twice)).toBe("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they can't be shown.");
-    expect(refusedFigureNote(twice, 'low')).toBe("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be low.");
-    expect(refusedFigureNote(twice, 'off')).toBe("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be off.");
-    expect(refusedFigureNote(twice, 'uncounted')).toBe("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they aren't counted.");
+    expect(missingMonthNotes(twice)).toEqual([
+      "Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete.",
+    ]);
+    expect(missingEmptyNotes(twice)).toEqual(["Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they can't be shown."]);
+    expect(missingFigureNotes(twice, 'low')).toEqual(["Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be low."]);
+    expect(missingFigureNotes(twice, 'off')).toEqual(["Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be off."]);
+    expect(missingFigureNotes(twice, 'uncounted')).toEqual(["Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they aren't counted."]);
+    expect(missingWhat(twice)).toBe("transactions Plaid doesn't provide");
     for (const view of [investmentsOnly, withALoan, { without: [] }]) {
-      expect(refusedMonthNote(view)).toBeNull();
-      expect(refusedEmptyNote(view)).toBeNull();
-      expect(refusedFigureNote(view, 'low')).toBeNull();
+      expect(missingMonthNotes(view)).toEqual([]);
+      expect(missingEmptyNotes(view)).toEqual([]);
+      expect(missingFigureNotes(view, 'low')).toEqual([]);
+      expect(missingWhat(view)).toBeNull();
     }
+  });
+
+  test('transactions that were not allowed are said as that, with the way to allow them', () => {
+    expect(missingMonthNotes(unallowedBeside)).toEqual([
+      `Doesn't include the bank or card accounts at Fidelity: you didn't allow Nya to see their transactions, so this month may be incomplete. ${ALLOW}`,
+    ]);
+    expect(missingEmptyNotes(unallowedBeside)).toEqual([
+      `You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so they can't be shown. ${ALLOW}`,
+    ]);
+    expect(missingFigureNotes(unallowedBeside, 'low')).toEqual([
+      `You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be low. ${ALLOW}`,
+    ]);
+    expect(missingWhat(unallowedBeside)).toBe("transactions you didn't allow");
+    for (const note of [...missingMonthNotes(unallowedBeside), ...missingEmptyNotes(unallowedBeside)]) expect(note).not.toContain('Plaid');
+    // Alone, it is why there is no spending, and reconnecting is the way on.
+    const only: NoTransactionsView = { without: [{ institution_name: 'Fidelity', reason: 'no_consent' }], connections: 1 };
+    expect(noSpending(only, 0)).toEqual({
+      lead: "You didn't allow Nya to see transactions from the bank or card accounts at Fidelity",
+      remedy: 'reconnect Fidelity and allow transactions',
+    });
+    // Both causes at once: each said, each with its way on.
+    const both: NoTransactionsView = { without: [...unallowedBeside.without, ...refusedBeside.without], connections: 2 };
+    expect(noSpending(both, 0)).toEqual({
+      lead: "You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, and Plaid doesn't provide transactions for the bank or card accounts at Acme CU",
+      remedy: 'reconnect Fidelity and allow transactions, or connect another bank or card',
+    });
+    expect(missingWhat(both)).toBe("transactions Plaid doesn't provide or you didn't allow");
+    expect(missingMonthNotes(both)).toHaveLength(2);
+  });
+
+  test('the connections that never bring transactions in, by id, for leaving them out of the stopped', () => {
+    const view: NoTransactionsView = {
+      without: [
+        { item_id: 'item_emp', institution_name: 'Empower', reason: 'investment_accounts' },
+        { item_id: 'item_loan', institution_name: 'Nelnet', reason: 'no_cash_accounts' },
+        { item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused' },
+        { item_id: 'item_fid', institution_name: 'Fidelity', reason: 'no_consent' },
+        { institution_name: 'Old payload', reason: 'investment_accounts' },
+      ],
+      connections: 6,
+    };
+    expect([...quietItemIds(view)]).toEqual(['item_emp', 'item_loan']);
   });
 });
 
@@ -314,6 +369,140 @@ describe('budgets', () => {
   });
 });
 
+describe('a connection whose sign-in lapsed', () => {
+  // As the dashboard builds it: from each institution's health, leaving out
+  // by id the connections that hold no bank account or card.
+  const DAY = 86_400_000;
+  const healthy = { state: 'healthy', last_ok_at: new Date().toISOString() };
+  const lapsed = { state: 'needs_reauth', last_ok_at: new Date(Date.now() - 40 * DAY).toISOString() };
+  const MISSING = /hasn't synced since/;
+  const render = (institutions: { item_id: string; institution_name: string; health: { state: string; last_ok_at: string } }[], view: NoTransactionsView, txns: Txn[]) => {
+    const stopped = stoppedConnections(institutions, quietItemIds(view));
+    const activity = text(
+      renderToStaticMarkup(
+        <MonthBreakdown txns={txns} notes={[]} loading={false} onRecategorize={noop} onRename={noop} stopped={stopped} withoutTransactions={view} />
+      )
+    );
+    const budgets = text(
+      renderToStaticMarkup(
+        <BudgetsTab
+          txns={txns}
+          budgets={{ groceries: 400 }}
+          onSave={async () => true}
+          goals={[]}
+          onSaveGoals={async () => true}
+          accounts={[]}
+          loading={false}
+          stopped={stopped}
+          withoutTransactions={view}
+        />
+      )
+    );
+    return { stopped, activity, budgets };
+  };
+
+  test('a 401(k) beside a bank: never named as missing transactions it never brings in', () => {
+    const view: NoTransactionsView = { without: [{ item_id: 'item_emp', institution_name: 'Empower', reason: 'investment_accounts' }], connections: 2 };
+    const { stopped, activity, budgets } = render(
+      [
+        { item_id: 'item_chase', institution_name: 'Chase', health: healthy },
+        { item_id: 'item_emp', institution_name: 'Empower', health: lapsed },
+      ],
+      view,
+      [row({ institution_name: 'Chase' })]
+    );
+    expect(stopped).toEqual([]);
+    for (const t of [activity, budgets]) {
+      expect(t).not.toMatch(MISSING);
+      expect(t).not.toContain('Empower');
+    }
+  });
+
+  test('retirement connections only: no month said to be missing anything beside "no spending"', () => {
+    const view: NoTransactionsView = {
+      without: [
+        { item_id: 'item_emp', institution_name: 'Empower', reason: 'investment_accounts' },
+        { item_id: 'item_vg', institution_name: 'Vanguard', reason: 'investment_accounts' },
+      ],
+      connections: 2,
+    };
+    const { activity, budgets } = render(
+      [
+        { item_id: 'item_vg', institution_name: 'Vanguard', health: healthy },
+        { item_id: 'item_emp', institution_name: 'Empower', health: lapsed },
+      ],
+      view,
+      []
+    );
+    expect(budgets).toContain(`${INVESTMENTS_LEAD}, so there's no spending to count against budgets.`);
+    expect(activity).toContain(`${INVESTMENTS_LEAD}, so there are no bank or card transactions to show.`);
+    for (const t of [activity, budgets]) expect(t).not.toMatch(MISSING);
+  });
+
+  test('matched by id: a bank of the same name that lapsed is still named', () => {
+    // "Connect it again as ..." can leave two connections with one name.
+    const view: NoTransactionsView = { without: [{ item_id: 'item_fid_ret', institution_name: 'Fidelity', reason: 'investment_accounts' }], connections: 2 };
+    const { stopped, activity } = render(
+      [
+        { item_id: 'item_fid_ret', institution_name: 'Fidelity', health: healthy },
+        { item_id: 'item_fid_bank', institution_name: 'Fidelity', health: lapsed },
+      ],
+      view,
+      [row({ institution_name: 'Fidelity' })]
+    );
+    expect(stopped.map((s) => s.institution_name)).toEqual(['Fidelity']);
+    expect(activity).toMatch(/Fidelity hasn't synced since/);
+  });
+
+  test('one whose bank account or card Plaid refuses is still named: it holds one', () => {
+    const view: NoTransactionsView = { without: [{ item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused' }], connections: 2 };
+    const { stopped } = render(
+      [
+        { item_id: 'item_chase', institution_name: 'Chase', health: healthy },
+        { item_id: 'item_acme', institution_name: 'Acme CU', health: lapsed },
+      ],
+      view,
+      [row()]
+    );
+    expect(stopped.map((s) => s.institution_name)).toEqual(['Acme CU']);
+  });
+
+  test('the dashboard builds the list that way', () => {
+    const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
+    expect(dashboard).toContain('stoppedConnections(institutions, quietItemIds(txnWithout))');
+    expect(dashboard).toMatch(/<Insights[^>]*withoutTransactions=\{txnWithout\}/);
+  });
+});
+
+describe("Home's insights", () => {
+  const insights = (without: NoTransactionsView, txns: Txn[]) =>
+    text(renderToStaticMarkup(<Insights txns={txns} budgets={{ groceries: 26 }} accounts={[]} withoutTransactions={without} />));
+
+  test('a budget alert or the pace beside a bank account or card whose transactions are missing says so', () => {
+    const t = insights(refusedBeside, [row()]);
+    expect(t).toContain('Approaching your groceries budget');
+    expect(t).toContain("Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete.");
+    expect(insights(unallowedBeside, [row()])).toContain(`you didn't allow Nya to see their transactions, so this month may be incomplete. ${ALLOW}`);
+  });
+
+  test('and not beside alerts that are not about spending, nor without such an account', () => {
+    expect(insights(investmentsOnly, [row()])).not.toContain("Doesn't include");
+    // No budget near its limit and no other spending figure: nothing it would qualify.
+    const lowBalanceOnly = text(
+      renderToStaticMarkup(
+        <Insights
+          txns={[]}
+          budgets={{}}
+          accounts={[{ name: 'Checking', type: 'depository', balance: 12, currency: 'USD' }]}
+          withoutTransactions={refusedBeside}
+        />
+      )
+    );
+    expect(lowBalanceOnly).toContain('Low balance');
+    expect(lowBalanceOnly).not.toContain("Doesn't include");
+  });
+});
+
 describe('the Plan', () => {
   const money = (n: number) => wholeMoney(n, 'USD');
   const flows: TrailingFlows = {
@@ -387,6 +576,14 @@ describe('the Plan', () => {
     expect(t).toContain("May be low: spending is missing transactions Plaid doesn't provide (below).");
     expect(t).toContain("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be off.");
     expect(card(flows, investmentsOnly)).not.toContain('May be low');
+  });
+
+  test("transactions that weren't allowed keep the caveats, said as what they are", () => {
+    const t = card(flows, unallowedBeside);
+    expect(t).toContain(`You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be low. ${ALLOW}`);
+    expect(t).toContain("May be low: spending is missing transactions you didn't allow (below).");
+    expect(t).toContain(`You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be off. ${ALLOW}`);
+    expect(t).not.toContain("Plaid doesn't provide");
   });
 
   test('too few transactions yet, beside a refused bank account, says that one is not counted', () => {

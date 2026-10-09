@@ -50,7 +50,7 @@ import {
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { instantDay, localDate } from '@/lib/local-date';
-import { noSpending as noSpendingOf, refusedFigureNote, refusedNames, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { missingFigureNotes, missingWhat, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText } from '@/lib/spending';
 import {
   cashAccountIds,
@@ -755,17 +755,18 @@ export function FiCard({
   open: (s: SheetState) => void;
 }) {
   const { spending, savings, assets } = view;
-  // A refused bank account or card leaves spending short as surely as one
-  // that couldn't be read; no connection that can bring spending in at all,
-  // and no transaction from anywhere else, is said in place of the figure,
-  // not as waiting for it. With transactions entered by hand, the connections
-  // that bring in none are named beside the figures instead.
-  const refused = refusedNames(withoutTransactions).length > 0;
+  // A bank account or card whose transactions don't come in (Plaid doesn't
+  // provide them, or they weren't allowed) leaves spending short as surely as
+  // one that couldn't be read; no connection that can bring spending in at
+  // all, and no transaction from anywhere else, is said in place of the
+  // figure, not as waiting for it. With transactions entered by hand, the
+  // connections that bring in none are named beside the figures instead.
+  const missing = missingWhat(withoutTransactions);
   const noSpending = noSpendingOf(withoutTransactions, transactionCount);
   // Said where the figure's source is, not as a warning: nothing is missing.
   const namedWithout = withoutNote(withoutTransactions, transactionCount);
   const alsoNamed = namedWithout ? ` ${namedWithout}` : '';
-  const spendingShort = spending.source === 'measured' && (unread.length > 0 || refused);
+  const spendingShort = spending.source === 'measured' && (unread.length > 0 || missing !== null);
   const assetLines = assets.source === 'measured' ? assetCaveatLines(measuredAssets.caveats) : [];
   const assetsShort = assets.source === 'measured' && measuredAssets.caveats.some((c) => c.kind !== 'stale');
 
@@ -783,7 +784,7 @@ export function FiCard({
     ) : (
       <Notes
         source={`not enough transactions to measure from yet${namedWithout ? `.${alsoNamed}` : ''}`}
-        warnings={[refusedFigureNote(withoutTransactions, 'uncounted')]}
+        warnings={missingFigureNotes(withoutTransactions, 'uncounted')}
       />
     );
   } else {
@@ -831,7 +832,7 @@ export function FiCard({
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
             : null,
           unreadText(unread, 'low'),
-          refusedFigureNote(withoutTransactions, 'low'),
+          ...missingFigureNotes(withoutTransactions, 'low'),
         ]}
       />
     );
@@ -884,7 +885,7 @@ export function FiCard({
           workplace && workplace.unmeasured.length ? `Contributions to ${names(workplace.unmeasured)} couldn't be measured, so this figure may be low.` : null,
           ...(workplace?.problems ?? []).map((p) => `${p.name}'s activity couldn't all be read, so this figure may be low.`),
           unreadText(unread, 'off'),
-          refusedFigureNote(withoutTransactions, 'off'),
+          ...missingFigureNotes(withoutTransactions, 'off'),
         ]}
       />
     );
@@ -938,7 +939,7 @@ export function FiCard({
         <div className="as-of stale">
           {unread.length > 0
             ? "May be low: spending is missing transactions that couldn't be read (below)."
-            : "May be low: spending is missing transactions Plaid doesn't provide (below)."}
+            : `May be low: spending is missing ${missing} (below).`}
         </div>
       )}
       {view.progress !== null && (

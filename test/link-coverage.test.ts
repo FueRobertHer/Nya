@@ -31,11 +31,14 @@ const plaid = {
   /** Every /accounts/get call, and the tokens it fails for. */
   accountsCalls: [] as string[],
   accountsFail: {} as Record<string, true>,
+  /** Whether /link/token/create refuses `additional_consented_products`. */
+  refuseConsentField: false,
 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     linkTokenCreate: async (req: any) => {
       plaid.linkRequests.push(req);
+      if (plaid.refuseConsentField && req.additional_consented_products) throw { response: { data: { error_code: 'INVALID_FIELD' } } };
       return { data: { link_token: 'link-token' } };
     },
     itemPublicTokenExchange: async (req: any) => ({
@@ -200,13 +203,25 @@ async function route(path: string, method: string, body?: unknown, query = '') {
 }
 const transactions = (fresh = true) => route('transactions', 'GET', undefined, fresh ? '?refresh=1' : '');
 
+/** Runs `fn` with console output collected instead of printed. */
+async function quietly<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = [console.error, console.warn];
+  console.error = console.warn = () => {};
+  try {
+    return await fn();
+  } finally {
+    [console.error, console.warn] = saved;
+  }
+}
+
 beforeEach(async () => {
   fake.reset();
   for (const key of Object.keys(plaid) as (keyof typeof plaid)[]) {
     const v = plaid[key];
     if (Array.isArray(v)) v.length = 0;
-    else for (const k of Object.keys(v)) delete (v as Record<string, unknown>)[k];
+    else if (v && typeof v === 'object') for (const k of Object.keys(v)) delete (v as Record<string, unknown>)[k];
   }
+  plaid.refuseConsentField = false;
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
 });
@@ -375,12 +390,12 @@ describe('transactions from an Item without Transactions', () => {
     ]);
     expect(syncedTokens()).toEqual(['token-item_bank']);
     // Said beside the rows, with why, for the views that count spending.
-    expect(res.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
+    expect(res.body.without_transactions).toEqual([{ item_id: 'item_ret', institution_name: 'Empower', reason: 'investment_accounts' }]);
     expect(res.body.connections).toBe(2);
     // Clean, so the next load is served from the cache with no Plaid call.
     const again = await transactions(false);
     expect(again.body.from_cache).toBe(true);
-    expect(again.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
+    expect(again.body.without_transactions).toEqual([{ item_id: 'item_ret', institution_name: 'Empower', reason: 'investment_accounts' }]);
     expect(again.body.connections).toBe(2);
     expect(syncedTokens()).toEqual(['token-item_bank']);
   });
@@ -407,7 +422,7 @@ describe('transactions from an Item without Transactions', () => {
       const res = await transactions(fresh);
       expect(res.body.from_cache).toBe(!fresh);
       expect(res.body.transactions.map((t: any) => [t.name, t.source])).toEqual([['Farmers market', 'manual']]);
-      expect(res.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
+      expect(res.body.without_transactions).toEqual([{ item_id: 'item_ret', institution_name: 'Empower', reason: 'investment_accounts' }]);
       expect(res.body.connections).toBe(1);
       const view = noTransactionsView(res.body);
       expect(noSpending(view, res.body.transactions.length)).toBeNull();
@@ -420,7 +435,7 @@ describe('transactions from an Item without Transactions', () => {
     const loan = { ...checking('acct_loan'), name: 'Mortgage', type: 'loan', subtype: 'mortgage' };
     await addItem('item_loan', 'Mortgage servicer', [loan], { billed: false });
     const res = await transactions();
-    expect(res.body.without_transactions).toEqual([{ institution_name: 'Mortgage servicer', reason: 'no_cash_accounts' }]);
+    expect(res.body.without_transactions).toEqual([{ item_id: 'item_loan', institution_name: 'Mortgage servicer', reason: 'no_cash_accounts' }]);
     expect(res.body.connections).toBe(1);
     expect(plaid.syncCalls).toHaveLength(0);
   });
@@ -501,8 +516,11 @@ describe('transactions from an Item without Transactions', () => {
     expect(syncedTokens()).toEqual(['token-item_b']);
   });
 
-  test("a bank account Plaid doesn't provide Transactions for is quiet, said as such, and not asked again on the next loads", async () => {
-    for (const code of ['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED']) {
+  test("a bank account Plaid doesn't provide Transactions for, or that wasn't allowed, is quiet, said as such, and not asked again", async () => {
+    for (const [code, reason] of [
+      ['PRODUCTS_NOT_SUPPORTED', 'refused'],
+      ['ADDITIONAL_CONSENT_REQUIRED', 'no_consent'],
+    ]) {
       fake.reset();
       plaid.syncCalls.length = 0;
       (await import('@/lib/sessions')).forgetEpochs();
@@ -510,12 +528,13 @@ describe('transactions from an Item without Transactions', () => {
       await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: code });
       const res = await transactions();
       expect(res.body).toMatchObject({ transactions: [], notes: [], incomplete: [] });
-      // Its spending is not known, which the views say (lib/no-transactions.ts).
-      expect(res.body.without_transactions).toEqual([{ institution_name: 'Plan', reason: 'refused' }]);
+      // Its spending is not known, which the views say, each cause as what it
+      // is (lib/no-transactions.ts).
+      expect(res.body.without_transactions).toEqual([{ item_id: 'item_ret', institution_name: 'Plan', reason }]);
       expect(plaid.syncCalls).toHaveLength(1);
       expect((await transactions(false)).body.from_cache).toBe(true);
-      // Remembered: a fresh load doesn't ask Plaid again either.
-      expect((await transactions()).body.without_transactions).toEqual([{ institution_name: 'Plan', reason: 'refused' }]);
+      // Remembered, cause and all: a fresh load doesn't ask Plaid again either.
+      expect((await transactions()).body.without_transactions).toEqual([{ item_id: 'item_ret', institution_name: 'Plan', reason }]);
       expect(plaid.syncCalls).toHaveLength(1);
       // Kept in the Item's own transaction state, encrypted, with no rows and
       // no cursor, so nothing reads as synced.
@@ -524,6 +543,47 @@ describe('transactions from an Item without Transactions', () => {
       expect(raw).not.toContain(code);
       expect(await readStoredTxns(ctx, 'item_ret')).toEqual([]);
     }
+  });
+
+  test('a successful Reconnect forgets a refusal, so the next load asks Plaid again', async () => {
+    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'ADDITIONAL_CONSENT_REQUIRED' });
+    await transactions();
+    expect(plaid.syncCalls).toHaveLength(1);
+    // The Reconnect asks for the consent missing (and nothing else of Transactions).
+    const token = await route('create-update-link-token', 'POST', { item_id: 'item_ret' });
+    expect(token.status).toBe(200);
+    expect(plaid.linkRequests.at(-1)).toMatchObject({ access_token: 'token-item_ret', additional_consented_products: ['transactions'] });
+    expect(plaid.linkRequests.at(-1).products).toBeUndefined();
+    expect(plaid.linkRequests.at(-1).transactions).toBeUndefined();
+    // Consent given: the reconnect is recorded, and the refusal forgotten.
+    plaid.txns['token-item_ret'] = [bankRow('c1', 'acct_cash')];
+    expect((await route('item-reconnected', 'POST', { item_id: 'item_ret' })).status).toBe(200);
+    const res = await transactions(false);
+    expect(res.body.transactions.map((t: any) => t.transaction_id)).toEqual(['c1']);
+    expect(res.body.without_transactions).toEqual([]);
+    expect(plaid.syncCalls[1]).toEqual({ token: 'token-item_ret', cursor: undefined, options: { days_requested: 730 } });
+    // Synced now: a later Reconnect has nothing to forget, and keeps the rows.
+    await route('item-reconnected', 'POST', { item_id: 'item_ret' });
+    expect((await readStoredTxns(ctx, 'item_ret')).map((t) => t.transaction_id)).toEqual(['c1']);
+  });
+
+  test("consent is asked for only on a plain Reconnect after a consent refusal, and the Reconnect works if Plaid won't take it", async () => {
+    await addItem('item_ret', 'Plan', [k401(), checking('acct_cash')], { billed: false, txns: 'PRODUCTS_NOT_SUPPORTED' });
+    await addItem('item_fid', 'Fidelity', [k401(), checking('acct_cma')], { billed: false, txns: 'ADDITIONAL_CONSENT_REQUIRED' });
+    await transactions();
+    plaid.linkRequests.length = 0;
+    // Plaid doesn't provide them: no consent would change that.
+    await route('create-update-link-token', 'POST', { item_id: 'item_ret' });
+    // Payment details and the account picker are flows of their own.
+    await route('create-update-link-token', 'POST', { item_id: 'item_fid', add_liabilities: true });
+    await route('create-update-link-token', 'POST', { item_id: 'item_fid', select_accounts: true });
+    for (const req of plaid.linkRequests) expect(req.additional_consented_products).toBeUndefined();
+    // Plaid refusing the field: the Reconnect still opens, without it.
+    plaid.linkRequests.length = 0;
+    plaid.refuseConsentField = true;
+    const res = await quietly(() => route('create-update-link-token', 'POST', { item_id: 'item_fid' }));
+    expect(res.status).toBe(200);
+    expect(plaid.linkRequests.map((r) => r.additional_consented_products)).toEqual([['transactions'], undefined]);
   });
 
   test('a bank account or card added since a refusal is asked about at once', async () => {

@@ -33,7 +33,9 @@ import { loggable } from './log-safe';
 import {
   holdsTransactionAccounts,
   noTransactionsReason,
+  refusalReason,
   refusalStands,
+  CONSENT_REQUIRED,
   transactionAccountIds,
   transactionsBilled,
   REFUSAL_RECHECK_DAYS,
@@ -296,6 +298,38 @@ function parseBlocked(raw: string): BlockedMarker | null {
     /* not JSON */
   }
   return null;
+}
+
+/**
+ * The refusal remembered for an Item (refusalStands in lib/item-products.ts),
+ * or null when there is none. Lenient: for the Reconnect link token, which
+ * asks for consent to Transactions again after a consent refusal; a read that
+ * fails only leaves that out, and the Reconnect works as ever.
+ */
+export async function rememberedRefusal(ctx: Ctx, item_id: string): Promise<Refusal | null> {
+  try {
+    return (await readState(ctx, item_id)).refused ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Forgets a remembered refusal once the person has reconnected the Item
+ * (app/api/item-reconnected): a consent given again, or a sign-in that changed
+ * what Plaid offers, is asked about on the next load rather than up to
+ * REFUSAL_RECHECK_DAYS later. Only a state holding nothing but the refusal
+ * (never synced, no rows) is removed. A read that fails removes nothing: the
+ * refusal stands until it lapses.
+ */
+export async function forgetRefusal(ctx: Ctx, item_id: string): Promise<void> {
+  try {
+    const state = await readState(ctx, item_id);
+    if (!state.refused || state.cursor !== '' || Object.keys(state.txns).length > 0) return;
+    await redis().del(stateKey(ctx, item_id));
+  } catch (err) {
+    console.error(loggable(err));
+  }
 }
 
 /** A remembered refusal as written; anything else is not one, and is dropped
@@ -673,7 +707,7 @@ type SyncOptions = {
 /** Plaid's answers to a first call on an Item that can't have Transactions:
  *  the institution doesn't offer it for these accounts, or the person never
  *  consented to it. A retry changes neither. */
-const NO_TRANSACTIONS_CODES = new Set(['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED']);
+const NO_TRANSACTIONS_CODES = new Set(['PRODUCTS_NOT_SUPPORTED', CONSENT_REQUIRED]);
 
 /**
  * An Item's accounts (their ids and types), for deciding whether a first call
@@ -788,7 +822,7 @@ async function syncItem(ctx: Ctx,
     // again would only be refused again, a call and a log line on every load,
     // until it may answer otherwise. One added since is asked about.
     cash = transactionAccountIds(accounts);
-    if (refusalStands(stored.refused, cash)) return { state: null, note: null, noTransactions: 'refused' };
+    if (stored.refused && refusalStands(stored.refused, cash)) return { state: null, note: null, noTransactions: refusalReason(stored.refused) };
   }
 
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
@@ -856,12 +890,13 @@ async function syncItem(ctx: Ctx,
       // call: on an Item that has the product, these would be a real fault and
       // get the note below.
       if (starting && NO_TRANSACTIONS_CODES.has(code)) {
+        const refused = { at: new Date().toISOString(), code, accounts: cash };
         console.warn(
-          `transactions: Plaid doesn't provide Transactions for an Item's accounts (${code}); asking again in ${REFUSAL_RECHECK_DAYS} days, or when a bank account or card is added`
+          `transactions: ${refusalReason(refused) === 'no_consent' ? "the person didn't consent to sharing an Item's transactions" : "Plaid doesn't provide Transactions for an Item's accounts"} (${code}); asking again in ${REFUSAL_RECHECK_DAYS} days, after a reconnect, or when a bank account or card is added`
         );
         // Best effort: a write that fails costs one more refused call later.
-        await writeState(ctx, item.item_id, { ...stored, refused: { at: new Date().toISOString(), code, accounts: cash } });
-        return { state: null, note: null, noTransactions: 'refused' };
+        await writeState(ctx, item.item_id, { ...stored, refused });
+        return { state: null, note: null, noTransactions: refusalReason(refused) };
       }
       console.error(loggable(err));
       return { state: null, note: `${item.institution_name}: could not fetch transactions` };

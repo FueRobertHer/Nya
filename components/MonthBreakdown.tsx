@@ -19,7 +19,7 @@ import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
 import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
-import { noSpending, refusedEmptyNote, refusedMonthNote, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
+import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
@@ -237,8 +237,8 @@ export default function MonthBreakdown({
   actionError?: string | null;
   /** Connections that bring in no transactions (lib/no-transactions.ts): an
    *  empty list says why rather than "no transactions", rows entered by hand
-   *  name them under the month instead, and a bank account Plaid doesn't
-   *  provide them for is named under every month. */
+   *  name them under the month instead, and a bank account or card whose
+   *  transactions don't come in is named under every month. */
   withoutTransactions?: NoTransactionsView;
   /** Institutions whose rows this load lacks, or lacks the oldest of
    *  (/api/transactions), and connections whose transactions have stopped
@@ -422,7 +422,7 @@ export default function MonthBreakdown({
   if (!txns || (txns.length === 0 && notes.length === 0)) {
     // Connections that can't bring any in are not an empty year.
     const none = txns ? noSpending(withoutTransactions, txns.length) : null;
-    const refused = txns && !none ? refusedEmptyNote(withoutTransactions) : null;
+    const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
     return (
       <>
         {addCard}
@@ -432,7 +432,11 @@ export default function MonthBreakdown({
               ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? ", or add a transaction by hand" : ""}.`
               : "No transactions in the last 12 months."}
           </p>
-          {refused && <div className="stale-note">{refused}</div>}
+          {missing.map((n) => (
+            <div className="stale-note" key={n}>
+              {n}
+            </div>
+          ))}
         </div>
       </>
     );
@@ -441,9 +445,8 @@ export default function MonthBreakdown({
   const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
-  const refusedNote = refusedMonthNote(withoutTransactions);
   const gapNotes = selected
-    ? [...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...(refusedNote ? [refusedNote] : [])]
+    ? [...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
     : [];
   // When only rows entered by hand are here, the connections that bring in
   // none are named beside the totals: where they come from, not a warning.

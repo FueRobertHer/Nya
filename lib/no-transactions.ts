@@ -9,8 +9,8 @@
 // $0, and be told the Plan has "not enough transactions to measure from yet",
 // as if waiting would help. It won't: those connections carry investment
 // activity, never spending. And a bank account Plaid doesn't provide
-// transactions for leaves spending short with nothing to say so. Each view
-// says what is true instead. /api/transactions reports these connections
+// transactions for, or whose transactions the person didn't allow, leaves
+// spending short with nothing to say so. Each view says what is true instead. /api/transactions reports these connections
 // beside the rows, not as notes: nothing is wrong, so the payload stays
 // cacheable.
 //
@@ -22,8 +22,10 @@
 import type { NoTransactionsReason } from './item-products';
 import { joinNames } from './month-coverage';
 
-/** One connection that brings in no transactions, and why. */
-export type WithoutTransactions = { institution_name: string; reason: NoTransactionsReason };
+/** One connection that brings in no transactions, and why. `item_id` matches
+ *  it to the connection's health; absent on a payload cached before it was
+ *  sent. */
+export type WithoutTransactions = { item_id?: string; institution_name: string; reason: NoTransactionsReason };
 
 /** What /api/transactions says about them, as the views take it: the
  *  connections without transactions, and how many connections there are
@@ -32,30 +34,69 @@ export type NoTransactionsView = { without: WithoutTransactions[]; connections?:
 
 export const NO_CONNECTIONS_WITHOUT: NoTransactionsView = { without: [] };
 
-const REASONS: ReadonlySet<string> = new Set(['investment_accounts', 'no_cash_accounts', 'refused']);
+const REASONS: ReadonlySet<string> = new Set(['investment_accounts', 'no_cash_accounts', 'refused', 'no_consent']);
+/** The reasons that mean a connection holds no bank account or card: it never
+ *  brings transactions in, whatever happens to it. */
+const BY_DESIGN: ReadonlySet<string> = new Set(['investment_accounts', 'no_cash_accounts']);
 
 /** The view from a /api/transactions payload, keeping only well-formed entries
  *  (a cached payload from before has neither field). */
 export function noTransactionsView(payload: unknown): NoTransactionsView {
   const p = (payload ?? {}) as { without_transactions?: unknown; connections?: unknown };
   const without = Array.isArray(p.without_transactions)
-    ? p.without_transactions.filter(
-        (w): w is WithoutTransactions => !!w && typeof w.institution_name === 'string' && REASONS.has(w.reason)
+    ? p.without_transactions.flatMap((w): WithoutTransactions[] =>
+        !!w && typeof w.institution_name === 'string' && REASONS.has(w.reason)
+          ? [{ ...(typeof w.item_id === 'string' ? { item_id: w.item_id } : {}), institution_name: w.institution_name, reason: w.reason }]
+          : []
       )
     : [];
   const connections = typeof p.connections === 'number' && Number.isSafeInteger(p.connections) && p.connections >= 0 ? p.connections : undefined;
   return connections === undefined ? { without } : { without, connections };
 }
 
-/** No connection brings in spending: what is true of them, as the start of a
- *  sentence, and what would bring some in, to follow "To see spending, ". */
-export type NoSpending = { lead: string; remedy: string };
+/**
+ * The connections that hold no bank account or card, by id: they never bring
+ * transactions in, so a lapsed sign-in leaves no month short of any, and they
+ * are left out of the connections named as stopped (lib/month-coverage.ts).
+ * One whose bank account or card Plaid refuses, or the person didn't allow,
+ * is not among them: its transactions exist.
+ */
+export function quietItemIds(view: NoTransactionsView): Set<string> {
+  return new Set(view.without.flatMap((w) => (BY_DESIGN.has(w.reason) && w.item_id ? [w.item_id] : [])));
+}
 
-/** Whether every connection brings in no transactions (none refused or not),
+/** Whether every connection brings in no transactions (for whatever reason),
  *  as far as the payload says. */
 function noneBringTransactions(view: NoTransactionsView): boolean {
   return !!view.connections && view.without.length === view.connections;
 }
+
+/** The connections without transactions for one reason, each named once. */
+function namesFor(view: NoTransactionsView, reason: NoTransactionsReason): string[] {
+  return [...new Set(view.without.filter((w) => w.reason === reason).map((w) => w.institution_name))];
+}
+
+/** The connections holding a bank account or card that Plaid doesn't provide
+ *  transactions for: their spending is not known. */
+export function refusedNames(view: NoTransactionsView): string[] {
+  return namesFor(view, 'refused');
+}
+
+/** The connections holding a bank account or card whose transactions the
+ *  person didn't allow Nya to see: reconnecting and allowing them fixes it. */
+export function unallowedNames(view: NoTransactionsView): string[] {
+  return namesFor(view, 'no_consent');
+}
+
+/** Whether some connection's bank account or card has spending that doesn't
+ *  come in: refused, or not allowed. */
+export function spendingUnknown(view: NoTransactionsView): boolean {
+  return refusedNames(view).length > 0 || unallowedNames(view).length > 0;
+}
+
+/** No connection brings in spending: what is true of them, as the start of a
+ *  sentence, and what would bring some in, to follow "To see spending, ". */
+export type NoSpending = { lead: string; remedy: string };
 
 /**
  * When no connection can bring in spending at all, and there are no rows from
@@ -65,9 +106,9 @@ function noneBringTransactions(view: NoTransactionsView): boolean {
  *     investment accounts";
  *   - some hold a loan or other account instead: "None of your connected
  *     accounts is a bank account or card";
- *   - a bank account or card is there, and Plaid doesn't provide its
- *     transactions: that, naming the institutions, and "another" bank or card
- *     as the remedy.
+ *   - a bank account or card is there and its transactions don't come in:
+ *     whose, and why (not allowed, or Plaid doesn't provide them), with the
+ *     way to bring them in: reconnect and allow them, or another bank or card.
  * Null when some connection does bring transactions in (they say the rest),
  * when there are rows anyway (withoutNote names the connections then), with
  * nothing connected, or before the transactions have loaded (`connections`
@@ -75,16 +116,23 @@ function noneBringTransactions(view: NoTransactionsView): boolean {
  */
 export function noSpending(view: NoTransactionsView, rows: number): NoSpending | null {
   if (rows > 0 || !noneBringTransactions(view)) return null;
-  const { without } = view;
   const refused = refusedNames(view);
-  if (refused.length > 0) {
-    return {
-      lead: `Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}`,
-      remedy: 'connect another bank or card',
-    };
+  const unallowed = unallowedNames(view);
+  if (refused.length > 0 || unallowed.length > 0) {
+    const leads: string[] = [];
+    const remedies: string[] = [];
+    if (unallowed.length > 0) {
+      leads.push(`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}`);
+      remedies.push(`reconnect ${joinNames(unallowed)} and allow transactions`);
+    }
+    if (refused.length > 0) {
+      leads.push(`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}`);
+      remedies.push('connect another bank or card');
+    }
+    return { lead: leads.join(', and '), remedy: remedies.join(', or ') };
   }
   return {
-    lead: without.every((w) => w.reason === 'investment_accounts')
+    lead: view.without.every((w) => w.reason === 'investment_accounts')
       ? 'Your connected accounts are investment accounts'
       : 'None of your connected accounts is a bank account or card',
     remedy: 'connect a bank or card',
@@ -94,46 +142,76 @@ export function noSpending(view: NoTransactionsView, rows: number): NoSpending |
 /**
  * When no connection brings in transactions but there are rows anyway
  * (entered by hand on a manual account), in place of noSpending's sentence:
- * the connections that hold no bank account or card, named, under the totals
- * and beside the Plan's figures. Null otherwise. One whose bank account or
- * card Plaid refuses is named by the refused notes instead.
+ * the connections that hold no bank account or card, named, beside the totals
+ * and the Plan's figures. Null otherwise. One whose bank account or card
+ * doesn't bring its transactions in is named by the missing notes instead.
  */
 export function withoutNote(view: NoTransactionsView, rows: number): string | null {
   if (rows === 0 || !noneBringTransactions(view)) return null;
-  const names = [...new Set(view.without.filter((w) => w.reason !== 'refused').map((w) => w.institution_name))];
+  const names = [...new Set(view.without.filter((w) => BY_DESIGN.has(w.reason)).map((w) => w.institution_name))];
   if (names.length === 0) return null;
   const one = names.length === 1;
   return `${joinNames(names)} ${one ? 'holds' : 'hold'} no bank account or card, so no transactions come from ${one ? 'it' : 'them'}.`;
 }
 
-/** The connections holding a bank account or card that Plaid doesn't provide
- *  transactions for: their spending is not known. */
-export function refusedNames(view: NoTransactionsView): string[] {
-  return [...new Set(view.without.filter((w) => w.reason === 'refused').map((w) => w.institution_name))];
+/** How to bring in the transactions the person didn't allow. */
+function allowThem(names: string[]): string {
+  return `To bring them in, reconnect ${joinNames(names)} and allow transactions.`;
 }
 
-/** Under a month's totals (Activity, budgets), when a refused bank account or
- *  card leaves its spending short; null when none does. */
-export function refusedMonthNote(view: NoTransactionsView): string | null {
-  const names = refusedNames(view);
-  if (names.length === 0) return null;
-  return `Doesn't include the bank or card accounts at ${joinNames(names)}: Plaid doesn't provide their transactions, so this month may be incomplete.`;
+/** Under a month's totals (Activity, budgets, Home's spending insights): each
+ *  bank account or card whose transactions the month lacks, and why. Empty
+ *  when none does. */
+export function missingMonthNotes(view: NoTransactionsView): string[] {
+  const refused = refusedNames(view);
+  const unallowed = unallowedNames(view);
+  return [
+    ...(refused.length > 0
+      ? [`Doesn't include the bank or card accounts at ${joinNames(refused)}: Plaid doesn't provide their transactions, so this month may be incomplete.`]
+      : []),
+    ...(unallowed.length > 0
+      ? [
+          `Doesn't include the bank or card accounts at ${joinNames(unallowed)}: you didn't allow Nya to see their transactions, so this month may be incomplete. ${allowThem(unallowed)}`,
+        ]
+      : []),
+  ];
 }
 
-/** In place of the transactions, when there are none and a refused bank
- *  account or card is why some can't be; null when none is. */
-export function refusedEmptyNote(view: NoTransactionsView): string | null {
-  const names = refusedNames(view);
-  if (names.length === 0) return null;
-  return `Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(names)}, so they can't be shown.`;
+/** In place of the transactions, when there are none, and some bank account
+ *  or card is why some can't be shown. */
+export function missingEmptyNotes(view: NoTransactionsView): string[] {
+  const refused = refusedNames(view);
+  const unallowed = unallowedNames(view);
+  return [
+    ...(refused.length > 0 ? [`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}, so they can't be shown.`] : []),
+    ...(unallowed.length > 0
+      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, so they can't be shown. ${allowThem(unallowed)}`]
+      : []),
+  ];
 }
 
-/** The Plan's caveat on a figure measured from transactions, when a refused
- *  bank account or card is missing from it (`uncounted` where there is no
- *  figure yet); null when none is. */
-export function refusedFigureNote(view: NoTransactionsView, what: 'low' | 'off' | 'uncounted'): string | null {
-  const names = refusedNames(view);
-  if (names.length === 0) return null;
+/** The Plan's caveats on a figure measured from transactions, for each bank
+ *  account or card missing from it (`uncounted` where there is no figure
+ *  yet). */
+export function missingFigureNotes(view: NoTransactionsView, what: 'low' | 'off' | 'uncounted'): string[] {
+  const refused = refusedNames(view);
+  const unallowed = unallowedNames(view);
   const consequence = what === 'uncounted' ? "so they aren't counted" : `so this figure may be ${what}`;
-  return `Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(names)}, ${consequence}.`;
+  return [
+    ...(refused.length > 0 ? [`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}, ${consequence}.`] : []),
+    ...(unallowed.length > 0
+      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, ${consequence}. ${allowThem(unallowed)}`]
+      : []),
+  ];
+}
+
+/** What the missing spending is, for "May be low: spending is missing ...";
+ *  null when nothing is. */
+export function missingWhat(view: NoTransactionsView): string | null {
+  const refused = refusedNames(view).length > 0;
+  const unallowed = unallowedNames(view).length > 0;
+  if (refused && unallowed) return "transactions Plaid doesn't provide or you didn't allow";
+  if (refused) return "transactions Plaid doesn't provide";
+  if (unallowed) return "transactions you didn't allow";
+  return null;
 }

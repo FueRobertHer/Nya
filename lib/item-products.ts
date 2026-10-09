@@ -37,10 +37,12 @@
 // that its accounts bring in none (lib/no-transactions.ts).
 //
 // A first call Plaid refuses (the institution doesn't provide Transactions for
-// these accounts) is remembered for REFUSAL_RECHECK_DAYS in the Item's own
-// transaction state, with the bank accounts and cards it was about, so it is
-// not asked again on every load, but is at once for an account added since
-// (lib/transactions.ts).
+// these accounts, or the person didn't consent to sharing them) is remembered
+// for REFUSAL_RECHECK_DAYS in the Item's own transaction state, with the bank
+// accounts and cards it was about, so it is not asked again on every load, but
+// is at once for an account added since, and after a successful Reconnect
+// (lib/transactions.ts forgetRefusal), which for a consent refusal asks for
+// that consent again (app/api/create-update-link-token).
 //
 // Whether Plaid bills Transactions is read from /item/get's `billed_products`
 // when the Item is linked (app/api/exchange-public-token) and kept on its
@@ -142,13 +144,28 @@ export function transactionAccountIds(accounts: readonly { account_id?: unknown;
  *   investment_accounts  every account it holds is an investment account;
  *   no_cash_accounts     it holds no bank account or card (a loan, say);
  *   refused              it holds one, and Plaid doesn't provide Transactions
- *                        for it, so that account's spending is not known.
+ *                        for it, so that account's spending is not known;
+ *   no_consent           it holds one, and the person didn't consent to
+ *                        sharing its transactions: reconnecting and allowing
+ *                        it brings them in.
+ * The first two never bring transactions in, whatever the connection's
+ * health; the last two leave spending that exists unknown.
  */
-export type NoTransactionsReason = 'investment_accounts' | 'no_cash_accounts' | 'refused';
+export type NoTransactionsReason = 'investment_accounts' | 'no_cash_accounts' | 'refused' | 'no_consent';
 
 /** The reason for an Item that holds no bank account or card. */
-export function noTransactionsReason(types: readonly unknown[]): Exclude<NoTransactionsReason, 'refused'> {
+export function noTransactionsReason(types: readonly unknown[]): 'investment_accounts' | 'no_cash_accounts' {
   return types.length > 0 && types.every((t) => t === 'investment') ? 'investment_accounts' : 'no_cash_accounts';
+}
+
+/** Plaid's answer to a first call when the person never consented to sharing
+ *  transactions: update mode asking for that consent resolves it. */
+export const CONSENT_REQUIRED = 'ADDITIONAL_CONSENT_REQUIRED';
+
+/** What a remembered refusal says about the Item: no consent, or Plaid not
+ *  providing Transactions for its accounts. */
+export function refusalReason(refusal: Pick<Refusal, 'code'>): 'refused' | 'no_consent' {
+  return refusal.code === CONSENT_REQUIRED ? 'no_consent' : 'refused';
 }
 
 /** A first call Plaid refused, as remembered in the Item's transaction state:

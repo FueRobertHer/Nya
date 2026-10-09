@@ -125,8 +125,10 @@ async function assemblePlaid(ctx: Ctx): Promise<{ payload: PlaidPayload; hidden:
     r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
   );
   // Not problems, so not notes, and they don't keep the answer from the cache.
+  // By id as well as name: the dashboard matches them to connection health by
+  // id, since two connections can share a name.
   const without_transactions = results.flatMap((r, i) =>
-    r.noTransactions ? [{ institution_name: items[i].institution_name, reason: r.noTransactions }] : []
+    r.noTransactions ? [{ item_id: items[i].item_id, institution_name: items[i].institution_name, reason: r.noTransactions }] : []
   );
   return {
     payload: {

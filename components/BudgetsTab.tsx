@@ -16,7 +16,7 @@ import { detectRecurring } from '@/lib/recurring';
 import { localMonth, instantDay } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
-import { noSpending as noSpendingOf, refusedMonthNote, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { missingMonthNotes, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 
 // Stable empty defaults, as in Insights.
@@ -176,7 +176,7 @@ export default function BudgetsTab({
   // With rows entered by hand, the connections that bring in none are named
   // beside the budgets instead, as where the spending comes from.
   const noSpending = txns ? noSpendingOf(withoutTransactions, txns.length) : null;
-  const refusedNote = noSpending ? null : refusedMonthNote(withoutTransactions);
+  const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions);
   const namedWithout = withoutNote(withoutTransactions, txns?.length ?? 0);
 
   function startEdit(category: string) {
@@ -339,8 +339,10 @@ export default function BudgetsTab({
 
         {leftOut && <div className="chart-note">{leftOut}</div>}
         {totalBudget > 0 && namedWithout && <div className="chart-note">{namedWithout}</div>}
+        {/* With no spending to count at all, nothing can be missing from it. */}
         {totalBudget > 0 &&
-          [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...(refusedNote ? [refusedNote] : [])].map((n) => (
+          !noSpending &&
+          [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingNotes].map((n) => (
             <div className="stale-note" key={n}>
               {n}
             </div>

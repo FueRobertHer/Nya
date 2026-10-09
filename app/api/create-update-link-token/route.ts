@@ -5,6 +5,8 @@ import { plaidClient } from '@/lib/plaid';
 import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { webhookUrlFor } from '@/lib/webhook-url';
+import { rememberedRefusal } from '@/lib/transactions';
+import { CONSENT_REQUIRED } from '@/lib/item-products';
 import { loggable } from '@/lib/log-safe';
 
 export async function POST(req: Request) {
@@ -38,18 +40,37 @@ export async function POST(req: Request) {
     // adding (or removing) an account at an institution already connected
     // reuses this Item instead of creating a second one, which Plaid would bill
     // separately and which would mean signing in again.
-    const response = await plaidClient.linkTokenCreate({
+    //
+    // A plain Reconnect of an Item whose first transactions call Plaid refused
+    // for want of consent also asks for that consent, as Plaid's way to give
+    // it is update mode with the product in additional_consented_products.
+    // Consent alone bills nothing (lib/item-products.ts): the sync's own check
+    // still decides any first call. Should Plaid refuse the token for it, the
+    // Reconnect goes ahead without it rather than failing.
+    const request = {
       user: { client_user_id: ctx.container }, // as in create-link-token
       client_name: 'Nya',
       access_token,
       ...(add_liabilities ? { products: [Products.Liabilities] } : {}),
       ...(select_accounts ? { update: { account_selection_enabled: true } } : {}),
       country_codes: [CountryCode.Us],
-      language: 'en',
+      language: 'en' as const,
       // Re-registers the Item's webhook, so an Item linked before webhooks were
       // configured picks it up when it is reconnected.
       ...(webhookUrlFor(ctx) ? { webhook: webhookUrlFor(ctx) } : {}),
-    });
+    };
+    const askConsent = !add_liabilities && !select_accounts && (await rememberedRefusal(ctx, item.item_id))?.code === CONSENT_REQUIRED;
+    let response;
+    if (askConsent) {
+      try {
+        response = await plaidClient.linkTokenCreate({ ...request, additional_consented_products: [Products.Transactions] });
+      } catch (err) {
+        console.error(loggable(err));
+        response = await plaidClient.linkTokenCreate(request);
+      }
+    } else {
+      response = await plaidClient.linkTokenCreate(request);
+    }
 
     // When the picker opened, by the server's clock, handed back to
     // /api/item-accounts-updated: only an account first seen missing after this

@@ -20,7 +20,7 @@ import { CoverageNote, TrustLinks } from './TrustLinks';
 import ConnectButtons from './ConnectButtons';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
-import { noTransactionsView, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { noTransactionsView, quietItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
@@ -1165,7 +1165,9 @@ export default function Dashboard({
     [institutions]
   );
   // Connections whose transactions have stopped arriving, for Activity's months.
-  const stoppedTxns = useMemo(() => stoppedConnections(institutions), [institutions]);
+  // Not a connection that holds no bank account or card: it brings no
+  // transactions in, so its lapse leaves no month short (lib/no-transactions.ts).
+  const stoppedTxns = useMemo(() => stoppedConnections(institutions, quietItemIds(txnWithout)), [institutions, txnWithout]);
 
   // The last recorded day, when recording has stalled (see lib/history-status.ts).
   const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
@@ -1525,6 +1527,7 @@ export default function Dashboard({
                   budgets={budgets}
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
+                  withoutTransactions={txnWithout}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
