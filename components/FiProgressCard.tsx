@@ -29,7 +29,7 @@ import type { Txn } from './MonthBreakdown';
 import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { PAYROLL_NOTE, dayName, pct, progressText, savingsRateText, wholeMoney, yearsToFiText } from './plan-text';
 import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/plan';
-import { fiFigures, type FiFigures } from '@/lib/fire/progress';
+import { assetsLeftOut, fiFigures, spendingLeftOut, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 
 export type FiProgressProps = {
@@ -130,6 +130,8 @@ export function FiProgressView({
   const spendingShort = view.spending.source === 'measured' && inputs.unread.length > 0;
   const assetsShort = view.assets.source === 'measured' && inputs.assets.caveats.some((c) => c.kind !== 'stale');
   const workplaceAdded = (inputs.workplace?.total ?? 0) > 0;
+  const leftOut = spendingLeftOut(inputs.flows);
+  const otherAccounts = assetsLeftOut(inputs.assets, 'your invested assets', true);
   const typed = [view.spending.source === 'typed' && 'spending', view.savings.source === 'typed' && 'savings', view.assets.source === 'typed' && 'invested assets'].filter(
     (x): x is string => !!x
   );
@@ -174,6 +176,12 @@ export function FiProgressView({
         {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}.
       </p>
       {!workplaceAdded && view.savings.source === 'measured' && <p className="panel-note">{PAYROLL_NOTE}</p>}
+      {/* What the year's figures leave out, in the Plan's own words: the
+          savings rate is always from the year's transactions, so these are
+          said whenever there are any. */}
+      {inputs.flows && leftOut.excluded && <p className="panel-note">{leftOut.excluded}</p>}
+      {inputs.flows && leftOut.otherCurrencies && <div className="as-of stale">{leftOut.otherCurrencies}</div>}
+      {view.assets.source === 'measured' && otherAccounts && <div className="as-of stale">{otherAccounts}</div>}
       {spendingShort && <div className="as-of stale">May be low: spending is missing transactions that couldn&apos;t be read. The Plan tab says which.</div>}
       {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}

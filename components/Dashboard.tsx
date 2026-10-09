@@ -21,6 +21,8 @@ import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
+import ManualTxnSheet from './ManualTxnSheet';
+import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
 import { totalNotes } from './total-notes';
@@ -32,7 +34,7 @@ import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
-import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
@@ -171,8 +173,12 @@ type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
   balance: string;
 };
 
+// "cash" is a choice, not a type: saved as depository with the subtype
+// CASH_SUBTYPE (lib/balance.ts), which the Plan reads to count cash
+// withdrawals and the cash spending entered on the account once.
 const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
-  { value: 'depository', label: 'Cash (checking, savings)' },
+  { value: 'depository', label: 'Checking or savings' },
+  { value: 'cash', label: 'Cash on hand (a wallet)' },
   { value: 'investment', label: 'Investment (brokerage, 401k, HSA)' },
   { value: 'credit', label: 'Credit card' },
   { value: 'loan', label: 'Loan (mortgage, auto, student)' },
@@ -673,23 +679,6 @@ export default function Dashboard({
     goalsStore.load();
   }, [loadTransactions, budgetsStore, goalsStore]);
 
-  const recategorize = useCallback(async (transaction_id: string, category: string) => {
-    // Optimistic local update; the server stores the override and clears its
-    // transactions cache so future loads agree.
-    setTxns((prev) =>
-      prev ? prev.map((t) => (t.transaction_id === transaction_id ? { ...t, category } : t)) : prev
-    );
-    try {
-      await fetch('/api/recategorize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transaction_id, category }),
-      });
-    } catch {
-      // Next refresh reverts if the write didn't land.
-    }
-  }, []);
-
   const renameVendor = useCallback(
     async (vendor_key: string, name: string) => {
       // Optimistically relabel every transaction from this vendor. An empty
@@ -717,6 +706,10 @@ export default function Dashboard({
     },
     [loadTransactions]
   );
+
+  // Transactions entered by hand, categories and the exclude flag
+  // (components/transaction-edits.ts).
+  const txnEdits = useTransactionEdits({ txns, setTxns, setTxnNotes, setTxnIncomplete, loadTransactions, loadNetWorth, requestBackfill });
 
   // `bypass` skips both duplicate checks for this run: the user has said the
   // institution they already have is a different login.
@@ -859,6 +852,8 @@ export default function Dashboard({
         // is thin).
         await loadNetWorth(true);
         requestBackfill(() => loadNetWorth());
+        // Its transactions carry its name, and go with it when it is deleted.
+        loadTransactions();
         return true;
       } catch {
         setManualError('Could not reach the server.');
@@ -867,7 +862,7 @@ export default function Dashboard({
         setSavingManual(false);
       }
     },
-    [loadNetWorth, requestBackfill]
+    [loadNetWorth, requestBackfill, loadTransactions]
   );
 
   const startAddManual = useCallback(() => {
@@ -1783,6 +1778,11 @@ export default function Dashboard({
                                             Update
                                           </button>
                                         )}
+                                        {inst.manual && (
+                                          <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
+                                            Add transaction
+                                          </button>
+                                        )}
                                         {/* Hiding works on any account, linked
                                             or manual: it only stops the account
                                             counting, it doesn't remove it. */}
@@ -2161,8 +2161,15 @@ export default function Dashboard({
                 txns={txns}
                 notes={txnNotes}
                 loading={txnsLoading}
-                onRecategorize={recategorize}
+                onRecategorize={txnEdits.recategorize}
                 onRename={renameVendor}
+                // Only with a manual account to add to (hidden ones aren't offered).
+                onAddTransaction={
+                  institutions.some((i) => i.manual && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
+                }
+                onEditTransaction={txnEdits.openEdit}
+                onToggleExcluded={txnEdits.toggleExcluded}
+                actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
               />
@@ -2279,8 +2286,16 @@ export default function Dashboard({
               <label className="field">
                 Type
                 <select
-                  value={shownManualDraft.type}
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, type: e.target.value })}
+                  value={isCashOnHand(shownManualDraft) ? 'cash' : shownManualDraft.type}
+                  onChange={(e) => {
+                    const cash = e.target.value === 'cash';
+                    setManualDraft({
+                      ...shownManualDraft,
+                      type: cash ? 'depository' : e.target.value,
+                      // Cash only when chosen; another subtype is kept as it was.
+                      subtype: cash ? CASH_SUBTYPE : shownManualDraft.subtype === CASH_SUBTYPE ? null : shownManualDraft.subtype,
+                    });
+                  }}
                   disabled={savingManual}
                 >
                   {MANUAL_TYPE_LABELS.map((t) => (
@@ -2351,8 +2366,8 @@ export default function Dashboard({
         {shownDeleteTarget && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              This account&apos;s balance history is <strong>not recoverable</strong>. Re-adding it
-              creates a new account with an empty history.
+              This account&apos;s balance history, and any transactions entered on it, are{' '}
+              <strong>not recoverable</strong>. Re-adding it creates a new account with an empty history.
             </p>
             {manualError && <div className="error">{manualError}</div>}
             <div className="button-pair" style={{ marginTop: 16 }}>
@@ -2370,6 +2385,15 @@ export default function Dashboard({
           </>
         )}
       </Sheet>
+
+      <ManualTxnSheet
+        target={txnEdits.sheet}
+        institutions={institutions}
+        txns={txns}
+        onClose={txnEdits.closeSheet}
+        onSaved={txnEdits.onSaved}
+        onBalanceStale={() => loadNetWorth(true)}
+      />
 
       <Sheet
         open={!!redirect}

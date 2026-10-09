@@ -65,7 +65,7 @@ import {
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
-import { fiFigures, measuredInputs } from '@/lib/fire/progress';
+import { assetsLeftOut, fiFigures, measuredInputs, spendingLeftOut } from '@/lib/fire/progress';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding } from '@/lib/allocation/allocation';
@@ -238,14 +238,21 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
 
   // What Nya measures, and what may be missing from it, by the same hook and
   // arithmetic as the FI card on Home (components/plan-inputs.ts,
-  // lib/fire/progress.ts), so the two always agree.
+  // lib/fire/progress.ts), so the two always agree. The hook also reads which
+  // manual accounts are cash on hand, whose spending entered by hand is what
+  // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
+  // them for the label.
   const inputs = usePlanInputs({ txns, txnNotes, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
-  const { flows, unread, assets, contributions, workplace } = inputs;
+  const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(plan, inputs, currency);
   const view = figures.view;
   // Plan amounts are in the accounts' own currency, or the transactions'.
   const displayCurrency = figures.currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
+  // Nothing is converted between currencies in this app: investments in one
+  // and spending in another can't be compared (lib/fire/progress.ts). Within
+  // either, only amounts in one currency are added up, and the notes beside
+  // them name the rest.
   const currencyNote = figures.currencyNote;
   // In the plan's currency, so its mix is of what the plan counts.
   const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: plan.includeCash });
@@ -419,6 +426,8 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, institutions, bal
         workplace={workplace}
         workplaceCount={contributions === null ? null : contributions.length}
         currencyNote={currencyNote}
+        cashOn={cashOn}
+        cashUnmarked={cashUnmarked}
         money={money}
         editable={editable}
         open={open}
@@ -629,6 +638,8 @@ export function FiCard({
   workplace,
   workplaceCount,
   currencyNote,
+  cashOn = [],
+  cashUnmarked = false,
   money,
   editable,
   open,
@@ -649,6 +660,10 @@ export function FiCard({
   /** How many workplace plans there are to measure, null while unknown. */
   workplaceCount: number | null;
   currencyNote: string | null;
+  /** The names of the cash accounts the cash spending was entered on. */
+  cashOn?: string[];
+  /** Spending was entered by hand on a manual account not marked as cash. */
+  cashUnmarked?: boolean;
   money: (n: number) => string;
   editable: boolean;
   open: (s: SheetState) => void;
@@ -673,7 +688,27 @@ export function FiCard({
   } else {
     const parts: string[] = [];
     if (flows.loanPayments > 0) parts.push(`${money(flows.loanPayments)} of loan payments (principal counts as spending until the loan ends)`);
-    if (flows.cash > 0) parts.push(`${money(flows.cash)} of cash withdrawals`);
+    // Cash withdrawn and cash spending entered by hand on an account marked
+    // as cash are the same money: only the larger counts, and this says which,
+    // and on which accounts (lib/fire/inputs.ts).
+    const on = cashOn.length > 0 ? ` on ${names(cashOn)}` : '';
+    if (flows.cash > 0) {
+      parts.push(
+        flows.cashEntered > 0
+          ? `${money(flows.cash)} of cash withdrawals beyond the ${money(flows.cashEntered)} of cash spending you entered${on}, taken to be the same money`
+          : `${money(flows.cash)} of cash withdrawals`
+      );
+    }
+    const cashNote =
+      flows.cashWithdrawn > 0 && flows.cash === 0
+        ? ` Cash withdrawals (${money(flows.cashWithdrawn)}) aren't counted: the ${money(flows.cashEntered)} of cash spending you entered${on} is taken to be the same money.`
+        : '';
+    // Withdrawals counted beside spending entered on an account not marked as
+    // cash: both count, so if that is the same cash, say how to stop it.
+    const cashHint =
+      flows.cashWithdrawn > 0 && flows.cashEntered === 0 && cashUnmarked
+        ? "Cash withdrawals count as spent, and so does what you entered by hand. If what you entered is the cash you withdrew, mark its account as cash on hand (Update the account), so it isn't counted twice."
+        : null;
     // Refunds are taken off, so the total and the largest are said: an odd
     // large one (a deposit returned, an insurance payout) can be seen.
     const big = flows.largestRefund;
@@ -681,10 +716,18 @@ export function FiCard({
       flows.refunds > 0
         ? `, less ${money(flows.refunds)} of refunds${big ? ` (the largest, ${money(big.amount)} from ${big.name} on ${dayName(big.date)})` : ''}`
         : '';
+    // Transactions the person left out of budgets and reports count in no
+    // figure here either (lib/fire/inputs.ts), which the label says, and so
+    // do those in another currency: in the words the FI card on Home uses
+    // (lib/fire/progress.ts spendingLeftOut).
+    const leftOut = spendingLeftOut(flows);
+    const excluded = leftOut.excluded ? ` ${leftOut.excluded}` : '';
     spendingNote = (
       <Notes
-        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.`}
+        source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.${cashNote}${excluded}`}
         warnings={[
+          leftOut.otherCurrencies,
+          cashHint,
           flows.unclearLoans > 0
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
             : null,
@@ -753,7 +796,11 @@ export function FiCard({
     assetsNote = (
       <Notes
         source={`from ${what}${balancesAsOf ? `, balances as of ${fmtInstant(balancesAsOf)}` : ''}.`}
-        warnings={[...assetLines, measuredAssets.unknown > 0 ? `${measuredAssets.unknown} more had no balance to count, so this figure may be low.` : null]}
+        warnings={[
+          ...assetLines,
+          measuredAssets.unknown > 0 ? `${measuredAssets.unknown} more had no balance to count, so this figure may be low.` : null,
+          assetsLeftOut(measuredAssets),
+        ]}
       />
     );
   }

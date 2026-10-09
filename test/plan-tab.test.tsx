@@ -21,6 +21,9 @@ const flows: TrailingFlows = {
   loanPayments: 0,
   cash: 0,
   refunds: 0,
+  cashWithdrawn: 0,
+  cashEntered: 0,
+  cashEnteredOn: [],
   unclearLoans: 0,
   largestRefund: null,
   from: '2025-10-07',
@@ -28,8 +31,9 @@ const flows: TrailingFlows = {
   days: 365,
   scaled: false,
   count: 400,
+  excludedCount: 0,
   currency: 'USD',
-  mixedCurrency: false,
+  leftOut: [],
 };
 const measured: Measured = { spending: 40_000, savings: 30_000, assets: 250_000 };
 const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
@@ -41,7 +45,7 @@ const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   unknown: 0,
   caveats: [],
   currency: 'USD',
-  mixedCurrency: false,
+  leftOut: [],
   ...over,
 });
 const noPlans: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
@@ -106,6 +110,8 @@ describe('the FI card', () => {
       workplace?: WorkplaceSavings | null;
       workplaceCount?: number | null;
       currencyNote?: string | null;
+      cashOn?: string[];
+      cashUnmarked?: boolean;
     } = {}
   ) =>
     text(
@@ -122,6 +128,8 @@ describe('the FI card', () => {
           workplace={opts.workplace === undefined ? noPlans : opts.workplace}
           workplaceCount={opts.workplaceCount === undefined ? 0 : opts.workplaceCount}
           currencyNote={opts.currencyNote ?? null}
+          cashOn={opts.cashOn}
+          cashUnmarked={opts.cashUnmarked}
           money={money}
           editable
           open={noop}
@@ -148,6 +156,45 @@ describe('the FI card', () => {
       'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
     );
     expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
+  });
+
+  test('says which cash counted, withdrawals or the cash spending entered on an account marked cash on hand, never both, and names the account', () => {
+    // Withdrawals only.
+    expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } })).toContain('Includes $1,200 of cash withdrawals.');
+    // Some entered by hand on the wallet: the rest of what was withdrawn.
+    expect(card(plan(), { f: { ...flows, cash: 700, cashWithdrawn: 1_200, cashEntered: 500 }, cashOn: ['Wallet'] })).toContain(
+      'Includes $700 of cash withdrawals beyond the $500 of cash spending you entered on Wallet, taken to be the same money.'
+    );
+    // All of it entered: the withdrawals aren't counted, and it says so.
+    const t = card(plan(), { f: { ...flows, cash: 0, cashWithdrawn: 1_200, cashEntered: 1_500 }, cashOn: ['Wallet', 'Jar'] });
+    expect(t).toContain("Cash withdrawals ($1,200) aren't counted: the $1,500 of cash spending you entered on Wallet and Jar is taken to be the same money.");
+    expect(t).not.toContain('Includes');
+  });
+
+  test('with withdrawals counted beside spending entered on an account not marked as cash, says how to keep them from both counting', () => {
+    const hint = 'mark its account as cash on hand (Update the account), so it isn';
+    expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 }, cashUnmarked: true })).toContain(hint);
+    // Not without spending entered by hand, nor once an account is marked.
+    expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } })).not.toContain(hint);
+    expect(card(plan(), { f: { ...flows, cash: 700, cashWithdrawn: 1_200, cashEntered: 500 }, cashOn: ['Wallet'], cashUnmarked: true })).not.toContain(hint);
+  });
+
+  test('names what another currency left out of spending and of assets', () => {
+    const t = card(plan(), {
+      f: { ...flows, leftOut: [{ currency: 'JPY', count: 2 }] },
+      a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }),
+    });
+    expect(t).toContain("2 transactions in JPY aren't in your spending or savings, which are in USD.");
+    expect(t).toContain("1 account in EUR isn't in this figure, which is in USD.");
+    expect(card(plan())).not.toContain("aren't in your spending");
+  });
+
+  test('says how many transactions the person excluded were left out of spending', () => {
+    expect(card(plan())).not.toContain('Leaves out');
+    expect(card(plan(), { f: { ...flows, excludedCount: 1 } })).toContain(
+      'from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026). Leaves out 1 transaction you excluded from budgets and reports.'
+    );
+    expect(card(plan(), { f: { ...flows, excludedCount: 3 } })).toContain('Leaves out 3 transactions you excluded from budgets and reports.');
   });
 
   test('a figure that may be short says so, beside it and on the FI number, naming the institution', () => {

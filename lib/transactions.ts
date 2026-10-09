@@ -46,6 +46,9 @@ export type Txn = {
   institution_name: string;
   category: string | null;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
+  // Plaid's code for a currency with no ISO one (a cryptocurrency); absent on
+  // a payload cached before it was sent.
+  unofficial_currency_code?: string | null;
   vendor_key: string; // stable per-merchant key for vendor renames (see vendorKey)
   logo_url: string | null; // merchant logo for the row
   category_icon_url: string | null; // Plaid category icon
@@ -63,6 +66,14 @@ export type Txn = {
   counterparty: string | null; // real merchant behind a processor, when it differs
   payment_processor: string | null; // e.g. the PayPal/Square in front of the merchant
   payment_reference: string | null; // payment_meta reference number, for "what is this charge?"
+
+  // Set by /api/transactions on rows that aren't a bank's, and on any row the
+  // person excluded; absent otherwise, so a payload cached before they existed
+  // reads the same.
+  source?: string; // a manual row's source: 'manual' for one entered by hand (lib/manual-txns.ts)
+  account_id?: string; // a manual row's account, for editing it
+  note?: string | null; // a manual row's note
+  excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
 };
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.
@@ -791,11 +802,16 @@ export async function syncItemTransactions(ctx: Ctx,
   /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
    *  Applied here because this is the last place account_id exists; a
    *  category set on the row itself still wins, in /api/transactions. */
-  carriedIn?: Map<string, string> | Promise<Map<string, string>>
+  carriedIn?: Map<string, string> | Promise<Map<string, string>>,
+  /** Exclusions carried across a re-link, by contentKey
+   *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
+   *  same reason; what the person says on the row itself still wins. */
+  carriedExclusionsIn?: Set<string> | Promise<Set<string>>
 ): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage }> {
   const { state, note, importing } = await syncItem(ctx, item);
   if (!state) return { txns: [], note, coverage: 'missing' };
   const carried = await carriedIn;
+  const carriedExclusions = await carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name, which recurring detection and search
@@ -817,6 +833,7 @@ export async function syncItemTransactions(ctx: Ctx,
       institution_name: t.institution_name,
       category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
       iso_currency_code: t.iso_currency_code,
+      unofficial_currency_code: t.unofficial_currency_code ?? null,
       vendor_key: vendorKey(t),
       logo_url: t.logo_url,
       category_icon_url: t.personal_finance_category_icon_url,
@@ -833,6 +850,7 @@ export async function syncItemTransactions(ctx: Ctx,
       counterparty: resolveCounterparty(t),
       payment_processor: resolveProcessor(t),
       payment_reference: t.payment_meta?.reference_number ?? null,
+      ...(carriedExclusions?.size && !t.pending && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
     }));
   return { txns, note, coverage: importing ? 'importing' : 'complete' };
 }

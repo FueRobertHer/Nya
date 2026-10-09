@@ -19,6 +19,7 @@
 
 import { fiView, type FirePlan, type FiView, type Measured } from './plan';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from './inputs';
+import { leftOutText } from '@/lib/spending';
 
 /** What the Plan measures from, as the hook gathers it. */
 export type FiInputs = {
@@ -55,15 +56,35 @@ export function planCurrency({ flows, assets }: Pick<FiInputs, 'flows' | 'assets
   return assets.currency ?? flows?.currency ?? fallback;
 }
 
-/** What the figures can't add up, in a sentence, or null. Nothing is
+/** What the figures can't compare, in a sentence, or null. Nothing is
  *  converted between currencies in this app: investments in one and spending
- *  in another can't be compared, nor added up within either. */
+ *  in another can't be compared. Within either, only amounts in one currency
+ *  are added up (lib/fire/inputs.ts), and the notes beside them name the
+ *  rest (spendingLeftOut, assetsLeftOut). */
 export function currencyNote({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>): string | null {
   if (assets.currency && flows?.currency && assets.currency !== flows.currency) {
     return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Nya doesn't convert currencies, so the FI number and your assets can't be compared.`;
   }
-  if (assets.mixedCurrency || flows?.mixedCurrency) return 'Your accounts use more than one currency; amounts are added without converting them.';
   return null;
+}
+
+/** What the year's spending and income leave out, as the Plan's label says
+ *  it: transactions the person excluded from budgets and reports, and those
+ *  in another currency, by currency. Null for each when there are none. */
+export function spendingLeftOut(flows: TrailingFlows | null): { excluded: string | null; otherCurrencies: string | null } {
+  if (!flows) return { excluded: null, otherCurrencies: null };
+  const n = flows.excludedCount;
+  return {
+    excluded: n > 0 ? `Leaves out ${n} transaction${n === 1 ? '' : 's'} you excluded from budgets and reports.` : null,
+    otherCurrencies: leftOutText(flows.leftOut, flows.currency, { where: 'your spending or savings' }),
+  };
+}
+
+/** The invested accounts left out for being in another currency, in a
+ *  sentence, or null: "1 account in CAD isn't in this figure, which is in
+ *  USD." `where` names the figure, plural or not. */
+export function assetsLeftOut(assets: InvestedAssets, where = 'this figure', plural = false): string | null {
+  return leftOutText(assets.leftOut, assets.currency, { noun: 'account', where, plural });
 }
 
 export type FiFigures = {

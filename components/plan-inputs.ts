@@ -2,16 +2,19 @@
 //
 // The Plan's automatic inputs, gathered in one hook for the two screens that
 // show FI figures: the Plan tab and the FI card on Home. A year of spending
-// and income from the dashboard's transactions, the invested assets from its
-// accounts, and what went into workplace plans, from one
-// /api/investment-activity request per plan (as the Accounts tab makes when
-// an account is opened). Both screens run this and lib/fire/progress.ts on
-// the same plan, so they can't disagree.
+// and income from the dashboard's transactions (by lib/fire/inputs.ts's
+// rules: one currency, excluded rows left out, cash withdrawals and the cash
+// spending entered on an account marked as cash on hand counted once), the
+// invested assets from its accounts, and what went into workplace plans, from
+// one /api/investment-activity request per plan (as the Accounts tab makes
+// when an account is opened). Both screens run this and lib/fire/progress.ts
+// on the same plan, so they can't disagree.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { localDate } from '@/lib/local-date';
 import {
+  cashAccountIds,
   investedAssets,
   isWorkplacePlan,
   trailingFlows,
@@ -91,6 +94,13 @@ export type PlanInputs = FiInputs & {
   today: string;
   /** Institutions whose transactions couldn't all be read. */
   unread: UnreadTransactions[];
+  /** The names of the cash accounts cash spending was entered on, for the
+   *  label beside spending. */
+  cashOn: string[];
+  /** Spending was entered by hand on a manual account not marked as cash:
+   *  if it is the cash withdrawn, the label says how to keep the two from
+   *  both counting. */
+  cashUnmarked: boolean;
   /** Workplace plan contributions as measured, null while they load. */
   contributions: PlanContributions[] | null;
   flows: TrailingFlows | null;
@@ -115,7 +125,19 @@ export function usePlanInputs({
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
-  const flows = useMemo(() => (txns ? trailingFlows(txns, today) : null), [txns, today]);
+  // The manual accounts marked as cash on hand, whose rows entered by hand are
+  // what cash withdrawals were spent on (lib/fire/inputs.ts trailingFlows),
+  // by name for the label.
+  const cashAccounts = useMemo(() => cashAccountIds(institutions), [institutions]);
+  const flows = useMemo(() => (txns ? trailingFlows(txns, today, { cashAccounts }) : null), [txns, today, cashAccounts]);
+  const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, a.name] as const))), [institutions]);
+  const cashOn = useMemo(() => (flows?.cashEnteredOn ?? []).map((id) => accountNames.get(id) ?? 'a cash account'), [flows, accountNames]);
+  // Spending entered by hand on a manual account not marked as cash: if it is
+  // the cash withdrawn, the label says how to keep the two from both counting.
+  const cashUnmarked = useMemo(
+    () => (txns ?? []).some((t) => t.source === 'manual' && t.amount > 0 && !!t.account_id && !cashAccounts.has(t.account_id)),
+    [txns, cashAccounts]
+  );
   const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
   const assets = useMemo(() => investedAssets(institutions, includeCash), [institutions, includeCash]);
   const contributions = useWorkplaceContributions(institutions);
@@ -126,5 +148,5 @@ export function usePlanInputs({
     () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, funding: planFunding }) : null),
     [contributions, bankOut, planFunding]
   );
-  return { today, flows, unread, assets, contributions, workplace };
+  return { today, flows, unread, assets, contributions, workplace, cashOn, cashUnmarked };
 }

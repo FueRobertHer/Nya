@@ -8,7 +8,8 @@ import { loadFiProgress } from '@/components/FiProgressLoader';
 import { PAYROLL_NOTE, wholeMoney, yearsToFiText } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type FirePlan } from '@/lib/fire/plan';
 import { currencyNote, fiFigures, measuredInputs, planCurrency, savingsRate, type FiInputs } from '@/lib/fire/progress';
-import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
+import { trailingFlows, type InvestedAssets, type TrailingFlows, type WorkplaceSavings } from '@/lib/fire/inputs';
+import type { Txn } from '@/components/MonthBreakdown';
 
 // The FI card on Home: the Plan's own figures, from the same inputs and the
 // same arithmetic (lib/fire/progress.ts), so the two always agree; the
@@ -39,7 +40,11 @@ const flows: TrailingFlows = {
   scaled: false,
   count: 400,
   currency: 'USD',
-  mixedCurrency: false,
+  cashWithdrawn: 0,
+  cashEntered: 0,
+  cashEnteredOn: [],
+  excludedCount: 0,
+  leftOut: [],
 };
 const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   total: 250_000,
@@ -47,7 +52,7 @@ const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   unknown: 0,
   caveats: [],
   currency: 'USD',
-  mixedCurrency: false,
+  leftOut: [],
   ...over,
 });
 const noPlans: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
@@ -107,7 +112,9 @@ describe('the figures, from the Plan’s inputs', () => {
     expect(planCurrency(inputs(), 'EUR')).toBe('USD');
     expect(planCurrency(inputs({ assets: assets({ currency: null }), flows: { ...flows, currency: null } }), 'EUR')).toBe('EUR');
     expect(currencyNote(inputs({ flows: { ...flows, currency: 'CAD' } }))).toContain("can't be compared");
-    expect(currencyNote(inputs({ assets: assets({ mixedCurrency: true }) }))).toContain('more than one currency');
+    // Amounts in another currency within either are left out of it and named
+    // beside it, not summed: no note says they were added.
+    expect(currencyNote(inputs({ assets: assets({ leftOut: [{ currency: 'CAD', count: 1 }] }) }))).toBeNull();
     expect(currencyNote(inputs())).toBeNull();
   });
 
@@ -162,6 +169,57 @@ describe('the FI card on Home', () => {
     expect(t).toContain('Using the spending and savings you typed there.');
     expect(t).toContain('$1,500,000');
     expect(home(plan(), inputs(), true, true)).toContain("Your saved plan has values this version of Nya can't use");
+  });
+
+  test('names what the year’s figures leave out, in the Plan’s own words: excluded transactions, other currencies', () => {
+    const f = { ...flows, excludedCount: 2, leftOut: [{ currency: 'JPY', count: 3 }] };
+    const a = assets({ leftOut: [{ currency: 'CAD', count: 1 }] });
+    const i = inputs({ flows: f, assets: a });
+    const h = home(plan(), i);
+    const t = planTab(plan(), i);
+    for (const s of ['Leaves out 2 transactions you excluded from budgets and reports.', "3 transactions in JPY aren't in your spending or savings, which are in USD."]) {
+      expect(h).toContain(s);
+      expect(t).toContain(s);
+    }
+    expect(h).toContain("1 account in CAD isn't in your invested assets, which are in USD.");
+    expect(t).toContain("1 account in CAD isn't in this figure, which is in USD.");
+    // The savings rate leaves them out too: it is from the same year's figures.
+    expect(fiFigures(plan(), i, 'USD').savingsRate).toBeCloseTo(30 / 70, 12);
+  });
+
+  test('the savings rate is of the year as the Plan counts it: excluded rows and other currencies are in neither side', () => {
+    let seq = 0;
+    const txn = (over: Partial<Txn>): Txn =>
+      ({
+        transaction_id: `t${++seq}`,
+        date: '2026-09-01',
+        name: 'Shop',
+        amount: 10,
+        pending: false,
+        account_name: 'Checking',
+        institution_name: 'Bank',
+        category: 'food and drink',
+        iso_currency_code: 'USD',
+        vendor_key: 'shop',
+        subcategory: null,
+        transaction_code: null,
+        ...over,
+      }) as Txn;
+    const year = [
+      txn({ date: '2025-10-09', amount: -70_000, category: 'income', name: 'Pay' }),
+      txn({ date: '2025-10-09', amount: 40_000 }),
+      // A car bought outright and excluded, and spending in yen: in no figure.
+      txn({ date: '2026-03-01', amount: 20_000, excluded: true, name: 'Car' }),
+      txn({ date: '2026-04-01', amount: 900_000, iso_currency_code: 'JPY', name: 'Tokyo' }),
+    ];
+    const f = trailingFlows(year, '2026-10-08')!;
+    expect(f).toMatchObject({ spending: 40_000, income: 70_000, excludedCount: 1, leftOut: [{ currency: 'JPY', count: 1 }] });
+    const i = inputs({ flows: f });
+    expect(savingsRate(i)).toBeCloseTo(30 / 70, 12);
+    const h = home(plan(), i);
+    expect(h).toContain('43%');
+    expect(h).toContain('Leaves out 1 transaction you excluded from budgets and reports.');
+    expect(h).toContain("1 transaction in JPY isn't in your spending or savings, which are in USD.");
   });
 
   test('a figure that may be short says so, as the Plan’s does', () => {
