@@ -18,7 +18,7 @@ Five tabs, mobile-first, with bottom navigation:
 
 Amounts are shown in the currency they carry, and nothing is converted between currencies. Totals of transactions (the month's totals and its day subtotals, budgets, recurring bills, the Home insights, the Plan) add up only the currency most of your transactions are in and say how many in other currencies they left out; a transaction with no currency code, which only the oldest stored history has, counts as that currency. Net worth is labelled with your most common currency and says so when your accounts mix currencies. The header's refresh button bypasses the cache and re-reads from Plaid.
 
-More than one person can use a deployment: sign in with Clerk and each account gets its own data, with optional read-only sharing between people who connect. Otherwise a single shared password protects the app. See [docs/authentication.md](docs/authentication.md).
+More than one person can use a deployment: sign in with Clerk and each account gets its own data, with optional read-only sharing between people who connect: you choose what each person sees and for how long, see exactly what they see, and both of you see each time it was shown to them. Otherwise a single shared password protects the app. See [docs/authentication.md](docs/authentication.md).
 
 When a bank connection breaks, Nya sends one email (and one reminder a week later if it is still broken) naming the bank and what to do, never an amount, once email is set up (see [docs/deployment.md](docs/deployment.md#email-notices)).
 

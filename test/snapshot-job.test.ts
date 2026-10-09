@@ -40,6 +40,34 @@ afterEach(() => {
   console.error = errors;
 });
 
+describe('the records of showings, pruned in each container’s run', () => {
+  test('first, before the snapshot, never failing it, and with the emails still sent after every container', async () => {
+    const { accessLogStore, slotOf } = await import('@/lib/access-log');
+    const { PRUNE_BUDGET_MS, START_BUDGET_MS, MAIL_DEADLINE_MS } = await import('@/lib/snapshot-job');
+    const registry = await register([[A, 'active'], [B, 'active']]);
+    // Records whose connections have ended (there are none), in both containers.
+    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { a: 'balance' as const } }] };
+    for (const container of [A, B]) await accessLogStore.set({ container }, 'e'.repeat(32), record);
+    // B's records can't even be reached: its run goes on as if they weren't there.
+    const hgetall = fake.hgetall.bind(fake);
+    (fake as any).hgetall = (key: string) => (key === kc({ container: B }, 'sharing-access-log') ? Promise.reject(new Error('down')) : hgetall(key));
+    try {
+      const report = await runSnapshots(registry, { scheduledFor: DATE });
+      expect(report.results.map((r) => [r.container, r.status])).toEqual([
+        [A, 'empty'],
+        [B, 'empty'],
+      ]);
+    } finally {
+      delete (fake as any).hgetall;
+    }
+    expect(await accessLogStore.get({ container: A }, 'e'.repeat(32))).toBeNull();
+    expect(await accessLogStore.get({ container: B }, 'e'.repeat(32))).toEqual(record);
+    // Its time comes off the start budget, so the last container ends when it would without it.
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS).toBe(180_000);
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS + 101_000).toBeLessThan(MAIL_DEADLINE_MS);
+  });
+});
+
 describe('the fan-out', () => {
   test('one container failing costs the others nothing, and each outcome is kept', async () => {
     const registry = await register([[A, 'active'], [B, 'active'], [C, 'active']]);
