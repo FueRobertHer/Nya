@@ -1,16 +1,20 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, unscopedDataKeys } from './fake-redis';
+import { startRedis, upstashOn, type RealRedis } from './real-redis';
 
 // Deserializing like Upstash: what production reads back.
 const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
-mock.module('@/lib/storage', () => storageMock(fake));
+/** What redis() returns for the test running: the double, or a real server. */
+let client: unknown = fake;
+mock.module('@/lib/storage', () => ({ ...storageMock(fake), redis: () => client }));
 
 const {
   downloadAllowed,
   takeDownload,
   downloadCount,
   passwordAttemptsExhausted,
+  countWrongPassword,
   DOWNLOADS_PER_WINDOW,
   DOWNLOAD_WINDOW_SECONDS,
   LOGIN_MAX_FAILURES,
@@ -133,7 +137,111 @@ describe('wrong passwords, shared by the login', () => {
   });
 
   test('fails open when Redis can’t be read, as the login always has', async () => {
-    fake.failNext('get');
-    expect(await passwordAttemptsExhausted(new Request('http://x'))).toBe(false);
+    await fake.set(testKey('ratelimit:login:1.2.3.4'), String(LOGIN_MAX_FAILURES), { ex: LOGIN_WINDOW_SECONDS });
+    expect((await login('hunter2')).status).toBe(429);
+    fake.failNext('eval');
+    expect((await login('hunter2')).status).toBe(200);
+    // Nor is a check and a count that can't be made a reason to answer
+    // anything but the password's own answer.
+    fake.failNext('eval', 2);
+    expect((await login('nope', '5.6.7.8')).status).toBe(401);
+    expect(await fake.get(testKey('ratelimit:login:5.6.7.8'))).toBeNull();
+  });
+
+  test('a wrong password is counted with its window’s end in one step, so a request that dies part way leaves no count without one', async () => {
+    const key = testKey('ratelimit:login:1.2.3.4');
+    // Where a count sent as INCR and then EXPIRE lost its end: the second
+    // request failing after the first had counted.
+    fake.failNext('expire');
+    expect((await login('nope')).status).toBe(401);
+    expect([await fake.get(key), fake.ttls.get(key)]).toEqual([1, LOGIN_WINDOW_SECONDS]);
+    // Later counts keep the window's end.
+    fake.ttls.set(key, 120);
+    expect((await login('nope')).status).toBe(401);
+    expect([await fake.get(key), fake.ttls.get(key)]).toEqual([2, 120]);
+    // Under a second left (TTL answers 0): that window is still running.
+    fake.ttls.set(key, 0);
+    expect((await login('nope')).status).toBe(401);
+    expect(fake.ttls.get(key)).toBe(0);
+  });
+
+  test('an address shut out by a count with no end, as the code before this could leave one, is given a window and let in when it ends', async () => {
+    const key = testKey('ratelimit:login:1.2.3.4');
+    await fake.set(key, String(LOGIN_MAX_FAILURES));
+    expect((await login('hunter2')).status).toBe(429);
+    expect(fake.ttls.get(key)).toBe(LOGIN_WINDOW_SECONDS);
+    // A count below the limit gets one from the next wrong password too.
+    await fake.set(key, '3');
+    expect((await login('nope')).status).toBe(401);
+    expect([await fake.get(key), fake.ttls.get(key)]).toEqual([4, LOGIN_WINDOW_SECONDS]);
+  });
+});
+
+// The scripts on a real Redis, where one is installed (as in CI): the double
+// has no clock, so the windows' ends are checked here.
+const hasRedis = Bun.which('redis-server') !== null;
+describe.skipIf(!hasRedis && !process.env.CI)('wrong passwords, on a real Redis', () => {
+  let real: RealRedis | null = null;
+  let upstash: ReturnType<typeof upstashOn>;
+  const send = (command: string, args: string[]) => real!.client.send(command, args);
+  const req = new Request('http://x/api/login', { headers: { 'x-forwarded-for': '1.2.3.4' } });
+  const key = testKey('ratelimit:login:1.2.3.4');
+  /** Waits for the key's window to end, a few seconds at most. */
+  const ended = async () => {
+    for (let i = 0; i < 100 && Number(await send('EXISTS', [key])) === 1; i++) await Bun.sleep(25);
+    expect(Number(await send('EXISTS', [key]))).toBe(0);
+  };
+
+  beforeEach(async () => {
+    real ??= await startRedis();
+    await send('FLUSHALL', []);
+    upstash = upstashOn(real.client);
+    client = upstash;
+  });
+  afterEach(() => {
+    client = fake;
+  });
+  afterAll(() => {
+    real?.stop();
+    real = null;
+  });
+
+  test('each wrong password is counted with its window’s end in one request', async () => {
+    expect(await passwordAttemptsExhausted(req)).toBe(false);
+    expect(await send('EXISTS', [key])).toBe(0); // a check writes nothing where nothing is counted
+    upstash.sent.length = 0;
+    await countWrongPassword(req);
+    expect(upstash.sent).toEqual(['eval']);
+    expect([await send('GET', [key]), Number(await send('TTL', [key]))]).toEqual(['1', LOGIN_WINDOW_SECONDS]);
+    // A window part way through keeps its end.
+    await send('EXPIRE', [key, '100']);
+    for (let i = 1; i < LOGIN_MAX_FAILURES; i++) await countWrongPassword(req);
+    expect(await send('GET', [key])).toBe(String(LOGIN_MAX_FAILURES));
+    expect(Number(await send('TTL', [key]))).toBeLessThanOrEqual(100);
+    expect(await passwordAttemptsExhausted(req)).toBe(true);
+  });
+
+  test('a count left without an end is given a whole window by the next check or count', async () => {
+    await send('SET', [key, String(LOGIN_MAX_FAILURES)]);
+    expect(Number(await send('TTL', [key]))).toBe(-1);
+    expect(await passwordAttemptsExhausted(req)).toBe(true);
+    expect(Number(await send('TTL', [key]))).toBe(LOGIN_WINDOW_SECONDS);
+    await send('SET', [key, '3']);
+    await countWrongPassword(req);
+    expect([await send('GET', [key]), Number(await send('TTL', [key]))]).toEqual(['4', LOGIN_WINDOW_SECONDS]);
+  });
+
+  test('a window under a second from ending keeps its end, and once it has ended the address is let in and counted afresh', async () => {
+    // Under half a second left, which TTL answers as 0.
+    await send('SET', [key, String(LOGIN_MAX_FAILURES - 1), 'PX', '450']);
+    await countWrongPassword(req);
+    expect(await send('GET', [key])).toBe(String(LOGIN_MAX_FAILURES));
+    expect(Number(await send('PTTL', [key]))).toBeLessThanOrEqual(450);
+    expect(await passwordAttemptsExhausted(req)).toBe(true);
+    expect(Number(await send('PTTL', [key]))).toBeLessThanOrEqual(450);
+    await ended();
+    expect(await passwordAttemptsExhausted(req)).toBe(false);
+    await countWrongPassword(req);
+    expect([await send('GET', [key]), Number(await send('TTL', [key]))]).toEqual(['1', LOGIN_WINDOW_SECONDS]);
   });
 });

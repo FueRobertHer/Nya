@@ -11,6 +11,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
+- [An address locked out of the login](#an-address-locked-out-of-the-login)
 
 ## Backups
 
@@ -249,3 +250,7 @@ It is refused unless a report shows nothing left to copy, refresh or delete and 
 Once `PLAID_BROKERAGE_LINK=1` is set and anyone has connected with **Connect a brokerage or retirement account** ([deployment.md](deployment.md#brokerage-and-retirement-connections)), **never roll back to a release from before the one that added it.** Those releases ask Plaid for every connection's transactions on every load, and on a connection made with the brokerage option that first call starts Plaid's Transactions product, billed monthly until the connection is removed, wherever the institution offers it. It can't be taken off a connection again. Turning the option off doesn't help: it only stops new connections. Rolling back to that release or any later one is safe.
 
 If you have to go back further, first find those connections. In the Upstash console, each container's `<prefix>:c:<id>:plaid:items` hash holds one record per connection, and the ones made with the brokerage option carry `"transactions_billed":false` (`null` means the lookup when it was linked failed, so it could be either). Disconnect each of them on the Accounts tab (**Manage**, then **Disconnect** on its card) before the rollback, and connect them again once you are back on a release with the check, linking each new account to the one it replaces ([features.md](features.md#removing-an-institution-and-adding-it-back)) so its history carries on. Or keep them, and accept the fee on each.
+
+## An address locked out of the login
+
+Ten wrong passwords from one address (the login and the password asked for before a data download count together) shut that address out of the password login for 15 minutes from the first of them. Each count is written together with its expiry in one step (`lib/rate-limit.ts`), so a lockout always ends on its own: there is no key to delete by hand. A count left without an expiry by an older release (which set the expiry with a second request that could fail) is given a whole window the next time that address tries. The demo sign-in's limit per address (on Preview) is counted the same way.
