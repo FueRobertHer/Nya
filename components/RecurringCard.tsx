@@ -139,7 +139,7 @@ export default function RecurringCard({
       `seen ${s.seen} times`,
       s.pending ? `latest ${fmtDay(s.lastDate)}, pending` : null,
       s.agreement === 'varies' ? 'amount varies' : null,
-      s.paysCard ? 'pays a card' : null,
+      s.paysCard ? (s.paysCardOf ? `pays ${s.paysCardOf.account || 'a card'}` : 'pays a card') : null,
       when || null,
     ]
       .filter(Boolean)
@@ -198,7 +198,7 @@ export default function RecurringCard({
                   <div className="txn-edit" onClick={(e) => e.stopPropagation()}>
                     <p className="panel-note" style={{ marginTop: 4 }}>
                       Seen {s.seen} times from {fmtDay(s.firstDate)} to {fmtDay(s.lastDate)}, about {formatMoney(s.amount, s.currency ?? currency)}{' '}
-                      {s.agreement === 'median' ? 'each time, the median of the last half year' : 'each time'}
+                      {s.agreement === 'average' ? 'each time, the average of the last half year' : 'each time'}
                       {s.previousAmount !== undefined ? `, ${formatMoney(s.previousAmount, s.currency ?? currency)} before its price changed` : ''}.
                       {counted(s) ? ` ${counted(s)}` : ''}
                     </p>

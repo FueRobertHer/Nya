@@ -29,6 +29,7 @@ const {
   plannedCadenceLabel,
   plannedDates,
   thresholdOf,
+  upgradePlanned,
 } = await import('@/lib/planned');
 
 beforeEach(async () => {
@@ -126,6 +127,20 @@ describe('a save is checked field by field', () => {
     expect(thresholdOf(EMPTY_PLANNED, 'USD')).toEqual({ amount: DEFAULT_THRESHOLD, set: false });
     expect(DEFAULT_THRESHOLD).toBe(100);
     expect(thresholdOf({ threshold: { amount: 0, currency: 'USD' } }, 'USD')).toEqual({ amount: 0, set: true });
+  });
+
+  test('a warning saved as a bare number, before its currency was kept, reads in the forecast\'s currency and saves back', () => {
+    const old = { ...planned(), threshold: 250 };
+    expect(isPlanned(old)).toBe(false);
+    const upgraded = upgradePlanned(old) as Planned;
+    expect(upgraded.threshold).toEqual({ amount: 250, currency: null });
+    expect(isPlanned(upgraded)).toBe(true);
+    expect(thresholdOf(upgraded, 'EUR')).toEqual({ amount: 250, set: true });
+    // Sent back as read with another change, it is accepted.
+    expect(parsePlanned(JSON.parse(JSON.stringify(upgraded)))).toEqual({ ok: upgraded });
+    // The current shape, and anything else, go through untouched.
+    expect(upgradePlanned(planned())).toEqual(planned());
+    expect(upgradePlanned('x')).toBe('x');
   });
 
   test('a warning set in another currency is never read as the forecast\'s own', () => {
@@ -250,6 +265,15 @@ describe('the route', () => {
     await put({ planned: planned() });
     expect((await put({ planned: planned({ threshold: { amount: -5, currency: 'USD' } }) })).status).toBe(400);
     expect(await plannedStore.get(TEST_CTX)).toEqual(planned());
+  });
+
+  test('a plan stored with its warning as a bare number loads, upgraded, and saves back', async () => {
+    await fake.set(ctxKey('planned-items'), await encrypt(JSON.stringify({ ...planned(), threshold: 250 })));
+    const res = await route.GET();
+    expect(res.status).toBe(200);
+    const { planned: read } = await res.json();
+    expect(read.threshold).toEqual({ amount: 250, currency: null });
+    expect((await put({ planned: { ...read, dismissed: ['bill|Chase|Checking|netflix|USD|1549'] } })).status).toBe(200);
   });
 
   test('an unreadable store is a flagged 409 on load and on save, and is left alone', async () => {

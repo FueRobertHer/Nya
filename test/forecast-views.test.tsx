@@ -288,6 +288,17 @@ describe('the recurring list', () => {
     expect(t).not.toContain('/mo in');
   });
 
+  test("a card's payments received, imported with no category, are never income; the payment from checking says which card it pays", () => {
+    const rows = monthly('2026-03', 7, 25).flatMap((d) => [
+      row(d, 812.4, { name: 'ONLINE PAYMENT CAPITAL ONE', category: null }),
+      row(addDays(d, 2), -812.4, { name: 'PAYMENT/CREDIT', category: null, account_name: 'Quicksilver', account_type: 'credit', institution_name: 'Capital One' }),
+    ]);
+    const t = list({ series: detectRecurring(rows) });
+    expect(t).not.toContain('Income');
+    expect(t).not.toContain('/mo in');
+    expect(t).toContain('pays Quicksilver');
+  });
+
   test('when the planned items could not be loaded, it says why nothing can be marked', () => {
     expect(list({ status: 'error' })).toContain("Your planned items couldn't be loaded, so this can't be saved now.");
   });

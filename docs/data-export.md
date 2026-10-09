@@ -376,8 +376,8 @@ What you told the cash forecast (`lib/planned.ts`, [Recurring bills and the cash
 | Field | Meaning |
 | --- | --- |
 | `items[]` | Each expense or income you planned: `id` (random), `name`, `kind` (`expense` or `income`), `amount` (positive, in `currency`), `currency` (its ISO 4217 code), `date` (the day it falls on, or the first day of one that repeats) and `cadence` (`once`, `weekly`, `biweekly`, `monthly`, `quarterly`, `semiannual` or `yearly`). |
-| `dismissed[]` | The detected bills and income you marked not recurring, each as the series was when you did: its kind, institution, account, merchant (lower-cased), currency and amount in cents, joined by `\|`. Each applies to the series of that account and merchant nearest its amount, so it holds as amounts move. |
-| `threshold` | The figure the forecast warns below, as `amount` and the `currency` it was set in, or `null` for the default (100 in the forecast's currency). |
+| `dismissed[]` | The detected bills and income you marked not recurring, each as the series was when you did: its kind, institution, account, merchant (lower-cased), currency and amount in cents, joined by `\|`. Each applies to the series of that account and merchant nearest its amount, or its price before a change, within 25% or 5 units, so it holds as amounts move. |
+| `threshold` | The figure the forecast warns below, as `amount` and the `currency` it was set in (`null` for one saved before currencies were kept, read in the forecast's), or `null` for the default (100 in the forecast's currency). |
 
 #### `transaction-annotations`
 

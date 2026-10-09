@@ -115,7 +115,7 @@ export default function ForecastCard({
   const warn = thresholdOf(ready ? planned : EMPTY_PLANNED, position.currency);
   const threshold = warn.amount;
   const until = addDays(today, range);
-  const { events, leftOut, varied, lapsed, unplaced } = useMemo(
+  const { events, leftOut, varied, lapsed, unplaced, cardsPaid } = useMemo(
     () =>
       forecastEvents({
         series,
@@ -138,7 +138,8 @@ export default function ForecastCard({
         institutions,
         position,
         eventsLeftOut: leftOut,
-        series: { varied, lapsed, unplaced },
+        series: { varied, lapsed, unplaced, cardsPaid },
+        until,
         stopped,
         incomplete,
         refused: refusedNames(withoutTransactions),
@@ -146,7 +147,7 @@ export default function ForecastCard({
         today,
         days: DAYS,
       }),
-    [institutions, position, leftOut, varied, lapsed, unplaced, stopped, incomplete, withoutTransactions, today]
+    [institutions, position, leftOut, varied, lapsed, unplaced, cardsPaid, until, stopped, incomplete, withoutTransactions, today]
   );
 
   // The what-if: one purchase, in the forecast's currency, within its range.

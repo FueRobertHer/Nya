@@ -46,7 +46,7 @@
 import { type Cadence, type RecurringSeries, expectedDates, addDays, dayNumber } from './recurring';
 import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { inCurrency, isMoneyMovement, leftOutText, type LeftOut } from './spending';
-import { dominantCurrency } from './format';
+import { dominantCurrency, formatMoney } from './format';
 import { minorDigits } from './manual-txn-input';
 
 /** The ranges a forecast is shown for, in days from today. */
@@ -67,8 +67,9 @@ export type ForecastAccount = {
   /** Recovered from a past snapshot rather than fetched (lib/last-known.ts). */
   stale?: boolean;
   /** A card's or loan's payment terms, where Plaid serves them: the calendar
-   *  marks the payment due (lib/calendar.ts duePayments). */
-  liability?: { minimum_payment: number | null; next_due_date: string | null };
+   *  marks the payment due (lib/calendar.ts duePayments), and the forecast
+   *  names a card whose payment it doesn't hold (forecastNotes). */
+  liability?: { minimum_payment: number | null; next_due_date: string | null; last_statement_balance?: number | null };
 };
 
 /** An account an institution's card can't show (lib/last-known.ts). */
@@ -244,6 +245,9 @@ export type LeftOutSeries = {
   lapsed: RecurringSeries[];
   /** Bills and income on an account whose type isn't known. */
   unplaced: RecurringSeries[];
+  /** The cards whose payment from cash it holds (institution, then account,
+   *  joined by "|"), and whether it holds one for a card it can't tell. */
+  cardsPaid: { known: Set<string>; unknown: boolean };
 };
 
 /**
@@ -265,7 +269,7 @@ export function forecastEvents(opts: {
   const events: ForecastEvent[] = [];
   const others = new Map<string, number>();
   const leaveOut = (c: string) => others.set(c, (others.get(c) ?? 0) + 1);
-  const named: LeftOutSeries = { varied: [], lapsed: [], unplaced: [] };
+  const named: LeftOutSeries = { varied: [], lapsed: [], unplaced: [], cardsPaid: { known: new Set(), unknown: false } };
 
   for (const s of opts.series) {
     if (opts.dismissed?.has(s.id)) continue;
@@ -289,6 +293,8 @@ export function forecastEvents(opts: {
       leaveOut(s.currency!);
       continue;
     }
+    if (s.paysCardOf) named.cardsPaid.known.add(`${s.paysCardOf.institution}|${s.paysCardOf.account}`);
+    else if (s.paysCard) named.cardsPaid.unknown = true;
     for (const d of dates)
       events.push({
         date: d.date,
@@ -436,8 +442,11 @@ export function forecastNotes(opts: {
   position: CashPosition;
   /** Expected amounts left out for their currency (forecastEvents). */
   eventsLeftOut: LeftOut;
-  /** Series left out and named (forecastEvents). */
+  /** Series left out and named, and the cards whose payment is held
+   *  (forecastEvents). */
   series?: Partial<LeftOutSeries>;
+  /** The forecast's last day, for the card payments due within it. */
+  until?: string;
   stopped?: readonly StoppedConnection[];
   incomplete?: readonly IncompleteConnection[];
   /** Institutions whose bank accounts or cards bring in no transactions:
@@ -498,6 +507,22 @@ export function forecastNotes(opts: {
     notes.push(`Plaid doesn't provide transactions for the bank or card accounts at ${join(unique([...opts.refused]))}, so their bills and income aren't in this forecast.`);
   if (opts.unallowed && opts.unallowed.length > 0)
     notes.push(`You didn't allow Nya to see transactions from the bank or card accounts at ${join(unique([...opts.unallowed]))}, so their bills and income aren't in this forecast.`);
+
+  // A card's payment due within the forecast that it doesn't hold (none was
+  // detected paying that card, as one that changes every month isn't), named
+  // with its statement balance, from Plaid's payment details. Not said when
+  // a payment held pays a card it can't tell: it may be that one.
+  const paid = opts.series?.cardsPaid;
+  if (opts.until && !paid?.unknown)
+    for (const i of institutions)
+      for (const a of i.accounts) {
+        const due = a.liability?.next_due_date;
+        const owed = a.liability?.last_statement_balance ?? null;
+        if (a.type !== 'credit' || a.hidden || !due || due < today || due > opts.until || (a.currency && position.currency && a.currency !== position.currency)) continue;
+        if (paid?.known.has(`${i.institution_name}|${a.name}`) || owed === 0) continue;
+        const amount = owed !== null ? `, statement balance ${formatMoney(owed, a.currency ?? position.currency)},` : '';
+        notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
+      }
 
   // Pay left out, named.
   for (const s of opts.series?.lapsed ?? [])

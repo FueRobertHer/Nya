@@ -10,13 +10,15 @@
 // every item and dismissal and would replace the real ones with what is on
 // screen. Never saved reads as null, which the route answers as
 // EMPTY_PLANNED. isPlanned checks the shape and types, not today's ranges,
-// which parsePlanned checks when a save comes in (app/api/planned-items).
+// which parsePlanned checks when a save comes in (app/api/planned-items), and
+// upgradePlanned brings a warning saved as a bare number into its shape.
 
 import { defineValueStore } from './repo';
-import { isPlanned, type Planned } from './planned';
+import { isPlanned, upgradePlanned, type Planned } from './planned';
 
 export const plannedStore = defineValueStore<Planned>('planned-items', {
   what: 'planned items',
   isValid: isPlanned,
   exportable: true, // what the person typed and chose
+  upgrade: upgradePlanned,
 });

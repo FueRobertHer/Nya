@@ -12,7 +12,9 @@
 // isMoneyMovement: transfers between your own accounts, cash taken out), and
 // neither is a transaction the person excluded. Loan payments are bills (a
 // mortgage is the classic one) and so is a bank's monthly fee, as before; a
-// card payment received on the card's side is not income. Grouped by kind,
+// card payment received on the card's side is not income, nor is any money
+// in on a card or a loan account (a payment or a refund, however a bank's
+// file names it). Grouped by kind,
 // account (its name at its institution), merchant and currency: the same
 // subscription on two cards is two series, even at one bank, and an amount
 // never adds up charges in two currencies (nothing is converted). Each series
@@ -55,12 +57,14 @@
 //     bonus paycheck), and the amounts compared are the last year's. This is
 //     the rule that keeps a store visited every week from being called a
 //     bill: its timing may be weekly, its amounts are not;
-//   - twice a year and yearly charges come too seldom to be judged on a
-//     similar amount: they need the same amount, and three charges, or two
-//     at exactly the same amount, to the cent, with nothing else from the
-//     merchant in the window, at a merchant that isn't a restaurant, a shop
-//     for food or a way of getting about (EVERYDAY): two visits a year apart
-//     to a restaurant are not a bill;
+//   - twice a year and yearly charges come seldom, so they need more: three
+//     charges at the same amount, or two at exactly the same amount, to the
+//     cent, with nothing else from the merchant in the window, at a merchant
+//     that isn't a restaurant, a shop for food or a way of getting about
+//     (EVERYDAY): two visits a year apart to a restaurant are not a bill. A
+//     renewal whose price moves each time (a six-month car policy, a domain)
+//     is found from three charges at similar amounts, but only in a category
+//     known to bill (not food, transport or general shopping: SHOPPING);
 //   - a PRICE CHANGE (a promotion ending, a plan upgraded) keeps the series:
 //     charges at one amount and then, on the same schedule, at another, each
 //     part agreeing within itself and one of them long enough to be a series.
@@ -70,11 +74,15 @@
 //   - PAY that keeps its schedule closely (6 deposits or more, nearly every
 //     scheduled date) may vary more (an hourly wage): the largest and smallest
 //     within 60% of the median, once a tenth of them at the ends are left out.
-//     Its amount is then the MEDIAN of the last half year's, which moves
-//     little from one paycheck to the next; a raise to a new fixed amount is
-//     followed as a price change is. Pay that keeps its schedule but varies
-//     more than that is listed as VARYING: kept apart, so the forecast can
-//     name it rather than drop it unseen.
+//     Its amount is then the AVERAGE of the last half year's (those same ends
+//     left out), which moves little from one paycheck to the next and comes
+//     to what was paid in all, even when two amounts alternate; a raise to a
+//     new fixed amount is followed as a price change is. Pay that keeps its
+//     schedule but varies more than that is listed as VARYING: kept apart, so
+//     the forecast can name it rather than drop it unseen. Two deposits a
+//     date from one payer (two people paid by one employer into a joint
+//     account) are split by amount, at the widest gap between them, and each
+//     part is judged as pay.
 // Evidence comes from a window before the merchant's latest charge (half a
 // year for weekly, a year for most, longer for twice a year and yearly), so a
 // bill is judged on what it has recently been. Where the window spans a change
@@ -91,19 +99,31 @@
 //   cadence's own, and is never twice a year or yearly: at a merchant charged
 //   that often, a few charges that line up are what chance gives. Its price
 //   changing is followed once two charges in a row are at the new one.
-// After the last charge that fit: one at the series' amount paid early (by
-// more than the tolerance, at most twice it) stands for the date it was paid
-// for, so it is never expected again on top of itself; an extra charge at
-// another amount (a repair fee beside a water bill) is not taken for the next
-// bill. A charge still pending counts for its date too: the forecast takes it
-// off the balance it starts from, so it is not expected again. A deposit
-// still pending does not count, as the forecast doesn't add it either.
+// After the last charge that fit: one at the series' same amount paid early
+// (by more than the tolerance, up to half a period or a month) stands for the
+// date it was paid for, so it is never expected again on top of itself; an
+// extra charge at another amount (a repair fee beside a water bill) is not
+// taken for the next bill. A charge still pending counts for its date too,
+// when its amount is near the bill's (a smoothie pending at the gym is not the
+// membership): the forecast takes it off the balance it starts from, so it is
+// not expected again. A deposit still pending does not count, as the
+// forecast doesn't add it either. A charge another series of the merchant
+// kept is never taken by this one, so a cancelled phone line, or a paycheck
+// that stopped, ends rather than take over the one that goes on; a new price
+// is followed by the series whose amount it is nearest.
+//
+// CARD PAYMENTS. A bill that pays a card off (Plaid's "credit card payment",
+// or a charge from checking matched, at its amount within a few days, by a
+// payment received on a card's side) is marked so, with the card when it is
+// known: a monthly total of bills leaves it out, the card's own bills being
+// in it already, and the forecast names a card whose payment it doesn't hold.
 //
 // IDENTITY. A series' id is its group (kind, account, merchant, currency) and
 // its amount when found. A dismissal ("not recurring", lib/planned.ts) saves
-// that id and applies to the series of the same group nearest its amount
-// (dismissedSeries), so it holds as amounts move, new charges come in and a
-// series is found anew.
+// that id and applies to the series of the same group nearest its amount, or
+// the amount it had before a price change, and only within a similar amount
+// (dismissedSeries): it holds as amounts move and new charges come in, and it
+// never moves to another subscription from the same merchant.
 //
 // DATES. Transaction dates are the bank's calendar days, so every date here is
 // a calendar day, counted in whole days (UTC arithmetic on the date alone, so a
@@ -152,9 +172,9 @@ export type Cadence =
 export type RecurringKind = 'bill' | 'income';
 
 /** How a series' amounts agree (THE RULES above): the same each time,
- *  similar, around a median (pay only), or varying more than the forecast can
- *  use (pay only, never forecast). */
-export type Agreement = 'same' | 'similar' | 'median' | 'varies';
+ *  similar, around an average (pay only), or varying more than the forecast
+ *  can use (pay only, never forecast). */
+export type Agreement = 'same' | 'similar' | 'average' | 'varies';
 
 /**
  * When something is expected, as a run of dates from the first one: every
@@ -184,15 +204,17 @@ export type RecurringSeries = {
   cadence: Cadence;
   /** The typical amount, positive whichever way the money goes: the median of
    *  the last three at its amount now (the latest of two), an amount actually
-   *  charged; the median of the last half year's for pay around a median. */
+   *  charged; the average of the last half year's for pay that varies. */
   amount: number;
   agreement: Agreement;
   /** The amount before its latest price change, when it had one. */
   previousAmount?: number;
-  /** It pays a card off (Plaid's "credit card payment"): the card's own
-   *  charges are counted where they are charged, so a monthly total of bills
-   *  leaves it out, while the forecast counts it, as the money leaving cash. */
+  /** It pays a card off (see CARD PAYMENTS): the card's own charges are
+   *  counted where they are charged, so a monthly total of bills leaves it
+   *  out, while the forecast counts it, as the money leaving cash. */
   paysCard?: true;
+  /** The card it pays, when the card's side shows the payment received. */
+  paysCardOf?: { institution: string; account: string };
   /** One per series (see the grouping above). */
   currency: string | null;
   /** The merchant's logo, if any charge in the series carried one. */
@@ -315,20 +337,29 @@ const MIN_ON_SCHEDULE = 0.75;
 const MIN_FILLED = 0.75;
 /** The one amount farthest from the median is forgiven among this many. */
 const OUTLIER_FROM = 5;
-/** Pay around a median: this many deposits or more, filling this share of the
- *  scheduled dates. */
-const MEDIAN_FEWEST = 6;
-const MEDIAN_FILLED = 0.9;
+/** Pay keeping its schedule closely: this many deposits or more, filling this
+ *  share of the scheduled dates. */
+const STEADY_FEWEST = 6;
+const STEADY_FILLED = 0.9;
 /** A run of exactly one amount, at a merchant split by amount, needs this
  *  many charges or more. */
 const RUN_FEWEST = 4;
-/** How far back a median of pay looks, in days before its latest deposit. */
-const MEDIAN_DAYS = 182;
+/** How far back an average of pay looks, in days before its latest deposit. */
+const AVERAGE_DAYS = 182;
+/** How far ahead of its date a charge at a series' same amount is taken as
+ *  paid early: half a period, never more than a month. */
+const EARLY_MAX_DAYS = 31;
+/** How many days apart a payment from checking and the payment received on a
+ *  card's side may post. */
+const CARD_PAYMENT_DAYS = 5;
 /** Plaid's detail for paying a card off (as lib/fire/inputs.ts reads it). */
 const CARD_PAYMENT = 'credit card payment';
 /** Categories of everyday spending, where two visits a year apart at the
  *  same amount are chance, not a bill. */
 const EVERYDAY: ReadonlySet<string> = new Set(['food and drink', 'transportation']);
+/** Categories of shopping, where a few visits half a year apart at similar
+ *  amounts are chance: a renewal at a moving price is never found in them. */
+const SHOPPING: ReadonlySet<string> = new Set(['food and drink', 'transportation', 'general merchandise']);
 
 /** How far back detection looks: two years and a little, so a yearly charge
  *  can be seen twice. The Activity tab loads one year; the server sends the
@@ -351,9 +382,15 @@ function rowKind(t: RecurringRow): RecurringKind | null {
   if (isExcluded(t) || isMoneyMovement(t)) return null;
   if (t.amount > 0) return 'bill';
   // A card payment received, on the card's side, settles purchases already
-  // counted: it earns nothing.
-  if (t.amount < 0 && t.category !== 'loan payments') return 'income';
+  // counted: it earns nothing. Nor does any money in on a card or a loan (a
+  // file's "payment/credit", or no category at all), a payment or a refund.
+  if (t.amount < 0 && t.category !== 'loan payments' && !owed(t)) return 'income';
   return null;
+}
+
+/** On a card or a loan: an account whose money in pays it off. */
+function owed(t: RecurringRow): boolean {
+  return t.account_type === 'credit' || t.account_type === 'loan';
 }
 
 /** Whether a posted row can belong to a series, and which way. */
@@ -501,21 +538,24 @@ function agreeing(amounts: number[], drop?: number): 'same' | 'similar' | null {
   return null;
 }
 
-/** Where a series' charges come from: a merchant's charges as a whole, or a
- *  run of one amount among them (see THE RULES). */
-type From = 'whole' | 'run';
+/** Where a series' charges come from: a merchant's charges as a whole, a run
+ *  of one amount among them, or one part of a payer's two deposits a date
+ *  (see THE RULES). */
+type From = 'whole' | 'run' | 'part';
 
-/** The fewest charges a series needs, by how its amounts agree. */
-function fewest(cadence: Cadence, agreement: Agreement, from: From): number {
+/** The fewest charges a series needs, by how its amounts agree. `billing` is a
+ *  bill in a category known to bill, outside SHOPPING. */
+function fewest(cadence: Cadence, agreement: Agreement, from: From, billing: boolean): number {
   const spec = SPECS[cadence];
   if (from === 'run') return SELDOM.has(cadence) ? Infinity : Math.max(spec.minSeen, RUN_FEWEST);
+  if (from === 'part') return STEADY_FEWEST;
   switch (agreement) {
     case 'same':
       return spec.minSeen;
     case 'similar':
-      return SELDOM.has(cadence) ? Infinity : spec.minSeen + 1;
+      return SELDOM.has(cadence) ? (billing ? spec.minSeen : Infinity) : spec.minSeen + 1;
     default:
-      return MEDIAN_FEWEST;
+      return STEADY_FEWEST;
   }
 }
 
@@ -546,18 +586,26 @@ function judgeAmounts(
   let start = kept.findIndex((k) => k.row.day >= last - 365);
   if (kept.length - start < 2) start = kept.length - 2;
   const amounts = kept.slice(start).map((k) => k.row.amount);
+  const billing = kind === 'bill' && kept.every((k) => k.row.t.category !== null && !SHOPPING.has(k.row.t.category));
   // Enough charges for how they agree; at the fewest, the same amount means
   // exactly the same, to the cent.
   const enough = (agreement: Agreement, n: number, xs: number[]) => {
-    const need = fewest(cadence, agreement, from);
+    const need = fewest(cadence, agreement, from, billing);
     return n > need || (n === need && (agreement !== 'same' || exact(xs)));
   };
+  const wide = () => consistent(amounts, WIDE, Math.max(amounts.length >= OUTLIER_FROM ? 1 : 0, Math.ceil(amounts.length / 10)));
 
   if (from === 'run') return exact(amounts) && enough('same', kept.length, amounts) ? { agreement: 'same', shift: 0 } : null;
+  // One part of two deposits a date: pay keeping its schedule closely, or nothing.
+  if (from === 'part') {
+    if (!strong) return null;
+    if (agreeing(amounts) === 'same') return { agreement: 'same', shift: 0 };
+    return wide() ? { agreement: 'average', shift: 0 } : null;
+  }
 
-  // Pay keeping its schedule closely is taken around its median unless it is
-  // the same each time (or the same at a new amount, a raise): a median of
-  // the last half year moves little, where the last few paychecks swing.
+  // Pay keeping its schedule closely is taken at its average unless it is the
+  // same each time (or the same at a new amount, a raise): an average of the
+  // last half year moves little, where the last few paychecks swing.
   const steadyPay = kind === 'income' && strong;
   const all = agreeing(amounts);
   if (all === 'same' && enough('same', kept.length, amounts)) return { agreement: 'same', shift: 0 };
@@ -589,10 +637,7 @@ function judgeAmounts(
       if (rest && enough(rest, kept.length - 1, head)) return { agreement: rest, shift: 0 };
     }
   }
-  if (steadyPay) {
-    const drop = Math.max(amounts.length >= OUTLIER_FROM ? 1 : 0, Math.ceil(amounts.length / 10));
-    return { agreement: consistent(amounts, WIDE, drop) ? 'median' : 'varies', shift: 0 };
-  }
+  if (steadyPay) return { agreement: wide() ? 'average' : 'varies', shift: 0 };
   return null;
 }
 
@@ -622,7 +667,7 @@ function judge(cadence: Cadence, rows: Row[], fit: Fit, kind: RecurringKind, fro
   if (filled < MIN_FILLED) return null;
   // Two charges make a series only with nothing else in the window.
   if (kept.length === 2 && rows.length > 2) return null;
-  const strong = kept.length >= MEDIAN_FEWEST && filled >= MEDIAN_FILLED;
+  const strong = kept.length >= STEADY_FEWEST && filled >= STEADY_FILLED;
   const amounts = judgeAmounts(cadence, kept, kind, from, strong);
   if (!amounts) return null;
   const meanResid = kept.reduce((sum, k) => sum + k.resid, 0) / kept.length;
@@ -690,29 +735,46 @@ function exactRuns(rows: Row[]): Row[][] {
 }
 
 /** The typical amount of charges (oldest first): the median of the last
- *  three (the latest of two); for pay around a median, of the last half
- *  year's. */
-function typical(kept: Found['kept'], agreement: Agreement): number {
-  if (agreement === 'median' || agreement === 'varies') {
+ *  three (the latest of two), or for a twice-yearly or yearly charge at a
+ *  moving price the latest; for pay that varies, the average of the last half
+ *  year's, leaving out any far from the rest (a bonus, beyond 60% of the
+ *  median), so pay at two alternating amounts comes to what was paid. */
+function typical(kept: Found['kept'], agreement: Agreement, cadence?: Cadence): number {
+  if (agreement === 'average' || agreement === 'varies') {
     const last = kept[kept.length - 1].row.day;
-    const recent = kept.filter((k) => k.row.day >= last - MEDIAN_DAYS);
-    return median((recent.length >= 3 ? recent : kept).map((k) => k.row.amount));
+    const recent = kept.filter((k) => k.row.day >= last - AVERAGE_DAYS);
+    const amounts = (recent.length >= 3 ? recent : kept).map((k) => k.row.amount);
+    const med = median(amounts);
+    const use = amounts.filter((a) => near(a, med, WIDE));
+    return use.reduce((sum, a) => sum + a, 0) / use.length;
   }
+  if (agreement === 'similar' && cadence && SELDOM.has(cadence)) return kept[kept.length - 1].row.amount;
   const recent = kept.slice(-3).map((k) => k.row.amount);
   return recent.length >= 3 ? median(recent) : recent[recent.length - 1];
 }
 
 /** The series a fit makes. `all` is every posted row of its group (oldest
  *  first) and `pending` the group's pending charges, for what came after the
- *  last charge that fit (see the header). */
-function toSeries(group: string, kind: RecurringKind, found: Found, from: From, all: Row[], pending: Row[]): RecurringSeries {
+ *  last charge that fit (see the header); `claimed` the rows the group's
+ *  series kept or took, never taken again (each taken here is added), and
+ *  `rivals` the other series' amounts, for whose a new price is. */
+function toSeries(
+  group: string,
+  kind: RecurringKind,
+  found: Found,
+  from: From,
+  all: Row[],
+  pending: Row[],
+  claimed: Set<Row>,
+  rivals: number[]
+): RecurringSeries {
   const { spec, fit, kept, agreement, shift } = found;
   const latest = kept[kept.length - 1].row.t;
   const currency = currencyOf(latest);
   // A median of an even count is between two amounts: to the currency's
   // minor unit (the cent, the yen).
   const round = (n: number) => toMinorUnits(n, currency ?? 'USD');
-  let amount = round(typical(kept.slice(shift), agreement));
+  let amount = round(typical(kept.slice(shift), agreement, found.cadence));
   // A price it changed from, when it was charged at least twice (one first
   // charge apart is a prorated first bill).
   let previousAmount = shift >= 2 ? round(typical(kept.slice(0, shift), agreement)) : undefined;
@@ -724,25 +786,34 @@ function toSeries(group: string, kind: RecurringKind, found: Found, from: From, 
   const tolerance = spec.tolerance;
   const rule = agreement === 'same' ? SAME : agreement === 'similar' ? SIMILAR : WIDE;
   const matches = (a: number) => (from === 'run' ? cents(a) === cents(amount) : near(a, amount, rule));
-  const taken = new Set(kept.map((k) => k.row));
-  const later = [...all.filter((r) => r.day > lastDay && !taken.has(r)), ...pending.filter((r) => r.day > lastDay)].sort((a, b) => a.day - b.day);
+  const sameAmount = (a: number) => (from === 'run' ? cents(a) === cents(amount) : near(a, amount, SAME));
+  // How early a charge at the same amount may come: half a period, at most a
+  // month, never less than twice the tolerance.
+  const early = Math.max(2 * tolerance, Math.min(Math.floor(spec.period / 2), EARLY_MAX_DAYS));
+  // Nearer this series' amount than any other's of the merchant.
+  const ours = (a: number) => rivals.every((x) => Math.abs(a - amount) < Math.abs(a - x));
+  const later = [...all, ...pending].filter((r) => r.day > lastDay && !claimed.has(r)).sort((a, b) => a.day - b.day);
   const closest = (list: Row[], due: number) =>
     list.reduce<Row | null>((best, r) => (!best || Math.abs(r.day - due) < Math.abs(best.day - due) ? r : best), null);
   while (later.length > 0) {
     const due = slotDay(spec, fit, lastSlot + 1);
-    // Early by up to twice the tolerance, or on time.
-    const options = later.filter((r) => r.day > lastDay && r.day >= due - 2 * tolerance && r.day <= due + tolerance);
+    const options = later.filter((r) => r.day > lastDay && !claimed.has(r) && r.day >= due - early && r.day <= due + tolerance);
     if (options.length === 0) break;
     const onTime = options.filter((r) => Math.abs(r.day - due) <= tolerance);
+    // On time at the series' own amount, or early at its same amount.
     let pick = closest(
-      options.filter((r) => matches(r.amount)),
+      options.filter((r) => (Math.abs(r.day - due) <= tolerance ? matches(r.amount) : sameAmount(r.amount))),
       due
     );
     if (!pick && from === 'run') {
-      // A new price two dates running, at a merchant split by amount.
+      // A new price two dates running, at a merchant split by amount, when it
+      // is nearer this series' amount than any other's.
       const next = slotDay(spec, fit, lastSlot + 2);
       const priced = onTime.find(
-        (r) => !r.t.pending && later.some((q) => !q.t.pending && q.day > r.day && cents(q.amount) === cents(r.amount) && Math.abs(q.day - next) <= tolerance)
+        (r) =>
+          !r.t.pending &&
+          ours(r.amount) &&
+          later.some((q) => !q.t.pending && !claimed.has(q) && q.day > r.day && cents(q.amount) === cents(r.amount) && Math.abs(q.day - next) <= tolerance)
       );
       if (priced) {
         previousAmount = amount;
@@ -750,14 +821,16 @@ function toSeries(group: string, kind: RecurringKind, found: Found, from: From, 
         pick = priced;
       }
     }
-    // A merchant of one series charging on time, still pending at another
-    // amount: that date's charge.
+    // A merchant of one series charging on time, still pending at a near
+    // amount (a new price, say): that date's charge. Not a smoothie pending
+    // at the gym.
     if (!pick && from === 'whole')
       pick = closest(
-        onTime.filter((r) => r.t.pending),
+        onTime.filter((r) => r.t.pending && near(r.amount, amount, SIMILAR)),
         due
       );
     if (!pick) break;
+    claimed.add(pick);
     lastSlot += 1;
     lastDay = pick.day;
     if (pick.t.pending) isPending = true;
@@ -783,7 +856,6 @@ function toSeries(group: string, kind: RecurringKind, found: Found, from: From, 
     amount,
     agreement,
     ...(previousAmount !== undefined && cents(previousAmount) !== cents(amount) ? { previousAmount } : {}),
-    ...(latest.subcategory === CARD_PAYMENT ? { paysCard: true as const } : {}),
     currency,
     logo_url: withLogo?.t.logo_url ?? null,
     firstDate: kept[0].row.t.date,
@@ -796,6 +868,58 @@ function toSeries(group: string, kind: RecurringKind, found: Found, from: From, 
 }
 
 const toRow = (t: RecurringRow): Row => ({ day: dayNumber(t.date), month: monthIndex(t.date), amount: Math.abs(t.amount), t });
+
+/** Whether a payer's deposits come two a date (within a day): at least half
+ *  of them beside another. */
+function twoADate(rows: Row[]): boolean {
+  let paired = 0;
+  for (let i = 0; i < rows.length; i++) if ((i > 0 && rows[i].day - rows[i - 1].day <= 1) || (i + 1 < rows.length && rows[i + 1].day - rows[i].day <= 1)) paired++;
+  return paired * 2 >= rows.length;
+}
+
+/** Rows split in two by amount, at the widest gap between their amounts,
+ *  each part oldest first. */
+function splitByAmount(rows: Row[]): Row[][] {
+  const byAmount = [...rows].sort((a, b) => a.amount - b.amount);
+  let gap = -1;
+  let cut = 0;
+  for (let i = 1; i < byAmount.length; i++) {
+    const g = byAmount[i].amount - byAmount[i - 1].amount;
+    if (g > gap) {
+      gap = g;
+      cut = i;
+    }
+  }
+  return [byAmount.slice(0, cut), byAmount.slice(cut)].map((part) => part.sort((a, b) => a.day - b.day));
+}
+
+/** The payments received on cards' sides, by amount in cents: the day and
+ *  the card (see CARD PAYMENTS). */
+function cardPayments(txns: readonly RecurringRow[]): Map<number, { day: number; institution: string; account: string }[]> {
+  const out = new Map<number, { day: number; institution: string; account: string }[]>();
+  for (const t of txns) {
+    if (t.pending || t.amount >= 0 || isExcluded(t) || t.account_type !== 'credit') continue;
+    const c = cents(-t.amount);
+    const list = out.get(c) ?? [];
+    list.push({ day: dayNumber(t.date), institution: t.institution_name, account: t.account_name ?? '' });
+    out.set(c, list);
+  }
+  return out;
+}
+
+/** Whether a bill's charges pay a card off, and which: Plaid's detail on its
+ *  latest charge, or its latest two (its only one) matched on a card's side at
+ *  their amount within CARD_PAYMENT_DAYS. */
+function paidCard(
+  kept: Found['kept'],
+  payments: Map<number, { day: number; institution: string; account: string }[]>
+): { paysCard?: true; paysCardOf?: { institution: string; account: string } } {
+  const recent = kept.slice(-2).map((k) => k.row);
+  const cards = recent.map((r) => (payments.get(cents(r.amount)) ?? []).find((p) => Math.abs(p.day - r.day) <= CARD_PAYMENT_DAYS));
+  const card = cards.every((c) => c !== undefined) && cards.every((c) => c!.institution === cards[0]!.institution && c!.account === cards[0]!.account) ? cards[0] : undefined;
+  if (card) return { paysCard: true, paysCardOf: { institution: card.institution, account: card.account } };
+  return recent[recent.length - 1].t.subcategory === CARD_PAYMENT ? { paysCard: true } : {};
+}
 
 /**
  * Every recurring series in the rows: bills first, then income, each largest
@@ -814,6 +938,7 @@ export function detectRecurring(txns: readonly RecurringRow[]): RecurringSeries[
     (t.pending ? g.pending : g.posted).push(t);
   }
 
+  const payments = cardPayments(txns);
   const out: RecurringSeries[] = [];
   const ids = new Set<string>();
   for (const [key, g] of groups) {
@@ -833,16 +958,28 @@ export function detectRecurring(txns: readonly RecurringRow[]): RecurringSeries[
       const f = bestCadence(run, g.kind, 'run');
       if (f) found.push({ f, from: 'run' });
     }
+    // Two deposits a date from one payer, at amounts that vary: each part as
+    // pay (see THE RULES).
+    if (g.kind === 'income' && found.length === 0 && twoADate(rows))
+      for (const part of splitByAmount(rows)) {
+        const f = bestCadence(part, g.kind, 'part');
+        if (f) found.push({ f, from: 'part' });
+      }
     // Pay that keeps its schedule at amounts too varied to forecast, listed
     // when nothing else was found.
     if (found.length === 0 && whole) found.push({ f: whole, from: 'whole' });
-    for (const { f, from } of found) {
-      const s = toSeries(key, g.kind, f, from, rows, pending);
+    // What each series kept is its own (see the header).
+    const claimed = new Set<Row>(found.flatMap(({ f }) => f.kept.map((k) => k.row)));
+    const built = found.map(({ f, from }, i) => {
+      const rivals = found.filter((_, j) => j !== i).map(({ f: o }) => typical(o.kept.slice(o.shift), o.agreement));
+      return { s: toSeries(key, g.kind, f, from, rows, pending, claimed, rivals), f };
+    });
+    for (const { s, f } of built) {
       // Never two ids alike: a dismissal must name one series.
       let id = s.id;
       for (let n = 2; ids.has(id); n++) id = `${s.id}#${n}`;
       ids.add(id);
-      out.push({ ...s, id });
+      out.push({ ...s, id, ...(g.kind === 'bill' && s.accountType !== 'credit' ? paidCard(f.kept, payments) : {}) });
     }
   }
   return out.sort((a, b) => (a.kind === b.kind ? b.amount - a.amount : a.kind === 'bill' ? -1 : 1));
@@ -974,8 +1111,10 @@ export function upcomingBills(
 /**
  * Which series the person said aren't recurring, each with the dismissal that
  * says so (see IDENTITY): a dismissal names a group and an amount, and applies
- * to the series of that group nearest the amount, each series and each
- * dismissal at most once.
+ * to the series of that group nearest the amount (or the amount it had before
+ * a price change), within a similar amount (25%, or 5 units), each series and
+ * each dismissal at most once. One with no series near its amount waits: iCloud
+ * dismissed is never Apple Music dismissed, once iCloud is gone.
  */
 export function dismissedSeries(series: readonly RecurringSeries[], dismissed: readonly string[]): Map<string, string> {
   const byGroup = new Map<string, RecurringSeries[]>();
@@ -988,8 +1127,11 @@ export function dismissedSeries(series: readonly RecurringSeries[], dismissed: r
   for (const entry of dismissed) {
     const m = /^(.*)\|(\d+)(?:#\d+)?$/.exec(entry);
     if (!m) continue;
-    const amount = Number(m[2]);
-    for (const s of byGroup.get(m[1]) ?? []) pairs.push({ gap: Math.abs(cents(s.amount) - amount), id: s.id, entry });
+    const saved = Number(m[2]) / 100;
+    for (const s of byGroup.get(m[1]) ?? []) {
+      const gap = Math.min(...[s.amount, s.previousAmount ?? Infinity].map((a) => Math.abs(a - saved)));
+      if (gap <= Math.max(saved * SIMILAR.share, SIMILAR.floor)) pairs.push({ gap, id: s.id, entry });
+    }
   }
   pairs.sort((a, b) => a.gap - b.gap);
   const out = new Map<string, string>();
@@ -1039,8 +1181,9 @@ const RECENT_PER_MERCHANT = 2;
  * merchant charged in `recent` too (a series that stopped over a year ago is
  * nothing to expect) but at most `limits.recent` times, at most
  * `limits.older` times in `older`, and at the same amount as one of its
- * charges this year (within 2% or 50 cents). That is what twice-yearly and
- * yearly series need, since they need the same amount, and little else. The
+ * charges this year (within 2% or 50 cents), or a similar one in a category
+ * known to bill (a renewal at a moving price). That is what twice-yearly and
+ * yearly series need, and little else. The
  * server keeps a wider set with its cache, chosen before the person's
  * exclusions are applied, and narrows it after them.
  */
@@ -1072,7 +1215,7 @@ export function olderRowsForDetection<T extends RecurringRow>(
       amounts.length <= limits.recent &&
       o !== undefined &&
       o <= limits.older &&
-      amounts.some((a) => near(Math.abs(t.amount), a, SAME))
+      amounts.some((a) => near(Math.abs(t.amount), a, t.category !== null && !SHOPPING.has(t.category) ? SIMILAR : SAME))
     );
   });
 }

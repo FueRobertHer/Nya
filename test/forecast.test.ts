@@ -253,7 +253,8 @@ describe('what moves it', () => {
       row(`${m}-20`, 10.99, { name: 'Spotify', ...card }),
       row(`${m}-25`, -26.48, { name: 'Payment Thank You', category: 'loan payments', ...card }),
       row(`${m}-25`, 26.48, { name: 'CHASE CREDIT CRD AUTOPAY', category: 'loan payments', subcategory: 'credit card payment' }),
-      // A statement credit on the card is not cash coming in either.
+      // A statement credit on the card is not income at all: money in on a
+      // card pays it off or refunds a purchase.
       row(`${m}-03`, -5, { name: 'Card perk credit', category: 'income', ...card }),
     ]);
     const s = detectRecurring(rows);
@@ -261,9 +262,10 @@ describe('what moves it', () => {
       ['CHASE CREDIT CRD AUTOPAY', 'depository'],
       ['Netflix', 'credit'],
       ['Spotify', 'credit'],
-      ['Card perk credit', 'credit'],
     ]);
-    expect(s.map(countsInForecast)).toEqual([true, false, false, false]);
+    expect(s.map(countsInForecast)).toEqual([true, false, false]);
+    // The autopay pays the card its side shows the payment received on.
+    expect(s[0]).toMatchObject({ paysCard: true, paysCardOf: { institution: 'Chase', account: 'Sapphire' } });
     const { events } = forecastEvents({ series: s, planned: [], currency: 'USD', today: '2026-10-09', until: '2026-11-08' });
     expect(events.map((e) => [e.date, e.name, e.amount])).toEqual([['2026-10-25', 'CHASE CREDIT CRD AUTOPAY', -26.48]]);
     expect(buildForecast(1000, events, '2026-10-09', 30, 0, 'USD').end).toBe(973.52);
@@ -453,6 +455,24 @@ describe('what it says it may be missing', () => {
     expect(notes([inst({ error: 'x', stale_as_of: '2026-10-03', stale_missing: 2 })])[1]).toBe("2 accounts at Chase couldn't be shown, so any cash in them isn't in this forecast.");
     // Missing from an otherwise good fetch.
     expect(notes([inst({ unconfirmed_missing: 1 })])).toEqual(["1 account at Chase stopped reporting, so any cash in it isn't in this forecast."]);
+  });
+
+  test("a card's payment due that the forecast doesn't hold is named, with its statement balance", () => {
+    const sapphire = { account_id: 'card', name: 'Sapphire', type: 'credit', balance: 812.4, currency: 'USD', liability: { minimum_payment: 40, next_due_date: '2026-10-22', last_statement_balance: 812.4 } };
+    const withCard = [inst({ accounts: [acct(), sapphire] })];
+    const cardNotes = (series: Parameters<typeof forecastNotes>[0]['series']) =>
+      forecastNotes({ institutions: withCard, position: cashPosition(withCard), eventsLeftOut: [], series, until: '2026-11-08', today: '2026-10-09', days });
+    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: false } })).toEqual([
+      "Sapphire's payment, statement balance $812.40, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
+    ]);
+    // Held: a payment detected from checking to that card.
+    expect(cardNotes({ cardsPaid: { known: new Set(['Chase|Sapphire']), unknown: false } })).toEqual([]);
+    // A payment held to a card it can't tell may be this one: not said.
+    expect(cardNotes({ cardsPaid: { known: new Set(), unknown: true } })).toEqual([]);
+    // Due after the forecast's end, or nothing owed: not said.
+    expect(forecastNotes({ institutions: withCard, position: cashPosition(withCard), eventsLeftOut: [], series: { cardsPaid: { known: new Set(), unknown: false } }, until: '2026-10-20', today: '2026-10-09', days })).toEqual([]);
+    const paidOff = [inst({ accounts: [acct(), { ...sapphire, liability: { ...sapphire.liability, last_statement_balance: 0 } }] })];
+    expect(forecastNotes({ institutions: paidOff, position: cashPosition(paidOff), eventsLeftOut: [], series: { cardsPaid: { known: new Set(), unknown: false } }, until: '2026-11-08', today: '2026-10-09', days })).toEqual([]);
   });
 
   test('pay that stopped coming or varies too much, and a series on an account of unknown type', () => {

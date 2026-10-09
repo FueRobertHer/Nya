@@ -39,8 +39,10 @@ export type PlannedItem = {
   cadence: PlannedCadence;
 };
 
-/** The figure the forecast warns below, with the currency it was set in. */
-export type Threshold = { amount: number; currency: string };
+/** The figure the forecast warns below, with the currency it was set in;
+ *  null for one saved before its currency was kept, read in the forecast's
+ *  currency (upgradePlanned). */
+export type Threshold = { amount: number; currency: string | null };
 
 export type Planned = {
   version: 1;
@@ -98,7 +100,16 @@ export function isPlanned(v: unknown): v is Planned {
 function isThresholdShape(v: unknown): v is Threshold {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
   const t = v as Record<string, unknown>;
-  return typeof t.amount === 'number' && Number.isFinite(t.amount) && typeof t.currency === 'string';
+  return typeof t.amount === 'number' && Number.isFinite(t.amount) && (typeof t.currency === 'string' || t.currency === null);
+}
+
+/** A stored plan in the current shape: a warning saved as a bare number,
+ *  before its currency was kept, becomes that amount in the forecast's
+ *  currency (a null currency). Anything else is left for isPlanned. */
+export function upgradePlanned(stored: unknown): unknown {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored;
+  const p = stored as Record<string, unknown>;
+  return typeof p.threshold === 'number' ? { ...p, threshold: { amount: p.threshold, currency: null } } : stored;
 }
 
 function isPlannedItemShape(v: unknown): v is PlannedItem {
@@ -185,20 +196,21 @@ function parseThreshold(raw: unknown): Threshold | null | undefined {
   if (raw === null) return null;
   if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const t = raw as Record<string, unknown>;
-  if (typeof t.currency !== 'string' || !knownCurrency(t.currency)) return undefined;
+  // Null: one saved before its currency was kept, sent back as it was read.
+  if (t.currency !== null && (typeof t.currency !== 'string' || !knownCurrency(t.currency))) return undefined;
   if (typeof t.amount !== 'number' || !Number.isFinite(t.amount) || t.amount < 0 || t.amount > MAX_AMOUNT) return undefined;
-  if (amountUnitsError(t.amount, t.currency)) return undefined;
+  if (t.currency !== null && amountUnitsError(t.amount, t.currency)) return undefined;
   return { amount: t.amount, currency: t.currency };
 }
 
 /** The low-balance warning in force for a forecast in `currency`: the one
  *  set, when it was set in that currency; otherwise the default, with the one
  *  set in another currency as `other`, for the forecast to say so. */
-export function thresholdOf(planned: Pick<Planned, 'threshold'>, currency: string | null): { amount: number; set: boolean; other?: Threshold } {
+export function thresholdOf(planned: Pick<Planned, 'threshold'>, currency: string | null): { amount: number; set: boolean; other?: Threshold & { currency: string } } {
   const t = planned.threshold;
   if (!t) return { amount: DEFAULT_THRESHOLD, set: false };
-  if (currency === null || t.currency === currency) return { amount: t.amount, set: true };
-  return { amount: DEFAULT_THRESHOLD, set: false, other: t };
+  if (currency === null || t.currency === null || t.currency === currency) return { amount: t.amount, set: true };
+  return { amount: DEFAULT_THRESHOLD, set: false, other: { amount: t.amount, currency: t.currency } };
 }
 
 /** A repeating item's schedule, from its date; null for a one-off. */
