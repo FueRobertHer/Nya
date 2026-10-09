@@ -135,7 +135,18 @@ export default function PlannedCard({
             <table>
               <tbody>
                 {items.map(({ item, next }) => (
-                  <tr key={item.id} className="acct-row" onClick={() => editable && startEdit(item)}>
+                  <tr
+                    key={item.id}
+                    className="acct-row"
+                    onClick={() => editable && startEdit(item)}
+                    // Reachable by keyboard too: Enter or Space edits it.
+                    tabIndex={editable ? 0 : undefined}
+                    onKeyDown={(e) => {
+                      if (!editable || (e.key !== 'Enter' && e.key !== ' ')) return;
+                      e.preventDefault();
+                      startEdit(item);
+                    }}
+                  >
                     <td>
                       <div className="txn-text">
                         {item.name}

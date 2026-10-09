@@ -123,7 +123,19 @@ export default function RecurringCard({
           const s = r.series;
           const isOpen = open === s.id;
           return (
-            <tr key={s.id} className={`acct-row${r.status === 'ended' ? ' recurring-ended' : ''}`} onClick={() => setOpen(isOpen ? null : s.id)}>
+            <tr
+              key={s.id}
+              className={`acct-row${r.status === 'ended' ? ' recurring-ended' : ''}`}
+              onClick={() => setOpen(isOpen ? null : s.id)}
+              // Reachable by keyboard too: Enter or Space opens it.
+              tabIndex={0}
+              aria-expanded={isOpen}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                e.preventDefault();
+                setOpen(isOpen ? null : s.id);
+              }}
+            >
               <td>
                 <div className="txn-main">
                   {s.logo_url ? (
