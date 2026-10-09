@@ -110,7 +110,9 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const READS = new Set(['get', 'hget', 'hgetall', 'hkeys', 'hlen', 'hexists', 'mget', 'hmget', 'ttl', 'exists', 'scan', 'type', 'strlen', 'hvals']);
-const READ_SCRIPTS = new Set(['-- nya:repo-read-entries', '-- nya:repo-read-entry-hashed', '-- nya:repo-counter-read']);
+// The address's count is read with its window's end (READ_IN_WINDOW): the
+// only write it can make gives a count found without one an expiry.
+const READ_SCRIPTS = new Set(['-- nya:repo-read-entries', '-- nya:repo-read-entry-hashed', '-- nya:repo-counter-read', '-- nya:ratelimit-read']);
 /** What a request wrote: the commands that aren't reads, a script by its name. */
 function writes(): string[] {
   return sent.flatMap(({ cmd, args }) => {
@@ -306,6 +308,43 @@ describe('the edges of arguments and messages', () => {
     await saveManualAccount(ctx, { account_id: 'manual_cash', name: 'Cash', institution_name: 'Cash', type: 'depository', subtype: null, balance: 40, updated_at: '1970-01-01T00:00:00.000Z' });
     const sentence = (await tool('get_net_worth', { include_history: false })).content[0].text;
     expect(sentence).toBe('Net worth 40.00 USD.');
+  });
+});
+
+describe('rows imported from a file', () => {
+  test('are served as the typed ones are, saying where they came from, and an ATM row counts as the app counts it', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const now = new Date().toISOString();
+    const before = (await manualTxnStore.get(ctx, 'manual_wallet'))!;
+    const imported = (id: string, name: string, amount: number, over: Record<string, unknown> = {}) => ({
+      id: `manual-txn:${id}-0000-4000-8000-000000000000`,
+      account_id: 'manual_wallet',
+      date: daysAgo(2),
+      amount,
+      currency: 'USD',
+      name,
+      category: 'general merchandise',
+      note: null,
+      source: 'import:ofx',
+      source_id: `FITID-${id}`,
+      import_id: 'import_review_1',
+      created_at: now,
+      updated_at: now,
+      ...over,
+    });
+    await manualTxnStore.set(ctx, 'manual_wallet', {
+      ...before,
+      rows: [...before.rows, imported('00000001', 'Hardware store', 30), imported('00000002', 'ATM withdrawal', 60, { transaction_code: 'atm' })],
+    });
+    const { body } = await call('transactions', `from=${daysAgo(3)}`);
+    const byName = Object.fromEntries(body.transactions.map((t: any) => [t.name, t]));
+    expect(byName['Hardware store']).toMatchObject({ source: 'import:ofx', account_id: 'manual_wallet', institution: 'Cash', is_transfer: false });
+    expect(byName['ATM withdrawal']).toMatchObject({ source: 'import:ofx', is_transfer: true });
+    expect(byName['Farmers market'].source).toBe('manual');
+    // Counted as the Activity tab counts them: the purchase in, the cash taken out not.
+    const before3 = (await call('spending', `from=${daysAgo(3)}`)).body;
+    expect(before3.categories.find((c: any) => c.category === 'general merchandise')?.spent).toBeGreaterThanOrEqual(30);
+    expect(before3.transfers).toBeGreaterThanOrEqual(1);
   });
 });
 

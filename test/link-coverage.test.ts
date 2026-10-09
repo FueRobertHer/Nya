@@ -431,6 +431,70 @@ describe('transactions from an Item without Transactions', () => {
     expect(plaid.syncCalls).toHaveLength(0);
   });
 
+  // Rows imported from a bank's file (app/api/import) are rows of the same
+  // manual book, so they bring spending in the same way, and undoing the
+  // import, which takes them out again, brings the sentence back.
+  test('rows imported from a file beside an investments-only connection count as rows entered by hand do', async () => {
+    await addRetirement();
+    await saveManualAccount(ctx, {
+      account_id: 'manual_checking-1',
+      name: 'Checking',
+      institution_name: 'Cascade CU',
+      type: 'depository',
+      subtype: 'checking',
+      balance: 1000,
+      updated_at: '2026-10-01T12:00:00.000Z',
+    });
+    const imports = await import('@/app/api/import/route');
+    const compact = (d: string) => d.replace(/-/g, '');
+    const statement = [
+      'OFXHEADER:100',
+      'DATA:OFXSGML',
+      'VERSION:102',
+      '',
+      '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD',
+      '<BANKACCTFROM><BANKID>325081403<ACCTID>0001234567<ACCTTYPE>CHECKING</BANKACCTFROM><BANKTRANLIST>',
+      `<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>${compact(daysAgo(3))}<TRNAMT>-42.10<FITID>F1<NAME>CORNER GROCER</STMTTRN>`,
+      `<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>${compact(daysAgo(5))}<TRNAMT>1500.00<FITID>F2<NAME>PAYROLL</STMTTRN>`,
+      '</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>',
+    ].join('\r\n');
+    const form = new FormData();
+    form.set('file', new Blob([statement]), 'checking.ofx');
+    form.set('meta', JSON.stringify({ action: 'import', account_id: 'manual_checking-1', file_name: 'checking.ofx', options: {} }));
+    const imported = await imports.POST(new Request('http://x/api/import', { method: 'POST', body: form }));
+    expect(imported.status).toBe(200);
+    const { import_id, imported: added } = await imported.json();
+    expect(added).toBe(2);
+    for (const fresh of [true, false]) {
+      const res = await transactions(fresh);
+      expect(res.body.from_cache).toBe(!fresh);
+      expect(res.body.transactions.map((t: any) => [t.name, t.source])).toEqual([
+        ['CORNER GROCER', 'import:ofx'],
+        ['PAYROLL', 'import:ofx'],
+      ]);
+      expect(res.body.without_transactions).toEqual([{ item_id: 'item_ret', institution_name: 'Empower', reason: 'investment_accounts' }]);
+      expect(res.body.connections).toBe(1);
+      const view = noTransactionsView(res.body);
+      expect(noSpending(view, res.body.transactions.length)).toBeNull();
+      expect(withoutNote(view, res.body.transactions.length)).toBe('Empower holds no bank account or card, so no transactions come from it.');
+    }
+    // Undone, there are none again, and the views say why.
+    const undone = await imports.DELETE(
+      new Request('http://x/api/import', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_id: 'manual_checking-1', import_id, confirm: true }),
+      })
+    );
+    expect(undone.status).toBe(200);
+    const after = await transactions(false);
+    expect(after.body.transactions).toEqual([]);
+    const view = noTransactionsView(after.body);
+    expect(noSpending(view, 0)).toEqual({ lead: 'Your connected accounts are investment accounts', remedy: 'connect a bank or card' });
+    expect(withoutNote(view, 0)).toBeNull();
+    expect(plaid.syncCalls).toHaveLength(0);
+  });
+
   test('a connection with a loan and no bank account or card is said as that', async () => {
     const loan = { ...checking('acct_loan'), name: 'Mortgage', type: 'loan', subtype: 'mortgage' };
     await addItem('item_loan', 'Mortgage servicer', [loan], { billed: false });

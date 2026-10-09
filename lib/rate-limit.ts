@@ -10,9 +10,10 @@
 //     use the download to guess the password faster than the login allows. It
 //     runs before anyone, or any container, is known, so it can't live in
 //     one, and the storage seam (lib/repo.ts) keeps containers only: it is the
-//     login's own Redis counter, moved here unchanged from app/api/login so
-//     both routes share it. Fails open if Redis is unreachable, as the login
-//     always has: being able to sign in beats a rate limit.
+//     login's own Redis counter, moved here from app/api/login so both routes
+//     share it, and counted with its expiry in one step (COUNT_IN_WINDOW).
+//     Fails open if Redis is unreachable, as the login always has: being able
+//     to sign in beats a rate limit.
 //   - API TOKENS THAT DON'T WORK, per IP, environment-wide (lib/api-http.ts):
 //     a request to the read-only API or the MCP server whose token is in the
 //     right form but doesn't check out costs two reads, so an address that
@@ -22,7 +23,9 @@
 //     the count's. Every request with a token in the right form, good ones
 //     too, reads the count first: one read more. Like the wrong passwords, it
 //     runs before any container is known, so it is the same kind of
-//     environment-wide counter (ratelimit:api:<ip>), never backed up. A token
+//     environment-wide counter (ratelimit:api:<ip>), counted and read with
+//     its expiry in one step as the wrong passwords are (COUNT_IN_WINDOW,
+//     READ_IN_WINDOW), and never backed up. A token
 //     not even in the right form costs nothing and isn't counted. Fails open,
 //     as the login's does: a limit that can't be read is no reason to refuse
 //     a good token.
@@ -45,6 +48,36 @@ import type { Ctx } from './containers';
 import { DOWNLOADS_PER_WINDOW, DOWNLOAD_WINDOW_SECONDS } from './download-limit';
 import { API_AUTH_MAX_FAILURES, API_AUTH_WINDOW_SECONDS } from './api-limits';
 
+// ---- Counting by address ----
+
+/**
+ * Counts one in an address's window and answers the count, in one step: INCR,
+ * then the window (ARGV[1] seconds) as the count's expiry whenever it has
+ * none, which a first count never has. Sent as INCR and then EXPIRE, a request
+ * that died between the two left a count that never ended, and its address
+ * locked out until someone deleted the key; one script can't stop part way. A
+ * TTL of 0 is under a second left: that window is still running, and keeps its
+ * end. The first line names the script for the test double. Also the demo
+ * sign-in's (app/api/demo/sign-in).
+ */
+export const COUNT_IN_WINDOW = `-- nya:ratelimit-count
+local n = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return n`;
+
+/**
+ * An address's count as it stands (as stored, for the client to parse), or 0
+ * with none, by the same rule: a count found without an expiry (left by the
+ * code before COUNT_IN_WINDOW, or written by hand) is given a whole window, so
+ * an address already locked out for good is let in again when it ends. The
+ * only write a read makes, and it only ever ends a window.
+ */
+export const READ_IN_WINDOW = `-- nya:ratelimit-read
+local n = redis.call('GET', KEYS[1])
+if not n then return 0 end
+if redis.call('TTL', KEYS[1]) == -1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return n`;
+
 // ---- Wrong passwords ----
 
 export const LOGIN_MAX_FAILURES = 10;
@@ -61,20 +94,18 @@ function loginKey(req: Request): string {
  *  counter can't be read (fails open, see the header). */
 export async function passwordAttemptsExhausted(req: Request): Promise<boolean> {
   try {
-    const failures = await redis().get<number>(loginKey(req));
-    return failures !== null && Number(failures) >= LOGIN_MAX_FAILURES;
+    const failures = await redis().eval(READ_IN_WINDOW, [loginKey(req)], [String(LOGIN_WINDOW_SECONDS)]);
+    return Number(failures) >= LOGIN_MAX_FAILURES;
   } catch {
     // Redis unavailable: skip the limiter rather than lock the user out.
     return false;
   }
 }
 
-/** Counts one wrong password. Best effort. */
+/** Counts one wrong password, with its window's end. Best effort. */
 export async function countWrongPassword(req: Request): Promise<void> {
-  const key = loginKey(req);
   try {
-    const failures = await redis().incr(key);
-    if (failures === 1) await redis().expire(key, LOGIN_WINDOW_SECONDS);
+    await redis().eval(COUNT_IN_WINDOW, [loginKey(req)], [String(LOGIN_WINDOW_SECONDS)]);
   } catch {
     // Best-effort counter.
   }
@@ -101,23 +132,23 @@ function apiFailureKey(req: Request): string {
   return kEnv(`ratelimit:api:${ip}`);
 }
 
-/** Whether this IP has sent too many tokens that don't work, for now. False
- *  when the counter can't be read (fails open, see the header). */
+/** Whether this IP has sent too many tokens that don't work, for now, read
+ *  with its window's end (READ_IN_WINDOW: a count found without one is given
+ *  one). False when the counter can't be read (fails open, see the header). */
 export async function tokenFailuresExhausted(req: Request): Promise<boolean> {
   try {
-    const failures = await redis().get<number>(apiFailureKey(req));
-    return failures !== null && Number(failures) >= API_AUTH_MAX_FAILURES;
+    const failures = await redis().eval(READ_IN_WINDOW, [apiFailureKey(req)], [String(API_AUTH_WINDOW_SECONDS)]);
+    return Number(failures) >= API_AUTH_MAX_FAILURES;
   } catch {
     return false;
   }
 }
 
-/** Counts one token that didn't work. Best effort. */
+/** Counts one token that didn't work, with its window's end, in one step
+ *  (COUNT_IN_WINDOW): a count can never be left without one. Best effort. */
 export async function countTokenFailure(req: Request): Promise<void> {
-  const key = apiFailureKey(req);
   try {
-    const failures = await redis().incr(key);
-    if (failures === 1) await redis().expire(key, API_AUTH_WINDOW_SECONDS);
+    await redis().eval(COUNT_IN_WINDOW, [apiFailureKey(req)], [String(API_AUTH_WINDOW_SECONDS)]);
   } catch {
     // Best-effort counter.
   }

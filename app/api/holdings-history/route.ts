@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { getEffectiveHidden } from '@/lib/links';
-import { readHoldingsHistory, repairHoldingsIndex, indexIsDamaged } from '@/lib/holdings-history';
+import { readHoldingsHistory, repairHoldingsIndex, indexIsDamaged, HoldingsIndexMissingError } from '@/lib/holdings-history';
 import { loggable } from '@/lib/log-safe';
 
 // Holdings history (lib/holdings-history.ts): what each investment account
@@ -16,8 +16,8 @@ import { loggable } from '@/lib/log-safe';
 //     { first_recorded, last_recorded, first_recorded_at, last_recorded_at },
 //     from the index alone
 //   POST /api/holdings-history { action: "repair", confirm: true }
-//     rebuilds a damaged index from the months, once the person confirms
-//     (repairHoldingsIndex): { repaired: true, months, damaged_months? }
+//     rebuilds a damaged or missing index from the months, once the person
+//     confirms (repairHoldingsIndex): { repaired: true, months, damaged_months? }
 //
 // Dates are UTC days, as net-worth history's are. `to` defaults to today and
 // `from` to 30 days before `to`; a range is at most MAX_RANGE_DAYS long. Each
@@ -32,8 +32,10 @@ import { loggable } from '@/lib/log-safe';
 // show the viewer's own day. The index is read once for both parts of an
 // answer, so they agree.
 //
-// What can't be read is a 409 naming it, never an empty history. `repairable`
-// says it is the index alone, damaged: what POST repairs.
+// What can't be read is a 409 naming it, never an empty history, and so are
+// months whose index is missing (`index_missing`: deleted by hand, or left so
+// by a rollback), which would otherwise read as nothing recorded. `repairable`
+// says it is the index alone, damaged or missing: what POST repairs.
 
 /** About a quarter: the longest range one request reads. */
 const MAX_RANGE_DAYS = 92;
@@ -61,13 +63,16 @@ function failure(err: unknown, doing: string): NextResponse {
   if (err instanceof StoredDataUnreadableError) {
     console.error('Stored holdings history unreadable:', describeUnreadable(err));
     const entries = err instanceof UnreadableEntriesError ? err : null;
+    const missing = err instanceof HoldingsIndexMissingError ? err : null;
+    // Only the index, damaged or missing: rebuilt from the months on request.
+    const repairable = (!!entries && indexIsDamaged(entries) && entries.unrecognised.length === 0) || !!missing?.repairable;
     return NextResponse.json(
       {
         error: err.message,
         unreadable: true,
         ...(entries ? { unreadable_ids: entries.unreadable, unrecognised_ids: entries.unrecognised } : {}),
-        // Only the index, and only damaged: rebuilt from the months on request.
-        ...(entries && indexIsDamaged(entries) && entries.unrecognised.length === 0 ? { repairable: true } : {}),
+        ...(missing ? { index_missing: true } : {}),
+        ...(repairable ? { repairable: true } : {}),
       },
       { status: 409 }
     );

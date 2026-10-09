@@ -37,7 +37,8 @@ const IMPLEMENTATION = ['lib/storage.ts', 'lib/repo.ts'];
  *
  * One entry moved without growing the list: the login's wrong-password limiter
  * left app/api/login/route.ts for lib/rate-limit.ts, unchanged (same key, same
- * commands), so the data download's password check shares it. It is
+ * commands; it has since counted with its expiry in one script), so the data
+ * download's password check shares it. It is
  * environment-wide (it counts by address before any container is known), which
  * the seam, containers only, cannot hold. A move, not a new raw store.
  */

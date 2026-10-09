@@ -1,0 +1,3 @@
+# Import fixtures are bank files byte for byte (Windows-1252, a byte order
+# mark, CRLF inside quoted fields): never convert their line endings.
+* -text

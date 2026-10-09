@@ -1,11 +1,12 @@
 // lib/manual-txns.ts
 //
 // Transactions on a manual account (lib/manual.ts), entered by hand: cash, a
-// bank Plaid can't reach, a card used abroad. Later, rows imported from a file
-// (#43: CSV, OFX) or pulled through SimpleFIN land here too, each marked with
-// its `source` and the source's own id (`source_id`, an OFX FITID say), so a
-// re-import can tell what is already stored, and with the import it came in
-// (`import_id`), so one import can be taken out whole.
+// bank Plaid can't reach, a card used abroad. Rows imported from a file (#43:
+// OFX or QFX, CSV, QIF; lib/import/) land here too, and later rows pulled
+// through SimpleFIN, each marked with its `source` and the source's own id
+// (`source_id`, an OFX FITID say), so a re-import can tell what is already
+// stored, and with the import it came in (`import_id`), so one import can be
+// taken out whole.
 //
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the
@@ -17,7 +18,7 @@
 // never trimmed. Deleting the account deletes its book in one step, and an
 // account's rows are read with one decrypt. Keeping each import's raw record
 // beside its row, as #43 also asks, would take several times that room: it
-// belongs in a store of its own, not in the book.
+// is in a store of its own (lib/import/store.ts), not in the book.
 //
 // WHO WINS. Every change to a book is a compare-and-set (MapStore.updateMany):
 // two devices adding to one account at once both land, and so will an import
@@ -64,15 +65,26 @@ export type ManualTxn = TxnFields & {
   id: string;
   /** The manual account it belongs to: the book it is kept in. */
   account_id: string;
-  /** 'manual' for one entered in the app; 'import:csv', 'import:ofx' or
-   *  'simplefin' once those exist. */
+  /** 'manual' for one entered in the app; 'import:ofx', 'import:csv' or
+   *  'import:qif' for one imported from a file; 'simplefin' once it exists. */
   source: string;
-  /** The source's own id for the row, for matching a re-import; null for one
-   *  entered by hand. */
+  /** The source's own id for the row, for matching a re-import: an OFX
+   *  file's FITID, or for a file without ids (CSV, QIF) the content key it
+   *  was imported with (lib/import/normalize.ts). Null for one entered by
+   *  hand. */
   source_id: string | null;
   /** The import it came in with (#43), so that import can be taken out whole;
    *  absent or null for one entered by hand. */
   import_id?: string | null;
+  /** For a row from a file with ids of its own (OFX): the content key it was
+   *  imported with, hashed (lib/import/normalize.ts keyHash), so a later file
+   *  holding exactly that version of it finds it, edited since or not. */
+  source_key?: string;
+  /** Plaid's code for what its file said it was, when the file says so
+   *  outright (an OFX file's ATM transaction is "atm": lib/import/ofx.ts
+   *  bankType); absent otherwise. The spending rules read it as they read a
+   *  bank's (lib/spending.ts, lib/fire/inputs.ts). */
+  transaction_code?: string | null;
   /** The balance update its add made, once made ("Also update the balance"):
    *  from the figure the form showed to the one it said, on the account it
    *  was added to (absent on a note written before it was kept). Absent when
@@ -80,6 +92,9 @@ export type ManualTxn = TxnFields & {
    *  twice, nor leaves the row and the balance apart. */
   balance_update?: { from: number; to: number; account_id?: string } | null;
   created_at: string;
+  /** When it was last changed in the app. An import that replaces it with
+   *  its file's version, and the undo of that, leave it as it was: neither is
+   *  the person's change (lib/import/commit.ts). */
   updated_at: string;
 };
 
@@ -124,6 +139,8 @@ export function isManualTxn(v: unknown): v is ManualTxn {
     isSource(v.source) &&
     isTextOrNull(v.source_id) &&
     (v.import_id === undefined || isTextOrNull(v.import_id)) &&
+    (v.source_key === undefined || (typeof v.source_key === 'string' && v.source_key.length <= 64)) &&
+    (v.transaction_code === undefined || v.transaction_code === null || (typeof v.transaction_code === 'string' && v.transaction_code.length <= 40)) &&
     isBalanceUpdate(v.balance_update) &&
     isInstant(v.created_at) &&
     isInstant(v.updated_at)
@@ -371,6 +388,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string):
     iso_currency_code: row.currency,
     vendor_key: '',
     ...NO_PLAID_DETAIL,
+    transaction_code: row.transaction_code ?? null,
     source: row.source,
     account_id: row.account_id,
     note: row.note,

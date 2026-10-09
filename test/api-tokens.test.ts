@@ -493,7 +493,7 @@ describe('the API’s door (lib/api-http.ts admit)', () => {
     expect(res.status).toBe(429);
     expect(res.headers.get('retry-after')).toBe(String(API_AUTH_WINDOW_SECONDS));
     expect((await res.json()).error.code).toBe('rate_limited');
-    expect(sent).toEqual(['get']); // the address's count, and nothing of any token
+    expect(sent).toEqual(['eval']); // the address's count (read with its window's end), and nothing of any token
     // A good token from that address waits too; from another, it works.
     expect((await ask(bearer(token))).status).toBe(429);
     expect((await ask(bearer(token), '198.51.100.4')).status).toBe(200);

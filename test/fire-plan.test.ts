@@ -570,6 +570,12 @@ describe('spending and savings from the trailing year', () => {
       expect(marked.cashEnteredOn).toEqual(['manual_cu']);
     });
 
+    test('spending imported from a file onto the cash account is the same money as spending typed there', () => {
+      const r = flows([txn(ATM), spent(120, { source: 'import:csv' }), spent(80, { source: 'import:qif' })]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 0, cashEntered: 200, cashEnteredOn: ['manual_wallet'] });
+    });
+
     test('only spending entered on a manual cash account is cash: a card Plaid can’t reach isn’t', () => {
       const r = flows([txn(ATM), spent(50, { account_id: 'manual_card' })]);
       expect(r.spending).toBe(1_250);

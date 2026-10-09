@@ -551,7 +551,10 @@ export type ApiTransaction = {
   account_id: string;
   account_name: string;
   institution: string;
-  /** 'plaid' for a bank's row; 'manual' for one entered by hand. */
+  /** 'plaid' for a bank's row; 'manual' for one entered by hand; 'import:ofx',
+   *  'import:csv' or 'import:qif' for one imported from a file into a manual
+   *  account (lib/import/), served as the typed ones are. Open: version 1 may
+   *  add values. */
   source: string;
   hidden: boolean;
   note: string | null;

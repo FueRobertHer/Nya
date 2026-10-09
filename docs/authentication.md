@@ -23,7 +23,7 @@ Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
 - Sessions from before containers stay valid until they expire (at most 30 days) and do not end on a password change; Sign out everywhere does end them.
 - While the container cannot be worked out (a wrong `CONTAINER_ID`, or it is being restored), no session is accepted. If the database itself is unreachable, requests are let through, since every page needs it anyway.
 
-`/api/login` allows at most 10 failed attempts per IP per 15 minutes. The counter lives in Redis, a successful login clears it, and the limiter fails open if Redis is unreachable. This blunts brute-forcing of `APP_PASSWORD` on the public URL.
+`/api/login` allows at most 10 failed attempts per IP per 15 minutes, counted from the first. The counter lives in Redis, a successful login clears it, and the limiter fails open if Redis is unreachable. Each count is written with its expiry in one step, so a lockout always ends on its own (see [operations.md](operations.md#an-address-locked-out-of-the-login)). This blunts brute-forcing of `APP_PASSWORD` on the public URL.
 
 The password is a single shared secret, appropriate for one person's tracker. For more than one person, use Clerk.
 

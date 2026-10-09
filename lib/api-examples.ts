@@ -267,7 +267,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].account_id', 'The account it is on.'],
       ['transactions[].account_name', 'That account’s name.'],
       ['transactions[].institution', 'That account’s institution.'],
-      ['transactions[].source', '"plaid" for a bank’s, "manual" for one you entered. Version 1 may add values (rows brought in from a file, say): treat one you don’t know as neither.'],
+      [
+        'transactions[].source',
+        '"plaid" for a bank’s; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF) into a manual account, served as the ones you entered are. Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
+      ],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
       ['transactions[].note', 'Your note on one you entered, or null.'],
       ['transactions[].counterparty', 'The merchant behind a payment processor, when it differs from the name, or null.'],
