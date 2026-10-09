@@ -17,7 +17,10 @@
 // the line is a note, not a figure. If what is stored can't be read (409),
 // recording has stopped too, and it says so, since a day not recorded is lost
 // for good. When only the index is damaged it offers to rebuild it from the
-// months, and does so only once the person confirms.
+// months, and does so only once the person confirms. An index gone missing
+// beside the months (deleted by hand, or a rollback) stops no recording, which
+// derives it again, but until then the months can't be read: it says so, never
+// that nothing was recorded, and offers the same rebuild.
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -39,9 +42,11 @@ export type SummaryState =
   /** A passing failure: nothing to say. */
   | { kind: 'quiet' }
   | { kind: 'recorded'; span: RecordedSpan }
-  /** What is stored can't be read, so recording has stopped. `repairable`:
-   *  only the index, damaged, which the months can rebuild. */
-  | { kind: 'unreadable'; repairable: boolean };
+  /** What is stored can't be read. Recording has stopped too, unless
+   *  `indexMissing`: the index is missing beside the months, which recording
+   *  derives again. `repairable`: only the index, damaged or missing, which
+   *  the months can rebuild. */
+  | { kind: 'unreadable'; repairable: boolean; indexMissing?: boolean };
 
 /** Where a repair is: not asked for, asked and waiting for the person's
  *  word, under way, or refused with the server's reason. */
@@ -95,7 +100,9 @@ const isInstantOrNull = (v: unknown) => v === undefined || v === null || (typeof
 /** What a summary answer means for the line. Pure. */
 export function summaryState(status: number, body: unknown): SummaryState {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
-  if (status === 409 && b.unreadable === true) return { kind: 'unreadable', repairable: b.repairable === true };
+  if (status === 409 && b.unreadable === true) {
+    return { kind: 'unreadable', repairable: b.repairable === true, ...(b.index_missing === true ? { indexMissing: true } : {}) };
+  }
   if (status !== 200 || !isDayOrNull(b.first_recorded) || !isDayOrNull(b.last_recorded)) return { kind: 'quiet' };
   if (!isInstantOrNull(b.first_recorded_at) || !isInstantOrNull(b.last_recorded_at)) return { kind: 'quiet' };
   return {
@@ -146,7 +153,11 @@ export function HoldingsRecordedView({
   if (state.kind === 'unreadable') {
     return (
       <div className="as-of stale">
-        Holdings history can&apos;t be read, so it isn&apos;t being recorded.
+        {state.indexMissing ? (
+          <>Holdings history can&apos;t be read: the list of where its months are kept is missing.</>
+        ) : (
+          <>Holdings history can&apos;t be read, so it isn&apos;t being recorded.</>
+        )}
         {state.repairable && (
           <>
             {' '}
@@ -172,16 +183,34 @@ export function HoldingsRecordedView({
   );
 }
 
-/** What the repair says before it does anything, pure. */
-export function RepairConfirm({ phase, onCancel, onConfirm }: { phase: RepairPhase; onCancel: () => void; onConfirm: () => void }) {
+/** What the repair says before it does anything, pure. `missing`: the list
+ *  is missing rather than damaged, which stops no recording. */
+export function RepairConfirm({
+  phase,
+  missing = false,
+  onCancel,
+  onConfirm,
+}: {
+  phase: RepairPhase;
+  missing?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   const busy = phase.kind === 'repairing';
   return (
     <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
-        are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
-        damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
-      </p>
+      {missing ? (
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          The list of where each month of your holdings history is kept is missing, so what was recorded can&apos;t be
+          read. Nya can rebuild it from the months themselves. Nothing is lost: every month stays as it is.
+        </p>
+      ) : (
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
+          are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
+          damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
+        </p>
+      )}
       {phase.kind === 'failed' && <div className="error">{phase.error}</div>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
@@ -250,7 +279,7 @@ export default function HoldingsRecorded({ accountId }: { accountId: string }) {
         state.repairable &&
         createPortal(
           <Sheet open={phase.kind !== 'closed'} title="Repair holdings history" onClose={close}>
-            <RepairConfirm phase={phase} onCancel={close} onConfirm={() => void repair()} />
+            <RepairConfirm phase={phase} missing={state.indexMissing === true} onCancel={close} onConfirm={() => void repair()} />
           </Sheet>,
           portal
         )}

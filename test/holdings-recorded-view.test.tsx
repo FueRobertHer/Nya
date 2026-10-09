@@ -104,6 +104,12 @@ describe('what the summary answer means', () => {
     expect(summaryState(409, { ...body, unreadable_ids: [], unrecognised_ids: ['index'] })).toEqual({ kind: 'unreadable', repairable: false });
     expect(summaryState(409, { ...body, unreadable_ids: ['index'], unrecognised_ids: [], repairable: true })).toEqual({ kind: 'unreadable', repairable: true });
   });
+
+  test('an index gone missing beside the months is told apart, and offered the repair only where the server offers it', () => {
+    const body = { error: 'Your saved holdings records could not be read, so they were left untouched.', unreadable: true, index_missing: true };
+    expect(summaryState(409, { ...body, repairable: true })).toEqual({ kind: 'unreadable', repairable: true, indexMissing: true });
+    expect(summaryState(409, body)).toEqual({ kind: 'unreadable', repairable: false, indexMissing: true });
+  });
 });
 
 describe('HoldingsRecordedView', () => {
@@ -116,6 +122,12 @@ describe('HoldingsRecordedView', () => {
     const stopped = "Holdings history can't be read, so it isn't being recorded.";
     expect(view({ kind: 'unreadable', repairable: false })).toBe(`<div class="as-of stale">${stopped}</div>`);
     expect(view({ kind: 'unreadable', repairable: true })).toBe(`<div class="as-of stale">${stopped} <button class="link-btn">Repair it</button></div>`);
+  });
+
+  test("months whose index went missing can't be read, and it says that, never that nothing was recorded nor that recording stopped", () => {
+    const missing = "Holdings history can't be read: the list of where its months are kept is missing.";
+    expect(view({ kind: 'unreadable', repairable: true, indexMissing: true })).toBe(`<div class="as-of stale">${missing} <button class="link-btn">Repair it</button></div>`);
+    expect(view({ kind: 'unreadable', repairable: false, indexMissing: true })).toBe(`<div class="as-of stale">${missing}</div>`);
   });
 
   test('after a repair, says which months were too damaged to read', () => {
@@ -136,6 +148,16 @@ describe('the repair', () => {
     expect(html).toContain('Nya can rebuild it from the months themselves');
     expect(html).toContain('Nothing that can be read is lost');
     expect(html).toContain('<button class="secondary">Cancel</button>');
+    expect(html).toContain('<button>Rebuild it</button>');
+  });
+
+  test('for a missing list, says it is missing, not damaged, and that nothing is lost', () => {
+    const html = read(renderToStaticMarkup(<RepairConfirm phase={{ kind: 'confirming' }} missing onCancel={noop} onConfirm={noop} />));
+    expect(html).toContain("is missing, so what was recorded can't be read");
+    expect(html).toContain('Nya can rebuild it from the months themselves');
+    expect(html).toContain('Nothing is lost');
+    expect(html).not.toContain('damaged');
+    expect(html).not.toContain('no holdings are being recorded');
     expect(html).toContain('<button>Rebuild it</button>');
   });
 
