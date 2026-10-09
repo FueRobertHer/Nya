@@ -55,9 +55,13 @@ export function createWholeListStore<T>(opts: {
   isValid: (v: unknown) => v is T;
   onChange: (state: ListState<T>) => void;
   fetch?: Fetcher;
+  /** How to try loading again, for the message when a load fails: the
+   *  dashboard's Refresh button unless the screen offers its own. */
+  reloadHint?: string;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
+  const reloadHint = opts.reloadHint ?? 'press Refresh to try again';
   let state: ListState<T> = initialListState(opts.empty);
   let loadSeq = 0;
 
@@ -76,7 +80,7 @@ export function createWholeListStore<T>(opts: {
       data = await res.json().catch(() => null);
     } catch {
       if (mine === loadSeq) {
-        set({ status: 'error', error: `${Noun} could not be loaded. Editing is paused until they are; press Refresh to try again.` });
+        set({ status: 'error', error: `${Noun} could not be loaded. Editing is paused until they are; ${reloadHint}.` });
       }
       return;
     }
@@ -87,7 +91,7 @@ export function createWholeListStore<T>(opts: {
         status: 'error',
         error: data?.unreadable
           ? `Your saved ${opts.noun} could not be read, so they have been left untouched and editing is paused.`
-          : `${Noun} could not be loaded. Editing is paused until they are; press Refresh to try again.`,
+          : `${Noun} could not be loaded. Editing is paused until they are; ${reloadHint}.`,
       });
       return;
     }

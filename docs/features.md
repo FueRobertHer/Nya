@@ -5,6 +5,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Connecting accounts](#connecting-accounts)
 - [Removing an institution and adding it back](#removing-an-institution-and-adding-it-back)
 - [Payment details](#payment-details)
+- [Debt payoff plan](#debt-payoff-plan)
 - [Hiding accounts](#hiding-accounts)
 - [When an institution can't be reached](#when-an-institution-cant-be-reached)
   - [Connection health](#connection-health)
@@ -12,6 +13,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
   - [Email notices](#email-notices)
 - [Manual accounts](#manual-accounts)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
+- [Planning](#planning)
 
 ## Connecting accounts
 
@@ -66,6 +68,40 @@ Credit cards and loans show what they actually cost: purchase APR, minimum payme
 This comes from Plaid's Liabilities product, which has to be enabled on an institution before it will return anything. Newly connected institutions get it automatically. Institutions you linked before this existed don't, so they show an **Enable payment details** button on their card: tap it, log back in through Plaid, and the terms appear.
 
 That button goes through Link's *update mode*, which re-authenticates the institution you already have rather than adding a second one: the item keeps its id, and its stored transaction history survives. Not every institution supports the product; where it isn't supported the button says so rather than failing silently, and where there's simply nothing to report (no cards or loans) no button appears at all.
+
+## Debt payoff plan
+
+**Payoff plan** on the Accounts tab (shown whenever a credit card or loan is on screen) works out when your cards and loans are paid off and what that costs in interest, paying a steady amount each month.
+
+Each debt starts from its balance and the terms Plaid supplies, and every figure says whether it came from Plaid, was worked out, or was typed. You can type over anything Plaid supplied, and go back to Plaid's figure. The plan waits until every debt has a rate and a payment, or has been left out of it: it never assumes either. Hidden accounts aren't included, and a card or loan with nothing owed is listed but not planned. Each debt in the plan shows roughly what it costs in interest a month at its current balance.
+
+Where the figures come from, and where Plaid's aren't used as they are:
+
+- **Rates.** A card's purchase APR (its highest rate when it reports no purchase APR), and a loan's interest rate. When a card reports the part of its balance each of its rates applied to at the last statement, Nya blends those rates by their parts instead, so a 0% promotional balance isn't charged the purchase APR, and labels the result as its own blend of Plaid's rates rather than a figure from Plaid.
+- **Cards paid in full.** A card whose last payment covered its last statement, and was made on or after the day the statement was issued, was paid in full at that statement. No interest is charged while that continues, so it starts out of the plan; put it in to plan it as a balance you carry. A payment made before the statement was on an earlier one, so it doesn't count, and a card whose payment or statement date isn't reported is planned with interest.
+- **Mortgages.** Plaid reports the whole monthly payment, which usually includes escrow (taxes and insurance) that doesn't pay down the loan, and it gives no split. So a mortgage's payment is needed, with the reason on the mortgage and by the headline: type the principal and interest from a statement. For a fixed-rate loan the planner offers the payment worked out from the original amount, term and rate, and where Plaid reports no escrow balance you can say there's none and use Plaid's figure. Planned as the payment, escrow would also move on to the next debt once the mortgage was paid off.
+- **Student loans.** For loans, Plaid's balance is the principal, and accrued interest is reported separately. Both are owed, so the plan starts from the two together and says so ("includes $612.40 of accrued interest"); you can leave the interest out. Plaid documents one exception: Sallie Mae's balance already includes the interest and it reports no separate figure, so nothing is added there. The accrued interest is then charged interest with the rest, which overstates a federal loan's interest slightly, since those use simple interest.
+- **A $0 minimum** from Plaid usually isn't a real payment: Plaid notes that some servicers show $0 under autopay, and it also appears when nothing is due this cycle or a loan is in deferment. It's needed rather than planned as $0. A 0 you type yourself is planned as it is.
+- **Shared payments.** Plaid notes that some student loan servicers bill one payment across all of an account's loans and show that same payment on each loan, and names them (Great Lakes, Firstmark, Commonbond Firstmark Services, Granite State and the Oklahoma Student Loan Authority). At those, loans showing the same minimum share one payment, split across them by balance, which the rows and the headline say; if the loans really are billed separately, use each loan's own figure. Anywhere else loans can simply have the same minimum, so the planner asks whether it's one payment for all of them or one each, and the answer applies to the whole group.
+- **No terms.** Manual accounts have none, and neither do cards and loans at an institution without [payment details](#payment-details) or one that can't be reached right now, or loans Plaid doesn't cover (auto and personal loans). Type the rate and payment from a statement.
+
+Add an extra amount each month and pick an order:
+
+- **Avalanche** pays the highest rate first, which costs the least interest.
+- **Snowball** pays the smallest balance first, which clears debts sooner and can cost more.
+
+Either way the total paid stays the same every month: each debt gets its own payment, the rest goes to the debt at the front, and when a debt is paid off its payment moves on to the next one. Both are shown beside **minimums only**, where each debt gets just its own payment and that payment stops once it's paid off. The plan shows the month everything is paid off and the total interest; what the extra alone saves (the same order with and without it); what the plan saves against minimums only (the extra and the moved-on payments together); the order the debts are cleared in, with each one's month and interest; and a chart of what is owed over time. The headline says "Debt-free" only when nothing owed may be outside the plan: nothing left out, no card or loan without a reported balance, no other currency, and no institution the plan can't see. Otherwise it says "Paid off", with what is outside it.
+
+The plan also says what it can't see, as the Home total does: an institution that couldn't be loaded (any cards or loans there aren't in the plan), accounts that couldn't be recovered or that an institution stopped reporting, and the date of balances recovered from an institution that couldn't be reached.
+
+How the numbers are worked out:
+
+- Interest is charged monthly at the APR / 12 on what is owed and rounded to the cent, and everything is counted in cents, so what is paid always equals what was owed plus the interest, to the cent. Card issuers charge interest daily, which comes to slightly more, so a card's real interest runs a little higher than shown.
+- Payments stay at today's amounts. A card's required minimum usually falls with the balance, so paying only what is required takes longer still. New charges and fees aren't modelled, and a promotional rate is taken as lasting, since when it ends isn't known. The first payment is a month from now.
+- A payment that doesn't more than cover a debt's interest never pays it off on its own, and the planner says so on that debt. A plan that hasn't cleared everything within 50 years is reported as not paid off within 50 years rather than given a date, and then has no total to measure savings against.
+- Debts in different currencies are planned one currency at a time: nothing is converted between currencies. Debts with no standard currency code (Plaid reports an unofficial one) are planned together without a currency symbol, and may not all be in the same currency.
+
+Nothing you type is saved, on the server or on the device. It lasts until the app is reloaded.
 
 ## Hiding accounts
 
@@ -169,3 +205,114 @@ Plaid bills per linked institution (Item) per month for Transactions, Investment
 - **Unused connections (admin only).** A daily check (`/api/plaid/check-items`) flags a connection, in any account, once Plaid has been unable to read it for 60 days (login expired, consent withdrawn) or every account on it has been hidden for 60 days. **It never removes anything.** The admin, meaning whoever owns the deployment's own account (normally the first to sign in with Clerk, or the password holder), sees the flagged ones under Manage on the Accounts tab, labelled by owner. Other accounts see nothing and the route answers them with a 404. Review and disconnect asks for the institution's name, and the server checks the connection again first: if its owner has reconnected it or unhidden an account, or Plaid does not answer, nothing is removed. Any success starts the count again; an outage or timeout counts for nothing. Change the period with `PLAID_UNUSED_DAYS` (minimum 14).
 
 Liabilities and Investments are paid Plaid products: free in `sandbox`, but billed per Item per month in `production`, so enabling payment details or linking brokerages on many institutions has a running cost.
+
+## Planning
+
+The **Plan** tab answers two questions: how much you need to be financially independent (FI), and how a retirement on that money would have lasted through US market history. Everything is in today's dollars. The results are hypothetical: they come from US history, or sequences resampled from it, and are not a prediction and not advice. The tab says so beside every result, with the assumptions behind it.
+
+### The FI figures
+
+- **FI number**: your annual spending divided by the withdrawal rate (4% by default), grossed up for the tax on withdrawals: `spending / (1 - tax) / rate`. Spending $40,000 at 4% with no tax needs $1,000,000.
+- **Years to FI**: how long your invested assets take to reach the FI number, adding your annual savings at the end of each year and earning a steady real return (5% a year after inflation by default). It says "Not at this rate" when savings and growth never get there.
+- **Coast FI**: what you need invested today for it to grow to the FI number by your target age with nothing more added, at the same return.
+- **Barista FI**: the FI number when part-time income (after tax) covers part of your spending, so the portfolio covers only the rest.
+- **At your target age**: the balance projected at the steady return. Real markets don't move steadily, which is what the simulation is for.
+
+### Where the inputs come from
+
+Each input says where it came from, over what dates, and what may be missing from it, and any of them can be typed over. A typed figure stays until you switch back to Nya's.
+
+- **Annual spending**: the last 365 days of money out, with the first and last day shown beside it. It starts from the Activity tab's rule, which leaves out transfers between your own accounts and card payments (paying a card off settles purchases already counted on the card), and then counts what that rule leaves out for reasons that don't hold for planning (`lib/fire/inputs.ts`; the Activity tab's own totals are unchanged):
+  - **Loan payments** that Plaid's detail says are on a mortgage, car, student or personal loan. Their principal is really saving, but it is spending until the loan ends, which is what a plan starting today has to fund. The label says how much of the figure they are; if a loan ends before you stop working, type your own figure. The loan account's side of a payment (money in) is never counted, so a payment from one linked account to another counts once.
+  - **Cash withdrawals** (at an ATM or a teller) and **bank charges**.
+  - **Refunds**: money back in a spending category (food, shopping, travel, bills and the like) is taken off spending rather than counted as income, which would overstate both. Money in under income, a transfer or "other" is never a refund. The total and the largest refund are shown beside the figure, so an odd large one (a deposit returned, an insurance payout) can be seen and typed over.
+
+  Paying a card off never counts, whatever the row was recategorized as: it settles purchases already counted on the card. Anything else filed under loan payments (no detail, Plaid's "other payment", which can be a store card, or a row recategorized there whose detail says something else, a card payoff among them) can't be told from a card payment, so it is left out and its total is named beside the figure, never guessed. A pending charge whose posted version has arrived was already dropped. With less than a year of history the total is scaled up to a year, and the label says from how many days or months. Under four weeks gives no figure.
+- **Invested assets**: your investment accounts at their balances when the dashboard last loaded them (the time is shown), without hidden ones, plus checking and savings if you tick the box. Debts are not subtracted. Every investment account counts, a 529 or an HSA included, since tax buckets aren't modelled yet: type your own total to leave one out.
+- **Annual savings**: an estimate. A year of income minus spending from bank data, plus what went into workplace retirement plans over the year: a 401(k), 403(b), 457(b), TSP, SIMPLE IRA and similar, by the account's type, from Nya's verified investment transactions, an employer's match included where the plan reports it as a contribution. Payroll contributions never pass through a bank account, so bank data alone misses them. Nothing is counted twice. Under Edit, say how each plan is paid into, and the choice is saved with your plan:
+  - **Payroll**: every contribution is added.
+  - **My bank** (a Solo 401(k) you fund from checking, say): none is, since the transfers that paid for them already count as saved.
+  - **Not set**, the default: a contribution is added unless a transfer that Plaid files as going to investment and retirement funds paid for it (the same amount within a dollar or 1%, within five days; several contributions on one day, a deferral and an employer share, by their sum). A move to savings or to another person never counts as one.
+
+  Contributions to brokerages and IRAs are not added: they are usually paid from a bank account, where income minus spending has already counted them. The label says, for each plan, how many contributions were added and the largest, so you can see what counted, what matched a transfer and wasn't added, and which plans aren't set. A plan whose verified record covers less than the year is named with the day it starts; the server decides that on its own days, so it never depends on your time zone. When the institution's own activity for a plan starts inside the year (it may keep less history than Nya asked for), the label says "Nya has activity for it from" that day. With no workplace plan linked, the label says pre-tax contributions and a match are missing.
+- **Ages and assumptions**: typed by you. Your age places Social Security, pensions and one-off expenses in the plan. The target age can't be before your age: if you have already stopped working, use your age. A pension that doesn't rise with inflation is entered in today's dollars, not the amount quoted for the year it starts.
+
+A figure that may be short says so beside it, and the FI number and the progress under it repeat the warning for spending and invested assets. In particular:
+
+- An institution whose transactions couldn't all be read (it needs reconnecting, is still syncing, or its stored history couldn't be read) is named beside spending and savings. If the transactions couldn't be loaded at all, spending says that rather than "not enough transactions".
+- An institution that couldn't be reached is named beside invested assets: not counted when nothing was recovered from it, or counted at its last-known balances, with their date. Accounts it is known to have that couldn't be shown, and accounts with no balance, are counted in the same notes.
+- A workplace plan whose activity couldn't be read is named beside savings.
+- Nya doesn't convert currencies. Investments in one currency and spending in another, or either one mixing several, are said beside the figures.
+
+### Will it last?
+
+The simulation runs a retirement through market history, withdrawing by a rule each year, for the length you choose: to age 95 by default, or 30 years when no age is set. Where it starts sets what the first year spends, and the card says which:
+
+- **Your FI number at your target age** (the default): the first year withdraws your withdrawal rate of it, which after tax is your spending, since that is how the FI number was set.
+- **Your invested assets today**, or **a balance you type**: the first year withdraws your spending (grossed up for tax), at whatever rate that implies, so the result answers whether what you spend now would have lasted from there. The card shows the rate and says when it is above the one your FI number assumes. The grid adds it as a row up to 20%.
+
+VPW is the exception: it sets its own spending from the balance and the years left, so the card compares its first year with what you spend.
+
+There are two methods:
+
+- **Historical cycles** start the plan in every month from January 1871 that leaves its whole length inside the data (1,470 starts for 30 years) and live through what actually followed, the idea behind cFIREsim and FIRECalc, on monthly rather than annual data.
+- **Monte Carlo** runs 5,000 sequences, each built from five-year blocks of consecutive months drawn at random from the same history (a circular block bootstrap). A block keeps the months together, so stocks, bonds and inflation stay matched, as do runs of good or bad years shorter than a block; longer cycles are cut at block edges, so the results spread wider than the history's. The draws are seeded, so the same plan always gives the same answer.
+
+While a new answer is worked out, the last one keeps its place but is hidden, since it answered other assumptions.
+
+**Success** means the portfolio never ran out: every year's withdrawal was paid in full to the end of the plan. The success rate is the share of starts (or runs) that succeeded. A flexible rule (all but the constant one) lasts by cutting spending when markets fall, so its success rate comes with a second figure: the lowest year's spending as a share of the first year's, in the worst start (or run) that lasted. The fan chart shows the balance each year at the 10th, 25th, 50th, 75th and 90th percentiles, with a table of the same figures. The worst starting years are those that ran out soonest, or, when none did, came closest (the lowest spending, then the lowest balance left), listed once per calendar year.
+
+**The grid** repeats the plan at 3% to 5% and 20 to 50 years, plus your own rate and length, with everything else as in the plan. For a flexible rule each cell carries the second figure too, and VPW, which has no rate to vary, gets one row. In historical cycles each length has its own starts, every month that leaves the whole length inside the data: a 30-year plan can start up to June 1993, a 50-year one only up to June 1973. Each column says where its starts end, and the note under the grid gives each one's count and span. A longer column leaves out the latest starts, so it can read safer than a shorter one: at 4%, 60 years can beat 50 by missing the late-1960s retirements. Monte Carlo columns share the same runs, each extended to the longer lengths, so for a rule that ignores the length (constant, percent of portfolio, floor and ceiling) a longer column never reads safer; guardrails and VPW withdraw by the years left, so theirs can differ slightly either way. A one-off dated after the plan ends is shown as such: only the grid's longer columns reach it.
+
+Each plan year, in order:
+
+1. The rule sets the year's withdrawal from the balance at the start of the year.
+2. Other income (Social Security, a pension, after tax) pays part of that year's spending, so the portfolio withdraws less; income beyond the spending is invested. One-off expenses are added. What the portfolio pays is grossed up for the flat tax.
+3. If that is more than the balance, the plan has run out that year.
+4. The rest earns the next twelve months' returns, at your mix, rebalanced every year by default (every month, or never, are the options).
+5. Fund fees are charged (0.1% a year by default).
+
+Withdrawals are taken once a year at the start of the year, the convention of the annual studies, slightly conservative against spreading them out. Returns compound monthly. Cash keeps up with inflation and earns nothing more: Shiller's data has no short-term rate, and the 10-year yield would credit cash with a bond's returns.
+
+### The withdrawal rules
+
+- **Constant (the 4% rule)**: the first year withdraws the rate times the starting balance, and every later year the same amount in today's dollars, whatever the market does.
+- **Percent of portfolio**: every year withdraws the rate times the balance at the start of that year. It cannot run out; spending moves with the market, and the result shows how far it fell.
+- **Guardrails (Guyton-Klinger)**: starts at the rate, then keeps the amount steady in today's dollars, except that after a year the portfolio lost money the raise for inflation is skipped while the withdrawal is above the starting rate (of the current balance); above 120% of that rate it is cut by 10% (not in the last 15 years), and below 80% it is raised by 10%.
+- **VPW (variable percentage withdrawal)**: each year withdraws the share an annuity would pay over the years left, at an expected real return from your mix (5% for stocks, 2% for bonds, 0% for cash). It spends the portfolio down to zero at the end, on purpose.
+- **Floor and ceiling**: each year withdraws the rate times the balance, kept between a floor and a ceiling set as shares of the first year's withdrawal (90% and 125% by default).
+
+The exact definitions are in `lib/fire/rules.ts`.
+
+### The data, and its license
+
+The history is Robert Shiller's monthly US data (the price and dividends of the S&P Composite, which is the S&P 500 since 1957, the consumer price index and the long-term government bond yield, the 10-year Treasury's since 1953), January 1871 to June 2023, as packaged by [datasets/s-and-p-500](https://github.com/datasets/s-and-p-500). The package extends the price past June 2023 without the other columns, so the history stops there. The packaging is licensed under the ODC Public Domain Dedication and License (ODC-PDDL-1.0), but **Shiller's own page states no license terms** beyond a disclaimer. Check before any paid use.
+
+`scripts/fire-data.ts` turns the package's CSV into `lib/fire/history-data.ts`: monthly real stock returns, real bond returns and inflation, in millionths. It is reproducible, and the module records the source URL (a pinned commit), the SHA-256 of the file and a SHA-256 of the rows used:
+
+```bash
+curl -sSLo /tmp/sp500.csv https://raw.githubusercontent.com/datasets/s-and-p-500/07b81e6af68239acd65b901a11844d6d95db6ead/data/data.csv
+bun run fire-data /tmp/sp500.csv
+```
+
+The derivations are in `lib/fire/derive.ts`:
+
+- **Stocks**: total return over a month is `(next price + next dividend / 12) / price - 1`. Shiller's dividends are annualized, so a month earns a twelfth.
+- **Bonds**: a 10-year bond bought at par at this month's yield and sold a month later, with 9 years 11 months left, at next month's yield, plus a month of coupon: the standard constant-maturity approximation. Shiller's long rate is the 10-year Treasury yield from 1953 and a long-term government bond yield before, so the early bonds are an approximation too.
+- **Real returns**: `(1 + nominal) / (1 + inflation) - 1`, from the CPI. Inflation is applied this once; the engine never adjusts a withdrawal for it again.
+
+### How it is checked
+
+The engine is pure functions (`lib/fire/`), run in the browser. Property tests check that no value appears from nowhere (with no returns, the balance is the start plus deposits minus withdrawals), that inflation is applied exactly once, that a higher withdrawal rate never raises the success rate, that a seed reproduces a Monte Carlo run, and that random plans give no NaN or negative balance. The flexible rules have their own: VPW never runs out and ends at exactly zero at the end of any plan, percent of portfolio never runs out or reaches zero at any rate, mix or method, and guardrails never cut in the final 15 years.
+
+Golden tests check that the results are consistent with the figures published studies report, as ranges, not against the same inputs run through other tools: the studies used annual data, other periods and other bonds, which move the answer by a few points. 4% over 30 years succeeds in 96% to 97.5% of the historical starts with half or more in stocks, consistent with the roughly 95% or more that the Trinity study, Bengen, FIRECalc and cFIREsim report for the classic case; bond-heavy mixes do much worse, as Trinity found; longer plans need lower rates; and the failures and near misses all start in the known bad periods (around the 1929 crash, the mid-1960s, and the early 1900s). Nothing here was compared with FIRECalc, cFIREsim or Early Retirement Now on identical settings. The tests name each source.
+
+### Limits
+
+- **US history only**, in US inflation terms. Accounts in other currencies are shown in their own currency but simulated on US data, and nothing is converted between currencies.
+- **Taxes are one flat rate** on withdrawals: no brackets, capital gains, account types (taxable, tax-deferred, Roth), required minimum distributions or subsidies.
+- **No fund look-through.** Nya doesn't know what your funds hold, so the mix is what you set: split a target-date or balanced fund by hand.
+- **One history.** Monte Carlo reshuffles it in five-year blocks, so it can string bad stretches together, but every month in it is a month that happened.
+- **Spending from bank data** misses anything paid from accounts you haven't connected, and last year's spending may not be what retirement costs.
+
+The tab saves only your assumptions (one encrypted value per account, the `fire-plan` store on the storage seam, `lib/fire-plan.ts`), never a result; everything else is worked out again from your data each time it opens. A plan saved under an earlier release always reads back: reading checks only its shape, and fills in any field added since, while today's ranges apply when it is saved again. If a saved value is one this release doesn't take (a range narrowed since, say), the tab says which, uses the default in its place (or leaves out the income or one-off it belongs to, named by its label or, without one, by its amount and age), and offers to save the plan that way. Nothing else saves it: editing is paused until you choose to, so nothing is dropped by accident, and the tab never stops working over it. A plan a later release saved, which this one doesn't understand, is reported as such and left untouched. Its code, with the engine and the market history, loads only when the tab is first opened. If that fails (offline before it was ever fetched, or a flaky connection), the tab says so and offers to try again, and the other tabs work as before. The simulation runs in a Web Worker, and the grid there one cell at a time, so the page stays responsive while they are worked out. The jobs wait on the page and go to the worker one at a time, so when the plan changes again before they run, the old ones are dropped and the new answer never waits behind them. Where a worker can't start, the same work runs on the page, one piece at a time between paints. If neither can run (the connection dropped before the engine's code arrived), the card says the simulation couldn't be loaded and offers to try again.

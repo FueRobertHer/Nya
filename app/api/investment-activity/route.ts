@@ -49,8 +49,10 @@ export async function GET(req: Request) {
     // an empty answer under the real account's field. (The cache key carries a
     // version, so payloads with an older meaning are not reachable.)
     const cacheField = `${item_id}:${account_id}`;
-    const cached = await readAccountCache(ctx, cacheField);
-    if (cached) return NextResponse.json({ ...cached, from_cache: true });
+    const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
+    // An entry cached before the Plan tab's fields existed is a miss, so the
+    // tab never reads their absence as "nothing contributed" or "a whole year".
+    if (cached && 'contributions_12m_activity_from' in cached) return NextResponse.json({ ...cached, from_cache: true });
 
     const sync = await syncInvestments(ctx, item);
     // Newest first, explicitly: the store has no order of its own.
@@ -94,6 +96,32 @@ export async function GET(req: Request) {
     const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
     const flows_to = flowsKnown ? cov!.through : null;
 
+    // The trailing year's contributions, for the Plan tab's savings
+    // (lib/fire/inputs.ts): new money only, not rollovers, from the later of a
+    // year ago and the first day the store has verified. Whether that cut the
+    // year short is said here, in contributions_12m_partial, decided against
+    // the verified coverage (not the oldest row: a plan with no activity for a
+    // while is still covered) and on the coverage's own UTC days, so the tab
+    // never compares one of these days with its own. Each contribution is
+    // listed too, so the tab can leave out one that a transfer from a bank
+    // account paid for, which its income minus spending already counts. Null
+    // where the flows aren't known, for the same reasons as the line above.
+    const yearAgo = new Date(Date.now() - 364 * 86_400_000).toISOString().slice(0, 10);
+    const contributions_12m_from = flowsKnown ? (cov!.from > yearAgo ? cov!.from : yearAgo) : null;
+    const contributions_12m_partial = flowsKnown ? cov!.from > yearAgo : null;
+    const contributed = contributions_12m_from
+      ? mine.filter((t) => t.date >= contributions_12m_from && isContribution(t, counted))
+      : null;
+    const contributions_12m = contributed ? sum(contributed) : null;
+    const contributions_12m_rows = contributed
+      ? contributed.map((t) => ({ date: t.date, amount: contributedAmount(t, counted) })).reverse() // oldest first
+      : null;
+    // The verified record can reach back further than the institution's own
+    // history (it may keep less), so when the account's oldest row is inside
+    // the year, that day is said too: "Nya has activity for it from" is true
+    // either way. Same UTC days as the rest.
+    const contributions_12m_activity_from = flowsKnown && oldest! > yearAgo ? oldest : null;
+
     // Said in full here so the client can print it as is. A fetch failure
     // serves what is stored (and says so only if there is any); a storage
     // problem serves what was just fetched. Both can happen at once.
@@ -109,6 +137,11 @@ export async function GET(req: Request) {
       flows,
       flows_from,
       flows_to,
+      contributions_12m,
+      contributions_12m_from,
+      contributions_12m_partial,
+      contributions_12m_rows,
+      contributions_12m_activity_from,
       note,
     };
 

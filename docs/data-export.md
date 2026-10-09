@@ -82,7 +82,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, or `null` with the shared password. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). None yet. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today one: `fire-plan`. |
 
 ### `institutions[]`
 
@@ -230,6 +230,24 @@ Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `accou
 ### Stores built on the storage seam
 
 Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. They are read as strictly as everything else: if any entry can't be read, nothing is downloaded and the error names the store. They are in the JSON file only.
+
+#### `fire-plan`
+
+The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never saved any. Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in, as the tab reads it.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `age`, `targetAge` | Your age and the age you plan to stop working, or `null`. |
+| `spending`, `savings`, `assets` | A figure you typed over Nya's, or `null` to use what Nya measures. |
+| `includeCash` | Whether checking and savings count as invested. |
+| `withdrawalRate`, `realReturn`, `taxRate` | Fractions: `0.04` is 4%. |
+| `partTimeIncome` | Barista FI's part-time income a year, after tax; 0 leaves it out. |
+| `method`, `rule`, `start`, `startBalance`, `horizon` | The simulation: `historical` or `monte-carlo`, the withdrawal rule, where it starts (`fi-number`, `assets`, or `custom` with `startBalance`), and its length in years (`null` runs to age 95). |
+| `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
+| `income[]` | `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
+| `expenses[]` | `id`, `label`, `amount`, `atAge`. |
+| `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
 
 ## The CSV files
 

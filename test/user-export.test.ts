@@ -617,7 +617,8 @@ describe('stores built on the storage seam', () => {
     await plans.set(OTHER, 'o1', { name: 'OTHER-PERSON-PLAN', target: 1 });
     const doc = await download();
     const keys = Object.keys(doc);
-    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings']);
+    // With the app's own exportable stores (lib/stores.ts) among them, in name order.
+    expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual(['export-test-plans', 'export-test-settings', 'fire-plan']);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
       { id: 'p1', value: { name: 'House', target: 120_000 } },
@@ -664,6 +665,26 @@ describe('stores built on the storage seam', () => {
   test('a store that isn’t exportable is never read for it, so it can’t fail a download either', async () => {
     await fake.hset(ctxKey('export-test-secrets'), { s1: 'not-ciphertext-but-long-enough-to-be-tried' });
     expect((await download())['export-test-secrets']).toBeUndefined();
+  });
+
+  // The first store the app itself declares on the seam: in the download by
+  // being declared exportable, under its own name, as saved.
+  test('the Plan tab’s saved assumptions are a section of their own, "fire-plan"', async () => {
+    const { firePlanStore } = await import('@/lib/fire-plan');
+    const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
+    expect(declaredSections().map((s) => s.key)).toContain('fire-plan');
+    expect((await download())['fire-plan']).toBeNull(); // never saved
+    const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 52_000, planFunding: [{ account_id: 'acc_solo', paidFrom: 'bank' as const }] };
+    await firePlanStore.set(ctx, plan);
+    const doc = await download();
+    expect(doc['fire-plan']).toEqual(plan);
+    const written = JSON.parse([...exportFile(doc, 'json').pieces()].join(''));
+    expect(written['fire-plan']).toEqual(plan);
+    // Saved before the three-way switch, with the two-way one's list: as the
+    // tab reads it, those plans paid from the bank.
+    const { planFunding: _, ...older } = plan;
+    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
+    expect((await download())['fire-plan']).toEqual(plan);
   });
 
   test('no store on the seam is named like a part of the file already there', async () => {

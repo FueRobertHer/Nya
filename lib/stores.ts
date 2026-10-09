@@ -18,6 +18,7 @@
 //   import './rules';
 
 import './connection-records';
+import './fire-plan';
 import './rate-limit';
 
 import { storesDeclaredSoFar, type Store } from './repo';
