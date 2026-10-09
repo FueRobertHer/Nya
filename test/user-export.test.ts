@@ -740,6 +740,7 @@ describe('stores built on the storage seam', () => {
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     // Not the records of showings: "sharing" has them (covers).
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'allocation-settings',
       'carried-annotations',
       'connection-notices',
       'connection-syncs',
@@ -825,6 +826,28 @@ describe('stores built on the storage seam', () => {
     const { planFunding: _, ...older } = plan;
     await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
     expect((await download())['fire-plan']).toEqual(plan);
+  });
+
+  // The allocation settings: the person's own choices (buckets, splits, a
+  // target), so a section of the download as saved.
+  test('the allocation settings are a section of their own, "allocation-settings"', async () => {
+    const { allocationSettingsStore } = await import('@/lib/allocation-settings');
+    expect(declaredSections().map((s) => s.key)).toContain('allocation-settings');
+    expect((await download())['allocation-settings']).toBeNull(); // never saved
+    const settings = {
+      v: 1 as const,
+      buckets: [{ account_id: 'acc_401k', bucket: 'roth' as const }],
+      funds: [{ ticker: 'VFIFX', split: { 'us-stocks': 54, 'intl-stocks': 36, bonds: 10 } }],
+      accounts: [{ account_id: 'manual_1', split: { cash: 100 } }],
+      target: { stocks: 80, bonds: 20 },
+    };
+    await allocationSettingsStore.set(ctx, settings);
+    await allocationSettingsStore.set(OTHER, { ...settings, funds: [{ ticker: 'OTHERPERSON', split: { stocks: 100 } }] });
+    const doc = await download();
+    expect(doc['allocation-settings']).toEqual(settings);
+    expect(JSON.stringify(doc)).not.toContain('OTHERPERSON');
+    const written = JSON.parse([...exportFile(doc, 'json').pieces()].join(''));
+    expect(written['allocation-settings']).toEqual(settings);
   });
 
   // Review: the record of the emails Nya sent about the person's own bank

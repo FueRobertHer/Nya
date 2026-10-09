@@ -46,6 +46,9 @@ import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
 // The Plan tab carries the projection engine, so its code is loaded only when
 // the tab is opened, and a failure to load or run it stays on that tab.
 import PlanTabLoader from './PlanTabLoader';
+// The FI card on Home works its figures out with the Plan's code, so it is
+// loaded the same way, after Home paints.
+import FiProgressLoader from './FiProgressLoader';
 
 type Account = {
   account_id: string;
@@ -64,6 +67,9 @@ type Account = {
   // what keeps the balance out of accountBalanceMap; the client only needs to
   // know the field exists so it survives the localStorage round trip.
   stale?: boolean;
+  // Investment accounts only: this load's holdings call failed for it, so its
+  // positions are unknown (lib/networth.ts markUnanswered).
+  holdings_unanswered?: boolean;
 };
 
 // Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
@@ -98,6 +104,9 @@ type Holding = {
   ticker?: string | null;
   security_type?: string | null;
   is_cash_equivalent?: boolean | null;
+  // What `value` is in, for the Plan's allocation. Absent on payloads cached
+  // before it was sent: the account's currency is used then.
+  currency?: string | null;
 };
 
 type Institution = {
@@ -152,8 +161,9 @@ type Institution = {
   // is on and what to do (lib/connection-state.ts). Optional: a payload
   // cached before it existed has none, and nothing is said then.
   health?: Health;
-  // The accounts a broken card can't show, by name, for the health view.
-  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
+  // The accounts a broken card can't show, by name, for the health view, with
+  // their kind and currency (absent on a payload from before they were sent).
+  unshown_accounts?: { account_id: string; name: string; mask: string | null; type?: string; currency?: string | null }[];
 };
 
 // One manually-tracked account as the API returns it (see lib/manual.ts).
@@ -1416,6 +1426,38 @@ export default function Dashboard({
     return seen.size > 1;
   }, [allAccounts]);
 
+  // The institutions as the Plan reads them, with what went wrong at each, so
+  // a figure that may be short says so; hidden accounts too, which the Plan
+  // leaves out itself. One mapping for the Plan tab and the FI card on Home,
+  // so both read the same accounts.
+  const planInstitutions = useMemo(
+    () =>
+      institutions.map((i) => ({
+        name: i.institution_name,
+        item_id: i.manual ? null : i.item_id,
+        error: !!i.error || i.needs_reauth,
+        staleAsOf: i.stale_as_of ?? null,
+        staleAsOfAt: i.stale_as_of_at ?? null,
+        missing: (i.stale_missing ?? 0) + (i.unconfirmed_missing ?? 0),
+        accounts: i.accounts.map((a) => ({
+          account_id: a.account_id,
+          name: a.name,
+          type: a.type,
+          subtype: a.subtype,
+          balance: a.balance,
+          currency: a.currency,
+          hidden: a.hidden,
+          positionsFailed: a.holdings_unanswered === true,
+        })),
+        // What it can't show (no balance recovered), for allocation over
+        // time, which still expects the investment ones.
+        unshown: (i.unshown_accounts ?? []).map((a) => ({ account_id: a.account_id, name: a.name, type: a.type ?? null, currency: a.currency ?? null })),
+      })),
+    [institutions]
+  );
+  // Every position, with its account, for the Plan's allocation.
+  const planHoldings = useMemo(() => institutions.flatMap((i) => i.holdings), [institutions]);
+
   // Counts what's rendering, so hiding an institution's last account doesn't
   // leave "3 institutions connected" above two cards, and a fully hidden set
   // doesn't read "0 institutions connected" as if nothing were linked.
@@ -1589,6 +1631,23 @@ export default function Dashboard({
                         liability: a.liability,
                       }))
                   )}
+                />
+
+                {/* The Plan's FI number, years to FI and savings rate, from
+                    the same inputs and plan as the Plan tab. Below the
+                    insights: it appears only once its inputs are in, so
+                    nothing above it moves when it does. */}
+                <FiProgressLoader
+                  txns={txns}
+                  txnsLoading={txnsLoading}
+                  txnNotes={txnNotes}
+                  txnWithout={txnWithout}
+                  institutions={planInstitutions}
+                  currency={accountCurrency}
+                  onOpenPlan={() => {
+                    window.scrollTo(0, 0);
+                    setTab('plan');
+                  }}
                 />
                 {error && <div className="error">{error}</div>}
               </>
@@ -2276,25 +2335,8 @@ export default function Dashboard({
                 txnsLoading={txnsLoading}
                 txnNotes={txnNotes}
                 txnWithout={txnWithout}
-                // With what went wrong at each, so a figure that may be short
-                // says so; hidden accounts too, which the tab leaves out itself.
-                institutions={institutions.map((i) => ({
-                  name: i.institution_name,
-                  item_id: i.manual ? null : i.item_id,
-                  error: !!i.error || i.needs_reauth,
-                  staleAsOf: i.stale_as_of ?? null,
-                  staleAsOfAt: i.stale_as_of_at ?? null,
-                  missing: (i.stale_missing ?? 0) + (i.unconfirmed_missing ?? 0),
-                  accounts: i.accounts.map((a) => ({
-                    account_id: a.account_id,
-                    name: a.name,
-                    type: a.type,
-                    subtype: a.subtype,
-                    balance: a.balance,
-                    currency: a.currency,
-                    hidden: a.hidden,
-                  })),
-                }))}
+                institutions={planInstitutions}
+                holdings={planHoldings}
                 balancesAsOf={asOf}
                 currency={accountCurrency}
               />

@@ -639,7 +639,7 @@ describe('the savings sheet', () => {
 
 describe('the tab', () => {
   test('shows a spinner until the saved plan has loaded, never the defaults as if they were saved', () => {
-    const html = renderToStaticMarkup(<PlanTab txns={[]} txnsLoading={false} txnNotes={[]} institutions={[]} balancesAsOf={null} currency="USD" />);
+    const html = renderToStaticMarkup(<PlanTab txns={[]} txnsLoading={false} txnNotes={[]} institutions={[]} balancesAsOf={null} currency="USD" holdings={[]} />);
     expect(html).toContain('role="status"');
     expect(html).not.toContain('FI number');
   });
