@@ -43,7 +43,6 @@ import {
   MAX_NOTE_CHARS,
   MAX_PAYEE_CHARS,
   minorDigits,
-  toMinorUnits,
   type TxnFields,
 } from '../manual-txn-input';
 import { sourceOf, type Problem, type RawRecord } from './record';
@@ -95,9 +94,24 @@ export function normalizeDescription(s: string): string {
     .trim();
 }
 
+// What Intl says of each currency, worked out once: a formatter per row
+// would make a large file several times slower to read.
+const DIGITS = new Map<string, number>();
+const KNOWN = new Map<string, boolean>();
+const digitsOf = (code: string) => {
+  let d = DIGITS.get(code);
+  if (d === undefined) DIGITS.set(code, (d = minorDigits(code)));
+  return d;
+};
+const isKnown = (code: string) => {
+  let k = KNOWN.get(code);
+  if (k === undefined) KNOWN.set(code, (k = knownCurrency(code)));
+  return k;
+};
+
 /** The content key of a transaction (see the header). */
 export function contentKey(t: { date: string; amount: number; currency: string; name: string }): string {
-  const minor = Math.round(t.amount * 10 ** minorDigits(t.currency));
+  const minor = Math.round(t.amount * 10 ** digitsOf(t.currency));
   return `${t.date}|${t.currency}|${minor}|${normalizeDescription(t.name)}`;
 }
 
@@ -117,13 +131,16 @@ export function normalizeRecords(records: RawRecord[], opts: { today: string; cu
     if (record.date < EARLIEST_DATE) return fail(`It is dated ${record.date}, before ${EARLIEST_DATE.slice(0, 4)}.`);
     if (record.date > latest) return fail(`It is dated ${record.date}, in the future.`);
     const currency = (record.currency ?? opts.currency).trim().toUpperCase();
-    if (!knownCurrency(currency)) return fail(`Its currency (${currency.slice(0, 12)}) isn’t one Nya knows.`);
+    if (!isKnown(currency)) return fail(`Its currency (${currency.slice(0, 12)}) isn’t one Nya knows.`);
     const amount = record.amount;
     if (!Number.isFinite(amount)) return fail('Its amount can’t be read.');
     if (amount === 0) return fail('Its amount is zero.');
     if (Math.abs(amount) > MAX_AMOUNT) return fail('Its amount is too large.');
-    const units = amountUnitsError(amount, currency);
-    if (units) return fail(`${units}, and this one has more.`);
+    // Whole minor units, as lib/manual-txn-input.ts inMinorUnits checks, with
+    // its message when not.
+    const scale = 10 ** digitsOf(currency);
+    const scaled = Math.abs(amount) * scale;
+    if (Math.abs(scaled - Math.round(scaled)) >= 1e-6) return fail(`${amountUnitsError(amount, currency)}, and this one has more.`);
     const fullName = cleanText(record.description);
     if (!fullName) return fail('It has no description.');
     const fullCategory = record.category ? cleanText(record.category).toLowerCase() : '';
@@ -131,7 +148,9 @@ export function normalizeRecords(records: RawRecord[], opts: { today: string; cu
     const name = cut(fullName, MAX_PAYEE_CHARS);
     const category = cut(fullCategory, MAX_CATEGORY_CHARS) || null;
     const note = cut(fullNote, MAX_NOTE_CHARS) || null;
-    const fields: TxnFields = { date: record.date, amount: toMinorUnits(amount, currency), currency, name, category, note };
+    // Rounded to its minor unit (half away from zero), as toMinorUnits does.
+    const rounded = (Math.sign(amount) * Math.round(Math.abs(amount) * scale)) / scale;
+    const fields: TxnFields = { date: record.date, amount: rounded, currency, name, category, note };
     const source = sourceOf(record.source);
     // A file without ids of its own keeps the content key it was imported
     // with, from the description as the file wrote it (see the header).
