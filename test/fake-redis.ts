@@ -14,6 +14,7 @@ export type FakeCommand =
   | 'incr'
   | 'del'
   | 'hset'
+  | 'hsetnx'
   | 'hget'
   | 'hdel'
   | 'hkeys'
@@ -158,6 +159,14 @@ export class FakeRedis {
     this.gate('hset');
     const h = this.hash(key);
     for (const [f, v] of Object.entries(fields)) h.set(f, v);
+  }
+  /** Sets one field only if the hash doesn't have it: 1 if it was set, 0 if
+   *  it was there already (lib/sharing.ts, a connection's access log id). */
+  async hsetnx(key: string, field: string, value: string): Promise<number> {
+    this.gate('hsetnx');
+    if (this.hashes.get(key)?.has(field)) return 0;
+    this.hash(key).set(field, value);
+    return 1;
   }
 
   async hget<T>(key: string, field: string): Promise<T | null> {

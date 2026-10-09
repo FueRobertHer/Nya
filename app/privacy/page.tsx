@@ -14,15 +14,17 @@ export const metadata: Metadata = {
 // How Nya handles personal data: its commitments, who processes the data, how
 // long things are kept, and how to download and delete it. Public (proxy.ts)
 // and a plain-language summary, not a legal policy. Each commitment says what
-// makes it true today and what is not built yet. Reads no stored data: what it
-// says of backups comes from backupRetention() (lib/backup.ts, environment
-// only), the rule the deletion receipt dates by, so the two never disagree.
+// makes it true today and, where some of it is still to come, what is not
+// built yet. Reads no stored data: what it says of backups comes from
+// backupRetention() (lib/backup.ts, environment only), the rule the deletion
+// receipt dates by, so the two never disagree.
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
   promise: string;
   today: ReactNode;
-  next: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned'; text: ReactNode };
+  /** What is still to come, if anything. */
+  next?: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned'; text: ReactNode };
 };
 
 /** What happens to a deleted account's data in the nightly backups here. */
@@ -59,11 +61,8 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   },
   {
     promise: 'You decide what anyone else sees, and you can see what they see about you.',
-    today: `Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of when they looked, kept for ${ACCESS_LOG_DAYS} days. A share can end on a date you set, and Remove or Block ends it at once. The people you share with see when what they see ends, and are told you can see when they look.`,
-    next: {
-      label: 'Planned',
-      text: 'More kinds of share, such as your net worth or your spending, with a warning when shares together would reveal something you held back.',
-    },
+    today:
+      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.',
   },
   {
     promise: 'You can see who can read what, including us.',
@@ -112,9 +111,16 @@ const processors = (backups: BackupRetention): [string, string][] => [
   ],
 ];
 
-/** What outlives a deletion in other people's data: their record of when
- *  you looked at what they shared with you (lib/access-log.ts). */
-const theirRecord = `People who shared with you keep their own record of when you looked. It doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`;
+/** How long the records of showings on a connection last (lib/access-log.ts),
+ *  backups included. */
+function showingsRow(backups: BackupRetention): string {
+  const kept = `Each entry is deleted after ${ACCESS_LOG_DAYS} days, by a pass that runs every night, and both people’s records go at once when either of you removes or blocks the other, or deletes their account.`;
+  if (backups === null) {
+    return `${kept} Nightly backups already taken keep a copy until their retention setting, which is not valid on this copy of Nya, is fixed and they are deleted in turn.`;
+  }
+  if (!backups.kept) return `${kept} This copy of Nya takes no backups, so no copy is left in one.`;
+  return `${kept} Nightly backups keep a copy up to ${backupDaysAtMost(backups)} days more, while the nightly backup keeps running.`;
+}
 
 function backupsRow(backups: BackupRetention): string {
   if (backups === null) return 'None taken and none deleted while the retention setting is not valid.';
@@ -131,10 +137,10 @@ const retention = (backups: BackupRetention): [string, string][] => [
   ['Nightly backups', backupsRow(backups)],
   [
     'A deleted account',
-    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} ${theirRecord} Plaid keeps what it collected under its own policy.`,
+    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy.`,
   ],
   ['Invite links', '72 hours, or until used.'],
-  ['When people you share with looked', `${ACCESS_LOG_DAYS} days: each night, looks older than that are deleted.`],
+  ['Records of when shared accounts were shown', showingsRow(backups)],
   [
     'Copies of what the dashboard shows',
     'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted.',
@@ -163,8 +169,12 @@ export default function PrivacyPage() {
           <dl className="info-status">
             <dt>True today</dt>
             <dd>{c.today}</dd>
-            <dt>{c.next.label}</dt>
-            <dd>{c.next.text}</dd>
+            {c.next && (
+              <>
+                <dt>{c.next.label}</dt>
+                <dd>{c.next.text}</dd>
+              </>
+            )}
           </dl>
         </section>
       ))}
@@ -239,7 +249,6 @@ export default function PrivacyPage() {
             Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
             own within 72 hours.
           </li>
-          <li>{theirRecord}</li>
           <li>
             Plaid keeps its own record of the connections you made through it. To see what Plaid holds about you, or
             delete it, use the{' '}

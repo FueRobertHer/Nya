@@ -6,12 +6,15 @@
 //     I'm connected with, and for each what I call them, what they see of
 //     mine, per account (not shared, that it exists, balance, or balance and
 //     recent transactions) and until when, a preview of exactly what they see,
-//     when they looked (the access log), plus remove and block;
+//     both records of showings (when what I share was shown to them, and when
+//     what they share was shown to me), plus remove and block;
 //   - "Shared by ...", on the Accounts tab whenever a connection shares
-//     something: their accounts, read-only, and until when.
+//     something: their accounts, read-only, and until when. They are fetched
+//     only once that part of the page is on screen, since each fetch is
+//     counted as a showing in the sharer's record (lib/access-log.ts).
 // Only with Clerk on; with the shared password there's nobody to connect
-// with, and both parts render nothing. End dates and the access log's days
-// are in components/SharingDates.tsx.
+// with, and both parts render nothing. End dates and the records' days are in
+// components/SharingDates.tsx.
 //
 // Class names avoid "share": ad blockers' social-share filters hide such
 // elements (Fanboy's list has ##.share-row).
@@ -27,10 +30,10 @@ import {
   endLabel,
   ended,
   EndPicker,
-  WhenTheyLooked,
+  ShowingsRecord,
   RENEW_DAYS,
   type EndChoice,
-  type LoggedHour,
+  type Showing,
 } from './SharingDates';
 
 export { shortDate } from './SharingDates';
@@ -45,16 +48,27 @@ export type Connection = {
   /** When what I share with them ends (an ISO time, which may have passed),
    *  or null for no end. */
   expires_at: string | null;
-  /** When they looked, by the hour, oldest first; null when the record can't
-   *  be used, and views_problem says why. */
-  views: LoggedHour[] | null;
-  views_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
+  /** My record's id, to clear it by when it can't be read; null before the
+   *  first record. */
+  record_id: string | null;
+  /** When the connection's records began, or null before the first. */
+  record_since: string | null;
+  /** When what I share was shown to them, by the quarter hour, oldest first;
+   *  null when my record can't be used, and the problem says why. */
+  shown_to_them: Showing[] | null;
+  shown_to_them_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
+  /** When what they share was shown to me: their record, the same one they see. */
+  shown_to_me: Showing[] | null;
+  shown_to_me_problem?: 'unreadable' | 'unrecognised' | 'unavailable';
 };
 export type SharingPayload = {
   enabled: boolean;
   connections?: Connection[];
   blocked?: { id: string; label: string }[];
   accounts?: { id: string; label: string; institution?: string; name?: string }[];
+  /** My records that can't be read and belong to no connection of mine now,
+   *  by id: clearable once I confirm. */
+  damaged_records?: string[];
 };
 
 type ShareableAccount = NonNullable<SharingPayload['accounts']>[number];
@@ -152,7 +166,9 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<SharePreview | null>(null);
   const [previewError, setPreviewError] = useState('');
-  const asked = useRef<string | null>(null);
+  // Which preview request is the latest: an older answer that comes back
+  // after a newer one (go back, save, look again) is dropped.
+  const asked = useRef(0);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/connections').catch(() => null);
@@ -212,16 +228,36 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
 
   // Always what is saved, never the draft: it is what they see.
   const openPreview = useCallback(async (id: string) => {
-    asked.current = id;
+    const mine = ++asked.current;
     setPreviewing(true);
     setPreview(null);
     setPreviewError('');
     const res = await fetch(`/api/connections/preview?id=${encodeURIComponent(id)}`).catch(() => null);
     const body = await res?.json().catch(() => null);
-    if (asked.current !== id) return; // another was asked for since
+    if (asked.current !== mine) return; // another was asked for since
     if (!res?.ok || !body) return setPreviewError(body?.error ?? 'Could not show what they see.');
     setPreview(body);
   }, []);
+
+  // Clears records of mine that can't be read, once I confirm.
+  const clearRecords = useCallback(
+    async (ids: string[], question: string) => {
+      if (ids.length === 0 || !window.confirm(question)) return;
+      setBusy(true);
+      setError('');
+      setNotice('');
+      let failed = '';
+      for (const id of ids) {
+        const res = await send('DELETE', '/api/connections/access-log', { id });
+        if (!res.ok) failed ||= res.body?.error ?? 'Something went wrong.';
+      }
+      setBusy(false);
+      if (failed) setError(failed);
+      else setNotice(ids.length === 1 ? 'Cleared.' : 'Cleared them.');
+      await load();
+    },
+    [load]
+  );
 
   const current = data?.connections?.find((c) => c.id === selected) ?? null;
   const accounts = data?.accounts ?? [];
@@ -277,10 +313,13 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
           onPreview={() => {
             if (current) openPreview(current.id);
           }}
-          onClearViews={async () => {
-            if (!current || !window.confirm('Clear the record of when they looked? It can’t be read, so nothing readable is lost.')) return;
-            await act('DELETE', '/api/connections/access-log', { id: current.id }, 'Cleared. Their next look starts a new record.');
-          }}
+          onClearRecord={(id) => clearRecords([id], 'Clear this record? It can’t be read, so nothing readable is lost, and the next showing starts a new one.')}
+          onClearDamaged={() =>
+            clearRecords(
+              data?.damaged_records ?? [],
+              'Clear what can’t be read? It belongs to no one you’re connected with now, and nothing readable is lost.'
+            )
+          }
           onRemove={async (id, block) => {
             const what = block
               ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.'
@@ -315,7 +354,8 @@ export function SharingPanelView({
   onSave,
   onRenew,
   onPreview,
-  onClearViews,
+  onClearRecord,
+  onClearDamaged,
   onRemove,
 }: {
   data: SharingPayload | null;
@@ -339,8 +379,11 @@ export function SharingPanelView({
   /** Gives an ended share another RENEW_DAYS, as it was. */
   onRenew: () => void;
   onPreview: () => void;
-  /** Clears an unreadable record of when they looked (after confirming). */
-  onClearViews: () => void;
+  /** Clears my unreadable record on a connection, by its id (after confirming). */
+  onClearRecord: (id: string) => void;
+  /** Clears my unreadable records that belong to no connection now (after
+   *  confirming). */
+  onClearDamaged: () => void;
   /** block: true blocks, false removes, null lifts a block (no confirmation). */
   onRemove: (id: string, block: boolean | null) => void;
 }) {
@@ -419,16 +462,32 @@ export function SharingPanelView({
           {status}
         </section>
         <section className="panel-section">
-          <p className="section-label">When they looked</p>
-          <WhenTheyLooked
+          <p className="section-label">Shown to them</p>
+          <ShowingsRecord
             who={current.label}
-            since={current.since}
-            views={current.views ?? null}
-            problem={current.views_problem ?? (current.views === undefined ? 'unavailable' : undefined)}
+            mine
+            since={current.record_since ?? null}
+            showings={current.shown_to_them ?? null}
+            problem={current.shown_to_them_problem ?? (current.shown_to_them === undefined ? 'unavailable' : undefined)}
             busy={busy}
-            onClear={onClearViews}
+            onClear={current.shown_to_them_problem === 'unreadable' && current.record_id ? () => onClearRecord(current.record_id!) : undefined}
           />
-          <p className="panel-note">Kept for {ACCESS_LOG_DAYS} days. Only you see this, and their card tells them you can.</p>
+          <p className="panel-note">
+            Counted each time their app loads what you share, which it does when that part of their Accounts tab comes into view. Kept{' '}
+            {ACCESS_LOG_DAYS} days at most, and only while you’re connected. They see this same record.
+          </p>
+        </section>
+        <section className="panel-section">
+          <p className="section-label">Shown to you</p>
+          <ShowingsRecord
+            who={current.label}
+            mine={false}
+            since={current.record_since ?? null}
+            showings={current.shown_to_me ?? null}
+            problem={current.shown_to_me_problem ?? (current.shown_to_me === undefined ? 'unavailable' : undefined)}
+            busy={busy}
+          />
+          <p className="panel-note">{current.label}’s record of each time what they share was shown to you: the same one they see.</p>
         </section>
         <section className="panel-section">
           <p className="section-label">Connection</p>
@@ -448,12 +507,25 @@ export function SharingPanelView({
 
   const connections = data.connections ?? [];
   const blocked = data.blocked ?? [];
+  const damaged = data.damaged_records ?? [];
   return (
     <>
       <section className="panel-section">
         <p className="panel-note" style={{ marginTop: 0 }}>
           They see only the accounts you choose, read-only. Nobody else in the app can find you.
         </p>
+        {damaged.length > 0 && (
+          <>
+            <p className="stale-note">
+              {damaged.length === 1
+                ? 'A record of showings from someone you’re no longer connected with can’t be read.'
+                : `${damaged.length} records of showings from people you’re no longer connected with can’t be read.`}
+            </p>
+            <button className="secondary" onClick={onClearDamaged} disabled={busy} style={{ marginTop: 10 }}>
+              {damaged.length === 1 ? 'Clear it' : 'Clear them'}
+            </button>
+          </>
+        )}
       </section>
       <section className="panel-section">
         <p className="section-label">Invite someone</p>
@@ -570,15 +642,20 @@ export function PreviewView({
   return (
     <>
       <p className="panel-note" style={{ marginTop: 4 }}>
-        Exactly what {who} sees of yours right now, read-only, on their Accounts tab, with the dates they see. The card there carries their name
-        for you.
+        Exactly what {who} sees of yours right now, read-only, on their Accounts tab. Their card carries their name for you, and shows its
+        dates in their own time zone, so one can fall a day apart from here.
       </p>
       {unsaved && <p className="stale-note">You have changes you haven’t saved. This shows what is saved.</p>}
       {preview.view ? (
         <SharedCard
           name="you"
           view={preview.view}
-          note={<p className="panel-note">{preview.view.expires_at ? `Shared until ${endLabel(preview.view.expires_at)}. ` : ''}You can see when they look.</p>}
+          note={
+            <p className="panel-note">
+              {preview.view.expires_at ? `Shared until ${endLabel(preview.view.expires_at)}. ` : ''}You see each time this is shown to them, and so
+              do they, in Sharing.
+            </p>
+          }
         />
       ) : (
         <p className="empty-note">{nothing}</p>
@@ -587,15 +664,41 @@ export function PreviewView({
   );
 }
 
+/**
+ * What others share with me, fetched only once this part of the page is on
+ * screen, and again after a refresh if it is (or once it next is): each fetch
+ * counts as a showing in the sharer's record, so one is made only when the
+ * cards can actually be seen. Scrolling past them again fetches nothing.
+ */
 export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
   const [data, setData] = useState<SharedPayload | null>(null);
+  const [onScreen, setOnScreen] = useState(false);
+  const spot = useRef<HTMLDivElement>(null);
+  const loadedFor = useRef<{ key: unknown } | null>(null);
   useEffect(() => {
+    const el = spot.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setOnScreen(true);
+      return;
+    }
+    const watch = new IntersectionObserver((entries) => setOnScreen(entries.some((e) => e.isIntersecting)));
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!onScreen || (loadedFor.current && Object.is(loadedFor.current.key, refreshKey))) return;
+    loadedFor.current = { key: refreshKey };
     fetch('/api/shared')
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => setData(body))
       .catch(() => setData(null));
-  }, [refreshKey]);
-  return <SharedWithMeView data={data} />;
+  }, [onScreen, refreshKey]);
+  return (
+    <div ref={spot} className="incoming-spot">
+      <SharedWithMeView data={data} />
+    </div>
+  );
 }
 
 function shownBalance(a: SharedAccount): string {
@@ -647,15 +750,30 @@ function SharedCard({ name, view, note }: { name: string; view: SharedView; note
 }
 
 export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
-  if (!data || data.shared.length === 0) return null;
+  const [now, setNow] = useState(() => Date.now());
+  // A share that ends while it is on screen goes at its end, without waiting
+  // for the next fetch: from then on the server shows nothing of it.
+  const next = Math.min(Infinity, ...(data?.shared ?? []).map((s) => (s.expires_at ? Date.parse(s.expires_at) : Infinity)).filter((t) => t > now));
+  useEffect(() => {
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(Math.max(next - Date.now(), 0), 2 ** 31 - 1) + 10);
+    return () => clearTimeout(timer);
+  }, [next]);
+  const shared = (data?.shared ?? []).filter((s) => !ended(s.expires_at, now));
+  if (shared.length === 0) return null;
   return (
     <>
-      {data.shared.map((s) => (
+      {shared.map((s) => (
         <SharedCard
           key={s.connection}
           name={s.label}
           view={s}
-          note={<p className="panel-note">{s.expires_at ? `Shared until ${endLabel(s.expires_at)}. ` : ''}{s.label} can see when you look.</p>}
+          note={
+            <p className="panel-note">
+              {s.expires_at ? `Shared until ${endLabel(s.expires_at)}. ` : ''}
+              {s.label} sees each time this is shown to you, and so do you, in Sharing.
+            </p>
+          }
         />
       ))}
     </>

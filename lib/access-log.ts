@@ -1,167 +1,143 @@
 // lib/access-log.ts
 //
-// The access log of sharing (#45 step 2): for each person I share with, when
-// they looked at what I share and what they were shown. It is mine: kept in my
-// container, encrypted, as a map store on the storage seam (lib/repo.ts) with
-// one entry per connection under the connection's id, and in my data download.
-// It never holds who they are: the Sharing drawer names a connection by what I
-// call them, read when it is shown.
+// The access log of sharing (#45 step 2): each time what one person shares
+// was shown to the other, and what it showed. There is one record per
+// connection on each side: in my container, when what I share was shown to
+// them; in theirs, when what they share was shown to me. Each is kept
+// encrypted, as a map store on the storage seam (lib/repo.ts), under the
+// connection's log id: a random id made for the connection (lib/sharing.ts),
+// so no field name can be traced back to who is connected, and two people who
+// connect again start new records.
 //
-// WRITTEN FROM THE OTHER PERSON'S REQUEST, by one named function in
-// lib/sharing.ts (recordView), the only code that holds my Ctx on their behalf.
-// It is the one write their request makes in my container, and all it writes is
-// this: an hour, a count, and the accounts and levels the read returned, under
-// the connection's id. Best effort: a failure is logged and never fails their
-// read. My own preview of what they see records nothing.
+// IT LIVES AS LONG AS THE CONNECTION. Ending a share keeps it. Removing or
+// blocking the person, or either account being deleted, deletes it on both
+// sides at once, by id, without reading it (lib/sharing.ts forgetShowings).
+// Both people see it: I see when what I share was shown to them, and they see
+// the same record (read through lib/sharing.ts). It is in both people's data
+// downloads, inside "sharing" (lib/user-export.ts).
 //
-// AGGREGATED BY THE HOUR. One row per connection per UTC hour, with how many
-// times they looked in it and, for each account, the widest level it was shown
-// at in that hour: someone refreshing ten times makes one row. Hours rather than
-// days so the drawer can group them into my own days, in my time zone
-// (components/Sharing.tsx), which the server doesn't know.
+// WRITTEN FROM THE OTHER PERSON'S REQUEST, by one function in lib/sharing.ts
+// (recordShowing), the only code that holds a Ctx on someone else's behalf:
+// each time their app loads what I share, it is counted here. Best effort: a
+// failure is logged and never fails their read. My own preview of what they
+// see counts nothing.
 //
-// KEPT FOR ACCESS_LOG_DAYS. Every write drops the hours older than that, and the
-// hours from before the connection began (two people who connect again get the
-// same connection id, and a new connection starts a new record). The nightly
-// snapshot prunes every entry in the container the same way (pruneAccessLog,
-// from lib/snapshot-job.ts) and removes those with nothing left, so the record
-// of a connection nobody looks at any more, or one since removed, is gone within
-// a day of its last hour passing ACCESS_LOG_DAYS. The drawer shows only what is
-// kept, whenever the pruning last ran.
+// COUNTED BY THE QUARTER HOUR (ACCESS_LOG_SLOT_MINUTES), in UTC: one row per
+// quarter hour, with how many times it was shown in it and, for each account,
+// the widest level it was shown at. Ten loads in a quarter hour are one row.
+// Every time zone in use is a whole number of quarter hours from UTC, so the
+// drawer can put each row in its reader's own day exactly
+// (components/SharingDates.tsx).
 //
-// READS. The drawer reads with getAllReport: an entry that can't be read shows
-// as that, never as "they never looked". An unreadable one (damaged bytes) can
-// be cleared, and only on the person's say-so (clearUnreadableAccessLog); an
-// unrecognised one is left alone. A write reads its entry strictly (update), so
-// it never replaces one it couldn't read; while an entry can't be read, looks
-// on that connection go unrecorded, and the drawer says so.
+// KEPT FOR ACCESS_LOG_DAYS AT MOST. Every write drops what is older, and every
+// night the snapshot (lib/snapshot-job.ts) prunes each record in the
+// container, deleting those left empty and those whose connection has ended
+// (in case a removal stopped part way): pruneAccessLog. Nightly backups keep a
+// copy for as long as they keep everything else.
+//
+// READS are strict about each entry: one that can't be used is named as such,
+// never shown as nothing. An unreadable one (damaged bytes) can be cleared
+// once the person confirms (clearUnreadableAccessLog), whether or not its
+// connection is still there; an unrecognised one is left alone. While either
+// is there, showings on that connection go unrecorded: a write reads its entry
+// strictly first (update), and refuses.
 
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
-import { ACCESS_LOG_DAYS, isLevel, widerLevel, type Level } from './share-rules';
+import { ACCESS_LOG_DAYS, ACCESS_LOG_SLOT_MINUTES, isLevel, widerLevel, type Level } from './share-rules';
 
-export type LoggedHour = {
-  /** The start of the UTC hour: "2026-10-04T13:00:00.000Z". */
-  hour: string;
-  /** How many times they looked in that hour: 1 or more. */
-  views: number;
-  /** What they were shown: each account's id, at the widest level it was
-   *  shown at in that hour. */
+/** One quarter hour of a record. */
+export type Showing = {
+  /** The start of the quarter hour, UTC: "2026-10-04T13:15:00.000Z". */
+  at: string;
+  /** How many times it was shown in that quarter hour: 1 or more. */
+  times: number;
+  /** What was shown: each account's id, at the widest level it was shown at
+   *  in that quarter hour. */
   read: Record<string, Level>;
 };
 
-/** One connection's record: its hours, oldest first. */
-export type AccessLog = { hours: LoggedHour[] };
+/** One side's record on one connection: its quarter hours, oldest first. */
+export type AccessLog = { shown: Showing[] };
 
-const HOUR_MS = 3_600_000;
+const SLOT_MS = ACCESS_LOG_SLOT_MINUTES * 60_000;
 const DAY_MS = 86_400_000;
-/** The most hours a record can keep: every hour of ACCESS_LOG_DAYS, and the
- *  one the window starts in. */
-const MAX_HOURS = ACCESS_LOG_DAYS * 24 + 1;
-const HOUR = /^\d{4}-\d{2}-\d{2}T\d{2}:00:00\.000Z$/;
+/** The most quarter hours a record can keep: every one of ACCESS_LOG_DAYS,
+ *  and the one the window starts in. */
+const MAX_SLOTS = (ACCESS_LOG_DAYS * DAY_MS) / SLOT_MS + 1;
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\.000Z$/;
+
+/** The start of a quarter hour, exactly as slotOf writes it. */
+function isSlot(v: unknown): v is string {
+  if (typeof v !== 'string' || !INSTANT.test(v)) return false;
+  const t = Date.parse(v);
+  return Number.isFinite(t) && t % SLOT_MS === 0 && new Date(t).toISOString() === v;
+}
 
 function isRead(v: unknown): v is Record<string, Level> {
   return typeof v === 'object' && v !== null && !Array.isArray(v) && Object.values(v).every(isLevel);
 }
 
-function isLoggedHour(v: unknown): v is LoggedHour {
+function isShowing(v: unknown): v is Showing {
   if (typeof v !== 'object' || v === null) return false;
-  const h = v as LoggedHour;
-  return typeof h.hour === 'string' && HOUR.test(h.hour) && Number.isSafeInteger(h.views) && h.views >= 1 && isRead(h.read);
+  const s = v as Showing;
+  return isSlot(s.at) && Number.isSafeInteger(s.times) && s.times >= 1 && isRead(s.read);
 }
 
 /** The current shape: what every write stores, and every read checks. */
 export function isAccessLog(v: unknown): v is AccessLog {
-  return typeof v === 'object' && v !== null && Array.isArray((v as AccessLog).hours) && (v as AccessLog).hours.every(isLoggedHour);
+  return typeof v === 'object' && v !== null && Array.isArray((v as AccessLog).shown) && (v as AccessLog).shown.every(isShowing);
 }
 
 export const accessLogStore = defineMapStore<AccessLog>('sharing-access-log', {
-  what: 'records of when people you share with looked',
+  what: 'records of when what you share was shown',
   isValid: isAccessLog,
-  exportable: true, // mine: who looked at what I share, and when
-  compress: true, // ninety days of hours, each naming what was read
+  // In the download, inside "sharing", beside the connection each belongs to
+  // (lib/user-export.ts covers it there), with the other side's record of the
+  // same connection.
+  exportable: true,
+  compress: true, // ninety days of quarter hours, each naming what was read
 });
 
-/** The start of the UTC hour `t` falls in, as stored. */
-export function hourOf(t: number): string {
-  return new Date(Math.floor(t / HOUR_MS) * HOUR_MS).toISOString();
+/** The start of the quarter hour `t` falls in, as stored. */
+export function slotOf(t: number): string {
+  return new Date(Math.floor(t / SLOT_MS) * SLOT_MS).toISOString();
+}
+
+/** The quarter hours of a record still kept at `now`: those reaching into the
+ *  last ACCESS_LOG_DAYS. One is kept while any of it is inside, so nothing is
+ *  dropped early. */
+export function keptShowings(log: AccessLog, now: number): Showing[] {
+  const from = now - ACCESS_LOG_DAYS * DAY_MS;
+  return log.shown.filter((s) => Date.parse(s.at) + SLOT_MS > from);
 }
 
 /**
- * The hours of a record still kept at `now`: those reaching into the last
- * ACCESS_LOG_DAYS and, given `since` (when the connection began, in ms), not
- * over before it. An hour is kept while any of it is inside, so a look is
- * never dropped early.
- */
-export function keptHours(log: AccessLog, now: number, since?: number): LoggedHour[] {
-  const window = now - ACCESS_LOG_DAYS * DAY_MS;
-  const from = since !== undefined && Number.isFinite(since) ? Math.max(window, since) : window;
-  return log.hours.filter((h) => Date.parse(h.hour) + HOUR_MS > from);
-}
-
-/**
- * The record with one more look at `now`, which was shown `read`: counted in
- * its hour, with each account at the widest level shown in that hour, and the
- * hours no longer kept dropped (see keptHours). Computes only, without changing
+ * The record with one more showing at `now`, of `read`: counted in its
+ * quarter hour, with each account at the widest level shown in it, and what
+ * is no longer kept dropped (keptShowings). Computes only, without changing
  * `current`, since update() may run it more than once.
  */
-export function withView(current: AccessLog | null, now: number, read: Record<string, Level>, since?: number): AccessLog {
-  const hour = hourOf(now);
-  const kept = keptHours(current ?? { hours: [] }, now, since);
-  const before = kept.find((h) => h.hour === hour);
-  const hours = kept.filter((h) => h !== before);
+export function withShowing(current: AccessLog | null, now: number, read: Record<string, Level>): AccessLog {
+  const at = slotOf(now);
+  const kept = keptShowings(current ?? { shown: [] }, now);
+  const before = kept.find((s) => s.at === at);
+  const shown = kept.filter((s) => s !== before);
   const merged: Record<string, Level> = { ...before?.read };
   for (const [id, level] of Object.entries(read)) merged[id] = merged[id] ? widerLevel(merged[id], level) : level;
-  hours.push({ hour, views: (before?.views ?? 0) + 1, read: merged });
-  // In order even when two servers' clocks disagree about which hour is newer.
-  hours.sort((a, b) => (a.hour < b.hour ? -1 : a.hour > b.hour ? 1 : 0));
-  return { hours: hours.slice(-MAX_HOURS) };
-}
-
-/** When one connection looked, for the drawer, or why that can't be shown:
- *  "unreadable" (damaged, and may be cleared), "unrecognised" (intact but not
- *  understood: left alone) or "unavailable" (the record couldn't be reached). */
-export type LookedField = { views: LoggedHour[] } | { views: null; views_problem: 'unreadable' | 'unrecognised' | 'unavailable' };
-
-/**
- * For my Sharing drawer: when each of my connections looked, by the hour,
- * oldest first, kept hours only (keptHours, from when each connection began).
- * Strict about each entry: one that can't be used is named as such, never
- * shown as no looks. A record that can't be reached at all is "unavailable" for
- * every connection rather than failing the drawer: it is only shown, and
- * nothing is written or removed on what this returns.
- */
-export async function whenTheyLooked(
-  ctx: Ctx,
-  connections: readonly { id: string; since: string }[],
-  now: number = Date.now()
-): Promise<Map<string, LookedField>> {
-  let report: Awaited<ReturnType<typeof accessLogStore.getAllReport>>;
-  try {
-    report = await accessLogStore.getAllReport(ctx);
-  } catch (err) {
-    console.error('Sharing: the access log could not be read', err instanceof Error ? err.name : err);
-    return new Map(connections.map((c) => [c.id, { views: null, views_problem: 'unavailable' }]));
-  }
-  const unreadable = new Set(report.unreadable);
-  const unrecognised = new Set(report.unrecognised);
-  return new Map(
-    connections.map((c): [string, LookedField] => {
-      if (unreadable.has(c.id)) return [c.id, { views: null, views_problem: 'unreadable' }];
-      if (unrecognised.has(c.id)) return [c.id, { views: null, views_problem: 'unrecognised' }];
-      const log = report.entries.get(c.id);
-      return [c.id, { views: log ? keptHours(log, now, Date.parse(c.since)) : [] }];
-    })
-  );
+  shown.push({ at, times: (before?.times ?? 0) + 1, read: merged });
+  // In order even when two servers' clocks disagree about which is newer.
+  shown.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return { shown: shown.slice(-MAX_SLOTS) };
 }
 
 /**
- * Removes my record for a connection, only if it is unreadable (damaged bytes,
- * so nothing readable is lost), for the drawer's "Clear it", which the person
- * confirms first. False, with nothing removed, when it reads, isn't there, or
- * is unrecognised (intact data a later release may read). Nothing can make an
- * unreadable entry readable in between: a write reads its entry strictly
- * first, and refuses.
+ * Removes my record under `id`, only if it is unreadable (damaged bytes, so
+ * nothing readable is lost), for the drawer's "Clear", which the person
+ * confirms first. Its connection may be gone. False, with nothing removed,
+ * when it reads, isn't there, or is unrecognised (intact data a later release
+ * may read). Nothing can make an unreadable entry readable in between: a write
+ * reads its entry strictly first, and refuses.
  */
 export async function clearUnreadableAccessLog(ctx: Ctx, id: string): Promise<boolean> {
   try {
@@ -176,33 +152,43 @@ export async function clearUnreadableAccessLog(ctx: Ctx, id: string): Promise<bo
 }
 
 /**
- * Drops, from every entry of the container's record, the hours no longer kept
- * (keptHours), removing an entry with none left: the nightly pass that keeps the
- * record of a connection nobody looks at any more, or one since removed, to
- * ACCESS_LOG_DAYS. Each change goes through update(), which reads the entry
- * strictly and writes only if it is still what was read, so a look recorded
- * meanwhile is kept. Unreadable and unrecognised entries are left alone (only
- * the person may clear one). Never throws: a failure is logged, and the next
- * night tries again.
+ * The nightly pass over one container's records. Deletes each record whose
+ * connection has ended, whole, by id, readable or not: the same rule as a
+ * removal (lib/sharing.ts forgetShowings), for one that stopped part way.
+ * Then drops, from each record left, the quarter hours no longer kept, and
+ * deletes a record with none left; each change goes through update(), which
+ * reads the entry strictly and writes only if it is still what was read, so a
+ * showing recorded meanwhile is kept. Unreadable and unrecognised records of a
+ * connection that is still there are left alone.
+ *
+ * `live` gives the log ids of the connections there are, or null when they
+ * can't all be read: then no record is deleted for its connection. It is read
+ * after the records, so a record is only ever judged by connections read after
+ * it was: a new connection's log id is saved before anything is written under
+ * it. Never throws: a failure is logged, and the next night tries again.
  */
-export async function pruneAccessLog(ctx: Ctx, now: number = Date.now()): Promise<void> {
-  let entries: Map<string, AccessLog>;
+export async function pruneAccessLog(ctx: Ctx, now: number, live: () => Promise<ReadonlySet<string> | null>): Promise<void> {
   try {
-    ({ entries } = await accessLogStore.getAllReport(ctx));
+    const report = await accessLogStore.getAllReport(ctx);
+    const known = await live();
+    if (known) {
+      const ended = [...report.entries.keys(), ...report.unreadable, ...report.unrecognised].filter((id) => !known.has(id));
+      if (ended.length > 0) await accessLogStore.remove(ctx, ...ended);
+      for (const id of ended) report.entries.delete(id);
+    }
+    for (const [id, log] of report.entries) {
+      if (keptShowings(log, now).length === log.shown.length) continue;
+      try {
+        await accessLogStore.update(ctx, id, (current) => {
+          if (!current) return null;
+          const shown = keptShowings(current, now);
+          return shown.length > 0 ? { shown } : null;
+        });
+      } catch (err) {
+        console.error('Sharing: an access log entry could not be pruned', err instanceof Error ? err.name : err);
+      }
+    }
   } catch (err) {
     console.error('Sharing: the access log could not be pruned', err instanceof Error ? err.name : err);
-    return;
-  }
-  for (const [id, log] of entries) {
-    if (keptHours(log, now).length === log.hours.length) continue;
-    try {
-      await accessLogStore.update(ctx, id, (current) => {
-        if (!current) return null;
-        const hours = keptHours(current, now);
-        return hours.length > 0 ? { hours } : null;
-      });
-    } catch (err) {
-      console.error('Sharing: an access log entry could not be pruned', err instanceof Error ? err.name : err);
-    }
   }
 }

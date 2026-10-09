@@ -2627,25 +2627,31 @@ button.plan-edit:disabled {
   margin-bottom: 6px;
 }
 
-/* --- sharing's end dates and when they looked (components/SharingDates.tsx) --- */
+/* --- sharing's end dates and records of showings (components/SharingDates.tsx) --- */
 
 .end-picker select {
   width: 100%;
   font-size: 15px;
 }
 
-/* When they looked: one of the owner's days a line. */
-.looked-list {
+/* A record of showings: one of the reader's days a line. */
+.shown-list {
   list-style: none;
   margin: 0;
   padding: 0;
   font-size: 14px;
 }
 
-.looked-list li {
+.shown-list li {
   padding: 8px 0;
 }
 
-.looked-list li + li {
+.shown-list li + li {
   border-top: 1px solid var(--line);
+}
+
+/* Where the "Shared by" cards go: a pixel tall even before they load, so the
+   page can tell when it is on screen, which is when they are fetched. */
+.incoming-spot {
+  min-height: 1px;
 }

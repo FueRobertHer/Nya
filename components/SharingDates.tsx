@@ -3,14 +3,17 @@
 // Dates in sharing (#45 step 2), for the Sharing drawer and the "Shared by"
 // cards (components/Sharing.tsx):
 //   - when a share ends. A share runs through the last day its owner chose and
-//     ends at the start of the next one, in their own time zone; that instant
-//     is worked out here, on their device, and the server compares it with the
-//     time of each read (lib/sharing.ts). The choices: no end, 7 or 30 days,
-//     the end of tax season (Apr 30), or a date.
-//   - when they looked: the access log's hours (lib/access-log.ts), grouped
-//     into the owner's own days, "Viewed 3 times on Oct 4, balances of 2
-//     accounts". The server keeps hours in UTC and doesn't know the owner's
-//     time zone, so the days are made here.
+//     ends at the first instant of the next one, in their own time zone; that
+//     instant is worked out here, on their device, and the server compares it
+//     with the time of each read (lib/sharing.ts). An end always reads as the
+//     last day the share is shown, in the reader's own time zone, never with a
+//     time. The choices: no end, 7 or 30 days, tax season (from January to
+//     April only, through Apr 30), or a date.
+//   - when it was shown: the records of showings (lib/access-log.ts), counted
+//     by the quarter hour in UTC, grouped into the reader's own days, "Shown
+//     3 times on Oct 4, balances of 2 accounts". Every time zone in use is a
+//     whole number of quarter hours from UTC, so each quarter hour falls in
+//     exactly one of the reader's days.
 
 import { useState } from 'react';
 import { ACCESS_LOG_DAYS, widerLevel, type Level } from '@/lib/share-rules';
@@ -37,8 +40,9 @@ export function localDay(d: Date): string {
 /** How long a renewal runs, from today. */
 export const RENEW_DAYS = 30;
 
-/** The end of a share that runs through the day `days` after today: the start
- *  of the day after that one, here. */
+/** The end of a share that runs through the day `days` after today: the first
+ *  instant of the day after that one, here (midnight, or later where the
+ *  clocks skip midnight). */
 export function endAfterDays(days: number, now: Date = new Date()): string {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate() + days + 1).toISOString();
 }
@@ -54,24 +58,32 @@ export function endOfDay(day: string): string | null {
   return new Date(y, mo, d + 1).toISOString();
 }
 
-/** The end of tax season, for the accountant: through Apr 30, this year's
- *  until it has passed, then next year's. */
-export function taxSeasonEnd(now: Date = new Date()): string {
-  const year = now.getMonth() > 3 ? now.getFullYear() + 1 : now.getFullYear(); // after April: next year's
-  return new Date(year, 4, 1).toISOString();
+/** The end of tax season, for the accountant: through Apr 30 of this year,
+ *  offered only from January through April, so it never runs most of a year.
+ *  Null the rest of the year. */
+export function taxSeasonEnd(now: Date = new Date()): string | null {
+  return now.getMonth() <= 3 ? new Date(now.getFullYear(), 4, 1).toISOString() : null;
 }
 
-/** How an end reads here: the last day it runs through ("Apr 30") when it
- *  falls at the start of a day here, as one chosen in this time zone does, else
- *  the day and time it falls ("May 1, 6:00 AM"), as one chosen in another
- *  time zone may. */
+/** The last day a share is shown, here: the day of the instant just before
+ *  its end. An end chosen in this time zone is the first instant of the day
+ *  after, so this is the day chosen; one chosen elsewhere is the day it ends
+ *  here. Never a time. */
+export function lastDay(iso: string): string | null {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : localDay(new Date(t - 1));
+}
+
+/** How an end reads: the last day it is shown, here ("Apr 30"). */
 export function endLabel(iso: string, now: Date = new Date()): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  if (d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0) {
-    return shortDate(localDay(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1)), now);
-  }
-  return `${shortDate(iso, now)}, ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  const day = lastDay(iso);
+  return day ? shortDate(day, now) : iso;
+}
+
+/** The same, always with its year ("Apr 30, 2027"). */
+export function endLabelWithYear(iso: string): string {
+  const day = lastDay(iso);
+  return day ? new Date(`${day}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : iso;
 }
 
 /** Whether an end has come. The server's clock decides what is shown; this
@@ -85,12 +97,13 @@ export function ended(iso: string | null, now: number = Date.now()): boolean {
 export type EndChoice = 'keep' | 'none' | '7' | '30' | 'tax' | 'date';
 
 /** What saving a choice sends: an end, null for none, or undefined to leave
- *  the end as it is ("keep", or a date not picked yet). */
+ *  the end as it is ("keep", a date not picked yet, or tax season outside its
+ *  months). */
 export function endFor(choice: EndChoice, day: string, now: Date = new Date()): string | null | undefined {
   if (choice === 'none') return null;
   if (choice === '7') return endAfterDays(7, now);
   if (choice === '30') return endAfterDays(30, now);
-  if (choice === 'tax') return taxSeasonEnd(now);
+  if (choice === 'tax') return taxSeasonEnd(now) ?? undefined;
   if (choice === 'date') return endOfDay(day) ?? undefined;
   return undefined;
 }
@@ -113,8 +126,10 @@ export function EndPicker({
   onDay: (day: string) => void;
 }) {
   const now = new Date();
-  // "As saved" only means something when there is an end saved.
-  const value = choice === 'keep' && saved === null ? 'none' : choice;
+  const tax = taxSeasonEnd(now);
+  // "As saved" only means something when there is an end saved, and tax
+  // season only in its months.
+  const value = (choice === 'keep' && saved === null) || (choice === 'tax' && !tax) ? 'none' : choice;
   return (
     <>
       <label className="field end-picker" style={{ marginTop: 12 }}>
@@ -126,7 +141,7 @@ export function EndPicker({
           <option value="none">No end date</option>
           <option value="7">{`7 days, until ${endLabel(endAfterDays(7, now), now)}`}</option>
           <option value="30">{`30 days, until ${endLabel(endAfterDays(30, now), now)}`}</option>
-          <option value="tax">{`Tax season, until ${endLabel(taxSeasonEnd(now), now)}`}</option>
+          {tax && <option value="tax">{`Tax season, until ${endLabelWithYear(tax)}`}</option>}
           <option value="date">Until a date you choose</option>
         </select>
       </label>
@@ -146,25 +161,24 @@ export function EndPicker({
   );
 }
 
-// ---- When they looked ----
+// ---- When it was shown ----
 
-/** One hour of the access log, as the server sends it. */
-export type LoggedHour = { hour: string; views: number; read: Record<string, Level> };
-/** One of the owner's days: its looks, and each account at the widest level
- *  shown that day. */
-export type LookedDay = { day: string; views: number; read: Record<string, Level> };
+/** One quarter hour of a record, as the server sends it. */
+export type Showing = { at: string; times: number; read: Record<string, Level> };
+/** One of the reader's days: how many times it was shown, and each account
+ *  at the widest level shown that day. */
+export type ShownDay = { day: string; times: number; read: Record<string, Level> };
 
-/** The hours grouped into this device's days, newest first. An hour belongs to
- *  the day it starts in here. */
-export function lookedDays(hours: LoggedHour[]): LookedDay[] {
-  const days = new Map<string, LookedDay>();
-  for (const h of hours) {
-    const at = new Date(h.hour);
+/** The quarter hours grouped into this device's days, newest first. */
+export function shownDays(shown: Showing[]): ShownDay[] {
+  const days = new Map<string, ShownDay>();
+  for (const s of shown) {
+    const at = new Date(s.at);
     if (Number.isNaN(at.getTime())) continue;
     const day = localDay(at);
-    const d = days.get(day) ?? { day, views: 0, read: {} };
-    d.views += h.views;
-    for (const [id, level] of Object.entries(h.read)) d.read[id] = d.read[id] ? widerLevel(d.read[id], level) : level;
+    const d = days.get(day) ?? { day, times: 0, read: {} };
+    d.times += s.times;
+    for (const [id, level] of Object.entries(s.read)) d.read[id] = d.read[id] ? widerLevel(d.read[id], level) : level;
     days.set(day, d);
   }
   return [...days.values()].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
@@ -175,7 +189,7 @@ export function timesText(n: number): string {
   return n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`;
 }
 
-/** What they were shown, widest first: "the balance and transactions of 1
+/** What was shown, widest first: "the balance and transactions of 1
  *  account, balances of 2 accounts and that 1 account exists". */
 export function describeRead(read: Record<string, Level>): string {
   const n = { exists: 0, balance: 0, transactions: 0 };
@@ -188,69 +202,91 @@ export function describeRead(read: Record<string, Level>): string {
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? '');
 }
 
-/** "Viewed 3 times on Oct 4, balances of 2 accounts." */
-export function lookedText(d: LookedDay, now: Date = new Date()): string {
+/** "Shown 3 times on Oct 4, balances of 2 accounts." */
+export function shownText(d: ShownDay, now: Date = new Date()): string {
   const what = describeRead(d.read);
-  return `Viewed ${timesText(d.views)} on ${shortDate(d.day, now)}${what ? `, ${what}` : ''}.`;
+  return `Shown ${timesText(d.times)} on ${shortDate(d.day, now)}${what ? `, ${what}` : ''}.`;
 }
 
 /** Days shown before "Show all". */
 const FIRST_DAYS = 5;
 
-/** "When they looked", for one connection: their looks by day, or why they
- *  can't be shown. `views` is null when the record can't be used, and
- *  `problem` says why; only an unreadable (damaged) one can be cleared. */
-export function WhenTheyLooked({
+/**
+ * One record of showings on a connection: by day, or, when it has none, that
+ * nothing was recorded (never that nothing was shown: a record only knows what
+ * it counted, and only since it began), or why it can't be shown. `mine` is
+ * my own record (when what I share was shown to them), which only I can
+ * clear, and only when it is unreadable; otherwise theirs, of showings to me.
+ */
+export function ShowingsRecord({
   who,
+  mine,
   since,
-  views,
+  showings,
   problem,
   busy,
   onClear,
 }: {
   /** What I call them. */
   who: string;
-  /** When we connected: an ISO time. */
-  since: string;
-  views: LoggedHour[] | null;
+  mine: boolean;
+  /** When the connection's records began, or null before the first. */
+  since: string | null;
+  showings: Showing[] | null;
   problem?: 'unreadable' | 'unrecognised' | 'unavailable';
   busy: boolean;
-  onClear: () => void;
+  /** Clears my unreadable record (after confirming); absent when it can't be. */
+  onClear?: () => void;
 }) {
   const [all, setAll] = useState(false);
-  if (views === null) {
+  if (showings === null) {
     if (problem === 'unreadable') {
-      return (
+      return mine ? (
         <>
           <p className="stale-note" style={{ marginTop: 0 }}>
-            The record of when {who} looked can’t be read, so new looks aren’t being recorded. Clearing it starts a new one; nothing readable is lost.
+            This record can’t be read, so new showings aren’t being recorded. Clearing it starts a new one; nothing readable is lost.
           </p>
-          <button className="secondary" onClick={onClear} disabled={busy} style={{ marginTop: 10 }}>
-            Clear the record
-          </button>
+          {onClear && (
+            <button className="secondary" onClick={onClear} disabled={busy} style={{ marginTop: 10 }}>
+              Clear the record
+            </button>
+          )}
         </>
+      ) : (
+        <p className="stale-note" style={{ marginTop: 0 }}>
+          {who}’s record of this can’t be read, so new showings aren’t being recorded.
+        </p>
       );
     }
     if (problem === 'unrecognised') {
-      return <p className="stale-note" style={{ marginTop: 0 }}>The record of when {who} looked was saved by another version of Nya and can’t be shown here. It is kept as it is.</p>;
+      return (
+        <p className="stale-note" style={{ marginTop: 0 }}>
+          {mine ? 'This record' : `${who}’s record of this`} was saved by another version of Nya and can’t be shown here. It is kept as it is, and new
+          showings aren’t recorded until it can be read.
+        </p>
+      );
     }
-    return <p className="stale-note" style={{ marginTop: 0 }}>The record of when {who} looked couldn’t be loaded. Try again later.</p>;
+    return <p className="stale-note" style={{ marginTop: 0 }}>This record couldn’t be loaded. Try again later.</p>;
   }
-  const days = lookedDays(views);
+  const days = shownDays(showings);
   if (days.length === 0) {
-    const young = Date.now() - Date.parse(since) < ACCESS_LOG_DAYS * 86_400_000;
-    return <p className="panel-note" style={{ marginTop: 0 }}>{young ? `${who} hasn’t looked yet.` : `${who} hasn’t looked in the last ${ACCESS_LOG_DAYS} days.`}</p>;
+    const recent = since !== null && Date.now() - Date.parse(since) < ACCESS_LOG_DAYS * 86_400_000;
+    return (
+      <p className="panel-note" style={{ marginTop: 0 }}>
+        {since === null ? 'Nothing recorded yet.' : recent ? `Nothing recorded since ${shortDate(since)}.` : `Nothing recorded in the last ${ACCESS_LOG_DAYS} days.`}
+      </p>
+    );
   }
   const shown = all ? days : days.slice(0, FIRST_DAYS);
   return (
     <>
-      <ul className="looked-list">
+      <ul className="shown-list">
         {shown.map((d) => (
-          <li key={d.day}>{lookedText(d)}</li>
+          <li key={d.day}>{shownText(d)}</li>
         ))}
       </ul>
       {days.length > FIRST_DAYS && (
-        <button className="link-btn" onClick={() => setAll(!all)}>
+        <button className="link-btn" onClick={() => setAll(!all)} aria-expanded={all}>
           {all ? 'Show fewer' : `Show all ${days.length} days`}
         </button>
       )}

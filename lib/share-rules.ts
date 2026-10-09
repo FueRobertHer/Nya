@@ -1,9 +1,9 @@
 // lib/share-rules.ts
 //
 // What both sides of sharing (#45) go by: the ladder an account is shared at,
-// how far ahead a share can end, and how long the access log keeps when someone
-// looked. Its own module, free of server imports, because the server
-// (lib/sharing.ts, lib/access-log.ts) and the Sharing drawer
+// how far ahead a share can end, and how the access log counts and how long
+// it keeps what it counted. Its own module, free of server imports, because
+// the server (lib/sharing.ts, lib/access-log.ts) and the Sharing drawer
 // (components/Sharing.tsx) need the same values, and because the store
 // catalogue (lib/stores.ts) loads the access log without loading
 // lib/sharing.ts, and the Plaid client with it.
@@ -22,8 +22,14 @@ export function widerLevel(a: Level, b: Level): Level {
   return LEVELS.indexOf(a) >= LEVELS.indexOf(b) ? a : b;
 }
 
-/** How many days the access log keeps (lib/access-log.ts). */
+/** The most days the access log keeps a showing (lib/access-log.ts). */
 export const ACCESS_LOG_DAYS = 90;
+
+/** How finely the access log counts: by the quarter hour, in UTC. Every time
+ *  zone in use is a whole number of quarter hours from UTC, so each quarter
+ *  hour falls inside one day wherever its reader is, and the drawer can put
+ *  every showing in the reader's own day exactly. */
+export const ACCESS_LOG_SLOT_MINUTES = 15;
 
 /**
  * How far ahead a share's end can be, in days. The drawer's date picker goes

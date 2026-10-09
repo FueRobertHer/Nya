@@ -15,10 +15,17 @@
 // 1. EVERY STORE, OR NOTHING. Every store is read, strictly, before the first
 //    byte is sent. One that can't be read fails the download with its name
 //    (ExportReadError), never a file with a gap in it that looks complete: a
-//    partial download presented as whole is a lie about what Nya holds.
+//    partial download presented as whole is a lie about what Nya holds. One
+//    exception, named in the file: a record of showings that can't be read
+//    (in sharing, read with the seam's getAllReport) is marked as such where
+//    it belongs, never left out quietly or read as empty. The other person's
+//    record of showings to me is theirs to clear, so a damaged one would
+//    otherwise stop my download with nothing I could do about it.
 // 2. ONLY THIS PERSON'S. Everything is read through their container's Ctx,
 //    and sharing as their own side of each connection (lib/sharing.ts
-//    mySharing): never another person's data.
+//    mySharing): never another person's data. The one thing read from
+//    someone else's container is their record of showings to this person:
+//    about them, and the same record both see.
 // 3. NO CREDENTIALS, NO MACHINERY. Plaid access tokens are left out: they are
 //    credentials, not data. So are internal ids, caches, locks, cursors,
 //    counters and the records of scheduled jobs: they are about running the
@@ -66,6 +73,7 @@ import { readHistoryForExport, type StoredPoint } from './history';
 import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
+import { accessLogStore, type Showing } from './access-log';
 import { declaredStores } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
@@ -165,8 +173,9 @@ export function storedKeyListed(key: string): boolean {
  *
  * These are the stores that predate the storage seam (lib/repo.ts). A store
  * built on the seam needs no entry: declared exportable, it is a section of
- * its own (declaredSections, below). Stores that the core sections below
- * cross-reference (accounts, history, transactions) stay in collectUserData.
+ * its own (declaredSections, below), unless an entry here exports it already
+ * (covers). Stores that the core sections below cross-reference (accounts,
+ * history, transactions) stay in collectUserData.
  */
 export type ExportSection = {
   /** Its key in the JSON file. */
@@ -177,6 +186,10 @@ export type ExportSection = {
   /** The account ids what it read names, so that `accounts` lists each one
    *  (a goal can still point at an account since forgotten). */
   mentions?: (value: unknown) => Iterable<unknown>;
+  /** Stores on the seam whose contents this section exports itself, so they
+   *  get no section of their own: "sharing" puts each record of showings
+   *  beside the connection it belongs to, where a person can read it. */
+  covers?: readonly string[];
 };
 
 /** An entry of SECTIONS, typed by what it reads. */
@@ -185,6 +198,7 @@ function section<T>(s: {
   what: string;
   read: (src: ExportSource) => Promise<T>;
   mentions?: (value: T) => Iterable<unknown>;
+  covers?: readonly string[];
 }): ExportSection {
   return s as ExportSection;
 }
@@ -209,24 +223,38 @@ export const SECTIONS: readonly ExportSection[] = [
   section({
     key: 'sharing',
     what: 'sharing settings',
-    // Null with the shared password: there is nobody to share with.
-    read: async ({ userId }) => (userId ? mySharing(userId) : null),
-    mentions: (sharing) => sharing?.connections.flatMap((c) => c.shared.map((s) => s.account_id)) ?? [],
+    // With the shared password there is nobody to share with: null, unless
+    // records of showings are still stored here.
+    read: async ({ ctx, userId }) => mySharing(userId, ctx),
+    // My own accounts: what I share, and what my records say was shown of
+    // them. Not shown_to_me: those are theirs.
+    mentions: (sharing) => [
+      ...(sharing?.connections.flatMap((c) => [...c.shared.map((s) => s.account_id), ...readIds(c.shown_to_them)]) ?? []),
+      ...(sharing?.ended.flatMap((e) => readIds(e.shown_to_them)) ?? []),
+    ],
+    covers: [accessLogStore.name],
   }),
 ];
+
+/** The account ids a record of showings names. */
+const readIds = (shown: Showing[] | null) => (shown ?? []).flatMap((s) => Object.keys(s.read));
 
 /**
  * The sections the storage seam's catalogue adds (lib/stores.ts): one for each
  * store declared with exportable: true, under its own name, after SECTIONS, in
- * name order. Read strictly, like every reader here: an unreadable or
- * unrecognised entry fails the download, naming the store. A value store's
- * section is its value (null if never saved); a map store's is its entries as
- * { id, value }, in id order. Declaring a store exportable is the whole
- * decision: nothing else has to remember to add it.
+ * name order, except a store an entry of SECTIONS exports itself (covers).
+ * Read strictly, like every reader here: an unreadable or unrecognised entry
+ * fails the download, naming the store. A value store's section is its value
+ * (null if never saved); a map store's is its entries as { id, value }, in id
+ * order. Declaring a store exportable is the whole decision: nothing else has
+ * to remember to add it.
  */
 export function declaredSections(): ExportSection[] {
+  const covered = new Set(SECTIONS.flatMap((s) => s.covers ?? []));
   return declaredStores().flatMap((store): ExportSection[] =>
-    store.exportable && store.kind !== 'counter' ? [{ key: store.name, what: store.what, read: ({ ctx }) => readDeclared(store, ctx) }] : []
+    store.exportable && store.kind !== 'counter' && !covered.has(store.name)
+      ? [{ key: store.name, what: store.what, read: ({ ctx }) => readDeclared(store, ctx) }]
+      : []
   );
 }
 
@@ -459,7 +487,7 @@ export function notIncluded(people: boolean): string[] {
       : 'The app password: a credential, not your data.',
     'Internal ids and the machinery of the app: your storage container’s id, caches, locks, sync cursors, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections and on accounts a bank stopped reporting). They are about running the app, not about you.',
     'The balances an estimate held flat: for an account the estimate could not walk back through its transactions, estimated net-worth totals use that account’s balance on the day the estimate was made. That copied balance is part of the estimated totals, and is not listed as the account’s own history.',
-    'What other people share with you, what they call you and how they introduced themselves: that is their data.',
+    'What other people share with you, what they call you and how they introduced themselves: that is their data. Their record of each time what they share was shown to you is in, under sharing: it is about you, and they see the same one.',
     'Unused invite links: they work for 72 hours and are then gone.',
     ...(people ? [] : ['Sharing: with one shared password there are no separate people to share with.']),
   ];

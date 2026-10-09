@@ -12,8 +12,6 @@
 // it, and what Nya can't delete (Plaid's own records) is named with where to
 // delete it.
 
-import { ACCESS_LOG_DAYS } from './share-rules';
-
 /** Where a person sees, and deletes, what Plaid itself keeps about them. */
 export const PLAID_PORTAL = 'https://my.plaid.com';
 
@@ -197,7 +195,6 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
           `${plural(d.banks_not_disconnected, 'bank', 'banks')} couldn’t be disconnected at Plaid. Nya deleted the token it used to reach ${d.banks_not_disconnected === 1 ? 'it' : 'them'}, but Plaid may keep the connection until you remove it at the Plaid Portal.`,
         ]
       : []),
-    `What others keep: if anyone shared accounts with you, they keep their own record of when you looked at them. It doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`,
     'Server logs: the host keeps them for a short time. Nya writes counts, dates and errors to them, not amounts or balances.',
     'Your downloads: a copy you saved with Download my data is yours, and deleting your account doesn’t reach it.',
   ];

@@ -61,6 +61,9 @@ const LOGIN_WINDOW_MINUTES = LOGIN_WINDOW_SECONDS / 60;
 const DEMO_WINDOW_MINUTES = DEMO_WINDOW_SECONDS / 60;
 /** A usable master key: 32 bytes, base64. */
 const MASTER = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+/** The privacy page's row for the records of when shared accounts were shown,
+ *  up to what it says of backups. */
+const SHOWINGS = `Records of when shared accounts were shown Each entry is deleted after ${ACCESS_LOG_DAYS} days, by a pass that runs every night, and both people’s records go at once when either of you removes or blocks the other, or deletes their account.`;
 
 /** The three ways backups can be kept: none (no blob store), by BACKUP_KEEP_DAYS, or not at all while it is invalid. */
 function backupsAre(state: 'none' | 'kept' | 'invalid', keep?: string) {
@@ -178,11 +181,16 @@ describe('the security page', () => {
     expect(page).toContain('Your accounts, their balances and your net-worth history, as the app last showed them');
   });
 
-  test('sharing: what is encrypted, what is plain text, and what a deletion leaves with others', () => {
+  test('sharing: what is encrypted, what is plain text, and who reads the records of when it was shown', () => {
     const page = security();
-    expect(page).toContain('manual accounts, the record of when people you share with looked, and the short-lived copies');
-    expect(page).toContain('which accounts each of you shares at which level and until when, and which of them your record of looks has an entry for (when they looked, and at what, is encrypted)');
-    expect(page).toContain(`The record each person who shared with you keeps of when you looked: theirs, it doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`);
+    expect(page).toContain('manual accounts, the records of when shared accounts were shown, and the short-lived copies');
+    expect(page).toContain(
+      'which accounts each of you shares at which level and until when, and for each connection a random id, which its records of when shared accounts were shown are kept under, and when those records began (what they record is encrypted), never the balances or transactions themselves.'
+    );
+    expect(page).toContain('until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.');
+    // Deleting an account deletes both sides' records, so nothing of them stays with anyone.
+    expect(page).not.toContain('doesn’t name you');
+    expect(page).not.toMatch(/when you looked/);
   });
 
   test('deletion, sessions and the login limit, with the figures the code uses', () => {
@@ -264,6 +272,7 @@ describe('backups, on both pages, by the rule the deletion receipt dates by', ()
       expect(priv).toContain(`keep a copy until they are deleted, within ${within} days while the nightly backup keeps running; if it stops, nothing is deleted until it runs again.`);
       expect(priv).toContain('The receipt gives the date.');
       expect(priv).toContain('Hosts the app and stores the nightly backups.');
+      expect(priv).toContain(`${SHOWINGS} Nightly backups keep a copy up to ${within} days more, while the nightly backup keeps running.`);
     }
   });
 
@@ -278,6 +287,7 @@ describe('backups, on both pages, by the rule the deletion receipt dates by', ()
     const priv = privacy();
     expect(priv).toContain('Nightly backups None: no backup store is set up for this copy of Nya.');
     expect(priv).toContain('This copy of Nya takes no backups, so no copy is left in one.');
+    expect(priv).toContain(`${SHOWINGS} This copy of Nya takes no backups, so no copy is left in one.`);
     expect(priv).toContain('Vercel Hosts the app. Handles every request');
     expect(priv).not.toMatch(/within \d+ days/);
   });
@@ -291,7 +301,8 @@ describe('backups, on both pages, by the rule the deletion receipt dates by', ()
     const priv = privacy();
     expect(priv).toContain('Nightly backups None taken and none deleted while the retention setting is not valid.');
     expect(priv).toContain('until their retention setting, which is not valid on this copy of Nya, is fixed');
-    for (const page of [sec, priv]) expect(page).not.toMatch(/within \d+ days/);
+    expect(priv).toContain(`${SHOWINGS} Nightly backups already taken keep a copy until their retention setting, which is not valid on this copy of Nya, is fixed and they are deleted in turn.`);
+    for (const page of [sec, priv]) expect(page).not.toMatch(/within \d+ days|up to \d+ days more/);
   });
 });
 
@@ -304,7 +315,7 @@ describe('the privacy page', () => {
     expect(page).not.toContain('lawyer');
   });
 
-  test('makes the seven commitments, each with what is true today and what is not', () => {
+  test('makes the seven commitments, each with what is true today and, where some of it is to come, what is not', () => {
     const html = privacyHtml();
     const promises = [
       'We never sell or share your financial data.',
@@ -335,15 +346,20 @@ describe('the privacy page', () => {
     expect(page).not.toContain('Until then there is no way to download');
   });
 
-  test('describes sharing as it is: the preview, ends, and the record of looks, kept as long as the code keeps it', () => {
-    const page = privacy();
+  test('describes sharing as it is: the preview, ends, and both records of when it was shown, for as long as the connection lasts', () => {
+    const html = privacyHtml();
+    const page = text(html);
     expect(page).toContain(
-      `For each person, Sharing shows a preview of exactly what they see of yours, and a record of when they looked, kept for ${ACCESS_LOG_DAYS} days. A share can end on a date you set, and Remove or Block ends it at once.`
+      'True today Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.'
     );
-    expect(page).toContain('The people you share with see when what they see ends, and are told you can see when they look.');
-    // Built now, so no longer listed as to come.
+    // Built now, so no longer listed as to come, and nothing new promised in its place.
+    const card = html.slice(html.indexOf('You decide what anyone else sees'), html.indexOf('You can see who can read what'));
+    expect(card.match(/<dt>/g)).toHaveLength(1);
     expect(page).not.toContain('A preview of exactly what they see, shares that end on a date you set');
-    expect(page).toContain(`When people you share with looked ${ACCESS_LOG_DAYS} days: each night, looks older than that are deleted.`);
+    expect(page).not.toMatch(/net worth or your spending|More kinds of share/);
+    // Never that someone didn't look: only what was shown, and counted.
+    expect(page).not.toMatch(/when they look|when you look|hasn’t looked/);
+    expect(page).toContain(SHOWINGS);
   });
 
   test('names the processors, and the kinds not used yet', () => {
@@ -370,9 +386,9 @@ describe('the privacy page', () => {
     expect(page).toContain(`apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within ${INVITE_HOURS} hours`);
     expect(page).toContain(`Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their own within ${INVITE_HOURS} hours.`);
     expect(page).toContain('for each one you recategorized, its date, amount and bank description are kept, encrypted');
-    // In the row for a deleted account, and among what deleting doesn't reach.
-    const theirs = `People who shared with you keep their own record of when you looked. It doesn’t name you, and each look in it is deleted after ${ACCESS_LOG_DAYS} days.`;
-    expect(page.split(theirs)).toHaveLength(3);
+    // Records of when what others share was shown to you go with your account, on their side too.
+    expect(page).not.toContain('keep their own record');
+    expect(page).not.toContain('doesn’t name you');
     expect(page).toContain('Plaid keeps what it collected under its own policy');
     expect(privacyHtml()).toContain(`href="${PLAID_PORTAL}"`);
   });

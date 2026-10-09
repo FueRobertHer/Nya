@@ -220,7 +220,7 @@ describe('with Clerk', () => {
     const doc = JSON.parse(await res.text());
     expect(doc.manual_accounts.map((m: { name: string }) => m.name)).toEqual(['Bea savings']);
     expect(JSON.stringify(doc)).not.toContain('Alex savings');
-    expect(doc.sharing).toEqual({ connections: [], blocked: [] });
+    expect(doc.sharing).toEqual({ connections: [], blocked: [], ended: [] });
   });
 
   test('a sign-in that isn’t recent gets Clerk’s reverification hint, and uses up nothing', async () => {

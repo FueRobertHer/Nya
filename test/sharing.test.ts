@@ -37,7 +37,7 @@ const { saveManualAccount } = await import('@/lib/manual');
 const { setAccountHidden } = await import('@/lib/hidden');
 const { recordSnapshot } = await import('@/lib/history');
 const { ctxKey } = await import('./fake-redis');
-const { hourOf } = await import('@/lib/access-log');
+const { slotOf, accessLogStore, pruneAccessLog } = await import('@/lib/access-log');
 
 const account = (id: string, mask: string) => ({
   account_id: id,
@@ -134,8 +134,19 @@ const previewOf = async (who: string, id = pair) => {
   const res = await GET(new Request(`http://x/api/connections/preview?id=${encodeURIComponent(id)}`));
   return { status: res.status, body: await res.json() };
 };
-/** The owner's access log entry for a connection, as stored. */
-const ownerLog = async (id = pair) => (await import('@/lib/access-log')).accessLogStore.get(TEST_CTX, id);
+/** A connection's log id: what both people's records of showings on it are
+ *  kept under. Null before the first record, or once the connection is gone. */
+const logIdOf = async (id = pair): Promise<string | null> => {
+  const raw = await fake.hget<string>(testKey('connections'), `${id}|log`);
+  return raw ? JSON.parse(raw).id : null;
+};
+/** The owner's record of showings on a connection, as stored. */
+const ownerRecord = async (id = pair) => {
+  const logId = await logIdOf(id);
+  return logId ? accessLogStore.get(TEST_CTX, logId) : null;
+};
+/** Someone's container, as the owners map has it. */
+const containerOf = async (who: string) => ({ container: await (await import('@/lib/owners')).ownerContainer(who) }) as any;
 /** console.error, quietly, with what it was given. */
 async function quietly<R>(fn: () => Promise<R>): Promise<{ result: R; logged: unknown[][] }> {
   const logged: unknown[][] = [];
@@ -175,9 +186,23 @@ describe('finding people: nobody can', () => {
 
   test('a connection shows only what I call them, never their id or name from Clerk', async () => {
     const mine = await connectionsOf('user_partner');
+    const [conn] = mine.connections;
     expect(mine.connections).toEqual([
-      { id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {}, expires_at: null, views: [] },
+      {
+        id: pair,
+        label: 'Someone',
+        introduced_as: null,
+        since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        sharing: {},
+        expires_at: null,
+        // Its records of showings: a random id, begun when they connected, empty so far.
+        record_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+        record_since: conn.since,
+        shown_to_them: [],
+        shown_to_me: [],
+      },
     ]);
+    expect(mine.damaged_records).toEqual([]);
     expect(JSON.stringify(mine)).not.toContain('user_owner');
     await share({ acct_joint: 'balance' });
     expect(JSON.stringify(await sharedWithPartner())).not.toContain('user_owner');
@@ -468,9 +493,8 @@ describe('ending a connection', () => {
     expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toEqual([]);
   });
 
-  test('removing or blocking still ends everything both ways at once: shares with ends, previews and looks', async () => {
-    const { ownerContainer } = await import('@/lib/owners');
-    const partnerCtx = { container: await ownerContainer('user_partner') } as any;
+  test('removing or blocking still ends everything both ways at once: shares with ends, previews, and both records of showings', async () => {
+    const partnerCtx = await containerOf('user_partner');
     await saveManualAccount(partnerCtx, {
       account_id: 'manual_bike',
       name: 'Bike',
@@ -480,30 +504,42 @@ describe('ending a connection', () => {
       balance: 800,
       updated_at: new Date().toISOString(),
     } as any);
-    const { accessLogStore } = await import('@/lib/access-log');
     for (const [who, block] of [['user_owner', false], ['user_partner', true]] as const) {
-      // Each shares with the other, with an end, and each looks once.
+      // Each shares with the other, with an end, and each is shown the other's once.
       expect((await shareUntil({ acct_joint: 'balance' }, endIn(5))).status).toBe(200);
       const back = await as('user_partner', () => route('connections', 'PUT', { id: pair, accounts: { manual_bike: 'balance' }, expires_at: endIn(5) }));
       expect(back.status).toBe(200);
       expect(await sharedWithPartner()).toHaveLength(1);
       expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toHaveLength(1);
-      const looks = [await accessLogStore.get(TEST_CTX, pair), await accessLogStore.get(partnerCtx, pair)];
-      expect(looks.every((l) => l?.hours.length === 1)).toBe(true);
+      const logId = (await logIdOf())!;
+      expect([await accessLogStore.get(TEST_CTX, logId), await accessLogStore.get(partnerCtx, logId)].every((r) => r?.shown.length === 1)).toBe(true);
 
       expect((await as(who, () => route('connections', 'DELETE', { id: pair, block }))).status).toBe(200);
       // Nothing of either share is left: a block keeps only its record and the blocker's name for them.
       const left = await connectionFields();
-      expect(left.filter((f) => f.includes('|share|'))).toEqual([]);
+      expect(left.filter((f) => f.includes('|share|') || f.endsWith('|log'))).toEqual([]);
       expect(await sharedWithPartner()).toEqual([]);
       expect((await as('user_owner', () => route('shared', 'GET'))).body.shared).toEqual([]);
       expect((await previewOf('user_owner')).status).toBe(409);
       expect((await previewOf('user_partner')).status).toBe(409);
-      // No look is recorded once it's gone; each person's record of earlier looks is theirs to keep.
-      expect([await accessLogStore.get(TEST_CTX, pair), await accessLogStore.get(partnerCtx, pair)]).toEqual(looks);
+      // Both records went with it, from both containers.
+      expect([await accessLogStore.get(TEST_CTX, logId), await accessLogStore.get(partnerCtx, logId)]).toEqual([null, null]);
       if (block) break;
       pair = await connect('user_owner', 'user_partner');
+      // Connected again: new records, under a new id.
+      expect(await logIdOf()).not.toBe(logId);
     }
+  });
+
+  test('an account deleted takes both records of showings on its connections with it', async () => {
+    const { dropConnectionsOf } = await import('@/lib/sharing');
+    const partnerCtx = await containerOf('user_partner');
+    await share({ acct_joint: 'balance' });
+    await sharedWithPartner();
+    const logId = (await logIdOf())!;
+    await accessLogStore.set(partnerCtx, logId, { shown: [{ at: slotOf(Date.now()), times: 1, read: { manual_bike: 'balance' } }] });
+    await dropConnectionsOf('user_partner');
+    expect([await accessLogStore.get(TEST_CTX, logId), await accessLogStore.get(partnerCtx, logId)]).toEqual([null, null]);
   });
 
   test('every connection someone is in can be dropped at once (their account is going away)', async () => {
@@ -585,10 +621,10 @@ describe('what they see: the preview', () => {
     expect((await previewOf('user_owner')).body.view.accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
   });
 
-  test('records nothing: my own look is not theirs', async () => {
+  test('records nothing: my own preview is no showing to them', async () => {
     await share({ acct_joint: 'balance' });
     for (let i = 0; i < 3; i++) expect((await previewOf('user_owner')).status).toBe(200);
-    expect(await ownerLog()).toBeNull();
+    expect(await ownerRecord()).toBeNull();
     expect(await fake.hgetall(ctxKey('sharing-access-log'))).toBeNull();
   });
 
@@ -609,6 +645,22 @@ describe('what they see: the preview', () => {
     expect(theirs).toEqual([]);
     const { result: mine } = await quietly(() => previewOf('user_owner'));
     expect(mine).toEqual({ status: 200, body: { connection: pair, view: null, unreadable: true } });
+  });
+
+  test('when storage can’t be reached it says it couldn’t show it, never that they see nothing', async () => {
+    await share({ acct_joint: 'transactions' });
+    fake.failNext('get', 20); // the transaction store's read, among others
+    const { result } = await quietly(() => previewOf('user_owner'));
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ error: 'Could not show what they see' });
+  });
+
+  test('changes nothing in my container, old-shaped records included', async () => {
+    await share({ acct_joint: 'balance' });
+    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
+    const before = await fake.hgetall<Record<string, string>>(ctxKey('accounts:meta'));
+    expect((await previewOf('user_owner')).status).toBe(200);
+    expect(await fake.hgetall<Record<string, string>>(ctxKey('accounts:meta'))).toEqual(before);
   });
 });
 
@@ -644,19 +696,19 @@ describe('shares that end', () => {
     const { result, logged } = await quietly(() => as('user_partner', () => route('shared', 'GET')));
     expect(result).toEqual({ status: 200, body: { shared: [] } });
     expect(logged).toEqual([]); // never read, so never failed
-    expect(await ownerLog()).toBeNull();
+    expect(await ownerRecord()).toBeNull();
   });
 
   test('ending deletes nothing: the share stays as it was, and renewing brings it back', async () => {
     const { sharedWithMe } = await import('@/lib/sharing');
     const end = endIn(1);
     await shareUntil({ acct_joint: 'balance', manual_house: 'exists' }, end);
-    await sharedWithMe('user_partner'); // one look, recorded
+    await sharedWithMe('user_partner'); // one showing, recorded
     const after = Date.parse(end) + DAY;
     expect(await sharedWithMe('user_partner', after)).toEqual([]);
-    // Still all there: the share, the connection, the record of the look.
+    // Still all there: the share, the connection, the record of the showing.
     expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ sharing: { acct_joint: 'balance', manual_house: 'exists' }, expires_at: end });
-    expect((await ownerLog())?.hours).toHaveLength(1);
+    expect((await ownerRecord())?.shown).toHaveLength(1);
     // Renewing changes only the end.
     const later = endIn(30);
     expect((await shareUntil(null, later)).status).toBe(200);
@@ -711,6 +763,27 @@ describe('shares that end', () => {
     expect((await connectionsOf('user_owner')).connections[0].expires_at).toBeNull();
   });
 
+  test('taking everything back never fails on the end date', async () => {
+    for (const end of [new Date(Date.now() - 1000).toISOString(), 'next tuesday', endIn(5)]) {
+      expect((await shareUntil({ acct_joint: 'balance' }, endIn(5))).status).toBe(200);
+      const res = await shareUntil({ acct_joint: 'none' }, end);
+      expect([end, res.status]).toEqual([end, 200]);
+      expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ sharing: {}, expires_at: null });
+      expect(await sharedWithPartner()).toEqual([]);
+    }
+  });
+
+  test('nothing of a change is saved unless all of it can be', async () => {
+    await shareUntil({ acct_joint: 'balance' }, endIn(5));
+    const before = await stored();
+    const res = await as('user_owner', () =>
+      route('connections', 'PUT', { id: pair, label: 'Renamed', accounts: { acct_joint: 'transactions' }, expires_at: 'next tuesday' })
+    );
+    expect(res.status).toBe(409);
+    expect(await stored()).toEqual(before);
+    expect((await connectionsOf('user_owner')).connections[0].label).toBe('Someone');
+  });
+
   test('is stored so a release from before end dates reads it as sharing nothing', async () => {
     await shareUntil({ acct_joint: 'balance' }, endIn(5));
     const withEnd = await stored();
@@ -739,92 +812,179 @@ describe('shares that end', () => {
   });
 });
 
-describe('the access log', () => {
-  const HOUR = 3_600_000;
+describe('records of showings', () => {
+  const SLOT = 15 * 60_000;
+  const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
 
-  test('records each read for the owner: when, and the accounts and levels it returned', async () => {
+  test('each read is counted for the owner, with the accounts and levels it returned, and both of them see it', async () => {
     const { sharedWithMe } = await import('@/lib/sharing');
     await share({ acct_joint: 'transactions', acct_mine: 'balance', manual_house: 'exists' });
-    await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true); // paused: not shown, so not read
+    await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true); // paused: not shown, so not counted
     const now = Date.now();
     await sharedWithMe('user_partner', now);
-    expect(await ownerLog()).toEqual({ hours: [{ hour: hourOf(now), views: 1, read: { acct_joint: 'transactions', manual_house: 'exists' } }] });
-    // What the owner's drawer gets: the same, on the connection.
-    const [conn] = (await connectionsOf('user_owner')).connections;
-    expect(conn.views).toEqual([{ hour: hourOf(now), views: 1, read: { acct_joint: 'transactions', manual_house: 'exists' } }]);
+    const expected = [{ at: slotOf(now), times: 1, read: { acct_joint: 'transactions' as const, manual_house: 'exists' as const } }];
+    expect(await ownerRecord()).toEqual({ shown: expected });
+    // The owner sees it on the connection; the partner sees the same record of showings to them.
+    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toEqual(expected);
+    expect((await connectionsOf('user_partner')).connections[0].shown_to_me).toEqual(expected);
+    // And not the other way round: nothing of the partner's was shown to the owner.
+    expect((await connectionsOf('user_owner')).connections[0].shown_to_me).toEqual([]);
   });
 
-  test('ten reads in an hour are one row with a count, and the widest level each account was shown at', async () => {
+  test('ten in a quarter hour are one row with a count, at the widest level each account was shown at', async () => {
     const { sharedWithMe } = await import('@/lib/sharing');
-    const t = Math.floor(Date.now() / HOUR) * HOUR + HOUR; // the start of the next hour
+    const t = Math.floor(Date.now() / SLOT) * SLOT + SLOT; // the start of the next quarter hour
     await share({ acct_joint: 'balance' });
     for (let i = 0; i < 9; i++) await sharedWithMe('user_partner', t + i * 60_000);
     await share({ acct_joint: 'transactions' });
-    await sharedWithMe('user_partner', t + 50 * 60_000);
-    await sharedWithMe('user_partner', t + HOUR);
-    expect(await ownerLog()).toEqual({
-      hours: [
-        { hour: hourOf(t), views: 10, read: { acct_joint: 'transactions' } },
-        { hour: hourOf(t + HOUR), views: 1, read: { acct_joint: 'transactions' } },
+    await sharedWithMe('user_partner', t + 14 * 60_000);
+    await sharedWithMe('user_partner', t + SLOT);
+    expect(await ownerRecord()).toEqual({
+      shown: [
+        { at: slotOf(t), times: 10, read: { acct_joint: 'transactions' } },
+        { at: slotOf(t + SLOT), times: 1, read: { acct_joint: 'transactions' } },
       ],
     });
   });
 
-  test('through the route too, and nothing recorded for a share that shows nothing', async () => {
+  test('through the route too, and nothing for a share that shows nothing, or for the owner’s own reads', async () => {
     expect(await sharedWithPartner()).toEqual([]);
-    expect(await ownerLog()).toBeNull();
+    expect(await fake.hgetall(ctxKey('sharing-access-log'))).toBeNull();
     await share({ acct_joint: 'balance' });
     for (let i = 0; i < 3; i++) await sharedWithPartner();
-    const log = await ownerLog();
-    expect(log!.hours.reduce((n, h) => n + h.views, 0)).toBe(3);
-    // The owner reading what others share with them is not a look at their own.
+    const total = async () => (await ownerRecord())!.shown.reduce((n, s) => n + s.times, 0);
+    expect(await total()).toBe(3);
     await as('user_owner', () => route('shared', 'GET'));
-    expect((await ownerLog())!.hours.reduce((n, h) => n + h.views, 0)).toBe(3);
+    expect(await total()).toBe(3);
   });
 
-  test('keeps 90 days, and starts again with a new connection between the same two', async () => {
-    const { sharedWithMe } = await import('@/lib/sharing');
-    const { accessLogStore } = await import('@/lib/access-log');
+  test('kept 90 days at most: dropped by the next showing, or by the nightly pass', async () => {
+    const { sharedWithMe, connectionLogIds } = await import('@/lib/sharing');
     const now = Date.now();
     await share({ acct_joint: 'balance' });
-    const old = { hour: hourOf(now - 91 * DAY), views: 7, read: { acct_joint: 'balance' as const } };
-    await accessLogStore.set(TEST_CTX, pair, { hours: [old] });
-    // Shown as nothing, and gone at the next look.
-    expect((await connectionsOf('user_owner')).connections[0].views).toEqual([]);
+    const logId = (await logIdOf())!;
+    const old = { at: slotOf(now - 91 * DAY), times: 7, read: { acct_joint: 'balance' as const } };
+    await accessLogStore.set(TEST_CTX, logId, { shown: [old] });
+    // Shown as nothing in the meantime.
+    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toEqual([]);
+    // Gone the next night, with nothing for anyone to do.
+    await pruneAccessLog(TEST_CTX, now, connectionLogIds);
+    expect(await ownerRecord()).toBeNull();
+    // Or at the next showing.
+    await accessLogStore.set(TEST_CTX, logId, { shown: [old] });
     await sharedWithMe('user_partner', now);
-    expect((await ownerLog())!.hours.map((h) => h.hour)).toEqual([hourOf(now)]);
-    // The same two connect again: the same id, a new record.
-    await accessLogStore.set(TEST_CTX, pair, { hours: [{ ...old, hour: hourOf(now - 2 * DAY) }] });
+    expect((await ownerRecord())!.shown.map((s) => s.at)).toEqual([slotOf(now)]);
+  });
+
+  test('a connection’s log id is random, never derived from who is connected, and new each time they connect', async () => {
+    const { connectionId } = await import('@/lib/sharing');
+    await share({ acct_joint: 'balance' });
+    await sharedWithPartner();
+    const first = (await logIdOf())!;
+    expect(first).toMatch(/^[0-9a-f]{32}$/);
+    expect(first).not.toContain(connectionId('user_owner', 'user_partner'));
+    // The only field name in the owner's container is that id.
+    expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([first]);
     await as('user_owner', () => route('connections', 'DELETE', { id: pair }));
     await connect('user_partner', 'user_owner');
-    expect((await connectionsOf('user_owner')).connections[0].views).toEqual([]);
+    expect(await logIdOf()).not.toBe(first);
+    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ shown_to_them: [], shown_to_me: [] });
+  });
+
+  test('a connection from before records gets its id at its first showing, and two at once agree on one', async () => {
+    const { sharedWithMe } = await import('@/lib/sharing');
+    await share({ acct_joint: 'balance' });
+    await fake.hdel(testKey('connections'), `${pair}|log`); // as connections were before records
+    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ record_id: null, record_since: null, shown_to_them: [], shown_to_me: [] });
+    const now = Date.now();
+    await Promise.all([sharedWithMe('user_partner', now), sharedWithMe('user_partner', now)]);
+    const logId = (await logIdOf())!;
+    expect(logId).toMatch(/^[0-9a-f]{32}$/);
+    expect(await accessLogStore.get(TEST_CTX, logId)).toEqual({ shown: [{ at: slotOf(now), times: 2, read: { acct_joint: 'balance' } }] });
+    expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([logId]);
+    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ record_id: logId, record_since: new Date(now).toISOString() });
+  });
+
+  test('a removal that lands while a showing is being counted leaves no record behind', async () => {
+    const { sharedWithMe } = await import('@/lib/sharing');
+    await share({ acct_joint: 'balance' });
+    const logId = (await logIdOf())!;
+    const realEval = fake.eval.bind(fake);
+    (fake as any).eval = async (script: string, keys: string[], args: string[]) => {
+      const answer = await realEval(script, keys, args);
+      // Between the count's read and its write: the whole removal runs, and
+      // finds no record yet to delete.
+      if (script.startsWith('-- nya:repo-read-entries') && keys[0] === ctxKey('sharing-access-log')) {
+        (fake as any).eval = realEval;
+        expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
+      }
+      return answer;
+    };
+    try {
+      expect(await sharedWithMe('user_partner')).toHaveLength(1);
+    } finally {
+      (fake as any).eval = realEval;
+    }
+    expect(await accessLogStore.get(TEST_CTX, logId)).toBeNull();
+    expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log'))) ?? {})).toEqual([]);
   });
 
   test('a failing write never fails the read, and is logged', async () => {
     await share({ acct_joint: 'balance' });
-    fake.failNext('eval'); // the log's own read
+    fake.failNext('eval'); // the record's own read
     const { result, logged } = await quietly(() => as('user_partner', () => route('shared', 'GET')));
     expect(result.status).toBe(200);
     expect(result.body.shared.map((s: any) => s.connection)).toEqual([pair]);
-    expect(logged.map((l) => l[0])).toEqual(['A look at shared data could not be recorded']);
-    expect(await ownerLog()).toBeNull();
+    expect(logged.map((l) => l[0])).toEqual(['A showing of shared data could not be recorded']);
+    expect(await ownerRecord()).toBeNull();
   });
 
-  test('a record that can’t be read is shown as such, its looks go unrecorded, and the owner can clear it', async () => {
+  test('a record that can’t be read says so on both sides, showings go unrecorded, and the owner can clear it', async () => {
     await share({ acct_joint: 'balance' });
-    await fake.hset(ctxKey('sharing-access-log'), { [pair]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const logId = (await logIdOf())!;
+    await fake.hset(ctxKey('sharing-access-log'), { [logId]: DAMAGED });
     const { result } = await quietly(() => sharedWithPartner());
     expect(result.map((s: any) => s.connection)).toEqual([pair]);
-    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ views: null, views_problem: 'unreadable' });
-    const clear = (who: string, id = pair) => as(who, () => route('connections/access-log', 'DELETE', { id }));
+    expect((await connectionsOf('user_owner')).connections[0]).toMatchObject({ record_id: logId, shown_to_them: null, shown_to_them_problem: 'unreadable' });
+    expect((await connectionsOf('user_partner')).connections[0]).toMatchObject({ shown_to_me: null, shown_to_me_problem: 'unreadable' });
+    const clear = (who: string, id: string) => as(who, () => route('connections/access-log', 'DELETE', { id }));
     expect((await clear('user_owner', 'nope')).status).toBe(400);
-    expect((await clear('user_owner')).status).toBe(200);
-    expect((await clear('user_owner')).status).toBe(409); // nothing damaged left
+    // Only the owner's own: the partner has no such record to clear.
+    expect((await clear('user_partner', logId)).status).toBe(409);
+    expect((await clear('user_owner', logId)).status).toBe(200);
+    expect((await clear('user_owner', logId)).status).toBe(409); // nothing damaged left
     await sharedWithPartner();
-    expect((await connectionsOf('user_owner')).connections[0].views).toHaveLength(1);
+    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toHaveLength(1);
     // A record that reads is never cleared.
-    expect((await clear('user_owner')).status).toBe(409);
-    expect((await connectionsOf('user_owner')).connections[0].views).toHaveLength(1);
+    expect((await clear('user_owner', logId)).status).toBe(409);
+    expect((await connectionsOf('user_owner')).connections[0].shown_to_them).toHaveLength(1);
+  });
+
+  test('a damaged record that belongs to no connection now is listed, and can be cleared', async () => {
+    const stray = 'f'.repeat(32);
+    await fake.hset(ctxKey('sharing-access-log'), { [stray]: DAMAGED });
+    expect((await connectionsOf('user_owner')).damaged_records).toEqual([stray]);
+    expect((await as('user_owner', () => route('connections/access-log', 'DELETE', { id: stray }))).status).toBe(200);
+    expect((await connectionsOf('user_owner')).damaged_records).toEqual([]);
+  });
+
+  test('the nightly pass deletes a record whose connection has ended, and nothing while a connection can’t be read', async () => {
+    const { connectionLogIds } = await import('@/lib/sharing');
+    await share({ acct_joint: 'balance' });
+    await sharedWithPartner();
+    const logId = (await logIdOf())!;
+    // Left by a removal that stopped part way.
+    const stray = 'e'.repeat(32);
+    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { acct_joint: 'balance' as const } }] };
+    await accessLogStore.set(TEST_CTX, stray, record);
+    // A connection whose record can't be read could own it: kept.
+    await fake.hset(testKey('connections'), { ['0'.repeat(24)]: 'not json' });
+    expect(await connectionLogIds()).toBeNull();
+    await pruneAccessLog(TEST_CTX, Date.now(), connectionLogIds);
+    expect(await accessLogStore.get(TEST_CTX, stray)).toEqual(record);
+    await fake.hdel(testKey('connections'), '0'.repeat(24));
+    await pruneAccessLog(TEST_CTX, Date.now(), connectionLogIds);
+    expect(Object.keys((await fake.hgetall(ctxKey('sharing-access-log')))!)).toEqual([logId]);
   });
 
   test('names the connection by what the owner calls them, never who they are', async () => {
@@ -833,13 +993,16 @@ describe('the access log', () => {
     await as('user_partner', () => route('connections', 'PUT', { id: pair, label: 'THEIR-NAME-FOR-ME' }));
     await sharedWithPartner();
     const mine = await connectionsOf('user_owner');
-    expect(mine.connections[0]).toMatchObject({ label: 'Pat', views: [expect.objectContaining({ views: 1 })] });
+    expect(mine.connections[0]).toMatchObject({ label: 'Pat', shown_to_them: [expect.objectContaining({ times: 1 })] });
     expect(JSON.stringify(mine)).not.toMatch(/user_partner|THEIR-NAME-FOR-ME/);
-    expect(JSON.stringify(await ownerLog())).not.toMatch(/user_|THEIR-NAME-FOR-ME|Pat/);
+    expect(JSON.stringify(await ownerRecord())).not.toMatch(/user_|THEIR-NAME-FOR-ME|Pat/);
   });
 
-  test('is the only thing a read writes in the owner’s container', async () => {
+  test('is the only thing a read writes in the owner’s container, old-shaped records included', async () => {
     await share({ acct_joint: 'transactions', manual_house: 'balance' });
+    // A remembered account in the shape from before per-item records, which
+    // the owner's own loads tidy away and someone else's read must not.
+    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
     const prefix = ctxKey('');
     const snapshot = () => {
       const out: Record<string, string> = {};
@@ -848,10 +1011,11 @@ describe('the access log', () => {
       return out;
     };
     const before = snapshot();
+    expect(Object.keys(before)).toContain(`${ctxKey('accounts:meta')} acct_legacy`);
     await sharedWithPartner();
     const after = snapshot();
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
-    expect(changed).toEqual([`${ctxKey('sharing-access-log')} ${pair}`]);
+    expect(changed).toEqual([`${ctxKey('sharing-access-log')} ${await logIdOf()}`]);
     expect(Object.keys(before).filter((k) => !(k in after))).toEqual([]);
   });
 });

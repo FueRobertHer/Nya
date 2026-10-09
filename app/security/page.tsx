@@ -5,7 +5,6 @@ import { cspMode, type CspMode } from '@/lib/security-headers';
 import { masterKeyConfigured } from '@/lib/crypto';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
-import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -51,7 +50,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention): [string, strin
   ],
   [
     'People you share with',
-    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. They can never change anything.',
+    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
   ],
   [
     'Your device',
@@ -65,7 +64,7 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
       <p>
         These values are encrypted with AES-256-GCM before they are written to the database: the tokens that connect
         your banks through Plaid, balances, net-worth history, transactions, budgets, goals, the categories you set and
-        the names you give merchants, manual accounts, the record of when people you share with looked, and the
+        the names you give merchants, manual accounts, the records of when shared accounts were shown, and the
         short-lived copies of what the dashboard last showed. Some details around them are not; they are listed below.
       </p>
       {envelope ? (
@@ -188,8 +187,9 @@ export default function SecurityPage() {
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
           <li>
             for sharing: the names you and the people you connect with gave each other, which accounts each of you
-            shares at which level and until when, and which of them your record of looks has an entry for (when they
-            looked, and at what, is encrypted), never the balances or transactions themselves.
+            shares at which level and until when, and for each connection a random id, which its records of when shared
+            accounts were shown are kept under, and when those records began (what they record is encrypted), never
+            the balances or transactions themselves.
           </li>
         </ul>
         <p>
@@ -237,10 +237,6 @@ export default function SecurityPage() {
           <li>
             Invite links you made that nobody has used: each holds your sign-in id and the name you gave, and expires on
             its own within 72 hours.
-          </li>
-          <li>
-            The record each person who shared with you keeps of when you looked: theirs, it doesn’t name you, and each
-            look in it is deleted after {ACCESS_LOG_DAYS} days.
           </li>
           <li>
             Plaid’s own copy: Plaid keeps what it collected under its own policy. You can see and delete your connections

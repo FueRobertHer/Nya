@@ -65,7 +65,6 @@ describe('the receipt', () => {
         '',
         'What stays, and why',
         `- Plaid’s own copy: Plaid keeps what it collected from your banks under its own privacy policy. Disconnecting ended Nya’s connections; it doesn’t delete Plaid’s records. See and delete what Plaid holds at the Plaid Portal: ${PLAID_PORTAL}`,
-        '- What others keep: if anyone shared accounts with you, they keep their own record of when you looked at them. It doesn’t name you, and each look in it is deleted after 90 days.',
         '- Server logs: the host keeps them for a short time. Nya writes counts, dates and errors to them, not amounts or balances.',
         '- Your downloads: a copy you saved with Download my data is yours, and deleting your account doesn’t reach it.',
         '',
