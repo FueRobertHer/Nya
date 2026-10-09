@@ -4,17 +4,20 @@
 // glance the big trackers lead with. Everything derives from data already
 // loaded (history + transactions), no extra API calls. Spending is what counts
 // in totals (lib/spending.ts), as on the Activity and Budgets tabs: in one
-// currency, with what is in others named under the list.
+// currency, with what is in others named under the list, and so is a month
+// that may be missing a connection's transactions, in their words
+// (lib/month-coverage.ts).
 
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
 import { detectRecurring, upcomingBills } from '@/lib/recurring';
-import { localMonth } from '@/lib/local-date';
+import { instantDay, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 
 /**
  * A connection Plaid says will end on a date (lib/connection-state.ts,
@@ -31,6 +34,8 @@ export type ReconnectSoon = {
 };
 
 const NO_RECONNECTS: ReconnectSoon[] = [];
+const NO_GAPS: Incomplete[] = [];
+const NO_STOPPED: Stopped[] = [];
 
 /** The Home alerts for connections ending within RECONNECT_ALERT_DAYS, soonest
  *  first, at most two: calendar days on the viewer's own calendar, as the
@@ -116,6 +121,8 @@ export default function Insights({
   idleCash = NO_IDLE_CASH,
   reconnectSoon = NO_RECONNECTS,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  incomplete = NO_GAPS,
+  stopped = NO_STOPPED,
 }: {
   txns: Txn[] | null;
   budgets: Record<string, number>;
@@ -126,6 +133,12 @@ export default function Insights({
    *  bank account or card whose transactions don't come in leaves the budget
    *  alerts and the pace short, as on the Activity and Budgets tabs. */
   withoutTransactions?: NoTransactionsView;
+  /** What may leave this month's spending short, as Activity and Budgets say
+   *  it (lib/month-coverage.ts): an institution whose transactions didn't
+   *  load or are still importing, and connections that stopped syncing. A
+   *  pace or a budget alert that looks finished but isn't misleads. */
+  incomplete?: Incomplete[];
+  stopped?: Stopped[];
 }) {
   const { insights, leftOut, missing } = useMemo(() => {
     const out: Insight[] = [];
@@ -333,9 +346,11 @@ export default function Insights({
     return {
       insights: shown,
       leftOut: fromSpending ? leftOut : null,
-      missing: fromSpending ? missingMonthNotes(withoutTransactions) : [],
+      missing: fromSpending
+        ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
+        : [],
     };
-  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions]);
+  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions, incomplete, stopped]);
 
   if (insights.length === 0) return null;
 

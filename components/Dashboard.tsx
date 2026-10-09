@@ -1604,6 +1604,8 @@ export default function Dashboard({
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
+                  incomplete={txnIncomplete}
+                  stopped={stoppedTxns}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
