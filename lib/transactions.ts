@@ -16,6 +16,12 @@
 // would still exceed Upstash's request-size ceiling, writeState REFUSES to write
 // it rather than trimming. Trimming oldest-first would drop precisely the rows
 // no bank will re-serve, silently; refusing is recoverable.
+//
+// Not every Item has Transactions. One linked as a brokerage or retirement
+// account often doesn't, and calling /transactions/sync on it would add the
+// product and start Plaid billing it, so syncItem first checks whether that call
+// is worth making (lib/item-products.ts). An Item without the product is a known,
+// quiet state: no rows and no note, never a failure.
 
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
@@ -24,6 +30,8 @@ import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './b
 import { redis, kc, type StoredItem } from './storage';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
+import { holdsTransactionAccounts, transactionsBilled, TRANSACTIONS_DAYS_REQUESTED } from './item-products';
+import { rememberedTypesForItem } from './last-known';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -603,17 +611,40 @@ function toStoredAccount(a: AccountBase): StoredAccount {
   };
 }
 
+/** What a sync of one Item came to (see syncItem). */
+type SyncOutcome = {
+  state: ItemState | null;
+  note: string | null;
+  /** Set when the Item has no Transactions to sync (lib/item-products.ts):
+   *  nothing to show and nothing wrong, so there is no note. */
+  noTransactions?: true;
+};
+
+type SyncOptions = {
+  /** The Item's accounts as the caller has just fetched them, for deciding
+   *  whether a first call is worth making (see `starting` in syncItem).
+   *  Without them the remembered accounts are read (lib/last-known.ts). */
+  accounts?: readonly { type?: unknown }[];
+};
+
+/** Plaid's answers to a first call on an Item that can't have Transactions:
+ *  the institution doesn't offer it for these accounts, or the person never
+ *  consented to it. A retry changes neither. */
+const NO_TRANSACTIONS_CODES = new Set(['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED']);
+
 /**
  * Sync one Item from Plaid and persist the reconciled set + cursor. Returns the
  * full retained `state` (callers slice to the window they need), plus a `note`
  * when something is off. `state` is null only on a hard stop (reauth, fresh
- * Item still syncing, unrecoverable error); a non-null `state` with a `note`
- * means usable-but-partial (e.g. the initial pull hit the page cap). Prior
- * stored state is left untouched on a hard stop.
+ * Item still syncing, unrecoverable error) or for an Item with no Transactions
+ * (`noTransactions`, with no note); a non-null `state` with a `note` means
+ * usable-but-partial (e.g. the initial pull hit the page cap). Prior stored
+ * state is left untouched on a hard stop.
  */
-async function syncItem(ctx: Ctx, 
-  item: StoredItem
-): Promise<{ state: ItemState | null; note: string | null }> {
+async function syncItem(ctx: Ctx,
+  item: StoredItem,
+  opts: SyncOptions = {}
+): Promise<SyncOutcome> {
   let access_token: string;
   try {
     access_token = await decrypt(item.encrypted_access_token);
@@ -668,6 +699,18 @@ async function syncItem(ctx: Ctx,
     throw err;
   }
 
+  // A call that may start Plaid billing Transactions (lib/item-products.ts):
+  // Plaid isn't known to bill it on this Item, and Nya has never synced it, so
+  // the first call would add the product. Made only for an Item holding an
+  // account Transactions describes. Any other (a 401(k), an IRA, a brokerage
+  // account) would gain a monthly charge and nothing to show, so it simply has
+  // no transactions: no rows, no note, nothing stored, and no Plaid call.
+  const starting = !transactionsBilled(item) && stored.cursor === '';
+  if (starting) {
+    const types = opts.accounts ? opts.accounts.map((a) => a.type) : await rememberedTypesForItem(ctx, item.item_id);
+    if (!holdsTransactionAccounts(types ?? [])) return { state: null, note: null, noTransactions: true };
+  }
+
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
     // page's deltas onto an already-mutated set.
@@ -679,7 +722,15 @@ async function syncItem(ctx: Ctx,
 
     try {
       while (hasMore && pages < MAX_PAGES) {
-        const res = await plaidClient.transactionsSync({ access_token, cursor, count: 500 });
+        const res = await plaidClient.transactionsSync({
+          access_token,
+          cursor,
+          count: 500,
+          // The call that initializes the product is the only place left to say
+          // how much history to fetch: the link token's days_requested applies
+          // only where Link initialized it. Plaid ignores it on any other call.
+          ...(starting && !cursor ? { options: { days_requested: TRANSACTIONS_DAYS_REQUESTED } } : {}),
+        });
         pages++;
         lastStatus = res.data.transactions_update_status;
         res.data.accounts.forEach((a) => (state.accounts[a.account_id] = toStoredAccount(a)));
@@ -715,6 +766,15 @@ async function syncItem(ctx: Ctx,
           state: null,
           note: `${item.institution_name}: transactions are still syncing — try again in a minute`,
         };
+      }
+      // The first call found the Item can't have Transactions after all (an
+      // institution that doesn't offer it, or no consent for it). The same as
+      // having none: quiet, and nothing stored, so it is asked again only on a
+      // later uncached load. Only on that first call: on an Item that has the
+      // product, these would be a real fault and get the note below.
+      if (starting && NO_TRANSACTIONS_CODES.has(code)) {
+        console.warn(`transactions: an Item can't serve Transactions (${code}); it shows balances and investments only`);
+        return { state: null, note: null, noTransactions: true };
       }
       console.error(loggable(err));
       return { state: null, note: `${item.institution_name}: could not fetch transactions` };
@@ -833,13 +893,19 @@ export async function syncItemTransactions(ctx: Ctx,
  * window, defaulting to LOOKBACK days. Used by the estimated-history backfill,
  * which walks balances per account. Reads straight from the same persisted
  * store, so the two features share one Plaid pull.
+ *
+ * `hasTransactions` is false for an Item with no Transactions (see syncItem):
+ * no stream at all, so its cash accounts can't be walked, which an empty list
+ * from an Item that has one (a dormant account) can. `accounts` are the Item's
+ * accounts as the caller just fetched them.
  */
-export async function readItemTransactions(ctx: Ctx, 
+export async function readItemTransactions(ctx: Ctx,
   item: StoredItem,
-  sinceDays: number = LOOKBACK_DAYS
-): Promise<{ txns: StoredTxn[]; note: string | null }> {
-  const { state, note } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note };
+  sinceDays: number = LOOKBACK_DAYS,
+  accounts?: readonly { type?: unknown }[]
+): Promise<{ txns: StoredTxn[]; note: string | null; hasTransactions: boolean }> {
+  const { state, note, noTransactions } = await syncItem(ctx, item, { accounts });
+  if (!state) return { txns: [], note, hasTransactions: !noTransactions };
   const cutoff = daysAgoIso(sinceDays);
   const superseded = supersededPendingIds(state.txns);
   return {
@@ -847,5 +913,6 @@ export async function readItemTransactions(ctx: Ctx,
       (t) => t.date >= cutoff && !superseded.has(t.transaction_id)
     ),
     note,
+    hasTransactions: true,
   };
 }

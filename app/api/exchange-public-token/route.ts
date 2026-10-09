@@ -5,6 +5,7 @@ import { encrypt } from '@/lib/crypto';
 import { saveItem } from '@/lib/storage';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
+import { billedProductsOf } from '@/lib/item-products';
 import { loggable } from '@/lib/log-safe';
 
 export async function POST(req: Request) {
@@ -18,10 +19,18 @@ export async function POST(req: Request) {
     // Asked of Plaid rather than taken from the client, which could send any id.
     // Best effort: without it the Item still links, and the duplicate check falls
     // back to the institution's name.
+    //
+    // The same answer says which products Plaid already bills on the Item. An
+    // Item from the brokerage option often has no Transactions, and a sync call
+    // would add it and start billing it, so the sync reads this before calling
+    // (lib/item-products.ts). Unknown when the lookup fails, which the sync
+    // treats with the same care as "not billed".
     let institution_id: string | null = null;
+    let billed_products: string[] | null = null;
     try {
       const item = await plaidClient.itemGet({ access_token: exchange.data.access_token });
       institution_id = item.data.item.institution_id ?? null;
+      billed_products = billedProductsOf(item.data.item);
     } catch (err: any) {
       console.error('exchange: could not read the institution id', err?.response?.data?.error_code ?? err?.name);
     }
@@ -31,6 +40,7 @@ export async function POST(req: Request) {
       institution_name: institution_name || 'Connected Account',
       encrypted_access_token,
       institution_id,
+      billed_products,
     });
 
     // Cached payloads no longer reflect the linked institutions, and the
