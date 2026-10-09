@@ -13,6 +13,11 @@
 // says what is true instead. /api/transactions reports these connections
 // beside the rows, not as notes: nothing is wrong, so the payload stays
 // cacheable.
+//
+// Rows can come from elsewhere: transactions entered by hand on a manual
+// account (lib/manual-txns.ts), which is not a connection. With any of those,
+// there is spending to show, so nothing says there is none: the views show
+// the rows, and name the connections that bring in none (withoutNote).
 
 import type { NoTransactionsReason } from './item-products';
 import { joinNames } from './month-coverage';
@@ -46,9 +51,16 @@ export function noTransactionsView(payload: unknown): NoTransactionsView {
  *  sentence, and what would bring some in, to follow "To see spending, ". */
 export type NoSpending = { lead: string; remedy: string };
 
+/** Whether every connection brings in no transactions (none refused or not),
+ *  as far as the payload says. */
+function noneBringTransactions(view: NoTransactionsView): boolean {
+  return !!view.connections && view.without.length === view.connections;
+}
+
 /**
- * When no connection can bring in spending at all, what to say instead of an
- * empty year or a zero:
+ * When no connection can bring in spending at all, and there are no rows from
+ * anywhere else (`rows`, every transaction shown, entered by hand included),
+ * what to say instead of an empty year or a zero:
  *   - every account is an investment account: "Your connected accounts are
  *     investment accounts";
  *   - some hold a loan or other account instead: "None of your connected
@@ -57,12 +69,13 @@ export type NoSpending = { lead: string; remedy: string };
  *     transactions: that, naming the institutions, and "another" bank or card
  *     as the remedy.
  * Null when some connection does bring transactions in (they say the rest),
- * with nothing connected, or before the transactions have loaded
- * (`connections` unknown).
+ * when there are rows anyway (withoutNote names the connections then), with
+ * nothing connected, or before the transactions have loaded (`connections`
+ * unknown).
  */
-export function noSpending(view: NoTransactionsView): NoSpending | null {
-  const { without, connections } = view;
-  if (!connections || without.length !== connections) return null;
+export function noSpending(view: NoTransactionsView, rows: number): NoSpending | null {
+  if (rows > 0 || !noneBringTransactions(view)) return null;
+  const { without } = view;
   const refused = refusedNames(view);
   if (refused.length > 0) {
     return {
@@ -76,6 +89,21 @@ export function noSpending(view: NoTransactionsView): NoSpending | null {
       : 'None of your connected accounts is a bank account or card',
     remedy: 'connect a bank or card',
   };
+}
+
+/**
+ * When no connection brings in transactions but there are rows anyway
+ * (entered by hand on a manual account), in place of noSpending's sentence:
+ * the connections that hold no bank account or card, named, under the totals
+ * and beside the Plan's figures. Null otherwise. One whose bank account or
+ * card Plaid refuses is named by the refused notes instead.
+ */
+export function withoutNote(view: NoTransactionsView, rows: number): string | null {
+  if (rows === 0 || !noneBringTransactions(view)) return null;
+  const names = [...new Set(view.without.filter((w) => w.reason !== 'refused').map((w) => w.institution_name))];
+  if (names.length === 0) return null;
+  const one = names.length === 1;
+  return `${joinNames(names)} ${one ? 'holds' : 'hold'} no bank account or card, so no transactions come from ${one ? 'it' : 'them'}.`;
 }
 
 /** The connections holding a bank account or card that Plaid doesn't provide

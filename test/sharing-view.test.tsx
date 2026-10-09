@@ -146,4 +146,26 @@ describe('what others share with me', () => {
     expect(html).toContain('Balance not shared');
     expect(html).not.toMatch(/500\.00 owed/);
   });
+
+  test('a manual account shared with its transactions says those entered by hand aren’t shared yet, never that it has none', () => {
+    const html = renderToStaticMarkup(
+      <SharedWithMeView
+        data={{
+          shared: [
+            {
+              connection: 'c1',
+              label: 'Olive',
+              accounts: [
+                { id: 'manual_0b6f', label: 'Wallet', level: 'transactions', balance: 80, as_of: '2026-09-27T14:00:00.000Z', debt: false, transactions: [] },
+                { id: 'a', label: 'Joint ••1111', level: 'transactions', balance: 500, as_of: '2026-09-27', debt: false, transactions: [] },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+    expect(html).toContain('Transactions entered by hand aren&#x27;t shared yet.');
+    // A bank's account with none in the last 30 days still says so.
+    expect(html.match(/Recent transactions \(0\)/g)).toHaveLength(1);
+  });
 });

@@ -105,6 +105,9 @@ const { existingItemsAt } = await import('@/lib/existing-items');
 const { transactionsBilledOf, transactionsBilled, holdsTransactionAccounts, isLinkKind, refusalStands, noTransactionsReason, transactionAccountIds } =
   await import('@/lib/item-products');
 const { readStoredTxns } = await import('@/lib/transactions');
+const { saveManualAccount } = await import('@/lib/manual');
+const { addManualTxn, newManualTxn } = await import('@/lib/manual-txns');
+const { noTransactionsView, noSpending, withoutNote } = await import('@/lib/no-transactions');
 
 const checking = (id = 'acct_chk') => ({
   account_id: id,
@@ -380,6 +383,37 @@ describe('transactions from an Item without Transactions', () => {
     expect(again.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
     expect(again.body.connections).toBe(2);
     expect(syncedTokens()).toEqual(['token-item_bank']);
+  });
+
+  // Rows entered by hand on a manual account are merged after the cache of
+  // Plaid's rows, on every load: with them there is spending, so the views
+  // must not say there is none, only name the connections that bring none.
+  test('rows entered by hand beside an investments-only connection: listed, and only the connection named', async () => {
+    await addRetirement();
+    await saveManualAccount(ctx, {
+      account_id: 'manual_wallet-1',
+      name: 'Wallet',
+      institution_name: 'Cash',
+      type: 'depository',
+      subtype: null,
+      balance: 200,
+      updated_at: '2026-10-01T12:00:00.000Z',
+    });
+    await addManualTxn(
+      ctx,
+      newManualTxn('manual_wallet-1', { date: daysAgo(2), amount: 12.5, currency: 'USD', name: 'Farmers market', category: 'food and drink', note: null })
+    );
+    for (const fresh of [true, false]) {
+      const res = await transactions(fresh);
+      expect(res.body.from_cache).toBe(!fresh);
+      expect(res.body.transactions.map((t: any) => [t.name, t.source])).toEqual([['Farmers market', 'manual']]);
+      expect(res.body.without_transactions).toEqual([{ institution_name: 'Empower', reason: 'investment_accounts' }]);
+      expect(res.body.connections).toBe(1);
+      const view = noTransactionsView(res.body);
+      expect(noSpending(view, res.body.transactions.length)).toBeNull();
+      expect(withoutNote(view, res.body.transactions.length)).toBe('Empower holds no bank account or card, so no transactions come from it.');
+    }
+    expect(plaid.syncCalls).toHaveLength(0);
   });
 
   test('a connection with a loan and no bank account or card is said as that', async () => {

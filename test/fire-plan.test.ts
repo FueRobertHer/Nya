@@ -18,7 +18,7 @@ const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
 const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, repairPlan, startAge, upgradePlan } = await import('@/lib/fire/plan');
-const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
+const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
 const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
 const { historicalCycles } = await import('@/lib/fire/simulate');
@@ -486,6 +486,99 @@ describe('spending and savings from the trailing year', () => {
     expect(r.from).toBe(yearAgo);
   });
 
+  describe('cash is counted once', () => {
+    // $200 from the ATM (as Plaid files it in the US), and what it went on,
+    // entered by hand on a manual cash account.
+    const ATM = { date: '2026-10-01', amount: 200, category: 'transfer out', subcategory: 'withdrawal' };
+    const spent = (amount: number, over: Partial<Txn> = {}) =>
+      txn({ date: '2026-10-02', amount, source: 'manual', account_id: 'manual_wallet', account_name: 'Wallet', institution_name: 'Cash', ...over });
+    const flows = (rows: Txn[], cashAccounts = new Set(['manual_wallet'])) =>
+      trailingFlows([txn({ date: yearAgo, amount: 1_000 }), ...rows], today, { cashAccounts })!;
+
+    test('withdrawals alone are spending: cash taken out is spent', () => {
+      const r = flows([txn(ATM)]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 200, cashWithdrawn: 200, cashEntered: 0 });
+    });
+
+    test('the same cash, entered as it was spent, counts once', () => {
+      const r = flows([txn(ATM), spent(120), spent(80, { category: 'transportation' })]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 0, cashWithdrawn: 200, cashEntered: 200 });
+    });
+
+    test('some of it entered: the rest of what was withdrawn still counts', () => {
+      const r = flows([txn(ATM), spent(50)]);
+      expect(r.spending).toBe(1_200);
+      expect(r).toMatchObject({ cash: 150, cashEntered: 50 });
+    });
+
+    test('more entered than withdrawn: what was entered counts, the withdrawals no more', () => {
+      const r = flows([txn(ATM), spent(300)]);
+      expect(r.spending).toBe(1_300);
+      expect(r.cash).toBe(0);
+    });
+
+    test('over the whole year, so cash taken out at a month’s end and spent in the next isn’t counted twice', () => {
+      const r = flows([txn({ ...ATM, date: '2026-08-31' }), spent(200, { date: '2026-09-03' })]);
+      expect(r.spending).toBe(1_200);
+    });
+
+    test('which accounts are cash: manual ones marked cash on hand, never a manual checking account or a bank’s', () => {
+      const manual = (accounts: Partial<AssetAccount>[]): AssetInstitution => ({
+        name: 'Cash',
+        item_id: null,
+        error: false,
+        staleAsOf: null,
+        staleAsOfAt: null,
+        missing: 0,
+        accounts: accounts.map((a, i) => ({ account_id: `m${i}`, name: 'Account', type: 'depository', balance: 0, currency: 'USD', ...a })),
+      });
+      const institutions: AssetInstitution[] = [
+        manual([
+          { account_id: 'manual_wallet', name: 'Wallet', subtype: 'cash' },
+          { account_id: 'manual_cu', name: 'Credit Union Checking', subtype: null },
+          { account_id: 'manual_old', name: 'Savings jar' }, // saved before the choice existed
+          { account_id: 'manual_odd', name: 'Card', type: 'credit', subtype: 'cash' },
+        ]),
+        { name: 'Bank', item_id: 'item-1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [{ account_id: 'plaid_chk', name: 'Checking', type: 'depository', subtype: 'cash', balance: 0, currency: 'USD' }] },
+      ];
+      expect([...cashAccountIds(institutions)]).toEqual(['manual_wallet']);
+    });
+
+    test('debit spending entered on a manual checking account never cancels a bank’s withdrawals', () => {
+      // The reviewer's case: $200 a month withdrawn from a linked bank and
+      // spent in cash, never entered, and $1,500 a month of debit spending
+      // entered on a manual credit-union checking account (not cash on hand).
+      const day = (n: number) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+      const rows: Txn[] = [];
+      for (let m = 0; m < 12; m++) {
+        rows.push(txn({ date: day(m * 30 + 1), amount: 200, category: 'transfer out', subcategory: 'withdrawal' }));
+        rows.push(txn({ date: day(m * 30 + 2), amount: 1_500, source: 'manual', account_id: 'manual_cu' }));
+      }
+      const institutions: AssetInstitution[] = [
+        { name: 'Credit Union', item_id: null, error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [{ account_id: 'manual_cu', name: 'Credit Union Checking', type: 'depository', subtype: null, balance: 0, currency: 'USD' }] },
+      ];
+      const r = trailingFlows(rows, today, { cashAccounts: cashAccountIds(institutions) })!;
+      const days = r.days;
+      expect(r.cash).toBeCloseTo((12 * 200 * 365) / days, 6);
+      expect(r.cashEntered).toBe(0);
+      expect(r.spending).toBeCloseTo((12 * 1_700 * 365) / days, 6);
+      // Marked as cash on hand, the same rows would be the withdrawals' spending.
+      const marked = trailingFlows(rows, today, { cashAccounts: new Set(['manual_cu']) })!;
+      expect(marked.cash).toBe(0);
+      expect(marked.cashEnteredOn).toEqual(['manual_cu']);
+    });
+
+    test('only spending entered on a manual cash account is cash: a card Plaid can’t reach isn’t', () => {
+      const r = flows([txn(ATM), spent(50, { account_id: 'manual_card' })]);
+      expect(r.spending).toBe(1_250);
+      expect(r.cash).toBe(200);
+      // Nor a bank's own row on the account.
+      expect(flows([txn(ATM), spent(50, { source: undefined })]).cash).toBe(200);
+    });
+  });
+
   test("leaves the Activity tab's own rule as it was", () => {
     expect(isTransfer(txn({ amount: 1_500, category: 'loan payments', subcategory: 'mortgage payment' }))).toBe(true);
     expect(isTransfer(txn({ amount: 200, transaction_code: 'atm' }))).toBe(true);
@@ -588,10 +681,31 @@ describe('spending and savings from the trailing year', () => {
     expect(trailingFlows([], today)).toBeNull();
   });
 
-  test('flags spending summed across currencies', () => {
-    const r = trailingFlows([txn({ date: yearAgo, amount: 10 }), txn({ date: today, amount: 10, iso_currency_code: 'EUR' }), txn({ date: today, amount: 10 })], today)!;
+  test('sums one currency, and names the transactions in others instead of adding them', () => {
+    const r = trailingFlows(
+      [
+        txn({ date: yearAgo, amount: 10 }),
+        txn({ date: today, amount: 3_200, iso_currency_code: 'JPY' }),
+        txn({ date: today, amount: -50, category: 'income', iso_currency_code: 'EUR' }),
+        txn({ date: today, amount: 10 }),
+        // A transfer in another currency would count in nothing anyway: not named.
+        txn({ date: today, amount: 99, iso_currency_code: 'JPY', category: 'transfer out' }),
+      ],
+      today
+    )!;
     expect(r.currency).toBe('USD');
-    expect(r.mixedCurrency).toBe(true);
+    expect(r.spending).toBe(20);
+    expect(r.income).toBe(0);
+    expect(r.leftOut).toEqual([
+      { currency: 'EUR', count: 1 },
+      { currency: 'JPY', count: 1 },
+    ]);
+  });
+
+  test('a row with no currency code counts in the figures, taken to be in their currency', () => {
+    const r = trailingFlows([txn({ date: yearAgo, amount: 10 }), txn({ date: today, amount: 5, iso_currency_code: null })], today)!;
+    expect(r.spending).toBe(15);
+    expect(r.leftOut).toEqual([]);
   });
 
   test("reads which institutions couldn't be read from the transactions' notes", () => {
