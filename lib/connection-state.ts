@@ -15,6 +15,13 @@
 //     connection and its history;
 //   - the bank or Plaid is having trouble (INSTITUTION_DOWN, ...): nothing to
 //     do, it recovers on its own;
+//   - Plaid refuses Nya itself (INVALID_ACCESS_TOKEN, INVALID_API_KEYS, ...),
+//     which is what a deployment mistake looks like: a PLAID_ENV or
+//     PLAID_SECRET for another environment refuses every connection at once.
+//     Nothing for the person to do, and never removal: whoever runs Nya puts
+//     it right, and the connection then works as before. Removing it instead
+//     would delete its stored transactions and leave the Item live at Plaid
+//     with nothing left to remove it by;
 //   - the connection is gone or can't be repaired (USER_PERMISSION_REVOKED,
 //     ITEM_NOT_FOUND, ...): remove it and connect again, and the history
 //     carries over through account links (lib/links.ts);
@@ -27,7 +34,9 @@
 //
 // WHOSE SIDE. Each cause also says where the problem is: the person's own
 // sign-in, the bank, Plaid, or Nya. A broken link looks like a Nya problem
-// from the outside, so the health view says which it is.
+// from the outside, so the health view says which it is. A problem on Nya's
+// side is never the person's to fix, so it only ever waits: it is never
+// emailed (lib/connection-notices.ts), and never offered for removal.
 //
 // RECONNECT SOON. Plaid warns about a week ahead when a connection is going to
 // end: the PENDING_EXPIRATION and PENDING_DISCONNECT webhooks, which
@@ -49,6 +58,11 @@ export const RECONNECT_SOON_DAYS = 7;
 export const PENDING_DISCONNECT_LEAD_DAYS = 7;
 /** How many days before a connection ends the Home tab raises it too. */
 export const RECONNECT_ALERT_DAYS = 3;
+
+/** Where a notice email sends the person: the Connection health card on the
+ *  Accounts tab (components/Dashboard.tsx), kept through sign-in (proxy.ts,
+ *  app/login). */
+export const CONNECTIONS_PATH = '/?view=connections';
 
 /** The coarse state: what the badge says, and what the notices go by. */
 export type HealthState =
@@ -75,10 +89,11 @@ export type Cause =
   | 'provider' // Plaid's own errors, maintenance and rate limits
   | 'unreachable' // no answer at all: a timeout or a network failure
   | 'credentials' // Nya could not read the access token it stores
+  | 'token' // INVALID_ACCESS_TOKEN: Plaid doesn't accept the stored token here, as after a change of PLAID_ENV or PLAID_SECRET
+  | 'setup' // Plaid refused Nya's own keys, environment or access (INVALID_API_KEYS and kin)
   | 'unknown' // any other code
   | 'revoked' // USER_PERMISSION_REVOKED: access was withdrawn, and can't be restored
   | 'gone' // ITEM_NOT_FOUND and kin: Plaid no longer has the connection
-  | 'token' // INVALID_ACCESS_TOKEN: Plaid doesn't accept the stored token here
   | 'unsupported' // ITEM_NOT_SUPPORTED and kin: Plaid can't reach these accounts any more
   | 'no_accounts' // NO_ACCOUNTS: the bank reports no open accounts
   | 'vanished'; // accounts missing from an otherwise good answer (lib/vanished.ts)
@@ -102,14 +117,16 @@ export const CAUSES: Readonly<Record<Cause, { state: HealthState; action: Health
   institution_down: { state: 'outage', action: 'wait' },
   provider: { state: 'outage', action: 'wait' },
   unreachable: { state: 'outage', action: 'wait' },
-  // Not something the person can fix at their bank, and not something that
-  // clears by itself either: whoever runs Nya restores the key. Waiting is
-  // the person's only part, and the view says who has to act.
+  // On Nya's side: not something the person can fix at their bank, and not
+  // something that clears by itself either. Whoever runs Nya restores the key
+  // or the Plaid settings; waiting is the person's only part, and the view
+  // says who has to act.
   credentials: { state: 'outage', action: 'wait' },
+  token: { state: 'outage', action: 'wait' },
+  setup: { state: 'outage', action: 'wait' },
   unknown: { state: 'outage', action: 'wait' },
   revoked: { state: 'relink', action: 'relink' },
   gone: { state: 'relink', action: 'relink' },
-  token: { state: 'relink', action: 'relink' },
   // Connecting again would fail the same way, so only removal is offered.
   unsupported: { state: 'relink', action: 'remove' },
   no_accounts: { state: 'closed', action: 'resolve' },
@@ -149,8 +166,17 @@ const CODES: Readonly<Record<string, readonly [Cause, Side]>> = {
   ITEM_NO_LONGER_AVAILABLE: ['gone', 'plaid'],
   ITEM_CONCURRENTLY_DELETED: ['gone', 'plaid'],
   // What switching PLAID_ENV or the secret looks like too (lib/item-usage.ts),
-  // so it is on Nya's side until shown otherwise.
+  // so it is on Nya's side until shown otherwise: never removal advice.
   INVALID_ACCESS_TOKEN: ['token', 'nya'],
+  // Plaid refusing Nya's own settings: keys that don't match (PLAID_CLIENT_ID,
+  // PLAID_SECRET), an environment or a route the Plaid account isn't enabled
+  // for, an institution it isn't registered with. A deployment's to fix.
+  INVALID_API_KEYS: ['setup', 'nya'],
+  UNAUTHORIZED_ENVIRONMENT: ['setup', 'nya'],
+  UNAUTHORIZED_ROUTE_ACCESS: ['setup', 'nya'],
+  INVALID_PRODUCT: ['setup', 'nya'],
+  INSTITUTION_REGISTRATION_REQUIRED: ['setup', 'nya'],
+  UNAUTHORIZED_INSTITUTION: ['setup', 'nya'],
   ITEM_NOT_SUPPORTED: ['unsupported', 'bank'],
   MFA_NOT_SUPPORTED: ['unsupported', 'bank'],
   INSTITUTION_NO_LONGER_SUPPORTED: ['unsupported', 'plaid'],
@@ -174,6 +200,10 @@ export function reconnectFixes(cause: Cause): boolean {
 
 /** Plaid's error types whose every code means Plaid itself is busy or failing. */
 const PROVIDER_TYPES = new Set(['RATE_LIMIT_EXCEEDED', 'API_ERROR']);
+/** Plaid's error types for a request it found wrong in itself: a balance call
+ *  sends only Nya's keys and its access token, so whatever the code, the
+ *  mistake is Nya's (a deployment's settings), never the person's. */
+const NYA_TYPES = new Set(['INVALID_REQUEST', 'INVALID_INPUT']);
 
 /** A code as Plaid writes them, so nothing else is ever kept or shown as one. */
 const CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -189,6 +219,7 @@ export function classifyFailure(input: { code?: unknown; type?: unknown; respond
     return { cause, side, code };
   }
   if (typeof input.type === 'string' && PROVIDER_TYPES.has(input.type)) return { cause: 'provider', side: 'plaid', code };
+  if (typeof input.type === 'string' && NYA_TYPES.has(input.type)) return { cause: 'setup', side: 'nya', code };
   if (!code && !input.responded) return { cause: 'unreachable', side: 'unknown', code: null };
   return { cause: 'unknown', side: 'unknown', code };
 }
@@ -302,6 +333,10 @@ export type ConnectionHealth = {
   ends_estimated?: boolean;
   /** Plaid's error code, when the failure came with one. */
   code?: string;
+  /** For the dashboard only: some of what Nya keeps about this connection (its
+   *  warning, or its last sync) could not be read, so a warning may be missing
+   *  from what this says (lib/connection-health.ts). */
+  unread?: boolean;
 };
 
 function health(cause: Cause, side: Side, last_ok_at: string | null): ConnectionHealth {

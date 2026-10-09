@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { sendMail, mailConfig, mailConfigured, mailOff, forgetMailOffLogged, isEmailAddress, MailError } from '@/lib/mail';
+import { sendMail, mailConfig, mailConfigured, mailOff, forgetMailOffLogged, isEmailAddress, retryAfterMs, MailError, MAIL_TIMEOUT_MS } from '@/lib/mail';
 
 // The mail module (lib/mail.ts): Resend's HTTP API through fetch, off unless
 // both RESEND_API_KEY and MAIL_FROM are set, and never logging what it sends.
@@ -101,6 +101,31 @@ describe('with mail on', () => {
     expect(err.status).toBeNull();
     const server = fakeFetch(() => new Response('oops', { status: 500 }));
     expect((await sendMail(message, { fetch: server.fn }).catch((e) => e)).status).toBe(500);
+  });
+
+  // Review nit: Resend's default limit is two requests a second.
+  test('a rate limit throws with how long Resend asked to wait', async () => {
+    const limited = fakeFetch(() => Response.json({ name: 'rate_limit_exceeded' }, { status: 429, headers: { 'Retry-After': '1' } }));
+    const err = await sendMail(message, { fetch: limited.fn }).catch((e) => e);
+    expect(err).toBeInstanceOf(MailError);
+    expect([err.status, err.retryAfterMs]).toEqual([429, 1000]);
+    const unsaid = await sendMail(message, { fetch: fakeFetch(() => new Response('{}', { status: 429 })).fn }).catch((e) => e);
+    expect(unsaid.retryAfterMs).toBeNull();
+    expect(retryAfterMs('2')).toBe(2000);
+    expect(retryAfterMs(new Date(Date.parse('2026-10-09T12:00:03Z')).toUTCString(), Date.parse('2026-10-09T12:00:00Z'))).toBe(3000);
+    for (const bad of [null, '', 'soon', '-1']) expect(retryAfterMs(bad)).toBeNull();
+  });
+
+  test('a send that takes too long is given up on at its timeout, and thrown', async () => {
+    expect(MAIL_TIMEOUT_MS).toBeLessThanOrEqual(5_000);
+    // Answers only once aborted, as a stalled connection does.
+    const stalled = ((_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)))) as unknown as typeof fetch;
+    const started = Date.now();
+    const err = await sendMail(message, { fetch: stalled, timeoutMs: 30 }).catch((e) => e);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(err).toBeInstanceOf(MailError);
+    expect(err.status).toBeNull();
   });
 
   test('only plain addresses are sent to, each once; none at all is refused', async () => {

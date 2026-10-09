@@ -4,7 +4,7 @@ import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
-import { mailConfigured } from '@/lib/mail';
+import { sendsEmail } from '@/lib/notice-recipients';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -17,8 +17,9 @@ export const metadata: Metadata = {
 // makes it true today and what is not built yet. Reads no stored data: what it
 // says of backups comes from backupRetention() (lib/backup.ts, environment
 // only), the rule the deletion receipt dates by, so the two never disagree,
-// and whether it names an email provider from mailConfigured() (lib/mail.ts),
-// which is whether this copy sends email at all.
+// and whether it names an email provider from sendsEmail()
+// (lib/notice-recipients.ts): mail set up, and someone it may write to, which
+// is whether this copy sends email at all.
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
@@ -117,7 +118,7 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, and one reminder a week later. Sees your email address and each email, which names the bank and what to do, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. Sees your email address and each email, which names the bank and what to do, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
         ],
       ] as [string, string][])
     : []),
@@ -133,7 +134,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'How each bank connection is doing',
-    'When it last answered, Plaid’s warnings that it is going to end, and the record of a problem with it (when it began, and when you were emailed about it): until the connection is removed. The warnings and the problem records go sooner, once the connection works again. Encrypted.',
+    'When it last answered, Plaid’s warnings that it is going to end, and the record of a problem with it (when it began, what it was, and when you were emailed about it): until the connection is removed. The warnings and the problem records go sooner, once the connection works again. Encrypted, and in your download.',
   ],
   ...(mail
     ? ([['Emails Nya sent you', 'In your inbox, and with the email service under its own policy. Deleting your account does not reach them.']] as [string, string][])
@@ -163,7 +164,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
 
 export default function PrivacyPage() {
   const backups = backupRetention();
-  const mail = mailConfigured();
+  const mail = sendsEmail();
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">

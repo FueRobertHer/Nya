@@ -70,14 +70,19 @@ function backupsAre(state: 'none' | 'kept' | 'invalid', keep?: string) {
   else delete process.env.BACKUP_KEEP_DAYS;
 }
 
-/** Whether this copy sends email: both of Resend's settings, or neither. */
+/** Whether this copy sends email: with the shared password, both of Resend's
+ *  settings and NOTIFY_EMAIL to write to, or none of them. */
 function mailIs(on: boolean) {
+  delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  delete process.env.CLERK_SECRET_KEY;
   if (on) {
     process.env.RESEND_API_KEY = 're_placeholder';
     process.env.MAIL_FROM = 'Nya <alerts@example.com>';
+    process.env.NOTIFY_EMAIL = 'me@example.com';
   } else {
     delete process.env.RESEND_API_KEY;
     delete process.env.MAIL_FROM;
+    delete process.env.NOTIFY_EMAIL;
   }
 }
 
@@ -425,7 +430,7 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
   test('with mail on: Resend is named, with what it sees, and never an amount', () => {
     mailIs(true);
     const priv = privacy();
-    expect(priv).toContain('Resend Sends the emails about your bank connections: one when a connection needs you, and one reminder a week later.');
+    expect(priv).toContain('Resend Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later.');
     expect(priv).toContain('never a balance, an amount or an account number');
     expect(priv).toContain('Not used yet: no billing provider, since Nya charges nothing yet.');
     expect(priv).not.toContain('no email provider');
@@ -441,9 +446,25 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     expect(privacy()).toContain('no email provider');
   });
 
+  // Review nit: mail set up with nobody to write to sends nothing, so names
+  // nothing (lib/notice-recipients.ts sendsEmail).
+  test('with mail set up but nobody it may write to, no email provider is named either', () => {
+    mailIs(true);
+    delete process.env.NOTIFY_EMAIL;
+    expect(privacy()).toContain('and no email provider, since this copy of Nya sends no email of its own.');
+    expect(privacy()).not.toContain('Resend');
+    expect(security()).not.toContain('Resend');
+    // With Clerk, each account's own verified address is written to.
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    expect(privacy()).toContain('Resend Sends the emails about your bank connections');
+    expect(security()).toContain('Resend, the email service');
+  });
+
   test('the record of how each connection is doing is in the retention table, and among what is encrypted', () => {
     expect(privacy()).toContain('How each bank connection is doing When it last answered, Plaid’s warnings that it is going to end');
     expect(privacy()).toContain('until the connection is removed.');
+    expect(privacy()).toContain('Encrypted, and in your download.');
     expect(security()).toContain('how each bank connection is doing');
   });
 });

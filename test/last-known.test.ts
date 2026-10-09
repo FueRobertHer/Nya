@@ -598,15 +598,15 @@ describe('the accounts a broken card cannot show', () => {
     const none = broken('item_a');
     await fillFromLastKnown(ctx, [none]);
     expect((none as any).unshown_accounts).toEqual([
-      { name: 'Venture', mask: '0189' },
-      { name: 'Savings', mask: '7777' },
+      { account_id: 'card', name: 'Venture', mask: '0189' },
+      { account_id: 'save', name: 'Savings', mask: '7777' },
     ]);
 
     await writeAccountSnapshot(RECENT, { card: 500 });
     const some = broken('item_a');
     await fillFromLastKnown(ctx, [some]);
     expect(some.accounts.map((a) => a.account_id)).toEqual(['card']);
-    expect((some as any).unshown_accounts).toEqual([{ name: 'Savings', mask: '7777' }]);
+    expect((some as any).unshown_accounts).toEqual([{ account_id: 'save', name: 'Savings', mask: '7777' }]);
 
     await writeAccountSnapshot(RECENT, { card: 500, save: 20 });
     const all = broken('item_a');
@@ -620,7 +620,21 @@ describe('the accounts a broken card cannot show', () => {
     const inst = broken('item_a');
     await fillFromLastKnown(ctx, [inst]);
     expect(inst.stale_too_old).toBe(daysAgo(60));
-    expect((inst as any).unshown_accounts).toEqual([{ name: 'Venture', mask: '0189' }]);
+    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189' }]);
     expect(JSON.stringify(inst)).not.toContain('500');
+  });
+
+  // Review nit: "Not counted in net worth" named accounts the person hid.
+  test('a hidden one is left out, as every total leaves it out', async () => {
+    const { applyHidden } = await import('@/lib/hidden');
+    await remember('item_a', [acct('card', 'Venture', 'credit'), acct('save', 'Savings', 'depository', { mask: '7777' })]);
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    applyHidden([inst], new Map([['save', {}]]) as any);
+    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189' }]);
+    const allHidden = broken('item_a');
+    await fillFromLastKnown(ctx, [allHidden]);
+    applyHidden([allHidden], new Map([['save', {}], ['card', {}]]) as any);
+    expect((allHidden as any).unshown_accounts).toBeUndefined();
   });
 });

@@ -62,18 +62,28 @@ async function setUp(args: string[]): Promise<unknown> {
 }
 
 /**
- * The accounts that own a container, in id order: normally one, its first
- * sign-in or its creator, unless the mapping was edited by hand to give one
- * container to more than one account (docs/authentication.md). For the
- * notices about its bank connections (lib/notice-recipients.ts), which go to
- * whoever owns the data and to nobody else. Throws when the mapping can't be
- * read: no recipient is ever a guess.
+ * Every container's owners, from one read of the mapping, each in id order:
+ * normally one, its first sign-in or its creator, unless the mapping was
+ * edited by hand to give one container to more than one account
+ * (docs/authentication.md). For the notices about bank connections
+ * (lib/notice-recipients.ts), which go to whoever owns the data and to nobody
+ * else; the daily job reads it once for its run. Throws when the mapping
+ * can't be read: no recipient is ever a guess.
  */
-export async function ownersOf(container: ContainerId): Promise<string[]> {
+export async function ownersByContainer(): Promise<Map<ContainerId, string[]>> {
   const all = ((await redis().hgetall(ownersKey())) ?? {}) as Record<string, unknown>;
-  return Object.keys(all)
-    .filter((userId) => all[userId] === container)
-    .sort();
+  const owners = new Map<ContainerId, string[]>();
+  for (const userId of Object.keys(all).sort()) {
+    const container = all[userId];
+    if (!isContainerId(container)) continue;
+    owners.set(container, [...(owners.get(container) ?? []), userId]);
+  }
+  return owners;
+}
+
+/** The accounts that own one container (ownersByContainer). */
+export async function ownersOf(container: ContainerId): Promise<string[]> {
+  return (await ownersByContainer()).get(container) ?? [];
 }
 
 async function owned(userId: string): Promise<ContainerId | null> {

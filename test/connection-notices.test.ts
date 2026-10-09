@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, testKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 // The emails about bank connections (lib/connection-notices.ts): exactly one
 // notice per break and one reminder a week later, across repeated runs and the
@@ -34,7 +34,9 @@ const { encrypt } = await import('@/lib/crypto');
 const { classifyFailure } = await import('@/lib/connection-state');
 const { recordWarning } = await import('@/lib/connection-health');
 const { noticesStore, warningsStore, syncsStore } = await import('@/lib/connection-records');
-const { checkConnections, decideNotice, composeNotice, appUrl, OUTAGE_NOTICE_DAYS, REMINDER_DAYS } = await import('@/lib/connection-notices');
+const { checkConnections, prepareNotices, sendNotices, decideNotice, composeNotice, appUrl, elapsedDays, OUTAGE_NOTICE_DAYS, REMINDER_DAYS, MASS_BREAK_CONTAINERS } = await import(
+  '@/lib/connection-notices'
+);
 const { forgetMailOffLogged } = await import('@/lib/mail');
 const { runSnapshots, readRegistry, snapshotDate } = await import('@/lib/snapshot-job');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -145,16 +147,42 @@ describe('one notice per break, and one reminder a week later', () => {
     expect((await notice('item_chase'))?.episode).toBe('episode-2');
   });
 
-  test('a change of state within a break sends nothing new; the reminder speaks of the state it finds', async () => {
+  test('a break that comes to need something new is told of that at once, then reminded of it once', async () => {
     await recordWarning(ctx, 'item_chase', { webhook_code: 'PENDING_EXPIRATION', consent_expiration_time: new Date(day(6)).toISOString() }, day(0));
     await run([healthy('item_chase')], day(0, 1));
     expect(sent.map((s) => s.subject)).toEqual(['Reconnect Chase soon']);
     expect(sent[0].text).toContain("Plaid says Chase's connection will end around October 7");
-    // The consent ran out: the connection now needs reconnecting. Same break.
-    for (let d = 1; d < 7; d++) await run([broken('item_chase')], day(d, 1));
-    expect(sent).toHaveLength(1);
-    await run([broken('item_chase')], day(7, 1));
-    expect(sent.map((s) => s.subject)).toEqual(['Reconnect Chase soon', 'Reminder: Chase needs reconnecting']);
+    // The consent ran out: the connection now needs reconnecting. Same break,
+    // but it has stopped now, which is news.
+    await run([broken('item_chase')], day(6, 1));
+    expect(sent.map((s) => s.subject)).toEqual(['Reconnect Chase soon', 'Chase needs reconnecting']);
+    // Its reminder is a week after that notice, not after the first.
+    for (let d = 7; d < 13; d++) await run([broken('item_chase')], day(d, 1));
+    expect(sent).toHaveLength(2);
+    await run([broken('item_chase')], day(13, 1));
+    expect(sent.map((s) => s.subject)).toEqual(['Reconnect Chase soon', 'Chase needs reconnecting', 'Reminder: Chase needs reconnecting']);
+    for (let d = 14; d < 40; d++) await run([broken('item_chase')], day(d, 1));
+    expect(sent).toHaveLength(3);
+    expect(await notice('item_chase')).toMatchObject({ told: ['reconnect_soon', 'needs_reauth'] });
+  });
+
+  // Review should-fix 2 (probe B): the only email said to wait.
+  test('an outage already told as "nothing to do yet" that then needs a sign-in sends that email at once', async () => {
+    const down = broken('item_chase', 'INSTITUTION_NOT_RESPONDING');
+    await run([healthy('item_chase')], day(0));
+    for (let d = 1; d <= 3; d++) await run([down], day(d));
+    expect(sent.map((s) => s.subject)).toEqual(["Chase isn't updating"]);
+    expect(sent[0].text).toContain("if it turns into something you need to do, Nya will email you about that");
+    await run([broken('item_chase')], day(4));
+    expect(sent.map((s) => s.subject)).toEqual(["Chase isn't updating", 'Chase needs reconnecting']);
+    // One email per run and container, still: never both on one run.
+    expect((await run([broken('item_chase')], day(4, 2))).mail).toBe('none');
+  });
+
+  test('a connection flapping between two states is told of each once a break, never again', async () => {
+    const states = ['ITEM_LOGIN_REQUIRED', 'USER_PERMISSION_REVOKED'];
+    for (let d = 0; d < 6; d++) await run([broken('item_chase', states[d % 2])], day(d));
+    expect(sent.map((s) => s.subject)).toEqual(['Chase needs reconnecting', 'Chase needs connecting again']);
   });
 
   test('several connections due at once are one email, naming each', async () => {
@@ -174,6 +202,26 @@ describe('one notice per break, and one reminder a week later', () => {
     expect((await run([down], day(OUTAGE_NOTICE_DAYS))).mail).toBe('sent');
     expect(sent[0].subject).toBe("Chase isn't updating");
     expect(sent[0].text).toContain("Chase hasn't updated for 3 days: Chase isn't answering. There's nothing to do yet");
+  });
+
+  // Review nit (probe E): counted from the episode, the break may be older.
+  test('with no last good answer on record, an outage is "at least" its days, counted from when it was first seen', async () => {
+    const down = broken('item_chase', 'INSTITUTION_DOWN');
+    await run([down], day(0));
+    await run([down], day(3));
+    expect(sent[0].text).toContain("Chase hasn't updated for at least 3 days: Chase isn't answering.");
+  });
+
+  test('the three days are three days elapsed, not three dates: a last good answer late in the evening waits a day more', () => {
+    const lastOk = '2026-10-01T23:59:00.000Z';
+    expect(elapsedDays(lastOk, Date.parse('2026-10-04T00:05:00.000Z'))).toBe(2);
+    expect(elapsedDays(lastOk, Date.parse('2026-10-04T13:00:00.000Z'))).toBe(2);
+    expect(elapsedDays(lastOk, Date.parse('2026-10-05T13:00:00.000Z'))).toBe(3);
+    const down = (at: string) => ({ state: 'outage' as const, cause: 'institution_down' as const, side: 'bank' as const, action: 'wait' as const, last_ok_at: at });
+    expect(decideNotice(null, down(lastOk), Date.parse('2026-10-04T00:05:00.000Z'), () => 'e').send).toBeNull();
+    // The daily job's own timing: the run three days after the one that last
+    // saw it answer is three days, even when it starts a little earlier.
+    expect(decideNotice(null, down('2026-10-01T13:00:20.000Z'), Date.parse('2026-10-04T13:00:05.000Z'), () => 'e').send).toBe('notice');
   });
 
   test('an outage that keeps answering in between never builds up to an email', async () => {
@@ -268,7 +316,7 @@ describe('what an email may say', () => {
       { account_id: 'acct_secret_1', name: 'Sapphire Reserve', official_name: 'Sapphire Reserve 4821', mask: MASK, type: 'credit', balance: BALANCE, limit: 25000, available: 1000, stale: true },
     ],
     stale_as_of: '2026-09-28',
-    unshown_accounts: [{ name: 'Savings', mask: '7777' }],
+    unshown_accounts: [{ account_id: 'acct_secret_2', name: 'Savings', mask: '7777' }],
   });
 
   test('never a balance, an amount or an account number, whatever the state', async () => {
@@ -287,8 +335,29 @@ describe('what an email may say', () => {
     }
     // No currency, and no figure with decimals anywhere.
     expect(all).not.toMatch(/[$€£¥]|\d[\d,]*\.\d{2}\b|\bUSD\b/);
-    // Every one of them was in the emails, by name.
-    for (const inst of insts) expect(all).toContain(inst.institution_name);
+    // Every one of them was in the emails, by name, but those on Nya's side,
+    // which nobody is emailed about.
+    const nya = new Set(['Bank J', 'Credit Union']);
+    for (const inst of insts) expect([inst.institution_name, all.includes(inst.institution_name)]).toEqual([inst.institution_name, !nya.has(inst.institution_name)]);
+  });
+
+  // Review nit (probe D): an end already past said "will end around".
+  test('a warned end already past is "reconnect now", in the subject and the text', () => {
+    const { subject, text } = composeNotice(
+      [
+        {
+          institution_name: 'Chase',
+          health: { state: 'reconnect_soon', cause: 'consent_ending', side: 'bank', action: 'reconnect', last_ok_at: new Date(day(0)).toISOString(), ends_at: new Date(day(-2)).toISOString(), ends_estimated: false },
+          since: new Date(day(-6)).toISOString(),
+          kind: 'notice',
+        },
+      ],
+      null,
+      day(0)
+    );
+    expect(subject).toBe('Reconnect Chase now');
+    expect(text).toContain("Plaid said Chase's connection would end around September 29. Reconnect it now to keep it updating: it takes a minute.");
+    expect(text).not.toContain('before then');
   });
 
   test('a name is one line, without control characters', () => {
@@ -380,7 +449,7 @@ describe('the decision, on its own', () => {
 
   test('a break starts an episode and is due a notice; fine ends it', () => {
     const first = decideNotice(null, h('needs_reauth'), day(0), () => 'e1');
-    expect(first).toEqual({ next: { episode: 'e1', since: at(day(0)), state: 'needs_reauth', notified_at: null, reminded_at: null }, send: 'notice' });
+    expect(first).toEqual({ next: { episode: 'e1', since: at(day(0)), state: 'needs_reauth', side: 'you', notified_at: null, reminded_at: null, told: [] }, send: 'notice' });
     expect(decideNotice(first.next, h('healthy'), day(1))).toEqual({ next: null, send: null });
     expect(decideNotice(null, h('partial'), day(1))).toEqual({ next: null, send: null });
   });
@@ -442,4 +511,284 @@ describe('end to end, through the daily snapshot and its catch-up', () => {
       globalThis.fetch = realFetch;
     }
   });
+});
+
+// The review's blocking finding (probe A): INVALID_ACCESS_TOKEN is what a
+// PLAID_ENV or PLAID_SECRET for another environment answers, for every
+// connection at once, and the code itself puts it on Nya's side. Telling
+// everybody to remove their connections would delete their stored
+// transactions and leave the Items live at Plaid.
+describe("Nya's side, and a fault many containers share", () => {
+  const OTHERS = ['5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d', '6e2d3c4b-5f6a-4b7c-9d8e-0f1a2b3c4d5e', '7f3e4d5c-6a7b-4c8d-ae9f-1a2b3c4d5e6f'];
+  const CONTAINERS = [ctx.container as string, ...OTHERS];
+  const ctxOf = (container: string) => ({ container }) as typeof ctx;
+  const mailbox = (c: { container: string }) => `${c.container.slice(0, 8)}@example.com`;
+  const logs: string[] = [];
+
+  beforeEach(async () => {
+    logs.length = 0;
+    console.error = (...a: unknown[]) => void logs.push(a.join(' '));
+    for (const id of OTHERS) {
+      await fake.hset(testKey('containers'), { [id]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-01-01T00:00:00.000Z' }) });
+    }
+  });
+
+  test("a connection Plaid refuses Nya's token for is never emailed about, however long it lasts, and the log says why", async () => {
+    const refused = broken('item_chase', 'INVALID_ACCESS_TOKEN');
+    expect(refused.failure).toEqual({ cause: 'token', side: 'nya', code: 'INVALID_ACCESS_TOKEN' });
+    await run([healthy('item_chase')], day(0));
+    for (let d = 1; d <= 40; d++) expect((await run([refused], day(d))).mail).toBe('none');
+    expect(sent).toHaveLength(0);
+    expect(await notice('item_chase')).toMatchObject({ state: 'outage', side: 'nya', notified_at: null });
+    expect(logs.some((l) => l.includes("fail for a reason on Nya's side (INVALID_ACCESS_TOKEN)") && l.includes('PLAID_ENV'))).toBe(true);
+    // Nor the other ways Plaid refuses Nya, or a token Nya can't read.
+    for (const failure of [classifyFailure({ code: 'INVALID_API_KEYS', type: 'INVALID_INPUT', responded: true }), { cause: 'credentials' as const, side: 'nya' as const, code: null }]) {
+      for (let d = 41; d <= 50; d++) await run([{ ...broken('item_amex', 'X'), failure, institution_name: 'Amex' }], day(d));
+    }
+    expect(sent).toHaveLength(0);
+  });
+
+  test('a break that then turns out to be the person’s own is told, once it is', async () => {
+    await run([broken('item_chase', 'INVALID_ACCESS_TOKEN')], day(0));
+    await run([broken('item_chase', 'INVALID_ACCESS_TOKEN')], day(1));
+    // The settings were put back, and the bank wants a new sign-in.
+    await run([broken('item_chase')], day(2));
+    expect(sent.map((s) => s.subject)).toEqual(['Chase needs reconnecting']);
+  });
+
+  test("relink advice for a cause on Plaid's side waits three days, so whoever runs Nya can see it first", async () => {
+    await run([healthy('item_chase')], day(0));
+    for (let d = 1; d < 3; d++) expect((await run([broken('item_chase', 'ITEM_NOT_FOUND')], day(d))).mail).toBe('none');
+    expect((await run([broken('item_chase', 'ITEM_NOT_FOUND')], day(3))).mail).toBe('sent');
+    expect(sent[0].subject).toBe('Chase needs connecting again');
+    // The person's own withdrawal is told at once.
+    await run([broken('item_amex', 'USER_PERMISSION_REVOKED', { institution_name: 'Amex' })], day(3));
+    expect(sent.map((s) => s.subject)).toContain('Amex needs connecting again');
+  });
+
+  /** Each container's part of one run: its connections as the fetch found them. */
+  const prepare = (now: number, byContainer: Record<string, Inst[]>) =>
+    Promise.all(Object.entries(byContainer).map(([c, insts]) => prepareNotices(ctxOf(c), insts, { now, newEpisode: () => `episode-${++episodes}` })));
+  const deliver = (batch: Awaited<ReturnType<typeof prepare>>, over: Record<string, unknown> = {}) =>
+    sendNotices(batch, { fetch: resend, recipients: async (c) => [mailbox(c)], sleep: async () => {}, ...over });
+
+  test('a run in which many containers break at once outside their banks emails nobody, and says so for the operator', async () => {
+    const all = (insts: (c: string) => Inst[]) => Object.fromEntries(CONTAINERS.map((c) => [c, insts(c)]));
+    await deliver(await prepare(day(0), all(() => [healthy('item_chase')])));
+    // A code Nya can't place, everywhere at once: due an email three days on.
+    for (let d = 1; d <= 6; d++) {
+      const outcomes = await deliver(await prepare(day(d), all(() => [broken('item_chase', 'SOMETHING_NEW')])));
+      if (d >= 3) expect([...outcomes.values()]).toEqual(['held', 'held', 'held', 'held']);
+    }
+    expect(sent).toHaveLength(0);
+    expect(logs.some((l) => l.includes('4 of 4 containers') && l.includes('SOMETHING_NEW (4)') && l.includes('no email was sent this run'))).toBe(true);
+    // In such a run nothing goes, even a sign-in somebody really owes their bank.
+    const mixed = all(() => [broken('item_chase', 'SOMETHING_NEW')]);
+    mixed[CONTAINERS[0]].push(broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' }));
+    expect((await deliver(await prepare(day(7), mixed))).get(CONTAINERS[0] as any)).toBe('held');
+    expect(sent).toHaveLength(0);
+    // Once it no longer looks like that, what is due goes.
+    const after = all(() => [healthy('item_chase')]);
+    after[CONTAINERS[0]].push(broken('item_amex', 'ITEM_LOGIN_REQUIRED', { institution_name: 'Amex' }));
+    await deliver(await prepare(day(8), after));
+    expect(sent.map((s) => [s.to, s.subject])).toEqual([[[mailbox(ctx)], 'Amex needs reconnecting']]);
+  });
+
+  test(`fewer than ${MASS_BREAK_CONTAINERS} containers breaking that way are each told, as their own`, async () => {
+    const pair = { [CONTAINERS[0]]: [healthy('item_chase')], [CONTAINERS[1]]: [healthy('item_chase')] };
+    await deliver(await prepare(day(0), pair));
+    const down = { [CONTAINERS[0]]: [broken('item_chase', 'SOMETHING_NEW')], [CONTAINERS[1]]: [broken('item_chase', 'SOMETHING_NEW')], [CONTAINERS[2]]: [healthy('item_chase')] };
+    for (let d = 1; d <= 3; d++) await deliver(await prepare(day(d), down));
+    expect(sent.map((s) => s.to[0]).sort()).toEqual([mailbox(ctxOf(CONTAINERS[0])), mailbox(ctxOf(CONTAINERS[1]))].sort());
+  });
+
+  // What the coordinator asked a test to prove: one deployment mistake, every
+  // container's connections refused at once, through the daily job itself.
+  test('one PLAID_ENV mix-up, every container refused at once: nobody is emailed, run after run, and the operator is told', async () => {
+    for (const c of CONTAINERS) {
+      for (const bank of ['chase', 'amex']) {
+        await fake.hset(ctxKey('plaid:items', ctxOf(c)), {
+          [`item_${bank}`]: JSON.stringify({ item_id: `item_${bank}`, institution_name: bank, encrypted_access_token: await encrypt(`tok-${c}-${bank}`) }),
+        });
+      }
+    }
+    const answer = (fn: () => unknown) => {
+      for (const c of CONTAINERS) for (const bank of ['chase', 'amex']) plaidAnswers[`tok-${c}-${bank}`] = fn;
+    };
+    const daily = async (t: number) => {
+      setSystemTime(new Date(t));
+      forgetEpochs();
+      return runSnapshots(await readRegistry(), { scheduledFor: snapshotDate(t), mail: { fetch: resend, recipients: async (c) => [mailbox(c)], sleep: async () => {} } });
+    };
+    answer(() => ({ data: { item: { institution_id: 'ins_3' }, accounts: [{ account_id: 'acct_1', name: 'Checking', type: 'depository', subtype: 'checking', mask: '4821', balances: { current: 100 } }] } }));
+    await daily(day(0));
+    // Production deployed with Preview's PLAID_ENV and PLAID_SECRET.
+    answer(() => {
+      throw { response: { data: { error_code: 'INVALID_ACCESS_TOKEN', error_type: 'INVALID_INPUT' } } };
+    });
+    for (let d = 1; d <= 9; d++) {
+      const report = await daily(day(d));
+      expect(report.results.map((r) => r.status)).toEqual(['unclean', 'unclean', 'unclean', 'unclean']);
+      await daily(day(d, 2)); // the catch-up
+    }
+    expect(sent).toHaveLength(0);
+    expect(logs.some((l) => l.includes("8 connection(s) in 4 container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (8))"))).toBe(true);
+    expect(logs.some((l) => l.includes('no email was sent this run'))).toBe(true);
+    for (const c of CONTAINERS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toMatchObject({ state: 'outage', side: 'nya', notified_at: null });
+    // The settings put back: every connection works again, and its break ends
+    // without a word to anyone.
+    answer(() => ({ data: { item: { institution_id: 'ins_3' }, accounts: [{ account_id: 'acct_1', name: 'Checking', type: 'depository', subtype: 'checking', mask: '4821', balances: { current: 100 } }] } }));
+    await daily(day(10));
+    expect(sent).toHaveLength(0);
+    for (const c of CONTAINERS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toBeNull();
+  });
+});
+
+// Review item 4: mail must never push the daily job past its 300 s limit.
+describe('the time the emails may take', () => {
+  const ctxOf = (container: string) => ({ container }) as typeof ctx;
+  const IDS = [ctx.container as string, '8a4f5e6d-7b8c-4d9e-bf0a-2b3c4d5e6f7a', '9b5a6f7e-8c9d-4eaf-80b1-3c4d5e6f7a8b'];
+  const dueIn = (now: number) => Promise.all(IDS.map((c) => prepareNotices(ctxOf(c), [broken('item_chase')], { now, newEpisode: () => `episode-${++episodes}` })));
+
+  test('a slow email service: each send waits at most its timeout, none starts that could not end in time, and the rest wait, unmarked, for the next run', async () => {
+    let clock = 0;
+    // Resend taking its time: four seconds a call.
+    const slow = (async (url: string, init: RequestInit) => {
+      clock += 4_000;
+      return resend(url, init);
+    }) as unknown as typeof fetch;
+    const batch = await dueIn(day(0));
+    const outcomes = await sendNotices(batch, { fetch: slow, recipients: async () => ['me@example.com'], clock: () => clock, deadline: 15_000, sleep: async (ms) => void (clock += ms) });
+    // 0 s and 4.5 s start in time (with 3 s to find the recipient, 4 s to
+    // send and the pause between); 9 s could not end by 15 s.
+    expect([...outcomes.values()]).toEqual(['sent', 'sent', 'deferred']);
+    expect(sent).toHaveLength(2);
+    expect(await noticesStore.get(ctxOf(IDS[2]), 'item_chase')).toMatchObject({ notified_at: null });
+    // The next run sends it, and only it.
+    const next = await sendNotices(await dueIn(day(0, 2)), { fetch: resend, recipients: async () => ['me@example.com'], sleep: async () => {} });
+    expect([...next.values()]).toEqual(['none', 'none', 'sent']);
+    expect(sent).toHaveLength(3);
+  });
+
+  test('a send that never answers is given up on at its timeout; the rest wait for the next run', async () => {
+    const stalled = ((_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)))) as unknown as typeof fetch;
+    const started = Date.now();
+    const outcomes = await sendNotices(await dueIn(day(0)), { fetch: stalled, recipients: async () => ['me@example.com'], sendTimeoutMs: 30, sleep: async () => {} });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect([...outcomes.values()]).toEqual(['failed', 'deferred', 'deferred']);
+    for (const c of IDS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toMatchObject({ notified_at: null });
+  });
+
+  test('a lookup of whom to write to that hangs is given up on too', async () => {
+    const outcomes = await sendNotices([await prepareNotices(ctx, [broken('item_chase')], { now: day(0) })], {
+      fetch: resend,
+      recipients: () => new Promise<string[]>(() => {}),
+      recipientsTimeoutMs: 20,
+    });
+    expect(outcomes.get(ctx.container)).toBe('failed');
+    expect(sent).toHaveLength(0);
+  });
+
+  test('through the daily job: with its deadline already past, nothing is sent and nothing marked', async () => {
+    process.env.NOTIFY_EMAIL = 'owner@example.com';
+    await fake.hset(ctxKey('plaid:items'), { item_chase: JSON.stringify({ item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('tok-late') }) });
+    plaidAnswers['tok-late'] = () => {
+      throw { response: { data: { error_code: 'ITEM_LOGIN_REQUIRED' } } };
+    };
+    setSystemTime(new Date(day(1)));
+    forgetEpochs();
+    // The request began 290 s ago: past MAIL_DEADLINE_MS.
+    await runSnapshots(await readRegistry(), { scheduledFor: snapshotDate(day(1)), startedAt: day(1) - 290_000, budgetMs: 300_000, mail: { fetch: resend } });
+    expect(sent).toHaveLength(0);
+    expect(await notice('item_chase')).toMatchObject({ notified_at: null });
+    // The catch-up, on time, sends it.
+    setSystemTime(new Date(day(1, 2)));
+    await runSnapshots(await readRegistry(), { scheduledFor: snapshotDate(day(1)), mail: { fetch: resend } });
+    expect(sent.map((s) => s.subject)).toEqual(['Chase needs reconnecting']);
+  });
+});
+
+// Review nit: Resend's default limit is two requests a second, and the job
+// may have many containers due at once.
+describe("Resend's rate limit", () => {
+  const ctxOf = (container: string) => ({ container }) as typeof ctx;
+  const IDS = [ctx.container as string, '8a4f5e6d-7b8c-4d9e-bf0a-2b3c4d5e6f7a'];
+  const dueIn = (now: number) => Promise.all(IDS.map((c) => prepareNotices(ctxOf(c), [broken('item_chase')], { now, newEpisode: () => `episode-${++episodes}` })));
+  const limitedThen = (answers: Response[]) => {
+    const keys: string[] = [];
+    const fn = (async (url: string, init: RequestInit) => {
+      keys.push((init.headers as Record<string, string>)['Idempotency-Key']);
+      return answers.shift() ?? resend(url, init);
+    }) as unknown as typeof fetch;
+    return { fn, keys };
+  };
+  const tooMany = (after?: string) => new Response('{"name":"rate_limit_exceeded"}', { status: 429, headers: after ? { 'Retry-After': after } : {} });
+
+  test('one email at a time, at most two a second', async () => {
+    const pauses: number[] = [];
+    let clock = 0;
+    await sendNotices(await dueIn(day(0)), { fetch: resend, recipients: async () => ['me@example.com'], clock: () => clock, sleep: async (ms) => void (pauses.push(ms), (clock += ms)) });
+    expect(sent).toHaveLength(2);
+    expect(pauses).toEqual([500]);
+  });
+
+  test('a 429 that asks for a short wait is waited out once, with the same idempotency key', async () => {
+    const pauses: number[] = [];
+    let clock = 0;
+    const f = limitedThen([tooMany('1')]);
+    const outcomes = await sendNotices([(await dueIn(day(0)))[0]], {
+      fetch: f.fn,
+      recipients: async () => ['me@example.com'],
+      clock: () => clock,
+      sleep: async (ms) => void (pauses.push(ms), (clock += ms)),
+    });
+    expect([...outcomes.values()]).toEqual(['sent']);
+    expect(pauses).toEqual([1000]);
+    expect(f.keys).toHaveLength(2);
+    expect(f.keys[0]).toBe(f.keys[1]);
+  });
+
+  test('still limited, or asked to wait long: not marked, and the rest wait for the next run', async () => {
+    for (const answers of [[tooMany('1'), tooMany('1')], [tooMany('30')]]) {
+      sent = [];
+      fake.reset();
+      await registerTestContainer(fake);
+      const f = limitedThen(answers);
+      const outcomes = await sendNotices(await dueIn(day(0)), { fetch: f.fn, recipients: async () => ['me@example.com'], sleep: async () => {} });
+      expect([...outcomes.values()]).toEqual(['failed', 'deferred']);
+      expect(sent).toHaveLength(0);
+      for (const c of IDS) expect(await noticesStore.get(ctxOf(c), 'item_chase')).toMatchObject({ notified_at: null });
+    }
+  });
+
+  test('one email refused for itself (a 4xx) does not stop the others', async () => {
+    const f = limitedThen([new Response('{"name":"validation_error"}', { status: 422 })]);
+    const outcomes = await sendNotices(await dueIn(day(0)), { fetch: f.fn, recipients: async () => ['me@example.com'], sleep: async () => {} });
+    expect([...outcomes.values()]).toEqual(['failed', 'sent']);
+  });
+});
+
+// Review nit: the owners mapping was read once per container with an email due.
+test('with Clerk, the owners mapping is read once for the whole run', async () => {
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+  process.env.CLERK_SECRET_KEY = 'sk_test_x';
+  process.env.CLERK_ALLOWED_USER_IDS = 'user_a, user_b';
+  const OTHER = '8a4f5e6d-7b8c-4d9e-bf0a-2b3c4d5e6f7a';
+  await fake.hset(testKey('owners'), { user_a: ctx.container, user_b: OTHER, user_gone: OTHER });
+  let reads = 0;
+  const hgetall = fake.hgetall.bind(fake);
+  (fake as any).hgetall = async (key: string) => {
+    if (key === testKey('owners')) reads++;
+    return hgetall(key);
+  };
+  try {
+    const batch = await Promise.all([ctx.container, OTHER].map((c) => prepareNotices({ container: c } as typeof ctx, [broken('item_chase')], { now: day(0) })));
+    await sendNotices(batch, { fetch: resend, sleep: async () => {}, recipientDeps: { primaryEmail: async (id) => `${id}@example.com` } });
+  } finally {
+    (fake as any).hgetall = hgetall;
+  }
+  expect(reads).toBe(1);
+  // And an owner taken off the allowlist is not written to.
+  expect(sent.map((s) => s.to)).toEqual([['user_a@example.com'], ['user_b@example.com']]);
 });

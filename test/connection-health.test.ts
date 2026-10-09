@@ -140,10 +140,31 @@ describe("Plaid's early warnings, from the webhook", () => {
     expect(await noticesStore.get(ctx, 'item_chase')).toBeNull();
   });
 
-  test('a warning stored before that cannot be read is replaced by the fresh one', async () => {
-    await fake.hset(ctxKey('connection-warnings'), { item_chase: 'damaged' });
-    await recordWarning(ctx, 'item_chase', { webhook_code: 'PENDING_DISCONNECT' }, NOW);
-    expect((await warningsStore.get(ctx, 'item_chase'))?.kind).toBe('pending_disconnect');
+  // Review: seam rule 4. An unrecognised entry is intact data (a later
+  // version's, after a rollback); an unreadable one may go only once the
+  // person confirms. A webhook can do neither, so it writes over nothing.
+  test('a stored warning this version cannot use is never written over: unreadable or unrecognised, it is left as it is', async () => {
+    await link('item_chase');
+    await link('item_amex', 'Amex');
+    const later = await encrypt(JSON.stringify({ kind: 'consent_renewal', received_at: at(-1), ends_at: at(12), ends_estimated: false, reason: null, extra: 1 }));
+    await fake.hset(ctxKey('connection-warnings'), { item_chase: 'damaged', item_amex: later });
+    const before = await warningsStore.getAllReport(ctx);
+    expect([before.unreadable, before.unrecognised]).toEqual([['item_chase'], ['item_amex']]);
+    const logs: string[] = [];
+    console.error = (...a: unknown[]) => void logs.push(a.join(' '));
+    for (const item_id of ['item_chase', 'item_amex']) {
+      expect(await recordWarning(ctx, item_id, { webhook_code: 'PENDING_DISCONNECT' }, NOW)).toBe(false);
+      // Through the webhook too: answered as handled, so Plaid stops retrying
+      // what would only find the same.
+      expect(await applyWebhook(ctx, { webhook_type: 'ITEM', webhook_code: 'PENDING_EXPIRATION', item_id, consent_expiration_time: at(5) }, NOW)).toBe(true);
+    }
+    expect(await fake.hget<string>(ctxKey('connection-warnings'), 'item_chase')).toBe('damaged');
+    expect(await fake.hget<string>(ctxKey('connection-warnings'), 'item_amex')).toBe(later);
+    expect(logs.some((l) => l.includes('is not one this version understands'))).toBe(true);
+    expect(logs.some((l) => l.includes('could not be read'))).toBe(true);
+    // A repair still clears them: it ends what either said.
+    await applyWebhook(ctx, { webhook_type: 'ITEM', webhook_code: 'LOGIN_REPAIRED', item_id: 'item_amex' }, NOW);
+    expect(await fake.hget<string>(ctxKey('connection-warnings'), 'item_amex')).toBeNull();
   });
 
   test('other webhooks record nothing', async () => {
@@ -274,11 +295,27 @@ describe('what the dashboard is sent', () => {
     expect(m.health).toBeUndefined();
   });
 
-  test('a lenient read leaves out a warning it cannot read, and shows the rest', async () => {
+  test('a warning it cannot read is left out, and its connection says a warning may be missing', async () => {
     await recordWarning(ctx, 'item_a', { webhook_code: 'PENDING_DISCONNECT' }, NOW);
     await fake.hset(ctxKey('connection-warnings'), { item_b: 'damaged' });
+    await fake.hset(ctxKey('connection-syncs'), { item_c: await encrypt(JSON.stringify({ at: 'not a time' })) });
     const reads = await readHealthForDisplay(ctx);
     expect([...reads!.warnings.keys()]).toEqual(['item_a']);
+    expect([...reads!.unread].sort()).toEqual(['item_b', 'item_c']);
+    const inst = (item_id: string): Inst => ({ institution_name: 'Chase', item_id, accounts: [], holdings: [], error: null, needs_reauth: false, liabilities: 'unavailable' });
+    const [a, b, c] = withHealth([inst('item_a'), inst('item_b'), inst('item_c')], reads, at(0), NOW);
+    expect(a.health).toMatchObject({ state: 'reconnect_soon' });
+    expect(a.health?.unread).toBeUndefined();
+    expect(b.health).toMatchObject({ state: 'healthy', unread: true });
+    expect(c.health).toMatchObject({ state: 'healthy', unread: true });
+  });
+
+  test('through the route: such a connection is sent with unread, not as plainly fine', async () => {
+    answers(await link('item_chase'));
+    await fake.hset(ctxKey('connection-warnings'), { item_chase: 'damaged' });
+    const { body } = await dashboard();
+    expect(body.health_unavailable).toBeUndefined();
+    expect(healthOfItem(body, 'item_chase')).toMatchObject({ state: 'healthy', unread: true });
   });
 });
 
@@ -312,6 +349,23 @@ describe('a fetch that fails says why (lib/networth.ts)', () => {
     plaid['token-item_x'] = () => ({ data: { item: { error: { error_code: 'ITEM_LOCKED', error_type: 'ITEM_ERROR' } }, accounts: [account('a1')] } });
     const inst = await fetchInstitution(await stored('item_x'));
     expect(inst).toMatchObject({ needs_reauth: true, accounts: [], failure: { cause: 'locked', side: 'bank', code: 'ITEM_LOCKED' } });
+  });
+
+  // Blocking finding of the review: what a PLAID_ENV or PLAID_SECRET for
+  // another environment answers. Nya's side: no Reconnect, and the health
+  // view only waits.
+  test('Plaid refusing the stored token or Nya’s keys is a failure on Nya’s side, without a Reconnect button', async () => {
+    for (const [error_code, error_type, cause] of [
+      ['INVALID_ACCESS_TOKEN', 'INVALID_INPUT', 'token'],
+      ['INVALID_API_KEYS', 'INVALID_INPUT', 'setup'],
+      ['MISSING_FIELDS', 'INVALID_REQUEST', 'setup'],
+    ] as const) {
+      plaid['token-item_x'] = () => {
+        throw { response: { data: { error_code, error_type } } };
+      };
+      const inst = await fetchInstitution(await stored('item_x'));
+      expect([error_code, inst.needs_reauth, inst.error, inst.failure]).toEqual([error_code, false, 'Could not fetch balances', { cause, side: 'nya', code: error_code }]);
+    }
   });
 
   test('no answer at all is unreachable; credentials Nya cannot read are on Nya’s side', async () => {

@@ -50,6 +50,7 @@ describe("Plaid's error codes, by family", () => {
     [['USER_PERMISSION_REVOKED'], 'revoked', 'you'],
     [['ITEM_NOT_FOUND', 'ITEM_NO_LONGER_AVAILABLE'], 'gone', 'plaid'],
     [['INVALID_ACCESS_TOKEN'], 'token', 'nya'],
+    [['INVALID_API_KEYS', 'UNAUTHORIZED_ENVIRONMENT', 'UNAUTHORIZED_ROUTE_ACCESS', 'INVALID_PRODUCT', 'INSTITUTION_REGISTRATION_REQUIRED', 'UNAUTHORIZED_INSTITUTION'], 'setup', 'nya'],
     [['ITEM_NOT_SUPPORTED', 'MFA_NOT_SUPPORTED'], 'unsupported', 'bank'],
     [['INSTITUTION_NO_LONGER_SUPPORTED'], 'unsupported', 'plaid'],
     [['NO_ACCOUNTS'], 'no_accounts', 'bank'],
@@ -77,6 +78,34 @@ describe("Plaid's error codes, by family", () => {
     expect(CAUSES.vanished).toEqual({ state: 'partial', action: 'resolve' });
     // Connecting an unsupported institution again would fail the same way.
     expect(action('ITEM_NOT_SUPPORTED')).toEqual({ state: 'relink', action: 'remove' });
+  });
+
+  // A Production deployment given Preview's PLAID_ENV or PLAID_SECRET answers
+  // every connection with one of these at once. Telling everybody to remove
+  // their connections would delete their stored transactions and leave the
+  // Items live at Plaid; whoever runs Nya puts the settings back instead.
+  test("Plaid refusing Nya itself is on Nya's side, and only ever waits: never removal, never a reconnect", () => {
+    for (const code of ['INVALID_ACCESS_TOKEN', 'INVALID_API_KEYS', 'UNAUTHORIZED_ENVIRONMENT']) {
+      const f = classifyFailure({ code, responded: true });
+      expect([code, f.side, CAUSES[f.cause]]).toEqual([code, 'nya', { state: 'outage', action: 'wait' }]);
+      expect(reconnectFixes(f.cause)).toBe(false);
+    }
+    // Whatever the code, a request Plaid found wrong in itself is Nya's: a
+    // balance call sends only Nya's keys and its access token.
+    for (const type of ['INVALID_REQUEST', 'INVALID_INPUT']) {
+      expect(classifyFailure({ code: 'MISSING_FIELDS', type, responded: true })).toEqual({ cause: 'setup', side: 'nya', code: 'MISSING_FIELDS' });
+    }
+    // A known code still wins over its type.
+    expect(classifyFailure({ code: 'INVALID_ACCESS_TOKEN', type: 'INVALID_INPUT', responded: true }).cause).toBe('token');
+    expect(CAUSES.credentials).toEqual({ state: 'outage', action: 'wait' });
+    expect(healthOf(failed('INVALID_ACCESS_TOKEN', 'INVALID_INPUT'), null, at(-1), NOW)).toEqual({
+      state: 'outage',
+      cause: 'token',
+      side: 'nya',
+      action: 'wait',
+      last_ok_at: at(-1),
+      code: 'INVALID_ACCESS_TOKEN',
+    });
   });
 
   test('a rate limit or Plaid API error is Plaid having trouble, whatever its code', () => {
@@ -121,7 +150,7 @@ describe('the health of one connection', () => {
 
   test('a reconnect fixes the sign-in family and an end that has come, and nothing else', () => {
     for (const cause of ['login', 'access', 'locked', 'bank_action', 'consent_ending', 'disconnect_pending'] as Cause[]) expect([cause, reconnectFixes(cause)]).toEqual([cause, true]);
-    for (const cause of ['ok', 'institution_down', 'provider', 'unreachable', 'credentials', 'unknown', 'revoked', 'gone', 'token', 'unsupported', 'no_accounts', 'vanished'] as Cause[]) {
+    for (const cause of ['ok', 'institution_down', 'provider', 'unreachable', 'credentials', 'token', 'setup', 'unknown', 'revoked', 'gone', 'unsupported', 'no_accounts', 'vanished'] as Cause[]) {
       expect([cause, reconnectFixes(cause)]).toEqual([cause, false]);
     }
   });

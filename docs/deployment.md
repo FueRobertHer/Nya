@@ -54,7 +54,7 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `REDIS_PREFIX` | optional | Overrides the key namespace (defaults to the Vercel environment name, or `dev` locally). |
 | `DEMO_USER_IDS` | optional | Preview only: one-click demo accounts. |
 | `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
-| `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Ignored with Clerk, where each account's notices go to its own verified address. |
+| `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Without it nothing is sent, and `/privacy` and `/security` name no email service. Ignored with Clerk, where each account's notices go to its own verified address. |
 | `APP_URL` | optional | The app's public `https` address, for the link in a notice email (`http://localhost:3000` works locally). Unset, the email says to open Nya without a link. |
 
 ## 4. Scheduled jobs
@@ -107,7 +107,7 @@ Vercel gives you a free HTTPS domain automatically.
 
 ## Email notices
 
-When a bank connection needs you (a sign-in to redo, a connection to remove and make again, Plaid's warning that it will end, or an outage that has lasted three days), the daily snapshot emails once, and once more a week later if it still needs you. How that is decided is in [features.md](features.md#email-notices). Email goes through [Resend](https://resend.com)'s HTTP API, with no SDK (`lib/mail.ts`).
+When a bank connection needs you (a sign-in to redo, a connection to remove and make again, Plaid's warning that it will end, or an outage that has lasted three days), the daily snapshot emails once, again only if what it needs changes, and once more a week later if it still needs you. How that is decided is in [features.md](features.md#email-notices). Email goes through [Resend](https://resend.com)'s HTTP API, with no SDK (`lib/mail.ts`).
 
 1. Create a Resend account and verify the domain you will send from (Resend's Domains page lists the DNS records to add).
 2. Create an API key with sending access only, and set it as `RESEND_API_KEY` (mark it Sensitive in Vercel).
@@ -118,6 +118,10 @@ When a bank connection needs you (a sign-in to redo, a connection to remove and 
 The notices come from the daily snapshot, and crons run only on the production deployment ([Scheduled jobs](#4-scheduled-jobs)), so only production sends them. The record of what was sent is in the backups, so a restored copy doesn't send those again.
 
 An email names the institution and what to do, and for a connection about to end, the day it ends as a UTC date, which is why it says "around". It never carries a balance, an amount or an account number. A send that fails is logged with Resend's status (never the message or the address) and tried again by the next run, at most one email per container per run; one that has nobody to go to is logged as that. Without `RESEND_API_KEY` and `MAIL_FROM`, nothing is sent and the Connection health card on the Accounts tab is the only place a broken connection shows.
+
+The emails go once every container's snapshot has run, so they never use the snapshots' time. They have 30 seconds in all, ending at the latest 285 seconds into the run (inside its 300-second limit), and each is started only if finding the recipient (3 seconds at most) and the send (4 seconds at most) can both end in time. They go one at a time, at most two a second (Resend's default rate limit); a 429 is waited out once when Resend asks for 2 seconds or less. What doesn't fit, and everything after Resend itself fails (no answer, a 5xx, still rate limited), waits for the next run, unmarked: the catch-up two hours later for an account whose snapshot came back unclean, which a broken connection's does, otherwise the next day.
+
+**What the log tells you.** Problems on Nya's side are never emailed to anyone, so the log is where they show: each run lists the connections that fail for a reason on Nya's side, with Plaid's codes (`Connection notices: N connection(s) in M container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (12))`). `INVALID_ACCESS_TOKEN` across every connection means `PLAID_ENV`, `PLAID_CLIENT_ID` or `PLAID_SECRET` is not the set the connections were made with, a Preview value on Production, say; `INVALID_API_KEYS`, that the client id and secret don't match. Put the settings back and the connections work as before: don't remove them, which would delete their stored transactions and leave them live, and billed, at Plaid. A run in which three or more containers break at once for a reason outside their banks sends no email at all and says so (`... no email was sent this run`), with the codes it saw; the emails due go on the first run that doesn't look like that.
 
 ## Security headers and the Content-Security-Policy
 

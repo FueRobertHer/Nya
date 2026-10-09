@@ -34,7 +34,7 @@ export type HealthInstitution = {
   stale_too_old?: string;
   stale_too_old_at?: string;
   unconfirmed_missing?: number;
-  unshown_accounts?: { name: string; mask: string | null }[];
+  unshown_accounts?: { account_id?: string; name: string; mask: string | null }[];
 };
 
 const BADGES: Record<HealthState, string> = {
@@ -62,8 +62,14 @@ const TONES: Record<HealthState, 'up' | 'warn' | 'down'> = {
 /** Worst first, so what needs the person tops the list. */
 const ORDER: HealthState[] = ['needs_reauth', 'relink', 'closed', 'reconnect_soon', 'outage', 'partial', 'healthy'];
 
-export function badgeOf(h: Health): string {
-  return h.cause === 'unsupported' ? "Can't be repaired" : BADGES[h.state] ?? BADGES.outage;
+/** Whether the end Plaid warned of has already come (on a connection that
+ *  still answered, or in a payload made before it). */
+const endPassed = (h: Health, now: number) => !!h.ends_at && Date.parse(h.ends_at) <= now;
+
+export function badgeOf(h: Health, now: number = Date.now()): string {
+  if (h.cause === 'unsupported') return "Can't be repaired";
+  if (h.state === 'reconnect_soon' && endPassed(h, now)) return 'Reconnect now';
+  return BADGES[h.state] ?? BADGES.outage;
 }
 
 const localDay = (iso: string) => instantDay(iso) ?? iso.slice(0, 10);
@@ -77,8 +83,13 @@ const snapshotDay = (date: string, at?: string) => (at && at.slice(0, 10) === da
 export function endsText(h: Health, now: number = Date.now()): string {
   if (!h.ends_at) return 'Plaid says this connection will end soon';
   const day = localDay(h.ends_at);
-  if (Date.parse(h.ends_at) < now) return `Plaid said this connection would end ${h.ends_estimated ? 'around' : 'on'} ${day}`;
+  if (endPassed(h, now)) return `Plaid said this connection would end ${h.ends_estimated ? 'around' : 'on'} ${day}`;
   return `Plaid says this connection ends ${h.ends_estimated ? 'around' : 'on'} ${day}`;
+}
+
+/** What to do about an end Plaid warned of: before it, or now that it has come. */
+export function reconnectText(h: Health, now: number = Date.now()): string {
+  return endPassed(h, now) ? 'Reconnect now to keep it syncing' : 'Reconnect before then to keep it syncing';
 }
 
 /** What is wrong and what to do, in a sentence or two. */
@@ -89,7 +100,7 @@ export function healthText(name: string, h: Health, inst: Pick<HealthInstitution
       return null;
     case 'consent_ending':
     case 'disconnect_pending':
-      return `${endsText(h, now)}. Reconnect before then to keep it syncing: it takes a minute.`;
+      return `${endsText(h, now)}. ${reconnectText(h, now)}: it takes a minute.`;
     case 'login':
       return `${name} needs you to sign in again. Reconnect: it takes a minute.`;
     case 'access':
@@ -104,14 +115,18 @@ export function healthText(name: string, h: Health, inst: Pick<HealthInstitution
       return `Plaid, which Nya reaches ${name} through, is having trouble. Nothing to do: it usually recovers on its own.`;
     case 'unreachable':
       return `Nya couldn't get an answer. Nothing to do: it usually recovers on its own.`;
+    // On Nya's side: nothing for the person to do, and never removal, which
+    // would lose the connection's stored transactions for nothing.
     case 'credentials':
-      return `Nya can't read the sign-in it keeps for ${name}. Whoever runs Nya should check its encryption keys.`;
+      return `Nya can't read the sign-in it keeps for ${name}. Nothing for you to do: whoever runs Nya restores its encryption keys, and the connection then works as before.`;
+    case 'token':
+      return `Plaid doesn't accept the access Nya keeps for ${name}, which usually means Nya's own Plaid settings changed. Nothing for you to do: whoever runs Nya puts them back, and the connection then works as before.`;
+    case 'setup':
+      return `Plaid refused Nya's own settings, so it can't reach ${name} just now. Nothing for you to do: whoever runs Nya puts them right, and the connection then works as before.`;
     case 'revoked':
       return `Access to ${name} was withdrawn, so this connection can't be repaired. Remove it, then ${again}.`;
     case 'gone':
       return `Plaid no longer has this connection, so it can't be repaired. Remove it, then ${again}.`;
-    case 'token':
-      return `Plaid doesn't accept Nya's access to ${name}. If Nya's Plaid settings changed, put them back; otherwise remove it, then ${again}.`;
     case 'unsupported':
       return `Plaid can no longer reach ${name}, so reconnecting won't help. Remove the connection; its history is kept, and its accounts can be tracked by hand.`;
     case 'no_accounts':
@@ -261,6 +276,7 @@ export function ConnectionHealthView({
   now?: number;
 }) {
   const troubled = rows.filter((r) => r.health.state !== 'healthy').length;
+  const unread = rows.filter((r) => r.health.unread).length;
   const summary =
     troubled === 0
       ? rows.length === 1
@@ -278,13 +294,21 @@ export function ConnectionHealthView({
           </svg>
         </span>
       </button>
+      {/* Shown open or closed: a closed card that says "All working" is
+          exactly where a connection about to end would go unseen. */}
+      {unavailable ? (
+        <p className="stale-note">
+          Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
+        </p>
+      ) : (
+        unread > 0 && (
+          <p className="stale-note">
+            {`Some of what Nya keeps about ${unread === 1 ? 'one connection' : `${unread} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+          </p>
+        )
+      )}
       {open && (
         <>
-          {unavailable && (
-            <p className="stale-note">
-              Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
-            </p>
-          )}
           <ul className="health-list">
             {rows.map((inst) => {
               const h = inst.health;
@@ -295,9 +319,12 @@ export function ConnectionHealthView({
                 <li key={inst.item_id} className="health-row">
                   <div className="health-head">
                     <span className="inst-name">{name}</span>
-                    <span className={`health-badge health-${TONES[h.state] ?? 'warn'}`}>{badgeOf(h)}</span>
+                    <span className={`health-badge health-${TONES[h.state] ?? 'warn'}`}>{badgeOf(h, now)}</span>
                   </div>
                   {text && <p className="health-text">{text}</p>}
+                  {h.unread && (
+                    <p className="health-text health-affected">Some of what Nya keeps about this connection couldn&apos;t be read, so a warning from Plaid may be missing here.</p>
+                  )}
                   {affectedText(inst).map((line) => (
                     <p className="health-text health-affected" key={line}>
                       {line}
@@ -337,7 +364,7 @@ function HealthAction({
   if (action === 'reconnect') {
     return (
       <div className="card-actions">
-        <button onClick={() => onReconnect(inst.item_id)} disabled={connecting}>
+        <button onClick={() => onReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
           Reconnect
         </button>
       </div>
@@ -375,20 +402,21 @@ export function ReconnectSoonNote({
   onReconnect,
   now = Date.now(),
 }: {
-  inst: Pick<HealthInstitution, 'item_id' | 'health' | 'manual'>;
+  inst: Pick<HealthInstitution, 'item_id' | 'institution_name' | 'health' | 'manual'>;
   connecting: boolean;
   onReconnect: (item_id: string) => void;
   now?: number;
 }) {
   const h = inst.health;
   if (inst.manual || !h || h.state !== 'reconnect_soon') return null;
-  const by = h.ends_at ? ` · ${h.ends_estimated ? 'about ' : ''}${localDay(h.ends_at)}` : '';
+  // Once the day has passed the note says which it was; the badge says what to do.
+  const by = h.ends_at && !endPassed(h, now) ? ` · ${h.ends_estimated ? 'about ' : ''}${localDay(h.ends_at)}` : '';
   return (
     <div className="reconnect-soon">
-      <span className="health-badge health-warn">Reconnect soon{by}</span>
-      <p className="stale-note">{endsText(h, now)}. Reconnect before then to keep it syncing.</p>
+      <span className="health-badge health-warn">{`${badgeOf(h, now)}${by}`}</span>
+      <p className="stale-note">{`${endsText(h, now)}. ${reconnectText(h, now)}.`}</p>
       <div className="card-actions">
-        <button onClick={() => onReconnect(inst.item_id)} disabled={connecting}>
+        <button onClick={() => onReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
           Reconnect
         </button>
       </div>

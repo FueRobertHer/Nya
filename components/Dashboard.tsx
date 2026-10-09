@@ -142,7 +142,7 @@ type Institution = {
   // cached before it existed has none, and nothing is said then.
   health?: Health;
   // The accounts a broken card can't show, by name, for the health view.
-  unshown_accounts?: { name: string; mask: string | null }[];
+  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
 };
 
 // One manually-tracked account as the API returns it (see lib/manual.ts).
@@ -1990,7 +1990,7 @@ export default function Dashboard({
                         (!inst.manual && (manageMode || inst.new_accounts_available))) && (
                         <div className="card-actions">
                           {inst.needs_reauth && (
-                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
+                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
                               Reconnect
                             </button>
                           )}

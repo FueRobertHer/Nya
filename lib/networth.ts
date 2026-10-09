@@ -102,7 +102,7 @@ export type InstitutionResult = {
   /** The accounts this institution is known to have that its card can't show
    *  (no balance could be recovered for them), by name and mask, so the health
    *  view can say which accounts a failure affects. Set by fillFromLastKnown. */
-  unshown_accounts?: { name: string; mask: string | null }[];
+  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
 };
 
 /**

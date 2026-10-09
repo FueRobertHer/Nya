@@ -17,9 +17,10 @@
 // that never arrived cannot double an email.
 
 const ENDPOINT = 'https://api.resend.com/emails';
-/** How long a send may take. It runs inside the daily snapshot, whose time is
- *  counted (START_BUDGET_MS in lib/snapshot-job.ts). */
-export const MAIL_TIMEOUT_MS = 8_000;
+/** How long a send may take: Resend answers in well under a second. The daily
+ *  job's emails have a budget of their own (lib/connection-notices.ts), and a
+ *  send is started only when this much of it is left. */
+export const MAIL_TIMEOUT_MS = 4_000;
 
 export type Mail = {
   to: string[];
@@ -33,14 +34,30 @@ export type Mail = {
  *  throws MailError instead, so it can never be mistaken for either. */
 export type MailResult = { sent: true; id: string | null } | { sent: false; reason: 'off' };
 
+/** A message that was not accepted. `status` is Resend's HTTP status, or null
+ *  when no answer came (a timeout, the network, no usable recipient);
+ *  `retryAfterMs` is how long a 429 asked to wait, when it said. */
 export class MailError extends Error {
   constructor(
     message: string,
-    readonly status: number | null
+    readonly status: number | null,
+    readonly retryAfterMs: number | null = null
   ) {
     super(message);
     this.name = 'MailError';
   }
+}
+
+/** A Retry-After header in milliseconds: seconds, or an HTTP date. Null when
+ *  absent or unusable. */
+export function retryAfterMs(header: string | null, now: number = Date.now()): number | null {
+  const v = header?.trim();
+  if (!v) return null;
+  if (/^\d{1,6}$/.test(v)) return Number(v) * 1000;
+  // An HTTP date, as in "Fri, 09 Oct 2026 12:00:03 GMT".
+  if (!/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(v)) return null;
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
 }
 
 /** An address on its own: no name, no list, nothing a header could split. */
@@ -89,9 +106,10 @@ export function mailOff(): boolean {
 /**
  * Sends one plain-text message, or does nothing when mail is off (and says so
  * once). Throws MailError when the message was not accepted: no usable
- * recipient, no answer within MAIL_TIMEOUT_MS, or a refusal.
+ * recipient, no answer within the timeout (MAIL_TIMEOUT_MS unless given), or a
+ * refusal, a rate limit (429) among them.
  */
-export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch } = {}): Promise<MailResult> {
+export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<MailResult> {
   const config = mailConfig();
   if (!config) {
     mailOff();
@@ -110,7 +128,7 @@ export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch } = {}):
         ...(mail.idempotencyKey ? { 'Idempotency-Key': mail.idempotencyKey.slice(0, 256) } : {}),
       },
       body: JSON.stringify({ from: config.from, to, subject: mail.subject, text: mail.text }),
-      signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? MAIL_TIMEOUT_MS),
     });
   } catch (err) {
     throw new MailError(`The email service could not be reached (${err instanceof Error ? err.name : typeof err}).`, null);
@@ -122,7 +140,8 @@ export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch } = {}):
       .json()
       .then((b: any) => (typeof b?.name === 'string' && /^[a-z_]{1,60}$/.test(b.name) ? b.name : null))
       .catch(() => null);
-    throw new MailError(`The email service refused the email (${res.status}${name ? `, ${name}` : ''}).`, res.status);
+    const wait = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : null;
+    throw new MailError(`The email service refused the email (${res.status}${name ? `, ${name}` : ''}).`, res.status, wait);
   }
   const id = await res
     .json()

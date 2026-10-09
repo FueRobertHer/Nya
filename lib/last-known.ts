@@ -80,14 +80,15 @@ type Fillable = {
   stale_too_old?: string;
   stale_too_old_at?: string;
   stale_missing?: number;
-  unshown_accounts?: { name: string; mask: string | null }[];
+  unshown_accounts?: { account_id: string; name: string; mask: string | null }[];
 };
 
 /** Names the remembered accounts a broken institution's card can't show, so
- *  the connection health view can say which accounts are affected. Names and
- *  masks only, as every healthy card already shows them: no balance. */
+ *  the connection health view can say which accounts are affected. Ids, names
+ *  and masks only, as every healthy card already shows them: no balance. The
+ *  id is so a hidden one can be left out (applyHidden in lib/hidden.ts). */
 function noteUnshown(inst: Fillable, accounts: RememberedAccount[]): void {
-  if (accounts.length > 0) inst.unshown_accounts = accounts.map((a) => ({ name: a.name, mask: a.mask }));
+  if (accounts.length > 0) inst.unshown_accounts = accounts.map((a) => ({ account_id: a.account_id, name: a.name, mask: a.mask }));
 }
 
 /**

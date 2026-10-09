@@ -5,7 +5,7 @@ import { cspMode, type CspMode } from '@/lib/security-headers';
 import { masterKeyConfigured } from '@/lib/crypto';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
-import { mailConfigured } from '@/lib/mail';
+import { sendsEmail } from '@/lib/notice-recipients';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -19,8 +19,9 @@ export const metadata: Metadata = {
 // things never to promise. Reads no stored data. From the environment it reads
 // only how the Content-Security-Policy is sent, whether a master key is set
 // (lib/crypto.ts), how backups are kept (lib/backup.ts backupRetention, the
-// rule the deletion receipt uses too) and whether email is set up
-// (lib/mail.ts), since each changes what is true of this copy.
+// rule the deletion receipt uses too) and whether this copy sends email
+// (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
+// write to), since each changes what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -160,7 +161,7 @@ function DeletedInBackups({ backups }: { backups: BackupRetention }): ReactNode 
 export default function SecurityPage() {
   const envelope = masterKeyConfigured();
   const backups = backupRetention();
-  const mail = mailConfigured();
+  const mail = sendsEmail();
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
