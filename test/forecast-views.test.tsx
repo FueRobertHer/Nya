@@ -98,7 +98,9 @@ describe('the forecast', () => {
     expect(t).toContain('-$600.00 lowest, on Oct 15 (estimated)');
     expect(t).toContain('Drops below zero on Oct 15.');
     expect(t).toContain('Ends $1,400.00 on Nov 8.');
-    expect(t).toContain("An estimate from the bills and income Nya expects and what you planned. Everyday spending isn't in it");
+    expect(t).toContain(
+      "An estimate from the bills and income Nya expects and what you planned. Everyday spending and money moved to your other accounts aren't in it, and a card's payment only when it repeats at a steady amount."
+    );
     expect(t).toContain('What if I buy');
     expect(t).toContain('Warns below $100.00');
   });

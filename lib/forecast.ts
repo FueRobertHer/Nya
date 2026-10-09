@@ -20,9 +20,11 @@
 // WHAT MOVES IT. Each detected bill (out) and income (in) on the dates its
 // schedule names from today, one that is late within its tolerance counting
 // today; each planned item on its days; nothing dismissed, nothing in another
-// currency (named instead). Not everyday spending, and not a card's payment
-// unless it repeats at a steady amount (then it is a detected bill): the
-// forecast says so. Money is counted in whole cents, so a day's balance is the
+// currency (named instead). Not everyday spending, not money moved between
+// accounts (detection leaves transfers out: between two cash accounts they
+// net out, but one to a brokerage would lower the balance), and not a card's
+// payment unless it repeats at a steady amount (then it is a detected bill):
+// the forecast says so. Money is counted in whole cents, so a day's balance is the
 // one before it plus that day's amounts, exactly. The lowest point counts the
 // balance now too: what is expected today may not have happened yet.
 

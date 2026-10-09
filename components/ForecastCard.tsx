@@ -232,8 +232,8 @@ export default function ForecastCard({
         </div>
       ))}
       <div className="chart-note">
-        An estimate from the bills and income Nya expects and what you planned. Everyday spending isn&apos;t in it, and a card&apos;s
-        payment only when it repeats at a steady amount.
+        An estimate from the bills and income Nya expects and what you planned. Everyday spending and money moved to your other
+        accounts aren&apos;t in it, and a card&apos;s payment only when it repeats at a steady amount.
       </div>
 
       <Sheet open={whatIfOpen} title="What if I buy…" onClose={() => setWhatIfOpen(false)}>
