@@ -258,6 +258,8 @@ export type CsvReadOptions = {
 
 /** What is wrong with a mapping for this header, in words, or null. */
 export function columnsProblem(columns: CsvColumns, header: string[]): string | null {
+  if (columns.date === undefined) return 'Choose the date column.';
+  if (columns.description === undefined) return 'Choose the description column.';
   const roles = COLUMN_ROLES.filter((r) => columns[r] !== undefined);
   for (const r of roles) {
     const at = columns[r]!;

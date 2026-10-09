@@ -536,6 +536,8 @@ describe('CSV in general', () => {
     expect(columnsProblem({ date: 0, description: 1, amount: 2, debit: 3 }, header)).toContain('not both');
     expect(columnsProblem({ date: 0, description: 1, debit: 3 }, header)).toBe('Choose both the money-out and the money-in column.');
     expect(columnsProblem({ date: 0, description: 1 }, header)).toBe('Choose the amount column.');
+    expect(columnsProblem({ description: 1, amount: 2 } as never, header)).toBe('Choose the date column.');
+    expect(columnsProblem({ date: 0, amount: 2 } as never, header)).toBe('Choose the description column.');
     const r = readImport('Date,Description,Amount\n2026-09-01,A,-1\n', { options: { csv: { columns: { date: 0, description: 1 } as never, sign: 'negative-out' } }, thisYear: YEAR });
     expect(r).toMatchObject({ status: 'mapping', problem: 'Choose the amount column.' });
   });

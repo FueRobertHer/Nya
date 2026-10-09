@@ -213,6 +213,7 @@ export default function MonthBreakdown({
   onRecategorize,
   onRename,
   onAddTransaction,
+  onImport,
   onEditTransaction,
   onToggleExcluded,
   actionError = null,
@@ -227,6 +228,9 @@ export default function MonthBreakdown({
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
   onAddTransaction?: () => void;
+  /** Opens the import sheet (components/ImportSheet.tsx); left out, like the
+   *  quick-add form's, when there is no manual account to import into. */
+  onImport?: () => void;
   /** Opens a manual row's edit form. */
   onEditTransaction?: (t: Txn) => void;
   /** Leaves a transaction out of budgets and reports, or puts it back. */
@@ -404,10 +408,19 @@ export default function MonthBreakdown({
   // where a phone reaches it without scrolling.
   const addCard = onAddTransaction && (
     <div className="card">
-      <button onClick={onAddTransaction}>Add a transaction</button>
+      {onImport ? (
+        <div className="button-pair" style={{ marginTop: 0 }}>
+          <button onClick={onAddTransaction}>Add a transaction</button>
+          <button className="secondary" onClick={onImport}>
+            Import a file
+          </button>
+        </div>
+      ) : (
+        <button onClick={onAddTransaction}>Add a transaction</button>
+      )}
       <p className="panel-note">
-        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach. It doesn&apos;t change the
-        account&apos;s balance unless you ask.
+        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach, typed in or imported from the
+        bank&apos;s file. It doesn&apos;t change the account&apos;s balance unless you ask.
       </p>
     </div>
   );
