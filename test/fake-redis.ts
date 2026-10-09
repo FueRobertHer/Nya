@@ -14,6 +14,7 @@ export type FakeCommand =
   | 'incr'
   | 'del'
   | 'hset'
+  | 'hsetnx'
   | 'hget'
   | 'hdel'
   | 'hkeys'
@@ -187,6 +188,14 @@ export class FakeRedis {
     this.gate('hset');
     const h = this.hash(key);
     for (const [f, v] of Object.entries(fields)) h.set(f, v);
+  }
+  /** Sets one field only if the hash doesn't have it: 1 if it was set, 0 if
+   *  it was there already (lib/sharing.ts, a connection's access log id). */
+  async hsetnx(key: string, field: string, value: string): Promise<number> {
+    this.gate('hsetnx');
+    if (this.hashes.get(key)?.has(field)) return 0;
+    this.hash(key).set(field, value);
+    return 1;
   }
 
   async hget<T>(key: string, field: string): Promise<T | null> {
@@ -431,6 +440,22 @@ export class FakeRedis {
     if (name === '-- nya:history-set-if-absent') {
       if (this.hashes.get(keys[0])?.has(args[0])) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
+      return 1;
+    }
+    if (name === '-- nya:sharing-delete-orphan-log') {
+      // lib/sharing.ts DELETE_ORPHAN_LOG: the log field, only while the connection's record field is absent.
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const h = this.hashes.get(keys[0]);
+      if (h?.has(args[0]) || !h?.has(args[1])) return 0;
+      this.hdelNow(keys[0], [args[1]]);
+      return 1;
+    }
+    if (name === '-- nya:sharing-delete-log-if') {
+      // lib/sharing.ts DELETE_LOG_IF: the field, only while it holds the log id.
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.hashes.get(keys[0])?.get(args[0]);
+      if (value === undefined || !value.includes(args[1])) return 0;
+      this.hdelNow(keys[0], [args[0]]);
       return 1;
     }
     if (name === '-- nya:history-delete-if') {

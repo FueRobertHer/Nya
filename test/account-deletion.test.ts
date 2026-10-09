@@ -161,6 +161,21 @@ describe('deleting my account', () => {
     expect(String(await fake.hget(ownersKey(), 'user_owner'))).toBe(TEST_CONTAINER);
   });
 
+  test('takes both records of showings on its connections with it, the one in the other person’s container too', async () => {
+    // Each has been shown what the other shares: a record on each side.
+    expect((await as('user_partner', () => route('shared', 'GET'))).body.shared).toHaveLength(1);
+    const records = (container: string) => keysOf(container).filter((k: string) => k.endsWith(':sharing-access-log'));
+    expect(records(TEST_CONTAINER)).toHaveLength(1);
+    expect(records(partner.container)).toHaveLength(1);
+    const ownerKeysBefore = keysOf(TEST_CONTAINER).filter((k: string) => !k.endsWith(':sharing-access-log')).sort();
+
+    expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+    expect(records(TEST_CONTAINER)).toEqual([]);
+    expect(keysOf(partner.container)).toEqual([]);
+    // And nothing else of the owner's.
+    expect(keysOf(TEST_CONTAINER).sort()).toEqual(ownerKeysBefore);
+  });
+
   test('needs DELETE typed out', async () => {
     expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'yes' }))).status).toBe(400);
     expect(keysOf(partner.container).length).toBeGreaterThan(0);

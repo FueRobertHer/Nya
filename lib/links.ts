@@ -750,8 +750,9 @@ export async function directoryParts(ctx: Ctx, ids: string[]): Promise<Record<st
  * to PAUSE links whose old id is live again, so an empty set errs toward
  * following links: it can hide more, never reveal. A caller that WRITES on the
  * answer (Unhide clears every id it finds) passes strict, and fails instead.
- * A caller that must change nothing (the download of my data) passes
- * readOnly, which leaves old-shaped remembered records where they are.
+ * A caller that must change nothing (the download of my data, or someone
+ * else's read of what is shared with them, lib/sharing.ts) passes readOnly,
+ * which leaves old-shaped remembered records where they are.
  */
 export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean; readOnly?: boolean } = {}): Promise<Set<string>> {
   try {
@@ -784,7 +785,9 @@ export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean; readOnl
  */
 export async function getEffectiveHidden(
   ctx: Ctx,
-  opts: { describe?: boolean } = {}
+  /** readOnly: change nothing while reading, as liveAccountIds (someone
+   *  else's request reading what is shared with them, lib/sharing.ts). */
+  opts: { describe?: boolean; readOnly?: boolean } = {}
 ): Promise<{
   /** Every id of every hidden account: what totals and filters subtract. */
   hidden: HiddenMap;
@@ -807,7 +810,7 @@ export async function getEffectiveHidden(
     ),
     // Unreadable counts as empty here (see liveAccountIds), but callers are
     // told, since an empty set can also be a user with nothing connected.
-    liveAccountIds(ctx, { strict: true }).then(
+    liveAccountIds(ctx, { strict: true, readOnly: opts.readOnly }).then(
       (ids) => ({ ok: true, ids }),
       () => ({ ok: false, ids: new Set<string>() })
     ),
