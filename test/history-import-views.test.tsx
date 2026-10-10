@@ -129,6 +129,71 @@ describe('the review', () => {
     expect(countsNow(REVIEW, { each: {} }, { each: { '4': 'same', '7': 'new' } })).toMatchObject({ new: 4, duplicates: 1, unanswered: 0 });
   });
 
+  test('a pair across an edge says why; an earlier file’s row is named by its file; lines that can’t be read ask whether they are transactions; a connection still sending its history says so', () => {
+    const review: Review = {
+      ...REVIEW,
+      counts: { ...REVIEW.counts, unreadable: 2 },
+      history_pending: true,
+      proposals: [
+        { ...REVIEW.proposals[0], edge: { kind: 'before-bank', day: '2026-07-15' } },
+        {
+          ...REVIEW.proposals[1],
+          index: 9,
+          twin: {
+            kind: 'imported',
+            date: '2026-08-10',
+            name: 'ONLINE TRANSFER TO LANDLORD REF 99812',
+            amount: 1850,
+            currency: 'USD',
+            id: 'imported-txn:00000000-0000-0000-0000-000000000001',
+            descriptor: null,
+            import_id: 'history-import:a1b2c3d4',
+            file_name: 'export.csv',
+            imported_at: '2026-09-01T12:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const view = (whole: boolean) =>
+      text(
+        renderToStaticMarkup(
+          <ReviewView
+            review={review}
+            file={picked}
+            options={{}}
+            account={account}
+            busy={false}
+            error=""
+            acknowledged={false}
+            onAcknowledge={noop}
+            choices={{ each: {} }}
+            sentChoices={{ each: {} }}
+            onChoose={noop}
+            onChooseAll={noop}
+            conflicts={{ each: {} }}
+            onConflict={noop}
+            onConflictAll={noop}
+            onCovers={noop}
+            whole={whole}
+            onWhole={noop}
+            onFlip={noop}
+            onImport={noop}
+            onBack={noop}
+          />
+        )
+      );
+    const t = view(false);
+    expect(t).toContain('Chase has nothing before');
+    expect(t).toContain('the same only if it posted days later.');
+    expect(t).toContain('Likely already here');
+    expect(t).toContain('Imported from export.csv');
+    expect(t).toContain('The 2 lines that can’t be read aren’t transactions');
+    expect(t).toContain('this file’s period isn’t used to draw the estimated history');
+    expect(t).toContain('Chase is still sending this connection’s older transactions to Nya');
+    expect(view(true)).not.toContain('this file’s period isn’t used to draw the estimated history');
+    expect(t).not.toMatch(/[\u2013\u2014]/);
+  });
+
   test('what undoing says before it is done', () => {
     expect(undoText({ record: 'ok', remove: 3, duplicates: 4, kept: [{ file_name: 'later.ofx', count: 2 }], incomplete: false })).toBe(
       'Remove the 3 transactions this import added? The 4 rows it kept as the bank’s own go too; the bank’s stay. 2 more transactions stay: later.ofx found them already here, so they are kept for that import.'
