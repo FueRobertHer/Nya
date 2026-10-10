@@ -126,6 +126,7 @@ const RUNS: Record<string, Operation['run']> = {
     const includeHidden = flag(a, 'include_hidden');
     const text = str(a, 'q');
     const category = str(a, 'category');
+    const categoryId = str(a, 'category_id');
     // The query as asked, defaults left out, so a cursor made before midnight
     // (UTC) still belongs to it after; the range it came to rides in the cursor.
     const print = fingerprint([
@@ -137,6 +138,9 @@ const RUNS: Record<string, Operation['run']> = {
       category?.toLowerCase() ?? null,
       min ?? null,
       max ?? null,
+      // Added after cursors were first made: absent, a query's print is as
+      // before, so a cursor already handed out still works.
+      ...(categoryId ? [categoryId] : []),
     ]);
     const cursor = str(a, 'cursor');
     const resumed = cursor ? decodeCursor(cursor, print) : null;
@@ -148,6 +152,7 @@ const RUNS: Record<string, Operation['run']> = {
       includeHidden,
       text,
       category,
+      categoryId,
       minAmount: min,
       maxAmount: max,
       limit: num(a, 'limit') ?? DEFAULT_PAGE_SIZE,

@@ -168,7 +168,7 @@ describe('with the shared password', () => {
     const doc = JSON.parse(new TextDecoder().decode(body));
     // Everything else is in it.
     expect(doc.manual_accounts.map((m: { name: string }) => m.name)).toEqual(['Piggy bank']);
-    expect(doc.budgets).toEqual([{ category: 'Food', monthly_amount: 400 }]);
+    expect(doc.budgets).toEqual([{ category: 'Food', monthly_amount: 400, category_id: null, group: 'Other' }]);
     expect(doc.problems).toEqual([
       { section: 'manual_accounts', problem: 'unreadable', ids: ['manual_broken'] },
       { section: 'connection-notices', problem: 'unreadable', ids: ['item_secret'] },

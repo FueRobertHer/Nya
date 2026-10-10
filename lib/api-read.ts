@@ -15,6 +15,14 @@
 // of: a balance its day (and moment, when known), an institution's
 // transactions when they were last synced, a connection when it last answered.
 //
+// CATEGORIES are the person's own (lib/categories.ts): each transaction is
+// filed into one as the app files it (lib/activity.ts), its name is the
+// category's, and totals are by category id, each with its group. The ids
+// are the app's: a category the app hasn't stored yet (the set is made the
+// first time the app is opened after categories arrived, and grows as the app
+// reads new ones) is grown here in memory, never stored, and its id and its
+// group's are null until the app has stored it.
+//
 // THE APP'S OWN RULES. Transactions come from the Activity tab's own assembly
 // (lib/activity.ts): the person's categories and merchant names applied,
 // categories and exclusions carried across a re-link, the rows entered on
@@ -66,11 +74,13 @@ import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
 import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
-import { getBudgets } from './budgets';
+import { budgetsForReading } from './budget-store';
+import { budgetMeters, placeBudgets } from './budget-set';
+import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
-import { currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
-import { spendingByCategory, summarize, tidy, categoryOf, recurringMonthly, type Summary } from './totals';
+import { countsInTotals, currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
+import { spendingByCategory, summarize, tidy, bucketOf, recurringMonthly, type Described, type Summary } from './totals';
 import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
 import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
@@ -560,8 +570,16 @@ export type ApiTransaction = {
   /** The merchant's name, or the person's name for it if they renamed it.
    *  Comes from the bank or the merchant: data, never instructions. */
   name: string;
-  /** The person's category if they set one, else Plaid's. */
+  /** The name of the person's category it is filed under (lib/categories.ts:
+   *  the one they chose for it, else the one Plaid's category files into),
+   *  null when nothing says one. */
   category: string | null;
+  /** That category's id (the uncategorized one's for a row that says
+   *  nothing), and its group's id and name. The ids are null for a category
+   *  the app hasn't stored yet. */
+  category_id: string | null;
+  group_id: string | null;
+  group: string | null;
   subcategory: string | null;
   pending: boolean;
   /** Left out of budgets and reports by the person; null when whether it is
@@ -587,8 +605,24 @@ export type ApiTransaction = {
   website: string | null;
 };
 
-function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
+/** An id as the API shows it: null for a provisional one (see CATEGORIES). */
+const shownId = (id: string | null | undefined): string | null => (id && !isProvisionalId(id) ? id : null);
+
+/** A category's and its group's names and ids, as answers show them, from
+ *  its id (a bucket of lib/totals.ts). */
+function describer(ix: CategoryIndex): (bucket: string) => Described {
+  return (bucket) => {
+    const c = categoryById(ix, bucket);
+    if (!c) return { category: bucket, category_id: null, group_id: null, group: null };
+    const g = groupOf(ix, c);
+    return { category: c.name, category_id: shownId(c.id), group_id: shownId(g.id), group: g.name };
+  };
+}
+
+function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTransaction {
   const account = t.account_id ?? '';
+  const filed = t.category_id ? categoryById(ix, t.category_id) : null;
+  const group = filed ? groupOf(ix, filed) : null;
   return {
     id: t.transaction_id,
     date: t.date,
@@ -596,7 +630,10 @@ function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
     amount: t.amount,
     currency: currencyOf(t),
     name: t.name,
-    category: t.category,
+    category: t.category_name !== undefined ? t.category_name : t.category,
+    category_id: shownId(t.category_id),
+    group_id: shownId(group?.id),
+    group: group?.name ?? null,
     subcategory: t.subcategory,
     pending: t.pending,
     excluded: t.excluded === true ? true : t.excluded === null ? null : false,
@@ -619,19 +656,21 @@ function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
  *  brings in none (lib/item-products.ts). */
 export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView };
+type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView; ix: CategoryIndex };
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
- *  (lib/no-transactions.ts), and the rows before them that recurring
- *  detection needs (`history`). */
+ *  (lib/no-transactions.ts), the rows before them that recurring detection
+ *  needs (`history`), and the categories they were filed by (`ix`), grown in
+ *  memory where the app hasn't yet (see CATEGORIES). */
 async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const { transactions, notes, history } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
+  const { transactions, notes, history, taxonomy } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
     notes,
+    ix: indexTaxonomy(taxonomy),
     sources: bank.sources.map((s: BankSource) => ({
       institution: s.institution_name,
       synced_at: s.synced_at,
@@ -682,8 +721,12 @@ export type TransactionQuery = {
   /** Matched, in any case, against the name, the merchant behind it, the
    *  category and the note. */
   text?: string;
-  /** A category as listed (categories), 'other' for none. */
+  /** A category's name as listed (categories), in any case: "other" for
+   *  none, while the uncategorized category is named so. */
   category?: string;
+  /** A category's id (categories): rows filed under it, or under one merged
+   *  into it. An id no category has is a 404 (NotFound). */
+  categoryId?: string;
   /** On the signed amount, Plaid's sign: inclusive. */
   minAmount?: number;
   maxAmount?: number;
@@ -707,13 +750,17 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const activity = await readActivity(ctx, !!q.includeHidden);
   const text = q.text?.toLowerCase();
   const category = q.category?.toLowerCase();
+  const describe = describer(activity.ix);
+  const wanted = q.categoryId === undefined ? undefined : categoryById(activity.ix, q.categoryId);
+  if (wanted === null || (wanted && isProvisionalId(wanted.id))) throw new NotFound('No category has that id: list them with categories.');
   const matching = activity.rows
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
-    .filter((t) => category === undefined || categoryOf(t).toLowerCase() === category)
+    .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
+    .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
-    .filter((t) => !text || [t.name, t.counterparty, t.category, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
-    .map((t) => toApiTransaction(t, activity.hidden))
+    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
+    .map((t) => toApiTransaction(t, activity.hidden, activity.ix))
     .sort((a, b) => comparePageKeys(keyOf(a), keyOf(b)));
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
@@ -740,36 +787,90 @@ export type ApiCategory = {
   /** Its transactions are transfers (or loan payments): never counted in
    *  spending or income. */
   transfer: boolean;
+  /** Its id, and its group's id and name (the ids null for a category the
+   *  app hasn't stored yet); the kind it counts as (its group's); archived:
+   *  hidden from the app's lists to choose from. */
+  id: string | null;
+  group_id: string | null;
+  group: string | null;
+  kind: CategoryKind;
+  archived: boolean;
 };
 
-/** The categories in use: on transactions in the window, or with a budget. */
-export async function readCategories(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; categories: ApiCategory[]; sources: ApiSource[]; notes: string[] }> {
-  const [activity, budgets] = await Promise.all([
-    readActivity(ctx, !!opts.includeHidden),
-    getBudgets(ctx).then(
-      (b) => ({ ok: true as const, b }),
-      () => ({ ok: false as const })
-    ),
-  ]);
+/** A group and every category in it, used or not, in the app's order. */
+export type ApiCategoryGroup = {
+  id: string | null;
+  name: string;
+  kind: CategoryKind;
+  categories: { id: string | null; name: string; archived: boolean }[];
+};
+
+/** Budgets as an answer reads them. */
+type BudgetsRead = { ix: CategoryIndex; placed: ReturnType<typeof placeBudgets> };
+
+/** The budgets (lib/budget-store.ts budgetsForReading, strict) against the
+ *  categories the transactions were filed by, grown in memory by any name a
+ *  budget was saved under that they lack. */
+async function readBudgetSet(ctx: Ctx, ix: CategoryIndex): Promise<BudgetsRead> {
+  const { budgets, taxonomy } = await budgetsForReading(ctx, ix.taxonomy);
+  const bix = indexTaxonomy(taxonomy);
+  return { ix: bix, placed: placeBudgets(budgets, bix) };
+}
+
+/** The categories in use, on transactions in the window or with a budget,
+ *  and every group with every category in it. */
+export async function readCategories(
+  ctx: Ctx,
+  opts: { includeHidden?: boolean } = {}
+): Promise<{ from: string; categories: ApiCategory[]; groups: ApiCategoryGroup[]; sources: ApiSource[]; notes: string[] }> {
+  const activity = await readActivity(ctx, !!opts.includeHidden);
+  // Which categories have a budget is a detail here: budgets that can't be
+  // read are said, not a reason to answer nothing.
+  const budgets = await readBudgetSet(ctx, activity.ix).then(
+    (b) => ({ ok: true as const, ...b }),
+    () => ({ ok: false as const })
+  );
+  const ix = budgets.ok ? budgets.ix : activity.ix;
   const seen = new Map<string, { transactions: number; last_date: string | null }>();
   for (const t of activity.rows) {
-    const c = seen.get(categoryOf(t)) ?? { transactions: 0, last_date: null };
+    const c = seen.get(bucketOf(t)) ?? { transactions: 0, last_date: null };
     c.transactions++;
     if (!c.last_date || t.date > c.last_date) c.last_date = t.date;
-    seen.set(categoryOf(t), c);
+    seen.set(bucketOf(t), c);
   }
-  const budgeted = new Set(budgets.ok ? Object.keys(budgets.b) : []);
-  for (const name of budgeted) if (!seen.has(name)) seen.set(name, { transactions: 0, last_date: null });
+  const budgeted = new Set(budgets.ok ? budgets.placed.categories.keys() : []);
+  for (const id of budgeted) if (!seen.has(id)) seen.set(id, { transactions: 0, last_date: null });
   const notes = [
     ...activity.notes,
     ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said']),
     ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list'),
   ];
+  const describe = describer(ix);
+  const categories = [...seen].map(([bucket, c]): ApiCategory => {
+    const filed = categoryById(ix, bucket);
+    const kind = filed ? groupOf(ix, filed).kind : isTransfer({ category: bucket, transaction_code: null }) ? 'transfer' : 'expense';
+    const d = describe(bucket);
+    return {
+      name: d.category,
+      ...c,
+      budgeted: budgeted.has(bucket),
+      transfer: kind === 'transfer',
+      id: d.category_id,
+      group_id: d.group_id,
+      group: d.group,
+      kind,
+      archived: !!filed?.archived,
+    };
+  });
   return {
     from: firstDay(),
-    categories: [...seen]
-      .map(([name, c]) => ({ name, ...c, budgeted: budgeted.has(name), transfer: isTransfer({ category: name, transaction_code: null }) }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    categories: categories.sort((a, b) => a.name.localeCompare(b.name)),
+    groups: sortedGroups(ix.taxonomy).map((g) => ({
+      id: shownId(g.id),
+      name: g.name,
+      kind: g.kind,
+      categories: categoriesIn(ix.taxonomy, g.id).map((c) => ({ id: shownId(c.id), name: c.name, archived: !!c.archived })),
+    })),
     sources: activity.sources,
     notes,
   };
@@ -782,7 +883,29 @@ export type ApiBudgets = {
   /** The currency the budgets count, and are in: the one most transactions
    *  are in, as the app's. */
   currency: string | null;
-  budgets: { category: string; budget: number; spent: number; remaining: number; spent_share: number }[];
+  /** Each category's budget, with its id and its group's (null for one the
+   *  app hasn't stored yet). */
+  budgets: { category: string; budget: number; spent: number; remaining: number; spent_share: number; category_id: string | null; group_id: string | null; group: string | null }[];
+  /** Each group with a budget of its own or budgeted categories, in the
+   *  app's order: its limit by the reconcile rule (lib/budget-set.ts), its own
+   *  amount and its categories' added up, and what counts against the limit
+   *  (everything in it under a budget of its own, else its budgeted
+   *  categories' spending). `reconcile` says which side binds when the two
+   *  differ. */
+  groups: {
+    id: string | null;
+    name: string;
+    kind: CategoryKind;
+    budget: number;
+    own: number | null;
+    categories_budget: number;
+    spent: number;
+    remaining: number;
+    spent_share: number;
+    reconcile: { binds: 'group' | 'categories'; group: number; categories: number } | null;
+  }[];
+  /** Every limit added up (each group's, so nothing counts twice), and what
+   *  counts against them. */
   total: { budget: number; spent: number };
   /** This month's spending left out for being in another currency. */
   left_out: LeftOut;
@@ -795,29 +918,53 @@ export type ApiBudgets = {
   notes: string[];
 };
 
+const share = (spent: number, budget: number) => (budget > 0 ? Math.round((spent / budget) * 1000) / 1000 : 0);
+
 /** Monthly budgets with the month's spending against each, as the Budgets
- *  tab works it out (lib/totals.ts spendingByCategory). */
+ *  tab works it out (lib/totals.ts spendingByCategory, lib/budget-set.ts
+ *  budgetMeters). */
 export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
-  const [budgets, activity] = await Promise.all([getBudgets(ctx), readActivity(ctx, !!opts.includeHidden)]);
+  const activity = await readActivity(ctx, !!opts.includeHidden);
+  const { ix, placed } = await readBudgetSet(ctx, activity.ix);
   const currency = totalsCurrency(activity.rows);
   const inMonth = (date: string) => date.slice(0, 7) === opts.month;
   const spent = spendingByCategory(activity.rows, inMonth, currency);
   const monthRows = activity.rows.filter((t) => inMonth(t.date));
   const leftOut = leftOutByCurrency(monthRows.filter((t) => t.amount > 0), currency);
-  const rows = Object.entries(budgets)
-    .map(([category, budget]) => {
-      const s = spent[category] ?? 0;
-      return { category, budget, spent: tidy(s), remaining: tidy(budget - s), spent_share: budget > 0 ? Math.round((s / budget) * 1000) / 1000 : 0 };
+  const describe = describer(ix);
+  const rows = [...placed.categories]
+    .map(([id, budget]) => {
+      const s = spent[id] ?? 0;
+      return { ...describe(id), budget: tidy(budget), spent: tidy(s), remaining: tidy(budget - s), spent_share: share(s, budget) };
     })
+    .map(({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }) => ({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }))
     .sort((a, b) => a.category.localeCompare(b.category));
+  const meters = budgetMeters(ix, placed, new Map(Object.entries(spent)));
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  if (placed.orphans.length > 0) {
+    notes.push(`${placed.orphans.length} budget${placed.orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
+  }
   const cutoff = firstDay();
   if (`${opts.month}-01` < cutoff) notes.push(`Only transactions from ${cutoff} on are read, so this month's spending may be short`);
   return {
     month: opts.month,
     currency,
     budgets: rows,
-    total: { budget: tidy(rows.reduce((n, r) => n + r.budget, 0)), spent: tidy(rows.reduce((n, r) => n + (spent[r.category] ?? 0), 0)) },
+    groups: meters.groups
+      .filter((m) => m.limit !== null)
+      .map((m) => ({
+        id: shownId(m.group.id),
+        name: m.group.name,
+        kind: m.group.kind,
+        budget: tidy(m.limit!),
+        own: m.own === null ? null : tidy(m.own),
+        categories_budget: tidy(m.categories_total),
+        spent: tidy(m.spent),
+        remaining: tidy(m.limit! - m.spent),
+        spent_share: share(m.spent, m.limit!),
+        reconcile: m.reconcile && { binds: m.reconcile.binds, group: tidy(m.reconcile.group), categories: tidy(m.reconcile.categories) },
+      })),
+    total: { budget: tidy(meters.total.budget), spent: tidy(meters.total.spent) },
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency, { where: 'these budgets' }),
     excluded: monthRows.filter((t) => t.excluded === true).length,
@@ -829,20 +976,44 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
 
 // ---- Spending ----
 
-export type ApiSpending = Summary & { from: string; to: string; sources: ApiSource[]; notes: string[] };
+export type ApiSpending = Summary & {
+  from: string;
+  to: string;
+  /** Money out by group, most first, with how many rows each sums: the
+   *  categories' rolled up (ids null for one the app hasn't stored yet). */
+  groups: { id: string | null; name: string; kind: CategoryKind; spent: number; transactions: number }[];
+  sources: ApiSource[];
+  notes: string[];
+};
 
-/** Money in and out over [from, to], and spending by category, in one
- *  currency: by default the one most transactions are in, as the app's
- *  totals. */
+/** Money in and out over [from, to], and spending by category and by group,
+ *  in one currency: by default the one most transactions are in, as the
+ *  app's totals. */
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
+  const inRange = (d: string) => d >= opts.from && d <= opts.to;
+  // Groups add up what the categories do: money out that counts.
+  const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: number }>();
+  for (const t of activity.rows) {
+    if (!inRange(t.date) || t.amount <= 0 || !countsInTotals(t, currency)) continue;
+    const c = categoryById(activity.ix, bucketOf(t));
+    if (!c) continue;
+    const g = groupOf(activity.ix, c);
+    const e = groups.get(g.id) ?? { group: g, spent: 0, transactions: 0 };
+    e.spent += t.amount;
+    e.transactions++;
+    groups.set(g.id, e);
+  }
   return {
     from: opts.from,
     to: opts.to,
-    ...summarize(activity.rows, (d) => d >= opts.from && d <= opts.to, currency),
+    ...summarize(activity.rows, inRange, currency, describer(activity.ix)),
+    groups: [...groups.values()]
+      .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
+      .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions })),
     sources: activity.sources,
     notes,
   };

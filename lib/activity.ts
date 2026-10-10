@@ -23,6 +23,14 @@
 // there are, so the app's views and the API say the same of them
 // (lib/no-transactions.ts).
 //
+// CATEGORIES. Every row the assembly answers is filed into the person's
+// categories (lib/categories.ts, lib/category-store.ts) in finishActivity,
+// after the cached part: the banks' part keeps only what files a row (the
+// category words it carries, whether the person chose them, and Plaid's own
+// values), so renaming, moving, archiving or merging a category never drops
+// the cache. The app grows the stored categories by whatever its rows carry;
+// the read-only API grows a copy in memory and writes nothing.
+//
 // BEFORE THE YEAR. Beside the year's rows, each part gives the rows before it
 // that recurring detection may need, as it sees a yearly charge twice only in
 // two years: compact (OlderTxn), with the same categories, names and
@@ -43,6 +51,8 @@ import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
+import { fileTransactions } from './category-store';
+import type { Taxonomy } from './categories';
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -51,12 +61,14 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
 
 /** The banks' part as assembled (and, by the app, cached). `plaid_only`
  *  tells it from the payload cached before, which held the manual rows too
- *  and must not be merged with them again, and `account_types` from one
- *  cached before rows carried their account's type (account_type, which the
- *  cash forecast reads): either is a miss. */
+ *  and must not be merged with them again, `account_types` from one cached
+ *  before rows carried their account's type (account_type, which the cash
+ *  forecast reads), and `category_facts` from one cached before rows carried
+ *  what files them into the person's categories: any is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
   account_types: true;
+  category_facts: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -84,6 +96,7 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     !!p &&
     p.plaid_only === true &&
     p.account_types === true &&
+    p.category_facts === true &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
     typeof p.as_of === 'string'
@@ -211,13 +224,17 @@ export async function assembleBankRows(
   ]);
 
   // The person's own changes win over Plaid's data: recategorization by
-  // transaction, vendor rename by vendor key (so it covers every row from that
-  // merchant).
+  // transaction (a category's words, filed by finishActivity, which marks
+  // them as the person's), vendor rename by vendor key (so it covers every row
+  // from that merchant).
   const transactions = results.flatMap((r) => r.txns);
   const older = results.flatMap((r) => r.older);
   for (const t of [...transactions, ...older]) {
     const manual = overrides.overrides[t.transaction_id];
-    if (manual) t.category = manual;
+    if (manual) {
+      t.category = manual;
+      t.category_set = true;
+    }
     const renamed = renames.renames[t.vendor_key];
     if (renamed) t.name = renamed;
   }
@@ -236,6 +253,7 @@ export async function assembleBankRows(
     payload: {
       plaid_only: true,
       account_types: true,
+      category_facts: true,
       transactions,
       notes,
       incomplete,
@@ -285,12 +303,16 @@ export async function assembleBankRows(
  * `history` is the rows before the year that recurring detection can use
  * (see BEFORE THE YEAR): the banks', as kept, and the manual accounts',
  * chosen once the exclusions are on them.
+ *
+ * Every row, the history's too, is filed into the person's categories (see
+ * CATEGORIES), and `taxonomy` is the set it was filed by. `grow` is the app:
+ * it seeds and grows the stored set; without it nothing is written.
  */
 export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
   hidden: Set<string>,
-  opts: { since?: string } = {}
+  opts: { since?: string; grow?: boolean } = {}
 ): Promise<{
   transactions: Txn[];
   notes: string[];
@@ -299,6 +321,7 @@ export async function finishActivity(
   /** The manual accounts whose rows couldn't be read (lib/manual-txns.ts
    *  readManualTxnsForDisplay), or 'all'. */
   manual_unread: string[] | 'all';
+  taxonomy: Taxonomy;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -339,15 +362,17 @@ export async function finishActivity(
     else if (own === false) delete t.excluded;
     else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
   }
+  const filed = await fileTransactions(ctx, [...transactions, ...candidates], { grow: !!opts.grow });
   // The institutions whose rows aren't all here (the banks' part: a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
-    notes: [...plaid.notes, ...manual.notes],
+    notes: [...plaid.notes, ...manual.notes, ...filed.notes],
     incomplete: plaid.incomplete ?? [],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),
+    taxonomy: filed.taxonomy,
     manual_unread: manual.unread,
   };
 }

@@ -45,6 +45,7 @@ import {
 } from './item-products';
 import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
+import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations } from './txn-annotations';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -71,7 +72,26 @@ export type Txn = {
   // account's type isn't known; absent on a row built before it was sent.
   account_type?: string | null;
   institution_name: string;
+  // The category the row carries, as words: the one the person chose for it,
+  // else carried across a re-link, else Plaid's primary in words, or a manual
+  // or imported row's own. What the spending rules read (lib/spending.ts
+  // categoryKey), and the key that files it into one of the person's
+  // categories (lib/categories.ts); what to show is category_name.
   category: string | null;
+  // Filed into the person's categories (lib/category-store.ts fileRows), on
+  // every row an answer sends: the category's id (provisional, with a ":", for
+  // one not stored yet), the name to show (null when the row says nothing of
+  // its category, which shows none and counts under the uncategorized one),
+  // and the kind it counts as. Absent on a row not yet filed.
+  category_id?: string;
+  category_name?: string | null;
+  category_kind?: CategoryKind;
+  // What a bank's row is filed by, until it is (never sent): whether
+  // `category` is the person's choice (chosen for it, or carried across a
+  // re-link), and Plaid's own values.
+  category_set?: boolean;
+  pfc_primary?: string | null;
+  pfc_detailed?: string | null;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
   // Plaid's code for a currency with no ISO one (a cryptocurrency); absent on
   // a payload cached before it was sent.
@@ -118,6 +138,12 @@ export type OlderTxn = Pick<
   | 'account_type'
   | 'institution_name'
   | 'category'
+  | 'category_id'
+  | 'category_name'
+  | 'category_kind'
+  | 'category_set'
+  | 'pfc_primary'
+  | 'pfc_detailed'
   | 'subcategory'
   | 'iso_currency_code'
   | 'unofficial_currency_code'
@@ -1036,6 +1062,20 @@ async function syncItem(ctx: Ctx,
   return { state: null, note: `${item.institution_name}: could not fetch transactions` };
 }
 
+/** A bank row's category, and what files it into the person's categories
+ *  (lib/categories.ts resolveCategory): a category carried across a re-link
+ *  is the person's choice and wins over Plaid's, as before; Plaid's own
+ *  values go beside it. */
+function categoryFacts(t: StoredTxn, carried: Map<string, string> | undefined): Pick<Txn, 'category' | 'category_set' | 'pfc_primary' | 'pfc_detailed'> {
+  const carriedCategory = carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined;
+  return {
+    category: carriedCategory ?? t.category,
+    ...(carriedCategory !== undefined ? { category_set: true } : {}),
+    pfc_primary: t.personal_finance_category?.primary ?? null,
+    pfc_detailed: t.personal_finance_category?.detailed ?? null,
+  };
+}
+
 /** What the display rows of one Item are built with, besides its state. */
 type DisplayInputs = {
   hiddenAccountIds?: Set<string>;
@@ -1091,7 +1131,7 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
-      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      ...categoryFacts(t, carried),
       iso_currency_code: t.iso_currency_code,
       unofficial_currency_code: t.unofficial_currency_code ?? null,
       vendor_key: vendorKey(t),
@@ -1141,7 +1181,7 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
-      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      ...categoryFacts(t, carried),
       subcategory: humanizeSubcategory(t.personal_finance_category),
       iso_currency_code: t.iso_currency_code,
       unofficial_currency_code: t.unofficial_currency_code ?? null,

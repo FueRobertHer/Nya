@@ -14,6 +14,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Manual accounts](#manual-accounts)
 - [Importing files](#importing-files)
 - [Excluding a transaction](#excluding-a-transaction)
+- [Categories and groups](#categories-and-groups)
 - [Recurring bills and the cash forecast](#recurring-bills-and-the-cash-forecast)
 - [Reports](#reports)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
@@ -290,6 +291,66 @@ Excluding changes nothing stored about the transaction itself, and never a balan
 
 A bank's fee (Plaid's "bank charge", a maintenance or overdraft fee) is spending, not a transfer: it counts in every total, the budgets and recurring-bill detection included, where a monthly fee worth getting rid of shows up.
 
+## Categories and groups
+
+Every transaction is filed under one of your categories, and every category is in a group: food and drink in Food, rent and utilities in Housing, and so on. A category has an id that never changes, so renaming one renames it everywhere at once: on its transactions, in the totals and budgets, and in the API.
+
+### Where they come from
+
+There is nothing to set up. The first time Nya reads your data after categories arrived, it makes them from what is already there: ten groups (Income, Food, Shopping, Housing, Transport, Travel and entertainment, Health and personal care, Services and fees, Other, and Transfers), a category for each of Plaid's sixteen, **other** for a transaction that says nothing about its category, and one for every category already on your data: one you chose for a transaction, one carried across a re-link, one on a transaction you entered or imported, and one a budget was saved under. Each is named as Nya showed it before (on screen, with a capital first letter), so no total, budget or API answer moves. After that, a category a bank or a file brings that you don't have yet is added the next time the Activity tab loads: to the category with the same words, if there is one, or as a new one in Transfers (words starting with "transfer"), Income ("income") or Other.
+
+### How a transaction is filed
+
+By one rule, everywhere: the Activity tab, the totals, budgets, insights, recurring bills, the Plan, the API and the download ([architecture.md](architecture.md#categories)). Most specific first:
+
+1. **Yours**: the category you chose for the transaction, or for the same transaction under an earlier account you linked its new one to, or the one on a transaction you entered or imported.
+2. **A rule**, once rules arrive (#36): below a choice made on one transaction, above what the bank says.
+3. **Plaid's category** for it.
+4. **The words the transaction carries**, for one stored before Plaid's categories were kept.
+5. Otherwise the **uncategorized** category: other, unless you renamed it.
+
+The name shown is always your category's, never one stored on the transaction.
+
+### What a category counts as
+
+A group is **spending**, **income** or **transfers**, and its categories count as that. Transfers are left out of the month's totals and the budgets. Seeded, Transfers holds transfer in, transfer out and loan payments, exactly what the totals left out before. Moving a category into a group of another kind changes how its transactions count, in every total and budget, and the screen says so before you move it: moving loan payments into a spending group counts them as spending. A group's kind is chosen when it is added and doesn't change.
+
+A few rules read the words the bank or you gave a transaction rather than its category's name, so renaming or regrouping never moves them: recurring detection never takes a restaurant, a food shop, a way of getting about or a general shop for a yearly bill, and counts a loan payment as a bill whatever group holds it; the Plan finds loan payments, cash and refunds the same way, and counts income by its category's kind.
+
+### Managing them
+
+Under **Manage** on the Accounts tab, the **Categories** card counts your categories and groups, and **Edit categories** opens them, group by group, a screen at a time, for a phone. A change shows at once on your transactions and budgets.
+
+- **Add** a category to a group, with an optional icon (an emoji). A name is up to 60 characters, and no two categories, or two groups, share one, whatever their capitals.
+- **Rename** a category, give it an **icon**, or **move** it to another group.
+- **Archive** one you no longer use: it leaves the lists you choose a category from, and stays on every transaction filed under it, which count as before. **Unarchive** brings it back.
+- **Merge** one into another of the same kind: every transaction filed under it is then filed under the other, its budget is added to the other's, and it goes. Past months' totals stay as they were, since they are the same transactions, but a group's budget limit can change: the category's spending goes where it went, into another group too. Merging into another kind is refused, since it would change your totals: move it first. A merge can't be undone.
+- **Delete** a category only when nothing uses it: no transaction filed under it (one you chose it for, entered or imported with it, of any date, or a bank's from the last year), no budget, and none of Plaid's categories. Otherwise the screen says what uses it, and offers a merge or archiving instead.
+- The uncategorized category can be renamed, and moved to another spending group, but not archived, merged away or deleted.
+
+Groups can be **added**, with their kind, **renamed**, moved **up** or **down** (the order they are listed in everywhere), and **deleted** once empty and without a budget of their own.
+
+Choosing a category, for a transaction or for one you enter by hand, offers your categories by group, without the archived ones (but for the one it has).
+
+### Totals by group
+
+The Activity tab's **Top spending** is by group: each group's total, which a tap opens to its categories'. The Budgets tab lists budgets by group the same way.
+
+### Budgets on categories and groups
+
+A budget can be on a category or on a group as a whole (**Add Budget** offers both, for spending: income and transfers never count against a budget, so they aren't offered, and a budget already on one says so). A group's own budget is a limit on everything in it, its categories without a budget included. A group without one shows its budgeted categories added up, budgets and spending alike. When a group has both, its limit is the smaller of its own amount and its categories' budgets added up, and a line under its meter says which applies:
+
+- **Capped by the group's budget**: its categories' budgets add up to more than the group's.
+- **Limited to its categories' budgets**: every category in it has a budget, and they add up to less. An archived category without a budget is left aside while it has no spending that month; archived, it still files what its bank or you give it, and with spending and no budget of its own, nothing limits it but the group's amount, which then stays the limit, as for any category without a budget.
+
+Each group opens to its categories' meters and its own amount. The month's total counts each group once, at its limit. Home warns about a group nearing or over its limit as it does about a category, when the group has an amount of its own (without one, its categories' budgets warn on their own).
+
+Budgets are kept by category id, so a renamed category keeps its budget, and a merged one's is added to where it went. A budget left on a category or group since deleted (on another device, say) is shown, and can be removed. The release before this one still reads the category budgets, by name ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)).
+
+### In the API and the download
+
+The read-only API gives each transaction's category id and group (`category_id`, `group_id`, `group`), lists your categories with their ids, groups and kinds and the groups themselves, finds one category's transactions by its id (`category_id`), and gives budgets and spending by group as well. A transaction's `category` is its category's name. Until the app has stored your categories (the first time it loads them after this release), the ids are `null`. The [download](data-export.md) has your categories (`categories`), your budgets with their ids and groups (`budgets`, `group_budgets`), and each transaction's category, its id and its group (`nya_category`, `nya_category_id`, `nya_group`). Sharing still shares no category.
+
 ## Recurring bills and the cash forecast
 
 The Budgets tab finds the bills and income that repeat, says when each is next expected, and carries your checking and savings forward over the next 30, 60 or 90 days, with a calendar of what posted and what is coming. Home's upcoming bills come from the same detection, which the dashboard runs once for both.
@@ -356,7 +417,7 @@ A month a page, Sunday first, from a year back to a year ahead. Each day carries
 - **Days and times.** A transaction's date is its bank's own day and is never converted. Today, and every time a report shows (when it was made, when each connection last synced), are read in your browser's time zone, which the report names. The CSV writes its times in UTC (ISO 8601), and says so.
 - **From what is stored.** A report reads what Nya has stored, as the read-only API does, and never calls Plaid: it costs nothing there, works while a bank or Plaid is down, and says as of when each connection's transactions are. Open Nya first to bring your connections up to date.
 - **Printing.** **Print or save as PDF** opens the browser's print window; choose Save as PDF there. The print styles make a clean A4 or Letter page in black and white with no navigation or buttons: the first page holds the period, what may be missing, the bottom line and where the data comes from (on one page with half a dozen connections), and the totals by category, the months, the marked categories and the appendix each start a page of their own, a long table's header repeating on every page. Every page's footer names the report, its period and the page's number. No PDF library is involved. **Download as CSV** gives the same totals, months and notes as one table for a spreadsheet, written like the data download's CSV files, formula guard included (`lib/report/csv.ts`).
-- **Categories marked for taxes.** **Mark categories** picks the ones that matter to you, from the categories in the report's period; they show as a group of their own in every report, matched as Nya files a category (any case, spaces collapsed). Nya never marks a category, suggests one or says how any category is taxed: that is tax advice, and for you and your accountant. Your choice is saved as your own setting (`report-settings`, on the storage seam, and in your data download; see [data-export.md](data-export.md#report-settings)); a setting that can't be read leaves the group out, says so, and is never saved over.
+- **Categories marked for taxes.** **Mark categories** picks the ones that matter to you, from the categories in the report's period; they show as a group of their own in every report. A mark is kept as the category's words, which a rename never changes, so it follows your [categories](#categories-and-groups): a category you rename stays marked, under its new name, and one you merge into another takes its mark there, with its transactions. Words no category has any more stay marked, matched as Nya files a category (any case, spaces collapsed). The report's totals by category are by your categories too, named as they are now, as the Activity tab's are. Nya never marks a category, suggests one or says how any category is taxed: that is tax advice, and for you and your accountant. Your choice is saved as your own setting (`report-settings`, on the storage seam, and in your data download; see [data-export.md](data-export.md#report-settings)); a setting that can't be read leaves the group out, says so, and is never saved over.
 
 The page asks `GET /api/reports` (`kind=year&year=2025`, or `kind=range&start=2026-01-01&end=2026-03-31`, with `tz`, and optionally `currency` and `format=csv`), which checks every parameter and the period's bounds before reading anything (`lib/report/`). `GET` and `PUT /api/report-settings` read and save the marked categories.
 
@@ -376,7 +437,7 @@ Liabilities and Investments are paid Plaid products: free in `sandbox`, but bill
 
 Programs you choose can read your data: a script, a spreadsheet, a dashboard of your own, or an AI assistant. Make a token in the **API tokens** card under **Manage** on the Accounts tab; it is shown once, with a copy button and a configuration to paste into an MCP client. The public **Developers** page (`/developers`) documents everything: each endpoint with an example request and answer and every field, the limits, the conventions, and how to add the MCP server to a client. How tokens are made, kept, checked and revoked is in [authentication.md](authentication.md#api-tokens).
 
-- **A read-only REST API** under `/api/v1`: who the token is (`me`), accounts, net worth and its history, transactions (searchable, a page at a time), categories, budgets, spending by category, recurring bills and holdings. A token is sent as `Authorization: Bearer nya_...`; errors have one shape, `{"error":{"code","message"}}`.
+- **A read-only REST API** under `/api/v1`: who the token is (`me`), accounts, net worth and its history, transactions (searchable, a page at a time), categories and their groups, budgets, spending by category and group, recurring bills and holdings. A token is sent as `Authorization: Bearer nya_...`; errors have one shape, `{"error":{"code","message"}}`.
 - **An MCP server** at `/api/mcp`, over MCP's streamable HTTP transport (JSON-RPC 2.0, one message per request, plain JSON answers, no sessions), with tools for the same reads: accounts, net worth now and over time, searching transactions, spending by category, budgets, recurring bills, categories and holdings. Each tool answers with a short summary and the same JSON the REST endpoint gives. What came from a bank or was typed in (merchant names, descriptions, account names) is only ever inside that JSON, and the server tells the assistant it is data, not instructions.
 - **Stored data only.** Nothing either one does calls Plaid: it reads what Nya has already saved, so asking often adds no Plaid calls. Answers say how fresh that is: each balance's date, when each institution's transactions were last brought in (for transactions and the totals built on them), and whether an account's connection needs you. What can't be read is named and the rest answered: accounts and net worth say `complete: false` and list what they are short of (`missing_accounts`), so a total is never passed off as whole. Hidden accounts are left out unless asked for (`include_hidden=true`). Transactions are the app's own last 365 days, from banks, typed in and imported from files alike (each says which in `source`), built exactly as the Activity tab builds them (`lib/activity.ts`), and every total is the one the Budgets tab shows (`lib/totals.ts`): in one currency, without transfers, ATM withdrawals or loan payments, and without what you excluded, which each answer counts and names. Recurring bills are the ones the Budgets tab lists: detected the same way, from the older rows a yearly bill needs too, each with how often it comes, never one you marked not recurring, and added up to a month as the tab adds them, without those that may have ended or that pay a card off. A connection that brings in no transactions (one holding only investment accounts, or no bank account or card, and a bank account or card whose transactions Plaid doesn't provide or you didn't allow) is named in each answer's `sources`, with why, and its notes say what that leaves out, as the Activity and Budgets tabs do, so an empty list or a zero is never passed off as no spending.
 - **Plaid's sign convention**, the one Nya keeps: a positive transaction amount is money leaving the account, and what a credit card or loan owes is a positive balance.

@@ -23,7 +23,7 @@ const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashbo
 const mount = dashboard.slice(dashboard.indexOf('<Insights'), dashboard.indexOf('/>', dashboard.indexOf('<Insights')));
 
 describe('the Low balance alert', () => {
-  const alerts = (accounts: InsightAccount[]) => text(renderToStaticMarkup(<Insights txns={[]} budgets={{}} accounts={accounts} />));
+  const alerts = (accounts: InsightAccount[]) => text(renderToStaticMarkup(<Insights txns={[]} accounts={accounts} />));
   const checking: InsightAccount = { name: 'Checking', type: 'depository', subtype: 'checking', balance: 40, currency: 'USD' };
   const wallet: InsightAccount = { name: 'Wallet', type: 'depository', subtype: 'cash', balance: 20, currency: 'USD' };
 
@@ -82,7 +82,7 @@ describe("the spending figures in a month that may be missing a connection's tra
   // Spending this month and last, so the pace is said.
   const spent = [row(`${thisMonth}-01`, 40), row(`${lastMonth}-02`, 900)];
   const insights = (incomplete: Incomplete[], stopped: Stopped[], txns = spent, accounts: InsightAccount[] = []) =>
-    text(renderToStaticMarkup(<Insights txns={txns} budgets={{}} accounts={accounts} incomplete={incomplete} stopped={stopped} />));
+    text(renderToStaticMarkup(<Insights txns={txns} accounts={accounts} incomplete={incomplete} stopped={stopped} />));
   /** What Activity and Budgets say under this month. */
   const said = (incomplete: Incomplete[], stopped: Stopped[]) => monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10));
 

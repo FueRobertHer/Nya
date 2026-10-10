@@ -25,6 +25,7 @@ import {
 } from '@/lib/no-transactions';
 import { stoppedConnections } from '@/lib/month-coverage';
 import type { Txn } from '@/lib/transactions';
+import { categoriesFor } from './category-fixture';
 
 // Connections that bring in no transactions (lib/no-transactions.ts): what
 // Activity, budgets, Home's insights and the Plan say for them instead of an
@@ -354,12 +355,15 @@ describe('Activity', () => {
 });
 
 describe('budgets', () => {
+  // Each in a group of its own, so each is a meter of its own.
+  const two = categoriesFor({ groceries: 500, dining: 200 }, { groups: { dining: 'Food' } });
   const budgets = (txns: Txn[] | null, without?: NoTransactionsView) =>
     text(
       renderToStaticMarkup(
         <BudgetsTab
           txns={txns}
-          budgets={{ groceries: 500, dining: 200 }}
+          taxonomy={two.taxonomy}
+          budgets={two.budgets}
           onSave={async () => true}
           goals={[]}
           onSaveGoals={async () => true}
@@ -417,6 +421,8 @@ describe('budgets', () => {
   });
 });
 
+const GROCERIES_400 = categoriesFor({ groceries: 400 });
+
 describe('a connection whose sign-in lapsed', () => {
   // As the dashboard builds it: from each institution's health, leaving out
   // by id the connections that hold no bank account or card.
@@ -435,7 +441,8 @@ describe('a connection whose sign-in lapsed', () => {
       renderToStaticMarkup(
         <BudgetsTab
           txns={txns}
-          budgets={{ groceries: 400 }}
+          taxonomy={GROCERIES_400.taxonomy}
+          budgets={GROCERIES_400.budgets}
           onSave={async () => true}
           goals={[]}
           onSaveGoals={async () => true}
@@ -559,8 +566,9 @@ describe('the "Allow transactions" action', () => {
 });
 
 describe("Home's insights", () => {
+  const near = categoriesFor({ groceries: 26 });
   const insights = (without: NoTransactionsView, txns: Txn[]) =>
-    text(renderToStaticMarkup(<Insights txns={txns} budgets={{ groceries: 26 }} accounts={[]} withoutTransactions={without} />));
+    text(renderToStaticMarkup(<Insights txns={txns} taxonomy={near.taxonomy} budgets={near.budgets} accounts={[]} withoutTransactions={without} />));
 
   test('a budget alert or the pace beside a bank account or card whose transactions are missing says so', () => {
     const t = insights(refusedBeside, [row()]);
@@ -576,7 +584,6 @@ describe("Home's insights", () => {
       renderToStaticMarkup(
         <Insights
           txns={[]}
-          budgets={{}}
           accounts={[{ name: 'Checking', type: 'depository', balance: 12, currency: 'USD' }]}
           withoutTransactions={refusedBeside}
         />

@@ -35,7 +35,10 @@ import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
 import { totalNotes } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
-import BudgetsTab, { type Budgets } from './BudgetsTab';
+import BudgetsTab from './BudgetsTab';
+import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
+import { useCategories, useCategoriesForBudgets } from './categories-state';
+import CategoriesCard from './CategoriesCard';
 import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
@@ -450,6 +453,10 @@ export default function Dashboard({
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
+  // Your categories (components/categories-state.ts): the lists to choose one
+  // from, the group rollups, and what budgets are set on.
+  const categories = useCategories();
+  const acceptCategories = categories.accept;
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
@@ -476,16 +483,20 @@ export default function Dashboard({
   // Budgets and goals are each saved as one whole list, so their loading and
   // saving go through lib/whole-list-store.ts, which never lets an unloaded or
   // stale list be saved over what is stored.
-  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState({}));
+  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState(EMPTY_BUDGETS));
   const [goalsState, setGoalsState] = useState<ListState<Goal[]>>(initialListState<Goal[]>([]));
   const budgetsStore = useMemo(
     () =>
       createWholeListStore<Budgets>({
         url: '/api/budgets',
-        field: 'budgets',
+        // By category and group id (lib/budget-set.ts).
+        field: 'budget_set',
         noun: 'budgets',
-        empty: {},
-        isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+        empty: EMPTY_BUDGETS,
+        isValid: (v): v is Budgets => {
+          const b = v as Budgets | null;
+          return !!b && typeof b.categories === 'object' && b.categories !== null && typeof b.groups === 'object' && b.groups !== null;
+        },
         onChange: setBudgetsState,
       }),
     []
@@ -518,6 +529,7 @@ export default function Dashboard({
     []
   );
   const budgets = budgetsState.value;
+  useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
@@ -649,6 +661,8 @@ export default function Dashboard({
       }
       const data = await res.json();
       setTxns(data.transactions);
+      // The categories the rows were filed by.
+      acceptCategories(data.categories);
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
@@ -660,7 +674,7 @@ export default function Dashboard({
     } finally {
       setTxnsLoading(false);
     }
-  }, []);
+  }, [acceptCategories]);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
   // makes every API call answer 401; send the dashboard to the login page instead
@@ -773,6 +787,7 @@ export default function Dashboard({
     loadTransactions,
     loadNetWorth,
     requestBackfill,
+    taxonomy: categories.taxonomy,
   });
 
   // File import into a manual account (components/ImportSheet.tsx). After an
@@ -1653,6 +1668,7 @@ export default function Dashboard({
                 <Insights
                   txns={txns}
                   budgets={budgets}
+                  taxonomy={categories.taxonomy}
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
@@ -2317,6 +2333,18 @@ export default function Dashboard({
                     the rest of the account upkeep (components/ApiTokens.tsx). */}
                 {manageMode && <ApiTokens clerk={clerk} />}
 
+                {/* Your categories and their groups (components/CategoriesCard.tsx):
+                    a change shows on the next read of the transactions and budgets. */}
+                {manageMode && (
+                  <CategoriesCard
+                    categories={categories}
+                    onChanged={() => {
+                      loadTransactions();
+                      budgetsStore.load();
+                    }}
+                  />
+                )}
+
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
@@ -2329,6 +2357,7 @@ export default function Dashboard({
                 txns={txns}
                 notes={txnNotes}
                 loading={txnsLoading}
+                taxonomy={categories.taxonomy}
                 onRecategorize={txnEdits.recategorize}
                 onRename={renameVendor}
                 // Only with a manual account to add to (hidden ones aren't offered).
@@ -2352,6 +2381,8 @@ export default function Dashboard({
               <BudgetsTab
                 txns={txns}
                 budgets={budgets}
+                taxonomy={categories.taxonomy}
+                categoriesError={categories.error}
                 budgetsStatus={budgetsState.status}
                 budgetsError={budgetsState.error}
                 budgetsSaveError={budgetsState.saveError}
@@ -2576,6 +2607,7 @@ export default function Dashboard({
         target={txnEdits.sheet}
         institutions={institutions}
         txns={txns}
+        taxonomy={categories.taxonomy}
         onClose={txnEdits.closeSheet}
         onSaved={txnEdits.onSaved}
         onBalanceStale={() => loadNetWorth(true)}

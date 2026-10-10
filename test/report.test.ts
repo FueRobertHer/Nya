@@ -680,13 +680,16 @@ describe('review: what the first page claims', () => {
   test('marked categories are matched as the app files a category, and listed for marking once', () => {
     const rows = [row('h1', '2025-04-01', 500, { category: 'home  office' }), row('h2', '2025-04-02', 20, { category: 'Home Office' }), row('x', '2025-04-03', 7)];
     const r = buildReport(input({ rows, marked: ['home office'] }));
-    expect(r.marked!.categories).toEqual([{ category: 'home office', money_in: 0, money_out: 520, transactions: 2 }]);
+    expect(r.marked!.categories).toEqual([{ category: 'home office', key: 'home office', money_in: 0, money_out: 520, transactions: 2 }]);
     expect(r.marked!.money_out).toBe(520);
     expect(r.appendix!.rows.map((x) => [x.name, x.category])).toEqual([
       ['h1', 'home office'],
       ['h2', 'home office'],
     ]);
-    expect(r.categories).toEqual(['general merchandise', 'home office']);
+    expect(r.categories).toEqual([
+      { key: 'general merchandise', name: 'general merchandise' },
+      { key: 'home office', name: 'home office' },
+    ]);
   });
 
   test('on a tie, the currencies list the report’s own first', () => {
@@ -785,16 +788,16 @@ describe('the categories marked for taxes', () => {
   test('a group of their own, in the person’s order, summed by the same rules', () => {
     const r = medical();
     expect(r.marked!.categories).toEqual([
-      { category: 'medical', money_in: 0, money_out: 290.1, transactions: 4 },
+      { category: 'medical', key: 'medical', money_in: 0, money_out: 290.1, transactions: 4 },
       // A card's payment is never spending, marked or not.
-      { category: 'loan payments', money_in: 0, money_out: 0, transactions: 0 },
+      { category: 'loan payments', key: 'loan payments', money_in: 0, money_out: 0, transactions: 0 },
       // Euros aren't in a report in dollars.
-      { category: 'travel', money_in: 0, money_out: 0, transactions: 0 },
+      { category: 'travel', key: 'travel', money_in: 0, money_out: 0, transactions: 0 },
       // Marked, with nothing in the period.
-      { category: 'charity', money_in: 0, money_out: 0, transactions: 0 },
+      { category: 'charity', key: 'charity', money_in: 0, money_out: 0, transactions: 0 },
     ]);
     expect([r.marked!.money_in, r.marked!.money_out]).toEqual([0, 290.1]);
-    expect(r.categories).toContain('charity');
+    expect(r.categories).toContainEqual({ key: 'charity', name: 'charity' });
     expect(r.caveats.marked).toBe('set');
   });
 

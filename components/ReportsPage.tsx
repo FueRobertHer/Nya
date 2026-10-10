@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReportView } from './ReportView';
 import { Sheet } from './Sheet';
-import type { Report } from '@/lib/report/build';
+import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
 import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
@@ -238,7 +238,7 @@ export default function ReportsPage() {
         <Sheet open={marking} title="Categories for taxes" onClose={() => setMarking(false)}>
           <MarkCategories
             categories={report.categories}
-            marked={report.marked?.categories.map((c) => c.category) ?? []}
+            marked={report.marked?.categories.map((c) => c.key) ?? []}
             unreadable={report.caveats.marked === 'unreadable'}
             onSaved={() => {
               setMarking(false);
@@ -252,14 +252,17 @@ export default function ReportsPage() {
 }
 
 /** The sheet that marks categories: every category in the report's period,
- *  and every one already marked. Saved whole (app/api/report-settings). */
+ *  and every one already marked, by name. A mark is saved as the category's
+ *  words (its `key`, which a rename never changes), the list whole
+ *  (app/api/report-settings). */
 export function MarkCategories({
   categories,
   marked,
   unreadable,
   onSaved,
 }: {
-  categories: string[];
+  categories: ReportCategory[];
+  /** The keys marked now. */
   marked: string[];
   unreadable: boolean;
   onSaved: () => void;
@@ -310,7 +313,8 @@ export function MarkCategoriesView({
   onToggle,
   onSave,
 }: {
-  categories: string[];
+  categories: ReportCategory[];
+  /** The keys chosen. */
   chosen: string[];
   unreadable: boolean;
   saving: boolean;
@@ -338,9 +342,9 @@ export function MarkCategoriesView({
       ) : (
         <fieldset className="report-marks" disabled={saving} aria-label="Categories">
           {categories.map((c) => (
-            <label key={c} className="report-mark">
-              <input type="checkbox" checked={chosen.includes(c)} onChange={() => onToggle(c)} />
-              <span>{c}</span>
+            <label key={c.key} className="report-mark">
+              <input type="checkbox" checked={chosen.includes(c.key)} onChange={() => onToggle(c.key)} />
+              <span>{c.name}</span>
             </label>
           ))}
         </fieldset>
