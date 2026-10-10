@@ -12,12 +12,17 @@
 // 96-bit nonce and a 32-bit block counter make each 64-byte block of
 // keystream, which is XORed with the text.
 //
-// POLY1305 is the one-time authenticator over 2^130 - 5. Numbers here are
-// JavaScript doubles, exact only below 2^53, so the accumulator and the key
-// are kept in ten limbs of 13 bits (the layout of poly1305-donna-16, as
-// TweetNaCl writes it): a product of two limbs, a sum of ten of them and a
-// carry all stay far below that. Carries are taken with a division, never a
-// 32-bit shift, which would drop bits of a sum past 2^32.
+// POLY1305 is the one-time authenticator over 2^130 - 5. The accumulator and
+// the key are kept in ten limbs of 13 bits (the layout of poly1305-donna-16,
+// as TweetNaCl writes it). Before each multiplication every limb of the
+// accumulator is carried back to 13 bits (the second at most 2^13), so each
+// limb of the product, a sum of ten products of two limbs plus the carry
+// before it, stays below 2^32: the largest possible is 2,415,452,816, about
+// 2^31.17, from the clamped key's largest limbs. That is what makes every
+// carry exact as a 32-bit shift (>>> 13), and the sums exact as doubles. A
+// change that let a limb grow past 13 bits before the product would break
+// this, silently, so test/age.test.ts runs the key at its largest clamped
+// value with every message byte at 0xff.
 //
 // THE AEAD seals with no associated data, as age does: the first block of
 // keystream (counter 0) keys Poly1305, the text is encrypted from counter 1,
@@ -187,9 +192,10 @@ export class Poly1305 {
       h7 += ((t5 >>> 11) | (t6 << 5)) & 0x1fff;
       h8 += ((t6 >>> 8) | (t7 << 8)) & 0x1fff;
       h9 += (t7 >>> 5) | hibit;
-      // Each limb back to 13 bits before the product, so that no sum of
-      // products below can reach 2^32 (the largest is under 2^31.1), and its
-      // carry can be taken with a 32-bit shift.
+      // Each limb back to 13 bits before the product (h1 at most 2^13), so
+      // that no sum of products below can reach 2^32 (the largest is
+      // 2,415,452,816, about 2^31.17), and its carry can be taken with a
+      // 32-bit shift.
       let c = h0 >>> 13;
       h0 &= 0x1fff;
       h1 += c; c = h1 >>> 13; h1 &= 0x1fff;
