@@ -193,16 +193,30 @@ describe('which kept rows count', () => {
     expect(shown.pendingStood.get('r')?.transaction_id).toBe('p');
   });
 
-  test('a row dated by posting (OFX) is never superseded across the bank’s window edge; others may be, by a posting lag', () => {
+  test('no kept row is superseded across an edge on read, whatever its file: only a lag would make the pair one, which the review asks about', () => {
     const b = bank({ transaction_id: 'first', date: '2025-02-01' });
-    const ofxRow = held('ofx', { date: '2025-01-30', source: 'import:ofx' });
-    const csvRow = held('csv', { date: '2025-01-30', source: 'import:csv' });
-    expect(counted([ofxRow], [b], '2025-02-01')).toEqual(['ofx']);
-    expect(counted([csvRow], [b], '2025-02-01')).toEqual([]);
+    for (const source of ['import:ofx', 'import:csv', 'import:qif']) expect(counted([held('r', { date: '2025-01-30', source })], [b], '2025-02-01')).toEqual(['r']);
     // Nor by a bank row after the period its file covers.
     const covers = new Map([['history-import:a', { from: '2025-01-01', to: '2025-01-31' }]]);
-    const inside = held('in', { date: '2025-01-31', source: 'import:ofx' });
+    const inside = held('in', { date: '2025-01-31', source: 'import:csv' });
     expect(settle([inside], [bank({ transaction_id: 'feb', date: '2025-02-02' })], order, { bankFrom: '2025-01-01', covers }).counted.map((r) => r.id)).toEqual(['in']);
+    // Within both sides' days, it is.
+    expect(counted([held('r', { date: '2025-02-03', source: 'import:csv' })], [b], '2025-02-01')).toEqual([]);
+  });
+
+  test('a file reaching up to the bank’s first day, answered as its own wherever the review asked: every answer stands, and the one fare both have counts once', () => {
+    const day = (n: number) => new Date(Date.UTC(2025, 0, 1) + n * 86_400_000).toISOString().slice(0, 10);
+    // A daily fare: the file holds days 25 to 30, the bank days 30 to 34.
+    const banks = [30, 31, 32, 33, 34].map((d) => bank({ transaction_id: `b${d}`, date: day(d), amount: 2.75, name: 'MTA*NYCT PAYGO', merchant_name: 'MTA' }));
+    const covers = new Map([['history-import:a', { from: day(25), to: day(30) }]]);
+    // The review pairs each of days 26 to 30 with the bank's fare four days
+    // later, across an edge, and asks; each is answered as its own.
+    const rows = [25, 26, 27, 28, 29, 30].map((d) =>
+      held(`r${d}`, { date: day(d), amount: 2.75, name: 'MTA NYCT PAYGO', source: 'import:csv', ...(d >= 26 ? { distinct_from: [bankKey(banks[d - 26])] } : {}) })
+    );
+    const out = settle(rows, banks, order, { bankFrom: day(30), covers });
+    expect(out.counted.map((r) => r.id)).toEqual(['r25', 'r26', 'r27', 'r28', 'r29']);
+    expect(out.superseded.get('r30')?.transaction_id).toBe('b30');
   });
 });
 
@@ -216,10 +230,17 @@ describe('as many pairs as can be', () => {
     const pairs = pairUp(file, banks);
     expect(pairs.size).toBe(13);
     expect([...pairs.values()].every((p) => p.days === 2)).toBe(true);
-    // Through the later sync too: 8 of the file's fares are the bank's only ones.
-    const rows = file.map((r) => held(`r${r.index}`, { date: r.date, amount: 2.75, name: r.name }));
+    // Kept as answered (each the duplicate of its bank fare): 8 of the file's
+    // fares are its own, 21 in all.
+    const rows = file.map((r) => held(`r${r.index}`, { date: r.date, amount: 2.75, name: r.name, ...(pairs.has(r.index) ? { same_as: bankKey(pairs.get(r.index)!.twin) } : {}) }));
     const out = settle(rows, banks, ['history-import:a'], { bankFrom: day(10) });
     expect(out.counted.length + banks.length).toBe(21);
+    // On a read, the bank's fares reaching these days only later (its history
+    // arriving after the review): those within both sides' days are matched,
+    // as many as can be; the two before the bank's first day stay counted, as
+    // only a lag would make them its fares.
+    const unanswered = file.map((r) => held(`u${r.index}`, { date: r.date, amount: 2.75, name: r.name }));
+    expect(settle(unanswered, banks, ['history-import:a'], { bankFrom: day(10) }).counted.map((r) => r.date)).toEqual(Array.from({ length: 10 }, (_, i) => day(i)));
   });
 
   test('the closest pairing among the fullest: a gap never pairs a row with its neighbour’s twin', () => {

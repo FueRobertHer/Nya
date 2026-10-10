@@ -43,15 +43,23 @@
 // an imported row a free bank row matches by the same rule retires,
 // uncounted, while the bank's row stays (settle). Earlier imports' rows are
 // matched first, so what an import showed in its review is what it does once
-// committed. ACROSS AN EDGE (a row dated before the bank's earliest posted
-// row, or a bank row dated outside the period the file covers) two rows can
-// only be one transaction through a posting lag: a file dated by purchase
-// (many a CSV) beside the bank's posting dates. An OFX file is dated by
-// posting (DTPOSTED), as the bank's rows are, so for its rows such a pair is
-// never made; for others it is, and the review shows it as possibly the same,
-// for the person to answer (lib/history-import/plan.ts). Worked out on every
-// read, never stored: undoing an import, or the bank removing its row, puts
-// the imported row back exactly as it was.
+// committed. Worked out on every read, never stored: undoing an import, or
+// the bank removing its row, puts the imported row back exactly as it was.
+//
+// ACROSS AN EDGE (a row dated before the bank's earliest posted row, or a
+// bank row dated outside the period the row's file covers) two rows can only
+// be one transaction through a posting lag: a file dated by purchase (many a
+// CSV) beside the bank's posting dates. Whether there is one, the dates of
+// rows of one amount can't tell: a daily fare reads as well with a lag of two
+// days as with none. So such a pair is only ever the person's to answer: the
+// review shows it as possibly the same, and why (lib/history-import/plan.ts;
+// for an OFX file, dated by posting as the bank's rows are, it isn't made at
+// all), and a read never makes one, so an answer that a row is its own
+// stands, and nothing is absorbed behind the person's back. What that costs:
+// a file dated by purchase whose days the bank's own reach only after the
+// review (its history arriving later, a re-link) may count a lag's worth of
+// rows at an edge beside the bank's, in plain sight on the Activity tab,
+// rather than lose any.
 
 import { digitsOf, normalizeDescription } from '../import/normalize';
 
@@ -372,7 +380,7 @@ export type Settled<T extends HeldRow> = {
  *      posted bank row no duplicate holds is its twin by the matching rule:
  *      then that bank row stands for it. Earlier imports are matched first; a
  *      pair the person said is not one never is, nor a pair across an edge
- *      for a row dated by posting (crossesEdge, POSTED_DATED).
+ *      (crossesEdge: see the header).
  *   4. With `pending` (what is shown and listed, never the estimated history,
  *      which walks posted rows only): a row left over that a pending bank row
  *      looks like isn't shown beside it until it posts, or goes.
@@ -417,10 +425,11 @@ export function settle<T extends HeldRow>(
     if (named !== undefined && before(named, r.import_id) < 0) standing.set(r.id, { row: r.same_as_row });
   }
 
-  // 3. Superseded: the rest against the free posted rows.
+  // 3. Superseded: the rest against the free posted rows, never across an
+  //    edge, nor as a pair the person said is not one.
   const candidates = sorted.filter((r) => !standing.has(r.id));
   const forbidden = (r: T, b: BankRow) =>
-    (r.distinct_from ?? []).includes(bankKey(b)) || (POSTED_DATED(r.source) && crossesEdge(r.date, b.date, opts.bankFrom, opts.covers?.get(r.import_id) ?? null));
+    (r.distinct_from ?? []).includes(bankKey(b)) || crossesEdge(r.date, b.date, opts.bankFrom, opts.covers?.get(r.import_id) ?? null);
   const match = (rows: T[], twins: BankRow[], into: Map<string, BankRow>): Set<BankRow> => {
     const asRows = rows.map((r, index) => ({ index, date: r.date, amount: r.amount, currency: r.currency, name: r.name }));
     const pairs = pairUp(asRows, twins, (row, b) => forbidden(rows[row.index], b));
