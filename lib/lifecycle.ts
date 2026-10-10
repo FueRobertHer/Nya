@@ -549,6 +549,40 @@ export async function removeUnreadable(ctx: Ctx): Promise<{ removed: string[]; u
 
 // ---- For the app ----
 
+type EndingInstitution = {
+  accounts: { account_id: string }[];
+  holdings: { account_id?: string }[];
+  unshown_accounts?: { account_id: string }[];
+};
+
+/**
+ * Takes every account ended by now (endedNow) out of the live institutions:
+ * its row, its positions and its name among the accounts a broken
+ * institution can't show. So the live total, the Accounts tab's cards, the
+ * Plan, allocation and every figure the dashboard adds up leave it out,
+ * without each having to know. A hidden one stays: it is left out of every
+ * total already, and the Hidden card lists it from its row. Display only, on
+ * a fetch that has been recorded already: storage never changes. Returns the
+ * ids taken out.
+ */
+export function applyLifecycle(institutions: EndingInstitution[], view: LifecycleView, hidden: ReadonlyMap<string, unknown>, now: number = Date.now()): Set<string> {
+  const ended = endedNowIds(view, now);
+  const out = new Set<string>();
+  if (ended.size === 0) return out;
+  const gone = (id: string | undefined) => !!id && ended.has(id) && !hidden.has(id);
+  for (const inst of institutions) {
+    for (const a of inst.accounts) if (gone(a.account_id)) out.add(a.account_id);
+    inst.accounts = inst.accounts.filter((a) => !gone(a.account_id));
+    inst.holdings = inst.holdings.filter((h) => !gone(h.account_id));
+    if (inst.unshown_accounts) {
+      const shown = inst.unshown_accounts.filter((a) => !gone(a.account_id));
+      if (shown.length > 0) inst.unshown_accounts = shown;
+      else delete inst.unshown_accounts;
+    }
+  }
+  return out;
+}
+
 /** An ended account as the Accounts tab and the chart read it: one per
  *  account, under its current id. */
 export type LifecycleForClient = {

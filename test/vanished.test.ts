@@ -158,9 +158,10 @@ describe('an account disappears from a healthy fetch', () => {
 
     const res = await check('item_a', ['acct_1'], NOW + 4 * DAY);
 
-    // Accepted does NOT close the gate: a real closure should cost a few days
-    // of gap, not a permanent freeze on a condition nothing can clear while
-    // the lifecycle UI is unbuilt.
+    // Accepted does NOT close the gate: nobody answered within the window,
+    // so the outcome is recorded as an assumed closure the person can correct
+    // (lib/lifecycle-questions.ts), and a real closure costs a few days of
+    // gap, not a permanent freeze.
     expect(res.unconfirmed).toEqual([]);
     expect(res.accepted).toEqual(['acct_2']);
   });
@@ -318,9 +319,9 @@ describe('cost', () => {
     // institutions cost only one more than batched, so any loose threshold
     // passes both.
     expect(three).toBe(two);
-    // Exactly three: one hgetall each for the remembered hash, the records,
-    // and the account links.
-    expect(two).toBe(3);
+    // Exactly four: one hgetall each for the remembered hash, the records,
+    // the account links, and the answers about accounts (lib/lifecycle.ts).
+    expect(two).toBe(4);
   });
 
   test('costs nothing at all when there are no institutions', async () => {
