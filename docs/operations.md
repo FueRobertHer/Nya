@@ -10,6 +10,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Plaid secrets in older logs](#plaid-secrets-in-older-logs)
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
+- [Category ids: the migration and rolling back](#category-ids-the-migration-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -244,6 +245,30 @@ REDIS_PREFIX=production CONTAINER_ID=<id> bun run move-data --target production 
 ```
 
 It is refused unless a report shows nothing left to copy, refresh or delete and no conflicts (the proof nothing written to the old keys is left behind), and afterwards every run is refused, so a run can never take the missing old keys for deletions to carry into the container.
+
+## Category ids: the migration and rolling back
+
+The release that gave categories ids and groups ([features.md](features.md#categories-and-groups)) changes what names a category. Before it, a category was its words, stored wherever it was used: a category you chose for a transaction (`txn-category-overrides`), one carried across a re-link (`txn-category-carry`), the category on a transaction entered by hand or imported (`manual-transactions`), and the name a budget was saved under (`budgets`). There is nothing to run: each container migrates itself the first time the app reads it, and the read-only API and the data download never write.
+
+**What happens on the first read.** The app makes the person's categories (the `categories` store): the default groups, every Plaid category, `other`, and a category for every set of words already on their data, each named by its words exactly as Nya showed it, so nothing a person or a program reads changes. Every set of words becomes a **text key** of exactly one category: what was stored stays as it was, and each value is now a key that files into a category, which a rename never changes. Then budgets move to the `budget-set` store, by category id: each name to the category its words file into (names that land on one category add up, so the month's total doesn't move). The `budgets` blob is left as it was. Overrides, carried categories and manual and imported rows are not rewritten at all.
+
+**Lossless and idempotent.** Every budget name gets a category, whatever the limit on categories; every override, carried category and row keeps its words, which file into a category. A second read finds the set and the budgets stored and writes nothing. Two first reads at once (the dashboard loads transactions and budgets side by side) agree: the categories are made and grown with a compare-and-set, so both use the same ids.
+
+**What a rollback sees.** Redeploying the release before reads only what it always read, and every one of those stores still holds what it understands:
+
+- **Categories chosen for transactions, carried ones, manual and imported rows**: exactly as that release wrote them. A category chosen since is stored as the category's first text key: its words when it was first made (a seeded or older category's original words, so a renamed one shows under its old name; a category made since, under the name it was made with). A transaction filed under a merged category keeps its own words, so it shows as it did before the merge.
+- **Budgets**: every save writes the `budget-set` store, then the `budgets` blob with each category's budget under its first text key. So the release before shows every category budget as last saved, a renamed one under its old words, a merged one's added into the one it went into under that one's words. It never shows a group's budget (it has no groups): those wait in `budget-set`.
+- **Not shown at all**: group budgets, groups, archiving, renames, icons, and categories that exist only in the new release's lists (that release builds its list from the words on transactions, as before).
+
+**Rolling forward again.** The `budget-set` store keeps the copy of the `budgets` blob it last wrote, and what the blob held before that write. On the next read:
+
+- the blob is that copy: nothing happened;
+- the blob is still what it held before the last save (a save that stopped between its two writes): the save is finished;
+- anything else: the release before changed it after the rollback. Its category budgets are taken in, by name, onto categories as on the first read; group budgets, which it never saw, are kept.
+
+Categories chosen, carried or typed during a rollback are words, as always: the next load of the Activity tab makes a category for any words that none has yet. A category made with the same name as one of yours is the same category.
+
+**If a read fails.** Budgets or categories that can't be read answer 409 and are never saved over, as before. Transactions are still shown, each under the category it came with, with a note, until the categories can be read.
 
 ## Rolling back once the brokerage option is on
 
