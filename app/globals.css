@@ -2811,6 +2811,84 @@ button.plan-edit:disabled {
   margin-top: 8px;
 }
 
+/* --- API tokens (components/ApiTokens.tsx) --- */
+
+.api-token-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.api-token {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.api-token:first-child {
+  border-top: none;
+}
+
+.api-token-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.api-token-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.api-token > button {
+  width: auto;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.api-token-problem .link-btn {
+  margin-left: 4px;
+}
+
+.api-token-config {
+  width: 100%;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.api-token-made .button-pair,
+.api-token-new > button {
+  margin-top: 12px;
+}
+
+/* --- the developer page (app/developers) --- */
+
+.info-section pre {
+  max-width: 100%;
+  margin: 0 0 12px;
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.api-endpoint h2 code {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.api-endpoint h3 {
+  margin: 16px 0 8px;
+}
+
 /* --- allocation (components/AllocationCard.tsx), on the Plan tab, and the FI
    card on Home (components/FiProgressCard.tsx) --- */
 
@@ -2964,6 +3042,255 @@ button.plan-edit:disabled {
 
 .connect-options + .coverage-note {
   margin-top: 14px;
+}
+
+/* --- recurring, the cash forecast and the calendar (components/RecurringCard.tsx,
+   components/ForecastCard.tsx, components/CalendarView.tsx) --- */
+
+/* Bills and income, and a calendar day's lists: a quiet heading over each. */
+.recurring-section {
+  margin: 14px 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.recurring-section span {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* A series whose dates went by with nothing arriving: still listed, quieter. */
+.recurring-ended td {
+  opacity: 0.6;
+}
+
+.recurring-dismissed {
+  margin-top: 12px;
+}
+
+.recurring-dismissed-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 14px;
+}
+
+.recurring-dismissed-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+/* The forecast's warning sits right under the range buttons. */
+.forecast-warning {
+  margin-top: 10px;
+}
+
+.forecast-warn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.forecast-warn-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.forecast-warn-field input {
+  width: 96px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+/* The what-if's answer: the new lowest point, coloured as the line's point. */
+.forecast-whatif {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.forecast-whatif.warn {
+  color: var(--warn);
+}
+
+.forecast-whatif.down {
+  color: var(--down);
+}
+
+/* The calendar: seven columns that fit a phone, a figure and dots a day. */
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 6px;
+}
+
+.cal-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cal-nav {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text);
+}
+
+.cal-nav svg {
+  width: 18px;
+  height: 18px;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.cal-dow {
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.cal-day {
+  width: auto;
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cal-day.selected {
+  background: rgba(91, 141, 239, 0.14);
+}
+
+.cal-num {
+  font-size: 13px;
+}
+
+.cal-day.past .cal-num {
+  color: var(--muted);
+}
+
+.cal-day.today .cal-num {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* A day's figure: what posted, or what is expected, in italics as an estimate. */
+.cal-fig {
+  max-width: 100%;
+  min-height: 12px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cal-fig.in {
+  color: var(--up);
+}
+
+.cal-fig.out {
+  color: var(--text);
+}
+
+.cal-fig.estimated {
+  font-style: italic;
+}
+
+/* The narrowest phones (320 px wide): a day's cell is 34 px, so its figure
+   is set a size smaller and tighter to fit, as "-$143" or "+$3.5K". */
+@media (max-width: 340px) {
+  .cal-fig {
+    font-size: 9px;
+    letter-spacing: -0.03em;
+  }
+}
+
+.cal-dots {
+  display: flex;
+  gap: 3px;
+  min-height: 5px;
+}
+
+.cal-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.cal-dot.income {
+  background: var(--up);
+}
+
+.cal-dot.bill {
+  background: var(--down);
+}
+
+.cal-dot.planned {
+  background: var(--accent);
+}
+
+.cal-dot.due {
+  background: var(--warn);
+}
+
+.cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cal-legend .cal-dot {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.cal-detail {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* Listed on the day, not in its figure: another currency, excluded, or a
+   payment due. */
+.cal-uncounted td {
+  color: var(--muted);
 }
 
 /* --- file import (components/ImportSheet.tsx): lists, not tables, so the

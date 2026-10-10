@@ -547,6 +547,7 @@ describe('on the Activity tab', () => {
       amount: 12.5,
       pending: false,
       account_name: 'Wallet',
+      account_type: 'depository',
       institution_name: 'Cash',
       category: 'food and drink',
       iso_currency_code: 'USD',

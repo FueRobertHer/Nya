@@ -39,6 +39,9 @@ export type ManualType = (typeof MANUAL_TYPES)[number];
  *  every write path so the UI, the PUT and the ingest route agree. */
 export const MAX_BALANCE = 1e12;
 
+/** The one currency manual balances are kept in, for now (toInstitutions). */
+export const MANUAL_CURRENCY = 'USD';
+
 export type ManualAccount = {
   account_id: string;
   name: string;
@@ -118,30 +121,23 @@ export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   return accounts.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** One account by id, or null if it doesn't exist. Throws on read failure, same as above. */
-export async function getManualAccount(ctx: Ctx, account_id: string): Promise<ManualAccount | null> {
-  const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), account_id);
-  if (!blob) return null;
-  try {
-    return parseStoredAccount(account_id, await decrypt(blob));
-  } catch (err) {
-    throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
-  }
-}
-
 /**
  * Every manual account that can be read, and the ids of those that can't, for
- * the download of my data (lib/user-export.ts), which names what it can't read
- * rather than stopping. By the storage seam's rules (lib/repo.ts openStored),
- * as its stores report entries: `unreadable`, an account whose stored bytes
- * are damaged; `unrecognised`, one stored intact in a form this code does not
- * know (not JSON, not an account's shape). Anything that says nothing about
- * the data still throws: storage out of reach, a key this deployment can't
- * load, a failed decrypt under k0. Never for a figure that is recorded or
- * written on, which must use getManualAccounts (see the file header). The
- * accounts in name order, the ids in id order.
+ * a reader that names what it can't show rather than stopping: the read-only
+ * API's accounts and net worth (lib/api-read.ts) and the download of my data
+ * (lib/user-export.ts). Never for a figure that is recorded or written on,
+ * which must use getManualAccounts (see the file header). By the storage
+ * seam's rules (lib/repo.ts openStored), as its stores report entries:
+ * `unreadable`, an account whose stored bytes are damaged (not ciphertext, or
+ * ciphertext that fails to authenticate under a data key); `unrecognised`,
+ * one stored intact in a form this code does not know (not JSON, not an
+ * account's shape, a later version's format). Anything that says nothing
+ * about the data throws as it is: storage out of reach, a key this deployment
+ * can't load, and a failed decrypt under k0, which a replaced
+ * PLAID_ENCRYPTION_KEY would look exactly like. The accounts in name order,
+ * the ids in id order.
  */
-export async function readManualAccountsForExport(ctx: Ctx): Promise<{ accounts: ManualAccount[]; unreadable: string[]; unrecognised: string[] }> {
+export async function getManualAccountsReport(ctx: Ctx): Promise<{ accounts: ManualAccount[]; unreadable: string[]; unrecognised: string[] }> {
   // Deliberately uncaught: a Redis error is never "no accounts".
   const map = (await redis().hgetall<Record<string, unknown>>(ACCOUNTS_HASH(ctx))) ?? {};
   const accounts: ManualAccount[] = [];
@@ -162,6 +158,22 @@ export async function readManualAccountsForExport(ctx: Ctx): Promise<{ accounts:
     })
   );
   return { accounts: accounts.sort((a, b) => a.name.localeCompare(b.name)), unreadable: unreadable.sort(), unrecognised: unrecognised.sort() };
+}
+
+/** Whether a manual account by this id is stored, without reading it. */
+export async function manualAccountExists(ctx: Ctx, account_id: string): Promise<boolean> {
+  return Number(await redis().hexists(ACCOUNTS_HASH(ctx), account_id)) === 1;
+}
+
+/** One account by id, or null if it doesn't exist. Throws on read failure, same as above. */
+export async function getManualAccount(ctx: Ctx, account_id: string): Promise<ManualAccount | null> {
+  const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), account_id);
+  if (!blob) return null;
+  try {
+    return parseStoredAccount(account_id, await decrypt(blob));
+  } catch (err) {
+    throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+  }
 }
 
 /** Creates or replaces one account. Single-field HSET, so concurrent writes to
@@ -312,7 +324,7 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       balance: a.balance,
       // Manual accounts are USD-only for now, matching the rest of the
       // account-level figures (net worth, balances, goals).
-      currency: 'USD',
+      currency: MANUAL_CURRENCY,
       updated_at: a.updated_at,
     });
   }

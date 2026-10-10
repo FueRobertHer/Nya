@@ -63,8 +63,10 @@ export type StoreUsage = {
   entries: number;
   /** Characters stored, ids and values together. */
   chars: number;
-  /** Its largest value, the one nearest the ceiling: its id (null for a
-   *  value store's one value) and characters. */
+  /** Its largest value, the one nearest the ceiling: its characters, and its
+   *  id, null for a value store's one value and for a store not declared
+   *  exportable, whose ids are a credential's (an API token's id is part of
+   *  the token) or the service's own bookkeeping. */
   largest_id: string | null;
   largest_chars: number;
 };
@@ -148,17 +150,28 @@ export async function readStorageUsage(ctx: Ctx): Promise<StorageUsage> {
   return { total_chars: total, items, stores_chars: stores.reduce((n, s) => n + s.chars, 0), stores };
 }
 
+/** The stores that hold data, one value or one per id: neither kind of
+ *  counter store (a count per container, or one per id), whose counts are
+ *  the service's bookkeeping, a few characters each that come and go. */
 const measurable = (s: Store): s is ValueStore<unknown> | MapStore<unknown> => s.kind === 'value' || s.kind === 'map';
 
-/** Every store on the seam that holds something, largest first, one request
- *  each. Counter stores are left out: a count is the service's bookkeeping,
- *  a few characters that never grow. */
+/** Every store on the seam that holds something (measurable), largest
+ *  first, one request each. */
 async function readStoreSizes(ctx: Ctx): Promise<StoreUsage[]> {
   const measured = await Promise.all(declaredStores().filter(measurable).map(async (s) => ({ s, size: await s.size(ctx) })));
   return measured
     .flatMap(({ s, size }): StoreUsage[] =>
       size.largest
-        ? [{ store: s.name, what: s.what, entries: size.entries, chars: size.chars, largest_id: size.largest.id, largest_chars: size.largest.chars }]
+        ? [
+            {
+              store: s.name,
+              what: s.what,
+              entries: size.entries,
+              chars: size.chars,
+              largest_id: s.exportable ? size.largest.id : null,
+              largest_chars: size.largest.chars,
+            },
+          ]
         : []
     )
     .sort((a, b) => b.chars - a.chars || (a.store < b.store ? -1 : 1));

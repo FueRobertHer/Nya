@@ -20,6 +20,9 @@ const { manualTxnStore } = await import('@/lib/manual-txns');
 const { txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { firePlanStore } = await import('@/lib/fire-plan');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
+const { plannedStore } = await import('@/lib/planned-store');
+const { EMPTY_PLANNED } = await import('@/lib/planned');
+const { apiTokenStore, apiRequestCount } = await import('@/lib/api-token-store');
 
 const A = crypto.randomUUID();
 const saved = { ...process.env };
@@ -193,6 +196,27 @@ describe('the stores on the storage seam, measured', () => {
     expect(usage.stores_chars).toBe(usage.stores.reduce((n, s) => n + s.chars, 0));
     // The Items' blobs are counted apart, as before.
     expect(usage.total_chars).toBe(0);
+  });
+
+  test('the forecast’s planned items are measured as a value; API tokens without an id named; request counts never listed', async () => {
+    await plannedStore.set(ctx, { ...EMPTY_PLANNED, dismissed: ['group:rent|1500'] });
+    // A token's id is part of its secret: its size is reported, never its id.
+    await apiTokenStore.set(ctx, 'tok_secret_part', { v: 1, label: 'Raycast', hash: 'a'.repeat(64), user_id: null, created_at: at, last_used_at: null });
+    // A count per id is bookkeeping, like a counter.
+    await apiRequestCount.take(ctx, 'tok_secret_part');
+
+    const usage = await readStorageUsage(ctx);
+    const planned = (fake.strings.get(ctxKey('planned-items')) ?? '').length;
+    const token = fake.hashes.get(ctxKey('api-tokens'))!.get('tok_secret_part')!.length;
+    expect(planned).toBeGreaterThan(0);
+    expect(usage.stores).toEqual(
+      [
+        { store: 'planned-items', what: 'planned items', entries: 1, chars: planned, largest_id: null, largest_chars: planned },
+        { store: 'api-tokens', what: 'API tokens', entries: 1, chars: storedChars('api-tokens'), largest_id: null, largest_chars: token },
+      ].sort((x, y) => y.chars - x.chars)
+    );
+    expect(fake.hashes.get(ctxKey('api-requests'))?.size).toBe(1);
+    expect(JSON.stringify(usage)).not.toContain('tok_secret_part');
   });
 
   test('a store that can’t be measured fails the report, never reads as empty', async () => {

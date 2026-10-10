@@ -70,7 +70,7 @@ import {
   type DirectoryEntry,
   type Link,
 } from './links';
-import { readManualAccountsForExport, isManualId, type ManualAccount } from './manual';
+import { getManualAccountsReport, isManualId, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -89,6 +89,7 @@ import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
+import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
@@ -198,9 +199,12 @@ export type ExportProblem = {
   /** What is missing, by the id it is stored under, in id order: an entry's
    *  id for a store on the seam, a UTC day for the balance histories, an
    *  account's id for manual accounts. Absent for a part that is one value
-   *  (then null in the file) and for sharing, which names no ids and marks
-   *  each record it can't give where it belongs. */
+   *  (then null in the file), for sharing, which names no ids and marks each
+   *  record it can't give where it belongs, and for api_tokens, whose ids are
+   *  part of each token, so never in the file (`count` instead). */
   ids?: string[];
+  /** How many are missing, for a part that can't name them (api_tokens). */
+  count?: number;
 };
 
 /** A list of ids that can't be used, by why, as problems of one part. */
@@ -209,6 +213,11 @@ function idProblems(section: string, named: { unreadable: string[]; unrecognised
     ...(named.unreadable.length > 0 ? [{ section, problem: 'unreadable' as const, ids: named.unreadable }] : []),
     ...(named.unrecognised.length > 0 ? [{ section, problem: 'unrecognised' as const, ids: named.unrecognised }] : []),
   ];
+}
+
+/** The same, counted, for a part whose ids must not be in the file. */
+function countedProblems(section: string, named: { unreadable: string[]; unrecognised: string[] }): ExportProblem[] {
+  return idProblems(section, named).map(({ ids, ...p }) => ({ ...p, count: ids?.length ?? 0 }));
 }
 
 // ---- Stores with nothing to say about the others ----
@@ -285,6 +294,26 @@ export const SECTIONS: readonly ExportSection[] = [
       (await getGoals(ctx)).map((g) => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id ?? null })),
     mentions: (goals) => goals.map((g) => g.account_id),
   }),
+  {
+    key: 'api_tokens',
+    what: 'API tokens',
+    // Each token's name and dates: what the person called it, and when it was
+    // made and last read their data. Never its secret, which Nya doesn't keep,
+    // nor the hash it keeps of it (a credential, so the store itself is not
+    // exportable), nor its id, which is part of the token. Read with the
+    // seam's report, as every store on it is: a token whose record can't be
+    // used is counted among the problems, never named by its id, and never a
+    // reason to stop (rule 1).
+    read: async ({ ctx }) => {
+      const report = await apiTokenStore.getAllReport(ctx);
+      return {
+        value: [...report.entries.values()]
+          .map((t) => ({ label: t.label, created_at: t.created_at, last_used_at: t.last_used_at }))
+          .sort((a, b) => byCodePoint(a.created_at, b.created_at) || byCodePoint(a.label, b.label)),
+        problems: countedProblems('api_tokens', report),
+      };
+    },
+  },
   section({
     key: 'sharing',
     what: 'sharing settings',
@@ -332,7 +361,7 @@ const readIds = (shown: Showing[] | null) => (shown ?? []).flatMap((s) => Object
 export function declaredSections(): ExportSection[] {
   const covered = new Set(SECTIONS.flatMap((s) => s.covers ?? []));
   return declaredStores().flatMap((store): ExportSection[] =>
-    store.exportable && store.kind !== 'counter' && !covered.has(store.name)
+    store.exportable && store.kind !== 'counter' && store.kind !== 'counter-map' && !covered.has(store.name)
       ? [{ key: store.name, what: store.what, read: ({ ctx }) => readDeclared(store, ctx) }]
       : []
   );
@@ -431,7 +460,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
-      read('manual accounts', () => readManualAccountsForExport(ctx)),
+      read('manual accounts', () => getManualAccountsReport(ctx)),
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
@@ -589,6 +618,7 @@ export type UserExport = {
 export function notIncluded(people: boolean): string[] {
   return [
     'Bank access tokens: the credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya, so they are left out.',
+    'Your API tokens themselves, and the hashes Nya keeps to check them: credentials, not your data. Each token’s name and when it was made and last used are in, under api_tokens.',
     people
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
       : 'The app password: a credential, not your data.',
@@ -699,7 +729,14 @@ function latestRecorded(points: StoredPoint[] | undefined): { balance: number; d
 /** How a core part of the file that can be missing something says so in
  *  words: what it holds, what it counts, and the sentence. A store on the
  *  seam is named by its declaration (`what`) and counts entries. */
-type PartWords = { noun: string; one: string; many: string; missing: (noun: string, counts: string) => string };
+type PartWords = {
+  noun: string;
+  one: string;
+  many: string;
+  missing: (noun: string, counts: string) => string;
+  /** Where the person finds what is missing: the JSON file, unless said. */
+  listed?: string;
+};
 const missingFrom = (noun: string, counts: string) => `Not all of your ${noun} could be read, so this file is missing ${counts}.`;
 const PART_WORDS: Record<string, PartWords> = {
   manual_accounts: {
@@ -709,6 +746,8 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: (noun, counts) => `${missingFrom(noun, counts)} Any balance history they have is still in account_history, under their ids.`,
   },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
+  // Counted, never named: a token's id is part of the token.
+  api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
   account_history: {
     noun: 'account balance history',
     one: 'day',
@@ -734,15 +773,15 @@ export function problemNotes(problems: readonly ExportProblem[]): string[] {
     }
     const words = PART_WORDS[section] ?? { noun: declaredStore(section)?.what ?? section, one: 'entry', many: 'entries', missing: missingFrom };
     const why = (p: ExportProblem) => (p.problem === 'unrecognised' ? 'saved in a form this version of Nya does not know' : 'whose stored data is damaged');
-    if (mine.every((p) => p.ids === undefined)) {
+    if (mine.every((p) => p.ids === undefined && p.count === undefined)) {
       // A part that is one value, null in the file.
       return `Your ${words.noun} could not be read (${mine[0].problem === 'unrecognised' ? 'they were saved in a form this version of Nya does not know' : 'the stored data is damaged'}), so this file does not have them. ${unchanged}`;
     }
     const counts = mine.map((p) => {
-      const n = p.ids?.length ?? 0;
+      const n = p.ids?.length ?? p.count ?? 0;
       return `${n} ${n === 1 ? words.one : words.many} ${why(p)}`;
     });
-    return `${words.missing(words.noun, counts.join(' and '))} The JSON file lists them under problems. ${unchanged}`;
+    return `${words.missing(words.noun, counts.join(' and '))} ${words.listed ?? 'The JSON file lists them under problems.'} ${unchanged}`;
   });
 }
 

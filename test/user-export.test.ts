@@ -285,6 +285,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       'account_links',
       'budgets',
       'goals',
+      'api_tokens',
       'sharing',
       // Then a section for each store on the storage seam declared exportable.
       ...declaredSections().map((s) => s.key),
@@ -439,6 +440,61 @@ describe('everything stored, decrypted, and nothing else', () => {
       { category: 'Travel', monthly_amount: 150 },
     ]);
     expect(doc.goals).toEqual([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' }]);
+  });
+
+  test('API tokens: each one’s name and dates, never the token, its hash or its id, and one that can’t be read is counted, never named', async () => {
+    const { createToken, parseToken } = await import('@/lib/api-tokens');
+    const { apiTokenStore } = await import('@/lib/api-token-store');
+    expect((await download()).api_tokens).toEqual([]);
+    const first = await createToken(ctx, 'Raycast', new Date('2026-09-01T10:00:00.000Z'));
+    const second = await createToken(ctx, 'Claude', new Date('2026-09-02T10:00:00.000Z'));
+    await apiTokenStore.update(ctx, second.info.id, (t) => t && { ...t, last_used_at: '2026-10-01T08:00:00.000Z' });
+    const doc = await download();
+    expect(doc.api_tokens).toEqual([
+      { label: 'Raycast', created_at: '2026-09-01T10:00:00.000Z', last_used_at: null },
+      { label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z' },
+    ]);
+    const text = JSON.stringify(doc);
+    const stored = await apiTokenStore.getAll(ctx);
+    for (const [id, t] of stored) {
+      expect(text).not.toContain(id);
+      expect(text).not.toContain(t.hash);
+    }
+    // The secret by its place in the token: base64url, so it may hold "_" itself.
+    for (const { token } of [first, second]) {
+      expect(text).not.toContain(token);
+      expect(text).not.toContain(parseToken(token)!.secret);
+    }
+    expect(doc.not_included.some((s: string) => s.startsWith('Your API tokens themselves, and the hashes'))).toBe(true);
+    // A damaged record, and one from a version this one doesn't know: the
+    // others are listed, and these are counted under problems, never named by
+    // their ids, which are part of the tokens. Nothing stops the download.
+    await fake.hset(ctxKey('api-tokens'), { [first.info.id]: DAMAGED });
+    await fake.hset(ctxKey('api-tokens'), { ['0123456789abcdef']: await encrypt(JSON.stringify({ v: 2, label: 'Later' })) });
+    const short = await download();
+    expect(short.api_tokens).toEqual([{ label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z' }]);
+    expect(short.problems).toEqual([
+      { section: 'api_tokens', problem: 'unreadable', count: 1 },
+      { section: 'api_tokens', problem: 'unrecognised', count: 1 },
+    ]);
+    expect(short.notes).toEqual([
+      'Not all of your API tokens could be read, so this file is missing 1 token whose stored data is damaged and 1 token saved in a form this version of Nya does not know. The API tokens card lists them, and can remove a damaged one. Nothing was changed: what could not be read is still stored as it was.',
+    ]);
+    const shortText = JSON.stringify(short);
+    for (const id of [first.info.id, '0123456789abcdef']) expect(shortText).not.toContain(id);
+    // Storage out of reach still stops it, naming the store.
+    const real = fake.hgetall.bind(fake);
+    (fake as any).hgetall = async (key: string) => {
+      if (key === ctxKey('api-tokens')) throw new Error('FakeRedis: out of reach');
+      return real(key);
+    };
+    try {
+      const err = await collectUserData({ ctx, userId: 'user_me' }).catch((e) => e);
+      expect(err).toBeInstanceOf(ExportReadError);
+      expect(err.message).toContain('Your API tokens could not be read');
+    } finally {
+      (fake as any).hgetall = real;
+    }
   });
 
   test('sharing: my side of each connection, never theirs, with both records of showings on it', async () => {
@@ -899,6 +955,7 @@ describe('stores built on the storage seam', () => {
       'import-settings',
       'imports',
       'manual-transactions',
+      'planned-items',
       'transaction-annotations',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
@@ -1044,6 +1101,32 @@ describe('stores built on the storage seam', () => {
     expect(JSON.stringify(doc)).not.toContain('OTHERPERSON');
     const written = JSON.parse([...exportFile(doc, 'json').pieces()].join(''));
     expect(written['allocation-settings']).toEqual(settings);
+  });
+
+  // The recurring forecast's planned items: what the person typed and the
+  // series they dismissed, a value store like the Plan tab's. Its request
+  // counts per API token (a count per id) are bookkeeping, as a counter is.
+  test('the forecast’s planned items are a section of their own, "planned-items", and one that can’t be read is named', async () => {
+    const { plannedStore } = await import('@/lib/planned-store');
+    const { EMPTY_PLANNED } = await import('@/lib/planned');
+    const { apiRequestCount } = await import('@/lib/api-token-store');
+    expect((await download())['planned-items']).toBeNull(); // never saved
+    const planned = { ...EMPTY_PLANNED, dismissed: ['group:rent|1500'], threshold: { amount: 250, currency: 'USD' } };
+    await plannedStore.set(ctx, planned as any);
+    await apiRequestCount.take(ctx, 'tok_1');
+    const doc = await download();
+    expect(doc['planned-items']).toEqual(planned);
+    expect(Object.keys(doc)).not.toContain('api-requests');
+    expect(declaredSections().map((s) => s.key)).not.toContain('api-requests');
+    expect(doc.problems).toEqual([]);
+
+    await fake.set(ctxKey('planned-items'), DAMAGED);
+    const damaged = await download();
+    expect(damaged['planned-items']).toBeNull();
+    expect(damaged.problems).toEqual([{ section: 'planned-items', problem: 'unreadable' }]);
+    expect(damaged.notes).toContain(
+      'Your planned items could not be read (the stored data is damaged), so this file does not have them. Nothing was changed: what could not be read is still stored as it was.'
+    );
   });
 
   // Review: the record of the emails Nya sent about the person's own bank

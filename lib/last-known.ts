@@ -169,13 +169,16 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
  *  caller that writes on the strength of the answer (lib/links.ts
  *  liveAccountIds). `tidy` (the default) also deletes the fields left in the
  *  old shape; a reader that must change nothing passes false (the download
- *  of my data, and the count an account deletion takes for its receipt). */
-async function recallByItem(ctx: Ctx, strict = false, tidy = true): Promise<Record<string, RememberedAccount[]>> {
+ *  of my data, and the count an account deletion takes for its receipt).
+ *  `unreadable`, when given, collects the Items whose record couldn't be read
+ *  instead, and a failed read throws, as with `strict`
+ *  (rememberedAccountsReport). */
+async function recallByItem(ctx: Ctx, strict = false, tidy = true, unreadable?: string[]): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
     map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH(ctx));
   } catch (err) {
-    if (strict) throw err;
+    if (strict || unreadable) throw err;
     return {};
   }
   if (!map) return {};
@@ -203,6 +206,7 @@ async function recallByItem(ctx: Ctx, strict = false, tidy = true): Promise<Reco
         if (strict) throw err;
         // Undecryptable: that Item just won't be recoverable. Left in place
         // rather than deleted, since a rotated key is fixed by restoring the key.
+        unreadable?.push(item_id);
       }
     })
   );
@@ -289,6 +293,17 @@ export async function rememberedIdsByItem(ctx: Ctx, strict = false, tidy = true)
     out[item_id] = accounts.map((a) => a.account_id);
   }
   return out;
+}
+
+/** Every Item's remembered accounts, for the read-only API's list of accounts
+ *  (lib/api-read.ts): a display that names what it can't show. Only reads (a
+ *  field in the old shape is left where it is), a failed read throws, and an
+ *  Item whose record can't be read is named in `unreadable` rather than read
+ *  as having no accounts. */
+export async function rememberedAccountsReport(ctx: Ctx): Promise<{ byItem: Record<string, RememberedAccount[]>; unreadable: string[] }> {
+  const unreadable: string[] = [];
+  const byItem = await recallByItem(ctx, false, false, unreadable);
+  return { byItem, unreadable: unreadable.sort() };
 }
 
 /** Every Item's remembered accounts, whole, for the download of my data

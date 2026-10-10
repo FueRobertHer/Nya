@@ -18,7 +18,7 @@
 //                     accounts). In Redis, one hash with a field per id; in a
 //                     table, a row per id.
 //
-// And one for the service's own bookkeeping:
+// And two for the service's own bookkeeping:
 //
 //   defineCounterStore  a count per container in a fixed window that starts
 //                       with its first count and ends on its own (a rate
@@ -27,6 +27,12 @@
 //                       Redis, one integer key with an expiry, counted in
 //                       Lua; in a table, a row with the count and the end of
 //                       its window.
+//   defineCounterMapStore  the same, a count per id within a container (a
+//                       rate limit per API token). In Redis, one hash with a
+//                       field per id holding its count and the end of its
+//                       window, counted in Lua, the hash kept a window past
+//                       its last count so it goes on its own; in a table, a
+//                       row per id.
 //
 // CONTAINERS ONLY, by design. Every store keeps its data inside a container (kc
 // in lib/storage.ts), so deleting the account deletes it with the rest
@@ -56,7 +62,9 @@
 // walking every store reads: the key inventory in lib/reencrypt.ts, and the
 // person's data download (lib/user-export.ts), where each store declared
 // exportable is a section of its own. The name is the key family, so a
-// declared store is in the key inventory by construction.
+// declared store is in the key inventory by construction. A store holding a
+// credential that a restore must never bring back (API tokens) is declared
+// `backup: false`, and lib/export.ts leaves its key out of every backup.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with
 // what is stored, or says exactly why it cannot:
@@ -235,6 +243,12 @@ export type StoreOptions<T> = {
   /** Stores each value gzip-compressed (lib/blob.ts), for values that can grow
    *  large. Reads take either form, so it can be switched on or off later. */
   compress?: boolean;
+  /** False only for a credential a restore must never bring back (an API
+   *  token, which a restore could otherwise revive after it was revoked): its
+   *  key is left out of every backup, and lib/export.ts must list it in
+   *  EXCLUDED_PREFIXES, which declare() checks both ways. A restore then
+   *  deletes what is there and brings none back. Backed up by default. */
+  backup?: false;
 };
 
 type Declared = {
@@ -242,6 +256,8 @@ type Declared = {
   readonly name: string;
   readonly what: string;
   readonly exportable: boolean;
+  /** In backups (lib/export.ts), unless declared `backup: false`. */
+  readonly backedUp: boolean;
 };
 
 export type ValueStore<T> = Declared & {
@@ -362,7 +378,22 @@ export type CounterStore = Declared & {
   take(ctx: Ctx): Promise<CounterWindow>;
 };
 
-export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore;
+export type CounterMapStore = Declared & {
+  readonly kind: 'counter-map';
+  /** How long a window lasts, from its first count. */
+  readonly windowSeconds: number;
+  /** Counts one for `id`, atomically, starting a window for it if none is
+   *  running, and answers its window with this one counted. Each id counts
+   *  apart from the others, and two callers racing never get the same count,
+   *  so the count is what decides. `now` (ms) is the clock the window is
+   *  measured by: the caller's, and a test's own. Throws if it cannot count,
+   *  so a limit built on it fails closed. */
+  take(ctx: Ctx, id: string, now?: number): Promise<CounterWindow>;
+  /** Forgets these ids' windows, counted or not. */
+  remove(ctx: Ctx, ...ids: string[]): Promise<void>;
+};
+
+export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore | CounterMapStore;
 
 /**
  * Reads fields exactly: each as "v" followed by its stored text, or "" where
@@ -496,6 +527,40 @@ if ttl < 0 then
 end
 return {n, ttl}`;
 
+/**
+ * Counts one for an id in a counter map store, in one step. Each field holds
+ * "<count>:<end of its window>" (whole seconds since 1970, by the clock of
+ * whoever started the window). ARGV: the id, now and the window, in seconds.
+ * A window that has ended, or ends further ahead than any could (a clock that
+ * moved back), starts again. The hash is kept two windows past its last count,
+ * so it outlives every window in it (with room for clocks a little apart) and
+ * goes on its own once nothing counts. What is there and is not a count as
+ * this writes one is refused, writing nothing but that expiry, should the hash
+ * have none (one restored by hand), so it can't stay forever. Answers the
+ * count and its seconds left.
+ */
+export const COUNTERS_TAKE = `-- nya:repo-counters-take
+local now = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+local count, ends = 0, 0
+if raw then
+  local c, e = string.match(raw, '^([1-9]%d*):([1-9]%d*)$')
+  if not c then
+    if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], 2 * window) end
+    return redis.error_reply('${NOT_A_COUNT}')
+  end
+  count, ends = tonumber(c), tonumber(e)
+end
+if ends <= now or ends - now > 2 * window then
+  count = 0
+  ends = now + window
+end
+count = count + 1
+redis.call('HSET', KEYS[1], ARGV[1], count .. ':' .. ends)
+redis.call('EXPIRE', KEYS[1], 2 * window)
+return {count, ends - now}`;
+
 /** Fields read per READ_ENTRIES call, well inside Lua's limit for unpack. */
 const READ_BATCH = 1000;
 /** Tries before update() gives up on an entry that keeps changing. */
@@ -517,8 +582,9 @@ const declared = new Map<string, Store>();
 const NAME = /^[a-z][a-z0-9]*(?:[-:][a-z0-9]+)*$/;
 
 /** Why a well-formed name still cannot be a store's, or null. Each would put
- *  the store's key where something else is meant to be. */
-function nameTaken(name: string): string | null {
+ *  the store's key where something else is meant to be. `backedUp` false is a
+ *  store declared out of backups, whose key lib/export.ts must leave out. */
+function nameTaken(name: string, backedUp: boolean): string | null {
   // Containers never nest, and an environment-wide store never belongs in one:
   // lib/reencrypt.ts reports either as a key built wrongly.
   if (name.startsWith('c:')) return 'a container';
@@ -526,7 +592,8 @@ function nameTaken(name: string): string | null {
   // A store moving behind the seam takes its entry off the list in the same
   // change; anything else under a listed name would be read as that family.
   if (listedKind(name) !== null) return 'a key family stored the old way (lib/key-families.ts)';
-  if (isExcluded(name)) return 'a key that backups leave out (lib/export.ts), so its data would never be backed up';
+  if (backedUp && isExcluded(name)) return 'a key that backups leave out (lib/export.ts), so its data would never be backed up';
+  if (!backedUp && !isExcluded(name)) return 'declared out of backups, but lib/export.ts would back it up: list it in EXCLUDED_PREFIXES';
   return null;
 }
 
@@ -535,7 +602,7 @@ function declare<S extends Store>(store: S): S {
   if (!NAME.test(name) || name.length > 64) {
     throw new Error(`"${name}" cannot name a store: use lowercase words joined by "-" or ":", at most 64 long.`);
   }
-  const taken = nameTaken(name);
+  const taken = nameTaken(name, store.backedUp);
   if (taken) throw new Error(`"${name}" cannot name a store: it is ${taken}.`);
   // The same name declared again with the same kind is its module being
   // evaluated again (a development reload), so the new declaration replaces the
@@ -700,6 +767,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     name,
     what,
     exportable: opts.exportable,
+    backedUp: opts.backup !== false,
     get: read,
     async getReport(ctx) {
       const d = await readDecoded(ctx);
@@ -873,6 +941,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     name,
     what,
     exportable: opts.exportable,
+    backedUp: opts.backup !== false,
     async get(ctx, id) {
       return (await getMany(ctx, [id])).get(id) ?? null;
     },
@@ -933,6 +1002,9 @@ export type CounterOptions = {
   what: string;
   /** How long a window lasts, from its first count: a whole number of seconds. */
   windowSeconds: number;
+  /** As for a value or map store (StoreOptions): false leaves it out of
+   *  backups, with lib/export.ts listing it. */
+  backup?: false;
 };
 
 /** A count as COUNTER_READ answers it: digits only, as INCR writes them. */
@@ -970,6 +1042,7 @@ export function defineCounterStore(name: string, opts: CounterOptions): CounterS
     name,
     what,
     exportable: false,
+    backedUp: opts.backup !== false,
     windowSeconds,
     async read(ctx) {
       return windowOf(await redis().eval(COUNTER_READ, [key(ctx)], [String(windowSeconds)]), false);
@@ -984,6 +1057,52 @@ export function defineCounterStore(name: string, opts: CounterOptions): CounterS
         throw err;
       }
       return windowOf(answer, true);
+    },
+  });
+}
+
+/**
+ * Declares a counter map store: a count per id in a container, each in a fixed
+ * window of its own (see TWO SHAPES above), such as requests per API token.
+ * The service's bookkeeping, like a counter store: never exportable, and its
+ * values are plain text ("<count>:<end>"), which the re-encryption pass knows
+ * (classify() in lib/reencrypt.ts). Ids are opaque, as a map store's are.
+ */
+export function defineCounterMapStore(name: string, opts: CounterOptions): CounterMapStore {
+  const { what, windowSeconds } = opts;
+  if (!Number.isInteger(windowSeconds) || windowSeconds < 1) {
+    throw new Error(`The window of "${name}" must be a whole number of seconds, 1 or more.`);
+  }
+  const key = (ctx: Ctx) => storeKey(ctx, name);
+  return declare<CounterMapStore>({
+    kind: 'counter-map',
+    name,
+    what,
+    exportable: false,
+    backedUp: opts.backup !== false,
+    windowSeconds,
+    async take(ctx, id, now = Date.now()) {
+      checkId(what, id);
+      let answer: unknown;
+      try {
+        answer = await redis().eval(COUNTERS_TAKE, [key(ctx)], [id, String(Math.floor(now / 1000)), String(windowSeconds)]);
+      } catch (err) {
+        // Damaged: thrown, never taken for no count, so a limit built on it
+        // stays shut rather than open. The id is named, as a map store's are.
+        if (err instanceof Error && err.message.includes(NOT_A_COUNT)) throw new UnreadableEntriesError(what, [id], [], err);
+        throw err;
+      }
+      const [count, left] = Array.isArray(answer) && answer.length === 2 ? answer.map(Number) : [NaN, NaN];
+      if (!Number.isSafeInteger(count) || count < 1 || !Number.isSafeInteger(left)) {
+        throw new Error(`repo: unexpected answer counting ${name}`);
+      }
+      // A window's end is set by the clock of whoever started it, which may run
+      // a little ahead of this one: never more than a window is left.
+      return { count, secondsLeft: Math.min(windowSeconds, Math.max(1, left)) };
+    },
+    async remove(ctx, ...ids) {
+      for (const id of ids) checkId(what, id);
+      if (ids.length > 0) await redis().hdel(key(ctx), ...ids);
     },
   });
 }

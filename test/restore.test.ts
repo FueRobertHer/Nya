@@ -617,6 +617,33 @@ describe('the command', () => {
     expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
   });
 
+  test('an overwrite restore ends every API token: none is in a backup, and the live ones are deleted', async () => {
+    const container = '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b';
+    const tokens = testKey(`c:${container}:api-tokens`);
+    const counts = testKey(`c:${container}:api-requests`);
+    // A token made, and used, before the backup...
+    await fake.hset(tokens, { '0123456789abcdef': 'v1-made-before' });
+    await fake.hset(counts, { '0123456789abcdef': '3:1760000000' });
+    const file = await archiveFile();
+    const keysIn = async (path: string) => verifyArchive(await Bun.file(path).text()).records.map((r) => r.key);
+    expect((await keysIn(file)).filter((k) => /api-(tokens|requests)/.test(k))).toEqual([]);
+    // ...then revoked, another made after it, and an address counted for tokens that didn't work.
+    await fake.hdel(tokens, '0123456789abcdef');
+    await fake.hset(tokens, { fedcba9876543210: 'v1-made-after' });
+    await fake.set(testKey('ratelimit:api:203.0.113.5'), '12');
+
+    await main([file, '--target', 'test', '--overwrite'], fake as any);
+
+    // Neither comes back, the revoked one least of all; nor is either in the file saved before the restore.
+    expect(await fake.hgetall(tokens)).toBeNull();
+    expect(await fake.hgetall(counts)).toBeNull();
+    const saved = (await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-test-'));
+    expect((await keysIn(join(dir, saved[0]))).filter((k) => /api-(tokens|requests)/.test(k))).toEqual([]);
+    // The environment's own counters stay, as the login's always have.
+    expect(await fake.get<string>(testKey('ratelimit:api:203.0.113.5'))).toBe('12');
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+
   test('a dry run over a populated target writes no backup and deletes nothing', async () => {
     const file = await archiveFile();
     await fake.set(testKey('budgets'), 'current');

@@ -10,13 +10,13 @@ const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 
 describe('the session gate', () => {
   test('skips exactly the routes that authenticate themselves', () => {
-    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/login']) {
+    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/login']) {
       expect(gated(path)).toBe(false);
     }
   });
 
   test('still covers anything that merely starts with one of them', () => {
-    for (const path of ['/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/backup/x', '/api/backups', '/api/admin/unused', '/api/plaid/webhook/x', '/api/plaid/check-items2', '/api/plaid/other', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/other']) {
+    for (const path of ['/api/v1', '/api/v1/accounts/x', '/api/v1/other', '/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/backup/x', '/api/backups', '/api/admin/unused', '/api/plaid/webhook/x', '/api/plaid/check-items2', '/api/plaid/other', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/other']) {
       expect(gated(path)).toBe(true);
     }
   });
@@ -28,7 +28,55 @@ describe('the session gate', () => {
   // They are let through inside (below), but still pass through the proxy:
   // that is what gives a page its Content-Security-Policy.
   test('covers the public pages too', () => {
-    for (const path of ['/login', '/security', '/privacy']) expect(gated(path)).toBe(true);
+    for (const path of ['/login', '/security', '/privacy', '/developers']) expect(gated(path)).toBe(true);
+  });
+});
+
+// Compiled by Next itself, as it compiles the matcher for a deployment: the
+// same paths are exempt from the proxy, and no other spelling of them is.
+// In a process of its own: loading Next's build code here would leave its
+// request storage unusable for the test files that run after this one.
+describe('the matcher, as Next compiles it', () => {
+  const script =
+    "const { getMiddlewareMatchers } = require('next/dist/build/analysis/get-page-static-info.js');" +
+    'process.stdout.write(getMiddlewareMatchers([process.env.MATCHER], {})[0].regexp);';
+  const compiled = Bun.spawnSync([process.execPath, '-e', script], {
+    cwd: new URL('..', import.meta.url).pathname,
+    env: { ...process.env, MATCHER: config.matcher[0] },
+  });
+  const regexp = compiled.stdout.toString();
+  const runs = (path: string) => new RegExp(regexp).test(path);
+
+  test('compiles', () => {
+    expect([compiled.exitCode, regexp.length > 0]).toEqual([0, true]);
+  });
+
+  test('exempts each API endpoint and the MCP server at exactly their paths', async () => {
+    const { OPERATION_SPECS } = await import('@/lib/api-spec');
+    for (const op of OPERATION_SPECS) expect([op.name, runs(`/api/v1/${op.name}`)]).toEqual([op.name, false]);
+    expect(runs('/api/mcp')).toBe(false);
+  });
+
+  test('runs for every other spelling of them', () => {
+    for (const path of [
+      '/api/v1/me/',
+      '/api/v1/me.json',
+      '/api/v1/me.rsc',
+      '/API/V1/ME',
+      '/api/v1/accounts/',
+      '/api/v1//accounts',
+      '/api/v1/accounts%2F',
+      '/api/v1/../connections',
+      '/api/v1/accounts/..',
+      '/api/mcp/',
+      '/api/mcp.rsc',
+      '/_next/data/build/api/v1/me.json',
+      '/api/v1/me;x',
+      '/api/v1',
+      '/api/connections',
+    ]) {
+      expect([path, runs(path)]).toEqual([path, true]);
+    }
   });
 });
 
@@ -45,8 +93,8 @@ describe('without a session', () => {
   });
   const call = (path: string, init?: ConstructorParameters<typeof NextRequest>[1]) => proxy(new NextRequest(`https://nya.test${path}`, init));
 
-  test('the login, security and privacy pages open, with their policy', async () => {
-    for (const path of ['/login', '/security', '/privacy']) {
+  test('the login, security, privacy and developer pages open, with their policy', async () => {
+    for (const path of ['/login', '/security', '/privacy', '/developers']) {
       const res = await call(path);
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
@@ -54,8 +102,19 @@ describe('without a session', () => {
     }
   });
 
+  test('a path under /api/v1 that is no endpoint is a 404 in the API’s own error shape, session or not', async () => {
+    for (const path of ['/api/v1/acounts', '/api/v1/accounts/', '/api/v1', '/api/v1/', '/api/v1/accounts/x']) {
+      const res = await call(path, { headers: { authorization: 'Bearer nya_whatever' } });
+      expect([path, res.status]).toEqual([path, 404]);
+      expect(await res.json()).toEqual({ error: { code: 'not_found', message: 'There is no such endpoint. The endpoints are listed at /developers.' } });
+      expect(res.headers.get('cache-control')).toBe('no-store');
+    }
+    // Anything else under /api is gated as before.
+    expect((await call('/api/v1x')).status).toBe(401);
+  });
+
   test('only those exact paths', async () => {
-    for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/']) {
+    for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/developers/x', '/developer', '/']) {
       expect((await call(path)).headers.get('location')).toBe('https://nya.test/login');
     }
     expect((await call('/api/security')).status).toBe(401);

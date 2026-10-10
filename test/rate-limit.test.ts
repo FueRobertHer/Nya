@@ -15,6 +15,10 @@ const {
   downloadCount,
   passwordAttemptsExhausted,
   countWrongPassword,
+  tokenFailuresExhausted,
+  countTokenFailure,
+  API_AUTH_MAX_FAILURES,
+  API_AUTH_WINDOW_SECONDS,
   DOWNLOADS_PER_WINDOW,
   DOWNLOAD_WINDOW_SECONDS,
   LOGIN_MAX_FAILURES,
@@ -177,6 +181,43 @@ describe('wrong passwords, shared by the login', () => {
   });
 });
 
+describe('API tokens that don’t work, counted by address (lib/api-http.ts)', () => {
+  const req = new Request('https://nya.test/api/v1/me', { headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' } });
+  const key = testKey('ratelimit:api:203.0.113.7');
+
+  test('each is counted with its window’s end in one step, so a request that dies part way leaves no count without one', async () => {
+    // Where a count sent as INCR and then EXPIRE lost its end: the second
+    // request failing after the first had counted. One script now, no EXPIRE.
+    fake.failNext('expire');
+    await countTokenFailure(req);
+    expect([await fake.get(key), fake.ttls.get(key)]).toEqual([1, API_AUTH_WINDOW_SECONDS]);
+    // Later counts keep the window's end.
+    fake.ttls.set(key, 120);
+    await countTokenFailure(req);
+    expect([await fake.get(key), fake.ttls.get(key)]).toEqual([2, 120]);
+  });
+
+  test('a count left without an end is given a window by the next check, so an address is never shut out for good', async () => {
+    await fake.set(key, String(API_AUTH_MAX_FAILURES));
+    expect(fake.ttls.get(key) ?? -1).toBe(-1);
+    expect(await tokenFailuresExhausted(req)).toBe(true);
+    expect(fake.ttls.get(key)).toBe(API_AUTH_WINDOW_SECONDS);
+    // Below the limit, and for another address, nothing is refused.
+    await fake.set(key, String(API_AUTH_MAX_FAILURES - 1), { ex: 60 });
+    expect(await tokenFailuresExhausted(req)).toBe(false);
+    expect(await tokenFailuresExhausted(new Request('https://nya.test/', { headers: { 'x-forwarded-for': '198.51.100.1' } }))).toBe(false);
+  });
+
+  test('fails open: a count that can’t be read or made refuses nothing', async () => {
+    await fake.set(key, String(API_AUTH_MAX_FAILURES), { ex: 60 });
+    fake.failNext('eval');
+    expect(await tokenFailuresExhausted(req)).toBe(false);
+    fake.failNext('eval');
+    await countTokenFailure(req);
+    expect(Number(await fake.get(key))).toBe(API_AUTH_MAX_FAILURES);
+  });
+});
+
 // The scripts on a real Redis, where one is installed (as in CI): the double
 // has no clock, so the windows' ends are checked here.
 const hasRedis = Bun.which('redis-server') !== null;
@@ -204,6 +245,18 @@ describe.skipIf(!hasRedis && !process.env.CI)('wrong passwords, on a real Redis'
   afterAll(() => {
     real?.stop();
     real = null;
+  });
+
+  test('an API token that doesn’t work is counted with its window’s end in one request, too', async () => {
+    const apiReq = new Request('https://nya.test/api/v1/me', { headers: { 'x-forwarded-for': '203.0.113.7' } });
+    const apiKey = testKey('ratelimit:api:203.0.113.7');
+    upstash.sent.length = 0;
+    await countTokenFailure(apiReq);
+    expect(upstash.sent).toEqual(['eval']);
+    expect([await send('GET', [apiKey]), Number(await send('TTL', [apiKey]))]).toEqual(['1', API_AUTH_WINDOW_SECONDS]);
+    await send('PERSIST', [apiKey]);
+    expect(await tokenFailuresExhausted(apiReq)).toBe(false);
+    expect(Number(await send('TTL', [apiKey]))).toBe(API_AUTH_WINDOW_SECONDS);
   });
 
   test('each wrong password is counted with its window’s end in one request', async () => {

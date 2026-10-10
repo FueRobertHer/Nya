@@ -13,6 +13,7 @@ import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
 import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
+import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -507,5 +508,56 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     expect(privacy()).toContain('until the connection is removed.');
     expect(privacy()).toContain('Encrypted, and in your download.');
     expect(security()).toContain('how each bank connection is doing');
+  });
+});
+
+describe('API tokens, on both pages', () => {
+  test('the security page: who can read what through one, how it is kept and checked, and what ends it', () => {
+    const page = security();
+    expect(page).toContain('Programs you give an API token to What the read-only API and the MCP server serve (the Developers page lists it)');
+    expect(page).toContain('until you revoke the token. Never your sign-in or your bank logins, and they can never change anything.');
+    expect(page).toContain('Nya shows it once and never stores it: it keeps a SHA-256 hash of the token’s secret, inside your own data and encrypted with it');
+    expect(page).toContain('A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong secret, or another person’s data)');
+    expect(page).toContain('one whose secret doesn’t match costs the same work whoever’s data it names');
+    expect(page).toContain('Only a token whose secret checks out is told more: that its data is being restored, say, and to try again later.');
+    expect(page).toContain('Requests with tokens that don’t work are counted by the address they come from');
+    expect(page).toContain('Making one needs a fresh sign-in, as downloading your data does.');
+    expect(page).toContain(`makes at most ${REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out everywhere or a change of the shared password`);
+    expect(page).toContain('it stops when the account that made it is taken off the list of people allowed in.');
+    expect(page).toContain('Deleting your account deletes every token with the rest of your data, and restoring a backup ends every token, since backups leave them out.');
+    // Backups: the same kinds of data, but no tokens.
+    backupsAre('kept');
+    expect(security()).toContain('A backup holds the same kinds of data as the database, apart from API tokens');
+    expect(security()).toContain('API tokens are never backed up, so restoring a backup ends every token, and none revoked before it can work again.');
+    expect(securityHtml()).toContain('href="/developers"');
+  });
+
+  test('the security page lists what of them is plain text: ids that can’t be used, and the counts of requests', () => {
+    const page = security();
+    expect(page).toContain('and of your API tokens (random, and not enough to use one);');
+    expect(page).toContain(
+      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
+    );
+    expect(page).toContain(`of a device that sent API tokens that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
+  });
+
+  test('the privacy page: what an assistant connected to the MCP server reads, how long tokens and their counts are kept, and what the download holds of them', () => {
+    const page = privacy();
+    expect(page).toContain(
+      'Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.'
+    );
+    expect(page).toContain('A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the Developers page');
+    // The API exists now: only writing through it is to come.
+    expect(page).toContain('Not built yet Writing through the API, a way to bring your download into another copy of Nya');
+    expect(page).not.toContain('A public API');
+    expect(page).toContain(
+      'API tokens Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'
+    );
+    expect(page).toContain(`Requests with API tokens that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
+    expect(page).toContain(
+      `Requests counted for each API token Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
+    );
+    expect(page).toContain('your API tokens themselves (each one’s name and dates are in)');
+    expect(privacyHtml()).toContain('href="/developers"');
   });
 });
