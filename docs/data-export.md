@@ -293,6 +293,8 @@ When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts
 | `seen` | Only with `closed` and `left`: `{ "balance": number or null, "through": day }`, the balance it showed when you set or last confirmed its end, and that UTC day. A bank still returning it with another balance, or a transaction after that day, asks about it again. Absent when it wasn't known. |
 | `missed` | `[{ "from": day, "to": day }]`: the days it was missing from its bank's answer and assumed closed, before it came back. The totals saved on those days are short of it, so the app leaves them out of the chart (they stay in `net_worth_history` as saved). Any state; absent when there were none. |
 
+An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, which is the account's: that account's `lifecycle` in `accounts` is then `null`, and its rows in the balances CSV have no `account_state`, although it may have ended. The notes say so, in the JSON file and in the balances CSV.
+
 #### `allocation-settings`
 
 What you set under Allocation on the Plan tab ([features.md](features.md#allocation)), or `null` if you never set anything: only your choices, never an allocation Nya worked out.

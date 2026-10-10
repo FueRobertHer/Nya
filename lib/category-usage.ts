@@ -19,7 +19,10 @@ import { placeBudgets } from './budget-set';
 import { indexTaxonomy, textKey, TEXT, type CategoryUsage, type Taxonomy } from './categories';
 
 /** How many transactions are filed under the category, and whether it has a
- *  budget. Reads the stored rows (no Plaid call), hidden accounts' too. */
+ *  budget. Reads the stored rows (no Plaid call), hidden accounts' too, and
+ *  those of accounts that ended from their end day on (lib/lifecycle.ts):
+ *  left out of every total, they are still stored, filed under it, and back
+ *  if the account is reopened. */
 export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): Promise<CategoryUsage> {
   const c = taxonomy.categories.find((x) => x.id === id);
   if (!c) return { transactions: 0, budget: false };
@@ -27,13 +30,13 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   const uses = (text: string | null | undefined) => !!text && words.has(textKey(text));
 
   const [bank, overrides, carried, books, budgets] = await Promise.all([
-    assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true }),
+    assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, keepEnded: true }),
     readOverridesStrict(ctx),
     readCarriedStrict(ctx),
     manualTxnStore.getAll(ctx),
     loadBudgets(ctx),
   ]);
-  const shown = await finishActivity(ctx, bank.payload, new Set());
+  const shown = await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true });
   // Rows in the window, as filed; then what keeps words outside it.
   const counted = new Set<string>();
   for (const t of [...shown.transactions, ...shown.history]) if (t.category_id === id) counted.add(t.transaction_id);

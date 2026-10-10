@@ -7,7 +7,9 @@
 // the time zone its days and times are read in, when the data is from,
 // whether anything may be missing and why (the gaps, in plain words, at the
 // top), every institution with its last sync and its gaps, the manual
-// accounts with their last update, and the bottom line. Then the totals by
+// accounts with their last update, the accounts that ended (closed, no longer
+// the person's, or not tracked, from a day the period has something to say
+// of), and the bottom line. Then the totals by
 // category on a page of their own, the months, the categories the person
 // marked, and the appendix, each starting a new page. A figure that may be
 // short is marked in words, never by color alone, so it reads in black and
@@ -18,9 +20,13 @@
 // same in a test (test/report-view.test.tsx) as in the browser.
 
 import { formatMoney } from '@/lib/format';
-import type { Report, ReportMonth } from '@/lib/report/build';
+import { endedBefore, type Report, type ReportMonth } from '@/lib/report/build';
 import {
   appendixStatus,
+  endedConnection,
+  endedCounted,
+  endedWords,
+  ENDED_NOTE,
   gapShort,
   MANUAL_NOTE,
   MARKED_NOTE,
@@ -166,7 +172,15 @@ export function ReportView({ report }: { report: Report }) {
                         </td>
                         <td>{i.no_transactions ? '' : i.synced_at ? reportTime(i.synced_at, tz) : 'Not known'}</td>
                         <td>{i.first_date ? reportDay(i.first_date) : ''}</td>
-                        <td>{gaps.length > 0 ? gaps.join('. ') : i.no_transactions ? '' : 'Nothing known'}</td>
+                        <td>
+                          {gaps.length > 0
+                            ? gaps.join('. ')
+                            : i.no_transactions
+                              ? ''
+                              : i.ended_by && endedBefore(i, period)
+                                ? endedConnection(i.ended_by, reportDay)
+                                : 'Nothing known'}
+                        </td>
                       </tr>
                     );
                   })}
@@ -200,6 +214,32 @@ export function ReportView({ report }: { report: Report }) {
                 </table>
               </div>
               <p className="report-note">{MANUAL_NOTE}</p>
+            </>
+          )}
+          {report.ended.length > 0 && (
+            <>
+              <h3>Accounts that ended</h3>
+              <div className="report-scroll">
+                <table className="report-table">
+                  <thead>
+                    <tr>
+                      <th>Account</th>
+                      <th>Ended</th>
+                      <th>In this report</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.ended.map((e, i) => (
+                      <tr key={i}>
+                        <td>{e.institution ? `${e.institution}: ${e.account}` : e.account}</td>
+                        <td>{endedWords(e, reportDay)}</td>
+                        <td>{endedCounted(e, reportDay)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="report-note">{ENDED_NOTE}</p>
             </>
           )}
           {report.removed.length > 0 && (

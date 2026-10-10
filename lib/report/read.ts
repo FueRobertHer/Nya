@@ -20,7 +20,13 @@
 //     removed account can be told back or not;
 //   - the categories the person marked (lib/report/store.ts), found among
 //     their categories as the rows were filed by them (finishActivity, which
-//     files without writing: the report never grows the stored categories).
+//     files without writing: the report never grows the stored categories);
+//   - the accounts that ended (lib/lifecycle.ts), read by the assembly
+//     through the same links as the hidden set, strictly, as the Activity tab
+//     reads them: its rows come with theirs kept (keepEnded) and each row's
+//     account (withAccountIds), so the report leaves out what the Activity
+//     tab leaves out, by the same rule, and says what it did (lib/report/
+//     build.ts ENDED ACCOUNTS); and the windows an account was missing.
 //
 // READ ONLY, and for display: nothing here writes, deletes or records anything
 // on what it reads (readOnly). Every read that can't be made is said on the
@@ -30,7 +36,9 @@
 // carried exclusions that can't (the assembly's own_read), each manual
 // account whose rows can't (never counted as having none), and whatever else
 // the assembly couldn't read (its notes, which the report lists as gaps).
-// Storage that can't be reached at all fails the whole report.
+// Storage that can't be reached at all fails the whole report, and so do
+// account closures that can't be read, as they fail the Activity tab: never
+// a report counting an account the person closed.
 
 import type { Ctx } from '../containers';
 import { getItems } from '../storage';
@@ -42,13 +50,84 @@ import { readLinks } from '../link-core';
 import { rememberedAccountsReport } from '../last-known';
 import { isInvestmentType } from '../balance';
 import { StoredDataUnreadableError } from '../repo';
+import { accountWords, endDays, endOf, type LifecycleView } from '../lifecycle';
 import { reportSettingsStore } from './store';
-import { buildReport, type LiveAccountFacts, type ManualFacts, type RemovedFacts, type Report, type SourceFacts } from './build';
-import type { Period } from './period';
+import {
+  buildReport,
+  type EndedFacts,
+  type LiveAccountFacts,
+  type ManualFacts,
+  type MissedFacts,
+  type RemovedFacts,
+  type Report,
+  type SourceFacts,
+} from './build';
+import { addDays, type Period } from './period';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
 const realTime = (iso: string | null | undefined): string | null => (iso && Date.parse(iso) > 0 ? iso : null);
+
+/**
+ * The accounts that ended and the windows any was missing from its bank's
+ * answer, as the report says them (lib/report/build.ts ENDED ACCOUNTS): a
+ * hidden account left out, as everywhere; each under every id it has had,
+ * its current one first; named as its entry names it (a closed account soon
+ * leaves every live list); placed under the connection it is at now, if any
+ * (`connectionOf`). A window is said only on the days the account counts
+ * (lib/lifecycle.ts shortDays): from its end on, none. Pure.
+ */
+export function lifecycleFacts(
+  view: LifecycleView,
+  hidden: ReadonlySet<string>,
+  connectionOf: (ids: readonly string[], item_id: string | null) => string | null
+): { ended: EndedFacts[]; missed: MissedFacts[] } {
+  const idsOf = new Map<string, string[]>();
+  for (const [id, root] of view.rootOf) {
+    const ids = idsOf.get(root) ?? [root];
+    if (id !== root) ids.push(id);
+    idsOf.set(root, ids);
+  }
+  const ended: EndedFacts[] = [];
+  for (const [root, { entry }] of view.accounts) {
+    const l = entry.lifecycle;
+    if (l.state === 'active') continue;
+    const ids = idsOf.get(root) ?? [root];
+    if (ids.some((id) => hidden.has(id))) continue;
+    ended.push({
+      ids,
+      account: accountWords(entry.label),
+      institution: entry.label.institution,
+      item_id: connectionOf(ids, entry.item_id),
+      type: entry.type,
+      state: l.state,
+      assumed: entry.assumed === true,
+      end: endOf(l)!,
+    });
+  }
+  const missed: MissedFacts[] = [];
+  for (const [id, entry] of view.entries) {
+    if (!entry.missed?.length) continue;
+    const root = view.rootOf.get(id) ?? id;
+    const ids = idsOf.get(root) ?? [root];
+    if (hidden.has(id) || ids.some((x) => hidden.has(x))) continue;
+    const applies = view.accounts.get(root)?.entry ?? entry;
+    const end = endOf(applies.lifecycle);
+    for (const w of entry.missed) {
+      const to = end !== null && w.to >= end ? addDays(end, -1) : w.to;
+      if (w.from > to) continue;
+      missed.push({
+        account: accountWords(applies.label),
+        institution: applies.label.institution,
+        item_id: connectionOf(ids, applies.item_id),
+        type: applies.type,
+        from: w.from,
+        to,
+      });
+    }
+  }
+  return { ended, missed };
+}
 
 export async function readReport(
   ctx: Ctx,
@@ -56,9 +135,11 @@ export async function readReport(
   opts: { currency?: string | null; now?: number; appendixLimit?: number } = {}
 ): Promise<Report> {
   const now = opts.now ?? Date.now();
-  const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: period.start });
+  // Each row with its account, and an ended account's later rows kept: left
+  // out by buildReport, by the Activity tab's rule, and said.
+  const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: period.start, withAccountIds: true, keepEnded: true });
   const [activity, facts, manual, items, settings, remembered, links] = await Promise.all([
-    finishActivity(ctx, bank.payload, bank.hidden, { since: period.start }),
+    finishActivity(ctx, bank.payload, bank.hidden, { since: period.start, keepEnded: true }),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the API lists them: an account that
     // can't be read is left out here and named by the assembly's notes.
@@ -119,6 +200,29 @@ export async function readReport(
     if (!seen || a.first_seen < seen) firstSeen.set(a.item_id, a.first_seen);
   }
 
+  // The connection each account is at now: an ended account's gaps are said
+  // in its row too.
+  const connectionOfAccount = new Map<string, string>();
+  for (const item of items) for (const a of remembered.byItem[item.item_id] ?? []) connectionOfAccount.set(a.account_id, item.item_id);
+  for (const a of directory?.live ?? []) if (itemOf.has(a.item_id) && !connectionOfAccount.has(a.account_id)) connectionOfAccount.set(a.account_id, a.item_id);
+  const lifecycle = lifecycleFacts(bank.lifecycle, hidden, (ids, item_id) => {
+    for (const id of ids) {
+      const item = connectionOfAccount.get(id);
+      if (item) return item;
+    }
+    return item_id !== null && itemOf.has(item_id) ? item_id : null;
+  });
+  // A connection whose every account it is known to hold (not hidden) has
+  // ended: the last of their ends, from which nothing of it counts.
+  const endDay = endDays(bank.lifecycle);
+  const accountsOf = new Map<string, Set<string>>();
+  for (const [account_id, item_id] of connectionOfAccount) accountsOf.set(item_id, (accountsOf.get(item_id) ?? new Set()).add(account_id));
+  const endedBy = (item_id: string): string | null => {
+    const ids = [...(accountsOf.get(item_id) ?? [])].filter((id) => !hidden.has(id));
+    if (ids.length === 0 || !ids.every((id) => endDay.has(id))) return null;
+    return ids.map((id) => endDay.get(id)!).sort().at(-1)!;
+  };
+
   const sources: SourceFacts[] = bank.sources.map((s) => {
     const f = facts.of(s.item_id);
     return {
@@ -135,6 +239,7 @@ export async function readReport(
       problem: f.problem,
       records_unreadable: f.records_unreadable === true,
       holds: holds.get(s.item_id) ?? { investment: false, loans: false },
+      ended_by: endedBy(s.item_id),
     };
   });
 
@@ -176,5 +281,7 @@ export async function readReport(
     hidden: hidden.size > 0,
     healthUnread: facts.note !== null,
     appendixLimit: opts.appendixLimit,
+    ended: lifecycle.ended,
+    missed: lifecycle.missed,
   });
 }

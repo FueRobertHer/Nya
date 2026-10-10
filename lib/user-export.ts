@@ -942,6 +942,17 @@ const PART_WORDS: Record<string, PartWords> = {
   // Read from the same stores as the budgets on categories: when those can't
   // be read, neither can these, and the budgets' note says it.
   group_budgets: { noun: 'budgets on category groups', one: 'budget', many: 'budgets', missing: missingFrom, saidWith: 'budgets' },
+  // An entry is about the account whose id it is stored under: that account's
+  // lifecycle (and its account_state in the balances CSV) can't say it ended.
+  'account-lifecycle': {
+    noun: 'account closures',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    listed: 'The JSON file lists them under problems, each by the id of the account it is about, whose lifecycle in this file is then null although it may have ended.',
+    inCsv: (counts) => `Not all of your account closures could be read: ${counts}. An account one of them is about has no account_state in this file, although it may have ended.`,
+  },
+  'timeline-notes': { noun: 'timeline notes', one: 'note', many: 'notes', missing: missingFrom },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
