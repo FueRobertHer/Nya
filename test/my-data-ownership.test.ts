@@ -615,11 +615,13 @@ describe('an email each time', () => {
     const names = ['Chase', 'Checking', 'Sapphire', 'BB Coffee', 'Blue Bottle', 'Farmers', 'peaches', 'Cash', 'By hand', 'owner@example.com', PASSPHRASE];
     for (const mail of sent) {
       const all = `${mail.subject}\n${mail.text}`;
-      for (const s of [...amounts, ...masks, ...names]) expect([s, all.includes(s)]).toEqual([s, false]);
-      // The time is the only number in it.
+      // The time is the only number in it, so it is taken out first: the
+      // rest is checked whatever the clock says (15:15 on the 15th has "15").
       const time = /on (\w+day, \w+ \d{1,2}, \d{4}, at \d{2}:\d{2} UTC)/.exec(all)![1];
-      expect(all.replace(time, '')).not.toMatch(/\d/);
-      expect(all).not.toMatch(/\$|€|USD|EUR/);
+      const rest = all.replace(time, '');
+      expect(rest).not.toMatch(/\d/);
+      for (const s of [...amounts, ...masks, ...names]) expect([s, rest.includes(s)]).toEqual([s, false]);
+      expect(rest).not.toMatch(/\$|€|USD|EUR/);
     }
   }, 30_000);
 
