@@ -361,7 +361,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'list_accounts',
     'accounts',
     'List accounts',
-    'Every account, linked and manual, with its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, how its bank connection was last found, and when it ended if it did (lifecycle: closed, left or untracked, counted in nothing from that day).',
+    'Every account, linked and manual, with its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, how its bank connection was last found, and when it ended if it did (lifecycle: closed, left or untracked, counted in nothing from that day; listed even once its bank stops returning it).',
     NARROW_HIDDEN
   ),
   {

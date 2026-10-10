@@ -999,9 +999,43 @@ async function hiddenContribution(src: HiddenSources, date: string, estimated: b
  * account's end day on: every point before it is untouched, so the step on
  * that day stays, as it happened. An id that is also hidden is subtracted
  * once, as hidden. The days they end are breaks for bridgeInteriorEstimates,
- * so a stretch with nothing recorded across one keeps its step there.
+ * so a stretch with nothing recorded across one keeps its step there, on its
+ * day, when the end moved the total (movingBreaks).
+ *
+ * `short` are days whose recorded totals are known to be short of an account
+ * (lib/lifecycle.ts shortDays: it was missing from its bank's answer, assumed
+ * closed, and came back): their recorded points are left out, so the chart
+ * bridges them as it bridges any day with nothing recorded, rather than draw
+ * a dip that never happened. Read only: the real layer keeps them.
  */
-export async function getHistory(ctx: Ctx, hidden?: HiddenMap, ended?: EndedAccounts): Promise<HistoryPoint[]> {
+export async function getHistory(ctx: Ctx, hidden?: HiddenMap, ended?: EndedAccounts, short?: ReadonlySet<string>): Promise<HistoryPoint[]> {
+  return (await getHistoryWithBreaks(ctx, hidden, ended, short)).points;
+}
+
+/** getHistory, with the end days its bridging stepped on (`breaks`), which
+ *  withTodayPoint needs to bridge the same way once today's point closes a
+ *  hole. */
+export async function getHistoryWithBreaks(
+  ctx: Ctx,
+  hidden?: HiddenMap,
+  ended?: EndedAccounts,
+  short?: ReadonlySet<string>
+): Promise<{ points: HistoryPoint[]; breaks: string[] }> {
+  const { points, breaks } = await readHistoryPoints(ctx, hidden, ended, short);
+  return { points: bridgeInteriorEstimates(points, breaks), breaks };
+}
+
+/**
+ * The points getHistory draws, before any bridging, date-sorted, and the end
+ * days that move a total: for a caller comparing two readings, which bridging
+ * would set apart by the breaks alone (lib/lifecycle.ts endedForgetRefusal).
+ */
+export async function readHistoryPoints(
+  ctx: Ctx,
+  hidden?: HiddenMap,
+  ended?: EndedAccounts,
+  short?: ReadonlySet<string>
+): Promise<{ points: HistoryPoint[]; breaks: string[] }> {
   const ending = [...(ended ?? [])].filter(([id]) => !hidden?.has(id));
   const hiding = (!!hidden && hidden.size > 0) || ending.length > 0;
 
@@ -1019,10 +1053,12 @@ export async function getHistory(ctx: Ctx, hidden?: HiddenMap, ended?: EndedAcco
 
   const entries: { date: string; blob: string; estimated: boolean }[] = [];
   for (const [date, blob] of Object.entries(realMap ?? {})) {
+    // Known short of an account: left out, as if nothing were recorded.
+    if (short?.has(date)) continue;
     entries.push({ date, blob, estimated: false });
   }
   for (const [date, blob] of Object.entries(estMap ?? {})) {
-    if (!realMap?.[date]) entries.push({ date, blob, estimated: true });
+    if (!realMap?.[date] || short?.has(date)) entries.push({ date, blob, estimated: true });
   }
 
   const points = await Promise.all(
@@ -1054,19 +1090,42 @@ export async function getHistory(ctx: Ctx, hidden?: HiddenMap, ended?: EndedAcco
       return { date, value, ...(estimated ? { estimated: true } : {}) };
     })
   );
-  return bridgeInteriorEstimates(
-    points.filter((p): p is HistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1)),
-    endBreaks(ending)
-  );
+  const sorted = points.filter((p): p is HistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1));
+  return { points: sorted, breaks: ending.length > 0 ? await movingBreaks(sorted, ending, sources) : [] };
 }
 
 /** The days the ended accounts stop counting: bridgeInteriorEstimates keeps a
- *  step on each rather than a line across it. */
+ *  step on each rather than a line across it. Every end, moving or not:
+ *  getHistory keeps only those that move a total (movingBreaks). */
 export function endBreaks(ended: Iterable<readonly [string, { from: string }]>): string[] {
   return [...new Set([...ended].map(([, e]) => e.from))].sort();
 }
 
+/**
+ * The end days that move a total: an end where the last point before it
+ * counted the account with a balance, or with one that can't be told. An end
+ * that moved nothing (an account closed at zero) is no step, so the stretch
+ * around it is bridged as any other, never drawn as a step on that day.
+ */
+async function movingBreaks(points: readonly HistoryPoint[], ending: readonly [string, { type: string | null; from: string }][], sources: HiddenSources): Promise<string[]> {
+  const days = new Set<string>();
+  for (const [id, { type, from }] of ending) {
+    if (days.has(from)) continue;
+    // Where a stretch with nothing recorded across its end would begin.
+    let before: HistoryPoint | undefined;
+    for (const p of points) {
+      if (p.date >= from) break;
+      before = p;
+    }
+    if (!before) continue;
+    if ((await hiddenContribution(sources, before.date, !!before.estimated, id, type)) === 0) continue;
+    days.add(from);
+  }
+  return [...days].sort();
+}
+
 const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
+const dayBefore = (date: string) => new Date(dayMs(date) - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 /**
  * Replaces every run of estimated points that has a real point on BOTH sides
@@ -1087,37 +1146,50 @@ const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
  * For the TOTAL only: a single account's walk is that account's own flows, so
  * getAccountHistory keeps it.
  *
- * `breaks` are days an account ended (lib/lifecycle.ts, endBreaks): a known
+ * `breaks` are days an account ended (lib/lifecycle.ts, movingBreaks): a known
  * step. A hole across one is not drawn as a line, which would spread the step
  * over the whole hole and smooth the cliff away, but as a step on that day:
- * the earlier recorded value up to it, the later one from it on. Still exact
- * at both ends, still dashed.
+ * the earlier recorded value up to it, the later one from it on, with a point
+ * on the day before it and one on the day itself wherever nothing recorded or
+ * estimated is there (both estimated, display only, never written), so the
+ * drop falls on its own day and a note on that day marks it. Still exact at
+ * both ends, still dashed.
  */
 export function bridgeInteriorEstimates(points: HistoryPoint[], breaks: readonly string[] = []): HistoryPoint[] {
   const out = points.slice();
+  const steps: HistoryPoint[] = [];
   let lastReal = -1;
   for (let i = 0; i < out.length; i++) {
     if (out[i].estimated) continue;
-    if (lastReal >= 0 && i - lastReal > 1) {
+    if (lastReal >= 0) {
       const from = out[lastReal];
       const to = out[i];
       const step = breaks.find((d) => d > from.date && d <= to.date);
-      const t0 = dayMs(from.date);
-      const span = dayMs(to.date) - t0;
-      for (let j = lastReal + 1; j < i; j++) {
-        const f = span > 0 ? (dayMs(out[j].date) - t0) / span : 0;
-        const value =
-          step !== undefined
-            ? out[j].date < step
-              ? from.value
-              : to.value
-            : Math.round((from.value + (to.value - from.value) * f) * 100) / 100;
-        out[j] = { date: out[j].date, value, estimated: true };
+      if (i - lastReal > 1) {
+        const t0 = dayMs(from.date);
+        const span = dayMs(to.date) - t0;
+        for (let j = lastReal + 1; j < i; j++) {
+          const f = span > 0 ? (dayMs(out[j].date) - t0) / span : 0;
+          const value =
+            step !== undefined
+              ? out[j].date < step
+                ? from.value
+                : to.value
+              : Math.round((from.value + (to.value - from.value) * f) * 100) / 100;
+          out[j] = { date: out[j].date, value, estimated: true };
+        }
+      }
+      if (step !== undefined) {
+        const inside = new Set(out.slice(lastReal + 1, i).map((p) => p.date));
+        const before = dayBefore(step);
+        if (before > from.date && !inside.has(before)) steps.push({ date: before, value: from.value, estimated: true });
+        if (step < to.date && !inside.has(step)) steps.push({ date: step, value: to.value, estimated: true });
       }
     }
     lastReal = i;
   }
-  return out;
+  if (steps.length === 0) return out;
+  return [...out, ...steps].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 /**

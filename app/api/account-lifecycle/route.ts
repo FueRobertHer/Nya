@@ -4,18 +4,22 @@ import type { Ctx } from '@/lib/containers';
 import { getItems } from '@/lib/storage';
 import { getManualAccount, isManualId } from '@/lib/manual';
 import { findRememberedAccount, rememberedIdsForItem } from '@/lib/last-known';
-import { directoryEntries, effectiveLinks, getLinks, liveAccountIds, withLinksLock, ForgetRefused } from '@/lib/links';
+import { directoryEntries, effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock, ForgetRefused, type Link } from '@/lib/links';
 import { clearCaches, readCache, CacheKey } from '@/lib/cache';
 import {
   lifecycleStore,
   markEnded,
   markStillOpen,
   reopenAccount,
+  reopenMissing,
   removeUnreadable,
   effectiveLifecycle,
+  lifecycleOf,
   endedNow,
   lastEndDay,
   isEndDay,
+  isLifecycleNote,
+  isRecordedBalance,
   LIFECYCLE_NOTE_MAX,
   type AccountAbout,
   type EndedLifecycle,
@@ -32,11 +36,22 @@ export const maxDuration = 120;
 // whole-list write would put back what it didn't know about. Every field is
 // checked, and anything else refused:
 //
-//   { account_id, state: "closed" | "left", on, note? }   it ended on a day
-//   { account_id, state: "untracked", from }              no longer followed from a day
+//   { account_id, state: "closed" | "left", on, note?, balance? }   it ended on a day
+//   { account_id, state: "untracked", from, balance? }              no longer followed from a day
 //   { account_id, state: "active" }                       reopen: every end it has goes
 //   { account_id, state: "active", answer, since }        "Still open", answering a question
 //   { action: "repair", confirm: true }                   remove the entries whose bytes are damaged
+//
+// `balance` is the balance the person was shown when they said so (null when
+// the app had none): a bank that goes on returning a closed or left account
+// with another one is asked about again (lib/lifecycle-questions.ts). Saying
+// the same end again with the balance shown now is "Still closed".
+//
+// Reopening an account its bank no longer returns (no live answer lists it,
+// and its connection is still there) can't make it count again by itself:
+// deleting its end would leave it nowhere while totals went on being saved
+// without it. It is answered "Still open" instead, held at its last known
+// balance and asked about as any missing account is (`held` in the answer).
 //
 // A day is a real calendar day, from 1970 on, and never after the person's
 // today (lastEndDay: the UTC day after, for anyone east of Greenwich). An end
@@ -60,14 +75,14 @@ export const maxDuration = 120;
 
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 const KEYS: Record<string, readonly string[]> = {
-  closed: ['account_id', 'state', 'on', 'note'],
-  left: ['account_id', 'state', 'on', 'note'],
-  untracked: ['account_id', 'state', 'from'],
+  closed: ['account_id', 'state', 'on', 'note', 'balance'],
+  left: ['account_id', 'state', 'on', 'note', 'balance'],
+  untracked: ['account_id', 'state', 'from', 'balance'],
   active: ['account_id', 'state', 'answer', 'since'],
 };
 
 type Change =
-  | { kind: 'end'; account_id: string; lifecycle: EndedLifecycle }
+  | { kind: 'end'; account_id: string; lifecycle: EndedLifecycle; seen?: { balance: number | null } }
   | { kind: 'reopen'; account_id: string }
   | { kind: 'still-open'; account_id: string; answered: { kind: QuestionKind; since: string } }
   | { kind: 'repair' };
@@ -94,22 +109,29 @@ function parseChange(body: unknown, now: number = Date.now()): Change | string {
     if (v > latest) return { error: `${what} can't be in the future` };
     return v;
   };
+  let seen: { balance: number | null } | undefined;
+  if (b.balance !== undefined) {
+    if (!isRecordedBalance(b.balance)) return 'The balance is a number, or null';
+    seen = { balance: b.balance };
+  }
   if (state === 'closed' || state === 'left') {
     const on = day(b.on, 'The day it ended');
     if (typeof on !== 'string') return on.error;
     let note: string | undefined;
     if (b.note !== undefined && b.note !== null) {
       if (typeof b.note !== 'string') return 'The note is text';
-      const clean = b.note.replace(/\s+/g, ' ').trim();
+      // One line, as a timeline note is: control characters become spaces.
+      const clean = b.note.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
       if (clean.length > LIFECYCLE_NOTE_MAX) return `The note is at most ${LIFECYCLE_NOTE_MAX} characters`;
+      if (clean && !isLifecycleNote(clean)) return 'The note is one line of text';
       if (clean) note = clean;
     }
-    return { kind: 'end', account_id, lifecycle: { state, on, ...(note ? { note } : {}) } };
+    return { kind: 'end', account_id, lifecycle: { state, on, ...(note ? { note } : {}) }, ...(seen ? { seen } : {}) };
   }
   if (state === 'untracked') {
     const from = day(b.from, 'The day to stop tracking it from');
     if (typeof from !== 'string') return from.error;
-    return { kind: 'end', account_id, lifecycle: { state, from } };
+    return { kind: 'end', account_id, lifecycle: { state, from }, ...(seen ? { seen } : {}) };
   }
   if (b.answer === undefined && b.since === undefined) return { kind: 'reopen', account_id };
   if (b.answer !== 'missing' && b.answer !== 'zero') return 'The answer is to the question about a missing account or a zero balance';
@@ -166,6 +188,18 @@ async function activeLinks(ctx: Ctx) {
   return effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true }));
 }
 
+/** The end that applies to an account its bank no longer returns, when it has
+ *  one: linked (not manual), its connection still stored, and no id it has
+ *  had among the accounts a live answer lists. Null otherwise: reopening it
+ *  then counts it again at once. Strict, as the write it decides is. */
+async function missingFromItsBank(ctx: Ctx, account_id: string, links: Map<string, Link>) {
+  if (isManualId(account_id)) return null;
+  const [entries, live, items] = await Promise.all([lifecycleStore.getAll(ctx), liveAccountIds(ctx, { strict: true }), getItems(ctx)]);
+  const entry = lifecycleOf(effectiveLifecycle(entries, links), account_id);
+  if (!entry || entry.lifecycle.state === 'active' || !entry.item_id || !items.some((i) => i.item_id === entry.item_id)) return null;
+  return sameAccountIds(account_id, links).some((id) => live.has(id)) ? null : entry;
+}
+
 /** Whether every account of a Plaid connection has ended now: the prompt to
  *  remove it. Its accounts as its last answer listed them (with any held
  *  for an answer); none listed, or a read that fails, asks nothing. */
@@ -214,7 +248,14 @@ export async function POST(req: Request) {
 
     return await withLinksLock(ctx, async () => {
       if (change.kind === 'reopen') {
-        const gone = await reopenAccount(ctx, change.account_id, await activeLinks(ctx), now);
+        const links = await activeLinks(ctx);
+        const missing = await missingFromItsBank(ctx, change.account_id, links);
+        if (missing) {
+          await reopenMissing(ctx, change.account_id, missing, links, now);
+          await clearCaches(ctx);
+          return NextResponse.json({ account_id: change.account_id, lifecycle: { state: 'active' }, reopened: true, held: true });
+        }
+        const gone = await reopenAccount(ctx, change.account_id, links, now);
         await clearCaches(ctx);
         return NextResponse.json({ account_id: change.account_id, lifecycle: { state: 'active' }, reopened: gone.length > 0 });
       }
@@ -226,7 +267,7 @@ export async function POST(req: Request) {
         await clearCaches(ctx);
         return NextResponse.json({ account_id: change.account_id, lifecycle: entry.lifecycle });
       }
-      const entry = await markEnded(ctx, change.account_id, change.lifecycle, about!, now, links);
+      const entry = await markEnded(ctx, change.account_id, change.lifecycle, about!, now, links, change.seen);
       await clearCaches(ctx);
       const remove = await lastOpenEnded(ctx, entry.item_id, now);
       return NextResponse.json({ account_id: change.account_id, lifecycle: entry.lifecycle, ...(remove ? { remove_connection: remove } : {}) });

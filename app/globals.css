@@ -3529,6 +3529,25 @@ button.import-choice {
   font-weight: 600;
 }
 
+/* A note in the readout, while its day is scrubbed: on the date's own line,
+   cut to fit it with an ellipsis, so the readout never grows under the finger.
+   The whole note is in the list under the chart. */
+.chart-readout-noted {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.chart-readout-day {
+  flex-shrink: 0;
+}
+
+.chart-readout-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The sheet's three choices: a radio and a sentence each. */
 .lifecycle-choices {
   border: none;
@@ -3639,6 +3658,40 @@ button.import-choice {
 .lifecycle-actions {
   flex-shrink: 0;
   margin-top: 0;
+}
+
+/* On a phone the actions go under the text, so a name and the assumed note
+   keep the card's width instead of a column beside two buttons. */
+@media (max-width: 480px) {
+  .lifecycle-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .lifecycle-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* What an end does to net worth, and the tick a debt still owed asks for. */
+.lifecycle-effect {
+  margin-top: 8px;
+}
+
+.lifecycle-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.lifecycle-confirm input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--accent);
 }
 
 /* Closures that can't be read, and their repair. */

@@ -6,7 +6,9 @@ import { pendingVanishedIds } from '@/lib/vanished';
 import { placeRecorded, readHoldingsHistory } from '@/lib/holdings-history';
 import { readMeasuredBalances } from '@/lib/history';
 import { allocationSettingsStore } from '@/lib/allocation-settings';
-import { getEffectiveLifecycle, endDays } from '@/lib/lifecycle';
+import { getEffectiveLifecycle, endDays, endOf } from '@/lib/lifecycle';
+import { isInvestmentType } from '@/lib/balance';
+import { isManualId } from '@/lib/manual';
 import { commonCurrency, KNOWN_ALWAYS, seriesBuilder, type SeriesAccount } from '@/lib/allocation/series';
 import { loggable } from '@/lib/log-safe';
 
@@ -60,10 +62,12 @@ import { loggable } from '@/lib/log-safe';
 // the next is read, so no more than a month of positions is held at once.
 //
 // An account that ENDED (lib/lifecycle.ts: closed, left, no longer tracked)
-// counts on the days before its end and not from it on, as in net worth: its
-// positions and balance are left out of every day from its end, it is never
-// listed (the Plan has no row for it), and it is gone, so it is expected only
-// on the days it was recorded before its end, never missing after it. Read
+// counts on the days before its end and not from it on, as in net worth: on
+// the days before, as a listed account counts (its balance beside its
+// positions, and its splits), whether or not the Plan still lists it (it no
+// longer has a row there, so an investment account that ended is listed
+// here, its currency taken as the series' own); from its end its positions
+// and balance are left out, and it is gone, never missing after it. Read
 // strictly: an end that can't be read is a 409, never an account counted.
 //
 // What can't be read is a 409 naming it, never an empty series. A day whose
@@ -232,7 +236,18 @@ export async function POST(req: Request) {
     const listed = new Map<string, SeriesAccount>();
     for (const a of q.accounts) {
       const placed = place(a.account_id);
-      if (placed && !ends.has(placed.account) && !listed.has(placed.account)) listed.set(placed.account, { ...a, account_id: placed.account });
+      if (!placed || listed.has(placed.account)) continue;
+      const end = ends.get(placed.account);
+      listed.set(placed.account, { ...a, account_id: placed.account, ...(end !== undefined ? { ended: end } : {}) });
+    }
+    // An investment account that ended, which the Plan no longer lists, up
+    // to its end (see the header).
+    for (const [root, { entry }] of lifecycle.accounts) {
+      const end = endOf(entry.lifecycle);
+      if (end === null || !(isInvestmentType(entry.type ?? '') || (entry.type === null && head.accounts.has(root)))) continue;
+      const placed = place(root);
+      if (!placed || listed.has(placed.account)) continue;
+      listed.set(placed.account, { account_id: placed.account, currency: null, manual: isManualId(placed.account), shown: false, ended: end });
     }
     // When the directory first knew each account, the earliest of its ids.
     // One whose entry can't be read is taken to have been there all along:

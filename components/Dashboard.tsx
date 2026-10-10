@@ -184,6 +184,10 @@ type Institution = {
   // The accounts a broken card can't show, by name, for the health view, with
   // their kind and currency (absent on a payload from before they were sent).
   unshown_accounts?: { account_id: string; name: string; mask: string | null; type?: string; currency?: string | null }[];
+  // Accounts that ended that its bank still returns, moved since: a copy of
+  // each row with its question, counted in nothing (#50,
+  // lib/lifecycle-questions.ts askAboutReportedEnds).
+  ended_reported?: Account[];
 };
 
 // One manually-tracked account as the API returns it (see lib/manual.ts).
@@ -1834,11 +1838,13 @@ export default function Dashboard({
                     const inst = institutions.find((i) => i.item_id === h.item_id);
                     return inst ? (
                       <AccountQuestions
-                        accounts={inst.accounts.filter((a) => !a.hidden)}
+                        accounts={[...inst.accounts, ...(inst.ended_reported ?? [])]}
                         institution={inst.institution_name}
                         busy={lifecycle.busy}
                         onOpen={lifecycle.open}
                         onStillOpen={lifecycle.stillOpen}
+                        onConfirmEnd={lifecycle.confirmEnd}
+                        onReopen={lifecycle.reopen}
                       />
                     ) : null;
                   }}
@@ -1870,6 +1876,11 @@ export default function Dashboard({
                   );
                   const instMixed =
                     new Set(inst.accounts.map((a) => a.currency).filter(Boolean)).size > 1;
+                  // Every row, hidden ones too, for the questions about them
+                  // (#50), and whether each one held was answered Still open.
+                  const allRows = institutions.find((i) => i.item_id === inst.item_id)?.accounts ?? inst.accounts;
+                  const heldRows = allRows.filter((a) => a.held);
+                  const heldStillOpen = heldRows.length > 0 && heldRows.every((a) => a.question?.still_open);
                   return (
                     <div className="card" key={inst.item_id}>
                       <div className="inst-header">
@@ -2037,8 +2048,11 @@ export default function Dashboard({
                                         )}
                                         {/* Hiding works on any account, linked
                                             or manual: it only stops the account
-                                            counting, it doesn't remove it. */}
-                                        {manageMode && (
+                                            counting, it doesn't remove it. Not
+                                            on a row held for an answer: its
+                                            bank isn't returning it, so there is
+                                            nothing to hide yet (#50). */}
+                                        {manageMode && !a.held && (
                                           <button
                                             className="link-btn"
                                             disabled={togglingHidden !== null}
@@ -2062,6 +2076,12 @@ export default function Dashboard({
                                                 mask: a.mask,
                                                 institution: inst.institution_name,
                                                 ...(a.question ? { day: a.question.end } : {}),
+                                                // What it shows, so the sheet
+                                                // can say what ending it does.
+                                                balance: a.balance,
+                                                type: a.type,
+                                                currency: a.currency,
+                                                lastKnown: !!a.held,
                                               })
                                             }
                                           >
@@ -2290,20 +2310,26 @@ export default function Dashboard({
                           {inst.unconfirmed_missing === 1 ? '' : 's'} this institution used to
                           report {inst.unconfirmed_missing === 1 ? "isn't" : "aren't"} in its latest
                           response · {inst.unconfirmed_missing === 1 ? 'it is' : 'they are'} held at{' '}
-                          {inst.unconfirmed_missing === 1 ? 'its' : 'their'} last known balance until
-                          you say whether {inst.unconfirmed_missing === 1 ? 'it' : 'they'} closed, and
-                          history is paused until then
+                          {inst.unconfirmed_missing === 1 ? 'its' : 'their'} last known balance
+                          {/* Answered Still open: held for the account, two weeks at most. */}
+                          {heldStillOpen
+                            ? ` until ${inst.unconfirmed_missing === 1 ? 'it comes' : 'they come'} back, two weeks from your answer at most, and history is paused until then`
+                            : ` until you say whether ${inst.unconfirmed_missing === 1 ? 'it' : 'they'} closed, and history is paused until then`}
                         </div>
                       )}
 
                       {/* The questions about its accounts (#50): missing
-                          from its answer, or at zero for weeks. */}
+                          from its answer, at zero for weeks, or ended and
+                          still reported. From every row, a hidden one's too:
+                          its absence holds every total all the same. */}
                       <AccountQuestions
-                        accounts={inst.accounts}
+                        accounts={[...allRows, ...(inst.ended_reported ?? [])]}
                         institution={inst.institution_name}
                         busy={lifecycle.busy}
                         onOpen={lifecycle.open}
                         onStillOpen={lifecycle.stillOpen}
+                        onConfirmEnd={lifecycle.confirmEnd}
+                        onReopen={lifecycle.reopen}
                       />
 
                       {/* Tells someone who just tapped Enable why the button
@@ -2408,8 +2434,9 @@ export default function Dashboard({
                         <p className="empty-note">
                           These accounts still sync, but are left out of net worth, transactions,
                           budgets and insights, on every day, past ones too. Unhiding restores their
-                          history in full. To stop counting one only from a day on, use Close… on it
-                          and choose Stop tracking: every day before then still counts.
+                          history in full. To stop counting one only from a day on, unhide it, then use
+                          Close… on it (under Manage) and choose Stop tracking: every day before then
+                          still counts.
                         </p>
                         <table>
                           <tbody>

@@ -5,6 +5,7 @@ import {
   EndedAccounts,
   LifecycleForm,
   LifecycleRepair,
+  endEffect,
   endText,
   lifecycleDamageOf,
   questionText,
@@ -37,9 +38,34 @@ describe('the questions', () => {
     expect(questionText({ ...q, since: null }, 'Card', 'Chase').ask).toBe('Card is missing from Chase’s latest answer. Closed?');
   });
 
-  test('answered Still open, and still missing: said, without asking the same again', () => {
+  test('answered Still open, and still missing: said, without asking the same again, for two weeks at most', () => {
     const q = { kind: 'missing' as const, end: '2024-03-13', since: '2024-03-12', still_open: true as const };
-    expect(questionText(q, 'Savings', 'Chase').ask).toBe('You said Savings is still open, but Chase hasn’t reported it since Mar 12, 2024.');
+    const { ask, detail } = questionText(q, 'Savings', 'Chase');
+    expect(ask).toBe('You said Savings is still open, but Chase hasn’t reported it since Mar 12, 2024.');
+    expect(detail).toContain('no total is saved while it’s missing, for two weeks from your answer at most: then Nya asks again.');
+    // Lapsed: asked again, with the three days that follow.
+    const again = questionText({ kind: 'missing', end: '2024-03-13', since: '2024-03-12', again: true }, 'Savings', 'Chase');
+    expect(again.ask).toBe('You said Savings was still open, but it still hasn’t appeared since Mar 12, 2024. Closed?');
+    expect(again.detail).toContain('If nobody answers within three days, Nya assumes it closed');
+  });
+
+  test('a hidden account that goes missing is asked about too: it counts in nothing, but holds every total', () => {
+    const q = { kind: 'missing' as const, end: '2024-03-13', since: '2024-03-12' };
+    expect(questionText(q, 'Joint', 'Chase', { balance: 900, currency: 'USD', hidden: true, held: { as_of: '2024-03-12' } }).detail).toBe(
+      'It’s hidden, so it counts in no total either way, and no total is saved until you answer.'
+    );
+  });
+
+  test('an end its bank disagrees with: what it shows, Still closed or Reopen', () => {
+    const q = { kind: 'reported' as const, end: '2024-03-13', since: null, ended: { state: 'closed' as const, on: '2024-03-13' } };
+    const row = { account_id: 'card', name: 'Chase Freedom', mask: '9902', type: 'credit', balance: 450, currency: 'USD', question: q };
+    expect(questionText(q, 'Chase Freedom ••9902', 'Chase', row).ask).toBe('Chase Freedom ••9902, closed Mar 13, 2024, shows $450.00 owed. Still closed?');
+    const html = renderToStaticMarkup(<AccountQuestions accounts={[row]} institution="Chase" busy={false} onOpen={noop} onStillOpen={noop} onConfirmEnd={noop} onReopen={noop} />);
+    expect(buttons(html)).toEqual(['Still closed', 'Reopen']);
+    expect(text(html)).toContain('Chase still reports it, and from its end it counts in nothing, so this isn’t in your net worth.');
+    // Left, with a transaction since.
+    const left = { kind: 'reported' as const, end: '2024-03-13', since: '2024-03-20', ended: { state: 'left' as const, on: '2024-03-13' } };
+    expect(questionText(left, 'Joint', 'Ally').ask).toBe('Joint, no longer yours since Mar 13, 2024, has a transaction from Mar 20, 2024. Still not yours?');
   });
 
   test('a zero for weeks holds nothing, and says so', () => {
@@ -73,7 +99,11 @@ describe('the questions', () => {
       accounts: [{ account_id: 'z', name: 'Old checking', mask: null, type: 'depository', balance: 0, currency: 'USD', question: { kind: 'zero' } }],
     };
     expect(needsAttention(row)).toBe(true);
-    expect(needsAttention({ ...row, accounts: [{ ...row.accounts[0], hidden: true }] })).toBe(false);
+    // A hidden account's question too: its absence holds every total all the same.
+    expect(needsAttention({ ...row, accounts: [{ ...row.accounts[0], hidden: true }] })).toBe(true);
+    expect(needsAttention({ ...row, accounts: [{ ...row.accounts[0], question: undefined }] })).toBe(false);
+    // And an end its bank disagrees with.
+    expect(needsAttention({ ...row, accounts: [], ended_reported: [{ question: { kind: 'reported' } }] })).toBe(true);
     const html = renderToStaticMarkup(
       <ConnectionHealthView
         rows={[row]}
@@ -118,9 +148,28 @@ describe('the sheet', () => {
     expect(form({ target: { ...target, day: '2024-07-04' } })).toContain('value="2024-06-30"');
   });
 
-  test('an account that ended can be reopened from it', () => {
+  test('an account that ended can be reopened from it; one its bank no longer returns is held, which it says', () => {
     expect(buttons(form())).toEqual(['Cancel', 'Save']);
-    expect(buttons(form({ target: { ...target, state: 'left', day: '2024-03-13', ended: true } }))).toEqual(['Cancel', 'Save', 'Reopen it']);
+    const ended = form({ target: { ...target, state: 'left', day: '2024-03-13', ended: true } });
+    expect(buttons(ended)).toEqual(['Cancel', 'Save', 'Reopen it']);
+    expect(text(ended)).toContain('If its bank no longer returns it, it is held at its last known balance, and asked about, until the bank does.');
+  });
+
+  test('ending a card that still owes says net worth rises by it, and waits for a tick', () => {
+    const card = { ...target, name: 'Freedom', balance: 310, type: 'credit', currency: 'USD' };
+    const html = form({ target: card });
+    expect(text(html)).toContain('It still shows $310.00 owed. From Jun 30, 2024 that debt stops counting, so your net worth rises by $310.00.');
+    expect(text(html)).toContain('Stop counting what it owes');
+    // Save waits for the tick.
+    expect(html).toMatch(/<button disabled="">Save<\/button>/);
+    // An asset says what leaves net worth, and asks nothing more; a zero says nothing.
+    expect(endEffect({ balance: 5000, type: 'depository', currency: 'USD' }, '2024-03-12')).toEqual({
+      text: 'It still shows $5,000.00. From Mar 12, 2024 it stops counting, so your net worth falls by $5,000.00.',
+      owed: false,
+    });
+    expect(endEffect({ balance: 0, type: 'credit', currency: 'USD' }, '2024-03-12')).toBeNull();
+    expect(endEffect({ balance: null, type: 'credit', currency: 'USD' }, '2024-03-12')).toBeNull();
+    expect(endEffect({ balance: 2000, type: 'credit', currency: 'USD', lastKnown: true }, '2024-03-13')?.text).toStartWith('Its last known balance is $2,000.00 owed.');
   });
 });
 
@@ -175,8 +224,11 @@ describe('closures that can’t be read', () => {
     expect(text(damaged)).toContain('One saved account closure is damaged and can’t be read. Accounts can’t load until it is removed, since one may be an account you closed.');
     expect(buttons(damaged)).toEqual(['Remove the damaged closure']);
     const newer = renderToStaticMarkup(<LifecycleRepair damage={{ unreadable: 0, unrecognised: 2 }} onRepaired={noop} />);
-    expect(text(newer)).toContain('2 account closures were saved by a newer version of Nya');
+    expect(text(newer)).toContain('2 account closures are in a form this version of Nya can’t read, though they look intact');
     expect(buttons(newer)).toEqual([]);
+    // Both: removing the damaged one isn't enough on its own, and it says so.
+    const both = text(renderToStaticMarkup(<LifecycleRepair damage={{ unreadable: 1, unrecognised: 1 }} onRepaired={noop} />));
+    expect(both).toContain('removing this one isn’t enough on its own');
   });
 });
 

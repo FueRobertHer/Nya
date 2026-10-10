@@ -26,9 +26,11 @@
 // Notes on the timeline (#50, lib/timeline-notes.ts) mark their days: a
 // dotted rule and a small marker, never a change to the line, so a step (an
 // account that closed, a house bought) stays as it happened and says what it
-// was. Scrubbing to a marked day puts its note in the readout. For keyboard
-// and screen reader, the notes in the range are listed under the chart as
-// buttons that select their day, and the selection is announced.
+// was. Scrubbing to a marked day puts its note in the readout, on the date's
+// own line and cut to fit it, so the readout never grows under the finger;
+// the whole note is in the list. For keyboard and screen reader, the notes in
+// the range are listed under the chart as buttons that select their day, and
+// the selection is announced.
 
 import { useId, useMemo, useRef, useState } from 'react';
 import { formatMoney, compactMoney } from '@/lib/format';
@@ -424,13 +426,14 @@ export default function NetWorthChart({
 
   let readValue: string;
   let readDate: string;
+  let readNote: string | null = null;
   if (measure) {
     readValue = change(measure[0], measure[1]).text;
     readDate = `${day(measure[0])} to ${day(measure[1])}`;
   } else if (active !== null) {
     readValue = formatMoney(vals[active], currency);
-    const note = noteOn(active);
-    readDate = `${day(active)}${points[active].estimated ? ' · estimated' : ''}${note ? ` · ${note}` : ''}`;
+    readNote = noteOn(active);
+    readDate = `${day(active)}${points[active].estimated ? ' · estimated' : ''}`;
   } else {
     readValue = rangeChange.text;
     readDate = rangeLabel(range, points[0].date, points[last].date);
@@ -440,7 +443,14 @@ export default function NetWorthChart({
     <div>
       <div className="chart-readout chart-readout-stable">
         <span className="chart-readout-value">{readValue}</span>
-        <span className="chart-readout-date">{readDate}</span>
+        {readNote ? (
+          <span className="chart-readout-date chart-readout-noted">
+            <span className="chart-readout-day">{readDate}</span>
+            <span className="chart-readout-note">{`\u00a0·\u00a0${readNote}`}</span>
+          </span>
+        ) : (
+          <span className="chart-readout-date">{readDate}</span>
+        )}
         <button
           type="button"
           className="chart-info-btn"

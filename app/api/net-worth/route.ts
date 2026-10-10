@@ -5,19 +5,19 @@ import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
-  getHistory,
+  getHistoryWithBreaks,
   withTodayPoint,
   isBackfillDone,
-  endBreaks,
   type HistoryPoint,
 } from '@/lib/history';
+import { signedContribution } from '@/lib/balance';
 import { applyHidden } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
 import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
-import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, isLifecycleUnreadable, type LifecycleForClient } from '@/lib/lifecycle';
-import { holdMissingAccounts, askAboutZeroBalances } from '@/lib/lifecycle-questions';
+import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, isLifecycleUnreadable, shortDays, type LifecycleForClient } from '@/lib/lifecycle';
+import { holdMissingAccounts, askAboutZeroBalances, askAboutReportedEnds } from '@/lib/lifecycle-questions';
 import { storeFailure } from '@/lib/store-failure';
 
 type NetWorthPayload = {
@@ -136,7 +136,10 @@ export async function GET(req: Request) {
     // snapshot like the hidden set, so it can't cost today's point.
     const readLifecycle = () => eager(hiddenPromise.then((h) => getEffectiveLifecycle(ctx, h.links)));
     let lifecyclePromise = readLifecycle();
-    const readHistory = () => eager(Promise.all([hiddenPromise, lifecyclePromise]).then(([h, l]) => getHistory(ctx, h.hidden, l.ended)));
+    // The days known short of an account that came back after an assumed
+    // closure are left out (lib/lifecycle.ts shortDays).
+    const readHistory = () =>
+      eager(Promise.all([hiddenPromise, lifecyclePromise]).then(([h, l]) => getHistoryWithBreaks(ctx, h.hidden, l.ended, shortDays(l, h.hidden))));
     let historyPromise = readHistory();
 
     const { institutions, netWorth, lifecycleChanged } = await computeNetWorth(ctx);
@@ -209,10 +212,13 @@ export async function GET(req: Request) {
     // the accounts were remembered: a held row is never recorded.
     await holdMissingAccounts(ctx, institutions, lifecycle, links ?? new Map());
     await askAboutZeroBalances(ctx, institutions, lifecycle, links ?? new Map(), hidden);
+    // And one that ended but whose bank still returns it moving is asked
+    // about again, from a copy of its row (`ended_reported`).
+    await askAboutReportedEnds(ctx, institutions, lifecycle, links ?? new Map(), hidden);
     // And an account that ended leaves the live accounts (and with them every
     // total) for the Accounts tab's own section, unless it is hidden too: the
     // Hidden card lists it, and every total leaves it out already.
-    applyLifecycle(institutions, lifecycle, hidden);
+    const endedRows = applyLifecycle(institutions, lifecycle, hidden);
     // Plaid's cross-Item account identity is for matching on the server only
     // (lib/links.ts); it has no business in the payload, the cache or the
     // browser's localStorage. Nor has the raw holdings answer recorded above:
@@ -226,9 +232,14 @@ export async function GET(req: Request) {
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
     const stored = await historyPromise;
-    const history = snapshotDate
-      ? withTodayPoint(stored, snapshotDate, visibleNetWorth, endBreaks([...lifecycle.ended].filter(([id]) => !hidden.has(id))))
-      : stored;
+    // An end on the person's today can be the UTC day after (lib/lifecycle.ts
+    // lastEndDay): it leaves the live total at once, but today's point is the
+    // UTC day, before that end, where the account still counts, as the day
+    // reads once recorded.
+    const notYet = snapshotDate
+      ? endedRows.filter((r) => r.end > snapshotDate && r.type !== null).reduce((n, r) => n + signedContribution(r.type!, r.balance ?? 0), 0)
+      : 0;
+    const history = snapshotDate ? withTodayPoint(stored.points, snapshotDate, visibleNetWorth + notYet, stored.breaks) : stored.points;
 
     const payload: NetWorthPayload = {
       institutions,

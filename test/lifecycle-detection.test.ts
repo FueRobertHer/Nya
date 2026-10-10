@@ -29,9 +29,10 @@ const { encrypt } = await import('@/lib/crypto');
 const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const netWorthRoute = await import('@/app/api/net-worth/route');
+const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
 const { snapshotData } = await import('@/lib/snapshot-job');
 const { lifecycleStore, markStillOpen, markEnded } = await import('@/lib/lifecycle');
-const { timelineNotesStore, autoNoteId } = await import('@/lib/timeline-notes');
+const { timelineNotesStore, autoNoteId, missedNoteId } = await import('@/lib/timeline-notes');
 const { zeroRun, ZERO_DAYS } = await import('@/lib/lifecycle-questions');
 const { readMeasuredBalances } = await import('@/lib/history');
 
@@ -62,6 +63,26 @@ const recordedTotals = async () => {
 };
 
 const accountRow = (body: any, id: string) => body.institutions.flatMap((i: any) => i.accounts).find((a: any) => a.account_id === id);
+
+/** A change through the route the app uses (app/api/account-lifecycle). */
+async function post(body: unknown) {
+  const res = await lifecycleRoute.POST(new Request('http://x/api/account-lifecycle', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }));
+  return { status: res.status, body: await res.json() };
+}
+
+/** The bank's stored transactions for Ally, as a sync leaves them. */
+async function storedTxns(rows: { account_id: string; date: string }[]) {
+  const { encodeJsonBlob } = await import('@/lib/blob');
+  const txns = Object.fromEntries(
+    rows.map((r, i) => [
+      `t${i}`,
+      { transaction_id: `t${i}`, account_id: r.account_id, date: r.date, amount: 5, pending: false, name: 'x', merchant_name: null, iso_currency_code: 'USD' },
+    ])
+  );
+  await fake.set(ctxKey('txns:item_ally'), await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: {}, txns, synced_at: null }));
+}
+
+const points = (body: any) => body.history.map((p: any) => [p.date, p.value, !!p.estimated]);
 
 beforeEach(async () => {
   setSystemTime();
@@ -135,10 +156,12 @@ describe('an account missing from a healthy answer', () => {
     ]);
     expect(accountRow(body, 'sav')).toBeUndefined();
     expect(body.netWorth).toBe(500);
-    // Every day it was measured keeps it; no measurement of it is removed.
-    expect(body.history.map((p: any) => [p.date, p.value])).toEqual([
-      ['2026-03-12', 10_500],
-      ['2026-03-16', 500],
+    // Every day it was measured keeps it; no measurement of it is removed. The
+    // step falls on its own day, drawn as an estimate across the days held.
+    expect(body.history.map((p: any) => [p.date, p.value, !!p.estimated])).toEqual([
+      ['2026-03-12', 10_500, false],
+      ['2026-03-13', 500, true],
+      ['2026-03-16', 500, false],
     ]);
     expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-03-13', kind: 'auto', text: 'Savings ••4821 assumed closed: it stopped appearing at Ally' });
   });
@@ -173,6 +196,8 @@ describe('an account missing from a healthy answer', () => {
     await load('2026-03-12');
     plaid.accounts = [CHK];
     await load('2026-03-13');
+    // Still open, said again a week before: it holds two weeks from each answer.
+    setSystemTime(new Date('2026-04-24T12:00:00Z'));
     await markStillOpen(ctx, 'sav', { kind: 'missing', since: '2026-03-12' }, { type: 'depository', label: { name: 'Savings', institution: 'Ally', mask: '4821' }, item_id: 'item_ally' });
     const { body } = await load('2026-05-01');
     expect(accountRow(body, 'sav')).toMatchObject({ balance: null, held: { as_of: null, too_old: '2026-03-12' } });
@@ -189,11 +214,21 @@ describe('an account missing from a healthy answer', () => {
 
     plaid.accounts = [SAV, CHK];
     const { body } = await load('2026-03-20');
-    expect(await lifecycleStore.has(ctx, 'sav')).toBe(false);
+    // Open again, with the days saved without it kept as a missing window.
+    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ lifecycle: { state: 'active' }, missed: [{ from: '2026-03-13', to: '2026-03-19' }] });
     expect(await timelineNotesStore.has(ctx, autoNoteId('sav'))).toBe(false);
+    expect(await timelineNotesStore.get(ctx, missedNoteId('sav', '2026-03-13'))).toMatchObject({
+      text: 'Savings ••4821 was missing at Ally from Mar 13 to Mar 19, so the totals saved then, short of it, are left out',
+    });
     expect(body.lifecycle).toEqual([]);
     expect(accountRow(body, 'sav')).toMatchObject({ balance: 10_000 });
     expect(body.netWorth).toBe(10_500);
+    // The total saved on 03-16 without it is left out of the chart, never drawn as a dip.
+    expect(await recordedTotals()).toEqual(['2026-03-12', '2026-03-16', '2026-03-20']);
+    expect(body.history.map((p: any) => [p.date, p.value])).toEqual([
+      ['2026-03-12', 10_500],
+      ['2026-03-20', 10_500],
+    ]);
   });
 
   test('a confirmed closure stays closed when the account is still reported', async () => {
@@ -204,12 +239,173 @@ describe('an account missing from a healthy answer', () => {
     expect(accountRow(body, 'sav')).toBeUndefined();
     expect(body.netWorth).toBe(500);
     expect(body.lifecycle.map((l: any) => l.lifecycle)).toEqual([{ state: 'left', on: '2026-03-13', note: 'Divided' }]);
-    // Recorded as measured (the true total), applied on read.
+    // Recorded as measured (the true total), applied on read; the step on its day.
     expect(await recordedTotals()).toEqual(['2026-03-12', '2026-03-14']);
     expect(body.history.map((p: any) => [p.date, p.value])).toEqual([
       ['2026-03-12', 10_500],
+      ['2026-03-13', 500],
       ['2026-03-14', 500],
     ]);
+    // Left, and moving as it always did: no transaction after its end, so
+    // nothing asks.
+    expect(body.institutions[0].ended_reported).toBeUndefined();
+  });
+});
+
+describe('an answer that doesn’t settle a missing account', () => {
+  test('Still open about a zero balance says nothing about it going missing: after the window it is assumed closed, never dropped silently', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    // Weeks before, it sat at zero and the person said it was still open.
+    expect((await post({ account_id: 'sav', state: 'active', answer: 'zero', since: '2026-01-02' })).status).toBe(200);
+    plaid.accounts = [CHK];
+    expect((await load('2026-03-13')).body.institutions[0].unconfirmed_missing).toBe(1);
+    const { body } = await load('2026-03-16', 13);
+    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ lifecycle: { state: 'closed', on: '2026-03-13' }, assumed: true });
+    expect(body.lifecycle.map((l: any) => [l.account_id, l.assumed])).toEqual([['sav', true]]);
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-03-13' });
+    // Shown as a closure on its day, with its note: the drop is explained.
+    expect(points(body)).toEqual([
+      ['2026-03-12', 10_500, false],
+      ['2026-03-13', 500, true],
+      ['2026-03-16', 500, false],
+    ]);
+  });
+
+  test('Still open holds two weeks from the answer; then Nya asks again, and unanswered, assumes it closed', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    plaid.accounts = [CHK];
+    await load('2026-03-13');
+    expect((await post({ account_id: 'sav', state: 'active', answer: 'missing', since: '2026-03-12' })).status).toBe(200);
+    expect(accountRow((await load('2026-03-26')).body, 'sav')?.question).toMatchObject({ kind: 'missing', still_open: true });
+    // Lapsed on 03-27: asked again, still held, nothing saved.
+    const asked = (await load('2026-03-28')).body;
+    expect(accountRow(asked, 'sav')?.question).toMatchObject({ kind: 'missing', again: true });
+    expect(accountRow(asked, 'sav')?.question?.still_open).toBeUndefined();
+    expect(asked.institutions[0].unconfirmed_missing).toBe(1);
+    expect(await recordedTotals()).toEqual(['2026-03-12']);
+    // Three days on with no answer: assumed closed, and totals are saved again.
+    const after = (await load('2026-03-31')).body;
+    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ lifecycle: { state: 'closed', on: '2026-03-13' }, assumed: true });
+    expect(after.institutions[0].unconfirmed_missing).toBeUndefined();
+    expect(await recordedTotals()).toEqual(['2026-03-12', '2026-03-31']);
+  });
+});
+
+describe('reopening an account its bank no longer returns', () => {
+  test('after its closure settled, Reopen holds it at its last known balance and asks, and no total is saved without it', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    plaid.accounts = [CHK];
+    await load('2026-03-13');
+    expect((await post({ account_id: 'sav', state: 'closed', on: '2026-03-13' })).status).toBe(200);
+    await load('2026-03-14');
+    await load('2026-03-15');
+    const reopened = await post({ account_id: 'sav', state: 'active' });
+    expect(reopened).toMatchObject({ status: 200, body: { reopened: true, held: true } });
+    const { body } = await load('2026-03-16');
+    expect(accountRow(body, 'sav')).toMatchObject({ balance: 10_000, held: { as_of: '2026-03-12' }, question: { kind: 'missing', still_open: true } });
+    expect(body.lifecycle).toEqual([]);
+    expect(body.netWorth).toBe(10_500);
+    expect(body.institutions[0].unconfirmed_missing).toBe(1);
+    expect(await recordedTotals()).toEqual(['2026-03-12', '2026-03-14', '2026-03-15']);
+  });
+
+  test('the same from an assumed closure', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    plaid.accounts = [CHK];
+    await load('2026-03-13');
+    await load('2026-03-16', 13);
+    await load('2026-03-17');
+    expect((await lifecycleStore.get(ctx, 'sav'))?.assumed).toBe(true);
+    expect((await post({ account_id: 'sav', state: 'active' })).body).toMatchObject({ held: true });
+    const { body } = await load('2026-03-18');
+    expect(accountRow(body, 'sav')).toMatchObject({ question: { kind: 'missing', still_open: true } });
+    expect(body.netWorth).toBe(10_500);
+  });
+
+  test('one its bank still returns simply counts again', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    await post({ account_id: 'sav', state: 'left', on: '2026-03-12' });
+    expect((await post({ account_id: 'sav', state: 'active' })).body).toEqual({ account_id: 'sav', lifecycle: { state: 'active' }, reopened: true });
+    expect(await lifecycleStore.has(ctx, 'sav')).toBe(false);
+    expect((await load('2026-03-13')).body.netWorth).toBe(10_500);
+  });
+});
+
+describe('an account that ended and that its bank still returns', () => {
+  const card = (owed: number) => plaidAccount('card', 'credit', owed);
+
+  test('a card closed at zero that comes to owe is asked about, and counts in nothing meanwhile; Still closed holds until it moves again', async () => {
+    plaid.accounts = [CHK, card(0)];
+    await load('2026-03-12');
+    expect((await post({ account_id: 'card', state: 'closed', on: '2026-03-13' })).status).toBe(200);
+    plaid.accounts = [CHK, card(450)];
+    const { body } = await load('2026-04-20');
+    const inst = body.institutions[0];
+    expect(body.netWorth).toBe(500);
+    expect(accountRow(body, 'card')).toBeUndefined();
+    expect(inst.ended_reported).toEqual([
+      expect.objectContaining({ account_id: 'card', balance: 450, question: { kind: 'reported', end: '2026-03-13', since: null, ended: { state: 'closed', on: '2026-03-13' } } }),
+    ]);
+    // Still closed, as it shows now: asked no more while it stays there.
+    expect((await post({ account_id: 'card', state: 'closed', on: '2026-03-13', balance: 450 })).status).toBe(200);
+    expect((await lifecycleStore.get(ctx, 'card'))?.seen).toEqual({ balance: 450, through: '2026-04-20' });
+    expect((await load('2026-04-21')).body.institutions[0].ended_reported).toBeUndefined();
+    plaid.accounts = [CHK, card(600)];
+    expect((await load('2026-04-22')).body.institutions[0].ended_reported).toHaveLength(1);
+  });
+
+  test('closed with the balance it showed, it is asked about only when that moves', async () => {
+    plaid.accounts = [CHK, card(310)];
+    await load('2026-03-12');
+    await post({ account_id: 'card', state: 'closed', on: '2026-03-12', balance: 310 });
+    expect((await load('2026-03-13')).body.institutions[0].ended_reported).toBeUndefined();
+  });
+
+  test('a transaction after its end asks about a left account; an untracked one is expected to move, and never is', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    await post({ account_id: 'sav', state: 'left', on: '2026-03-13' });
+    await storedTxns([{ account_id: 'sav', date: '2026-03-20' }]);
+    const asked = (await load('2026-03-21')).body.institutions[0].ended_reported;
+    expect(asked).toEqual([expect.objectContaining({ account_id: 'sav', question: expect.objectContaining({ kind: 'reported', since: '2026-03-20', ended: { state: 'left', on: '2026-03-13' } }) })]);
+    await post({ account_id: 'sav', state: 'untracked', from: '2026-03-13' });
+    expect((await load('2026-03-22')).body.institutions[0].ended_reported).toBeUndefined();
+  });
+});
+
+describe('the chart across a hold', () => {
+  test('Still open, then Closed on the prefilled day: the step falls on that day, with its note there, never a slope across the hold', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    plaid.accounts = [CHK];
+    await load('2026-03-13');
+    await post({ account_id: 'sav', state: 'active', answer: 'missing', since: '2026-03-12' });
+    await load('2026-03-20');
+    setSystemTime(new Date('2026-03-25T12:00:00Z'));
+    await post({ account_id: 'sav', state: 'closed', on: '2026-03-13' });
+    const { body } = await load('2026-03-26');
+    expect(points(body)).toEqual([
+      ['2026-03-12', 10_500, false],
+      ['2026-03-13', 500, true],
+      ['2026-03-26', 500, false],
+    ]);
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-03-13' });
+  });
+});
+
+describe('an end on the person’s today, a day ahead of UTC', () => {
+  test('leaves the live total at once, while today’s point, a UTC day before it, still counts it as the day will read once recorded', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12', 23);
+    expect((await post({ account_id: 'sav', state: 'closed', on: '2026-03-13' })).status).toBe(200);
+    const { body } = await load('2026-03-12', 23);
+    expect(body.netWorth).toBe(500);
+    expect(points(body)).toEqual([['2026-03-12', 10_500, false]]);
   });
 });
 

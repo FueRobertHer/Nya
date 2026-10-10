@@ -729,9 +729,10 @@ function mentionedAccountIds(data: UserData): Set<string> {
   const read = new Map(data.sections);
   for (const s of SECTIONS) if (s.mentions && read.has(s.key)) for (const id of s.mentions(read.get(s.key))) add(id);
   // The stores on the seam that name accounts: an account's end, and the
-  // notes about one.
+  // notes Nya wrote about one. A note of the person's own may carry any id,
+  // which says nothing about an account.
   for (const id of storedLifecycles(data).keys()) add(id);
-  for (const note of storedNotes(data)) add(note.account_id);
+  for (const note of storedNotes(data)) if (note.kind === 'auto') add(note.account_id);
   return ids;
 }
 

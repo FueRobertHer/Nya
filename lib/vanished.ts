@@ -20,10 +20,11 @@
 // unconfirmed, no snapshot is recorded, and the person is asked (#50,
 // lib/lifecycle-questions.ts): Closed, Still open, or Stop tracking. An answer
 // settles it: an end (lib/lifecycle.ts) holds nothing, and "Still open" holds
-// for as long as the account stays missing. Holding forever needs a way out,
-// so an account nobody answers about for CONFIRM_AFTER_DAYS is recorded as an
-// ASSUMED closure (assumeClosed), which the person can correct, and the gate
-// reopens. A glitch resolves inside the window (and an assumption it outlives
+// while the account stays missing, for STILL_OPEN_HOLD_DAYS from the answer,
+// when it is asked about again with a grace window of its own. Holding
+// forever needs a way out, so an account nobody answers about for
+// CONFIRM_AFTER_DAYS is recorded as an ASSUMED closure (assumeClosed), which
+// the person can correct, and the gate reopens. A glitch resolves inside the window (and an assumption it outlives
 // is lifted when the account comes back); a real closure costs a few days of
 // gap, which the estimated layer can span, where a wrong measurement in the
 // real layer is permanent. If the answers can't be read, nothing is assumed:
@@ -40,7 +41,7 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { rememberedIdsForItem, rememberedIdsByItem } from './last-known';
 import { getLinks, resolveId, effectiveLinks, type Link } from './link-core';
-import { readLifecycleEntries, effectiveLifecycle, answersFrom, liftAssumedClosures, type LifecycleAnswers } from './lifecycle';
+import { readLifecycleEntries, effectiveLifecycle, answersFrom, liftAssumedClosures, type LifecycleAnswers, type LifecycleView } from './lifecycle';
 import { assumeClosed } from './lifecycle-questions';
 import { clearCaches } from './cache';
 
@@ -329,11 +330,15 @@ async function checkOne(ctx: Ctx,
     }
 
     const since = Date.parse(record[id]);
+    // A "Still open" that has lapsed asks again, with a window from when it
+    // lapsed (lib/lifecycle.ts STILL_OPEN_HOLD_DAYS).
+    const reask = answers?.reaskFrom.get(id);
+    const start = reask !== undefined ? Math.max(since, Date.parse(reask)) : since;
     // An unparseable timestamp is treated as "just now" rather than as ancient,
     // so a corrupt entry cannot wave a disappearance through unexamined. Held
     // too: "Still open", whatever the window says, and anything while the
     // answers can't be read, since one may be "Still open".
-    if (!Number.isFinite(since) || since > cutoff || stillOpen.has(id) || answers === null) {
+    if (!Number.isFinite(start) || start > cutoff || stillOpen.has(id) || answers === null) {
       unconfirmed.push(id);
       continue;
     }
@@ -375,7 +380,7 @@ export async function checkVanished(ctx: Ctx,
   now: number = Date.now()
 ): Promise<VanishedResult> {
   const [remembered, inputs] = await Promise.all([rememberedIdsForItem(ctx, item_id), loadVanishedInputs(ctx)]);
-  return checkOne(ctx, item_id, freshIds, remembered, now, undefined, inputs.answers ?? null, assumeWith(ctx, inputs, now));
+  return checkOne(ctx, item_id, freshIds, remembered, now, undefined, answersAt(inputs, now), assumeWith(ctx, inputs, now));
 }
 
 /**
@@ -400,11 +405,18 @@ export type VanishedInputs = {
   /** Account links (lib/links.ts). An id the user linked to an account that
    *  is present is not missing: the account is there under its new id. */
   links?: Map<string, Link>;
-  /** The person's answers about accounts (lib/lifecycle.ts), through the
-   *  links that apply; null when they couldn't be read, and then nothing is
-   *  assumed closed. Absent reads as none given. */
-  answers?: LifecycleAnswers | null;
+  /** What the person said about their accounts (lib/lifecycle.ts), through
+   *  the links that apply; null when it couldn't be read, and then nothing is
+   *  assumed closed. Absent reads as nothing said. */
+  lifecycle?: LifecycleView | null;
 };
+
+/** The answers as they stand at `now` (a "Still open" lapses: answersFrom). */
+function answersAt(inputs: VanishedInputs, now: number): LifecycleAnswers | null {
+  if (inputs.lifecycle === null) return null;
+  if (inputs.lifecycle === undefined) return { ended: new Set(), stillOpen: new Map(), reaskFrom: new Map(), assumed: new Map() };
+  return answersFrom(inputs.lifecycle, now);
+}
 
 /**
  * Issue the reads. Depends only on what is already in Redis, never on the
@@ -427,8 +439,8 @@ export async function loadVanishedInputs(ctx: Ctx): Promise<VanishedInputs> {
   // A link whose earlier id is live again joins two live accounts: one's end
   // must not settle the other's absence (lib/link-core.ts effectiveLinks).
   const live = new Set(Object.values(remembered).flat());
-  const answers = entries === null ? null : answersFrom(effectiveLifecycle(entries, effectiveLinks(links, live)));
-  return { remembered, records, links, answers };
+  const lifecycle = entries === null ? null : effectiveLifecycle(entries, effectiveLinks(links, live));
+  return { remembered, records, links, lifecycle };
 }
 
 /** The assumed-closure recorder for these inputs. */
@@ -445,7 +457,7 @@ export async function applyVanished(ctx: Ctx,
   now: number = Date.now()
 ): Promise<Record<string, VanishedResult>> {
   const out: Record<string, VanishedResult> = {};
-  const answers = inputs.answers === undefined ? { ended: new Set<string>(), stillOpen: new Map(), assumed: new Map() } : inputs.answers;
+  const answers = answersAt(inputs, now);
   const assume = assumeWith(ctx, inputs, now);
 
   await Promise.all(

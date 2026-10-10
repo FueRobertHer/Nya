@@ -286,6 +286,8 @@ When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts
 | `set_at` | When this was saved. |
 | `assumed` | `true` when Nya assumed it closed: its bank stopped returning it and nobody answered within three days. Absent otherwise. |
 | `answered` | `{ "kind": "missing" or "zero", "since": day }`: you said it is still open, answering the question about it going missing or sitting at zero from that day. Absent otherwise. |
+| `seen` | Only with `closed` and `left`: `{ "balance": number or null, "through": day }`, the balance it showed when you set or last confirmed its end, and that UTC day. A bank still returning it with another balance, or a transaction after that day, asks about it again. Absent when it wasn't known. |
+| `missed` | `[{ "from": day, "to": day }]`: the days it was missing from its bank's answer and assumed closed, before it came back. The totals saved on those days are short of it, so the app leaves them out of the chart (they stay in `net_worth_history` as saved). Any state; absent when there were none. |
 
 #### `allocation-settings`
 
@@ -432,7 +434,7 @@ What you told the cash forecast (`lib/planned.ts`, [Recurring bills and the cash
 
 #### `timeline-notes`
 
-The notes on your net-worth timeline (`lib/timeline-notes.ts`, [features.md](features.md#notes-on-the-timeline)): yours under random ids, and the ones Nya writes when an account ends, under `lifecycle.` and the account's id. Each `value`: `date` (the day it marks), `text` (up to 200 characters), `kind` (`user` for yours, `auto` for Nya's), `account_id` (the account an `auto` note is about; absent on yours), `created_at`, and `updated_at` once it changed. They are also rows of the [balances CSV](#nya-balances-datecsv).
+The notes on your net-worth timeline (`lib/timeline-notes.ts`, [features.md](features.md#notes-on-the-timeline)): yours under random ids, and the ones Nya writes when an account ends, under `lifecycle.` and the account's id, and when an account it assumed closed came back, under `missed.`, the account's id and the first day it was missing. Each `value`: `date` (the day it marks), `text` (up to 200 characters), `kind` (`user` for yours, `auto` for Nya's), `account_id` (the account an `auto` note is about; absent on yours), `created_at`, and `updated_at` once it changed. They are also rows of the [balances CSV](#nya-balances-datecsv).
 
 #### `transaction-annotations`
 

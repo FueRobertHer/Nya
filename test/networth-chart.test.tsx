@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthChart from '@/components/NetWorthChart';
 
@@ -207,6 +209,18 @@ describe('NetWorthChart notes on the timeline', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={gap} notes={[{ date: '2026-09-03', text: 'Closed' }]} />);
     expect(html.match(/class="chart-note-mark"/g)).toHaveLength(1);
     expect(html).toContain('Sep 3</span> Closed');
+  });
+
+  test('on scrub the note keeps to the date’s one line, cut to fit, so the chart never moves under the finger', () => {
+    // The suite can't scrub or lay a page out: this holds the rules the
+    // readout relies on (a note of 110 characters moved the chart 44px at 320px
+    // before them), and the markup that uses them.
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(/\.chart-readout-noted \{[^}]*display: flex;[^}]*white-space: nowrap;/);
+    expect(css).toMatch(/\.chart-readout-note \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;/);
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'NetWorthChart.tsx'), 'utf8');
+    expect(source).toContain('<span className="chart-readout-date chart-readout-noted">');
+    expect(source).toContain('<span className="chart-readout-note">');
   });
 
   test('no notes: no list, no markers, nothing announced', () => {

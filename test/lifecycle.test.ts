@@ -32,12 +32,13 @@ const {
   answersFrom,
   lifecycleForClient,
   autoNoteText,
+  shortDays,
   EMPTY_VIEW,
 } = await import('@/lib/lifecycle');
-const { getHistory, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates, endBreaks } = await import('@/lib/history');
+const { getHistory, getHistoryWithBreaks, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates, endBreaks } = await import('@/lib/history');
 const { UnreadableEntriesError } = await import('@/lib/repo');
 const { recordDirectory, forgetEarlierAccount, ForgetRefused } = await import('@/lib/links');
-const { timelineNotesStore, autoNoteId } = await import('@/lib/timeline-notes');
+const { timelineNotesStore, autoNoteId, missedNoteId, writeMissedNote, addUserNote } = await import('@/lib/timeline-notes');
 type Link = { to: string; linked_at: string; evidence: Record<string, unknown> };
 
 const ABOUT = { type: 'depository', label: { name: 'Ally Savings', institution: 'Ally', mask: '1234' }, item_id: 'item_ally' };
@@ -379,11 +380,16 @@ describe('forgetting an account that ended', () => {
     await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
     const before = await getHistory(ctx);
     expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).not.toBeNull();
+    await writeMissedNote(ctx, 'sav', '2026-02-01', 'Ally Savings was missing on Feb 1', NOW);
+    const mine = await addUserNote(ctx, { date: '2026-03-11', text: 'Moved the savings', account_id: 'sav' }, NOW);
     await forgetEarlierAccount(ctx, 'sav');
     expect(await getHistory(ctx)).toEqual(before);
-    // Its closure and its note named it: they go with the rest of it.
+    // Its closure and Nya's notes named it: they go with the rest of it. The
+    // person's own note stays: its words are theirs.
     expect(await lifecycleStore.get(ctx, 'sav')).toBeNull();
     expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toBeNull();
+    expect(await timelineNotesStore.get(ctx, missedNoteId('sav', '2026-02-01'))).toBeNull();
+    expect(await timelineNotesStore.get(ctx, mine.id)).not.toBeNull();
   });
 });
 
@@ -416,6 +422,45 @@ describe('the cliff is kept, never smoothed', () => {
     expect(endBreaks(view.ended)).toEqual(['2026-03-03']);
     expect((await getHistory(ctx, undefined, view.ended)).map((p) => p.value)).toEqual([1500, 1500, 500, 500, 500]);
   });
+
+  test('across a stretch with no point at all, the step is put on its own day, the day before it at the earlier value', () => {
+    const points = [
+      { date: '2026-03-12', value: 10_500 },
+      { date: '2026-04-03', value: 500 },
+    ];
+    expect(bridgeInteriorEstimates(points, ['2026-03-13'])).toEqual([
+      { date: '2026-03-12', value: 10_500 },
+      { date: '2026-03-13', value: 500, estimated: true },
+      { date: '2026-04-03', value: 500 },
+    ]);
+    expect(bridgeInteriorEstimates(points, ['2026-03-20'])).toEqual([
+      { date: '2026-03-12', value: 10_500 },
+      { date: '2026-03-19', value: 10_500, estimated: true },
+      { date: '2026-03-20', value: 500, estimated: true },
+      { date: '2026-04-03', value: 500 },
+    ]);
+    // On the later point's own day, it is the step already.
+    expect(bridgeInteriorEstimates(points, ['2026-04-03'])).toEqual([
+      { date: '2026-03-12', value: 10_500 },
+      { date: '2026-04-02', value: 10_500, estimated: true },
+      { date: '2026-04-03', value: 500 },
+    ]);
+    // With no break, nothing is added.
+    expect(bridgeInteriorEstimates(points)).toEqual(points);
+  });
+
+  test('an end that moved nothing (closed at zero) is no step: the stretch around it is bridged as any other', async () => {
+    await recordDay('2026-03-01', { sav: 0, chk: 1000 }, TYPES);
+    await recordDay('2026-03-10', { chk: 500 }, TYPES);
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-03' }, ABOUT, NOW);
+    const view = await getEffectiveLifecycle(ctx, new Map());
+    const { breaks, points } = await getHistoryWithBreaks(ctx, undefined, view.ended);
+    expect(breaks).toEqual([]);
+    expect(points.map((p) => [p.date, p.value])).toEqual([
+      ['2026-03-01', 1000],
+      ['2026-03-10', 500],
+    ]);
+  });
 });
 
 describe('answers the guard reads', () => {
@@ -427,25 +472,48 @@ describe('answers the guard reads', () => {
       ['c', { lifecycle: { state: 'active' as const }, ...ABOUT, set_at: at, answered: { kind: 'zero' as const, since: '2026-02-01' } }],
       ['d', { lifecycle: { state: 'left' as const, on: '2026-03-01' }, ...ABOUT, set_at: at }],
     ]);
-    const answers = answersFrom(effectiveLifecycle(entries, new Map([['a0', { to: 'a', linked_at: at, evidence: {} }]])));
+    const view = effectiveLifecycle(entries, new Map([['a0', { to: 'a', linked_at: at, evidence: {} }]]));
+    const answers = answersFrom(view, Date.parse('2026-03-20T00:00:00Z'));
     expect([...answers.ended].sort()).toEqual(['a', 'a0', 'd']);
     expect(answers.stillOpen).toEqual(new Map([['item_ally', new Set(['b'])]]));
+    expect(answers.reaskFrom).toEqual(new Map());
     expect(answers.assumed).toEqual(new Map([['a', 'a'], ['a0', 'a']]));
+    // Still open holds for two weeks from the answer, then lapses and is asked again.
+    const lapsed = answersFrom(view, Date.parse('2026-03-26T00:00:00Z'));
+    expect(lapsed.stillOpen).toEqual(new Map());
+    expect(lapsed.reaskFrom).toEqual(new Map([['b', '2026-03-26T00:00:00.000Z']]));
   });
 });
 
 describe('assumed closures', () => {
-  test('are written only where there is no answer, and say they are assumed', async () => {
+  test('are written only where nothing settles the account: an end stands, a Still open that holds keeps it held', async () => {
     await markStillOpen(ctx, 'b', { kind: 'missing', since: '2026-03-12' }, ABOUT, NOW);
+    await markEnded(ctx, 'c', { state: 'left', on: '2026-03-01' }, ABOUT, NOW);
     const answered = await recordAssumedClosures(ctx, [
       { account_id: 'a', on: '2026-03-12', about: ABOUT },
       { account_id: 'b', on: '2026-03-12', about: ABOUT },
+      { account_id: 'c', on: '2026-03-12', about: ABOUT },
     ], NOW);
-    expect(answered).toEqual(new Set(['a', 'b']));
+    // a is assumed, c has its end: both settled. b stays held: not accepted.
+    expect(answered).toEqual(new Set(['a', 'c']));
     expect((await lifecycleStore.get(ctx, 'a'))?.assumed).toBe(true);
-    // The person's answer stands.
+    // The person's answers stand.
     expect((await lifecycleStore.get(ctx, 'b'))?.lifecycle).toEqual({ state: 'active' });
+    expect((await lifecycleStore.get(ctx, 'c'))?.lifecycle).toEqual({ state: 'left', on: '2026-03-01' });
     expect((await timelineNotesStore.get(ctx, autoNoteId('a')))?.text).toBe('Ally Savings ••1234 assumed closed: it stopped appearing at Ally');
+  });
+
+  test('replace what doesn’t settle a missing account: a Still open about a zero, a lapsed one, a repair’s placeholder', async () => {
+    await markStillOpen(ctx, 'z', { kind: 'zero', since: '2026-01-02' }, ABOUT, NOW);
+    // Answered three weeks before: lapsed (STILL_OPEN_HOLD_DAYS).
+    await markStillOpen(ctx, 'old', { kind: 'missing', since: '2026-03-12' }, ABOUT, NOW - 21 * 86_400_000);
+    await lifecycleStore.set(ctx, 'p', { lifecycle: { state: 'active' }, type: null, label: { name: '', institution: '', mask: null }, item_id: null, set_at: new Date(0).toISOString() });
+    const answered = await recordAssumedClosures(ctx, ['z', 'old', 'p'].map((account_id) => ({ account_id, on: '2026-03-12', about: ABOUT })), NOW);
+    expect(answered).toEqual(new Set(['z', 'old', 'p']));
+    for (const id of ['z', 'old', 'p']) {
+      expect(await lifecycleStore.get(ctx, id)).toMatchObject({ lifecycle: { state: 'closed', on: '2026-03-12' }, assumed: true });
+      expect(await timelineNotesStore.has(ctx, autoNoteId(id))).toBe(true);
+    }
   });
 
   test('one that can’t be recorded is left out, so it stays held', async () => {
@@ -457,10 +525,43 @@ describe('assumed closures', () => {
   test('are lifted when the account comes back, a confirmed closure is not', async () => {
     await recordAssumedClosures(ctx, [{ account_id: 'a', on: '2026-03-12', about: ABOUT }], NOW);
     await markEnded(ctx, 'c', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
-    expect(await liftAssumedClosures(ctx, ['a', 'c'], NOW)).toEqual(['a']);
+    // Back on the day it was assumed gone from: no day was saved short.
+    const sameDay = Date.parse('2026-03-12T15:00:00Z');
+    expect(await liftAssumedClosures(ctx, ['a', 'c'], sameDay)).toEqual(['a']);
     expect(await lifecycleStore.has(ctx, 'a')).toBe(false);
     expect(await lifecycleStore.has(ctx, 'c')).toBe(true);
     expect(await timelineNotesStore.has(ctx, autoNoteId('a'))).toBe(false);
+  });
+
+  test('lifted later, the days saved without it are kept as a missing window, with a note, and left out of the chart', async () => {
+    await recordDay('2026-03-11', { sav: 1000, chk: 500 }, TYPES);
+    // Missing from 03-12; assumed closed; totals saved without it 03-15 to 03-17.
+    for (const day of ['2026-03-15', '2026-03-16', '2026-03-17']) await recordDay(day, { chk: 500 }, TYPES);
+    await recordAssumedClosures(ctx, [{ account_id: 'sav', on: '2026-03-12', about: ABOUT }], NOW);
+    expect(await liftAssumedClosures(ctx, ['sav'], Date.parse('2026-03-18T12:00:00Z'))).toEqual(['sav']);
+    await recordDay('2026-03-18', { sav: 1000, chk: 500 }, TYPES);
+    const entry = await lifecycleStore.get(ctx, 'sav');
+    expect(entry).toMatchObject({ lifecycle: { state: 'active' }, missed: [{ from: '2026-03-12', to: '2026-03-17' }] });
+    expect(entry?.assumed).toBeUndefined();
+    expect(await timelineNotesStore.has(ctx, autoNoteId('sav'))).toBe(false);
+    expect(await timelineNotesStore.get(ctx, missedNoteId('sav', '2026-03-12'))).toMatchObject({
+      date: '2026-03-12',
+      kind: 'auto',
+      account_id: 'sav',
+      text: 'Ally Savings ••1234 was missing at Ally from Mar 12 to Mar 17, so the totals saved then, short of it, are left out',
+    });
+    // The chart leaves the short days out, so no dip is drawn; the real layer keeps them.
+    const view = await getEffectiveLifecycle(ctx, new Map());
+    expect(byDate(await getHistory(ctx, undefined, view.ended, shortDays(view, new Map())))).toEqual({ '2026-03-11': 1500, '2026-03-18': 1500 });
+    expect(byDate(await getHistory(ctx))).toMatchObject({ '2026-03-15': 500 });
+    // Hidden, it counts in no total: nothing is left out for it.
+    expect(shortDays(view, new Map([['sav', { type: 'depository' }]]))).toEqual(new Set());
+    // Kept through a later change, and only the days it still counts on.
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-16' }, ABOUT, NOW);
+    const later = await getEffectiveLifecycle(ctx, new Map());
+    expect([...shortDays(later, new Map())].sort()).toEqual(['2026-03-12', '2026-03-13', '2026-03-14', '2026-03-15']);
+    await reopenAccount(ctx, 'sav', new Map(), NOW);
+    expect((await lifecycleStore.get(ctx, 'sav'))?.missed).toEqual([{ from: '2026-03-12', to: '2026-03-17' }]);
   });
 
   test('a confirmed answer replaces the assumption', async () => {

@@ -168,7 +168,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['accounts[].connection.problem.since', 'When the daily check first found it.'],
       ['accounts[].connection.ends_at', 'When Plaid has warned the connection will end, so reconnect before then; or null.'],
       ['accounts[].connection.records_unreadable', 'Present, and true, when some of what Nya keeps about the connection couldn’t be read, so a problem or a warning may be missing.'],
-      ['accounts[].lifecycle', 'When the account ended, or null while it is open. From that day on it counts in no total: net worth, its history, transactions and spending all leave it out.'],
+      ['accounts[].lifecycle', 'When the account ended, or null while it is open. From that day on it counts in no total: net worth, its history, transactions and spending all leave it out. An account that ended is listed even once its bank stops returning it, with the newest balance measured before.'],
       ['accounts[].lifecycle.state', 'closed, left (no longer yours: sold, transferred or divided) or untracked (you stopped following it). Version 1 may add states.'],
       ['accounts[].lifecycle.date', 'The day (YYYY-MM-DD) it stopped counting. Every day before it still counts.'],
       ['accounts[].lifecycle.note', 'What you wrote about it, or null.'],
@@ -488,6 +488,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           as_of: '2026-10-09',
           observed_at: '2026-10-09T13:00:52.000Z',
           recorded_since: '2026-03-02',
+          lifecycle: null,
           positions: [
             {
               security_id: 'd6ePmbPxgWCWmMVv66q9iPV94n91vMtov5Are',
@@ -517,6 +518,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['accounts[].as_of', 'The day (UTC) these positions were recorded, or null if none ever were.'],
       ['accounts[].observed_at', 'The moment they were recorded, or null.'],
       ['accounts[].recorded_since', 'The first day anything was recorded for it: Plaid keeps no history of holdings, so nothing earlier is known.'],
+      ['accounts[].lifecycle', 'When it ended, as on /accounts, or null while it is open. An account that ended counts in nothing from its day, and its positions are the last recorded before it.'],
       ['accounts[].positions', 'What it held, in the order the institution listed it.'],
       ['accounts[].positions[].security_id', 'Plaid’s id for the security.'],
       ['accounts[].positions[].ticker', 'Its ticker, or null.'],

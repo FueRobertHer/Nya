@@ -90,6 +90,27 @@ describe('the read-only API gains fields, and counts an ended account in nothing
     await expect(api.queryTransactions(ctx, { from: daysAgo(30), to: daysAgo(0), limit: 10 })).rejects.toBeInstanceOf(StoredDataUnreadableError);
   });
 
+  test('an account that ended is listed even once its bank stops returning it, so an assumed closure can be seen', async () => {
+    await recordAssumedClosures(ctx, [{ account_id: 'acc_gone', on: daysAgo(2), about: { type: 'depository', label: { name: 'Old Savings', institution: 'Chase', mask: '4821' }, item_id: 'item_chase' } }]);
+    const { accounts } = await api.readAccounts(ctx);
+    expect(accounts.find((a) => a.id === 'acc_gone')).toMatchObject({
+      source: 'plaid',
+      name: 'Old Savings',
+      institution: 'Chase',
+      mask: '4821',
+      type: 'depository',
+      lifecycle: { state: 'closed', date: daysAgo(2), note: null, assumed: true },
+    });
+  });
+
+  test('holdings say when an investment account ended (a field version 1 gained)', async () => {
+    const { accounts } = await api.readHoldings(ctx);
+    expect(accounts.every((a) => a.lifecycle === null)).toBe(true);
+    await markEnded(ctx, 'acc_ira', { state: 'left', on: daysAgo(1), note: 'Rolled over' }, { ...CARD, type: 'investment' });
+    const after = await api.readHoldings(ctx);
+    expect(after.accounts.find((a) => a.account_id === 'acc_ira')?.lifecycle).toEqual({ state: 'left', date: daysAgo(1), note: 'Rolled over', assumed: false });
+  });
+
   test('a re-link carries the end: an earlier id’s end applies to the account it became', async () => {
     await markEnded(ctx, 'acc_old_card', { state: 'untracked', from: daysAgo(30) }, CARD);
     await linkAccounts(ctx, 'acc_old_card', 'acc_card', { old_type: 'credit' });
@@ -127,6 +148,12 @@ describe('the data download', () => {
     await markEnded(ctx, 'acc_long_gone', { state: 'closed', on: '2025-01-01' }, CARD);
     const doc = await download();
     expect(doc.accounts.find((a) => a.account_id === 'acc_long_gone')?.lifecycle).toMatchObject({ state: 'closed', date: '2025-01-01' });
+  });
+
+  test('a note of your own naming an id says nothing about an account: none is listed for it', async () => {
+    await addUserNote(ctx, { date: daysAgo(3), text: 'About something', account_id: 'not_an_account' });
+    const doc = await download();
+    expect(doc.accounts.find((a) => a.account_id === 'not_an_account')).toBeUndefined();
   });
 
   test('the balances CSV carries each account’s end on its rows, and the notes as rows of their own', async () => {

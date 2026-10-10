@@ -30,7 +30,18 @@
 //      counts before its day and not after.
 //
 // So reopening (back to active) restores exactly: nothing was removed. A
-// hidden account that also ended is subtracted once, as hidden.
+// hidden account that also ended is subtracted once, as hidden. One thing
+// reopening can't do is make a bank return an account it stopped returning:
+// such an account, once reopened, is held at its last known balance and
+// asked about, as any missing account is (reopenMissing), never left
+// nowhere.
+//
+// WHAT AN ENTRY KEEPS THROUGH EVERY CHANGE: the windows its account was
+// missing from its bank's answer and assumed closed before it came back
+// (`missed`, liftAssumedClosures). The totals recorded on those days are
+// short of it, a measurement known to be wrong that the real layer keeps as
+// it was written, so the chart leaves those days out on read (shortDays) and
+// a note on the timeline says why.
 //
 // KEYED TO SURVIVE A RE-LINK. An entry is stored under the id the account had
 // when it was set, and read through account links (lib/links.ts) the way
@@ -61,8 +72,8 @@ import type { Ctx } from './containers';
 import { isCalendarDay, addDays } from './manual-txn-input';
 import { resolveId, sameAccountIds, getLinks, effectiveLinks, type Link } from './link-core';
 import { liveAccountIds } from './links';
-import { writeAutoNote, removeAutoNote } from './timeline-notes';
-import { getHistory, type EndedAccounts } from './history';
+import { writeAutoNote, removeAutoNote, writeMissedNote, removeAccountNotes } from './timeline-notes';
+import { readHistoryPoints, type EndedAccounts } from './history';
 
 export type { EndedAccounts } from './history';
 
@@ -103,12 +114,37 @@ export type LifecycleEntry = {
    *  the account comes back. */
   assumed?: true;
   /** Only with `active`: the question "Still open" answered, so the same one
-   *  isn't asked again (and a missing account stays held, not assumed). */
+   *  isn't asked again (and a missing account stays held, not assumed, for
+   *  STILL_OPEN_HOLD_DAYS from `set_at`). */
   answered?: { kind: QuestionKind; since: string };
+  /** The windows it was missing from its bank's answer and assumed closed,
+   *  before it came back (liftAssumedClosures), oldest first: the totals
+   *  recorded on those days are short of it (shortDays). Any state; kept
+   *  through every later change, the newest MAX_MISSED. */
+  missed?: MissedWindow[];
+  /** Only with closed and left: the balance it showed when its end was set
+   *  or last confirmed (null when that wasn't known), and the UTC day. A bank
+   *  still returning it with another balance, or with a transaction after
+   *  that day, raises the question again (lib/lifecycle-questions.ts
+   *  askAboutReportedEnds). */
+  seen?: { balance: number | null; through: string };
 };
+
+/** Days an account was missing from its bank's answer, first and last. */
+export type MissedWindow = { from: string; to: string };
 
 /** The longest note on a closure, in characters. */
 export const LIFECYCLE_NOTE_MAX = 200;
+/** How many missing windows an entry keeps: the newest. */
+export const MAX_MISSED = 20;
+/** How long a "Still open" answer about a missing account holds it, and with
+ *  it every total, from the answer: then Nya asks again, and unanswered, the
+ *  grace window ends in an assumed closure as for any missing account
+ *  (lib/vanished.ts). An answer can't pause history for good. */
+export const STILL_OPEN_HOLD_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** The largest balance an entry records: anything past it isn't a balance. */
+const BALANCE_MAX = 1e15;
 /** The earliest end date: nothing in Nya is older. */
 export const FIRST_END_DAY = '1970-01-01';
 const LABEL_MAX = 200;
@@ -160,7 +196,7 @@ function isLabel(v: unknown): v is AccountLabel {
 /** The stored shape, closed: a field this release doesn't know makes the
  *  entry unrecognised (see the header). */
 export function isLifecycleEntry(v: unknown): v is LifecycleEntry {
-  if (!isRecord(v) || !onlyKeys(v, ['lifecycle', 'type', 'label', 'item_id', 'set_at', 'assumed', 'answered'])) return false;
+  if (!isRecord(v) || !onlyKeys(v, ['lifecycle', 'type', 'label', 'item_id', 'set_at', 'assumed', 'answered', 'missed', 'seen'])) return false;
   if (!isAccountLifecycle(v.lifecycle)) return false;
   if (!(v.type === null || (typeof v.type === 'string' && TYPE.test(v.type)))) return false;
   if (!isLabel(v.label)) return false;
@@ -172,8 +208,23 @@ export function isLifecycleEntry(v: unknown): v is LifecycleEntry {
     if (v.lifecycle.state !== 'active' || !isRecord(a) || !onlyKeys(a, ['kind', 'since'])) return false;
     if (!(a.kind === 'missing' || a.kind === 'zero') || !isEndDay(a.since)) return false;
   }
+  if (v.missed !== undefined) {
+    if (!Array.isArray(v.missed) || v.missed.length === 0 || v.missed.length > MAX_MISSED) return false;
+    for (const w of v.missed) {
+      if (!isRecord(w) || !onlyKeys(w, ['from', 'to']) || !isEndDay(w.from) || !isEndDay(w.to) || w.from > w.to) return false;
+    }
+  }
+  if (v.seen !== undefined) {
+    const s = v.seen;
+    if (!(v.lifecycle.state === 'closed' || v.lifecycle.state === 'left') || !isRecord(s) || !onlyKeys(s, ['balance', 'through'])) return false;
+    if (!(s.balance === null || (typeof s.balance === 'number' && Number.isFinite(s.balance) && Math.abs(s.balance) <= BALANCE_MAX))) return false;
+    if (!isEndDay(s.through)) return false;
+  }
   return true;
 }
+
+/** A balance as an entry records it: a finite number within reason, or null. */
+export const isRecordedBalance = (v: unknown): v is number | null => v === null || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= BALANCE_MAX);
 
 export const lifecycleStore: MapStore<LifecycleEntry> = defineMapStore<LifecycleEntry>('account-lifecycle', {
   what: 'account closures',
@@ -308,31 +359,77 @@ export type LifecycleAnswers = {
    *  answered, so its absence holds nothing. */
   ended: Set<string>;
   /** Per Plaid connection, the ids the person said are still open while they
-   *  were missing from its answer: held, never assumed closed. Only the id
-   *  each answer was given for, on the connection it belongs to. */
+   *  were missing from its answer, within STILL_OPEN_HOLD_DAYS of saying so:
+   *  held, never assumed closed. Only the id each answer was given for, on
+   *  the connection it belongs to. */
   stillOpen: Map<string, Set<string>>;
+  /** The ids whose "Still open" is older than that, to when it lapsed: asked
+   *  again, with a grace window counted from then. */
+  reaskFrom: Map<string, string>;
   /** Every id of each assumed closure, to the id the entry is stored under:
    *  lifted when the account comes back. */
   assumed: Map<string, string>;
 };
 
-/** The answers, from the view. Pure. */
-export function answersFrom(view: LifecycleView): LifecycleAnswers {
+/** When a "Still open" answer about a missing account stops holding it (an
+ *  ISO time), or null for any other entry. */
+export function stillOpenUntil(entry: LifecycleEntry): string | null {
+  if (entry.lifecycle.state !== 'active' || entry.answered?.kind !== 'missing') return null;
+  const at = Date.parse(entry.set_at);
+  return Number.isFinite(at) ? new Date(at + STILL_OPEN_HOLD_DAYS * DAY_MS).toISOString() : null;
+}
+
+/** Whether an entry is a "Still open" answer about a missing account that
+ *  still holds it (see STILL_OPEN_HOLD_DAYS). */
+export function holdsStillOpen(entry: LifecycleEntry | null | undefined, now: number = Date.now()): boolean {
+  const until = entry ? stillOpenUntil(entry) : null;
+  return until !== null && now < Date.parse(until);
+}
+
+/** The answers, from the view, as they stand at `now`. Pure. */
+export function answersFrom(view: LifecycleView, now: number = Date.now()): LifecycleAnswers {
   const ended = new Set(view.ended.keys());
   const stillOpen = new Map<string, Set<string>>();
+  const reaskFrom = new Map<string, string>();
   const assumed = new Map<string, string>();
   for (const [id, entry] of view.entries) {
-    if (entry.lifecycle.state === 'active' && entry.answered?.kind === 'missing' && entry.item_id) {
-      const set = stillOpen.get(entry.item_id) ?? new Set<string>();
-      set.add(id);
-      stillOpen.set(entry.item_id, set);
+    const until = stillOpenUntil(entry);
+    if (until === null || !entry.item_id) continue;
+    if (now >= Date.parse(until)) {
+      reaskFrom.set(id, until);
+      continue;
     }
+    const set = stillOpen.get(entry.item_id) ?? new Set<string>();
+    set.add(id);
+    stillOpen.set(entry.item_id, set);
   }
   for (const [root, { entry, stored }] of view.accounts) {
     if (!entry.assumed) continue;
     for (const [id, r] of view.rootOf) if (r === root) assumed.set(id, stored);
   }
-  return { ended, stillOpen, assumed };
+  return { ended, stillOpen, reaskFrom, assumed };
+}
+
+/**
+ * The days whose recorded totals are known to be short of an account: the
+ * windows it was missing and assumed closed before it came back (`missed`),
+ * on the days it counts (before any end it has since been given), never for
+ * a hidden one (left out of every total anyway). getHistory leaves those
+ * points out, so the chart bridges the hole rather than draw a dip that never
+ * happened. The real layer keeps them as written. Pure.
+ */
+export function shortDays(view: LifecycleView, hidden: ReadonlyMap<string, unknown>): Set<string> {
+  const out = new Set<string>();
+  for (const [id, entry] of view.entries) {
+    if (!entry.missed?.length) continue;
+    const root = view.rootOf.get(id) ?? id;
+    if (hidden.has(id) || hidden.has(root)) continue;
+    const applies = view.accounts.get(root)?.entry ?? entry;
+    for (const w of entry.missed) {
+      for (let day = w.from; day <= w.to; day = addDays(day, 1)) if (countsOn(applies.lifecycle, day)) out.add(day);
+    }
+  }
+  return out;
 }
 
 /** Strict: every entry, or UnreadableEntriesError. */
@@ -356,7 +453,9 @@ export async function endedForgetRefusal(ctx: Ctx, id: string, hidden: boolean):
   const end = entry ? endOf(entry.lifecycle) : null;
   if (!entry || !end) return null;
   const ended: EndedAccounts = new Map([[id, { type: entry.type, from: end }]]);
-  const [withEnd, without] = await Promise.all([getHistory(ctx, undefined, ended), getHistory(ctx)]);
+  // The points as read, before bridging, which the end's step alone would
+  // set apart.
+  const [withEnd, without] = await Promise.all([readHistoryPoints(ctx, undefined, ended).then((r) => r.points), readHistoryPoints(ctx).then((r) => r.points)]);
   const same = withEnd.length === without.length && withEnd.every((p, i) => p.date === without[i].date && p.value === without[i].value);
   if (same) return null;
   return `It stopped counting on ${end}, but balances after that are recorded, and forgetting them would put it back into your totals from then on. Reopen it first if that is what you want.`;
@@ -369,7 +468,7 @@ export async function endedForgetRefusal(ctx: Ctx, id: string, hidden: boolean):
  */
 export async function forgetLifecycle(ctx: Ctx, id: string): Promise<void> {
   await lifecycleStore.update(ctx, id, () => null);
-  await removeAutoNote(ctx, id).catch((err) => {
+  await removeAccountNotes(ctx, id).catch((err) => {
     if (!(err instanceof StoredDataUnreadableError)) throw err;
   });
 }
@@ -471,13 +570,31 @@ async function dropOtherNotes(ctx: Ctx, account_id: string, links: ReadonlyMap<s
   for (const id of sameAccountIds(account_id, links as Map<string, Link>)) if (id !== account_id) await noteFor(ctx, id, null, now);
 }
 
+/** What every write carries over from the entry it replaces: the windows the
+ *  account was missing (see the header). */
+const kept = (current: LifecycleEntry | null): Pick<LifecycleEntry, 'missed'> => (current?.missed?.length ? { missed: current.missed } : {});
+
+/** "Mar 13": a UTC day, as the notes Nya writes say one (they are read in
+ *  any time zone, and a history day is a UTC day). */
+const shortDay = (day: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`));
+
+/** The note on a window an account was missing (liftAssumedClosures). */
+export function missedNoteText(label: AccountLabel, window: MissedWindow): string {
+  const who = accountWords(label);
+  const at = label.institution ? ` at ${label.institution}` : '';
+  const span = window.from === window.to ? `on ${shortDay(window.from)}` : `from ${shortDay(window.from)} to ${shortDay(window.to)}`;
+  return `${who} was missing${at} ${span}, so the totals saved then, short of it, are left out`;
+}
+
 /**
  * Sets an account's end, as the person said: closed or left on a day (with a
  * note), or untracked from one. Replaces whatever was there for that id (an
  * assumed closure becomes theirs), in one compare-and-set, and writes its
  * note on the timeline, the only one for the account (`links`, the links
- * that apply). Validation of the day against today is the route's
- * (lastEndDay).
+ * that apply). `seen` is the balance the person was shown when they said so,
+ * when the app knew it: what a bank still returning the account is compared
+ * with (askAboutReportedEnds). Without it, what was seen before stays.
+ * Validation of the day against today is the route's (lastEndDay).
  */
 export async function markEnded(
   ctx: Ctx,
@@ -485,10 +602,17 @@ export async function markEnded(
   lifecycle: EndedLifecycle,
   about: AccountAbout,
   now: number = Date.now(),
-  links: ReadonlyMap<string, Link> = new Map()
+  links: ReadonlyMap<string, Link> = new Map(),
+  seen?: { balance: number | null }
 ): Promise<LifecycleEntry> {
-  const entry: LifecycleEntry = { lifecycle, ...cleanAbout(about), set_at: new Date(now).toISOString() };
-  await lifecycleStore.update(ctx, account_id, () => entry);
+  const base: LifecycleEntry = { lifecycle, ...cleanAbout(about), set_at: new Date(now).toISOString() };
+  let entry = base;
+  await lifecycleStore.update(ctx, account_id, (current) => {
+    const keepsSeen = lifecycle.state === 'closed' || lifecycle.state === 'left';
+    const seenNow = seen && isRecordedBalance(seen.balance) ? { balance: seen.balance, through: utcDay(now) } : current?.seen;
+    entry = { ...base, ...kept(current), ...(keepsSeen && seenNow ? { seen: seenNow } : {}) };
+    return entry;
+  });
   await noteFor(ctx, account_id, entry, now);
   await dropOtherNotes(ctx, account_id, links, now);
   return entry;
@@ -497,8 +621,9 @@ export async function markEnded(
 /**
  * "Still open": the person's answer to a question about an account, recorded
  * so the question isn't asked again and a missing account is held rather
- * than assumed closed (lib/lifecycle-questions.ts). Also what reopening a
- * held account does. Takes away any end, and its note.
+ * than assumed closed (lib/lifecycle-questions.ts), for STILL_OPEN_HOLD_DAYS.
+ * Also what reopening an account its bank no longer returns does
+ * (reopenMissing). Takes away any end, and its note.
  */
 export async function markStillOpen(
   ctx: Ctx,
@@ -508,18 +633,31 @@ export async function markStillOpen(
   now: number = Date.now(),
   links: ReadonlyMap<string, Link> = new Map()
 ): Promise<LifecycleEntry> {
-  const entry: LifecycleEntry = { lifecycle: { state: 'active' }, ...cleanAbout(about), set_at: new Date(now).toISOString(), answered };
-  await lifecycleStore.update(ctx, account_id, () => entry);
+  const base: LifecycleEntry = { lifecycle: { state: 'active' }, ...cleanAbout(about), set_at: new Date(now).toISOString(), answered };
+  let entry = base;
+  await lifecycleStore.update(ctx, account_id, (current) => {
+    entry = { ...base, ...kept(current) };
+    return entry;
+  });
   await noteFor(ctx, account_id, null, now);
   await dropOtherNotes(ctx, account_id, links, now);
   return entry;
 }
 
+/** Takes an entry's end and answers away, keeping only what every entry
+ *  keeps (`missed`): null when that is nothing. */
+function withoutEnd(current: LifecycleEntry | null, now: number): LifecycleEntry | null {
+  if (!current?.missed?.length) return null;
+  return { lifecycle: { state: 'active' }, type: current.type, label: current.label, item_id: current.item_id, set_at: new Date(now).toISOString(), missed: current.missed };
+}
+
 /**
  * Reopens an account: every entry on every id it has had (through the links
  * that apply) goes, with its note, so nothing an earlier id says keeps it
- * ended. Exact: nothing was ever removed from storage, so every day reads as
- * it did before it was ended. Returns the ids whose entries went.
+ * ended (an entry that keeps missing windows stays, active). Exact: nothing
+ * was ever removed from storage, so every day reads as it did before it was
+ * ended. For an account its bank no longer returns, see reopenMissing.
+ * Returns the ids whose entries changed.
  */
 export async function reopenAccount(ctx: Ctx, account_id: string, links: ReadonlyMap<string, Link>, now: number = Date.now()): Promise<string[]> {
   const ids = sameAccountIds(account_id, links as Map<string, Link>);
@@ -527,11 +665,39 @@ export async function reopenAccount(ctx: Ctx, account_id: string, links: Readonl
   const gone: string[] = [];
   for (const id of ids) {
     if (!stored.has(id)) continue;
-    await lifecycleStore.update(ctx, id, () => null);
+    await lifecycleStore.update(ctx, id, (current) => withoutEnd(current, now));
     gone.push(id);
     await noteFor(ctx, id, null, now);
   }
   return gone;
+}
+
+/**
+ * Reopens an account its bank no longer returns: no live answer lists it, so
+ * deleting its end would leave it nowhere (no row, no question, no hold) while
+ * totals went on being saved without it. Instead it is answered "Still open"
+ * to the question about it going missing: held at its last known balance and
+ * asked about, as any missing account is, until its bank returns it or the
+ * person says it closed (lib/lifecycle-questions.ts). `entry` is the one that
+ * applies to it now; its other ids' entries go, as in reopenAccount.
+ */
+export async function reopenMissing(
+  ctx: Ctx,
+  account_id: string,
+  entry: LifecycleEntry,
+  links: ReadonlyMap<string, Link>,
+  now: number = Date.now()
+): Promise<LifecycleEntry> {
+  for (const id of sameAccountIds(account_id, links as Map<string, Link>)) {
+    if (id === account_id || !(await lifecycleStore.get(ctx, id))) continue;
+    await lifecycleStore.update(ctx, id, (current) => withoutEnd(current, now));
+    await noteFor(ctx, id, null, now);
+  }
+  // The last day it was there: the day before its end, or today.
+  const end = endOf(entry.lifecycle);
+  const before = end ? addDays(end, -1) : utcDay(now);
+  const since = isEndDay(before) ? before : (end ?? utcDay(now));
+  return markStillOpen(ctx, account_id, { kind: 'missing', since }, { type: entry.type, label: entry.label, item_id: entry.item_id }, now, links);
 }
 
 /** One account the guard is about to assume closed. */
@@ -539,28 +705,46 @@ export type AssumeInput = { account_id: string; on: string; about: AccountAbout 
 
 /**
  * Records assumed closures (lib/lifecycle-questions.ts, THE WAY OUT), each in
- * one compare-and-set that writes only where there is no entry: an answer
- * the person gave meanwhile always wins. Returns the ids that now have an
- * answer (assumed here, or already answered). One that can't be recorded is
- * left out, so it stays held and is tried again; storage out of reach throws
- * for the caller to hold them all.
+ * one compare-and-set, and returns the ids that now have an end: assumed
+ * here, or ended already. Only an answer that settles a missing account
+ * stands: an end the person gave (or an assumption already made), and a
+ * "Still open" about it going missing that still holds it, which keeps it
+ * held (not returned, so it isn't accepted). Anything else is replaced by
+ * the assumed closure, with its note: no entry, a "Still open" about a zero
+ * balance (another question), one about it going missing that has lapsed
+ * (STILL_OPEN_HOLD_DAYS), and a repair's placeholder. Nothing short of that
+ * may let an account that is gone be accepted with no end recorded: the gate
+ * would reopen and every total be saved without it, silently. One that can't
+ * be recorded is left out, so it stays held and is tried again; storage out
+ * of reach throws for the caller to hold them all.
  */
 export async function recordAssumedClosures(ctx: Ctx, inputs: AssumeInput[], now: number = Date.now()): Promise<Set<string>> {
   const answered = new Set<string>();
   for (const { account_id, on, about } of inputs) {
-    const assumed: LifecycleEntry = { lifecycle: { state: 'closed', on }, ...cleanAbout(about), set_at: new Date(now).toISOString(), assumed: true };
-    let wrote = false;
+    const base: LifecycleEntry = { lifecycle: { state: 'closed', on }, ...cleanAbout(about), set_at: new Date(now).toISOString(), assumed: true };
+    let outcome = 'assumed' as 'ended' | 'held' | 'assumed';
+    let assumed = base;
     try {
       await lifecycleStore.update(ctx, account_id, (current) => {
-        wrote = current === null;
-        return current ?? assumed;
+        if (current && endOf(current.lifecycle) !== null) {
+          outcome = 'ended';
+          return current;
+        }
+        if (holdsStillOpen(current, now)) {
+          outcome = 'held';
+          return current;
+        }
+        outcome = 'assumed';
+        assumed = { ...base, ...kept(current) };
+        return assumed;
       });
     } catch (err) {
       console.error('Account lifecycle: an assumed closure could not be recorded, so the account stays held', err instanceof Error ? err.name : typeof err);
       continue;
     }
+    if (outcome === 'held') continue;
     answered.add(account_id);
-    if (wrote) await noteFor(ctx, account_id, assumed, now);
+    if (outcome === 'assumed') await noteFor(ctx, account_id, assumed, now);
   }
   return answered;
 }
@@ -569,17 +753,30 @@ export async function recordAssumedClosures(ctx: Ctx, inputs: AssumeInput[], now
  * Lifts assumed closures whose accounts came back in a healthy answer: the
  * assumption was only ever a way out of holding, and the account is
  * measured again. Each only while it is still an assumption (a confirmed
- * closure stays). Best effort: one left is lifted next time. Returns the
- * stored ids lifted.
+ * closure stays). The days between its assumed end and today were saved
+ * without it, so they are short of it: the entry keeps them as a missing
+ * window (`missed`, the chart leaves them out) and a note on the timeline
+ * says so, in place of the assumption's. Best effort: one left is lifted
+ * next time. Returns the stored ids lifted.
  */
 export async function liftAssumedClosures(ctx: Ctx, storedIds: Iterable<string>, now: number = Date.now()): Promise<string[]> {
   const lifted: string[] = [];
   for (const id of new Set(storedIds)) {
     let lift = false;
+    let window: MissedWindow | null = null;
+    let label: AccountLabel | null = null;
     try {
       await lifecycleStore.update(ctx, id, (current) => {
         lift = !!current?.assumed;
-        return lift ? null : current;
+        if (!current || !lift) return current;
+        const from = endOf(current.lifecycle)!;
+        const to = addDays(utcDay(now), -1);
+        // Back the day it was assumed gone from: no day was saved short.
+        window = from <= to ? { from, to } : null;
+        label = current.label;
+        const missed = [...(current.missed ?? []), ...(window ? [window] : [])].slice(-MAX_MISSED);
+        if (missed.length === 0) return null;
+        return { lifecycle: { state: 'active' }, type: current.type, label: current.label, item_id: current.item_id, set_at: new Date(now).toISOString(), missed };
       });
     } catch (err) {
       console.error('Account lifecycle: an assumed closure could not be lifted', err instanceof Error ? err.name : typeof err);
@@ -588,6 +785,12 @@ export async function liftAssumedClosures(ctx: Ctx, storedIds: Iterable<string>,
     if (!lift) continue;
     lifted.push(id);
     await noteFor(ctx, id, null, now);
+    const w = window as MissedWindow | null;
+    if (w && label) {
+      await writeMissedNote(ctx, id, w.from, missedNoteText(label, w), now).catch((err) =>
+        console.error('Account lifecycle: the note on a missing window could not be saved', err instanceof Error ? err.name : typeof err)
+      );
+    }
   }
   return lifted;
 }
@@ -622,10 +825,14 @@ export async function removeUnreadable(ctx: Ctx): Promise<{ removed: string[]; u
 // ---- For the app ----
 
 type EndingInstitution = {
-  accounts: { account_id: string }[];
+  accounts: { account_id: string; type?: string; balance?: number | null }[];
   holdings: { account_id?: string }[];
   unshown_accounts?: { account_id: string }[];
 };
+
+/** A row applyLifecycle took out: what it held, and the day it stopped
+ *  counting. */
+export type EndedRow = { account_id: string; type: string | null; balance: number | null; end: string };
 
 /**
  * Takes every account ended by now (endedNow) out of the live institutions:
@@ -635,15 +842,19 @@ type EndingInstitution = {
  * without each having to know. A hidden one stays: it is left out of every
  * total already, and the Hidden card lists it from its row. Display only, on
  * a fetch that has been recorded already: storage never changes. Returns the
- * ids taken out.
+ * rows taken out.
  */
-export function applyLifecycle(institutions: EndingInstitution[], view: LifecycleView, hidden: ReadonlyMap<string, unknown>, now: number = Date.now()): Set<string> {
+export function applyLifecycle(institutions: EndingInstitution[], view: LifecycleView, hidden: ReadonlyMap<string, unknown>, now: number = Date.now()): EndedRow[] {
   const ended = endedNowIds(view, now);
-  const out = new Set<string>();
+  const out: EndedRow[] = [];
   if (ended.size === 0) return out;
   const gone = (id: string | undefined) => !!id && ended.has(id) && !hidden.has(id);
   for (const inst of institutions) {
-    for (const a of inst.accounts) if (gone(a.account_id)) out.add(a.account_id);
+    for (const a of inst.accounts) {
+      if (!gone(a.account_id)) continue;
+      const end = endOf(lifecycleOf(view, a.account_id)?.lifecycle ?? { state: 'active' });
+      if (end) out.push({ account_id: a.account_id, type: a.type ?? null, balance: typeof a.balance === 'number' ? a.balance : null, end });
+    }
     inst.accounts = inst.accounts.filter((a) => !gone(a.account_id));
     inst.holdings = inst.holdings.filter((h) => !gone(h.account_id));
     if (inst.unshown_accounts) {

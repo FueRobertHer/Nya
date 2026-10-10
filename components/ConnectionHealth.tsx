@@ -12,9 +12,11 @@
 //
 // And the questions about an institution's accounts (#50,
 // lib/lifecycle-questions.ts): an account missing from its answer, held at
-// its last known balance until the person says whether it closed, and one at
-// zero for weeks. The dashboard draws them (`questions`), the same as on the
-// institution's own card; a connection with one needs attention.
+// its last known balance until the person says whether it closed, one at
+// zero for weeks, and one that ended but that its bank still returns moving
+// (`ended_reported`). The dashboard draws them (`questions`), the same as on
+// the institution's own card, a hidden account's too (its absence holds every
+// total all the same); a connection with one needs attention.
 //
 // Everything here reads the `health` the server attached to each institution
 // (lib/connection-state.ts); a payload from before it existed has none, and
@@ -45,8 +47,11 @@ export type HealthInstitution = {
     /** Held at its last known balance while a question about it is open
      *  (lib/lifecycle-questions.ts). */
     held?: { as_of: string | null; too_old?: string };
-    question?: { kind: 'missing' | 'zero' };
+    question?: { kind: 'missing' | 'zero' | 'reported'; still_open?: true; again?: true };
   }[];
+  /** Accounts that ended that its bank still returns, moved since: asked
+   *  about, and counted in nothing (lib/lifecycle-questions.ts). */
+  ended_reported?: { question?: { kind: string } }[];
   health?: Health;
   stale_as_of?: string;
   stale_as_of_at?: string;
@@ -112,7 +117,7 @@ export function reconnectText(h: Health, now: number = Date.now()): string {
 }
 
 /** What is wrong and what to do, in a sentence or two. */
-export function healthText(name: string, h: Health, inst: Pick<HealthInstitution, 'unconfirmed_missing'>, now: number = Date.now()): string | null {
+export function healthText(name: string, h: Health, inst: Pick<HealthInstitution, 'unconfirmed_missing'> & Partial<Pick<HealthInstitution, 'accounts'>>, now: number = Date.now()): string | null {
   const again = `connect ${name} again: link its new accounts to the old ones and their history carries over`;
   switch (h.cause) {
     case 'ok':
@@ -153,6 +158,12 @@ export function healthText(name: string, h: Health, inst: Pick<HealthInstitution
     case 'vanished': {
       const n = inst.unconfirmed_missing ?? 0;
       const one = n === 1;
+      // Every one held is one the person said is still open: they have
+      // answered, so say what that holds, and for how long.
+      const held = (inst.accounts ?? []).filter((a) => a.held);
+      if (held.length > 0 && held.every((a) => a.question?.still_open)) {
+        return `You said ${one ? 'the account' : `the ${n} accounts`} ${name} stopped reporting ${one ? 'is' : 'are'} still open. Until ${one ? 'it comes' : 'they come'} back, ${one ? 'it is' : 'they are'} counted at ${one ? 'its' : 'their'} last known balance and no total is saved, for two weeks from your answer at most; then Nya asks again. Reconnecting may bring ${one ? 'it' : 'them'} back.`;
+      }
       return `${n} account${one ? '' : 's'} ${name} used to report ${one ? "isn't" : "aren't"} in its latest answer. Until you say whether ${one ? 'it' : 'they'} closed, ${one ? 'it is' : 'they are'} counted at ${one ? 'its' : 'their'} last known balance and no total is saved. If nobody answers, Nya assumes ${one ? 'it' : 'them'} closed after three days, and you can say otherwise. Removed ${one ? 'it' : 'them'} on purpose? Check with Add or remove accounts.`;
     }
     default:
@@ -295,8 +306,10 @@ export default function ConnectionHealth({
   return <ConnectionHealthView ref={ref} rows={rows} open={open} onToggle={() => setOpen((o) => !o)} unavailable={unavailable} connecting={connecting} onReconnect={onReconnect} onRemove={onRemove} onManageAccounts={onManageAccounts} questions={questions} />;
 }
 
-/** A connection that isn't working, or has a question about an account. */
-export const needsAttention = (r: HealthInstitution & { health: Health }) => r.health.state !== 'healthy' || r.accounts.some((a) => !!a.question && !a.hidden);
+/** A connection that isn't working, or has a question about an account,
+ *  a hidden one's included: its absence holds every total all the same. */
+export const needsAttention = (r: HealthInstitution & { health: Health }) =>
+  r.health.state !== 'healthy' || r.accounts.some((a) => !!a.question) || (r.ended_reported ?? []).some((a) => !!a.question);
 
 /** The card itself, from rows already sorted: for tests, and the wrapper above. */
 export function ConnectionHealthView({

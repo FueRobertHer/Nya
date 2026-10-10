@@ -80,6 +80,9 @@ export type SeriesAccount = {
   manual: boolean;
   /** In today's allocation; false for one its institution can't show. */
   shown: boolean;
+  /** It ended (lib/lifecycle.ts) and counts only on the days before this
+   *  one: never counted, nor expected, from it on, and gone. */
+  ended?: string;
 };
 
 export type SeriesDay = {
@@ -219,6 +222,7 @@ export function seriesBuilder(input: SeriesInput) {
     // The accounts the Plan lists: positions and the balance, by today's
     // rules.
     for (const a of listed.values()) {
+      if (a.ended !== undefined && day.date >= a.ended) continue;
       const positions = held.get(a.account_id);
       const balance = balances.get(a.account_id);
       if (positions === undefined && balance === undefined) {
@@ -280,7 +284,7 @@ export function seriesBuilder(input: SeriesInput) {
 
   const stateOf = (id: string): AccountState => {
     const a = listed.get(id);
-    if (a) return a.shown ? 'shown' : 'unshown';
+    if (a) return a.ended !== undefined ? 'gone' : a.shown ? 'shown' : 'unshown';
     return input.linked(id) ? 'unshown' : 'gone';
   };
 

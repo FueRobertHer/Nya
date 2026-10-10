@@ -14,6 +14,10 @@
 //     the seam allows in a field name), so changing the end date moves the
 //     note rather than adding a second, and reopening the account takes it
 //     away. The person changes these by changing the account, never directly.
+//     Also one per window an account was missing from its bank's answer and
+//     assumed closed before it came back (lib/lifecycle.ts), under the
+//     account's id and the window's first day: it says why the chart leaves
+//     those days out, and stays, since the days stay short.
 //   - "user": what the person wrote, under a random id. They add, edit and
 //     remove these as they like.
 //
@@ -95,6 +99,10 @@ export const timelineNotesStore: MapStore<TimelineNote> = defineMapStore<Timelin
  *  allows in a field name, so a change to its lifecycle finds it again. */
 export const autoNoteId = (account_id: string) => `lifecycle.${account_id}`;
 
+/** The id of the note on a window an account was missing (lib/lifecycle.ts
+ *  liftAssumedClosures): one per window, by its first day. */
+export const missedNoteId = (account_id: string, from: string) => `missed.${account_id}.${from}`;
+
 /** A note refused for what it asks, with a message for the person: 400. */
 export class NoteRefusedError extends Error {
   constructor(message: string) {
@@ -117,10 +125,19 @@ export function cleanNoteText(v: unknown): string | null {
  * left alone.
  */
 export async function writeAutoNote(ctx: Ctx, account_id: string, date: string, text: string, now: number = Date.now()): Promise<void> {
+  await writeNoteUnder(ctx, autoNoteId(account_id), account_id, date, text, now);
+}
+
+/** Writes the note on a window an account was missing, as writeAutoNote. */
+export async function writeMissedNote(ctx: Ctx, account_id: string, from: string, text: string, now: number = Date.now()): Promise<void> {
+  await writeNoteUnder(ctx, missedNoteId(account_id, from), account_id, from, text, now);
+}
+
+async function writeNoteUnder(ctx: Ctx, id: string, account_id: string, date: string, text: string, now: number): Promise<void> {
   const at = new Date(now).toISOString();
   const clean = cleanNoteText(text) ?? cleanNoteText(text.slice(0, NOTE_TEXT_MAX - 1).trim() + '…');
   if (!clean || !isNoteDay(date)) return;
-  await timelineNotesStore.update(ctx, autoNoteId(account_id), (current) => {
+  await timelineNotesStore.update(ctx, id, (current) => {
     if (current && current.kind !== 'auto') return current;
     return current
       ? { ...current, date, text: clean, updated_at: at }
@@ -132,6 +149,20 @@ export async function writeAutoNote(ctx: Ctx, account_id: string, date: string, 
  *  happened on a day (it was reopened, or an assumed closure lifted). */
 export async function removeAutoNote(ctx: Ctx, account_id: string): Promise<void> {
   await timelineNotesStore.update(ctx, autoNoteId(account_id), (current) => (current && current.kind === 'auto' ? null : current));
+}
+
+/**
+ * Removes every note Nya wrote about an account, its end's and its missing
+ * windows' alike: forgetting the account (lib/lifecycle.ts forgetLifecycle),
+ * since each names it. Reads the notes with a report: one that can't be read
+ * holds nothing anyone can read, and is left. Strict about storage.
+ */
+export async function removeAccountNotes(ctx: Ctx, account_id: string): Promise<void> {
+  const { entries } = await timelineNotesStore.getAllReport(ctx);
+  for (const [id, note] of entries) {
+    if (note.kind !== 'auto' || note.account_id !== account_id) continue;
+    await timelineNotesStore.update(ctx, id, (current) => (current && current.kind === 'auto' && current.account_id === account_id ? null : current));
+  }
 }
 
 /** Adds one of the person's own notes, under a random id. Refused past

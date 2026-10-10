@@ -56,9 +56,29 @@
 // it is tried again on the next load or snapshot.
 //
 // "Still open" on a missing account is the person's word against the bank's
-// answer: the account stays held, for as long as it is missing (as a broken
-// connection stays held), and is never assumed closed. Connection health
+// answer: the account stays held while it is missing (as a broken connection
+// stays held), and is not assumed closed, for STILL_OPEN_HOLD_DAYS from the
+// answer (lib/lifecycle.ts). Then the question is asked again (`again`), with
+// a grace window of its own, so one answer can't pause every total for good,
+// and unanswered it ends as any missing account's does. Connection health
 // says what to do: reconnect, or answer again.
+//
+// THE COST OF THE WAY OUT. An account that outlives its assumed closure (a
+// bank's glitch longer than the window) comes back after totals were saved
+// without it. Those days are short of it, and the real layer keeps them as
+// written; the lift records them as a missing window on the account
+// (lib/lifecycle.ts liftAssumedClosures), the chart leaves them out on read
+// (shortDays) and a note on the timeline says why. A few days drawn as a
+// dashed bridge, rather than a dip that never happened.
+//
+// ENDED, STILL REPORTED. A closed or left account its bank goes on returning
+// counts in nothing from its end. If its balance moves from the one it
+// showed when its end was set or last confirmed (`seen`, a closed account's
+// taken as zero when not known), or a transaction on it is dated after
+// then, it is asked about again ("Chase Freedom ••9902, closed Mar 13, shows
+// $450.00 owed. Still closed?"), so a card used again, or a fee that lands,
+// never moves out of net worth unseen (askAboutReportedEnds). An untracked
+// account is expected to move, and stays quiet.
 
 import type { Ctx } from './containers';
 import { sameAccountIds, type Link } from './link-core';
@@ -71,6 +91,8 @@ import { addDays } from './manual-txn-input';
 import {
   recordAssumedClosures,
   lifecycleOf,
+  holdsStillOpen,
+  endedNow,
   utcDay,
   type AccountAbout,
   type LifecycleView,
@@ -91,15 +113,25 @@ export const HELD_MAX_AGE_DAYS = 35;
 
 /** A question on an account, as the app reads it (on the account's row). */
 export type AccountQuestion = {
-  kind: QuestionKind;
+  /** What raised it: missing from its bank's answer, at zero for weeks, or
+   *  ended and still reported with a balance or a transaction since. */
+  kind: QuestionKind | 'reported';
   /** The day to prefill as the end: the day after it was last measured
-   *  (missing), or the first day of the zeros (zero). */
+   *  (missing), or the first day of the zeros (zero); the end it has
+   *  (reported). */
   end: string;
   /** Missing: the last day it was measured, or null when none is recorded.
-   *  Zero: the first day of the zeros. */
+   *  Zero: the first day of the zeros. Reported: the newest transaction
+   *  after its end was seen, or null when only its balance moved. */
   since: string | null;
-  /** Missing, answered "Still open": held until it comes back. */
+  /** Missing, answered "Still open": held until it comes back, or the
+   *  answer lapses (STILL_OPEN_HOLD_DAYS). */
   still_open?: true;
+  /** Missing, answered "Still open" so long ago that the answer lapsed:
+   *  asked again. */
+  again?: true;
+  /** Reported: the end it has, to confirm as it is ("Still closed"). */
+  ended?: { state: 'closed' | 'left'; on: string; note?: string };
 };
 
 // ---- The way out: assumed closures ----
@@ -202,11 +234,12 @@ export async function holdMissingAccounts(
       const usable = last && last.date >= oldest && about.type !== null ? last : null;
       const answer = lifecycleOf(view, id);
       const stillOpen = answer?.lifecycle.state === 'active' && answer.answered?.kind === 'missing';
+      const holds = stillOpen && holdsStillOpen(answer, now);
       const question: AccountQuestion = {
         kind: 'missing',
         end: last ? addDays(last.date, 1) : utcDay(now),
         since: last?.date ?? null,
-        ...(stillOpen ? { still_open: true as const } : {}),
+        ...(holds ? { still_open: true as const } : stillOpen ? { again: true as const } : {}),
       };
       inst.accounts.push({
         account_id: id,
@@ -322,5 +355,71 @@ export async function askAboutZeroBalances(
     }
   } catch (err) {
     console.error('Account lifecycle: zero balances could not be checked', err instanceof Error ? err.name : typeof err);
+  }
+}
+
+// ---- Asking about an end the bank doesn't agree with ----
+
+/** An institution as askAboutReportedEnds reads and marks it. */
+type ReportingInstitution = AskingInstitution & { ended_reported?: any[] };
+
+/**
+ * Asks about each closed or left account its bank still returns in a healthy
+ * answer when its balance has moved from the one it showed when its end was
+ * set or last confirmed (`seen`; a closed account's is zero when nothing was
+ * seen), or a transaction on it is dated after then (see ENDED, STILL
+ * REPORTED). A copy of its row, with the question, goes in its institution's
+ * `ended_reported`: the row itself leaves the live accounts (applyLifecycle),
+ * so the account counts in nothing while the question waits. Not untracked
+ * accounts, hidden ones, held or recovered rows, or manual accounts (their
+ * balance is the person's own). Never throws, and a store it can't read
+ * asks nothing about transactions.
+ */
+export async function askAboutReportedEnds(
+  ctx: Ctx,
+  institutions: ReportingInstitution[],
+  view: LifecycleView,
+  links: ReadonlyMap<string, Link>,
+  hidden: ReadonlyMap<string, unknown>,
+  now: number = Date.now()
+): Promise<void> {
+  if (view.ended.size === 0) return;
+  const candidates: { inst: ReportingInstitution; a: any; ended: { state: 'closed' | 'left'; on: string; note?: string }; seen: { balance: number | null; through: string } }[] = [];
+  for (const inst of institutions) {
+    if (inst.error || inst.manual) continue;
+    for (const a of inst.accounts) {
+      if (!a || a.stale || a.held || hidden.has(a.account_id)) continue;
+      const entry = lifecycleOf(view, a.account_id);
+      const l = entry?.lifecycle;
+      if (!entry || !l || (l.state !== 'closed' && l.state !== 'left') || !endedNow(l, now)) continue;
+      const seen = entry.seen ?? { balance: l.state === 'closed' ? 0 : null, through: addDays(l.on, -1) };
+      candidates.push({ inst, a, ended: { state: l.state, on: l.on, ...(l.note ? { note: l.note } : {}) }, seen });
+    }
+  }
+  if (candidates.length === 0) return;
+  try {
+    // Transactions after what was seen, read once per institution; one whose
+    // store can't be read says nothing about them.
+    const rows = new Map<string, { account_id: string; date: string }[] | null>();
+    for (const item_id of new Set(candidates.map((c) => c.inst.item_id))) {
+      try {
+        rows.set(item_id, (await readStoredTxns(ctx, item_id)).map((t) => ({ account_id: t.account_id, date: t.date })));
+      } catch {
+        rows.set(item_id, null);
+      }
+    }
+    for (const { inst, a, ended, seen } of candidates) {
+      const ids = new Set(sameAccountIds(a.account_id, links as Map<string, Link>));
+      const after = (rows.get(inst.item_id) ?? [])
+        .filter((t) => ids.has(t.account_id) && t.date > seen.through && t.date >= ended.on)
+        .map((t) => t.date)
+        .sort();
+      const moved = typeof a.balance === 'number' && seen.balance !== null && Math.abs(a.balance - seen.balance) >= 0.005;
+      if (!moved && after.length === 0) continue;
+      const question: AccountQuestion = { kind: 'reported', end: ended.on, since: after.length > 0 ? after[after.length - 1] : null, ended };
+      inst.ended_reported = [...(inst.ended_reported ?? []), { ...a, question }];
+    }
+  } catch (err) {
+    console.error('Account lifecycle: accounts that ended could not be checked', err instanceof Error ? err.name : typeof err);
   }
 }

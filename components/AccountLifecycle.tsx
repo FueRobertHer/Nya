@@ -20,12 +20,18 @@
 // The words keep the three apart where it matters: closed and left are the
 // same to the math and differ only in what they say; untracked counts before
 // its day and not after, where hidden leaves an account out of every day.
-// Nothing here removes anything: reopening restores an account exactly.
+// Nothing here removes anything: reopening restores an account exactly, and
+// one its bank no longer returns is held at its last known balance and asked
+// about until it does. The sheet says what an end does to net worth when the
+// account still shows a balance, and asks for a tick before a debt still owed
+// stops counting: ending one raises net worth, and must never look like
+// money gained by accident.
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { localDate } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { signedContribution } from '@/lib/balance';
 
 export type EndState = 'closed' | 'left' | 'untracked';
 
@@ -42,7 +48,18 @@ export type EndedAccount = {
 };
 
 /** A question on an account's row (lib/lifecycle-questions.ts AccountQuestion). */
-export type AccountQuestion = { kind: 'missing' | 'zero'; end: string; since: string | null; still_open?: true };
+export type AccountQuestion = {
+  kind: 'missing' | 'zero' | 'reported';
+  end: string;
+  since: string | null;
+  still_open?: true;
+  again?: true;
+  ended?: { state: 'closed' | 'left'; on: string; note?: string };
+};
+
+/** How long a "Still open" holds a missing account (lib/lifecycle.ts
+ *  STILL_OPEN_HOLD_DAYS), in words. */
+const HOLD_WORDS = 'two weeks';
 
 /** What the sheet is about: an account, and what it opens on. */
 export type LifecycleTarget = {
@@ -57,6 +74,13 @@ export type LifecycleTarget = {
   note?: string;
   /** It ended already: the sheet offers to reopen it. */
   ended?: boolean;
+  /** What it shows now, when the app knows: what an end takes out of net
+   *  worth, said in the sheet, and what a bank still returning it is
+   *  compared with later. `lastKnown` says it is a held balance. */
+  balance?: number | null;
+  type?: string | null;
+  currency?: string | null;
+  lastKnown?: boolean;
   /** Why the day is prefilled, in a line. */
   prefilled?: string;
 };
@@ -162,8 +186,9 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
 
   /** Ends an account as the sheet says; asks about the connection after. */
   const end = useCallback(
-    async (account_id: string, state: EndState, day: string, note: string) => {
-      const body = state === 'untracked' ? { account_id, state, from: day } : { account_id, state, on: day, ...(note.trim() ? { note: note.trim() } : {}) };
+    async (account_id: string, state: EndState, day: string, note: string, balance?: number | null) => {
+      const seen = balance !== undefined ? { balance } : {};
+      const body = state === 'untracked' ? { account_id, state, from: day, ...seen } : { account_id, state, on: day, ...(note.trim() ? { note: note.trim() } : {}), ...seen };
       const done = await post(body);
       if (!done) return;
       setTarget(null);
@@ -186,6 +211,14 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
     [post]
   );
 
+  /** "Still closed": an end confirmed as it is, with the balance its bank
+   *  shows now, which is asked about again only if it moves. */
+  const confirmEnd = useCallback(
+    (account_id: string, ended: NonNullable<AccountQuestion['ended']>, balance: number | null) =>
+      post({ account_id, state: ended.state, on: ended.on, ...(ended.note ? { note: ended.note } : {}), balance }),
+    [post]
+  );
+
   const shown = useLast(target);
   const sheet = (
     <Sheet open={!!target} title={shown ? accountName(shown.name, shown.mask) : 'Account'} onClose={() => !busy && close()}>
@@ -193,7 +226,28 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
     </Sheet>
   );
 
-  return { open, stillOpen, reopen, sheet, busy, problem: target ? '' : error };
+  return { open, stillOpen, confirmEnd, reopen, sheet, busy, problem: target ? '' : error };
+}
+
+/**
+ * What an end does to net worth now, from the balance the account shows:
+ * null when that isn't known or is zero. A debt still owed (`owed`) raises
+ * net worth when it stops counting, which the form asks the person to
+ * confirm. Pure, for the tests.
+ */
+export function endEffect(t: Pick<LifecycleTarget, 'balance' | 'type' | 'currency' | 'lastKnown'>, day: string): { text: string; owed: boolean } | null {
+  if (typeof t.balance !== 'number' || !t.type) return null;
+  const c = signedContribution(t.type, t.balance);
+  if (Math.abs(c) < 0.005) return null;
+  const amount = formatMoney(Math.abs(c), t.currency ?? null);
+  const shows = t.lastKnown ? 'Its last known balance is' : 'It still shows';
+  if (c < 0) {
+    return {
+      text: `${shows} ${amount} owed. From ${dayText(day)} that debt stops counting, so your net worth rises by ${amount}. If it is still owed, keep the account open until it is paid.`,
+      owed: true,
+    };
+  }
+  return { text: `${shows} ${amount}. From ${dayText(day)} it stops counting, so your net worth falls by ${amount}.`, owed: false };
 }
 
 /** The sheet's form. */
@@ -210,14 +264,17 @@ export function LifecycleForm({
   busy: boolean;
   error: string;
   onCancel: () => void;
-  onEnd: (account_id: string, state: EndState, day: string, note: string) => void;
+  onEnd: (account_id: string, state: EndState, day: string, note: string, balance?: number | null) => void;
   onReopen: (account_id: string) => void;
   today?: string;
 }) {
   const [state, setState] = useState<EndState>(target.state ?? 'closed');
   const [day, setDay] = useState(target.day && target.day <= today ? target.day : today);
   const [note, setNote] = useState(target.note ?? '');
+  const [owedOk, setOwedOk] = useState(false);
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(day) && day >= '1970-01-01' && day <= today;
+  const effect = valid ? endEffect(target, day) : null;
+  const confirmed = !effect?.owed || owedOk;
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
@@ -253,18 +310,28 @@ export function LifecycleForm({
           ? `Every day before ${dayText(day)} stays as it was. From ${dayText(day)} on it isn’t counted: not in net worth, the chart, allocation, budgets or spending. Nothing is deleted, so reopening puts it back exactly.`
           : 'Choose a day up to today.'}
       </p>
+      {effect && <p className={effect.owed ? 'stale-note lifecycle-effect' : 'panel-note lifecycle-effect'}>{effect.text}</p>}
+      {effect?.owed && (
+        <label className="lifecycle-confirm">
+          <input type="checkbox" checked={owedOk} onChange={(e) => setOwedOk(e.target.checked)} disabled={busy} />
+          <span>Stop counting what it owes</span>
+        </label>
+      )}
       {error && <div className="error">{error}</div>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button disabled={busy || !valid} onClick={() => onEnd(target.account_id, state, day, note)}>
+        <button disabled={busy || !valid || !confirmed} onClick={() => onEnd(target.account_id, state, day, note, target.balance)}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
       {target.ended && (
         <div className="lifecycle-reopen">
-          <p className="panel-note">Still open after all? Reopening counts it again on every day.</p>
+          <p className="panel-note">
+            Still open after all? Reopening counts it again on every day. If its bank no longer returns it, it is held at its
+            last known balance, and asked about, until the bank does.
+          </p>
           <button className="secondary" onClick={() => onReopen(target.account_id)} disabled={busy}>
             Reopen it
           </button>
@@ -279,6 +346,7 @@ type QuestionRow = {
   account_id: string;
   name: string;
   mask: string | null;
+  type?: string;
   balance: number | null;
   currency: string | null;
   hidden?: boolean;
@@ -286,23 +354,52 @@ type QuestionRow = {
   held?: { as_of: string | null; too_old?: string };
 };
 
+/** "$450.00 owed", or "$450.00": a balance as a question names it. */
+function balanceWords(row: Pick<QuestionRow, 'balance' | 'currency' | 'type'> | undefined): string | null {
+  if (typeof row?.balance !== 'number') return null;
+  const owed = row.type === 'credit' || row.type === 'loan';
+  return `${formatMoney(Math.abs(row.balance), row.currency ?? null)}${owed && row.balance > 0 ? ' owed' : ''}`;
+}
+
 /** The words of a question, and the line under it. Pure, for the tests. */
-export function questionText(q: AccountQuestion, who: string, institution: string, row?: Pick<QuestionRow, 'balance' | 'currency' | 'held'>): { ask: string; detail: string } {
+export function questionText(
+  q: AccountQuestion,
+  who: string,
+  institution: string,
+  row?: Pick<QuestionRow, 'balance' | 'currency' | 'held' | 'hidden' | 'type'>
+): { ask: string; detail: string } {
   if (q.kind === 'zero') {
     return {
       ask: `${who} has been at ${formatMoney(0, row?.currency ?? null)} with no activity since ${dayText(q.since ?? q.end)}. Closed?`,
       detail: 'Nothing waits on your answer: a zero counts the same either way.',
     };
   }
-  const held = row?.held?.as_of
-    ? `It’s shown at its last known balance, from ${dayText(row.held.as_of)}`
-    : row?.held?.too_old
-      ? `Its last known balance, from ${dayText(row.held.too_old)}, is too old to count`
-      : 'Nya has no recent balance for it';
+  if (q.kind === 'reported') {
+    const ended = q.ended?.state === 'left' ? `no longer yours since ${dayText(q.end)}` : `closed ${dayText(q.end)}`;
+    const shows = balanceWords(row);
+    const what = q.since ? `has a transaction from ${dayText(q.since)}` : shows ? `shows ${shows}` : 'has moved';
+    return {
+      ask: `${who}, ${ended}, ${what}. ${q.ended?.state === 'left' ? 'Still not yours?' : 'Still closed?'}`,
+      detail: `${institution || 'Its bank'} still reports it, and from its end it counts in nothing, so this isn’t in your net worth. If it is open again, reopen it to count it.`,
+    };
+  }
+  const held = row?.hidden
+    ? 'It’s hidden, so it counts in no total either way'
+    : row?.held?.as_of
+      ? `It’s shown at its last known balance, from ${dayText(row.held.as_of)}`
+      : row?.held?.too_old
+        ? `Its last known balance, from ${dayText(row.held.too_old)}, is too old to count`
+        : 'Nya has no recent balance for it';
   if (q.still_open) {
     return {
       ask: `You said ${who} is still open, but ${institution || 'its bank'} hasn’t reported it since ${q.since ? dayText(q.since) : 'it went missing'}.`,
-      detail: `${held}, and no total is saved while it’s missing. Reconnecting may bring it back, or say it closed.`,
+      detail: `${held}, and no total is saved while it’s missing, for ${HOLD_WORDS} from your answer at most: then Nya asks again. Reconnecting may bring it back, or say it closed.`,
+    };
+  }
+  if (q.again) {
+    return {
+      ask: `You said ${who} was still open, but it still hasn’t appeared${q.since ? ` since ${dayText(q.since)}` : ''}. Closed?`,
+      detail: `${held}, and no total is saved until you answer. If nobody answers within three days, Nya assumes it closed, and you can say otherwise.`,
     };
   }
   return {
@@ -318,12 +415,18 @@ export function AccountQuestions({
   busy,
   onOpen,
   onStillOpen,
+  onConfirmEnd,
+  onReopen,
 }: {
   accounts: QuestionRow[];
   institution: string;
   busy: boolean;
   onOpen: (t: LifecycleTarget) => void;
   onStillOpen: (account_id: string, q: AccountQuestion) => void;
+  /** An end that a bank still reporting the account questions, confirmed
+   *  ("Still closed"), with the balance it shows now. */
+  onConfirmEnd?: (account_id: string, ended: NonNullable<AccountQuestion['ended']>, balance: number | null) => void;
+  onReopen?: (account_id: string) => void;
 }): ReactNode {
   const asked = accounts.filter((a): a is QuestionRow & { question: AccountQuestion } => !!a.question);
   if (asked.length === 0) return null;
@@ -332,6 +435,23 @@ export function AccountQuestions({
       {asked.map((a) => {
         const who = accountName(a.name, a.mask);
         const { ask, detail } = questionText(a.question, who, institution, a);
+        const ended = a.question.kind === 'reported' ? a.question.ended : undefined;
+        if (ended) {
+          return (
+            <li key={a.account_id} className="lifecycle-question">
+              <p className="lifecycle-ask">{ask}</p>
+              <p className="panel-note">{detail}</p>
+              <div className="card-actions">
+                <button className="secondary" onClick={() => onConfirmEnd?.(a.account_id, ended, a.balance)} disabled={busy || !onConfirmEnd}>
+                  {ended.state === 'left' ? 'Still not mine' : 'Still closed'}
+                </button>
+                <button className="secondary" onClick={() => onReopen?.(a.account_id)} disabled={busy || !onReopen}>
+                  Reopen
+                </button>
+              </div>
+            </li>
+          );
+        }
         const target = (state: EndState): LifecycleTarget => ({
           account_id: a.account_id,
           name: a.name,
@@ -339,6 +459,10 @@ export function AccountQuestions({
           institution,
           state,
           day: a.question.end,
+          balance: a.hidden ? undefined : a.balance,
+          type: a.type ?? null,
+          currency: a.currency,
+          lastKnown: !!a.held,
           prefilled:
             a.question.kind === 'zero'
               ? 'Prefilled with the first day it was at zero.'
@@ -408,7 +532,8 @@ export function EndedAccounts({
         <>
           <p className="empty-note">
             These stopped counting on the day shown: every day before it still counts, so your chart keeps the step and
-            its note. Nothing was deleted, so reopening one puts it back exactly.
+            its note. Nothing was deleted, so reopening one puts it back exactly; one its bank no longer returns is held
+            at its last known balance, and asked about, until the bank does.
           </p>
           <ul className="lifecycle-list">
             {ended.map((e) => {
@@ -444,7 +569,11 @@ export function EndedAccounts({
                   <div className="manual-row-actions lifecycle-actions">
                     {e.assumed ? (
                       <>
-                        <button className="link-btn" disabled={busy} onClick={() => onOpen({ ...target, prefilled: 'The day Nya assumed: the day after it was last seen.' })}>
+                        <button
+                          className="link-btn"
+                          disabled={busy}
+                          onClick={() => onOpen({ ...target, ended: false, prefilled: 'The day Nya assumed: the day after it was last seen.' })}
+                        >
                           Yes, closed
                         </button>
                         <button className="link-btn" disabled={busy} onClick={() => onStillOpen(e.account_id, { kind: 'missing', since: day, end: day })}>
@@ -524,16 +653,19 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
       {n > 0 && (
         <p>
           {n === 1 ? 'One saved account closure is damaged' : `${n} saved account closures are damaged`} and can’t be read.
-          Accounts can’t load until {n === 1 ? 'it is' : 'they are'} removed, since one may be an account you closed.
+          {damage.unrecognised > 0
+            ? ` Accounts can’t load while any closure can’t be read, since one may be an account you closed, and removing ${n === 1 ? 'this one' : 'these'} isn’t enough on its own (see below).`
+            : ` Accounts can’t load until ${n === 1 ? 'it is' : 'they are'} removed, since one may be an account you closed.`}{' '}
           Removing {n === 1 ? 'it' : 'them'} counts {n === 1 ? 'that account' : 'those accounts'} again until you close{' '}
           {n === 1 ? 'it' : 'them'} again.
         </p>
       )}
       {damage.unrecognised > 0 && (
         <p>
-          {damage.unrecognised === 1 ? 'One account closure was' : `${damage.unrecognised} account closures were`} saved by a newer
-          version of Nya, which reads {damage.unrecognised === 1 ? 'it' : 'them'}. Nothing here changes{' '}
-          {damage.unrecognised === 1 ? 'it' : 'them'}.
+          {damage.unrecognised === 1 ? 'One account closure is' : `${damage.unrecognised} account closures are`} in a form this
+          version of Nya can’t read, though {damage.unrecognised === 1 ? 'it looks' : 'they look'} intact: perhaps saved by a
+          newer version. Nothing here changes {damage.unrecognised === 1 ? 'it' : 'them'}, and accounts can’t load until the
+          version that saved {damage.unrecognised === 1 ? 'it' : 'them'} is back.
         </p>
       )}
       {error && <div className="error">{error}</div>}

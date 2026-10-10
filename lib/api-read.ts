@@ -45,11 +45,13 @@
 // worth, as the chart subtracts them) and holdings.
 //
 // ACCOUNTS THAT ENDED (closed, left, or no longer tracked: lib/lifecycle.ts)
-// are listed with when (`lifecycle`, a field version 1 gained), and count in
-// nothing from that day on, as in the app: net worth now leaves them out, its
-// history subtracts them from their end day, and their transactions from it
-// are left out (lib/activity.ts). Read strictly: one that can't be read is a
-// 409, never an account counted that the person closed.
+// are listed with when (`lifecycle`, a field version 1 gained), even once
+// their bank stops returning them, with the newest balance measured before,
+// and count in nothing from that day on, as in the app: net worth now leaves
+// them out, its history subtracts them from their end day, and their
+// transactions from it are left out (lib/activity.ts). An investment one's
+// holdings say so too. Read strictly: one that can't be read is a 409, never
+// an account counted that the person closed.
 //
 // READ ONLY. Nothing here writes: each read that could tidy as it goes is
 // asked not to (readOnly).
@@ -62,7 +64,7 @@ import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, sameAccountIds, type Link } from './links';
-import { getEffectiveLifecycle, lifecycleOf, endOf, lastEndDay, type LifecycleView } from './lifecycle';
+import { getEffectiveLifecycle, lifecycleOf, endOf, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
@@ -284,8 +286,19 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       if (includeHidden || !hidden.has(account.account_id)) linked.push({ item, account });
     }
   }
-  const ids = new Map(linked.map(({ account }) => [account.account_id, sameAccountIds(account.account_id, links)]));
-  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, [...ids.keys()], remembered.byItem)]);
+  // Accounts that ended and that no live list names any more (a bank stops
+  // returning a closed account): listed from what their end keeps, so the
+  // end, and whether it was assumed, can be seen.
+  const listedIds = new Set([...linked.map(({ account }) => account.account_id), ...manual.accounts.map((a) => a.account_id)]);
+  const endedOnly = [...lifecycle.accounts].filter(
+    ([root, { entry }]) =>
+      endOf(entry.lifecycle) !== null &&
+      !sameAccountIds(root, links).some((id) => listedIds.has(id)) &&
+      (includeHidden || !hidden.has(root)) &&
+      !(isManualId(root) && (manual.unreadable.includes(root) || manual.unrecognised.includes(root) || manual.unavailable.includes(root)))
+  );
+  const ids = new Map([...linked.map(({ account }) => account.account_id), ...endedOnly.map(([root]) => root)].map((id) => [id, sameAccountIds(id, links)]));
+  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem)]);
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
   const takenAt = new Map<string, string | null>();
@@ -361,6 +374,30 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       });
     }
   }
+  const stored = new Set(items.map((i) => i.item_id));
+  for (const [root, { entry }] of endedOnly) {
+    const b = balances.get(root) ?? null;
+    const type = entry.type ?? 'other';
+    accounts.push({
+      id: root,
+      source: isManualId(root) ? 'manual' : 'plaid',
+      name: entry.label.name,
+      official_name: null,
+      institution: entry.label.institution,
+      type,
+      subtype: null,
+      mask: entry.label.mask,
+      balance: b?.value ?? null,
+      currency: null,
+      credit_limit: null,
+      is_debt: isOwedType(type),
+      hidden: hidden.has(root),
+      as_of: b?.date ?? null,
+      as_of_time: b?.layer === 'recorded' ? (takenAt.get(b.date) ?? null) : null,
+      connection: entry.item_id && stored.has(entry.item_id) ? facts.of(entry.item_id) : null,
+      lifecycle: apiLifecycle(lifecycle, root),
+    });
+  }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
   return { accounts, missing, notes, hidden, links, lifecycle };
@@ -415,7 +452,7 @@ async function netWorthRead(ctx: Ctx, includeHidden: boolean): Promise<NetWorthR
   const read = await accountsRead(ctx, includeHidden);
   // Accounts that ended are subtracted from their end day either way: they
   // are no longer the person's to count, hidden or not.
-  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden, read.lifecycle.ended);
+  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden, read.lifecycle.ended, shortDays(read.lifecycle, includeHidden ? new Map() : read.hidden));
   return { read, history };
 }
 
@@ -995,6 +1032,10 @@ export type ApiHoldingsAccount = {
   observed_at: string | null;
   /** The first day anything was recorded for it. */
   recorded_since: string | null;
+  /** When it ended, as on /accounts, or null while it is open: an account
+   *  that ended counts in nothing from its day, and its positions are the
+   *  last recorded before it. Version 1 gained it. */
+  lifecycle: ApiLifecycle | null;
   positions: {
     security_id: string;
     ticker: string | null;
@@ -1060,6 +1101,7 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
         as_of: held ? day!.date : null,
         observed_at: held?.observed_at ?? null,
         recorded_since: span.first,
+        lifecycle: a.lifecycle,
         positions: (held?.positions ?? []).map((p) => ({
           security_id: p.security_id,
           ticker: p.ticker,

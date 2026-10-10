@@ -136,6 +136,11 @@ function spotText(s: BlindSpot): string {
       return `${s.count} ${plural(s.count, 'account', 'accounts')} at ${s.institution} couldn't be recovered, so ${plural(s.count, "it isn't", "they aren't")} in this plan.`;
     case 'vanished':
       return `${s.count} ${plural(s.count, 'account', 'accounts')} ${s.institution} used to report ${plural(s.count, "isn't", "aren't")} in its latest answer, so ${plural(s.count, "it isn't", "they aren't")} in this plan.`;
+    case 'held': {
+      const one = s.accounts.length === 1;
+      const names = one ? s.accounts[0] : `${s.accounts.slice(0, -1).join(', ')} and ${s.accounts[s.accounts.length - 1]}`;
+      return `${names} at ${s.institution} ${one ? "isn't" : "aren't"} in its latest answer, so ${one ? 'it starts' : 'they start'} from ${one ? 'its' : 'their'} last known balance${one ? '' : 's'}${s.date ? `, from ${staleDay(s.date, null)}` : ''}.`;
+    }
     case 'dated':
       return `${s.institution} couldn't be reached: its balances here are from ${staleDay(s.date, s.at)}.`;
   }

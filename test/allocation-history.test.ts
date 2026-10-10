@@ -195,6 +195,30 @@ describe('allocation over time', () => {
     expect(body.accounts.find((a: any) => a.account_id === 'b')).toMatchObject({ state: 'gone', last: '2026-09-30' });
   });
 
+  test('ending an account changes no day before its end: its cash beside its positions still counts, listed by the Plan or not', async () => {
+    await record('2026-09-30T13:00:00Z', ['a', 'b'], [hold('a', 'vti', 600), hold('b', 'bnd', 400)]);
+    // b holds 100 of cash beside its fund.
+    await measured('2026-09-30', { a: 600, b: 500 });
+    await record('2026-10-03T13:00:00Z', ['a', 'b'], [hold('a', 'vti', 620), hold('b', 'bnd', 380)]);
+    await measured('2026-10-03', { a: 620, b: 480 });
+    const before = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB })).body;
+    expect(before.days.map((d: any) => [d.date, d.total])).toEqual([
+      ['2026-09-30', 1100],
+      ['2026-10-03', 1100],
+    ]);
+    const { markEnded } = await import('@/lib/lifecycle');
+    await markEnded(ctx, 'b', { state: 'left', on: '2026-10-01' }, { type: 'investment', label: { name: 'B', institution: 'Broker', mask: null }, item_id: 'item_b' });
+    // As a list from before asks, and as the Plan asks once b has left it.
+    for (const accounts of [AB, [acct('a')]]) {
+      const { body } = await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts });
+      expect(body.days.map((d: any) => [d.date, d.total, d.unlisted, d.missing])).toEqual([
+        ['2026-09-30', 1100, 100, []],
+        ['2026-10-03', 620, 0, []],
+      ]);
+      expect(body.accounts.find((a: any) => a.account_id === 'b')).toMatchObject({ state: 'gone' });
+    }
+  });
+
   test('an end that can’t be read is a 409, never a series counting it', async () => {
     await threeDays();
     await fake.hset(ctxKey('account-lifecycle'), { b: 'damaged-bytes-damaged-bytes-damaged' });

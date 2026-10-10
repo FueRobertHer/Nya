@@ -66,6 +66,9 @@ describe('account lifecycle: what is refused', () => {
     ['a day before 1970', { account_id: 'a', state: 'closed', on: '1969-12-31' }, /from 1970/],
     ['a note that is not text', { account_id: 'a', state: 'closed', on: '2026-03-12', note: 5 }, /text/],
     ['a note too long', { account_id: 'a', state: 'closed', on: '2026-03-12', note: 'x'.repeat(201) }, /200 characters/],
+    ['a balance that is not a number', { account_id: 'a', state: 'closed', on: '2026-03-12', balance: '310' }, /balance/],
+    ['a balance past any', { account_id: 'a', state: 'left', on: '2026-03-12', balance: 1e300 }, /balance/],
+    ['a balance on a reopen', { account_id: 'a', state: 'active', balance: 10 }, /balance isn't part of reopening/],
     ['an answer without its day', { account_id: 'a', state: 'active', answer: 'zero' }, /YYYY-MM-DD/],
     ['an answer to no question', { account_id: 'a', state: 'active', answer: 'maybe', since: '2026-03-12' }, /question/],
     ['a repair without confirmation', { action: 'repair' }, /confirmation/],
@@ -82,6 +85,13 @@ describe('account lifecycle: what is refused', () => {
 
   test('a body that is not JSON', async () => {
     expect((await lifecycle(undefined, '{not json')).status).toBe(400);
+  });
+
+  test('a note is one line: control characters become spaces, never a 500 from storage', async () => {
+    await saveManualAccount(ctx, MANUAL);
+    const { status } = await lifecycle({ account_id: MANUAL.account_id, state: 'closed', on: '2026-03-12', note: 'Moved\u0001 to\tChase\n' });
+    expect(status).toBe(200);
+    expect((await lifecycleStore.get(ctx, MANUAL.account_id))?.lifecycle).toEqual({ state: 'closed', on: '2026-03-12', note: 'Moved to Chase' });
   });
 
   test('a day in the future, beyond the person’s today', async () => {

@@ -32,6 +32,8 @@ export function useTimelineNotes(refreshKey: unknown) {
         const data = await res.json().catch(() => null);
         if (!live) return;
         if (!res.ok || !Array.isArray(data?.notes)) {
+          // What the chart showed before is no longer known to be right.
+          setNotes([]);
           setProblem('Your notes couldn’t be read just now, so the chart shows none.');
           return;
         }
@@ -40,7 +42,9 @@ export function useTimelineNotes(refreshKey: unknown) {
         setProblem(flawed > 0 ? `${flawed === 1 ? 'One note' : `${flawed} notes`} couldn’t be read, so ${flawed === 1 ? 'it isn’t' : 'they aren’t'} shown.` : null);
       })
       .catch(() => {
-        if (live) setProblem('Your notes couldn’t be read just now, so the chart shows none.');
+        if (!live) return;
+        setNotes([]);
+        setProblem('Your notes couldn’t be read just now, so the chart shows none.');
       });
     return () => {
       live = false;
@@ -61,6 +65,11 @@ export function TimelineNotesCard({ notes, problem, onChanged }: { notes: Timeli
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const today = localDate();
+  /** Opens the sheet on a note, or a new one, with no error left from before. */
+  const openDraft = (next: Draft) => {
+    setError('');
+    setDraft(next);
+  };
 
   const send = async (method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown>) => {
     setBusy(true);
@@ -125,7 +134,7 @@ export function TimelineNotesCard({ notes, problem, onChanged }: { notes: Timeli
                   </div>
                   {n.kind === 'user' && (
                     <div className="manual-row-actions">
-                      <button className="link-btn" disabled={busy} onClick={() => setDraft({ id: n.id, date: n.date, text: n.text })}>
+                      <button className="link-btn" disabled={busy} onClick={() => openDraft({ id: n.id, date: n.date, text: n.text })}>
                         Edit
                       </button>
                     </div>
@@ -135,7 +144,7 @@ export function TimelineNotesCard({ notes, problem, onChanged }: { notes: Timeli
             </ul>
           )}
           <div className="card-actions">
-            <button className="secondary" onClick={() => setDraft({ id: null, date: today, text: '' })} disabled={busy}>
+            <button className="secondary" onClick={() => openDraft({ id: null, date: today, text: '' })} disabled={busy}>
               Add a note
             </button>
           </div>

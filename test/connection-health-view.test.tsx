@@ -116,6 +116,14 @@ describe('the connection health view', () => {
       ],
     });
     expect(affectedText(held, (n) => `$${n}`)).toEqual(['Shown at last known balances from Oct 5, not measured now: Checking ••4821, together $5000 of net worth.', 'Not counted in net worth: Old card.']);
+    // Answered Still open: what that holds, and for how long, not "if nobody answers".
+    const answered = inst('E', health('vanished'), {
+      unconfirmed_missing: 1,
+      accounts: [{ name: 'Checking', mask: '4821', type: 'depository', balance: 5000, currency: 'USD', stale: true, held: { as_of: '2026-10-05' }, question: { kind: 'missing', still_open: true } }],
+    });
+    expect(healthText('E', answered.health, answered)).toBe(
+      'You said the account E stopped reporting is still open. Until it comes back, it is counted at its last known balance and no total is saved, for two weeks from your answer at most; then Nya asks again. Reconnecting may bring it back.'
+    );
     expect(affectedText(inst('Citi', health('ok')))).toEqual([]);
     // Several currencies are not added up.
     const mixed = inst('Wise', health('login'), {
@@ -259,6 +267,10 @@ describe('the notes under the Home total name what is missing', () => {
     ]);
     expect(totalNotes(ally([{ balance: 900, held: {} }, { balance: null, held: {} }]), day)).toEqual([
       '2 accounts at Ally stopped reporting, so this total is short by 1 of them · history is paused until you answer',
+    ]);
+    // Answered Still open: the hold waits for the account, two weeks at most.
+    expect(totalNotes([{ ...ally([])[0], unconfirmed_missing: 1, accounts: [{ balance: 900, held: {}, question: { still_open: true } }] }], day)).toEqual([
+      '1 account at Ally stopped reporting; you said it is still open, so it is counted at its last known balance · history is paused until it comes back, two weeks at most',
     ]);
     expect(totalNotes([{ institution_name: 'Ally', error: null, needs_reauth: false }], day)).toEqual([]);
   });
