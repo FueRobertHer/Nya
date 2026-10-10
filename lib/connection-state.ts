@@ -47,6 +47,8 @@
 // consent renewed past that end, so a warning that a repair outran never
 // lingers.
 
+import type { ConnectorDetail } from './connectors/types';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** How far ahead a consent expiry Plaid reports makes a connection "reconnect
@@ -96,10 +98,12 @@ export type Cause =
   | 'gone' // ITEM_NOT_FOUND and kin: Plaid no longer has the connection
   | 'unsupported' // ITEM_NOT_SUPPORTED and kin: Plaid can't reach these accounts any more
   | 'no_accounts' // NO_ACCOUNTS: the bank reports no open accounts
-  | 'vanished'; // accounts missing from an otherwise good answer (lib/vanished.ts)
+  | 'vanished' // accounts missing from an otherwise good answer (lib/vanished.ts)
+  | 'connector'; // a connector the person brought (SimpleFIN): its detail says what (lib/connectors/health.ts)
 
-/** Where the problem is. */
-export type Side = 'none' | 'you' | 'bank' | 'plaid' | 'nya' | 'unknown';
+/** Where the problem is. 'connector' is a service the person brought
+ *  themselves, such as SimpleFIN (lib/connectors/), named where it is shown. */
+export type Side = 'none' | 'you' | 'bank' | 'plaid' | 'nya' | 'unknown' | 'connector';
 
 /** What to offer: reconnect through update mode, wait, remove and connect
  *  again, remove, resolve a closed account, or nothing. */
@@ -131,6 +135,9 @@ export const CAUSES: Readonly<Record<Cause, { state: HealthState; action: Health
   unsupported: { state: 'relink', action: 'remove' },
   no_accounts: { state: 'closed', action: 'resolve' },
   vanished: { state: 'partial', action: 'resolve' },
+  // A connector's health is built with its own state and action
+  // (lib/connectors/health.ts); this is only what a bare cause reads as.
+  connector: { state: 'outage', action: 'wait' },
 };
 
 /** What a failed fetch says, kept on the institution (lib/networth.ts). */
@@ -337,6 +344,9 @@ export type ConnectionHealth = {
    *  warning, or its last sync) could not be read, so a warning may be missing
    *  from what this says (lib/connection-health.ts). */
   unread?: boolean;
+  /** For a connector the person brought (cause 'connector'): which one, and
+   *  what is wrong in its own words (lib/connectors/health.ts). */
+  detail?: ConnectorDetail;
 };
 
 function health(cause: Cause, side: Side, last_ok_at: string | null): ConnectionHealth {

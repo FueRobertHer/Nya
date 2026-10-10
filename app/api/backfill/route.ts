@@ -6,7 +6,7 @@ import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { syncInvestments } from '@/lib/invstore';
-import { getManualAccounts } from '@/lib/manual';
+import { getKeptAccounts } from '@/lib/kept-accounts';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
 import { addInvestmentFlows, isoDaysAgo, loadItemInvestments, reconstruct, type WalkType } from '@/lib/backfill';
 import {
@@ -291,7 +291,10 @@ export async function POST() {
     // Read once and reused: two reads could disagree, and an account created
     // between them would land in the flat record without being in totalNow, so
     // hiding it later would subtract a contribution these points never contained.
-    const manualAccounts = await getManualAccounts(ctx);
+    // The accounts SimpleFIN feeds are held flat the same way (lib/kept-accounts.ts):
+    // their transactions are the bank's, but walking a balance back through them
+    // is left for when their history is known to be complete.
+    const manualAccounts = await getKeptAccounts(ctx);
     for (const a of manualAccounts) {
       totalNow += signedContribution(a.type, a.balance);
     }

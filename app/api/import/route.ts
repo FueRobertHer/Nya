@@ -478,9 +478,10 @@ export async function POST(req: Request) {
     const today = utcToday();
     // The statement's own currency for OFX, whatever was sent; for the others
     // (and an OFX file that doesn't say), the one chosen in the sheet, else
-    // the manual accounts' own. The preview says which.
+    // the account's own: US dollars, unless it was kept from SimpleFIN in
+    // another. The preview says which.
     const fromFile = format === 'ofx' ? (read.statement?.currency ?? null) : null;
-    const currency = fromFile ?? meta.options.currency ?? DEFAULT_CURRENCY;
+    const currency = fromFile ?? meta.options.currency ?? account.currency ?? DEFAULT_CURRENCY;
     const currency_from = fromFile ? 'file' : meta.options.currency ? 'chosen' : 'default';
     const normalized = normalizeRecords(read.records, { today, currency });
     const problems = [...read.problems, ...normalized.problems];
@@ -519,7 +520,7 @@ export async function POST(req: Request) {
         if (cents(meta.balance.from) !== cents(account.balance)) {
           return NextResponse.json(
             {
-              error: `${account.name}’s balance changed to ${formatMoney(account.balance, DEFAULT_CURRENCY)} since the preview, so nothing was imported. Check it and import again.`,
+              error: `${account.name}’s balance changed to ${formatMoney(account.balance, account.currency ?? DEFAULT_CURRENCY)} since the preview, so nothing was imported. Check it and import again.`,
               balance: account.balance,
             },
             { status: 409 }

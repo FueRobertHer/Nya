@@ -168,10 +168,10 @@ describe('a damaged record elsewhere', () => {
       }
       const accounts = (await call('accounts')).body;
       expect(accounts.complete).toBe(false);
-      expect(accounts.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable' });
+      expect(accounts.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable', source: 'plaid' });
       const worth = (await call('net-worth')).body;
       expect(worth.complete).toBe(false);
-      expect(worth.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable' });
+      expect(worth.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable', source: 'plaid' });
       // This account's own record is whole: its currency is still known.
       expect((await call('balance-history', 'account_id=acc_chk')).body.currency).toBe('USD');
       const history = await tool('get_balance_history', { account_id: 'acc_chk' });
@@ -189,7 +189,7 @@ describe('a damaged record elsewhere', () => {
       const { body: accounts } = await call('accounts');
       expect(accounts.accounts.map((a: any) => a.id)).toContain('manual_house');
       expect(accounts.accounts.map((a: any) => a.id)).not.toContain('manual_wallet');
-      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unreadable' });
+      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unreadable', source: 'manual' });
       const worth = (await call('net-worth')).body;
       // The house still counts: only the wallet's 40 is missing, and the answer says so.
       expect(worth.totals[0].net_worth).toBe(whole.totals[0].net_worth - 40);
@@ -209,7 +209,7 @@ describe('a damaged record elsewhere', () => {
     await quietly(async () => {
       const { body: accounts } = await call('accounts');
       expect(accounts.accounts.map((a: any) => a.id)).not.toContain('manual_wallet');
-      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unrecognised' });
+      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unrecognised', source: 'manual' });
       expect(accounts.complete).toBe(false);
       expect((await tool('get_net_worth')).content[0].text).toContain('1 manual account couldn’t be read');
     });
@@ -232,7 +232,7 @@ describe('a damaged record elsewhere', () => {
       expect(res.status).toBe(200);
       expect(accounts.accounts.map((a: any) => a.id)).toContain('manual_house');
       expect(accounts.accounts.map((a: any) => a.id)).not.toContain('manual_wallet');
-      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unavailable' });
+      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unavailable', source: 'manual' });
       expect(accounts.complete).toBe(false);
       const worth = (await call('net-worth')).body;
       expect(worth.totals[0].net_worth).toBe(whole.totals[0].net_worth - 40);
@@ -245,7 +245,7 @@ describe('a damaged record elsewhere', () => {
 
   test('a whole answer says it is whole', async () => {
     // The fixture's NewBank has never been loaded: a short answer, said so.
-    expect((await call('net-worth')).body).toMatchObject({ complete: false, missing_accounts: [{ institution: 'NewBank', account_id: null, reason: 'not_loaded' }] });
+    expect((await call('net-worth')).body).toMatchObject({ complete: false, missing_accounts: [{ institution: 'NewBank', account_id: null, reason: 'not_loaded', source: 'plaid' }] });
     await fake.hdel(ctxKey('plaid:items'), 'item_new');
     expect((await call('accounts')).body).toMatchObject({ complete: true, missing_accounts: [] });
     expect((await call('net-worth')).body).toMatchObject({ complete: true, missing_accounts: [], accounts_without_balance: 0 });
@@ -262,7 +262,7 @@ describe('holdings for one account whose connection can’t be read, or hasn’t
       expect(res.status).toBe(200);
       expect(body.accounts).toEqual([]);
       expect(body.complete).toBe(false);
-      expect(body.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable' });
+      expect(body.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unreadable', source: 'plaid' });
       expect(body.notes).toContain(
         'That account isn’t among the accounts that could be read: it may be at a connection whose accounts couldn’t be read or haven’t been loaded yet, so its holdings can’t be given'
       );

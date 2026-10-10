@@ -386,6 +386,113 @@ describe('sharing accounts on a connection', () => {
     expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([['acct_joint', 'transactions'], ['acct_mine', 'balance']]);
   });
 
+  /** A SimpleFIN card shared with the partner (at `level`, beside the joint
+   *  account), then reported positive with no answer about its sign: held. */
+  async function heldCard(level = 'balance') {
+    const { connectorAccountsStore } = await import('@/lib/connectors/store');
+    const card = 'manual_00000000-0000-4000-8000-00000000c4d0';
+    const entry = {
+      version: 1 as const,
+      account_id: card,
+      connection_id: 'conn_00000000-0000-4000-8000-00000000c0aa',
+      connector: 'simplefin' as const,
+      remote_id: 'CARD',
+      name: 'Visa',
+      institution_name: 'My Bank',
+      institution_key: 'name:my bank',
+      institution_ref: '0123456789abcdef',
+      type: 'credit' as const,
+      subtype: null,
+      currency: 'USD',
+      reported_balance: -40,
+      reported_available: null,
+      balance_at: new Date().toISOString(),
+      fetched_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    await connectorAccountsStore.set(TEST_CTX, card, entry);
+    expect((await share({ acct_joint: 'balance', [card]: level })).status).toBe(200);
+    await connectorAccountsStore.set(TEST_CTX, card, { ...entry, reported_balance: 40 });
+    const answer = () => connectorAccountsStore.set(TEST_CTX, card, { ...entry, reported_balance: 40, sign: 'owed_positive' as const });
+    return { card, answer };
+  }
+
+  test('ending every share while a shared SimpleFIN card waits for its balance ends the card’s share too', async () => {
+    const { card, answer } = await heldCard('transactions');
+    // The settings list it, marked as waiting, so it can be set to none.
+    const settings = await connectionsOf('user_owner');
+    expect(settings.accounts.find((a: any) => a.id === card)).toMatchObject({ id: card, waiting: true, name: 'Visa' });
+    // Every account the settings list, set to none, as the settings save it.
+    const none = Object.fromEntries(settings.accounts.map((a: any) => [a.id, 'none']));
+    expect((await share(none)).status).toBe(200);
+    const after = await connectionsOf('user_owner');
+    expect(after.connections[0].sharing).toEqual({});
+    // Shared nowhere now, it isn't listed while it waits.
+    expect(after.accounts.map((a: any) => a.id)).not.toContain(card);
+    // Its balance counts again: nothing comes back by itself.
+    await answer();
+    expect(await sharedWithPartner()).toEqual([]);
+    expect((await connectionsOf('user_owner')).accounts.find((a: any) => a.id === card)).toEqual({ id: card, label: 'My Bank Visa', institution: 'My Bank', name: 'Visa' });
+  });
+
+  test('a paused share is kept by an edit that doesn’t name it, or names its level, ended by "none", and can’t change meanwhile', async () => {
+    const { card } = await heldCard('balance');
+    expect((await share({ acct_joint: 'transactions', [card]: 'balance' })).status).toBe(200);
+    expect((await connectionsOf('user_owner')).connections[0].sharing).toEqual({ acct_joint: 'transactions', [card]: 'balance' });
+    const raised = await share({ [card]: 'transactions' });
+    expect([raised.status, raised.body.error]).toEqual([409, expect.stringContaining('waiting for its balance')]);
+    expect((await connectionsOf('user_owner')).connections[0].sharing).toEqual({ acct_joint: 'transactions', [card]: 'balance' });
+    // A hidden account's share ends with an explicit none too, and stays ended.
+    await share({ acct_joint: 'transactions', acct_mine: 'balance' });
+    await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true);
+    expect((await share({ acct_joint: 'transactions', acct_mine: 'transactions' })).status).toBe(409);
+    expect((await share({ acct_joint: 'transactions', acct_mine: 'none' })).status).toBe(200);
+    await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', false);
+    expect((await sharedWithPartner())[0].accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+    expect((await connectionsOf('user_owner')).connections[0].sharing).toEqual({ acct_joint: 'transactions', [card]: 'balance' });
+  });
+
+  test('a SimpleFIN card only held (its sign waiting for an answer) keeps its share through an edit that doesn’t name it, and shows again once answered', async () => {
+    const { connectorAccountsStore } = await import('@/lib/connectors/store');
+    const card = 'manual_00000000-0000-4000-8000-00000000c4d0';
+    const entry = {
+      version: 1 as const,
+      account_id: card,
+      connection_id: 'conn_00000000-0000-4000-8000-00000000c0aa',
+      connector: 'simplefin' as const,
+      remote_id: 'CARD',
+      name: 'Visa',
+      institution_name: 'My Bank',
+      institution_key: 'name:my bank',
+      institution_ref: '0123456789abcdef',
+      type: 'credit' as const,
+      subtype: null,
+      currency: 'USD',
+      reported_balance: -40,
+      reported_available: null,
+      balance_at: new Date().toISOString(),
+      fetched_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    await connectorAccountsStore.set(TEST_CTX, card, entry);
+    expect((await share({ acct_joint: 'balance', [card]: 'balance' })).status).toBe(200);
+    // Now it comes positive, unanswered: held, so the settings offer it only
+    // to keep or end, marked as waiting, and the partner doesn't see it.
+    await connectorAccountsStore.set(TEST_CTX, card, { ...entry, reported_balance: 40 });
+    expect((await connectionsOf('user_owner')).accounts.filter((a: any) => a.id === card)).toEqual([
+      { id: card, label: 'My Bank Visa', institution: 'My Bank', name: 'Visa', waiting: true },
+    ]);
+    expect((await sharedWithPartner())[0].accounts.map((a: any) => a.id)).toEqual(['acct_joint']);
+    expect((await share({ acct_joint: 'transactions' })).status).toBe(200);
+    // Answered: it shows again, at the level it had.
+    await connectorAccountsStore.set(TEST_CTX, card, { ...entry, reported_balance: 40, sign: 'owed_positive' });
+    const [after] = await sharedWithPartner();
+    expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([
+      ['acct_joint', 'transactions'],
+      [card, 'balance'],
+    ]);
+  });
+
   test('a hidden account can’t be shared at all', async () => {
     await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true);
     expect((await share({ acct_mine: 'balance' })).status).toBe(409);

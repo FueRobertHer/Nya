@@ -1090,6 +1090,9 @@ describe('stores built on the storage seam', () => {
       'connection-notices',
       'connection-syncs',
       'connection-warnings',
+      'connector-accounts',
+      'connector-connections',
+      'connector-ended',
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
@@ -1118,6 +1121,10 @@ describe('stores built on the storage seam', () => {
     // Each import's summary is its entry without the records, which `imports` has whole.
     expect(keys).not.toContain('import-summaries');
     expect(keys).not.toContain('holdings:history:index');
+    // Nor a connector's credential, nor its request and claim counters.
+    expect(keys).not.toContain('connector-secrets');
+    expect(keys).not.toContain('connector-requests');
+    expect(keys).not.toContain('connector-claims');
     // In the file as written, too, one entry per line.
     const written = [...exportFile(doc, 'json').pieces()].join('');
     expect(JSON.parse(written)['export-test-plans']).toEqual(doc['export-test-plans']);

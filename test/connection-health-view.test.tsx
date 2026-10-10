@@ -243,6 +243,11 @@ describe('the notes under the Home total name what is missing', () => {
     ]);
     expect(totalNotes([{ institution_name: 'Ally', error: null, needs_reauth: false }], day)).toEqual([]);
   });
+
+  test('a bank SimpleFIN feeds, held for a card or loan reported as money held, says it waits for the person, not that it failed', () => {
+    const held = { institution_name: 'My Bank', ...base, stale_as_of: '2026-09-12', health: { last_ok_at: null, detail: { issue: 'sign' } } };
+    expect(totalNotes([held], day)).toEqual(['My Bank has a card or loan waiting for your answer; its balances are from snap 2026-09-12']);
+  });
 });
 
 describe('the Home alert a few days before a connection ends', () => {
@@ -298,8 +303,11 @@ describe("Activity's months say when they may be incomplete", () => {
         { institution_name: 'E', health: h('healthy') },
         { institution_name: 'F' },
         { institution_name: 'G', manual: true, health: h('outage') },
+        // Accounts SimpleFIN feeds are kept like manual ones, but have a connection that can stop.
+        { institution_name: 'H', manual: true, connector: 'simplefin', health: h('needs_reauth') },
+        { institution_name: 'I', manual: true, connector: 'simplefin', health: h('healthy') },
       ]).map((s) => s.institution_name)
-    ).toEqual(['A', 'B']);
+    ).toEqual(['A', 'B', 'H']);
     expect(joinNames(['A', 'B', 'C'])).toBe('A, B and C');
   });
 });

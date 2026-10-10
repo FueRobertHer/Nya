@@ -4057,3 +4057,37 @@ button.cat-manage-row.archived {
 .open-download > button {
   margin-top: 4px;
 }
+
+/* --- bring your own sync (components/Connectors.tsx) --- */
+
+/* An external link among a card's buttons, drawn as one: the connector's own
+   site, where what it reports is fixed. */
+.card-actions a.connector-site {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* A connection's host and counts under its name: a host can run long on a
+   phone. */
+.connector-meta {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A Setup Token is a long run of letters and digits: wrapped anywhere, in
+   type that tells them apart. */
+.connector-token textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}

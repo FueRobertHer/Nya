@@ -242,7 +242,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   { name: 'me', summary: 'The token you called with, and when your data in Nya began.', args: {} },
   {
     name: 'accounts',
-    summary: 'Every account, linked and manual, with its newest measured balance and as of when.',
+    summary: 'Every account, linked, kept up to date through SimpleFIN, and manual, with its newest measured balance and as of when.',
     args: { include_hidden: INCLUDE_HIDDEN },
   },
   {
@@ -367,7 +367,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'list_accounts',
     'accounts',
     'List accounts',
-    'Every account, linked and manual, with its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, and how its bank connection was last found.',
+    'Every account, linked, kept up to date through SimpleFIN, and manual, with where it comes from (source), its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, and how its bank connection was last found.',
     NARROW_HIDDEN
   ),
   {

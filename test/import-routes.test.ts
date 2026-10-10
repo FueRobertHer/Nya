@@ -1086,6 +1086,20 @@ describe('a file that doesn’t say its currency', () => {
   });
 });
 
+describe('an account kept from SimpleFIN in another currency', () => {
+  test('a file that doesn’t say its currency is read in the account’s, and a statement’s balance is offered only in it', async () => {
+    const everyday: ManualAccount = { ...CHECKING, account_id: 'manual_everyday-1', name: 'Everyday', institution_name: 'Bendigo Bank', balance: 900, currency: 'AUD' };
+    await saveManualAccount(ctx, everyday);
+    const european = '!Type:Bank\nD13.09.2026\nT-1.234,50\nPMIETE\n^\n';
+    expect((await preview(everyday.account_id, european, {}, 'umsatz.qif')).body.preview).toMatchObject({ currency: 'AUD', currency_from: 'default' });
+    // An AUD statement's balance is offered; a USD one's isn't.
+    const aud = ofx([{ fitid: 'A1', date: day(-1), amount: -5, name: 'COFFEE' }], { ledger: { amount: 950, as_of: day(0) } }).replace('<CURDEF>USD</CURDEF>', '<CURDEF>AUD</CURDEF>');
+    expect((await preview(everyday.account_id, aud)).body.preview.balance).toMatchObject({ amount: 950, refusal: null });
+    const usd = ofx([{ fitid: 'U1', date: day(-1), amount: -5, name: 'COFFEE' }], { ledger: { amount: 950, as_of: day(0) } });
+    expect((await preview(everyday.account_id, usd)).body.preview.balance).toMatchObject({ refusal: 'currency' });
+  });
+});
+
 describe('what an OFX file’s own types and structure say, through the route', () => {
   test('transfers, cash and fees are counted for the preview, stored with what the spending rules read, and shown so', async () => {
     const file = ofx([

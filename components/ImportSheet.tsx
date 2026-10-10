@@ -244,15 +244,16 @@ function draftColumns(header: string[]): CsvColumns {
   return out;
 }
 
-/** Why a statement's balance isn't offered, in words. */
-function balanceRefusal(why: string, account: string): string {
+/** Why a statement's balance isn't offered, in words. `currency`: the one
+ *  the account's balance is kept in. */
+function balanceRefusal(why: string, account: string, currency: string = DEFAULT_CURRENCY): string {
   switch (why) {
     case 'past':
       return `Nya sets a balance from a statement only when it is today’s or yesterday’s, so a past figure never stands in for today’s. Update ${account} from its row if it is still right.`;
     case 'ahead':
       return 'It is dated ahead, so it isn’t offered.';
     case 'currency':
-      return `It isn’t in ${DEFAULT_CURRENCY}, the currency manual balances are kept in.`;
+      return `It isn’t in ${currency}, the currency ${account}’s balance is kept in.`;
     case 'kind':
       return `This statement’s kind doesn’t match ${account}’s (a card statement for a card, a bank statement for a bank account), so its sign can’t be trusted here.`;
     case 'owed-negative':
@@ -295,7 +296,8 @@ export default function ImportSheet({
   const accounts = useMemo<Account[]>(
     () =>
       institutions
-        .filter((i) => i.manual)
+        // Not the accounts SimpleFIN feeds: their transactions come from it.
+        .filter((i) => i.manual && !i.connector)
         .flatMap((i) => i.accounts.filter((a) => !a.hidden).map((a) => ({ ...a, institution_name: i.institution_name }))),
     [institutions]
   );
@@ -641,6 +643,7 @@ export default function ImportSheet({
             past={past}
             error={pastError}
             account={name}
+            keptIn={account?.currency ?? DEFAULT_CURRENCY}
             busy={busy}
             undoing={undoing}
             plan={undoPlan}
@@ -698,6 +701,7 @@ export default function ImportSheet({
           options={options}
           setOptions={setOptions}
           account={name}
+          keptIn={account?.currency ?? DEFAULT_CURRENCY}
           busy={busy}
           error={error}
           onNext={() => void requestPreview(options)}
@@ -750,7 +754,7 @@ export default function ImportSheet({
           </p>
           {done.balance_updated && typeof done.balance === 'number' && (
             <p className="status-note">
-              {name}’s {account && isOwedType(account.type) ? 'amount owed' : 'balance'} is now {formatMoney(done.balance, DEFAULT_CURRENCY)}.
+              {name}’s {account && isOwedType(account.type) ? 'amount owed' : 'balance'} is now {formatMoney(done.balance, account?.currency ?? DEFAULT_CURRENCY)}.
             </p>
           )}
           {done.balance_error && <div className="error">The rows were imported, but {done.balance_error}</div>}
@@ -764,6 +768,7 @@ export default function ImportSheet({
             past={past}
             error={pastError}
             account={name}
+            keptIn={account?.currency ?? DEFAULT_CURRENCY}
             busy={busy}
             undoing={undoing}
             plan={undoPlan}
@@ -840,6 +845,7 @@ export function CsvMapping({
   options,
   setOptions,
   account,
+  keptIn = DEFAULT_CURRENCY,
   busy,
   error,
   onNext,
@@ -850,6 +856,9 @@ export function CsvMapping({
   options: ImportOptions;
   setOptions: (o: ImportOptions) => void;
   account: string;
+  /** The currency the account's balance is kept in: rows are read in it
+   *  unless another is chosen. */
+  keptIn?: string;
   busy: boolean;
   error: string;
   onNext: () => void;
@@ -875,7 +884,7 @@ export function CsvMapping({
   };
   const today = localDate();
   const thisYear = new Date().getFullYear();
-  const currency = options.currency && isCurrencyCode(options.currency) ? options.currency : DEFAULT_CURRENCY;
+  const currency = options.currency && isCurrencyCode(options.currency) ? options.currency : keptIn;
   const live = useMemo(() => (read?.status === 'ready' ? normalizeRecords(read.records, { today, currency }) : null), [read, today, currency]);
   // Every row counted once the taps stop: what the list's note says, and
   // what a run of taps never waits for.
@@ -1002,7 +1011,7 @@ export function CsvMapping({
           <label className="field">
             Currency of every row
             <input
-              value={options.currency ?? DEFAULT_CURRENCY}
+              value={options.currency ?? keptIn}
               onChange={(e) => setOptions({ ...options, currency: e.target.value.toUpperCase().slice(0, 3) })}
               maxLength={3}
               autoCapitalize="characters"
@@ -1075,7 +1084,7 @@ export function CsvMapping({
       )}
       {error && <div className="error">{error}</div>}
       <div className="button-pair" style={{ marginTop: 16 }}>
-        <button onClick={onNext} disabled={busy || read?.status !== 'ready' || !live || live.rows.length === 0 || !isCurrencyCode(options.currency ?? DEFAULT_CURRENCY)}>
+        <button onClick={onNext} disabled={busy || read?.status !== 'ready' || !live || live.rows.length === 0 || !isCurrencyCode(options.currency ?? keptIn)}>
           {busy ? 'Checking…' : `Check against ${account}`}
         </button>
       </div>
@@ -1130,6 +1139,8 @@ export function PreviewView({
   const [currencyText, setCurrencyText] = useState<string | null>(null);
   const name = account?.name ?? 'the account';
   const owed = account ? isOwedType(account.type) : false;
+  // The currency the account's balance is kept in (lib/manual.ts).
+  const keptIn = account?.currency ?? DEFAULT_CURRENCY;
   // The preview was counted with the choices sent; the ones made since move
   // the listed conflicts between the counts.
   const c = sentChoices === choices ? p.counts : countsWith(p, choices);
@@ -1191,9 +1202,9 @@ export function PreviewView({
       {currencyChoice &&
         (currencyText === null ? (
           <p className="panel-note">
-            Amounts are read in {p.currency ?? DEFAULT_CURRENCY}
+            Amounts are read in {p.currency ?? keptIn}
             {p.currency_from === 'default' ? ': this file doesn’t say its currency' : ', as chosen for this account'}.{' '}
-            <button className="link-btn" disabled={busy} onClick={() => setCurrencyText(p.currency ?? DEFAULT_CURRENCY)}>
+            <button className="link-btn" disabled={busy} onClick={() => setCurrencyText(p.currency ?? keptIn)}>
               Change
             </button>
           </p>
@@ -1327,14 +1338,14 @@ export function PreviewView({
           <label className="quick-add-check" style={{ marginTop: 16 }}>
             <input type="checkbox" checked={setBalance} disabled={busy} onChange={(e) => onSetBalance(e.target.checked)} />
             <span>
-              Also set {name}’s {owed ? 'amount owed' : 'balance'} to {formatMoney(b.amount, DEFAULT_CURRENCY)}, the statement’s balance on{' '}
-              {b.as_of ? fmtDay(b.as_of) : 'its date'} (now {formatMoney(b.from, DEFAULT_CURRENCY)})
+              Also set {name}’s {owed ? 'amount owed' : 'balance'} to {formatMoney(b.amount, keptIn)}, the statement’s balance on{' '}
+              {b.as_of ? fmtDay(b.as_of) : 'its date'} (now {formatMoney(b.from, keptIn)})
             </span>
           </label>
         ) : (
           <p className="panel-note" style={{ marginTop: 16 }}>
-            The statement’s balance{b.as_of ? ` on ${fmtDay(b.as_of)}` : ''} was {formatMoney(b.amount, p.statement?.currency ?? DEFAULT_CURRENCY)}.{' '}
-            {balanceRefusal(b.refusal!, name)}
+            The statement’s balance{b.as_of ? ` on ${fmtDay(b.as_of)}` : ''} was {formatMoney(b.amount, p.statement?.currency ?? keptIn)}.{' '}
+            {balanceRefusal(b.refusal!, name, keptIn)}
           </p>
         ))}
       <p className="panel-note">
@@ -1455,6 +1466,7 @@ export function PastImports({
   past,
   error,
   account,
+  keptIn = DEFAULT_CURRENCY,
   busy,
   undoing,
   plan = null,
@@ -1465,6 +1477,8 @@ export function PastImports({
   past: { imports: ImportSummary[] } | null;
   error: string;
   account: string;
+  /** The currency the account's balance is kept in. */
+  keptIn?: string;
   busy: boolean;
   undoing: ImportSummary | null;
   /** What undoing `undoing` would do, once known, or why it isn't. */
@@ -1519,7 +1533,7 @@ export function PastImports({
               {i.record === 'missing' && <div className="import-row-meta">Its record is gone; Undo still takes its transactions out.</div>}
               {i.record === 'unrecognised' && <div className="import-row-meta">A newer version of Nya saved it, so it can’t be undone here.</div>}
               {i.balance_update && (
-                <div className="import-row-meta">It also set the balance to {formatMoney(i.balance_update.to, DEFAULT_CURRENCY)}.</div>
+                <div className="import-row-meta">It also set the balance to {formatMoney(i.balance_update.to, keptIn)}.</div>
               )}
               {confirming && (
                 <div className="import-confirm">

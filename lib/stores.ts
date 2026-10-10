@@ -23,6 +23,7 @@ import './api-token-store';
 import './budget-store';
 import './category-store';
 import './connection-records';
+import './connectors/store';
 import './fire-plan';
 import './holdings-history';
 import './import/store';

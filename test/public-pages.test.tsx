@@ -258,6 +258,29 @@ describe('the security page', () => {
     const page = security();
     expect(page).toContain('work for US institutions only');
     expect(page).toContain('you enter the balance in US dollars');
+    expect(page).toContain('Your own SimpleFIN account may reach banks Plaid can’t');
+    expect(page).toContain('Redbark, a separate paid service');
+    expect(page).toContain('It brings no pending transactions, no holdings and no categories');
+  });
+
+  test('names SimpleFIN as a processor only you choose, what it sees, and what Nya keeps of it', () => {
+    const priv = privacy();
+    expect(priv).toContain('SimpleFIN, if you connect it');
+    expect(priv).toContain('the read-only access it gives Nya, encrypted');
+    expect(priv).toContain('A SimpleFIN connection');
+    expect(priv).toContain('remove Nya in your SimpleFIN account');
+    const sec = security();
+    expect(sec).toContain('SimpleFIN, if you connect it');
+    expect(sec).toContain('the access your own SimpleFIN account gives Nya');
+    // Both hosts Nya contacts, and never a backup of the access.
+    expect(sec).toContain('the host in the Setup Token you paste, to claim it, and the host of the access that claim returns');
+    expect(priv).toContain('never in your download and never in backups: until you disconnect it, or delete your account');
+    try {
+      backupsAre('kept');
+      expect(security()).toContain('It never holds the access a SimpleFIN account gives Nya, which works on its own: restoring a backup ends that access');
+    } finally {
+      backupsAre('none');
+    }
   });
 });
 
@@ -463,7 +486,7 @@ describe('getting to them', () => {
     expect(links).toContain('href="/privacy"');
     expect(links).not.toContain('aria-current');
     expect(text(renderToStaticMarkup(<CoverageNote />))).toContain(
-      'Bank connections work for US institutions only, through Plaid. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
+      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
     );
   });
 

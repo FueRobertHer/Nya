@@ -101,6 +101,9 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
+import { connectorOf } from './connectors/registry';
+import type { ConnectorKind } from './connectors/types';
 import { taxonomyReport, taxonomyStore } from './category-store';
 import { budgetSetStore, budgetsReport } from './budget-store';
 import { placeBudgets } from './budget-set';
@@ -117,7 +120,7 @@ import {
   type CategoryIndex,
   type Taxonomy,
 } from './categories';
-import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
+import { manualTxnStore, isManualTxnBook, withPairWords, type ManualTxn } from './manual-txns';
 
 export const EXPORT_FORMAT = 'nya-export';
 /** 2 since a part that can't be read is named under `problems` instead of
@@ -491,6 +494,13 @@ export type UserData = {
   remembered: Record<string, RememberedAccount[]>;
   directory: Map<string, DirectoryEntry>;
   manual: ManualAccount[];
+  /** The connections to SimpleFIN, and the accounts each feeds
+   *  (lib/connectors/store.ts). */
+  connections: Map<string, ConnectorConnection>;
+  connected: Map<string, ConnectorAccount>;
+  /** The accounts SimpleFIN fed that the person let go (connector-ended):
+   *  what names a removed one that some part of the file still mentions. */
+  ended: Map<string, EndedAccount>;
   hidden: HiddenMap;
   stores: { item_id: string; accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; behind: boolean }[];
   investments: { item_id: string; state: InvStoreState }[];
@@ -559,7 +569,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     });
 
   const items = await read('linked institutions', () => readItems(ctx));
-  const [remembered, directory, manual, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, taxonomy, sections] =
+  const [remembered, directory, manual, connections, connected, ended, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, taxonomy, sections] =
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
@@ -571,6 +581,13 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
         if (report.unavailable.length > 0) throw new ManualAccountsUnavailableError(report.unavailable);
         return report;
       }),
+      // Read again here to name each account and bank in `accounts` and
+      // `institutions`: the entries that can be used. One that can't is named
+      // under its own section's problems (declaredSections), never a reason
+      // to stop the download.
+      read(connectionsStore.what, async () => (await connectionsStore.getAllReport(ctx)).entries),
+      read(connectorAccountsStore.what, async () => (await connectorAccountsStore.getAllReport(ctx)).entries),
+      read(endedAccountsStore.what, async () => (await endedAccountsStore.getAllReport(ctx)).entries),
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
@@ -612,6 +629,9 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     remembered,
     directory,
     manual: manual.accounts,
+    connections,
+    connected,
+    ended,
     hidden,
     stores,
     investments,
@@ -637,12 +657,15 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
 
 export type Kind = 'recorded' | 'estimated';
 
-export type ExportInstitution = { item_id: string; institution_name: string; institution_id: string | null; provider: 'plaid' };
+/** A connection: a Plaid Item, or a connection to SimpleFIN (`item_id` its
+ *  connection's id, `institution_name` "SimpleFIN" and the host it reaches). */
+export type ExportInstitution = { item_id: string; institution_name: string; institution_id: string | null; provider: 'plaid' | ConnectorKind };
 
 export type ExportAccount = {
   account_id: string;
-  /** "plaid"; "manual" for a manual account since removed, known now only
-   *  by what still names it; null when nothing stored says. */
+  /** "plaid"; "simplefin" for an account SimpleFIN keeps up to date; "manual"
+   *  for a manual account since removed, known now only by what still names
+   *  it; null when nothing stored says. */
   provider: string | null;
   item_id: string | null;
   institution_name: string | null;
@@ -670,6 +693,10 @@ export type ExportManualAccount = {
   type: string;
   subtype: string | null;
   balance: number;
+  /** Only on an account SimpleFIN fed in another currency, kept as a manual
+   *  account on a disconnect: its currency code. Every other manual balance
+   *  carries none, and is in US dollars. */
+  currency?: string;
   updated_at: string | null;
   hidden: boolean;
   hidden_at: string | null;
@@ -740,6 +767,7 @@ export type UserExport = {
 export function notIncluded(people: boolean): string[] {
   return [
     'Bank access tokens: the credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya, so they are left out.',
+    'The Access URL SimpleFIN gave Nya when you connected it: a credential, which reads your accounts there, not your data. Remove Nya at SimpleFIN to end it.',
     'Your API tokens themselves, and the hashes Nya keeps to check them: credentials, not your data. Each token’s name and when it was made and last used are in, under api_tokens.',
     people
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
@@ -799,6 +827,8 @@ function mentionedAccountIds(data: UserData): Set<string> {
     add(d.account_id);
   }
   for (const id of data.carried.keys()) add(id);
+  // The accounts SimpleFIN keeps up to date, whatever else names them.
+  for (const id of data.connected.keys()) add(id);
   const read = new Map(data.sections);
   for (const s of SECTIONS) if (s.mentions && read.has(s.key)) for (const id of s.mentions(read.get(s.key))) add(id);
   return ids;
@@ -836,7 +866,11 @@ export function countAccounts(data: UserData): { accounts: number; earlier: numb
     if (!connected.has(entry.item_id)) add(earlier, id);
   }
   for (const id of current) earlier.delete(id);
-  return { accounts: current.size + data.manual.length + missingIds(data.problems, 'manual_accounts').length, earlier: earlier.size };
+  // The accounts SimpleFIN keeps up to date (manual ids, so not counted above),
+  // apart from one already counted as the manual account it was kept as.
+  const manualIds = new Set([...data.manual.map((m) => m.account_id), ...missingIds(data.problems, 'manual_accounts')]);
+  const fed = [...data.connected.keys()].filter((id) => !manualIds.has(id)).length;
+  return { accounts: current.size + manualIds.size + fed, earlier: earlier.size };
 }
 
 /** The newest recorded balance in a series (never an estimate), with its day. */
@@ -846,6 +880,62 @@ function latestRecorded(points: StoredPoint[] | undefined): { balance: number; d
     if (!p.estimated) return { balance: p.value, date: p.date };
   }
   return null;
+}
+
+/** An account SimpleFIN keeps up to date, as `accounts` lists it: what its
+ *  entry in connector-accounts says, and its newest recorded balance. */
+function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap): ExportAccount {
+  const h = hidden.get(c.account_id);
+  return {
+    account_id: c.account_id,
+    provider: c.connector,
+    item_id: c.connection_id,
+    institution_name: c.institution_name,
+    institution_id: null,
+    connected: data.connections.has(c.connection_id),
+    name: c.name,
+    official_name: null,
+    type: c.type,
+    subtype: c.subtype,
+    mask: null,
+    currency: c.currency,
+    credit_limit: null,
+    persistent_account_id: null,
+    first_seen: c.created_at.slice(0, 10),
+    last_seen: c.fetched_at ? c.fetched_at.slice(0, 10) : null,
+    hidden: !!h,
+    hidden_at: realTime(h?.hidden_at),
+    latest_balance: latestRecorded(data.history.accounts.get(c.account_id)),
+  };
+}
+
+/** An account SimpleFIN kept up to date that the person let go and removed,
+ *  which some part of the file still mentions (its balance history, say), as
+ *  `accounts` lists it: what its record in connector-ended says. One kept is
+ *  a manual account, in `manual_accounts`. */
+function endedAccount(id: string, e: EndedAccount, data: UserData, hidden: HiddenMap): ExportAccount {
+  const h = hidden.get(id);
+  return {
+    account_id: id,
+    provider: e.connector,
+    item_id: e.connection_id,
+    institution_name: e.institution_name,
+    institution_id: null,
+    connected: false,
+    name: e.name,
+    official_name: null,
+    type: e.type,
+    subtype: null,
+    mask: null,
+    currency: e.currency,
+    credit_limit: null,
+    persistent_account_id: null,
+    first_seen: e.tracked_at.slice(0, 10),
+    last_seen: e.ended_at.slice(0, 10),
+    hidden: !!h,
+    hidden_at: realTime(h?.hidden_at),
+    latest_balance: latestRecorded(data.history.accounts.get(id)),
+  };
 }
 
 /** How a core part of the file that can be missing something says so in
@@ -880,6 +970,16 @@ const PART_WORDS: Record<string, PartWords> = {
     // A CSV's rows of such an account are all there, under its id: only its
     // name is missing from them.
     inCsv: (counts) => `Not all of your manual accounts could be read: ${counts}. Their rows in this file are under their account ids, with no account name.`,
+  },
+  // An account SimpleFIN keeps up to date: in a CSV, what names its rows and
+  // the type a pair of them is worked out by (transactionsCsv).
+  [connectorAccountsStore.name]: {
+    noun: connectorAccountsStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${connectorAccountsStore.what} could be read: ${counts}. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as SimpleFIN gave it, with no category.`,
   },
   // One entry per manual account: its book.
   'manual-transactions': {
@@ -985,6 +1085,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   const accounts: ExportAccount[] = [...mentionedAccountIds(data)]
     .filter((id) => !manualIds.has(id))
     .map((id): ExportAccount => {
+      const c = data.connected.get(id);
+      if (c) return fedAccount(c, data, hidden);
+      const e = data.ended.get(id);
+      if (e) return endedAccount(id, e, data, hidden);
       const m = remembered.get(id);
       const d = data.directory.get(id);
       const s = synced.get(id);
@@ -1029,6 +1133,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       type: m.type,
       subtype: m.subtype,
       balance: m.balance,
+      ...(m.currency ? { currency: m.currency } : {}),
       updated_at: realTime(m.updated_at),
       hidden: !!h,
       hidden_at: realTime(h?.hidden_at),
@@ -1064,7 +1169,11 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       pfc_detailed: t.personal_finance_category?.detailed ?? null,
     };
   };
-  const manualRows = manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]);
+  // As the CSV lists them: a pair of SimpleFIN rows in the pair's words.
+  const manualRows = withPairWords(
+    manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]),
+    new Map([...[...data.connected.values()].map((c) => [c.account_id, c.type] as const), ...data.manual.map((m) => [m.account_id, m.type] as const)])
+  );
   let provisional = 0;
   const filing = indexTaxonomy(
     growTaxonomy(
@@ -1146,9 +1255,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     // caveats (problemNotes).
     notes: [...notes, ...problemNotes(data.problems)],
     problems: data.problems,
-    institutions: data.items
-      .map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' }))
-      .sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
+    institutions: [
+      ...data.items.map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' })),
+      ...[...data.connections].map(([id, c]): ExportInstitution => ({ item_id: id, institution_name: `${connectorOf(c.connector).label} (${c.host})`, institution_id: null, provider: c.connector })),
+    ].sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
     accounts,
     manual_accounts,
     hidden_accounts: [...data.hidden]
@@ -1417,7 +1527,7 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | undefined, hidden: boolean, filed: NyaCategory): CsvValue[] {
+function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory): CsvValue[] {
   const cells: Record<TransactionColumn, CsvValue> = {
     ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
     date: row.date,
@@ -1511,11 +1621,35 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
  * time, which a manual row doesn't have, then the id), so two downloads of
  * the same data are the same file.
  */
+/** The accounts the books' rows are on (the manual accounts' own, and those
+ *  SimpleFIN brought), as `manual_accounts` or `accounts` describes each. */
+function bookAccountsIn(doc: UserExport): Map<string, { name: string | null; institution_name: string | null; type: string | null }> {
+  return new Map<string, { name: string | null; institution_name: string | null; type: string | null }>([
+    ...doc.accounts.filter((a) => a.provider !== 'plaid').map((a) => [a.account_id, a] as const),
+    ...doc.manual_accounts.map((m) => [m.account_id, m] as const),
+  ]);
+}
+
+/** Each book account's type, as the file says it: what a pair of SimpleFIN
+ *  rows between two of them is worked out by (lib/manual-txns.ts
+ *  knownPairs), in the transactions CSV and an OFX statement alike. */
+export function bookAccountTypes(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
+}
+
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
-  const accounts = new Map(doc.manual_accounts.map((m) => [m.account_id, m]));
+  // The books hold the rows SimpleFIN brought as well as the manual accounts'
+  // own: each is named as `manual_accounts` or `accounts` names its account.
+  const accounts = bookAccountsIn(doc);
+  const typeOf = bookAccountTypes(doc);
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
-  const manual = manualTransactionsIn(doc);
+  // A pair of SimpleFIN rows between two of the person's accounts (a card's
+  // payment, a loan's, a move between them) is worked out each time the rows
+  // are read, never stored: listed as the app shows it, each side in the
+  // pair's words and filed by them, so the file leaves out of a total what
+  // the app does (lib/manual-txns.ts withPairWords).
+  const manual = withPairWords(manualTransactionsIn(doc), typeOf);
   const filed = manualFiling(doc, manual);
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
@@ -1553,7 +1687,7 @@ export function* balancesCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(BALANCE_COLUMNS);
   const about = new Map<string, { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean }>();
   for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden });
-  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: null, hidden: m.hidden });
+  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: m.currency ?? null, hidden: m.hidden });
   // A manual account that couldn't be read is in neither list (problems names
   // it). When it is hidden, hidden_accounts still holds its type and says it
   // is hidden, as transactions.csv reads it there too.
@@ -1606,9 +1740,10 @@ export type ExportFile = {
  * every part.
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
-  // The books of the manual accounts, the names of the accounts they are on,
-  // and the categories every row is filed by (nya_category).
-  'transactions-csv': ['manual-transactions', 'manual_accounts', taxonomyStore.name],
+  // The books of the manual accounts, the names of the accounts they are on
+  // (and the types a pair of SimpleFIN rows is worked out by), and the
+  // categories every row is filed by (nya_category).
+  'transactions-csv': ['manual-transactions', 'manual_accounts', connectorAccountsStore.name, taxonomyStore.name],
   // The days, and the names of the manual accounts the rows are for.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
 };

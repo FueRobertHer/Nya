@@ -363,12 +363,13 @@ export async function finishActivity(
     else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
   }
   const filed = await fileTransactions(ctx, [...transactions, ...candidates], { grow: !!opts.grow });
-  // The institutions whose rows aren't all here (the banks' part: a manual
+  // The institutions whose rows aren't all here: Plaid's, and the banks of a
+  // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
     notes: [...plaid.notes, ...manual.notes, ...filed.notes],
-    incomplete: plaid.incomplete ?? [],
+    incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),
