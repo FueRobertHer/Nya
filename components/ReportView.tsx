@@ -46,7 +46,7 @@ export function reportTime(iso: string, timeZone: string): string {
 
 /** A month's name, and its days when the period covers only some of them. */
 function monthName(m: ReportMonth): string {
-  const name = new Date(`${m.month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'long', year: 'numeric' });
+  const name = new Date(`${m.month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
   const first = m.start.endsWith('-01');
   const lastDay = new Date(Date.UTC(Number(m.month.slice(0, 4)), Number(m.month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   if (first && m.end === lastDay) return name;
@@ -79,8 +79,9 @@ export function ReportView({ report }: { report: Report }) {
             {report.currencies.length > 1 && `; ${report.currencies.length - 1} other ${report.currencies.length === 2 ? 'currency is' : 'currencies are'} named below and left out`}.
           </p>
           <p className="report-meta">
-            Data as of {reportTime(report.data_as_of, tz)}. Made {reportTime(report.generated_at, tz)}. Times and today’s date are in {tz}; a
-            transaction’s date is its bank’s own day.
+            Data as of {reportTime(report.data_as_of, tz)}
+            {report.institutions.filter((i) => !i.no_transactions).length > 1 && ', the oldest of the connections’ times below'}. Made{' '}
+            {reportTime(report.generated_at, tz)}. Times and today’s date are in {tz}; a transaction’s date is its bank’s own day.
           </p>
         </header>
 
@@ -231,7 +232,7 @@ export function ReportView({ report }: { report: Report }) {
               <tbody>
                 {report.months.map((m) => (
                   <tr key={m.month}>
-                    <td>{monthName(m)}</td>
+                    <td className="report-nowrap">{monthName(m)}</td>
                     {m.future ? (
                       <>
                         <td className="num" colSpan={4}>
@@ -351,7 +352,7 @@ function CategoryTable({ rows, money, empty }: { rows: Report['money_out']; mone
   if (rows.length === 0) return <p className="report-note">{empty}</p>;
   return (
     <div className="report-scroll">
-      <table className="report-table">
+      <table className="report-table report-cats">
         <thead>
           <tr>
             <th>Category</th>

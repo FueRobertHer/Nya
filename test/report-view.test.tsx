@@ -113,7 +113,7 @@ describe('the printed report', () => {
     expect(first.text).toContain('2025 tax year summary');
     expect(first.text).toContain('Jan 1, 2025 to Dec 31, 2025');
     expect(first.text).toContain(`Times and today’s date are in ${NY}`);
-    expect(first.text).toContain('Data as of Sep 12, 2025');
+    expect(first.text).toContain('Data as of Sep 12, 2025, 11:00 AM, the oldest of the connections’ times below.');
     // The gaps, in plain words, before any figure.
     expect(first.text).toContain('This report may be incomplete:');
     expect(first.text).toContain('Citi hasn’t synced since Sep 12, 2025, so this report may be missing some of its transactions.');
@@ -142,8 +142,8 @@ describe('the printed report', () => {
     // A card's payment is no category's money out.
     expect(categories.text).not.toContain('loan payments $');
     // Twelve months, each saying what it may be missing, in words.
-    expect(months.text).toContain('January 2025 $4,000.00 $0.00 $4,000.00 1 May be missing transactions from Wells Fargo');
-    expect(months.text).toContain('October 2025 $0.00 $0.00 $0.00 0 May be missing transactions from Citi');
+    expect(months.text).toContain('Jan 2025 $4,000.00 $0.00 $4,000.00 1 May be missing transactions from Wells Fargo');
+    expect(months.text).toContain('Oct 2025 $0.00 $0.00 $0.00 0 May be missing transactions from Citi');
     expect(marked.text).toContain('You marked these categories as ones that matter for your taxes. Nya doesn’t judge how any of them is taxed');
     expect(marked.text).toContain('medical $0.00 $67.50 2');
     expect(appendix.text).toContain('Feb 3, 2025 Pharmacy medical Chase: Checking (from the bank) -$42.50');
@@ -162,8 +162,8 @@ describe('the printed report', () => {
     expect(first.text).toContain('2026 isn’t over: this report covers Jan 1, 2026 to Oct 10, 2026.');
     expect(first.text).toContain('Banks can take a few days to post a transaction');
     const months = parts(html({ period: period({ kind: 'year', year: 2026 }), rows: [row('a', '2026-10-01', 5)] }))[2];
-    expect(months.text).toContain('October 2026 (1 to 10)');
-    expect(months.text).toContain('November 2026 Still to come');
+    expect(months.text).toContain('Oct 2026 (1 to 10)');
+    expect(months.text).toContain('Nov 2026 Still to come');
   });
 
   test('nothing known to be missing says exactly that, and no figure is flagged', () => {

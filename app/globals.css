@@ -3412,6 +3412,19 @@ button.import-choice {
   font-size: 13px;
 }
 
+/* The two category tables, money out and money in, line up. */
+.report-cats {
+  table-layout: fixed;
+}
+
+.report-cats th:first-child {
+  width: 60%;
+}
+
+.report-cats th:last-child {
+  width: 18%;
+}
+
 /* While another report is made, the last one stays, dimmed. */
 .report-loading {
   opacity: 0.5;
