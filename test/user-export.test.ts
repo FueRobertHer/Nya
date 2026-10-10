@@ -1487,12 +1487,35 @@ describe('writing it out', () => {
     });
     // Each filed by its own category, as the app files it: by name, with its
     // group, and no id for one the app hasn't stored yet; one saying nothing
-    // of its category has none, in the uncategorized one's group.
-    expect(cells(typed, ['nya_category', 'nya_category_id', 'nya_group'])).toEqual({ nya_category: 'food', nya_category_id: '', nya_group: 'Other' });
+    // of its category has none, in the uncategorized one's group. "food" is
+    // the category the budget saved as "Food" made, named as the budgets
+    // part names it.
+    expect(cells(typed, ['nya_category', 'nya_category_id', 'nya_group'])).toEqual({ nya_category: 'Food', nya_category_id: '', nya_group: 'Other' });
+    expect((doc.budgets as { category: string }[]).map((b) => b.category)).toContain('Food');
     expect(cells(imported, ['nya_category', 'nya_category_id', 'nya_group'])).toEqual({ nya_category: '', nya_category_id: '', nya_group: 'Other' });
     // A bank's row says so.
     expect(cells('t_coffee', ['source', 'note'])).toEqual({ source: 'plaid', note: '' });
     expect(file).toMatchObject({ incomplete: [], notes: [] });
+  });
+
+  test('transactions.csv: before the app has stored the categories, a manual row is named as the rest of the download names its category', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const at = '2026-09-30T10:00:00.000Z';
+    const id = 'manual-txn:00000000-0000-4000-8000-000000000005';
+    // A budget saved, before categories had ids, as "Kids Stuff"; a row entered by hand in the same words, lower-cased.
+    await fake.set(ctxKey('budgets'), await enc({ 'Kids Stuff': 80 }));
+    await manualTxnStore.set(ctx, 'manual_house', {
+      version: 1,
+      rows: [{ id, account_id: 'manual_house', date: '2026-01-02', amount: 9, currency: 'USD', name: 'Toys', category: 'kids stuff', note: null, source: 'manual', source_id: null, created_at: at, updated_at: at }],
+    });
+    const doc = await download();
+    expect(fake.strings.has(ctxKey('categories'))).toBe(false);
+    expect(doc.budgets).toEqual([{ category: 'Kids Stuff', monthly_amount: 80, category_id: null, group: 'Other' }]);
+    const [, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+    const row = rows.find((r) => r[TRANSACTION_COLUMNS.indexOf('transaction_id')] === id)!;
+    const cell = (name: (typeof TRANSACTION_COLUMNS)[number]) => row[TRANSACTION_COLUMNS.indexOf(name)];
+    // The same category as the budget's, by the same name.
+    expect([cell('category'), cell('nya_category'), cell('nya_category_id'), cell('nya_group')]).toEqual(['kids stuff', 'Kids Stuff', '', 'Other']);
   });
 
   test('transactions.csv: a manual row is filed by its own category among the stored ones: renamed, by its new name, with its id and group', async () => {
