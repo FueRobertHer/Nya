@@ -283,3 +283,39 @@ describe('the rules route', () => {
     expect(await rulesStore.get(OTHER)).toBeNull();
   });
 });
+
+describe('kept as every financial payload is', () => {
+  test('rules and tags are encrypted at rest: nothing they say is in the stored bytes', async () => {
+    await route('tags', 'POST', { action: 'add', name: 'SECRET-TAG-NAME' });
+    await ruleAction({ action: 'add', rule: { conditions: [{ field: 'name', op: 'contains', value: 'SECRET-MERCHANT' }], actions: { set_name: 'SECRET-NAME' } } });
+    await route('transaction-annotations', 'PATCH', { transaction_id: 't_recent', note: 'SECRET-NOTE' });
+    const stored = JSON.stringify([fake.strings.get(ctxKey('rules')), fake.strings.get(ctxKey('tags')), [...(fake.hashes.get(ctxKey('transaction-annotations')) ?? new Map()).values()]]);
+    expect(stored).not.toMatch(/SECRET/i);
+    expect(stored.length).toBeGreaterThan(100);
+  });
+
+  test('a write too large for one request is refused whole (413), never trimmed', async () => {
+    await amazonRule();
+    const before = process.env.MAX_TXN_BLOB_CHARS;
+    process.env.MAX_TXN_BLOB_CHARS = '300';
+    try {
+      const r = await quietly(() => ruleAction({ action: 'add', rule: { conditions: [{ field: 'name', op: 'contains', value: 'x'.repeat(90) }], actions: { set_name: 'y'.repeat(90) } } }));
+      expect(r.status).toBe(413);
+      expect(r.body.error).toContain('Your rules are too large to save');
+    } finally {
+      if (before === undefined) delete process.env.MAX_TXN_BLOB_CHARS;
+      else process.env.MAX_TXN_BLOB_CHARS = before;
+    }
+    expect((await rulesStore.get(ctx))!.rules).toHaveLength(1);
+  });
+
+  test('storage usage measures them, as every store on the seam', async () => {
+    await amazonRule();
+    await route('tags', 'POST', { action: 'add', name: 'Work' });
+    const usage = (await route('storage-usage', 'GET')).body;
+    const names = usage.stores.map((s: any) => s.store);
+    expect(names).toContain('rules');
+    expect(names).toContain('tags');
+    expect(usage.stores.find((s: any) => s.store === 'rules')).toMatchObject({ what: 'rules', entries: 1 });
+  });
+});

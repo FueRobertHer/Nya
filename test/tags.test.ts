@@ -285,6 +285,15 @@ describe('tags and notes on transactions', () => {
     for (const t of body.transactions) for (const k of ['account_ref', 'renamed_from', 'carried']) expect(k in t).toBe(false);
   });
 
+  test('a row brought in from SimpleFIN is tagged and noted like any other on a manual account', async () => {
+    await seed();
+    const pulled = { ...newManualTxn(ACCOUNT, { date: daysAgo(1), name: 'SIMPLEFIN ROW', amount: 3, currency: 'USD', category: null, note: null }), source: 'simplefin', source_id: 'sf-1' };
+    await addManualTxn(ctx, pulled);
+    const r = await annotate({ transaction_id: pulled.id, account_id: ACCOUNT, new_tag: 'Work', note: 'pulled in' });
+    expect(r.status).toBe(200);
+    expect(await rowOf(pulled.id)).toMatchObject({ source: 'simplefin', tags: [r.body.created_tag.id], note: 'pulled in' });
+  });
+
   test('tags persist across a resync and a cache clear', async () => {
     await seed();
     const work = await made('Work');

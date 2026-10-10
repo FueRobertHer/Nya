@@ -98,7 +98,7 @@ afterEach(() => {
 });
 
 describe('what a share shows of a transaction', () => {
-  test('never its tags or its note, on a bank’s row or a manual one', async () => {
+  test('never its tags, its note or what a rule does, on a bank’s row or a manual one', async () => {
     const { row } = await addManualTxn(ownerCtx, newManualTxn('manual_house', { date: daysAgo(2), amount: 40, currency: 'USD', name: 'Hardware store', category: null, note: null }));
     for (const [transaction_id, extra] of [
       ['t_recent', {}],
@@ -107,9 +107,16 @@ describe('what a share shows of a transaction', () => {
       const r = await as('user_owner', () => route('transaction-annotations', 'PATCH', { transaction_id, ...extra, new_tag: 'SECRET-TAG', note: 'SECRET-NOTE' }));
       expect(r.status).toBe(200);
     }
+    // And a rule that renames, refiles, tags and hides both.
+    const categories = (await as('user_owner', () => route('categories', 'GET'))).body.categories;
+    const travel = categories.categories.find((c: any) => c.name === 'travel').id;
+    const madeRule = await as('user_owner', () =>
+      route('rules', 'POST', { action: 'add', rule: { conditions: [{ field: 'amount', op: 'gt', value: 1 }], actions: { set_category: travel, set_name: 'SECRET-RULE-NAME', hide: true } } })
+    );
+    expect(madeRule.status).toBe(200);
     // The owner sees them.
     const mine = (await as('user_owner', () => route('transactions', 'GET'))).body;
-    expect(mine.transactions.find((t: any) => t.transaction_id === 't_recent')).toMatchObject({ note: 'SECRET-NOTE', tags: [expect.any(String)] });
+    expect(mine.transactions.find((t: any) => t.transaction_id === 't_recent')).toMatchObject({ note: 'SECRET-NOTE', tags: [expect.any(String)], name: 'SECRET-RULE-NAME', excluded: true });
 
     await as('user_owner', () => route('connections', 'PUT', { id: pair, accounts: { acct_joint: 'transactions', manual_house: 'transactions' } }));
     const shown = (await as('user_partner', () => route('shared', 'GET'))).body.shared;
@@ -122,7 +129,7 @@ describe('what a share shows of a transaction', () => {
       const txns = view.accounts.flatMap((a: any) => a.transactions ?? []);
       expect(txns.map((t: any) => t.name).sort()).toEqual(['Blue Bottle', 'Hardware store']);
       for (const t of txns) expect(Object.keys(t).sort()).toEqual(['amount', 'currency', 'date', 'name', 'pending']);
-      expect(JSON.stringify(view)).not.toMatch(/SECRET|tags|note/i);
+      expect(JSON.stringify(view)).not.toMatch(/SECRET|tags|note|rule|excluded|travel/i);
     }
   });
 });
