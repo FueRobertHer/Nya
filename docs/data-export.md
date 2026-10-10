@@ -96,7 +96,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items`, `report-settings`, `rules`, `tags` and `transaction-annotations`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -110,7 +110,7 @@ Empty when the file has everything. Otherwise one entry for each part of the fil
 | --- | --- |
 | `section` | The part of the file: its field, such as `manual_accounts`, `account_history` or `holdings:history`. |
 | `problem` | `unreadable`: the stored data is damaged, so nothing in it can be read, by this version of Nya or any other. `unrecognised`: it looks intact, but was saved in a form this version of Nya doesn't know (a later version may have written it); it is kept as it is, and a version that knows it reads it. In `sharing`, also `unavailable` and `record_id_unreadable` ([below](#sharing)). |
-| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `categories`, `fire-plan`, `planned-items`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
+| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `categories`, `fire-plan`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
 | `count` | How many are missing, in place of `ids`, for a part whose ids are kept out of the file: `api_tokens`, since a token's id is part of the token. |
 
 A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
@@ -218,8 +218,14 @@ And what Nya adds, your own edits beside the bank's, never over them:
 | `your_merchant_name` | Your name for this merchant, or `null`. |
 | `superseded_by_posted` | A pending transaction its posted one replaced. The app hides these so nothing counts twice. |
 | `account_hidden` | Its account is hidden. |
+| `tags` | The names of the [`tags`](#tags) it carries, in the order you made them: put on by you, carried from an earlier account, or added by one of your [`rules`](#rules). Empty for none. |
+| `your_note` | Your note on it, or `null`. |
+| `nya_name` | The name the app shows: `your_merchant_name`, else a rule's, else `merchant_name`, else `name`. |
+| `excluded` | Left out of budgets and reports, as the app counts it: by you, carried from an earlier account, or hidden by a rule; `null` when what you said about it couldn't be read (it counts then, and `problems` names it). |
+| `excluded_by_rule` | `true` when it is excluded because a rule hides it, rather than by you. |
+| `rule_ids` | The ids of your rules that match it, in the order they run. |
 
-The app files a transaction by `your_category`, else `your_category_from_earlier_account`, else Plaid's category, and shows the name that category has now, `nya_category`; and it shows `your_merchant_name`, else `merchant_name`, else `name`.
+The app files a transaction by `your_category`, else `your_category_from_earlier_account`, else a rule's, else Plaid's category, and shows the name that category has now, `nya_category`; and it shows `nya_name`. Rules, tags and exclusions are applied exactly as the app applies them (`lib/txn-layers.ts`, the same function), from the parts of this file: [`rules`](#rules), [`tags`](#tags), [`transaction-annotations`](#transaction-annotations) and [`carried-annotations`](#carried-annotations).
 
 ### `category_overrides[]` and `merchant_renames[]`
 
@@ -442,13 +448,39 @@ The categories you marked as mattering for your taxes on the report page ([featu
 | `v` | The shape's version: 1. |
 | `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. Each is a category's words, one of its `text` keys in [`categories`](#categories), which a rename never changes and a merge moves to the category it went into, so the mark follows the category. A category stays marked when no transaction is in it, and so do words no category has any more. |
 
+#### `rules`
+
+Your rules ([features.md](features.md#rules), `lib/rules.ts`), or `null` if you never made one. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no rule is applied to the transactions in this file, as the app applies none until they can be read.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | 1. |
+| `rules[]` | Each rule: `id` (random), `enabled`, `priority` (1 runs first), `conditions[]`, `actions`, `created_at` and `updated_at`. |
+| `rules[].conditions[]` | All must match. Each has a `field` and an `op`: `name` with `contains`, `equals` or `starts_with` and the text; `amount` with `gt`, `lt` or `between`, `value` (and `value2` for between): sizes, never negative, in the transaction's own currency, with `direction` `out` (money out) or `in`, absent for either; `account` (an account id), `institution` (its name), `category` (a category's id, the one it is filed under before any rule) and `source` (`plaid`, `manual`, `import` or `simplefin`), each with `equals`. Text is matched in any case, with accents and repeated spaces ignored. |
+| `rules[].actions` | What it does: `set_category` (a category's id), `set_name`, `add_tags` (tags' ids) and `hide` (`true`: left out of budgets and reports, still listed). Empty for a rule whose only tags were deleted: it does nothing. |
+
+When two rules set a transaction's category or its name, the one that runs first decides it; tags come from every rule that matches, and any can hide. Anything you set on one transaction yourself wins over every rule.
+
+#### `tags`
+
+Your tags ([features.md](features.md#tags-and-notes), `lib/tags.ts`), or `null` if you never made one: `version` (1) and `tags[]`, each with `id` (random), `name`, `color` and `created_at`, in the order you made them. A tag being deleted when the file was made is listed under `deleting` by id until it has been taken off everything ([architecture.md](architecture.md#tags-notes-and-rules)); no transaction in the file carries one. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no transaction in the file has tags.
+
 #### `transaction-annotations`
 
-What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports, `false` when you put it back) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction the bank removed goes once a sync saves the removal, as do those of an institution you disconnect, after the ones you excluded are kept in `carried-annotations`; none goes while a store of transactions can't be read, and one saved by a version of Nya this one doesn't know is kept for it.
+What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds what you said and `updated_at`:
+
+| Field | Meaning |
+| --- | --- |
+| `excluded` | `true` when you left it out of budgets and reports, `false` when you put it back (which beats an exclusion carried from an earlier account, and a rule that hides it). Absent when you said nothing. |
+| `tags` | The [`tags`](#tags) you put on it, by id. |
+| `untagged` | Tags you took off it, by id: a rule that would add one, or one carried from an earlier account, doesn't put it back. |
+| `note` | Your note on a bank's transaction (a manual one's is its own, in [`manual-transactions`](#manual-transactions)). Empty when you cleared one, which keeps a note carried from an earlier account away. |
+
+A transaction you said nothing about has no entry. One whose transaction the bank removed goes once a sync saves the removal, as do those of an institution you disconnect, after what they said is kept in `carried-annotations`; none goes while a store of transactions can't be read, and one saved by a version of Nya this one doesn't know is kept for it.
 
 #### `carried-annotations`
 
-Transactions you excluded at an institution you have since disconnected, kept so that linking a re-added account to the old one excludes them again (`lib/txn-annotations.ts`, as categories carry: `account_links.carried_categories`). One entry per earlier account: `id` is its account id, and `value` holds `version` (1) and `rows`, keyed by the transaction's account, date, amount in cents and the bank's own description (lower-cased), joined by `|`, each `{ "excluded": true }`, or `null` where two identical transactions were excluded only one way, so nothing carries. Forgetting the earlier account deletes its entry.
+What you said about transactions at an institution you have since disconnected, kept so that linking a re-added account to the old one says it again (`lib/txn-annotations.ts`, as categories carry: `account_links.carried_categories`). One entry per earlier account: `id` is its account id, and `value` holds `version` (1) and `rows`, keyed by the transaction's account, date, amount in cents and the bank's own description (lower-cased), joined by `|`, each with what carries: `excluded` (`true` or `false`), `tags` and `untagged` (by id), and `note`; or `null` where two identical transactions were given different ones, so nothing carries. Forgetting the earlier account deletes its entry.
 
 ## The CSV files
 
@@ -460,7 +492,7 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 One row per transaction, newest first: every one stored from your banks, with the [transaction fields](#transactions) flattened, and every one on a manual account, entered by hand or imported ([`manual-transactions`](#manual-transactions)), in the same columns. Columns, in order:
 
-`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`, `source`, `note`, `nya_category`, `nya_category_id`, `nya_group`.
+`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`, `source`, `note`, `nya_category`, `nya_category_id`, `nya_group`, `tags` (the names of the tags it carries, separated by `; `), `nya_name` (the name the app shows) and `excluded` (left out of budgets and reports, by you or by a rule; empty when that couldn't be read). Rules, tags and exclusions are applied as the app applies them, so `nya_category`, `nya_name`, `tags` and `excluded` are what the Activity tab shows. `note` is your note: the one written with a transaction on a manual account, or one you put on a bank's.
 
 `source` says where a row came from: `plaid` for a bank's; for one on a manual account, `manual` (entered in the app), or `import:ofx`, `import:csv` or `import:qif` (imported from a file). A manual account's row has its own `name` (who was paid, or who paid you), `amount`, `iso_currency_code` (its currency), `category` (its own, so `your_category` is empty, and `nya_category`, `nya_category_id` and `nya_group` say where it is filed, as on a bank's row, by its own words) and `note`, the `transaction_code` its file gave (`atm`) where it gave one, and its account's `account_name`, `institution_name`, `account_id` and `account_hidden`, as in `manual_accounts`; the columns only a bank fills are empty, and so is `item_id`, since a manual account has no connection. On the same day, rows with a time come first. A manual account that can't be read leaves its rows' account names empty, and a book of rows that can't be read leaves those rows out; either way the response says the file is incomplete ([above](#getting-a-copy)).
 
