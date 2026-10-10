@@ -28,11 +28,18 @@ import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy }
 import CategoryRollup from "./CategoryRollup";
 import CategoryPicker from "./CategoryPicker";
 import type { CategoryChoice } from "./transaction-edits";
+import type { Tag } from "@/lib/tags";
+import TagChips from "./TagChips";
+import TagFilter from "./TagFilter";
+import SpendByTag from "./SpendByTag";
+import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
+import { searchRows } from "./txn-search";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
+const NO_TAGS: Tag[] = [];
 
 export type Txn = {
   transaction_id: string;
@@ -74,6 +81,8 @@ export type Txn = {
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
+  // As in lib/transactions.ts: the ids of the tags it carries (lib/tags.ts).
+  tags?: string[];
 };
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
@@ -182,7 +191,7 @@ export function categoryOptions(txns: Txn[] | null): string[] {
 // the Plaid fields that answer the question — the real merchant behind a
 // processor, channel, place, time, website, reference/check numbers, and (for
 // joint accounts) the owner — skipping any the row doesn't carry.
-function TxnDetail({ t }: { t: Txn }) {
+function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) {
   const rows: { label: string; value: React.ReactNode }[] = [];
   const time = fmtTime(t.datetime);
 
@@ -214,7 +223,7 @@ function TxnDetail({ t }: { t: Txn }) {
     rows.push({ label: "Reference", value: t.payment_reference });
   if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
   if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
-  if (t.note) rows.push({ label: "Note", value: t.note });
+  if (t.note && !noteEditor) rows.push({ label: "Note", value: t.note });
 
   if (rows.length === 0) return null;
 
@@ -245,6 +254,9 @@ export default function MonthBreakdown({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  tags = NO_TAGS,
+  onChangeTags,
+  onSaveNote,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -276,11 +288,19 @@ export default function MonthBreakdown({
    *  (their health): the month's totals say so (lib/month-coverage.ts). */
   incomplete?: Incomplete[];
   stopped?: Stopped[];
+  /** Your tags (components/tags-state.ts): names and colors for each row's
+   *  tag ids, the filter, and spending by tag. */
+  tags?: Tag[];
+  /** Puts tags on a transaction or takes them off, or makes one as typed. */
+  onChangeTags?: (t: Txn, change: TagChange) => void;
+  /** Saves a transaction's note (empty clears it). */
+  onSaveNote?: (t: Txn, note: string) => void;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
   const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
   const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
+  const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -402,17 +422,10 @@ export default function MonthBreakdown({
     if (el) el.scrollLeft = el.scrollWidth;
   }, [trend.length]);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return monthTxns;
-    return monthTxns.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        (categoryLabel(t) ?? "").toLowerCase().includes(q) ||
-        t.account_name.toLowerCase().includes(q) ||
-        t.institution_name.toLowerCase().includes(q),
-    );
-  }, [monthTxns, query]);
+  // The search reads a row's tags and note too (#40), and the tag filter
+  // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
+  const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
+  const visible = useMemo(() => searchRows(monthTxns, { query, tag: filterTag }, tags), [monthTxns, query, filterTag, tags]);
 
   // Group the visible rows into day sections, each carrying the day's net in
   // display terms (positive = money in) for each currency its rows are in, so
@@ -615,6 +628,8 @@ export default function MonthBreakdown({
         </div>
       )}
 
+      <SpendByTag txns={monthTxns} tags={tags} currency={currency} />
+
       {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
         <div className="card">
           <div className="inst-header">
@@ -673,7 +688,7 @@ export default function MonthBreakdown({
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
             {visible.length}
-            {query ? ` of ${monthTxns.length}` : ""}
+            {query || filterTag ? ` of ${monthTxns.length}` : ""}
           </div>
         </div>
 
@@ -684,12 +699,13 @@ export default function MonthBreakdown({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
 
         {actionError && <div className="error">{actionError}</div>}
 
         {visible.length === 0 ? (
           <p className="empty-note">
-            {query
+            {query || filterTag
               ? "No transactions match your search."
               : "No transactions this month."}
           </p>
@@ -745,6 +761,7 @@ export default function MonthBreakdown({
                                   · check category
                                 </span>
                               )}
+                              <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
@@ -870,7 +887,16 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            <TxnDetail t={t} />
+                            {onChangeTags && onSaveNote && (
+                              <TxnTagsNote
+                                key={`${t.transaction_id}:${t.note ?? ""}`}
+                                t={t}
+                                tags={tags}
+                                onChangeTags={(change) => onChangeTags(t, change)}
+                                onSaveNote={(note) => onSaveNote(t, note)}
+                              />
+                            )}
+                            <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />
                           </div>
                         )}
                       </td>

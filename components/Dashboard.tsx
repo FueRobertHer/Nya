@@ -39,6 +39,8 @@ import BudgetsTab from './BudgetsTab';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { useCategories, useCategoriesForBudgets } from './categories-state';
 import CategoriesCard from './CategoriesCard';
+import { useTagList } from './tags-state';
+import TagsCard from './TagsCard';
 import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
@@ -457,6 +459,9 @@ export default function Dashboard({
   // from, the group rollups, and what budgets are set on.
   const categories = useCategories();
   const acceptCategories = categories.accept;
+  // Your tags (components/tags-state.ts), from each transactions load.
+  const tagList = useTagList();
+  const acceptTags = tagList.accept;
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
@@ -661,8 +666,9 @@ export default function Dashboard({
       }
       const data = await res.json();
       setTxns(data.transactions);
-      // The categories the rows were filed by.
+      // The categories the rows were filed by, and the tags they carry.
       acceptCategories(data.categories);
+      acceptTags(data.tags);
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
@@ -674,7 +680,7 @@ export default function Dashboard({
     } finally {
       setTxnsLoading(false);
     }
-  }, [acceptCategories]);
+  }, [acceptCategories, acceptTags]);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
   // makes every API call answer 401; send the dashboard to the login page instead
@@ -788,6 +794,7 @@ export default function Dashboard({
     loadNetWorth,
     requestBackfill,
     taxonomy: categories.taxonomy,
+    onTagMade: tagList.add,
   });
 
   // File import into a manual account (components/ImportSheet.tsx). After an
@@ -2345,6 +2352,10 @@ export default function Dashboard({
                   />
                 )}
 
+                {/* Your tags (components/TagsCard.tsx): applied after the
+                    server's cache, so a change shows on the next read. */}
+                {manageMode && <TagsCard tags={tagList.tags} onChanged={acceptTags} />}
+
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
@@ -2367,6 +2378,9 @@ export default function Dashboard({
                 onImport={() => setImportTarget({ account_id: null })}
                 onEditTransaction={txnEdits.openEdit}
                 onToggleExcluded={txnEdits.toggleExcluded}
+                tags={tagList.tags}
+                onChangeTags={txnEdits.changeTags}
+                onSaveNote={txnEdits.saveNote}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}

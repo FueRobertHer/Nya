@@ -4032,3 +4032,113 @@ button.cat-manage-row.archived {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* --- tags and notes (#40): tag chips on a transaction's row and in its
+   detail, the field to put a tag on, a note, the filter by tag, and the
+   colors a tag can have (lib/tags.ts TAG_COLORS), each a tint with text
+   that keeps its contrast on the dark cards --- */
+
+.tag-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.tag-gray { background: rgba(139, 143, 152, 0.18); color: #c3c6cd; }
+.tag-red { background: rgba(239, 91, 91, 0.18); color: #f49a9a; }
+.tag-orange { background: rgba(240, 140, 60, 0.18); color: #f5b27c; }
+.tag-yellow { background: rgba(224, 196, 60, 0.18); color: #ead77f; }
+.tag-green { background: rgba(62, 207, 142, 0.18); color: #8ae2b9; }
+.tag-teal { background: rgba(48, 196, 196, 0.18); color: #86dede; }
+.tag-blue { background: rgba(91, 141, 239, 0.2); color: #a3bff6; }
+.tag-purple { background: rgba(160, 110, 235, 0.2); color: #c8aaf4; }
+.tag-pink { background: rgba(232, 100, 170, 0.18); color: #f0a6cd; }
+
+/* The x that takes a tag off, inside its chip: a 24px target on a 16px chip. */
+.tag-chip-remove {
+  width: auto;
+  min-width: 24px;
+  min-height: 24px;
+  margin: -4px -6px -4px 0;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.txn-tags-note {
+  margin-top: 8px;
+}
+
+.txn-tags-row .tag-chips {
+  margin-left: 0;
+}
+
+.tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+
+button.tag-suggestion {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+}
+
+.txn-note-input {
+  margin: 4px 0 0;
+  font-size: 14px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.tag-filter {
+  margin: 0 0 4px;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+/* The color choice on the Tags screen: one round swatch per color. */
+.tag-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+button.tag-color {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+button.tag-color.chosen {
+  border-color: var(--text);
+}
