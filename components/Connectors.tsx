@@ -343,6 +343,7 @@ export function ChooseView({
           </label>
         </fieldset>
       )}
+      {stopping > 0 && <EndedPointer count={stopping} />}
       {groups.length > 0 && (
         <section className="panel-section">
           <p className="section-label">{tracked.length > 0 ? 'Not tracked' : `What ${label} offers`}</p>
@@ -395,6 +396,22 @@ export function ChooseView({
       )}
       {tracked.length === 0 && offers.length === 0 && <p className="empty-note">{label} listed no accounts. Add some in {label}, then refresh.</p>}
     </>
+  );
+}
+
+/**
+ * What Nya keeps of an account let go, kept or removed (connector-ended,
+ * lib/connectors/manage.ts releaseAccounts), and where to forget it: the list
+ * on the Reports page, opened by the link (`?stopped`). Said where accounts
+ * are let go, so the record a report reads later is no surprise. Pure.
+ */
+export function EndedPointer({ count }: { count: number }) {
+  const one = count === 1;
+  return (
+    <p className="panel-note">
+      Either way, Nya keeps {one ? 'its' : 'each one’s'} name, bank and the day you let {one ? 'it' : 'them'} go, so a report on a period {one ? 'it was' : 'they were'} tracked in
+      can say what may be missing. To forget {one ? 'it' : 'one'}, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.
+    </p>
   );
 }
 
@@ -752,6 +769,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
               </span>
             </label>
           </fieldset>
+          {view.accounts.length > 0 && <EndedPointer count={view.accounts.length} />}
           {keep && view.accounts.some((a) => a.needs_sign) && (
             <SignView
               label={view.label}

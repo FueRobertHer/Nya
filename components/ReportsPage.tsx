@@ -17,7 +17,9 @@
 // SimpleFIN connection fed that the person let go (connector-ended), to say a
 // period may be missing its transactions. Here, and only here, the person can
 // see those records and forget one (app/api/connectors/ended), after which
-// reports no longer mention it.
+// reports no longer mention it. The sheets that let accounts go point here
+// (components/Connectors.tsx EndedPointer): `?stopped` in the address opens
+// the list once it has loaded.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReportView } from './ReportView';
@@ -34,6 +36,12 @@ export type ReportForm = { kind: 'year' | 'range'; year: number; start: string; 
 function browserZone(): string {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return isTimeZone(tz) ? tz : 'UTC';
+}
+
+/** Whether the address asks for the accounts you stopped tracking
+ *  (`?stopped`, the link from where accounts are let go). */
+export function asksStopped(search: string): boolean {
+  return new URLSearchParams(search).has('stopped');
 }
 
 /** The form as the address gives it, else last year (the tax year people most
@@ -92,12 +100,16 @@ export default function ReportsPage() {
   // Only the latest request's answer is shown: one asked for earlier may come back later.
   const latest = useRef(0);
 
-  /** The accounts you stopped tracking, as stored: none shown when they can't be listed. */
-  const loadStopped = useCallback(async () => {
+  /** The accounts you stopped tracking, as stored: none shown when they can't
+   *  be listed. `open`: shown at once, when there are any (asked for by the
+   *  address). */
+  const loadStopped = useCallback(async (open = false) => {
     try {
       const res = await fetch('/api/connectors/ended');
       const body = await res.json().catch(() => null);
-      setStopped(res.ok && body && Array.isArray(body.accounts) ? (body as StoppedList) : null);
+      const list = res.ok && body && Array.isArray(body.accounts) ? (body as StoppedList) : null;
+      setStopped(list);
+      if (open && list && list.accounts.length + list.unreadable.length > 0) setStoppedOpen(true);
     } catch {
       setStopped(null);
     }
@@ -141,11 +153,13 @@ export default function ReportsPage() {
     const tz = browserZone();
     const day = localDate();
     const f = formFrom(window.location.search, day);
+    // Read before load() rewrites the address to the form's.
+    const opening = asksStopped(window.location.search);
     setZone(tz);
     setToday(day);
     setForm(f);
     void load(f, tz);
-    void loadStopped();
+    void loadStopped(opening);
   }, [load, loadStopped]);
 
   const forget = async (id: string, label: string) => {

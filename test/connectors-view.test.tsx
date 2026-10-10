@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectButtonsView, SIMPLEFIN_OPTION } from '@/components/ConnectButtons';
-import { backIn, ChooseView, ConnectIntro, ConnectorCardView, guessKind, KINDS, nothingToKeep, reportedWords, SignView } from '@/components/Connectors';
+import { backIn, ChooseView, ConnectIntro, ConnectorCardView, EndedPointer, guessKind, KINDS, nothingToKeep, reportedWords, SignView } from '@/components/Connectors';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import type { Txn } from '@/lib/transactions';
 import { ConnectionHealthView } from '@/components/ConnectionHealth';
@@ -132,12 +132,23 @@ describe('choosing accounts', () => {
       onChoose: noop,
       onKeep: noop,
     };
-    expect(renderToStaticMarkup(<ChooseView {...props} choices={{}} />)).not.toContain('Keep as manual');
+    const none = renderToStaticMarkup(<ChooseView {...props} choices={{}} />);
+    expect(none).not.toContain('Keep as manual');
+    expect(none).not.toContain('Accounts you stopped tracking');
     const html = renderToStaticMarkup(<ChooseView {...props} choices={{ manual_a: 'stop' }} />);
     expect(html).toContain('Keep as manual account');
     expect(html).toContain('Past net-worth totals keep what it held');
     expect(html).toMatch(/<input type="radio" name="connector-keep" checked=""/);
     expect(html).toContain('<option value="stop" selected="">Stop tracking</option>');
+    // What Nya keeps of it for reports, and where to forget it.
+    expect(html).toContain('Either way, Nya keeps its name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.');
+    expect(html).toContain('To forget it, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.');
+  });
+
+  test('disconnecting says the same of every account it lets go', () => {
+    const html = renderToStaticMarkup(<EndedPointer count={3} />);
+    expect(html).toContain('Either way, Nya keeps each one’s name, bank and the day you let them go, so a report on a period they were tracked in can say what may be missing.');
+    expect(html).toContain('To forget one, open <a href="/reports?stopped=1">Accounts you stopped tracking</a>');
   });
 });
 

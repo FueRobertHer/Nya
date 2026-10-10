@@ -53,7 +53,7 @@ const recategorizeRoute = await import('@/app/api/recategorize/route');
 const categoriesRoute = await import('@/app/api/categories/route');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
 const { encrypt } = await import('@/lib/crypto');
-const { StoppedAccountsView } = await import('@/components/ReportsPage');
+const { StoppedAccountsView, asksStopped } = await import('@/components/ReportsPage');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -376,6 +376,8 @@ describe('where a report’s data comes from', () => {
     expect(html).toContain('A record that can’t be read');
     expect(html.match(/>Forget</g)).toHaveLength(2);
     expect(html).toContain('One more was saved by a newer version of Nya');
+    // The link from where accounts are let go opens it (components/Connectors.tsx EndedPointer).
+    expect([asksStopped('?stopped=1'), asksStopped('?kind=year&year=2025&stopped'), asksStopped('?kind=year&year=2025'), asksStopped('')]).toEqual([true, true, false, false]);
   });
 
   test('kept as manual accounts: from that day only what is entered or imported', async () => {
