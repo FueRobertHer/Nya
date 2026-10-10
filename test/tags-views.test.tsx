@@ -158,6 +158,25 @@ describe('on the Activity tab', () => {
     expect(t).toContain('Spending by tag');
   });
 
+  test('a row with a note says so, a bank’s or one entered by hand; the note itself is in its detail', () => {
+    const html = renderToStaticMarkup(
+      <MonthBreakdown
+        txns={[txn('Taxi', { note: 'Airport run' }), txn('Market', { note: 'apples', source: 'manual' }), txn('Groceries')]}
+        notes={[]}
+        loading={false}
+        taxonomy={taxonomy}
+        tags={TAGS}
+        onRecategorize={() => {}}
+        onRename={() => {}}
+        onChangeTags={() => {}}
+        onSaveNote={() => {}}
+      />
+    );
+    expect(html).toContain('<span class="note-tag" title="Airport run"> · note</span>');
+    expect(html).toContain('<span class="note-tag" title="apples"> · note</span>');
+    expect(html.match(/class="note-tag"/g)).toHaveLength(2);
+  });
+
   test('chips leave out an id no tag has', () => {
     expect(text(renderToStaticMarkup(<TagChips ids={['gone', 'gift']} tags={TAGS} />))).toBe('Gift');
     expect(renderToStaticMarkup(<TagChips ids={['gone']} tags={TAGS} />)).toBe('');

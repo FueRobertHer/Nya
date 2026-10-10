@@ -4087,6 +4087,13 @@ button.cat-manage-row.archived {
   margin-top: 8px;
 }
 
+/* A row with a note says so, as pending does: the note is in its detail. */
+.note-tag {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
 .txn-tags-row .tag-chips {
   margin-left: 0;
 }

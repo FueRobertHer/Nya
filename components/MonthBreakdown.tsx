@@ -798,6 +798,9 @@ export default function MonthBreakdown({
                                   · check category
                                 </span>
                               )}
+                              {t.note && (
+                                <span className="note-tag" title={t.note}> · note</span>
+                              )}
                               <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
