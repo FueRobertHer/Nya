@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { spendingByCategory, summarize, tidy, categoryOf, recurringMonthly, countsInMonthly, type TotalsRow } from '@/lib/totals';
+import { spendingByCategory, summarize, tidy, categoryOf, categoryTotals, recurringMonthly, countsInMonthly, type TotalsRow } from '@/lib/totals';
 import { countsInTotals } from '@/lib/spending';
 import { detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
 
@@ -85,6 +85,31 @@ describe('a summary over a range', () => {
     expect(tidy(-0)).toBe(0);
     // A cryptocurrency's eight places survive.
     expect(tidy(0.12345678)).toBe(0.12345678);
+  });
+
+  test('rows filed into the person’s categories are totalled by category, and named by it, never by an id, whether a describer is given or not', () => {
+    // As lib/category-store.ts files them: an id, the name now, and the words they came with.
+    const filed = [
+      row('2026-10-02', 30, { category: 'groceries', category_id: 'c-food', category_name: 'Food' }),
+      row('2026-10-03', 20, { category: 'food and drink', category_id: 'c-food', category_name: 'Food' }),
+      // Says nothing of its category: under the uncategorized one, with no name of its own.
+      row('2026-10-04', 5, { category: null, category_id: 'c-other', category_name: null }),
+      row('2026-10-04', 7, { category: 'other', category_id: 'c-other', category_name: 'Misc' }),
+      row('2026-10-05', -12, { category: 'groceries', category_id: 'c-food', category_name: 'Food' }),
+    ];
+    expect(summarize(filed, october, 'USD').categories).toEqual([
+      { category: 'Food', spent: 50, transactions: 2 },
+      { category: 'Misc', spent: 12, transactions: 2 },
+    ]);
+    const totals = categoryTotals(filed, october, 'USD');
+    expect(totals.out.map((c) => c.category)).toEqual(['Food', 'Misc']);
+    expect(totals.in).toEqual([{ category: 'Food', amount: 12, transactions: 1 }]);
+    // With a describer, its names.
+    const described = summarize(filed, october, 'USD', (bucket) => ({ category: bucket.toUpperCase(), category_id: bucket, group_id: null, group: null }));
+    expect(described.categories.map((c) => [c.category, c.category_id])).toEqual([
+      ['C-FOOD', 'c-food'],
+      ['C-OTHER', 'c-other'],
+    ]);
   });
 
   test('an empty range is zeros, never an error', () => {

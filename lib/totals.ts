@@ -147,7 +147,8 @@ export type Summary = {
  * The totals over the rows whose date `inRange` takes, kept in `currency`: what
  * the Activity tab sums for a month (money in, out and net, and spending by
  * category), for any range. Categories are by bucket (bucketOf), each said by
- * `describe` (by default, the bucket itself as its name).
+ * `describe`, or, without it, by the name its rows were filed under, else
+ * their words: never a category's id.
  */
 export function summarize(
   rows: readonly TotalsRow[],
@@ -162,7 +163,7 @@ export function summarize(
   let excluded = 0;
   let unknown = 0;
   let transactions = 0;
-  const byCategory = new Map<string, { spent: number; transactions: number }>();
+  const byCategory = new Map<string, BucketSum>();
   const ranged: TotalsRow[] = [];
   for (const t of rows) {
     if (!inRange(t.date)) continue;
@@ -177,10 +178,7 @@ export function summarize(
       moneyIn += -t.amount;
     } else if (t.amount > 0) {
       moneyOut += t.amount;
-      const c = byCategory.get(bucketOf(t)) ?? { spent: 0, transactions: 0 };
-      c.spent += t.amount;
-      c.transactions++;
-      byCategory.set(bucketOf(t), c);
+      addTo(byCategory, t, t.amount);
     }
   }
   const leftOut = leftOutByCurrency(ranged, currency);
@@ -189,8 +187,9 @@ export function summarize(
     money_in: tidy(moneyIn),
     money_out: tidy(moneyOut),
     net: tidy(moneyIn - moneyOut),
+    // Named by `describe`, else by the rows' own name: never an id.
     categories: [...byCategory]
-      .map(([bucket, c]) => ({ ...(describe ? describe(bucket) : { category: bucket }), spent: tidy(c.spent), transactions: c.transactions }))
+      .map(([bucket, s]) => ({ ...(describe ? describe(bucket) : { category: nameOf(bucket, s) }), spent: tidy(s.amount), transactions: s.transactions }))
       .sort((a, b) => b.spent - a.spent || (a.category < b.category ? -1 : 1)),
     transactions,
     counted,
