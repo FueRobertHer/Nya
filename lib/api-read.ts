@@ -86,6 +86,8 @@ import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { tagNameKey, type TagSet } from './tags';
+import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 
@@ -597,12 +599,17 @@ export type ApiTransaction = {
    *  add values. */
   source: string;
   hidden: boolean;
+  /** The person's note on it: one written with a row they entered or
+   *  imported, or put on a bank's row. */
   note: string | null;
   counterparty: string | null;
   payment_channel: string | null;
   city: string | null;
   region: string | null;
   website: string | null;
+  /** The tags it carries (lib/tags.ts), in the order they were made: put
+   *  on by the person, carried from an earlier account, or added by a rule. */
+  tags: { id: string; name: string }[];
 };
 
 /** An id as the API shows it: null for a provisional one (see CATEGORIES). */
@@ -619,7 +626,7 @@ function describer(ix: CategoryIndex): (bucket: string) => Described {
   };
 }
 
-function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTransaction {
+function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex, tagNames: ReadonlyMap<string, string>): ApiTransaction {
   const account = t.account_id ?? '';
   const filed = t.category_id ? categoryById(ix, t.category_id) : null;
   const group = filed ? groupOf(ix, filed) : null;
@@ -649,28 +656,43 @@ function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTr
     city: t.city,
     region: t.region,
     website: t.website,
+    tags: (t.tags ?? []).filter((id) => tagNames.has(id)).map((id) => ({ id, name: tagNames.get(id)! })),
   };
 }
+
+/** Each tag's name, by id: the tags that exist. */
+const namesOf = (set: TagSet | null): Map<string, string> => new Map((set?.tags ?? []).map((t) => [t.id, t.name]));
 
 /** Where an institution's transactions come from, and as of when; or why it
  *  brings in none (lib/item-products.ts). */
 export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView; ix: CategoryIndex };
+export type ActivityRead = {
+  rows: Txn[];
+  history: OlderTxn[];
+  notes: string[];
+  sources: ApiSource[];
+  hidden: Set<string>;
+  view: NoTransactionsView;
+  ix: CategoryIndex;
+  /** The tags that exist (lib/tags.ts), or null: none saved, or unreadable (said in notes). */
+  tags: TagSet | null;
+};
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
  *  (lib/no-transactions.ts), the rows before them that recurring detection
  *  needs (`history`), and the categories they were filed by (`ix`), grown in
  *  memory where the app hasn't yet (see CATEGORIES). */
-async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
+export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const { transactions, notes, history, taxonomy } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
+  const { transactions, notes, history, taxonomy, tags } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
     notes,
     ix: indexTaxonomy(taxonomy),
+    tags,
     sources: bank.sources.map((s: BankSource) => ({
       institution: s.institution_name,
       synced_at: s.synced_at,
@@ -692,7 +714,7 @@ async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityR
  * transactions don't come in (Plaid doesn't provide them, or the person
  * didn't allow them), as missing from a `list` or not counted in `totals`.
  */
-function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
+export function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
   const none = noSpending(view, rows);
   if (none) return [`${none.lead}, so no bank or card transactions come in. To see spending, ${none.remedy}.`];
   const named = withoutNote(view, rows);
@@ -719,7 +741,7 @@ export type TransactionQuery = {
   accountIds?: ReadonlySet<string>;
   includeHidden?: boolean;
   /** Matched, in any case, against the name, the merchant behind it, the
-   *  category and the note. */
+   *  category, the note and the names of its tags. */
   text?: string;
   /** A category's name as listed (categories), in any case: "other" for
    *  none, while the uncategorized category is named so. */
@@ -727,6 +749,11 @@ export type TransactionQuery = {
   /** A category's id (categories): rows filed under it, or under one merged
    *  into it. An id no category has is a 404 (NotFound). */
   categoryId?: string;
+  /** A tag's name as listed (tags), in any case: rows carrying it. */
+  tag?: string;
+  /** A tag's id (tags): rows carrying it. An id no tag has is a 404
+   *  (NotFound). */
+  tagId?: string;
   /** On the signed amount, Plaid's sign: inclusive. */
   minAmount?: number;
   maxAmount?: number;
@@ -753,14 +780,21 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const describe = describer(activity.ix);
   const wanted = q.categoryId === undefined ? undefined : categoryById(activity.ix, q.categoryId);
   if (wanted === null || (wanted && isProvisionalId(wanted.id))) throw new NotFound('No category has that id: list them with categories.');
+  const tagNames = namesOf(activity.tags);
+  if (q.tagId !== undefined && !tagNames.has(q.tagId)) throw new NotFound('No tag has that id: list them with tags.');
+  // A name no tag has matches nothing, as a category's does.
+  const byName = q.tag === undefined ? undefined : (activity.tags?.tags.find((t) => tagNameKey(t.name) === tagNameKey(q.tag!))?.id ?? null);
+  const tagged = (t: Txn) => (q.tagId === undefined || !!t.tags?.includes(q.tagId)) && (byName === undefined || (byName !== null && !!t.tags?.includes(byName)));
+  const tagText = (t: Txn) => (t.tags ?? []).map((id) => tagNames.get(id));
   const matching = activity.rows
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
     .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
     .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
-    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
-    .map((t) => toApiTransaction(t, activity.hidden, activity.ix))
+    .filter(tagged)
+    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note, ...tagText(t)].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
+    .map((t) => toApiTransaction(t, activity.hidden, activity.ix, tagNames))
     .sort((a, b) => comparePageKeys(keyOf(a), keyOf(b)));
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
@@ -982,6 +1016,10 @@ export type ApiSpending = Summary & {
   /** Money out by group, most first, with how many rows each sums: the
    *  categories' rolled up (ids null for one the app hasn't stored yet). */
   groups: { id: string | null; name: string; kind: CategoryKind; spent: number; transactions: number }[];
+  /** Money out by tag, most first (lib/tag-totals.ts): each counted outflow
+   *  under every tag its row carries, so a tag is exactly what its rows add
+   *  to the categories, and a row with two tags is in both. */
+  tags: { id: string; name: string; spent: number; transactions: number }[];
   sources: ApiSource[];
   notes: string[];
 };
@@ -1014,6 +1052,10 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
     groups: [...groups.values()]
       .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
       .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions })),
+    tags: spendingByTag(activity.rows, inRange, currency).flatMap((s) => {
+      const name = namesOf(activity.tags).get(s.tag);
+      return name === undefined ? [] : [{ id: s.tag, name, spent: s.spent, transactions: s.transactions }];
+    }),
     sources: activity.sources,
     notes,
   };

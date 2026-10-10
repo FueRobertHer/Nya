@@ -1,0 +1,47 @@
+// lib/api-tags.ts
+//
+// The read-only API's tags (#40): what /api/v1/tags and the MCP server's
+// list_tags answer. Read the way every answer built on transactions is read
+// (lib/api-read.ts readActivity, the Activity tab's own assembly), so a tag's
+// count is of the rows the app shows: the window the API reads, hidden
+// accounts left out unless asked for, and a tag counted wherever it is on a
+// row, put there by the person, carried from an earlier account, or added by
+// a rule. Only tags that exist are ever named: one deleted is in no answer.
+
+import type { Ctx } from './containers';
+import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+
+export type ApiTag = {
+  id: string;
+  name: string;
+  /** One of gray, red, orange, yellow, green, teal, blue, purple or pink; a
+   *  later version may add colors. */
+  color: string;
+  /** Transactions carrying it, in the window the API reads. */
+  transactions: number;
+  last_date: string | null;
+};
+
+export async function readTags(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; tags: ApiTag[]; sources: ApiSource[]; notes: string[] }> {
+  const activity = await readActivity(ctx, !!opts.includeHidden);
+  const seen = new Map<string, { transactions: number; last_date: string | null }>();
+  for (const t of activity.rows) {
+    for (const id of t.tags ?? []) {
+      const s = seen.get(id) ?? { transactions: 0, last_date: null };
+      s.transactions++;
+      if (!s.last_date || t.date > s.last_date) s.last_date = t.date;
+      seen.set(id, s);
+    }
+  }
+  return {
+    from: firstDay(),
+    tags: (activity.tags?.tags ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      color: t.color,
+      ...(seen.get(t.id) ?? { transactions: 0, last_date: null }),
+    })),
+    sources: activity.sources,
+    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
+  };
+}

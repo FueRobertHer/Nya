@@ -31,7 +31,7 @@ import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-heade
 // here too.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/budgets$|api/v1/spending$|api/v1/recurring$|api/v1/holdings$|api/mcp$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/tags$|api/v1/budgets$|api/v1/spending$|api/v1/recurring$|api/v1/holdings$|api/mcp$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 

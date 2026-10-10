@@ -101,6 +101,7 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { exportLayers, layerBankRow, layerManualRow, type ExportLayers } from './export-layers';
 import { taxonomyReport, taxonomyStore } from './category-store';
 import { budgetSetStore, budgetsReport } from './budget-store';
 import { placeBudgets } from './budget-set';
@@ -690,6 +691,11 @@ export type ExportTransaction = StoredTxn & {
   your_merchant_name: string | null;
   superseded_by_posted: boolean;
   account_hidden: boolean;
+  /** The tags it carries, by name, as the app shows them (lib/txn-layers.ts):
+   *  put on by the person, or carried from an earlier account. */
+  tags: string[];
+  /** The person's note on it, or null. */
+  your_note: string | null;
 };
 
 export type ExportInvestmentTransaction = Record<string, unknown> & {
@@ -1065,6 +1071,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     growTaxonomy(data.taxonomy, observedKeys(data.stores.flatMap((s) => Object.values(s.txns).map(factsOf))), () => `new:${++provisional}`, { limit: Infinity }).taxonomy
   );
   const filed = (t: StoredTxn) => filedAs(filing, factsOf(t));
+  // What the person said about each row, and what was carried across a
+  // re-link, from the file's own parts, as the app applies them.
+  const sectionOf = new Map(data.sections);
+  const layers = exportLayers((key) => sectionOf.get(key), effective);
   const transactions: ExportTransaction[] = data.stores
     .flatMap((s) => {
       const superseded = supersededPendingIds(s.txns);
@@ -1079,6 +1089,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
           your_merchant_name: data.renames.get(vendorKey(t)) ?? null,
           superseded_by_posted: superseded.has(t.transaction_id),
           account_hidden: hidden.has(t.account_id),
+          ...bankLayers(t, layers),
         })
       );
     })
@@ -1275,6 +1286,12 @@ export function* jsonPieces(value: unknown, layout: JsonLayout = EVERY_OBJECT, p
   yield JSON.stringify(value) ?? 'null';
 }
 
+/** A bank row's tags and note, as the file gives them. */
+function bankLayers(t: StoredTxn, layers: ExportLayers): Pick<ExportTransaction, 'tags' | 'your_note'> {
+  const { tags, note } = layerBankRow(t, layers);
+  return { tags, your_note: note };
+}
+
 /** The columns of transactions.csv, in order (docs/data-export.md). */
 export const TRANSACTION_COLUMNS = [
   'date',
@@ -1332,6 +1349,8 @@ export const TRANSACTION_COLUMNS = [
   'nya_category',
   'nya_category_id',
   'nya_group',
+  // Added with tags (#40), at the end too.
+  'tags',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
@@ -1389,10 +1408,11 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     logo_url: t.logo_url,
     category_icon_url: t.personal_finance_category_icon_url,
     source: PROVIDER,
-    note: null,
+    note: t.your_note,
     nya_category: t.nya_category,
     nya_category_id: t.nya_category_id,
     nya_group: t.nya_group,
+    tags: t.tags.join('; '),
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1406,7 +1426,7 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | undefined, hidden: boolean, filed: NyaCategory): CsvValue[] {
+function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | undefined, hidden: boolean, filed: NyaCategory, tags: string[]): CsvValue[] {
   const cells: Record<TransactionColumn, CsvValue> = {
     ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
     date: row.date,
@@ -1426,6 +1446,7 @@ function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | und
     source: row.source,
     note: row.note,
     ...filed,
+    tags: tags.join('; '),
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1489,13 +1510,15 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   const manual = manualTransactionsIn(doc);
   const filed = manualFiling(doc, manual);
+  // A manual row carries nothing from an earlier account: no links needed.
+  const layers = exportLayers((key) => doc[key], new Map());
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
     ...manual.map((r) => ({
       date: r.date,
       time: '',
       id: r.id,
-      cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed(r)),
+      cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed(r), layerManualRow(r, layers).tags),
     })),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
