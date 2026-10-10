@@ -319,8 +319,8 @@ describe('SimpleFIN rows on the Activity tab', () => {
         txns={[
           row({ transaction_id: 'manual-txn:1', name: 'PAYMENT TO VISA', amount: 300, ...card }),
           row({ transaction_id: 'manual-txn:2', name: 'PAYMENT THANK YOU', amount: -300, ...card, account_id: 'manual_card', account_name: 'Visa' }),
-          row({ transaction_id: 'manual-txn:4', name: 'TO SAVINGS', amount: 50, transaction_code: 'transfer', paired: 'transfer' }),
-          row({ transaction_id: 'manual-txn:5', name: 'FROM CHECKING', amount: -50, transaction_code: 'transfer', paired: 'transfer', account_id: 'manual_sav', account_name: 'Savings' }),
+          row({ transaction_id: 'manual-txn:4', name: 'TO SAVINGS', amount: 50, category: 'transfer out', paired: 'transfer' }),
+          row({ transaction_id: 'manual-txn:5', name: 'FROM CHECKING', amount: -50, category: 'transfer in', paired: 'transfer', account_id: 'manual_sav', account_name: 'Savings' }),
           row({ transaction_id: 'manual-txn:3', name: 'COFFEE', amount: 4 }),
         ]}
         notes={[]}

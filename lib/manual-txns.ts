@@ -29,10 +29,14 @@
 // same amount would look), both are shown as a bank shows the same pair: a
 // payment into a card as Plaid's card payment (loan payments, credit card
 // payment), one into a loan as a loan payment, and any other as a transfer
-// (transaction_code 'transfer'). Each is left out of every total
-// (lib/spending.ts isTransfer), and a card's or a loan's payment from cash is
-// a bill the cash forecast counts when it repeats, as a bank's is
-// (lib/recurring.ts), while a transfer is neither. Each row is marked
+// (transfer out or in, by its side). Those words file each into the person's
+// categories as a bank's row is filed (lib/categories.ts), in the Transfers
+// group when seeded, so every total leaves them out (lib/spending.ts
+// isTransfer, by the group's kind); moved to a group of another kind, the
+// category counts as that kind, a bank's rows and these alike. A
+// card's or a loan's payment from cash is a bill the cash forecast counts
+// when it repeats, as a bank's is (lib/recurring.ts, which reads the words,
+// never the group), while a transfer is neither. Each row is marked
 // (`paired`) as worked out from the amounts on the Activity tab, where a
 // wrong pair is seen and given a category. Amounts alone can't
 // tell every pair: a purchase paid from checking and an unrelated refund to a
@@ -444,12 +448,17 @@ const dayIndex = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86
  *  goes into: a card's payment, a loan's, or a transfer (see the header). */
 export type PairKind = 'card' | 'loan' | 'transfer';
 
-/** How each kind of pair is shown: as a bank shows the same (Plaid's
- *  categories for a card's and a loan's payment, its code for a transfer). */
-const PAIRED: Readonly<Record<PairKind, { category: string | null; subcategory: string | null; transaction_code: string | null }>> = {
-  card: { category: 'loan payments', subcategory: 'credit card payment', transaction_code: null },
-  loan: { category: 'loan payments', subcategory: null, transaction_code: null },
-  transfer: { category: null, subcategory: null, transaction_code: 'transfer' },
+/** How each kind of pair is shown: as a bank shows the same, in Plaid's
+ *  words, which file it into the person's categories as a bank's row is
+ *  filed (lib/categories.ts: seeded, all three are in the Transfers group,
+ *  so every total leaves them out): a card's payment as loan payments with
+ *  Plaid's card-payment detail, a loan's as loan payments, and any other
+ *  move as transfer out or in, by its side. No code: a US bank gives none,
+ *  so the category alone decides, as for a bank's row. */
+const PAIRED: Readonly<Record<PairKind, (amount: number) => { category: string; subcategory: string | null }>> = {
+  card: () => ({ category: 'loan payments', subcategory: 'credit card payment' }),
+  loan: () => ({ category: 'loan payments', subcategory: null }),
+  transfer: (amount) => ({ category: amount > 0 ? 'transfer out' : 'transfer in', subcategory: null }),
 };
 
 /**
@@ -496,7 +505,7 @@ export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyM
 /** One manual row as the Activity tab shows a transaction: one side of a
  *  pair as the pair is shown (PAIRED), marked. */
 function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, pair?: PairKind): Txn {
-  const shown = pair ? PAIRED[pair] : null;
+  const shown = pair ? PAIRED[pair](row.amount) : null;
   return {
     transaction_id: row.id,
     date: row.date,
@@ -511,7 +520,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, 
     vendor_key: '',
     ...NO_PLAID_DETAIL,
     subcategory: shown ? shown.subcategory : null,
-    transaction_code: shown ? shown.transaction_code : (row.transaction_code ?? null),
+    transaction_code: shown ? null : (row.transaction_code ?? null),
     ...(pair ? { paired: pair } : {}),
     source: row.source,
     account_id: row.account_id,

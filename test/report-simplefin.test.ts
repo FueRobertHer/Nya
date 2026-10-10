@@ -7,7 +7,9 @@ import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
 // Reports (lib/report/) with the accounts a SimpleFIN connection keeps up to
 // date: their rows count in a report's totals exactly as on the Activity tab
 // (a card payment worked out between two of them left out, an unrelated charge
-// and deposit counted), and the report's list of where its data comes from
+// and deposit counted; in the person's categories, the same by group, after a
+// rename, and after loan payments move to a spending group, when the pair
+// counts in both), and the report's list of where its data comes from
 // names each bank the connection reaches, with its last clean sync, and what
 // may be missing: older history still arriving, a bank SimpleFIN has only an
 // old balance from or a request that failed (hasn't synced since), and
@@ -47,6 +49,8 @@ const { formatMoney } = await import('@/lib/format');
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const transactions = await import('@/app/api/transactions/route');
 const endedRoute = await import('@/app/api/connectors/ended/route');
+const recategorizeRoute = await import('@/app/api/recategorize/route');
+const categoriesRoute = await import('@/app/api/categories/route');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
 const { encrypt } = await import('@/lib/crypto');
 const { StoppedAccountsView } = await import('@/components/ReportsPage');
@@ -134,6 +138,81 @@ describe('SimpleFIN rows in a report’s totals', () => {
     // Pay and the unrelated deposit in; coffee, the dinner and the restaurant out; the card's payment neither.
     expect([r.totals.money_in, r.totals.money_out]).toEqual([2620, 178.17]);
     expect([r.totals.transactions, r.totals.counted, r.totals.transfers]).toEqual([7, 5, 2]);
+  });
+
+  test('in the person’s categories, as on the Activity tab: a category chosen for one, renamed since, and the pair filed under transfers', async () => {
+    const now = new Date(NOW);
+    const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const on = (d: number) => Math.floor(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), d, 12) / 1000);
+    const start = first.toISOString().slice(0, 10);
+    const end = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    await trackOn({
+      checking: [txn('c1', on(3), '-12.50', 'COFFEE'), txn('c2', on(5), '2500.00', 'PAYROLL'), txn('c3', on(10), '-300.00', 'PAYMENT TO VISA'), txn('c5', on(12), '-80.00', 'GROCER')],
+      card: [txn('v1', on(4), '-45.67', 'DINER'), txn('v2', on(11), '300.00', 'PAYMENT THANK YOU')],
+    });
+    const read = async () => (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()) as { transactions: any[]; categories: any };
+    let a = await read();
+    // The coffee and the groceries put in food and drink, through the picker.
+    const food = a.categories.categories.find((c: any) => c.name === 'food and drink');
+    for (const name of ['COFFEE', 'GROCER']) {
+      const t = a.transactions.find((x: any) => x.name === name);
+      const res = await recategorizeRoute.POST(
+        new Request('http://localhost/api/recategorize', { method: 'POST', body: JSON.stringify({ transaction_id: t.transaction_id, category_id: food.id, account_id: t.account_id }) })
+      );
+      expect(res.status).toBe(200);
+    }
+    // Renamed since: both show the name it has now.
+    await categoriesRoute.POST(new Request('http://localhost/api/categories', { method: 'POST', body: JSON.stringify({ action: 'rename-category', id: food.id, name: 'Eating' }) }));
+    a = await read();
+    // The month's In, Out and Net on the tab, and its top spending: with
+    // categories loaded, by group, each one's name and total in the toggle
+    // that opens it.
+    const tab = () => {
+      const rows = a.transactions.filter((t: any) => t.date >= start && t.date <= end);
+      const html = renderToStaticMarkup(
+        createElement(MonthBreakdown, { txns: rows, notes: [], loading: false, taxonomy: a.categories, onRecategorize: () => {}, onRename: () => {} })
+      );
+      const figure = (label: string) => new RegExp(`total-label">${label}</div><div class="summary-value[^"]*">([^<]*)<`).exec(html)?.[1];
+      const top = html.slice(html.indexOf('Top spending'));
+      return {
+        figures: [figure('In'), figure('Out'), figure('Net')],
+        groups: [...top.matchAll(/aria-label="([^"]*?): ([^"]*?)\. Show its categories"/g)].map((m) => [m[1], m[2]]),
+      };
+    };
+    const { figures, groups: tabGroups } = tab();
+
+    let r = await report(start, end);
+    const money = (n: number) => formatMoney(n, r.currency);
+    expect(figures).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    // Eating, then the dinner nobody categorized; the card's payment in neither.
+    expect(r.money_out.map((c) => [c.category, c.amount, c.transactions])).toEqual([
+      ['Eating', 92.5, 2],
+      ['other', 45.67, 1],
+    ]);
+    // The report's categories, summed by the group each is in now, are the tab's groups.
+    const groupOf = (name: string) => {
+      const c = a.categories.categories.find((x: any) => x.name === name);
+      return a.categories.groups.find((g: any) => g.id === c.group).name as string;
+    };
+    const byGroup = new Map<string, number>();
+    for (const c of r.money_out) byGroup.set(groupOf(c.category), (byGroup.get(groupOf(c.category)) ?? 0) + c.amount);
+    expect(tabGroups).toEqual([...byGroup].sort((x, y) => y[1] - x[1]).map(([g, n]) => [g, money(n)]));
+    expect(tabGroups.map(([g]) => g)).toEqual(['Food', 'Other']);
+    expect(r.categories.map((c) => c.name)).toContain('Eating');
+    expect(r.totals.transfers).toBe(2);
+
+    // Loan payments moved to a spending group: the card's payment, both
+    // sides, counts in the report as on the tab, as a bank's rows there would.
+    const loans = a.categories.categories.find((c: any) => c.name === 'loan payments');
+    const housing = a.categories.groups.find((g: any) => g.name === 'Housing');
+    await categoriesRoute.POST(new Request('http://localhost/api/categories', { method: 'POST', body: JSON.stringify({ action: 'move-category', id: loans.id, group: housing.id }) }));
+    a = await read();
+    r = await report(start, end);
+    expect(tab().figures).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    expect(r.totals.transfers).toBe(0);
+    expect(r.money_out.map((c) => [c.category, c.amount])).toContainEqual(['loan payments', 300]);
+    expect(r.money_in.map((c) => [c.category, c.amount])).toContainEqual(['loan payments', 300]);
+    expect(tab().groups).toContainEqual(['Housing', money(300)]);
   });
 });
 

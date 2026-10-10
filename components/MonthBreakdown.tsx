@@ -19,24 +19,34 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
-import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
 import { isConnectorKind } from "@/lib/connectors/types";
-
-/** The mark on one side of a pair Nya worked out between two SimpleFIN
- *  accounts (lib/manual-txns.ts connectorTransfers), by what it is. */
-const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
-  card: "Card payment between your accounts, worked out from the amounts: give it a category to count it",
-  loan: "Loan payment between your accounts, worked out from the amounts: give it a category to count it",
-  transfer: "Transfer between your accounts, worked out from the amounts: give it a category to count it",
-};
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
 import CategoryPicker from "./CategoryPicker";
 import type { CategoryChoice } from "./transaction-edits";
+
+/** What one side of a pair Nya worked out between two SimpleFIN accounts
+ *  (lib/manual-txns.ts connectorTransfers) is. */
+const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
+  card: "Card payment between your accounts",
+  loan: "Loan payment between your accounts",
+  transfer: "Transfer between your accounts",
+};
+
+/** The mark on one side of a pair: what it is, worked out from the amounts,
+ *  and, while its category leaves it out of the totals, how to count it. It
+ *  counts once its category is moved into a spending group (lib/spending.ts
+ *  isTransfer: loan payments, say), and then says only what it is. */
+export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "category" | "category_kind">): string | null {
+  if (!t.paired) return null;
+  const what = `${PAIRED_WORDS[t.paired]}, worked out from the amounts`;
+  return isTransfer(t) ? `${what}: give it a category to count it` : what;
+}
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -778,7 +788,7 @@ export default function MonthBreakdown({
                             {/* A pair Nya worked out between two SimpleFIN
                                 accounts (lib/manual-txns.ts): said, so a
                                 wrong one is seen and given a category. */}
-                            {t.paired && <div className="excluded-tag">{PAIRED_WORDS[t.paired]}</div>}
+                            {t.paired && <div className="excluded-tag">{pairedWords(t)}</div>}
                             {t.excluded === null && (
                               <div className="excluded-tag">
                                 Couldn&apos;t read whether you excluded this
