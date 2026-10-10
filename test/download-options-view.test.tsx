@@ -85,7 +85,15 @@ describe('a passphrase', () => {
 
   test('asks twice, says plainly that a lost one can’t be recovered, and how to open the file', () => {
     const html = view({ protect: true, passphrase: 'piano orbit lantern harvest', confirm: 'piano orbit lantern harvest' });
-    expect(html.match(/autoComplete="new-password"|autocomplete="new-password"/gi)).toHaveLength(2);
+    // Never offered to be saved as the app's password, by a browser or a
+    // password manager: it is the file's.
+    const fields = [...html.matchAll(/<input type="password"[^>]*>/g)].map((m) => m[0]);
+    expect(fields).toHaveLength(2);
+    for (const field of fields) {
+      expect(field).toMatch(/autocomplete="off"/i);
+      for (const mark of ['data-1p-ignore="true"', 'data-lpignore="true"', 'data-bwignore="true"', 'data-form-type="other"']) expect(field).toContain(mark);
+    }
+    expect(html).not.toContain('new-password');
     expect(html).toContain('At least 12 characters. Four or more words you’ll remember that don’t belong together');
     expect(html).toContain('Nya never keeps your passphrase. If you lose it, the file can’t be opened, by you or by anyone running Nya.');
     expect(html).toContain('href="/open-download"');

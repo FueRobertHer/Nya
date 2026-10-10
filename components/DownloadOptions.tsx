@@ -26,6 +26,22 @@ export function ofxAccounts(accounts: readonly DownloadAccount[]): DownloadAccou
 /** "Chase · Checking ••1111". */
 export const accountLabel = (a: DownloadAccount) => `${a.institution_name} · ${a.name}${a.mask ? ` ••${a.mask}` : ''}`;
 
+/**
+ * For a passphrase field: nothing offers to save it as this site's password,
+ * or fills that password in, since it is the file's and not the app's.
+ * "new-password" would invite a browser to make one up and save it, and
+ * beside the shared password's field the card looks like a form that changes
+ * the app's own. "off" for browsers; the rest are the marks password managers
+ * look for (1Password, LastPass, Bitwarden, Dashlane).
+ */
+export const NOT_A_SIGN_IN = {
+  autoComplete: 'off',
+  'data-1p-ignore': 'true',
+  'data-lpignore': 'true',
+  'data-bwignore': 'true',
+  'data-form-type': 'other',
+} as const;
+
 /** Why the passphrase can't be used yet, in words, or null when it can. */
 export function passphraseHint(passphrase: string, confirm: string): string | null {
   if (passphraseLength(passphrase) < PASSPHRASE_MIN) return `Use at least ${PASSPHRASE_MIN} characters.`;
@@ -106,11 +122,11 @@ export function PassphraseFields({
         <>
           <label className="field">
             Passphrase
-            <input type="password" autoComplete="new-password" value={passphrase} onChange={(e) => onPassphrase(e.target.value)} disabled={disabled} />
+            <input type="password" {...NOT_A_SIGN_IN} value={passphrase} onChange={(e) => onPassphrase(e.target.value)} disabled={disabled} />
           </label>
           <label className="field">
             Type it again
-            <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => onConfirm(e.target.value)} disabled={disabled} />
+            <input type="password" {...NOT_A_SIGN_IN} value={confirm} onChange={(e) => onConfirm(e.target.value)} disabled={disabled} />
           </label>
           {hint && <p className="panel-note">{hint}</p>}
           <p className="panel-note">
