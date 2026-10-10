@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, tes
 import './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
+import { parseCsv } from './csv-parse';
 
 // The read-only API and the MCP server (lib/api-read.ts, lib/mcp.ts) with the
 // accounts a SimpleFIN connection keeps up to date: served with source
@@ -35,7 +36,7 @@ const { connect, trackAccounts, confirmSigns, disconnect } = await import('@/lib
 const { connectorAccountsStore } = await import('@/lib/connectors/store');
 const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
-const { collectUserData, buildUserExport } = await import('@/lib/user-export');
+const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
 const mcp = await import('@/app/api/mcp/route');
 
 const ctx = TEST_CTX;
@@ -195,6 +196,29 @@ describe('an account kept as a manual one in its own currency', () => {
     // MCP alike.
     expect((await tool('list_accounts')).data.accounts.find((a: any) => a.id === everyday).currency).toBe('AUD');
     expect((await tool('get_balance_history', { account_id: everyday })).data.currency).toBe('AUD');
+  });
+});
+
+describe('the download’s transactions.csv', () => {
+  test('holds SimpleFIN’s rows as stored, with their account and bank and their source', async () => {
+    server.accounts = [
+      fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': ago(1), transactions: [txn('c1', 3, '-12.50', 'COFFEE'), txn('p1', 5, '-300.00', 'PAYMENT TO VISA')] }),
+      fakeAccount({ id: 'CARD', name: 'Visa', balance: '-432.10', 'balance-date': ago(1), transactions: [txn('p2', 4, '300.00', 'PAYMENT THANK YOU')] }),
+    ];
+    const { connection_id } = await connect(ctx, 'simplefin', server.setupToken('csv'));
+    await trackAccounts(ctx, connection_id, [
+      { remote_id: 'CHK', type: 'depository' },
+      { remote_id: 'CARD', type: 'credit' },
+    ]);
+    const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
+    const [header, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+    expect(header).toEqual([...TRANSACTION_COLUMNS]);
+    const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
+    expect(rows.map((r) => [col(r, 'name'), col(r, 'account_name'), col(r, 'institution_name'), col(r, 'source'), col(r, 'amount')]).sort()).toEqual([
+      ['COFFEE', 'Checking', 'My Bank', 'simplefin', '12.5'],
+      ['PAYMENT THANK YOU', 'Visa', 'My Bank', 'simplefin', '-300'],
+      ['PAYMENT TO VISA', 'Checking', 'My Bank', 'simplefin', '300'],
+    ]);
   });
 });
 
