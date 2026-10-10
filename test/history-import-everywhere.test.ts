@@ -314,10 +314,16 @@ describe('the download of my data', () => {
     expect(imported.find((r) => r.name === 'CORNER SHOP')!.yours).toBe('groceries');
     expect(imported.find((r) => r.name === 'OLD DEPOSIT')!.amount).toBe('-500');
 
-    // The bank sends the corner shop later: in the CSV once, as the bank's.
-    await storeBank([...BANK, bankTxn('b_mid', 'acc_chk', 49, 60, { name: 'CORNER SHOP #12' })]);
+    // The bank sends the corner shop later: in the CSV once, as the bank's,
+    // with the category set on the imported row.
+    const mid = bankTxn('b_mid', 'acc_chk', 49, 60, { name: 'CORNER SHOP #12' });
+    await storeBank([...BANK, mid]);
     const later = csvRows(await download());
-    expect(later.filter((r) => r.amount === '60').map((r) => [r.id, r.source])).toEqual([['b_mid', 'plaid']]);
+    expect(later.filter((r) => r.amount === '60').map((r) => [r.id, r.source, r.yours])).toEqual([['b_mid', 'plaid', 'groceries']]);
+    // The bank takes its rent back: the row kept as its duplicate is a row again.
+    await storeBank([...BANK.filter((t) => t.transaction_id !== 'b_rent'), mid]);
+    const after = csvRows(await download());
+    expect(after.filter((r) => r.amount === '1850').map((r) => [r.name, r.source])).toEqual([['Online Transfer to Landlord', 'import:ofx']]);
   });
 });
 

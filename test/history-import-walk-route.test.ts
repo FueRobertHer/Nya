@@ -31,6 +31,7 @@ const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem, removeItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { linkAccounts } = await import('@/lib/links');
+const { setAccountHidden } = await import('@/lib/hidden');
 const { getHistory, getAccountHistory, isBackfillDone, markBackfillDone } = await import('@/lib/history');
 const { writeCache, CacheKey } = await import('@/lib/cache');
 const { readDrawState, drawImportedHistory, markDrawStale, linksChanged, DrawUnreadableError } = await import('@/lib/history-import/extend');
@@ -391,6 +392,13 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     expect([valueOn(history, 100), valueOn(history, 200), valueOn(history, 320)]).toEqual([11855, 3855, 5705]);
     const state = (await readDrawState(ctx))!;
     expect(state.accounts).toEqual([expect.objectContaining({ account_id: 'acc_new', reach: daysAgo(331), gaps: [], why: null })]);
+    // Hidden under its earlier id, it is hidden under this one too: the
+    // chart's note never names it.
+    await writeCache(ctx, CacheKey.NetWorth, { institutions: [], netWorth: 0, history: [], hidden: [], as_of: new Date().toISOString() });
+    const note = async () => (await (await netWorth.GET(new Request('http://localhost/api/net-worth'))).json()).imported_history;
+    expect((await note())?.accounts).toEqual([expect.objectContaining({ account_id: 'acc_new' })]);
+    await setAccountHidden(ctx, 'acc_chk', 'depository', true);
+    expect(await note()).toBeUndefined();
   });
 
   test('the bank’s own rows reaching before the earliest point are walked as the bank’s: the chart and the API say where the imported ones begin to count', async () => {
