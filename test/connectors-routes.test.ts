@@ -351,19 +351,25 @@ describe('everywhere else, like any account', () => {
     expect([after.category, after.amount]).toEqual(['food', 12.5]);
   });
 
-  test('a payment between two of them is a transfer, left out of totals; the rest say they have no category', async () => {
+  test('a payment from checking to the card is a card payment, left out of totals; the rest say they have no category', async () => {
     server.accounts[0].transactions.push(txn('p1', 2, '-300.00', 'PAYMENT TO VISA'));
     server.accounts[1].transactions.push(txn('p2', 1, '300.00', 'PAYMENT THANK YOU'));
     await connectAndTrack();
     const rows = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions;
-    const code = (name: string) => rows.find((t: any) => t.name === name)?.transaction_code;
-    expect([code('PAYMENT TO VISA'), code('PAYMENT THANK YOU'), code('COFFEE')]).toEqual(['transfer', 'transfer', null]);
+    const shown = (name: string) => {
+      const t = rows.find((r: any) => r.name === name);
+      return [t?.category, t?.subcategory, t?.transaction_code, t?.paired ?? null];
+    };
+    // As a bank shows a card's payment, and marked as worked out from the amounts.
+    expect(shown('PAYMENT TO VISA')).toEqual(['loan payments', 'credit card payment', null, 'card']);
+    expect(shown('PAYMENT THANK YOU')).toEqual(['loan payments', 'credit card payment', null, 'card']);
+    expect(shown('COFFEE')).toEqual([null, null, null, null]);
     const { isTransfer, uncategorizedFromConnector, uncategorizedNote } = await import('@/lib/spending');
     const { planFlow } = await import('@/lib/fire/inputs');
     const payments = rows.filter((t: any) => t.name.startsWith('PAYMENT'));
     expect(payments.every(isTransfer)).toBe(true);
-    // Neither side is spending or income on the Plan either.
-    expect(payments.map(planFlow)).toEqual(['transfer', 'transfer']);
+    // Neither side is spending or income on the Plan either: a card's payment, as a bank's is.
+    expect(Object.fromEntries(payments.map((t: any) => [t.name, planFlow(t)]))).toEqual({ 'PAYMENT TO VISA': 'card-payment', 'PAYMENT THANK YOU': 'transfer' });
     // COFFEE, PAYROLL and DINER count, uncategorized: said under the totals.
     expect(uncategorizedFromConnector(rows)).toBe(3);
     expect(uncategorizedNote(3)).toContain('3 transactions from SimpleFIN have no category');

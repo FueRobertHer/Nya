@@ -26,10 +26,15 @@
 // checking or savings account (a card payment, a loan payment, a move
 // between cash accounts: never a purchase on a card matched with a deposit
 // elsewhere, which is how an unrelated charge and an unrelated deposit of the
-// same amount would look), both are shown as a transfer (transaction_code
-// 'transfer', lib/spending.ts): left out of every total, as a bank's
-// transfers are, and marked as worked out from the amounts on the Activity
-// tab, where a wrong pair is seen and given a category. Amounts alone can't
+// same amount would look), both are shown as a bank shows the same pair: a
+// payment into a card as Plaid's card payment (loan payments, credit card
+// payment), one into a loan as a loan payment, and any other as a transfer
+// (transaction_code 'transfer'). Each is left out of every total
+// (lib/spending.ts isTransfer), and a card's or a loan's payment from cash is
+// a bill the cash forecast counts when it repeats, as a bank's is
+// (lib/recurring.ts), while a transfer is neither. Each row is marked
+// (`paired`) as worked out from the amounts on the Activity tab, where a
+// wrong pair is seen and given a category. Amounts alone can't
 // tell every pair: a purchase paid from checking and an unrelated refund to a
 // card of the same amount, within the days, look like a card payment, and
 // pair. Worked out each time the rows are read, never stored, so a category
@@ -435,15 +440,29 @@ export const TRANSFER_DAYS = 4;
 
 const dayIndex = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
 
+/** What a pair between two connector accounts is, by the account the money
+ *  goes into: a card's payment, a loan's, or a transfer (see the header). */
+export type PairKind = 'card' | 'loan' | 'transfer';
+
+/** How each kind of pair is shown: as a bank shows the same (Plaid's
+ *  categories for a card's and a loan's payment, its code for a transfer). */
+const PAIRED: Readonly<Record<PairKind, { category: string | null; subcategory: string | null; transaction_code: string | null }>> = {
+  card: { category: 'loan payments', subcategory: 'credit card payment', transaction_code: null },
+  loan: { category: 'loan payments', subcategory: null, transaction_code: null },
+  transfer: { category: null, subcategory: null, transaction_code: 'transfer' },
+};
+
 /**
- * The ids of connector rows that are one side of an exact opposite pair
- * between two connector accounts (see the header): each row money out (a
- * positive amount) of a checking or savings account (`typeOf` gives each
- * account's type) is paired with the nearest unpaired row of the opposite
- * amount and the same currency on another such account, within TRANSFER_DAYS,
- * oldest first. Only rows nobody categorized take part. Pure.
+ * The connector rows that are one side of an exact opposite pair between two
+ * connector accounts (see the header), by id, each with what the pair is: each
+ * row money out (a positive amount) of a checking or savings account (`typeOf`
+ * gives each account's type) is paired with the nearest unpaired row of the
+ * opposite amount and the same currency on another such account, within
+ * TRANSFER_DAYS, oldest first, and both are a card's payment, a loan's or a
+ * transfer by the type of the account the money goes into. Only rows nobody
+ * categorized take part. Pure.
  */
-export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): Set<string> {
+export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): Map<string, PairKind> {
   const candidates = rows.filter((r) => isConnectorRow(r) && r.category === null && !r.transaction_code && r.amount !== 0);
   const ins = new Map<string, ManualTxn[]>();
   for (const r of candidates) if (r.amount < 0) ins.set(`${r.currency}|${-r.amount}`, [...(ins.get(`${r.currency}|${-r.amount}`) ?? []), r]);
@@ -451,7 +470,7 @@ export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyM
   const outs = candidates
     .filter((r) => r.amount > 0 && typeOf.get(r.account_id) === 'depository')
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1));
-  const paired = new Set<string>();
+  const paired = new Map<string, PairKind>();
   for (const o of outs) {
     let best: ManualTxn | null = null;
     let gap = Infinity;
@@ -465,15 +484,19 @@ export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyM
       }
     }
     if (best) {
-      paired.add(o.id);
-      paired.add(best.id);
+      const into = typeOf.get(best.account_id);
+      const kind: PairKind = into === 'credit' ? 'card' : into === 'loan' ? 'loan' : 'transfer';
+      paired.set(o.id, kind);
+      paired.set(best.id, kind);
     }
   }
   return paired;
 }
 
-/** One manual row as the Activity tab shows a transaction. */
-function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, transfer = false): Txn {
+/** One manual row as the Activity tab shows a transaction: one side of a
+ *  pair as the pair is shown (PAIRED), marked. */
+function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, pair?: PairKind): Txn {
+  const shown = pair ? PAIRED[pair] : null;
   return {
     transaction_id: row.id,
     date: row.date,
@@ -483,11 +506,13 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, 
     account_name: account.name,
     account_type: account.type,
     institution_name: institution,
-    category: row.category,
+    category: shown ? shown.category : row.category,
     iso_currency_code: row.currency,
     vendor_key: '',
     ...NO_PLAID_DETAIL,
-    transaction_code: transfer ? 'transfer' : (row.transaction_code ?? null),
+    subcategory: shown ? shown.subcategory : null,
+    transaction_code: shown ? shown.transaction_code : (row.transaction_code ?? null),
+    ...(pair ? { paired: pair } : {}),
     source: row.source,
     account_id: row.account_id,
     note: row.note,
@@ -541,7 +566,7 @@ export function manualRowsForDisplay(
         (a.row.created_at < b.row.created_at ? 1 : a.row.created_at > b.row.created_at ? -1 : 0) ||
         (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0)
     )
-    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual', transfers.has(row.id)));
+    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual', transfers.get(row.id)));
 }
 
 /** A display read's answer, or what it failed with. */

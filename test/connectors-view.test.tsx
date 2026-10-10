@@ -312,12 +312,15 @@ describe('SimpleFIN rows on the Activity tab', () => {
       ...over,
     }) as Txn;
 
-  test('a pair worked out as a transfer says so on its row; the uncategorized rows are counted under the totals', () => {
+  test('a pair worked out from the amounts says what it is on its row; the uncategorized rows are counted under the totals', () => {
+    const card = { category: 'loan payments', subcategory: 'credit card payment', paired: 'card' as const };
     const html = renderToStaticMarkup(
       <MonthBreakdown
         txns={[
-          row({ transaction_id: 'manual-txn:1', name: 'PAYMENT TO VISA', amount: 300, transaction_code: 'transfer' }),
-          row({ transaction_id: 'manual-txn:2', name: 'PAYMENT THANK YOU', amount: -300, transaction_code: 'transfer', account_id: 'manual_card', account_name: 'Visa' }),
+          row({ transaction_id: 'manual-txn:1', name: 'PAYMENT TO VISA', amount: 300, ...card }),
+          row({ transaction_id: 'manual-txn:2', name: 'PAYMENT THANK YOU', amount: -300, ...card, account_id: 'manual_card', account_name: 'Visa' }),
+          row({ transaction_id: 'manual-txn:4', name: 'TO SAVINGS', amount: 50, transaction_code: 'transfer', paired: 'transfer' }),
+          row({ transaction_id: 'manual-txn:5', name: 'FROM CHECKING', amount: -50, transaction_code: 'transfer', paired: 'transfer', account_id: 'manual_sav', account_name: 'Savings' }),
           row({ transaction_id: 'manual-txn:3', name: 'COFFEE', amount: 4 }),
         ]}
         notes={[]}
@@ -326,6 +329,7 @@ describe('SimpleFIN rows on the Activity tab', () => {
         onRename={noop}
       />
     );
+    expect(html.match(/Card payment between your accounts, worked out from the amounts: give it a category to count it/g)?.length).toBe(2);
     expect(html.match(/Transfer between your accounts, worked out from the amounts: give it a category to count it/g)?.length).toBe(2);
     expect(html).toContain('1 transaction from SimpleFIN has no category, so it counts as spending or income.');
   });

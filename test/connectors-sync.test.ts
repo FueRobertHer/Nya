@@ -924,9 +924,11 @@ describe('transfers between two SimpleFIN accounts', () => {
     ['sav', 'depository'],
     ['card', 'credit'],
     ['wallet', 'depository'],
+    ['mortgage', 'loan'],
+    ['broker', 'investment'],
   ]);
 
-  test('an exact opposite pair within a few days, out of a cash account, is a transfer; anything else is not', () => {
+  test('an exact opposite pair within a few days, out of a cash account, is a pair; anything else is not', () => {
     const pairs = connectorTransfers(
       [
       row('pay', 'chk', '2026-09-02', 2000),
@@ -953,12 +955,38 @@ describe('transfers between two SimpleFIN accounts', () => {
       ],
       types
     );
-    expect([...pairs].sort()).toEqual(['pay', 'thanks']);
+    expect([...pairs.keys()].sort()).toEqual(['pay', 'thanks']);
   });
 
   test('each side pairs once, with the nearest', () => {
     const pairs = connectorTransfers([row('out', 'chk', '2026-09-10', 100), row('far', 'sav', '2026-09-13', -100), row('near', 'card', '2026-09-11', -100)], types);
-    expect([...pairs].sort()).toEqual(['near', 'out']);
+    expect([...pairs.keys()].sort()).toEqual(['near', 'out']);
+  });
+
+  test('a pair is a card’s payment, a loan’s or a transfer, by the account the money goes into', () => {
+    const pairs = connectorTransfers(
+      [
+        row('to-card', 'chk', '2026-09-02', 300),
+        row('card-in', 'card', '2026-09-03', -300),
+        row('to-loan', 'chk', '2026-09-05', 1200),
+        row('loan-in', 'mortgage', '2026-09-05', -1200),
+        row('to-sav', 'chk', '2026-09-07', 500),
+        row('sav-in', 'sav', '2026-09-07', -500),
+        row('to-broker', 'chk', '2026-09-09', 250),
+        row('broker-in', 'broker', '2026-09-10', -250),
+      ],
+      types
+    );
+    expect(Object.fromEntries(pairs)).toEqual({
+      'to-card': 'card',
+      'card-in': 'card',
+      'to-loan': 'loan',
+      'loan-in': 'loan',
+      'to-sav': 'transfer',
+      'sav-in': 'transfer',
+      'to-broker': 'transfer',
+      'broker-in': 'transfer',
+    });
   });
 
   test('on the Activity tab, an unrelated charge and deposit both still count', async () => {
@@ -977,6 +1005,46 @@ describe('transfers between two SimpleFIN accounts', () => {
     const { txns } = await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '2000-01-01' });
     const counted = Object.fromEntries(txns.map((t) => [t.name, countsInTotals(t, 'USD')]));
     expect(counted).toEqual({ 'ZELLE FROM ALEX': true, RESTAURANT: true, 'PAYMENT TO VISA': false, 'PAYMENT THANK YOU': false });
+    // Shown as a bank shows a card's payment, and marked as worked out.
+    const shown = Object.fromEntries(txns.map((t) => [t.name, [t.category, t.subcategory, t.transaction_code, t.paired ?? null]]));
+    expect(shown['PAYMENT TO VISA']).toEqual(['loan payments', 'credit card payment', null, 'card']);
+    expect(shown['PAYMENT THANK YOU']).toEqual(['loan payments', 'credit card payment', null, 'card']);
+    expect(shown.RESTAURANT).toEqual([null, null, null, null]);
+  });
+});
+
+describe('a SimpleFIN card payment in the cash forecast', () => {
+  test('a monthly payment from checking to a SimpleFIN card is a bill the forecast counts, as a bank’s card payment is', async () => {
+    const days = [3, 33, 63];
+    await trackOn(
+      [
+        fakeAccount({ id: 'CHK', name: 'Checking', balance: '2000.00', 'balance-date': ago(1), transactions: days.map((d, i) => txn(`pay${i}`, d, '-300.00', 'PAYMENT TO VISA')) }),
+        fakeAccount({ id: 'CARD', name: 'Visa', balance: '-300.00', 'balance-date': ago(1), transactions: days.map((d, i) => txn(`thanks${i}`, d - 1, '300.00', 'PAYMENT THANK YOU')) }),
+      ],
+      [
+        ['CHK', 'depository'],
+        ['CARD', 'credit'],
+      ]
+    );
+    const { readManualTxnsForDisplay } = await import('@/lib/manual-txns');
+    const { detectRecurring } = await import('@/lib/recurring');
+    const { forecastEvents } = await import('@/lib/forecast');
+    const { txns } = await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '2000-01-01' });
+    const until = dayOf(NOW + 60 * DAY);
+    const billsOf = (rows: Parameters<typeof detectRecurring>[0]) => {
+      const series = detectRecurring(rows);
+      const bills = series.filter((s) => s.kind === 'bill').map((s) => ({ name: s.name, accountType: s.accountType, amount: s.amount, cadence: s.cadence, paysCard: s.paysCard, paysCardOf: s.paysCardOf }));
+      const { events } = forecastEvents({ series, planned: [], currency: 'USD', today: TODAY, until });
+      return { bills, events: events.map((e) => [e.name, e.amount, e.source]) };
+    };
+    const fromSimplefin = billsOf(txns);
+    expect(fromSimplefin.bills).toEqual([
+      { name: 'PAYMENT TO VISA', accountType: 'depository', amount: 300, cadence: 'monthly', paysCard: true, paysCardOf: { institution: 'My Bank', account: 'Visa' } },
+    ]);
+    expect(fromSimplefin.events).toContainEqual(['PAYMENT TO VISA', -300, 'bill']);
+    // The same payments as a bank's rows (Plaid's card payment) give the same.
+    const plaid = txns.map((t) => ({ ...t, source: undefined, paired: undefined, category: 'loan payments', subcategory: 'credit card payment', transaction_code: null }));
+    expect(billsOf(plaid)).toEqual(fromSimplefin);
   });
 });
 

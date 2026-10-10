@@ -23,6 +23,14 @@ import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNE
 import { sourceLabel } from "@/lib/manual-txn-input";
 import { isConnectorKind } from "@/lib/connectors/types";
 
+/** The mark on one side of a pair Nya worked out between two SimpleFIN
+ *  accounts (lib/manual-txns.ts connectorTransfers), by what it is. */
+const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
+  card: "Card payment between your accounts, worked out from the amounts: give it a category to count it",
+  loan: "Loan payment between your accounts, worked out from the amounts: give it a category to count it",
+  transfer: "Transfer between your accounts, worked out from the amounts: give it a category to count it",
+};
+
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
 const NO_GAPS: Incomplete[] = [];
@@ -62,6 +70,9 @@ export type Txn = {
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
+  // As in lib/transactions.ts: one side of a pair Nya worked out between two
+  // SimpleFIN accounts.
+  paired?: "card" | "loan" | "transfer";
 };
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
@@ -724,11 +735,7 @@ export default function MonthBreakdown({
                             {/* A pair Nya worked out between two SimpleFIN
                                 accounts (lib/manual-txns.ts): said, so a
                                 wrong one is seen and given a category. */}
-                            {t.source && isConnectorKind(t.source) && t.transaction_code === "transfer" && !t.category && (
-                              <div className="excluded-tag">
-                                Transfer between your accounts, worked out from the amounts: give it a category to count it
-                              </div>
-                            )}
+                            {t.paired && <div className="excluded-tag">{PAIRED_WORDS[t.paired]}</div>}
                             {t.excluded === null && (
                               <div className="excluded-tag">
                                 Couldn&apos;t read whether you excluded this
