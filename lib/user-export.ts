@@ -1614,13 +1614,6 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
   return [...byId.values()];
 }
 
-/**
- * transactions.csv: one row per transaction, newest first: every one stored
- * from the banks, and every one on a manual account (manualTransactionRow).
- * In the order the bank's rows are listed in the file (then by the event
- * time, which a manual row doesn't have, then the id), so two downloads of
- * the same data are the same file.
- */
 /** The accounts the books' rows are on (the manual accounts' own, and those
  *  SimpleFIN brought), as `manual_accounts` or `accounts` describes each. */
 function bookAccountsIn(doc: UserExport): Map<string, { name: string | null; institution_name: string | null; type: string | null }> {
@@ -1637,6 +1630,13 @@ export function bookAccountTypes(doc: UserExport): Map<string, string> {
   return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
 }
 
+/**
+ * transactions.csv: one row per transaction, newest first: every one stored
+ * from the banks, and every one on a manual account (manualTransactionRow).
+ * In the order the bank's rows are listed in the file (then by the event
+ * time, which a manual row doesn't have, then the id), so two downloads of
+ * the same data are the same file.
+ */
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
