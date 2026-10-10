@@ -1,5 +1,20 @@
 import { describe, expect, test } from 'bun:test';
-import { ofxDocument, statementsOf, ofxAmount, ofxAccountId, ofxDate, to1252, encode1252, NAME_MAX, MEMO_MAX, type OfxAccount, type OfxRow } from '@/lib/ofx-export';
+import {
+  ofxDocument,
+  statementsOf,
+  ofxAmount,
+  ofxAccountId,
+  ofxDate,
+  dayIn,
+  firstIdOf,
+  to1252,
+  encode1252,
+  BANK_ID,
+  NAME_MAX,
+  MEMO_MAX,
+  type OfxAccount,
+  type OfxRow,
+} from '@/lib/ofx-export';
 import { decodeFile } from '@/lib/import/text';
 import { parseOfx, ofxRecords } from '@/lib/import/ofx';
 import { readImport } from '@/lib/import/read';
@@ -66,6 +81,113 @@ function readBack(bytes: Uint8Array) {
   return { encoding: decoded.encoding, statements: file.statements.map((s) => ({ s, ...ofxRecords(s) })) };
 }
 
+/**
+ * The file against OFX 1.0.2's own rules for every aggregate it writes: the
+ * elements each may hold, in the order the spec lists them, the ones it
+ * requires, and each leaf's form and length. What a strict reader checks
+ * (ofxtools, for one, refuses a bank statement without BANKID). LEDGERBAL is
+ * required too, and missing only from the statements in the currencies
+ * `noBalanceIn` names: the one departure, said in a note (statementsOf).
+ */
+const SPEC: Record<string, { order: string[]; required: string[] }> = {
+  OFX: { order: ['SIGNONMSGSRSV1', 'BANKMSGSRSV1', 'CREDITCARDMSGSRSV1'], required: ['SIGNONMSGSRSV1'] },
+  SIGNONMSGSRSV1: { order: ['SONRS'], required: ['SONRS'] },
+  SONRS: { order: ['STATUS', 'DTSERVER', 'LANGUAGE'], required: ['STATUS', 'DTSERVER', 'LANGUAGE'] },
+  STATUS: { order: ['CODE', 'SEVERITY'], required: ['CODE', 'SEVERITY'] },
+  BANKMSGSRSV1: { order: ['STMTTRNRS'], required: ['STMTTRNRS'] },
+  STMTTRNRS: { order: ['TRNUID', 'STATUS', 'STMTRS'], required: ['TRNUID', 'STATUS', 'STMTRS'] },
+  STMTRS: { order: ['CURDEF', 'BANKACCTFROM', 'BANKTRANLIST', 'LEDGERBAL'], required: ['CURDEF', 'BANKACCTFROM', 'LEDGERBAL'] },
+  BANKACCTFROM: { order: ['BANKID', 'ACCTID', 'ACCTTYPE'], required: ['BANKID', 'ACCTID', 'ACCTTYPE'] },
+  CREDITCARDMSGSRSV1: { order: ['CCSTMTTRNRS'], required: ['CCSTMTTRNRS'] },
+  CCSTMTTRNRS: { order: ['TRNUID', 'STATUS', 'CCSTMTRS'], required: ['TRNUID', 'STATUS', 'CCSTMTRS'] },
+  CCSTMTRS: { order: ['CURDEF', 'CCACCTFROM', 'BANKTRANLIST', 'LEDGERBAL'], required: ['CURDEF', 'CCACCTFROM', 'LEDGERBAL'] },
+  CCACCTFROM: { order: ['ACCTID'], required: ['ACCTID'] },
+  BANKTRANLIST: { order: ['DTSTART', 'DTEND', 'STMTTRN'], required: ['DTSTART', 'DTEND'] },
+  STMTTRN: { order: ['TRNTYPE', 'DTPOSTED', 'DTUSER', 'TRNAMT', 'FITID', 'CHECKNUM', 'NAME', 'MEMO'], required: ['TRNTYPE', 'DTPOSTED', 'TRNAMT', 'FITID'] },
+  LEDGERBAL: { order: ['BALAMT', 'DTASOF'], required: ['BALAMT', 'DTASOF'] },
+};
+const DATE = /^\d{8}(\d{6}(\.\d{3})?)?(\[[+-]?\d+(\.\d+)?(:\w+)?\])?$/;
+const AMOUNT = /^-?\d+(\.\d+)?$/;
+const LEAVES: Record<string, (v: string) => boolean> = {
+  CODE: (v) => /^\d{1,6}$/.test(v),
+  SEVERITY: (v) => ['INFO', 'WARN', 'ERROR'].includes(v),
+  DTSERVER: (v) => DATE.test(v),
+  LANGUAGE: (v) => /^[A-Z]{3}$/.test(v),
+  TRNUID: (v) => v.length <= 36,
+  CURDEF: (v) => /^[A-Z]{3}$/.test(v),
+  BANKID: (v) => v.length <= 9,
+  ACCTID: (v) => v.length <= 22,
+  ACCTTYPE: (v) => ['CHECKING', 'SAVINGS', 'MONEYMRKT', 'CREDITLINE'].includes(v),
+  DTSTART: (v) => DATE.test(v),
+  DTEND: (v) => DATE.test(v),
+  TRNTYPE: (v) =>
+    ['CREDIT', 'DEBIT', 'INT', 'DIV', 'FEE', 'SRVCHG', 'DEP', 'ATM', 'POS', 'XFER', 'CHECK', 'PAYMENT', 'CASH', 'DIRECTDEP', 'DIRECTDEBIT', 'REPEATPMT', 'OTHER'].includes(v),
+  DTPOSTED: (v) => DATE.test(v),
+  DTUSER: (v) => DATE.test(v),
+  TRNAMT: (v) => AMOUNT.test(v),
+  FITID: (v) => v.length <= 255,
+  CHECKNUM: (v) => v.length <= 12,
+  NAME: (v) => v.length <= NAME_MAX,
+  MEMO: (v) => v.length <= MEMO_MAX,
+  BALAMT: (v) => AMOUNT.test(v),
+  DTASOF: (v) => DATE.test(v),
+};
+
+/** Every way `text` breaks the rules above, in words: none for a good file. */
+function specProblems(text: string, opts: { noBalanceIn?: string[] } = {}): string[] {
+  type Node = { name: string; value: string | null; children: Node[] };
+  const problems: string[] = [];
+  const root: Node = { name: '', value: null, children: [] };
+  const stack = [root];
+  for (const line of text.slice(text.indexOf('<OFX>')).split('\r\n').filter(Boolean)) {
+    const end = /^<\/([A-Z0-9.]+)>$/.exec(line);
+    if (end) {
+      if (stack.pop()!.name !== end[1]) problems.push(`</${end[1]}> closes something else`);
+      continue;
+    }
+    const open = /^<([A-Z0-9.]+)>(.*)$/.exec(line);
+    if (!open) {
+      problems.push(`not an element: ${line}`);
+      continue;
+    }
+    const node: Node = { name: open[1], value: open[2] === '' ? null : open[2], children: [] };
+    stack.at(-1)!.children.push(node);
+    if (node.value === null) stack.push(node);
+  }
+  if (stack.length !== 1) problems.push('an aggregate is never closed');
+  const check = (node: Node) => {
+    if (node.value !== null) {
+      // A limit is on the text, not on how it is escaped; nothing is left
+      // unescaped.
+      if (/[<>]|&(?!amp;|lt;|gt;)/.test(node.value)) problems.push(`${node.name} isn’t escaped: ${node.value}`);
+      const value = node.value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const ok = LEAVES[node.name];
+      if (!ok) problems.push(`${node.name} isn’t an element written here`);
+      else if (!ok(value)) problems.push(`${node.name} can’t be ${value}`);
+      return;
+    }
+    const spec = SPEC[node.name];
+    if (!spec) return void problems.push(`${node.name} isn’t an aggregate written here`);
+    let at = 0;
+    for (const child of node.children) {
+      const i = spec.order.indexOf(child.name);
+      if (i < 0) problems.push(`${child.name} can’t be in ${node.name}`);
+      else if (i < at) problems.push(`${child.name} is out of order in ${node.name}`);
+      else at = i;
+      check(child);
+    }
+    for (const name of spec.required) {
+      if (node.children.some((c) => c.name === name)) continue;
+      const currency = node.children.find((c) => c.name === 'CURDEF')?.value ?? '';
+      if (name === 'LEDGERBAL' && opts.noBalanceIn?.includes(currency)) continue;
+      problems.push(`${node.name} has no ${name}`);
+    }
+  };
+  if (root.children.length !== 1 || root.children[0].name !== 'OFX') problems.push('the file isn’t one OFX element');
+  root.children.forEach(check);
+  return problems;
+}
+
 describe('the file', () => {
   test('OFX 1.0.2 in SGML: the headers banks write, one tag a line, CRLF, a bank statement for a bank account', () => {
     const text = textOf(checking([row({})]));
@@ -74,21 +196,51 @@ describe('the file', () => {
     );
     expect(text).toContain('<SONRS>\r\n<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n<DTSERVER>20261010143205.123[0:GMT]\r\n<LANGUAGE>ENG\r\n</SONRS>');
     expect(text).toContain(
-      `<BANKMSGSRSV1>\r\n<STMTTRNRS>\r\n<TRNUID>1\r\n<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n<STMTRS>\r\n<CURDEF>USD\r\n<BANKACCTFROM>\r\n<ACCTID>${ofxAccountId('acc_chk', '1111')}\r\n<ACCTTYPE>CHECKING\r\n</BANKACCTFROM>\r\n`
+      `<BANKMSGSRSV1>\r\n<STMTTRNRS>\r\n<TRNUID>1\r\n<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n<STMTRS>\r\n<CURDEF>USD\r\n<BANKACCTFROM>\r\n<BANKID>NYA\r\n<ACCTID>${ofxAccountId('acc_chk', '1111')}\r\n<ACCTTYPE>CHECKING\r\n</BANKACCTFROM>\r\n`
     );
     expect(text).toContain(
-      '<STMTTRN>\r\n<TRNTYPE>DEBIT\r\n<DTPOSTED>20260901120000\r\n<TRNAMT>-4.50\r\n<FITID>txn_1\r\n<NAME>Blue Bottle\r\n</STMTTRN>\r\n'
+      '<STMTTRN>\r\n<TRNTYPE>DEBIT\r\n<DTPOSTED>20260901105900\r\n<TRNAMT>-4.50\r\n<FITID>txn_1\r\n<NAME>Blue Bottle\r\n</STMTTRN>\r\n'
     );
-    expect(text).toContain('<LEDGERBAL>\r\n<BALAMT>1550.25\r\n<DTASOF>20261009120000\r\n</LEDGERBAL>\r\n</STMTRS>\r\n</STMTTRNRS>\r\n</BANKMSGSRSV1>\r\n</OFX>\r\n');
+    expect(text).toContain('<LEDGERBAL>\r\n<BALAMT>1550.25\r\n<DTASOF>20261009105900\r\n</LEDGERBAL>\r\n</STMTRS>\r\n</STMTTRNRS>\r\n</BANKMSGSRSV1>\r\n</OFX>\r\n');
     expect(text).toEndWith('</OFX>\r\n');
-    // Every line ends CRLF; no routing number is invented.
+    // Every line ends CRLF.
     expect(text.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/);
-    expect(text).not.toContain('BANKID');
     // Aggregates are closed, leaf elements are not.
     for (const tag of ['OFX', 'SIGNONMSGSRSV1', 'SONRS', 'STATUS', 'BANKMSGSRSV1', 'STMTTRNRS', 'STMTRS', 'BANKACCTFROM', 'BANKTRANLIST', 'STMTTRN', 'LEDGERBAL']) {
       expect([tag, text.split(`<${tag}>`).length]).toEqual([tag, text.split(`</${tag}>`).length]);
     }
     expect(text).not.toContain('</TRNAMT>');
+  });
+
+  test('every aggregate holds what OFX 1.0.2 requires of it, in its order, whatever the account and its rows', () => {
+    const rows = [
+      row({ id: 'a1', user_date: '2026-08-31', description: 'BLUE BOTTLE #12' }),
+      row({ id: 'a2', date: '2026-09-02', amount: -2450, name: 'ACME PAYROLL' }),
+      row({ id: 'a3', date: '2026-09-03', amount: 125, name: 'Landlord', check_number: '1042' }),
+      row({ id: 'a4', date: '2026-09-04', amount: 89.99, name: 'AT&T <Wireless> Grocery Outlet of Springfield', excluded: true, note: 'n'.repeat(300) }),
+      row({ id: 'a5', date: '2026-09-05', amount: 60, transaction_code: 'atm', name: 'Café Größe €' }),
+      row({ id: 'e1', date: '2026-09-06', amount: 15, currency: 'EUR' }),
+    ];
+    // The euro statement has no balance: the account's is in dollars.
+    for (const [what, account, noBalanceIn] of [
+      ['a bank account', checking(rows), ['EUR']],
+      ['a savings account, empty', checking([], { subtype: 'savings' }), []],
+      ['a card', checking(rows, { kind: 'creditcard', subtype: 'credit card', mask: '2222' }), ['EUR']],
+      ['a card, empty', checking([], { kind: 'creditcard' }), []],
+      ['a bank account with no balance known', checking(rows, { balance: null }), ['USD', 'EUR']],
+      ['a card with no balance known', checking(rows, { kind: 'creditcard', balance: null }), ['USD', 'EUR']],
+    ] as const) {
+      expect([what, specProblems(textOf(account), { noBalanceIn: [...noBalanceIn] })]).toEqual([what, []]);
+    }
+    // And the checker isn't one that passes anything.
+    expect(specProblems(textOf(checking([row({})])).replace(/<BANKID>NYA\r\n/, ''))).toEqual(['BANKACCTFROM has no BANKID']);
+    expect(specProblems(textOf(checking([row({})], { balance: null })))).toEqual(['STMTRS has no LEDGERBAL']);
+  });
+
+  test('BANKID is plainly Nya’s, not a routing number; a card statement has none', () => {
+    expect(BANK_ID).toBe('NYA');
+    expect(textOf(checking([row({})])).match(/<BANKID>([^\r]*)/g)).toEqual(['<BANKID>NYA']);
+    expect(textOf(checking([row({})], { kind: 'creditcard' }))).not.toContain('BANKID');
   });
 
   test('a card is a card statement, with no account type', () => {
@@ -98,6 +250,29 @@ describe('the file', () => {
     expect(text).not.toContain('BANKMSGSRSV1');
     expect(text).not.toContain('ACCTTYPE');
     expect(text).toEndWith('</CCSTMTRS>\r\n</CCSTMTTRNRS>\r\n</CREDITCARDMSGSRSV1>\r\n</OFX>\r\n');
+  });
+
+  test('the account’s id comes from the id Nya first knew it by, so a re-link keeps it', () => {
+    const link = (to: string) => ({ to, linked_at: '2026-09-15T00:00:00.000Z', evidence: {} });
+    // Never linked: its own.
+    expect(firstIdOf('acc_c', new Map())).toBe('acc_c');
+    // Reconnected twice: where the chain starts, from either end of it.
+    const chain = new Map([
+      ['acc_a', link('acc_b')],
+      ['acc_b', link('acc_c')],
+    ]);
+    expect(firstIdOf('acc_c', chain)).toBe('acc_a');
+    // Two earlier accounts linked into one: the first by id, always.
+    const merged = new Map([
+      ['acc_z', link('acc_c')],
+      ['acc_m', link('acc_c')],
+    ]);
+    expect(firstIdOf('acc_c', merged)).toBe('acc_m');
+    // A link of another account's changes nothing.
+    expect(firstIdOf('acc_c', new Map([['acc_x', link('acc_y')]]))).toBe('acc_c');
+    // In the file: the ACCTID the first id's files had.
+    const text = textOf(checking([], { account_id: 'acc_c', first_id: 'acc_a' }));
+    expect(text).toContain(`<ACCTID>${ofxAccountId('acc_a', '1111')}\r\n`);
   });
 
   test('the account’s id: stable, short enough for OFX, ending in its last digits, never more of its number', () => {
@@ -116,13 +291,26 @@ describe('the file', () => {
     for (const subtype of ['checking', 'cd', 'cash management', null]) expect(textOf(checking([], { subtype }))).toContain('<ACCTTYPE>CHECKING');
   });
 
-  test('dates are the bank’s days at noon, DTUSER only where it differs, and the list spans the rows', () => {
+  test('dates are the bank’s days at 10:59, DTUSER only where it differs, and the list spans the rows', () => {
     const text = textOf(checking([row({ id: 'b', date: '2026-09-05', user_date: '2026-09-03' }), row({ id: 'a', date: '2026-08-31', user_date: '2026-08-31' })]));
-    expect(text).toContain('<BANKTRANLIST>\r\n<DTSTART>20260831120000\r\n<DTEND>20260905120000\r\n');
-    expect(text).toContain('<DTPOSTED>20260905120000\r\n<DTUSER>20260903120000\r\n');
+    expect(text).toContain('<BANKTRANLIST>\r\n<DTSTART>20260831105900\r\n<DTEND>20260905105900\r\n');
+    expect(text).toContain('<DTPOSTED>20260905105900\r\n<DTUSER>20260903105900\r\n');
     expect(text.indexOf('<FITID>a')).toBeLessThan(text.indexOf('<FITID>b'));
     expect(text.match(/<DTUSER>/g)).toHaveLength(1);
-    expect(ofxDate('2026-01-02')).toBe('20260102120000');
+    expect(ofxDate('2026-01-02')).toBe('20260102105900');
+  });
+
+  test('10:59 GMT, as OFX reads a time without a zone, is the same day in every time zone from UTC-10 to UTC+13', () => {
+    const at = new Date(Date.UTC(2026, 0, 2, 10, 59));
+    for (const zone of ['Pacific/Honolulu', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'Asia/Kolkata', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland', 'Pacific/Fiji', 'Pacific/Tongatapu', 'Pacific/Apia']) {
+      expect([zone, dayIn(at.toISOString(), zone)]).toEqual([zone, '2026-01-02']);
+    }
+    // Where it would move a day, as the header says.
+    expect(dayIn(at.toISOString(), 'Pacific/Pago_Pago')).toBe('2026-01-01');
+    expect(dayIn(at.toISOString(), 'Pacific/Kiritimati')).toBe('2026-01-03');
+    // Noon would have moved New Zealand's (UTC+13 in its summer) and Fiji's (UTC+12).
+    const noon = new Date(Date.UTC(2026, 0, 2, 12)).toISOString();
+    expect([dayIn(noon, 'Pacific/Auckland'), dayIn(noon, 'Pacific/Fiji')]).toEqual(['2026-01-03', '2026-01-03']);
   });
 
   test('the bank’s own transaction codes, a check number, and otherwise the sign', () => {
@@ -149,8 +337,8 @@ describe('the file', () => {
 describe('amounts and signs', () => {
   test('OFX’s sign is the holder’s: money in is positive, on a bank account and on a card', () => {
     const bank = textOf(checking([row({ id: 'out', amount: 4.5 }), row({ id: 'in', amount: -1200 })]));
-    expect(bank).toContain('<TRNTYPE>DEBIT\r\n<DTPOSTED>20260901120000\r\n<TRNAMT>-4.50\r\n<FITID>out');
-    expect(bank).toContain('<TRNTYPE>CREDIT\r\n<DTPOSTED>20260901120000\r\n<TRNAMT>1200.00\r\n<FITID>in');
+    expect(bank).toContain('<TRNTYPE>DEBIT\r\n<DTPOSTED>20260901105900\r\n<TRNAMT>-4.50\r\n<FITID>out');
+    expect(bank).toContain('<TRNTYPE>CREDIT\r\n<DTPOSTED>20260901105900\r\n<TRNAMT>1200.00\r\n<FITID>in');
     const card = textOf(checking([row({ id: 'buy', amount: 30 }), row({ id: 'pay', amount: -500 })], { kind: 'creditcard' }));
     expect(card).toContain('<TRNAMT>-30.00\r\n<FITID>buy');
     expect(card).toContain('<TRNAMT>500.00\r\n<FITID>pay');
@@ -198,13 +386,13 @@ describe('text', () => {
     );
   });
 
-  test(`a name over ${NAME_MAX} characters is cut there, and given whole at the start of its memo, before the bank’s words and the note`, () => {
+  test(`a name over ${NAME_MAX} characters is cut there, and given whole in its memo, after the excluded mark and before the bank’s words and the note`, () => {
     const long = 'Grocery Outlet of Springfield Main Street';
     const text = textOf(checking([row({ name: long, description: 'GROCERY OUTLET #12 SPRINGFIELD', note: 'for the party', excluded: true })]));
     expect(text).toContain(`<NAME>${long.slice(0, NAME_MAX).trimEnd()}\r\n`);
     expect(text).toContain(`<MEMO>Excluded from budgets and reports in Nya; ${long}; GROCERY OUTLET #12 SPRINGFIELD; for the party\r\n`);
     expect(bytesOf(checking([row({ name: long })])).notes).toContain(
-      '1 payee’s name is longer than OFX’s 32 characters, so each is cut there and given whole at the start of its memo.'
+      '1 payee’s name is longer than OFX’s 32 characters, so each is cut there and given whole in its memo.'
     );
   });
 

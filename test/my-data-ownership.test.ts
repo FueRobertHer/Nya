@@ -23,7 +23,8 @@ const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveManualAccount } = await import('@/lib/manual');
 const { manualTxnStore } = await import('@/lib/manual-txns');
-const { setExcluded } = await import('@/lib/txn-annotations');
+const { setExcluded, carriedAnnotationStore } = await import('@/lib/txn-annotations');
+const { ofxAccountId } = await import('@/lib/ofx-export');
 const { ownerContainer } = await import('@/lib/owners');
 const { DOWNLOADS_PER_WINDOW, LOGIN_MAX_FAILURES } = await import('@/lib/rate-limit');
 const { decryptWithPassphrase, parseHeader } = await import('@/lib/age/age');
@@ -262,7 +263,7 @@ describe('one account as an OFX statement', () => {
     expect(read.text).toContain('<NAME>AT&amp;T &lt;WIRELESS&gt;');
     // Excluded from budgets and reports: still listed, and marked.
     expect(by.get('t_trip')!.note).toBe('Excluded from budgets and reports in Nya');
-    expect(read.text).toContain('<DTPOSTED>20260901120000\r\n<DTUSER>20260831120000\r\n<TRNAMT>-4.50\r\n<FITID>t_coffee');
+    expect(read.text).toContain('<DTPOSTED>20260901105900\r\n<DTUSER>20260831105900\r\n<TRNAMT>-4.50\r\n<FITID>t_coffee');
     expect(notesOf(res.headers)).toEqual([
       '1 pending transaction is left out: the bank gives a transaction a new id when it posts, so an app that imported it now would count it twice. Download again once it has posted.',
     ]);
@@ -364,6 +365,90 @@ describe('one account as an OFX statement', () => {
     expect(notesOf(res.headers)[0]).toStartWith('This account’s transactions could not be read, so the statement has none of them.');
     expect(statementsOf(res.bytes).statements.flatMap((x) => x.records)).toEqual([]);
   });
+  // The balance's day, where the person is (lib/ofx-export.ts header).
+  const ledgerOf = async (body: Record<string, unknown>) => {
+    await fake.del(ctxKey('download-count')); // several downloads: the hour's limit is not what this is about
+    const res = await download({ format: 'ofx', ...body });
+    expect(res.status).toBe(200);
+    return statementsOf(res.bytes).statements[0].s.ledger;
+  };
+
+  test('the balance’s day is the person’s own: when Nya recorded it, in the time zone their device sent', async () => {
+    // Recorded at 02:30 UTC on the 8th: the evening of the 7th in Los Angeles.
+    await fake.hset(ctxKey('snapshot:taken'), { '2026-10-08': '2026-10-08T02:30:00.000Z' });
+    expect(await ledgerOf({ account_id: 'acc_chk', time_zone: 'America/Los_Angeles' })).toEqual({ amount: 1550.25, as_of: '2026-10-07' });
+    expect(await ledgerOf({ account_id: 'acc_chk', time_zone: 'Asia/Tokyo' })).toEqual({ amount: 1550.25, as_of: '2026-10-08' });
+    // Without a time zone, or with one the server doesn't know: the UTC day.
+    expect(await ledgerOf({ account_id: 'acc_chk' })).toEqual({ amount: 1550.25, as_of: '2026-10-08' });
+    expect(await ledgerOf({ account_id: 'acc_chk', time_zone: 'Mars/Olympus_Mons' })).toEqual({ amount: 1550.25, as_of: '2026-10-08' });
+    // A card's the same way, and a manual account's from when its balance
+    // was set: 8 pm on the 1st in Los Angeles is the 2nd in UTC.
+    expect(await ledgerOf({ account_id: 'acc_card', time_zone: 'America/Los_Angeles' })).toEqual({ amount: -500, as_of: '2026-10-07' });
+    await saveManualAccount(ctx, { ...MANUAL_CASH, updated_at: '2026-10-02T03:00:00.000Z' } as any);
+    expect(await ledgerOf({ account_id: 'manual_cash', time_zone: 'America/Los_Angeles' })).toEqual({ amount: 200, as_of: '2026-10-01' });
+    expect(await ledgerOf({ account_id: 'manual_cash' })).toEqual({ amount: 200, as_of: '2026-10-02' });
+  });
+
+  test('the file is named for the person’s own day too', async () => {
+    const zone = 'Pacific/Kiritimati';
+    const day = () => new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const before = day();
+    const res = await download({ format: 'ofx', account_id: 'acc_chk', time_zone: zone });
+    const name = /filename="nya-chase-checking-1111-(\d{4}-\d{2}-\d{2})\.ofx"/.exec(res.headers.get('content-disposition') ?? '')![1];
+    expect([before, day()]).toContain(name);
+  });
+
+  test('a balance measured later on a partial day, or a moment kept for another day: the UTC day it is kept under', async () => {
+    await fake.hset(ctxKey('snapshot:taken'), { '2026-10-08': '2026-10-08T02:30:00.000Z' });
+    // Measured again later that day, while another bank failed: the moment
+    // above is that day's snapshot's, not this balance's.
+    await fake.hset(ctxKey('history:accounts:partial'), { '2026-10-08': await encrypt(JSON.stringify({ acc_chk: 1600 })) });
+    expect(await ledgerOf({ account_id: 'acc_chk', time_zone: 'America/Los_Angeles' })).toEqual({ amount: 1600, as_of: '2026-10-08' });
+    // A restored copy keeps this deployment's own moments: one from another
+    // day isn't the balance's.
+    await fake.del(ctxKey('history:accounts:partial'));
+    await fake.hset(ctxKey('snapshot:taken'), { '2026-10-08': '2026-10-09T01:00:00.000Z' });
+    expect(await ledgerOf({ account_id: 'acc_chk', time_zone: 'America/Los_Angeles' })).toEqual({ amount: 1550.25, as_of: '2026-10-08' });
+  });
+
+  // A bank reconnected: the account's earlier id linked to the one it has now.
+  const linkEarlier = async () =>
+    fake.hset(ctxKey('account-links'), { acc_old: await encrypt(JSON.stringify({ to: 'acc_chk', linked_at: '2026-09-15T00:00:00.000Z', evidence: {} })) });
+
+  test('after a re-link: the ACCTID the earlier account’s files had, and its exclusions marked, the account’s own record first', async () => {
+    let read = statementsOf((await download({ format: 'ofx', account_id: 'acc_chk' })).bytes);
+    expect(read.statements[0].s.account.account_id).toBe(ofxAccountId('acc_chk', '1111'));
+    await linkEarlier();
+    // AT&T, excluded under the earlier account, carried by its content.
+    await carriedAnnotationStore.set(ctx, 'acc_old', { version: 1, rows: { 'acc_old|2026-09-05|8999|at&t <wireless>': { excluded: true } } });
+    const res = await download({ format: 'ofx', account_id: 'acc_chk' });
+    expect(res.headers.get('x-nya-export-incomplete')).toBeNull();
+    read = statementsOf(res.bytes);
+    expect(read.statements[0].s.account.account_id).toBe(ofxAccountId('acc_old', '1111'));
+    let by = new Map(read.statements[0].records.map((r) => [r.source_id, r]));
+    expect(by.get('t_amp')!.note).toBe('Excluded from budgets and reports in Nya');
+    expect(by.get('t_coffee')!.note).not.toContain('Excluded');
+    // Said again about the transaction itself, the account's own record wins.
+    await setExcluded(ctx, 't_amp', false);
+    read = statementsOf((await download({ format: 'ofx', account_id: 'acc_chk' })).bytes);
+    by = new Map(read.statements[0].records.map((r) => [r.source_id, r]));
+    expect(by.get('t_amp')!.note ?? '').not.toContain('Excluded');
+  });
+
+  test('exclusions carried from an earlier account that can’t be read: said, and the file called incomplete', async () => {
+    await linkEarlier();
+    await fake.hset(ctxKey('carried-annotations'), { acc_old: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const res = await download({ format: 'ofx', account_id: 'acc_chk' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-nya-export-incomplete')).toBe('carried-annotations');
+    expect(notesOf(res.headers)).toContain(
+      'Exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they apply to aren’t marked as excluded. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+    );
+    expect(res.said).toEqual(['Data download: ofx, incomplete: carried-annotations']);
+    // The card was never linked to it: nothing of its is missing.
+    const card = await download({ format: 'ofx', account_id: 'acc_card' });
+    expect(card.headers.get('x-nya-export-incomplete')).toBeNull();
+  });
 });
 
 describe('a passphrase', () => {
@@ -462,9 +547,11 @@ describe('a passphrase', () => {
 });
 
 describe('every field is checked', () => {
-  test('format, account_id with OFX and only with OFX, and the passphrase, before anything is counted', async () => {
+  test('format, account_id and time_zone with OFX and only with OFX, and the passphrase, before anything is counted', async () => {
     for (const body of [
       { format: 'ofx' },
+      { format: 'ofx', account_id: 'acc_chk', time_zone: 5 },
+      { format: 'json', time_zone: 'Europe/Paris' },
       { format: 'ofx', account_id: '' },
       { format: 'ofx', account_id: 'a b' },
       { format: 'ofx', account_id: 'x'.repeat(201) },

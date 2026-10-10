@@ -6,7 +6,7 @@ mock.module('@clerk/nextjs', () => ({
   useReverification: (fetcher: unknown) => fetcher,
 }));
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { DownloadMyDataView, requestFile, formatsFor, localFilename } = await import('@/components/DownloadMyData');
+const { DownloadMyDataView, requestFile, formatsFor, localFilename, viewerTimeZone } = await import('@/components/DownloadMyData');
 const { ofxAccounts, accountLabel, chosenAccount, passphraseHint } = await import('@/components/DownloadOptions');
 const { localDate } = await import('@/lib/local-date');
 
@@ -135,7 +135,7 @@ describe('the request', () => {
     globalThis.fetch = realFetch;
   });
 
-  test('carries the account with OFX, and the passphrase when there is one; the file is named for both', async () => {
+  test('carries the account and the viewer’s time zone with OFX, and the passphrase when there is one; the file is named for both', async () => {
     const sent: unknown[] = [];
     const bytes = new TextEncoder().encode('OFXHEADER:100');
     globalThis.fetch = (async (_: unknown, init: RequestInit) => {
@@ -146,8 +146,10 @@ describe('the request', () => {
     expect(out).toMatchObject({ ok: true, filename: `nya-chase-checking-1111-${localDate()}.ofx.age`, protected: true });
     await requestFile({ format: 'json', account: ACCOUNTS[2], passphrase: null }, null, () => {});
     await requestFile('balances-csv', null, () => {});
+    const zone = viewerTimeZone();
+    expect(zone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(sent).toEqual([
-      { format: 'ofx', account_id: 'acc_chk', passphrase: 'piano orbit lantern harvest', password: 'hunter2' },
+      { format: 'ofx', account_id: 'acc_chk', ...(zone ? { time_zone: zone } : {}), passphrase: 'piano orbit lantern harvest', password: 'hunter2' },
       { format: 'json' },
       { format: 'balances-csv' },
     ]);

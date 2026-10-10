@@ -137,6 +137,16 @@ export function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** The viewer's time zone, for the day an OFX statement's balance is as of
+ *  (app/api/my-data), or null when the browser doesn't say. */
+export function viewerTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * One request for the file, read to its end and checked against the size the
  * server announced. Never a Response: Clerk's hook reads a Response as JSON,
@@ -146,6 +156,7 @@ export function formatBytes(n: number): string {
 export async function requestFile(request: Format | DownloadRequest, password: string | null, setPhase: (p: Phase) => void): Promise<Outcome> {
   const { format, account = null, passphrase = null } = typeof request === 'string' ? { format: request } : request;
   setPhase({ kind: 'preparing' });
+  const zone = format === 'ofx' ? viewerTimeZone() : null;
   let res: Response;
   try {
     res = await fetch('/api/my-data', {
@@ -153,7 +164,7 @@ export async function requestFile(request: Format | DownloadRequest, password: s
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         format,
-        ...(format === 'ofx' && account ? { account_id: account.account_id } : {}),
+        ...(format === 'ofx' && account ? { account_id: account.account_id, ...(zone ? { time_zone: zone } : {}) } : {}),
         ...(passphrase ? { passphrase } : {}),
         ...(password === null ? {} : { password }),
       }),

@@ -16,6 +16,8 @@ import {
 } from '@/lib/user-export';
 import { ACCOUNT_ID, DOWNLOAD_FORMATS, isDownloadFormat, passphraseProblem, type DownloadFormat } from '@/lib/download-options';
 import { ofxFile } from '@/lib/ofx-export';
+import { snapshotTakenAt } from '@/lib/history';
+import { timeZoneOf } from '@/lib/access-log';
 import { protectFile } from '@/lib/protected-download';
 import { sendAccessNotice } from '@/lib/download-notice';
 import { background } from '@/lib/background';
@@ -25,7 +27,8 @@ import { background } from '@/lib/background';
 // never written anywhere as plaintext on the way.
 //
 // POST { format: "json" | "transactions-csv" | "balances-csv" | "ofx",
-//        account_id? (with "ofx", and only then), passphrase?, password? }.
+//        account_id? and time_zone? (with "ofx", and only then),
+//        passphrase?, password? }.
 // POST, not GET: the request carries a password in the shared-password mode,
 // and a passphrase when the file is to be protected, and a download link must
 // not be something a page can make a browser fetch.
@@ -34,7 +37,10 @@ import { background } from '@/lib/background';
 // card of the person's own, found in what was read for the download; any
 // other id is a 404, and a loan or an investment account a 400 saying why.
 // Both come after the download is counted, since everything was read to
-// know: the card only offers the person's own bank accounts and cards.
+// know: the card only offers the person's own bank accounts and cards. The
+// device's time zone (an IANA name, such as "America/New_York") makes the
+// balance's day the person's own; one this server doesn't know, or none,
+// leaves it the UTC day.
 //
 // A PASSPHRASE protects the file, any format, in the age format
 // (lib/protected-download.ts), encrypted as it streams. It is used for that
@@ -87,13 +93,13 @@ import { background } from '@/lib/background';
 // export and the nightly backup.
 export const maxDuration = 300;
 
-type Body = { format: DownloadFormat; account_id: string | null; passphrase: string | null; password: string | null };
+type Body = { format: DownloadFormat; account_id: string | null; time_zone: string | null; passphrase: string | null; password: string | null };
 
 /** The request, or what is wrong with it. A message never repeats the
  *  password or the passphrase it was sent. */
 function parseBody(raw: unknown): Body | string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Send { format }.';
-  const { format, password, account_id, passphrase } = raw as Record<string, unknown>;
+  const { format, password, account_id, time_zone, passphrase } = raw as Record<string, unknown>;
   if (!isDownloadFormat(format)) return `format must be one of: ${DOWNLOAD_FORMATS.join(', ')}.`;
   if (password !== undefined && password !== null && (typeof password !== 'string' || password.length > PASSWORD_MAX)) {
     return 'password must be text.';
@@ -103,6 +109,10 @@ function parseBody(raw: unknown): Body | string {
   } else if (account_id !== undefined && account_id !== null) {
     return 'account_id goes only with format "ofx".';
   }
+  if (time_zone !== undefined && time_zone !== null) {
+    if (format !== 'ofx') return 'time_zone goes only with format "ofx".';
+    if (typeof time_zone !== 'string') return 'time_zone must be a time zone, such as "America/New_York".';
+  }
   if (passphrase !== undefined && passphrase !== null) {
     const problem = passphraseProblem(passphrase);
     if (problem) return problem;
@@ -110,6 +120,7 @@ function parseBody(raw: unknown): Body | string {
   return {
     format,
     account_id: format === 'ofx' ? (account_id as string) : null,
+    time_zone: format === 'ofx' ? timeZoneOf(time_zone) : null,
     passphrase: typeof passphrase === 'string' ? passphrase : null,
     password: typeof password === 'string' ? password : null,
   };
@@ -182,6 +193,12 @@ export async function POST(req: Request) {
     return notPrepared(err);
   }
 
+  // A linked account's statement says the day its balance is as of where
+  // the person is: from the moment its snapshot was taken, where Nya kept
+  // that (never an error: without it, the day is the UTC day).
+  const latest = body.format === 'ofx' ? doc.accounts.find((a) => a.account_id === body.account_id)?.latest_balance : null;
+  const balanceTakenAt = latest && body.time_zone ? await snapshotTakenAt(ctx, latest.date) : null;
+
   // The first pass: the size, with nothing kept (see the header). A writer
   // that meets a stored value of a shape it doesn't expect throws here, before
   // anything is sent, and gets the same answer as a document that couldn't be
@@ -190,7 +207,7 @@ export async function POST(req: Request) {
   let bytes: number;
   try {
     if (body.format === 'ofx') {
-      const made = ofxFile(data, doc, body.account_id!, now);
+      const made = ofxFile(data, doc, body.account_id!, now, { timeZone: body.time_zone, balanceTakenAt });
       if ('refused' in made) return NextResponse.json({ error: made.refused }, { status: made.status });
       file = made.file;
     } else {

@@ -31,9 +31,15 @@
 //     a check, interest): what it says outright, never a guess from a
 //     category.
 //   - Dates are the days as the bank gave them (Plaid's are days at the bank,
-//     not instants), written at noon with no time zone, so an app that reads
-//     them in its own zone still lands on the same day. DTUSER is when it
-//     happened, where Plaid says and that differs from when it posted.
+//     not instants), written at 10:59 with no time zone. OFX reads that as
+//     10:59 GMT, which is the same day in every time zone from UTC-10 to
+//     UTC+13, so an app that turns it into its own time still shows the
+//     bank's day from Hawaii to New Zealand, Tonga and Samoa (noon would move
+//     it a day at UTC+12 and beyond). Only at UTC-11 (American Samoa, Niue)
+//     or past UTC+13 (Kiribati's Line Islands, the Chatham Islands in summer)
+//     would such an app move it a day; one that reads the date as written
+//     shows it everywhere. DTUSER is when it happened, where Plaid says and
+//     that differs from when it posted.
 //   - NAME is the payee as the app shows it (your name for the merchant, else
 //     Plaid's, else the bank's words), within OFX's 32 characters; a longer
 //     one is cut, and given whole in the memo. MEMO (255 characters) holds,
@@ -46,15 +52,27 @@
 //     of its own, for the same account, in that currency: OFX has one
 //     currency per statement, and a rate to convert at isn't Nya's to invent.
 //   - The ledger balance (LEDGERBAL) is the latest balance Nya knows and the
-//     day it is as of: for a linked account, its newest recorded balance,
-//     never an estimate; for a manual account, the balance as set and when.
-//     A card's is negative while money is owed, as OFX writes it. Without one
-//     known, in the statement's currency, there is none, and a note says so;
-//     OFX asks for one, and an app that insists on it may refuse the file.
+//     day it is as of, a day where the person is (the time zone their device
+//     sends; UTC without one): for a linked account, its newest recorded
+//     balance, never an estimate, on the day Nya recorded it; for a manual
+//     account, the balance as set, on the day it was set. History is kept by
+//     UTC day, so a linked account's is that UTC day where Nya didn't keep
+//     the moment (lib/history.ts snapshotTakenAt), or the balance was
+//     measured on a day the snapshot was partial. A card's is negative while
+//     money is owed, as OFX writes it. Without one known, in the statement's
+//     currency, there is none, and a note says so; OFX asks for one, and an
+//     app that insists on it may refuse the file.
 //   - ACCTID is an id made for the account (Nya never has its full number):
-//     "NYA-", 12 characters derived from Nya's id for it, and its last digits
-//     where the bank gave them, so the same account is the same in every file.
-//     There is no BANKID: Nya doesn't know the routing number.
+//     "NYA-", 12 characters derived from the id Nya first knew it by, and its
+//     last digits where the bank gave them. The first id is where the
+//     account's links start (lib/link-core.ts), so a bank reconnected, and
+//     its new account linked to the old, still writes the same ACCTID. Its
+//     transactions come back with new ids from the bank then, though, so
+//     their FITIDs change: an app that matches by FITID may add again what a
+//     file from before the reconnection gave it.
+//   - BANKID is "NYA". It is not a routing number, which Nya doesn't know,
+//     but OFX requires the element in a bank statement, and a strict reader
+//     refuses a statement without it. A card statement has none.
 //
 // TEXT. The file is Windows-1252, as its header says and as US banks write
 // it, which every reader takes. A character it lacks is written as its plain
@@ -73,7 +91,7 @@ import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
 import { contentKey } from './transactions';
 import { carriedExclusions, isCarriedAnnotations, txnAnnotationStore, carriedAnnotationStore, type CarriedAnnotations } from './txn-annotations';
-import { effectiveLinks, resolveId } from './link-core';
+import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
@@ -146,8 +164,28 @@ const CHECKNUM_MAX = 12;
 
 // ---- Values ----
 
-/** A day (YYYY-MM-DD) as OFX writes it, at noon (see the header). */
-export const ofxDate = (day: string) => `${day.slice(0, 4)}${day.slice(5, 7)}${day.slice(8, 10)}120000`;
+/** A day (YYYY-MM-DD) as OFX writes it, at 10:59 (see the header). */
+export const ofxDate = (day: string) => `${day.slice(0, 4)}${day.slice(5, 7)}${day.slice(8, 10)}105900`;
+
+/** BANKID, where a bank statement needs one (see the header). */
+export const BANK_ID = 'NYA';
+
+/** The day an instant falls on in `timeZone`. */
+export function dayIn(iso: string, timeZone: string): string {
+  const parts: Record<string, string> = {};
+  for (const p of new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(iso))) parts[p.type] = p.value;
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** The id an account was first known by: where its chain of links starts
+ *  (lib/link-core.ts), its own when it was never linked to an earlier one.
+ *  Of two that both start it (two earlier accounts linked into one), the
+ *  first by id, so the choice is the same in every file. */
+export function firstIdOf(account_id: string, links: Map<string, Link>): string {
+  const same = sameAccountIds(account_id, links);
+  const linkedTo = new Set(same.map((id) => links.get(id)?.to));
+  return same.filter((id) => !linkedTo.has(id)).sort()[0] ?? account_id;
+}
 
 /** An instant, in GMT, as OFX writes one. */
 function ofxInstant(at: Date): string {
@@ -209,6 +247,8 @@ export type OfxRow = {
 /** One account, ready to be written as statements. */
 export type OfxAccount = {
   account_id: string;
+  /** The id ACCTID is made from (firstIdOf): `account_id` when not given. */
+  first_id?: string;
   kind: OfxKind;
   subtype: string | null;
   mask: string | null;
@@ -299,7 +339,7 @@ const ACCOUNT_TYPES: Record<string, string> = { savings: 'SAVINGS', 'money marke
 export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[]; notes: string[] } {
   const { statements, notes } = statementsOf(account);
   const bank = account.kind === 'bank';
-  const acctId = ofxAccountId(account.account_id, account.mask);
+  const acctId = ofxAccountId(account.first_id ?? account.account_id, account.mask);
   let lossy = 0;
   let shortened = 0;
   const line = (tag: string, value: string) => `<${tag}>${escape(value)}\r\n`;
@@ -311,7 +351,7 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   ];
   statements.forEach((s, index) => {
     const from = bank
-      ? `<BANKACCTFROM>\r\n${line('ACCTID', acctId)}${line('ACCTTYPE', ACCOUNT_TYPES[account.subtype ?? ''] ?? 'CHECKING')}</BANKACCTFROM>\r\n`
+      ? `<BANKACCTFROM>\r\n${line('BANKID', BANK_ID)}${line('ACCTID', acctId)}${line('ACCTTYPE', ACCOUNT_TYPES[account.subtype ?? ''] ?? 'CHECKING')}</BANKACCTFROM>\r\n`
       : `<CCACCTFROM>\r\n${line('ACCTID', acctId)}</CCACCTFROM>\r\n`;
     pieces.push(`<${bank ? 'STMTTRNRS' : 'CCSTMTTRNRS'}>\r\n${line('TRNUID', String(index + 1))}${status}<${bank ? 'STMTRS' : 'CCSTMTRS'}>\r\n${line('CURDEF', s.currency)}${from}`);
     if (s.rows.length > 0) {
@@ -360,7 +400,7 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   });
   pieces.push(bank ? '</BANKMSGSRSV1>\r\n</OFX>\r\n' : '</CREDITCARDMSGSRSV1>\r\n</OFX>\r\n');
   if (shortened > 0) {
-    notes.push(`${plural(shortened, 'payee’s name is', 'payees’ names are')} longer than OFX’s ${NAME_MAX} characters, so each is cut there and given whole at the start of its memo.`);
+    notes.push(`${plural(shortened, 'payee’s name is', 'payees’ names are')} longer than OFX’s ${NAME_MAX} characters, so each is cut there and given whole in its memo.`);
   }
   if (lossy > 0) {
     notes.push(
@@ -400,6 +440,16 @@ function* gathered(pieces: readonly string[]): Generator<string> {
   if (buffer) yield buffer;
 }
 
+/** Where the person is, and what the route read for the balance's day. */
+export type OfxOptions = {
+  /** The time zone the person's device sent (lib/access-log.ts timeZoneOf),
+   *  or null: then days are UTC days. */
+  timeZone: string | null;
+  /** When the snapshot of a linked account's newest recorded balance was
+   *  taken (lib/history.ts snapshotTakenAt), where Nya kept it. */
+  balanceTakenAt: string | null;
+};
+
 /**
  * The account's statement as a file of the download (lib/user-export.ts
  * ExportFile), from what the route read (`data`) and the document built from
@@ -407,7 +457,13 @@ function* gathered(pieces: readonly string[]): Generator<string> {
  * person's, one whose record couldn't be read, or one of a kind OFX has no
  * statement for.
  */
-export function ofxFile(data: UserData, doc: UserExport, account_id: string, now: Date): { file: ExportFile } | OfxRefused {
+export function ofxFile(
+  data: UserData,
+  doc: UserExport,
+  account_id: string,
+  now: Date,
+  opts: OfxOptions = { timeZone: null, balanceTakenAt: null }
+): { file: ExportFile } | OfxRefused {
   const linked = doc.accounts.find((a) => a.account_id === account_id);
   const manual = doc.manual_accounts.find((m) => m.account_id === account_id);
   if (!linked && !manual) {
@@ -422,6 +478,9 @@ export function ofxFile(data: UserData, doc: UserExport, account_id: string, now
 
   const notes: string[] = [];
   const incomplete = new Set<string>();
+  // A moment as the day it was where the person is (see the header); a
+  // stored day, or any moment without a time zone sent, as it is.
+  const dayOf = (iso: string) => (opts.timeZone && iso.length > 10 ? dayIn(iso, opts.timeZone) : iso.slice(0, 10));
   // What was said about each transaction (lib/txn-annotations.ts): its own
   // record, and on a linked account's posted rows, an exclusion carried from
   // an earlier account linked to this one, as the app applies them.
@@ -474,13 +533,22 @@ export function ofxFile(data: UserData, doc: UserExport, account_id: string, now
         `Nya could not save the newest transactions from ${linked.institution_name ?? 'this institution'} (a storage limit, or a write that failed), so ones the app showed recently may be missing from this file. They are saved again once a sync can store them.`
       );
     }
+    // The newest recorded balance's day: the UTC day it is kept under, or
+    // the day where the person is of the moment its snapshot was taken, when
+    // Nya kept that and it is this balance's (inside that UTC day, and not a
+    // partial measurement made after it).
+    const latest = linked.latest_balance;
+    const newest = (data.history.accounts.get(account_id) ?? []).findLast((p) => !p.estimated);
+    const taken = opts.balanceTakenAt;
+    const asOf = latest && taken && taken.slice(0, 10) === latest.date && newest?.date === latest.date && !newest.partial ? dayOf(taken) : latest?.date;
     account = {
       account_id,
+      first_id: firstIdOf(account_id, links),
       kind,
       subtype: linked.subtype,
       mask: linked.mask,
       currency: linked.currency,
-      balance: linked.latest_balance ? { amount: linked.latest_balance.balance, as_of: linked.latest_balance.date, currency: linked.currency } : null,
+      balance: latest && asOf ? { amount: latest.balance, as_of: asOf, currency: linked.currency } : null,
       no_balance: 'Nya has no recorded balance for this account.',
     };
   } else {
@@ -513,7 +581,7 @@ export function ofxFile(data: UserData, doc: UserExport, account_id: string, now
       mask: null,
       currency: null,
       // As set, and when: kept in US dollars (lib/manual.ts).
-      balance: m.updated_at ? { amount: m.balance, as_of: m.updated_at.slice(0, 10), currency: MANUAL_CURRENCY } : null,
+      balance: m.updated_at ? { amount: m.balance, as_of: dayOf(m.updated_at), currency: MANUAL_CURRENCY } : null,
       no_balance: 'Nya doesn’t know when this account’s balance was set.',
     };
   }
@@ -534,7 +602,7 @@ export function ofxFile(data: UserData, doc: UserExport, account_id: string, now
   const name = linked ? { institution_name: linked.institution_name, name: linked.name, mask: linked.mask } : { institution_name: manual!.institution_name, name: manual!.name, mask: null };
   return {
     file: {
-      filename: ofxFilename(name, now.toISOString().slice(0, 10)),
+      filename: ofxFilename(name, dayOf(now.toISOString())),
       contentType: 'application/x-ofx',
       pieces: () => gathered(written.pieces),
       notes: [...notes, ...written.notes],
