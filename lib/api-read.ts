@@ -15,6 +15,14 @@
 // of: a balance its day (and moment, when known), an institution's
 // transactions when they were last synced, a connection when it last answered.
 //
+// CATEGORIES are the person's own (lib/categories.ts): each transaction is
+// filed into one as the app files it (lib/activity.ts), its name is the
+// category's, and totals are by category id, each with its group. The ids
+// are the app's: a category the app hasn't stored yet (the set is made the
+// first time the app is opened after categories arrived, and grows as the app
+// reads new ones) is grown here in memory, never stored, and its id and its
+// group's are null until the app has stored it.
+//
 // THE APP'S OWN RULES. Transactions come from the Activity tab's own assembly
 // (lib/activity.ts): the person's categories and merchant names applied,
 // categories and exclusions carried across a re-link, the rows entered on
@@ -35,10 +43,19 @@
 // so an empty list or a zero is never passed off as no spending.
 //
 // NEVER SHORT WITHOUT SAYING SO. What can't be read is named, and the rest
-// answered: accounts and net worth list the connections and manual accounts
-// they couldn't include (missing_accounts) and say complete: false; a
-// per-account history reads only that account's records; an account_id no
-// account has is a 404 (NotFound), never an empty series.
+// answered: accounts and net worth list the connections, manual accounts and
+// accounts SimpleFIN feeds they couldn't include (missing_accounts) and say
+// complete: false; a per-account history reads only that account's records;
+// an account_id no account has is a 404 (NotFound), never an empty series.
+//
+// SIMPLEFIN. The accounts a SimpleFIN connection keeps up to date
+// (lib/connectors/) are served beside the rest with source 'simplefin': the
+// balance SimpleFIN last reported, in Nya's sign, as of the time the bank
+// gave it, and none to count while a card's or a loan's positive balance
+// waits for the person to say how to read it (an answer built on it says
+// complete: false), with each bank's health as Connection health shows it.
+// Their rows come from the same assembly as the rest, and each bank is among
+// the sources, with whether its older history is all in.
 //
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
@@ -58,7 +75,12 @@ import { getEffectiveHidden, sameAccountIds, type Link } from './links';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
-import { getManualAccountsReport, manualAccountExists, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
+import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
+import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
+import { connectorHealthText } from './connectors/health';
+import { connectorAccountsStore } from './connectors/store';
+import { connectorOf } from './connectors/registry';
+import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
 import { readHealthForDisplay } from './connection-health';
 import { noticesStore } from './connection-records';
@@ -66,11 +88,13 @@ import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
 import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
-import { getBudgets } from './budgets';
+import { budgetsForReading } from './budget-store';
+import { budgetMeters, placeBudgets } from './budget-set';
+import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
-import { currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
-import { spendingByCategory, summarize, tidy, categoryOf, recurringMonthly, type Summary } from './totals';
+import { countsInTotals, currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
+import { spendingByCategory, summarize, tidy, bucketOf, recurringMonthly, type Described, type Summary } from './totals';
 import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
 import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
@@ -136,9 +160,10 @@ export type ApiConnection = {
 
 export type ApiAccount = {
   id: string;
-  /** 'plaid' for a linked account, 'manual' for one tracked by hand. Version
+  /** 'plaid' for a linked account, 'simplefin' for one a SimpleFIN
+   *  connection keeps up to date, 'manual' for one tracked by hand. Version
    *  1 may add values (another way to connect): treat one you don't know as
-   *  neither. */
+   *  none of these. */
   source: string;
   name: string;
   official_name: string | null;
@@ -158,7 +183,8 @@ export type ApiAccount = {
   as_of: string | null;
   /** The moment, where it is known. */
   as_of_time: string | null;
-  /** Null for a manual account. */
+  /** Null for a manual account. For one SimpleFIN feeds, its bank's link
+   *  through SimpleFIN, as Connection health shows it. */
   connection: ApiConnection | null;
 };
 
@@ -168,9 +194,12 @@ export type ApiMissing = {
   /** The connection's institution; null for a manual account, whose name is
    *  in what couldn't be read. */
   institution: string | null;
-  /** A manual account's id; null for a connection, whose accounts can't be
-   *  told apart until they are read. */
+  /** A manual account's id, or one SimpleFIN feeds; null for a connection,
+   *  whose accounts can't be told apart until they are read. */
   account_id: string | null;
+  /** Where it comes from, as ApiAccount.source: 'plaid' for a connection's
+   *  accounts, 'manual', or 'simplefin'. */
+  source: string;
   /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
    *  account stored intact in a form this version doesn't know (a later
    *  version's), kept as it is. 'unavailable': a manual account sealed under
@@ -186,8 +215,10 @@ export type ApiMissing = {
  *  false). */
 type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
 
-/** The connection facts for each Item, from the records health keeps. */
-async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => ApiConnection; note: string | null }> {
+/** The connection facts for each Item, from the records health keeps. Also
+ *  what a report says of each connection (lib/report/read.ts), so the two
+ *  read them alike. */
+export async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => ApiConnection; note: string | null }> {
   const [health, notices] = await Promise.all([
     readHealthForDisplay(ctx),
     // A display read that nothing writes, deletes or records on: what can't be
@@ -212,7 +243,7 @@ async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => Api
 }
 
 async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsRead> {
-  const [items, remembered, effective, manual, facts] = await Promise.all([
+  const [items, remembered, effective, manual, facts, fed] = await Promise.all([
     getItems(ctx),
     rememberedAccountsReport(ctx),
     // Strict: a hidden account must never show for a read that failed.
@@ -225,6 +256,9 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     // reach, or a master key that can't open the data keys, still throws.
     getManualAccountsReport(ctx),
     connectionFacts(ctx),
+    // LENIENT, for this display only, as the manual accounts are: an account
+    // entry that can't be read is named in `missing`.
+    connectorBanksReport(ctx),
   ]);
   const notes: string[] = [];
   const missing: ApiMissing[] = [];
@@ -237,13 +271,13 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   for (const item of items) {
     if (unreadable.has(item.item_id)) {
       notes.push(`${item.institution_name}: its accounts couldn’t be read, so they aren’t listed`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable', source: 'plaid' });
       continue;
     }
     const accounts = remembered.byItem[item.item_id];
     if (!accounts) {
       notes.push(`${item.institution_name}: its accounts haven’t been loaded yet; open the app to load them`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'not_loaded' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: 'not_loaded', source: 'plaid' });
       continue;
     }
     for (const account of accounts) {
@@ -295,7 +329,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     ...manual.unrecognised.filter(asked).map((id) => ({ id, reason: 'unrecognised' as const })),
     ...manual.unavailable.filter(asked).map((id) => ({ id, reason: 'unavailable' as const })),
   ];
-  for (const { id, reason } of unlisted) missing.push({ institution: null, account_id: id, reason });
+  for (const { id, reason } of unlisted) missing.push({ institution: null, account_id: id, reason, source: 'manual' });
   if (unlisted.length > 0) {
     const one = unlisted.length === 1;
     notes.push(`${one ? 'A manual account' : `${unlisted.length} manual accounts`} couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
@@ -325,9 +359,70 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       });
     }
   }
+  // The accounts a SimpleFIN connection keeps up to date (see SIMPLEFIN
+  // above). One kept as a manual account on a disconnect that stopped part
+  // way is in both stores: the manual one, listed above, is it.
+  const own = new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]);
+  const label = connectorOf('simplefin').label;
+  for (const card of fed.cards) {
+    const shown = card.accounts.filter((a) => !own.has(a.account_id) && asked(a.account_id));
+    if (shown.length === 0) continue;
+    const connection = fedConnection(card, fed);
+    for (const a of shown) {
+      const at = realTime(a.updated_at);
+      accounts.push({
+        id: a.account_id,
+        source: 'simplefin',
+        name: a.name,
+        official_name: null,
+        institution: card.institution_name,
+        type: a.type,
+        subtype: a.subtype,
+        mask: null,
+        // Nya's sign; null while there is none to count (see SIMPLEFIN).
+        balance: a.balance,
+        currency: a.currency,
+        credit_limit: null,
+        is_debt: isOwedType(a.type),
+        hidden: hidden.has(a.account_id),
+        // The time the bank gave the balance (its balance-date), else when
+        // Nya received it.
+        as_of: at ? at.slice(0, 10) : null,
+        as_of_time: at,
+        connection,
+      });
+    }
+    const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
+    if (said) notes.push(`${card.institution_name}, through ${label}: ${said}`);
+  }
+  const unread = fed.unreadable.filter((u) => asked(u.account_id) && !own.has(u.account_id));
+  for (const u of unread) missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: 'simplefin' });
+  if (unread.length > 0) {
+    const one = unread.length === 1;
+    notes.push(`${one ? `An account ${label} keeps` : `${unread.length} accounts ${label} keeps`} up to date couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
+  }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
   return { accounts, missing, notes, hidden, links };
+}
+
+/**
+ * A SimpleFIN bank's link, as Connection health shows it, in the API's shape:
+ * when it last synced cleanly, and what is wrong with it while that lasts,
+ * with the state Connection health gives it and, as `since`, when Nya's
+ * latest request found it (when it began isn't kept), or, with no answer in
+ * over a day, when the last one came.
+ */
+function fedConnection(card: InstitutionResult, fed: ConnectorBanksReport, now: number = Date.now()): ApiConnection {
+  const health = card.health;
+  const conn = card.connection_id ? fed.connections.get(card.connection_id) : undefined;
+  const found = (health?.detail?.issue === 'stale' ? conn?.last_answer_at : fed.askedAt.get(card.item_id)) ?? conn?.created_at ?? new Date(now).toISOString();
+  return {
+    last_ok_at: health?.last_ok_at ?? null,
+    problem: !health || health.state === 'healthy' ? null : { state: health.state, since: found },
+    ends_at: null,
+    ...(card.connection_id && fed.unreadableConnections.has(card.connection_id) ? { records_unreadable: true as const } : {}),
+  };
 }
 
 export type ApiAccounts = {
@@ -356,7 +451,9 @@ export type ApiNetWorth = {
    *  account's newest measured balance, and can be from different days. */
   balances_from: string | null;
   balances_to: string | null;
-  /** Accounts left out of the totals for having no measured balance. */
+  /** Accounts left out of the totals for having no balance to count: none
+   *  ever measured, or a card's or a loan's SimpleFIN reports as money held,
+   *  until the person says how to read it. */
   accounts_without_balance: number;
   /** False when the totals leave accounts out: ones that couldn't be read or
    *  haven't been loaded (missing_accounts), or have no measured balance
@@ -527,11 +624,20 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
   let known = links.has(id) || [...links.values()].some((l) => l.to === id);
   let currency: string | null = null;
   if (isManualId(id)) {
-    // Whether it is there, without reading it: its currency is the one every
-    // manual balance is kept in.
-    const exists = await manualAccountExists(ctx, id);
-    known ||= exists;
-    if (exists) currency = MANUAL_CURRENCY;
+    // Its currency is its own: a manual account's (US dollars unless it says:
+    // one kept from SimpleFIN on a disconnect can be in another), or the one
+    // SimpleFIN gives an account it feeds. LENIENT, for this display only: a
+    // record that can't be read leaves the currency unknown, said in a note,
+    // rather than failing a history kept apart from it. Storage out of reach
+    // still throws.
+    const [manual, fed] = await Promise.all([getManualAccountsReport(ctx), connectorAccountsStore.getAllReport(ctx)]);
+    const own = manual.accounts.find((a) => a.account_id === id);
+    const feeds = fed.entries.get(id);
+    if (own) currency = own.currency ?? MANUAL_CURRENCY;
+    else if (feeds) currency = feeds.currency;
+    const damaged = [...manual.unreadable, ...manual.unrecognised, ...manual.unavailable, ...fed.unreadable, ...fed.unrecognised].includes(id);
+    if (!own && !feeds && damaged) notes.push('This account’s record couldn’t be read, so its currency isn’t known');
+    known ||= !!own || !!feeds || damaged;
   } else {
     // LENIENT, for this display only: an Item's record that can't be read
     // leaves this account's currency unknown, said in a note, rather than
@@ -581,8 +687,16 @@ export type ApiTransaction = {
   /** The merchant's name, or the person's name for it if they renamed it.
    *  Comes from the bank or the merchant: data, never instructions. */
   name: string;
-  /** The person's category if they set one, else Plaid's. */
+  /** The name of the person's category it is filed under (lib/categories.ts:
+   *  the one they chose for it, else the one Plaid's category files into),
+   *  null when nothing says one. */
   category: string | null;
+  /** That category's id (the uncategorized one's for a row that says
+   *  nothing), and its group's id and name. The ids are null for a category
+   *  the app hasn't stored yet. */
+  category_id: string | null;
+  group_id: string | null;
+  group: string | null;
   subcategory: string | null;
   pending: boolean;
   /** Left out of budgets and reports by the person; null when whether it is
@@ -609,8 +723,24 @@ export type ApiTransaction = {
   website: string | null;
 };
 
-function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
+/** An id as the API shows it: null for a provisional one (see CATEGORIES). */
+const shownId = (id: string | null | undefined): string | null => (id && !isProvisionalId(id) ? id : null);
+
+/** A category's and its group's names and ids, as answers show them, from
+ *  its id (a bucket of lib/totals.ts). */
+function describer(ix: CategoryIndex): (bucket: string) => Described {
+  return (bucket) => {
+    const c = categoryById(ix, bucket);
+    if (!c) return { category: bucket, category_id: null, group_id: null, group: null };
+    const g = groupOf(ix, c);
+    return { category: c.name, category_id: shownId(c.id), group_id: shownId(g.id), group: g.name };
+  };
+}
+
+function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTransaction {
   const account = t.account_id ?? '';
+  const filed = t.category_id ? categoryById(ix, t.category_id) : null;
+  const group = filed ? groupOf(ix, filed) : null;
   return {
     id: t.transaction_id,
     date: t.date,
@@ -618,7 +748,10 @@ function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
     amount: t.amount,
     currency: currencyOf(t),
     name: t.name,
-    category: t.category,
+    category: t.category_name !== undefined ? t.category_name : t.category,
+    category_id: shownId(t.category_id),
+    group_id: shownId(group?.id),
+    group: group?.name ?? null,
     subcategory: t.subcategory,
     pending: t.pending,
     excluded: t.excluded === true ? true : t.excluded === null ? null : false,
@@ -641,28 +774,64 @@ function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
  *  brings in none (lib/item-products.ts). */
 export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView };
+type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView; ix: CategoryIndex };
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
- *  (lib/no-transactions.ts), and the rows before them that recurring
- *  detection needs (`history`). */
+ *  (lib/no-transactions.ts), the rows before them that recurring detection
+ *  needs (`history`), and the categories they were filed by (`ix`), grown in
+ *  memory where the app hasn't yet (see CATEGORIES). */
 async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const { transactions, notes, history } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
+  const [{ transactions, notes, history, taxonomy }, fed] = await Promise.all([
+    finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
+    // LENIENT, for this display only: what can't be read is said by the
+    // assembly's own notes.
+    connectorBanksReport(ctx),
+  ]);
+  const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
-    notes,
-    sources: bank.sources.map((s: BankSource) => ({
-      institution: s.institution_name,
-      synced_at: s.synced_at,
-      complete: s.coverage === 'complete',
-      no_transactions: s.no_transactions,
-    })),
+    notes: [...notes, ...fedSources.notes],
+    ix: indexTaxonomy(taxonomy),
+    sources: [
+      ...bank.sources.map((s: BankSource) => ({
+        institution: s.institution_name,
+        synced_at: s.synced_at,
+        complete: s.coverage === 'complete',
+        no_transactions: s.no_transactions,
+      })),
+      ...fedSources.sources,
+    ],
     hidden: bank.hidden,
     view: noTransactionsView(bank.payload),
   };
+}
+
+/**
+ * Each bank a SimpleFIN connection reaches, as a source of transactions: when
+ * it last synced cleanly, and whether its older history is all in (fetched a
+ * window a night, lib/connectors/sync.ts), with a note when it isn't. A bank
+ * whose every account is `hidden` isn't one.
+ */
+function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>): { sources: ApiSource[]; notes: string[] } {
+  const sources: ApiSource[] = [];
+  const notes: string[] = [];
+  const label = connectorOf('simplefin').label;
+  for (const card of fed.cards) {
+    if (card.accounts.every((a) => hidden.has(a.account_id))) continue;
+    const conn = card.connection_id ? fed.connections.get(card.connection_id) : undefined;
+    const unread = !!card.connection_id && fed.unreadableConnections.has(card.connection_id);
+    const history = conn?.history ?? null;
+    const complete = !unread && history !== null && history.complete;
+    sources.push({ institution: card.institution_name, synced_at: card.health?.last_ok_at ?? null, complete, no_transactions: null });
+    if (complete) continue;
+    if (unread) notes.push(`${card.institution_name}: what Nya keeps about its ${label} connection couldn’t be read, so whether its transactions are all here isn’t known`);
+    else if (history === null) notes.push(`${card.institution_name}: no transactions have come from ${label} yet`);
+    else notes.push(`${card.institution_name}: older transactions are still arriving from ${label}, a few months each night`);
+  }
+  return { sources, notes };
 }
 
 /**
@@ -704,8 +873,12 @@ export type TransactionQuery = {
   /** Matched, in any case, against the name, the merchant behind it, the
    *  category and the note. */
   text?: string;
-  /** A category as listed (categories), 'other' for none. */
+  /** A category's name as listed (categories), in any case: "other" for
+   *  none, while the uncategorized category is named so. */
   category?: string;
+  /** A category's id (categories): rows filed under it, or under one merged
+   *  into it. An id no category has is a 404 (NotFound). */
+  categoryId?: string;
   /** On the signed amount, Plaid's sign: inclusive. */
   minAmount?: number;
   maxAmount?: number;
@@ -729,13 +902,17 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const activity = await readActivity(ctx, !!q.includeHidden);
   const text = q.text?.toLowerCase();
   const category = q.category?.toLowerCase();
+  const describe = describer(activity.ix);
+  const wanted = q.categoryId === undefined ? undefined : categoryById(activity.ix, q.categoryId);
+  if (wanted === null || (wanted && isProvisionalId(wanted.id))) throw new NotFound('No category has that id: list them with categories.');
   const matching = activity.rows
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
-    .filter((t) => category === undefined || categoryOf(t).toLowerCase() === category)
+    .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
+    .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
-    .filter((t) => !text || [t.name, t.counterparty, t.category, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
-    .map((t) => toApiTransaction(t, activity.hidden))
+    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
+    .map((t) => toApiTransaction(t, activity.hidden, activity.ix))
     .sort((a, b) => comparePageKeys(keyOf(a), keyOf(b)));
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
@@ -762,36 +939,90 @@ export type ApiCategory = {
   /** Its transactions are transfers (or loan payments): never counted in
    *  spending or income. */
   transfer: boolean;
+  /** Its id, and its group's id and name (the ids null for a category the
+   *  app hasn't stored yet); the kind it counts as (its group's); archived:
+   *  hidden from the app's lists to choose from. */
+  id: string | null;
+  group_id: string | null;
+  group: string | null;
+  kind: CategoryKind;
+  archived: boolean;
 };
 
-/** The categories in use: on transactions in the window, or with a budget. */
-export async function readCategories(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; categories: ApiCategory[]; sources: ApiSource[]; notes: string[] }> {
-  const [activity, budgets] = await Promise.all([
-    readActivity(ctx, !!opts.includeHidden),
-    getBudgets(ctx).then(
-      (b) => ({ ok: true as const, b }),
-      () => ({ ok: false as const })
-    ),
-  ]);
+/** A group and every category in it, used or not, in the app's order. */
+export type ApiCategoryGroup = {
+  id: string | null;
+  name: string;
+  kind: CategoryKind;
+  categories: { id: string | null; name: string; archived: boolean }[];
+};
+
+/** Budgets as an answer reads them. */
+type BudgetsRead = { ix: CategoryIndex; placed: ReturnType<typeof placeBudgets> };
+
+/** The budgets (lib/budget-store.ts budgetsForReading, strict) against the
+ *  categories the transactions were filed by, grown in memory by any name a
+ *  budget was saved under that they lack. */
+async function readBudgetSet(ctx: Ctx, ix: CategoryIndex): Promise<BudgetsRead> {
+  const { budgets, taxonomy } = await budgetsForReading(ctx, ix.taxonomy);
+  const bix = indexTaxonomy(taxonomy);
+  return { ix: bix, placed: placeBudgets(budgets, bix) };
+}
+
+/** The categories in use, on transactions in the window or with a budget,
+ *  and every group with every category in it. */
+export async function readCategories(
+  ctx: Ctx,
+  opts: { includeHidden?: boolean } = {}
+): Promise<{ from: string; categories: ApiCategory[]; groups: ApiCategoryGroup[]; sources: ApiSource[]; notes: string[] }> {
+  const activity = await readActivity(ctx, !!opts.includeHidden);
+  // Which categories have a budget is a detail here: budgets that can't be
+  // read are said, not a reason to answer nothing.
+  const budgets = await readBudgetSet(ctx, activity.ix).then(
+    (b) => ({ ok: true as const, ...b }),
+    () => ({ ok: false as const })
+  );
+  const ix = budgets.ok ? budgets.ix : activity.ix;
   const seen = new Map<string, { transactions: number; last_date: string | null }>();
   for (const t of activity.rows) {
-    const c = seen.get(categoryOf(t)) ?? { transactions: 0, last_date: null };
+    const c = seen.get(bucketOf(t)) ?? { transactions: 0, last_date: null };
     c.transactions++;
     if (!c.last_date || t.date > c.last_date) c.last_date = t.date;
-    seen.set(categoryOf(t), c);
+    seen.set(bucketOf(t), c);
   }
-  const budgeted = new Set(budgets.ok ? Object.keys(budgets.b) : []);
-  for (const name of budgeted) if (!seen.has(name)) seen.set(name, { transactions: 0, last_date: null });
+  const budgeted = new Set(budgets.ok ? budgets.placed.categories.keys() : []);
+  for (const id of budgeted) if (!seen.has(id)) seen.set(id, { transactions: 0, last_date: null });
   const notes = [
     ...activity.notes,
     ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said']),
     ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list'),
   ];
+  const describe = describer(ix);
+  const categories = [...seen].map(([bucket, c]): ApiCategory => {
+    const filed = categoryById(ix, bucket);
+    const kind = filed ? groupOf(ix, filed).kind : isTransfer({ category: bucket, transaction_code: null }) ? 'transfer' : 'expense';
+    const d = describe(bucket);
+    return {
+      name: d.category,
+      ...c,
+      budgeted: budgeted.has(bucket),
+      transfer: kind === 'transfer',
+      id: d.category_id,
+      group_id: d.group_id,
+      group: d.group,
+      kind,
+      archived: !!filed?.archived,
+    };
+  });
   return {
     from: firstDay(),
-    categories: [...seen]
-      .map(([name, c]) => ({ name, ...c, budgeted: budgeted.has(name), transfer: isTransfer({ category: name, transaction_code: null }) }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    categories: categories.sort((a, b) => a.name.localeCompare(b.name)),
+    groups: sortedGroups(ix.taxonomy).map((g) => ({
+      id: shownId(g.id),
+      name: g.name,
+      kind: g.kind,
+      categories: categoriesIn(ix.taxonomy, g.id).map((c) => ({ id: shownId(c.id), name: c.name, archived: !!c.archived })),
+    })),
     sources: activity.sources,
     notes,
   };
@@ -804,7 +1035,29 @@ export type ApiBudgets = {
   /** The currency the budgets count, and are in: the one most transactions
    *  are in, as the app's. */
   currency: string | null;
-  budgets: { category: string; budget: number; spent: number; remaining: number; spent_share: number }[];
+  /** Each category's budget, with its id and its group's (null for one the
+   *  app hasn't stored yet). */
+  budgets: { category: string; budget: number; spent: number; remaining: number; spent_share: number; category_id: string | null; group_id: string | null; group: string | null }[];
+  /** Each group with a budget of its own or budgeted categories, in the
+   *  app's order: its limit by the reconcile rule (lib/budget-set.ts), its own
+   *  amount and its categories' added up, and what counts against the limit
+   *  (everything in it under a budget of its own, else its budgeted
+   *  categories' spending). `reconcile` says which side binds when the two
+   *  differ. */
+  groups: {
+    id: string | null;
+    name: string;
+    kind: CategoryKind;
+    budget: number;
+    own: number | null;
+    categories_budget: number;
+    spent: number;
+    remaining: number;
+    spent_share: number;
+    reconcile: { binds: 'group' | 'categories'; group: number; categories: number } | null;
+  }[];
+  /** Every limit added up (each group's, so nothing counts twice), and what
+   *  counts against them. */
   total: { budget: number; spent: number };
   /** This month's spending left out for being in another currency. */
   left_out: LeftOut;
@@ -817,29 +1070,53 @@ export type ApiBudgets = {
   notes: string[];
 };
 
+const share = (spent: number, budget: number) => (budget > 0 ? Math.round((spent / budget) * 1000) / 1000 : 0);
+
 /** Monthly budgets with the month's spending against each, as the Budgets
- *  tab works it out (lib/totals.ts spendingByCategory). */
+ *  tab works it out (lib/totals.ts spendingByCategory, lib/budget-set.ts
+ *  budgetMeters). */
 export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
-  const [budgets, activity] = await Promise.all([getBudgets(ctx), readActivity(ctx, !!opts.includeHidden)]);
+  const activity = await readActivity(ctx, !!opts.includeHidden);
+  const { ix, placed } = await readBudgetSet(ctx, activity.ix);
   const currency = totalsCurrency(activity.rows);
   const inMonth = (date: string) => date.slice(0, 7) === opts.month;
   const spent = spendingByCategory(activity.rows, inMonth, currency);
   const monthRows = activity.rows.filter((t) => inMonth(t.date));
   const leftOut = leftOutByCurrency(monthRows.filter((t) => t.amount > 0), currency);
-  const rows = Object.entries(budgets)
-    .map(([category, budget]) => {
-      const s = spent[category] ?? 0;
-      return { category, budget, spent: tidy(s), remaining: tidy(budget - s), spent_share: budget > 0 ? Math.round((s / budget) * 1000) / 1000 : 0 };
+  const describe = describer(ix);
+  const rows = [...placed.categories]
+    .map(([id, budget]) => {
+      const s = spent[id] ?? 0;
+      return { ...describe(id), budget: tidy(budget), spent: tidy(s), remaining: tidy(budget - s), spent_share: share(s, budget) };
     })
+    .map(({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }) => ({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }))
     .sort((a, b) => a.category.localeCompare(b.category));
+  const meters = budgetMeters(ix, placed, new Map(Object.entries(spent)));
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  if (placed.orphans.length > 0) {
+    notes.push(`${placed.orphans.length} budget${placed.orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
+  }
   const cutoff = firstDay();
   if (`${opts.month}-01` < cutoff) notes.push(`Only transactions from ${cutoff} on are read, so this month's spending may be short`);
   return {
     month: opts.month,
     currency,
     budgets: rows,
-    total: { budget: tidy(rows.reduce((n, r) => n + r.budget, 0)), spent: tidy(rows.reduce((n, r) => n + (spent[r.category] ?? 0), 0)) },
+    groups: meters.groups
+      .filter((m) => m.limit !== null)
+      .map((m) => ({
+        id: shownId(m.group.id),
+        name: m.group.name,
+        kind: m.group.kind,
+        budget: tidy(m.limit!),
+        own: m.own === null ? null : tidy(m.own),
+        categories_budget: tidy(m.categories_total),
+        spent: tidy(m.spent),
+        remaining: tidy(m.limit! - m.spent),
+        spent_share: share(m.spent, m.limit!),
+        reconcile: m.reconcile && { binds: m.reconcile.binds, group: tidy(m.reconcile.group), categories: tidy(m.reconcile.categories) },
+      })),
+    total: { budget: tidy(meters.total.budget), spent: tidy(meters.total.spent) },
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency, { where: 'these budgets' }),
     excluded: monthRows.filter((t) => t.excluded === true).length,
@@ -851,20 +1128,44 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
 
 // ---- Spending ----
 
-export type ApiSpending = Summary & { from: string; to: string; sources: ApiSource[]; notes: string[] };
+export type ApiSpending = Summary & {
+  from: string;
+  to: string;
+  /** Money out by group, most first, with how many rows each sums: the
+   *  categories' rolled up (ids null for one the app hasn't stored yet). */
+  groups: { id: string | null; name: string; kind: CategoryKind; spent: number; transactions: number }[];
+  sources: ApiSource[];
+  notes: string[];
+};
 
-/** Money in and out over [from, to], and spending by category, in one
- *  currency: by default the one most transactions are in, as the app's
- *  totals. */
+/** Money in and out over [from, to], and spending by category and by group,
+ *  in one currency: by default the one most transactions are in, as the
+ *  app's totals. */
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
+  const inRange = (d: string) => d >= opts.from && d <= opts.to;
+  // Groups add up what the categories do: money out that counts.
+  const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: number }>();
+  for (const t of activity.rows) {
+    if (!inRange(t.date) || t.amount <= 0 || !countsInTotals(t, currency)) continue;
+    const c = categoryById(activity.ix, bucketOf(t));
+    if (!c) continue;
+    const g = groupOf(activity.ix, c);
+    const e = groups.get(g.id) ?? { group: g, spent: 0, transactions: 0 };
+    e.spent += t.amount;
+    e.transactions++;
+    groups.set(g.id, e);
+  }
   return {
     from: opts.from,
     to: opts.to,
-    ...summarize(activity.rows, (d) => d >= opts.from && d <= opts.to, currency),
+    ...summarize(activity.rows, inRange, currency, describer(activity.ix)),
+    groups: [...groups.values()]
+      .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
+      .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions })),
     sources: activity.sources,
     notes,
   };
@@ -1016,6 +1317,9 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
     if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
+    if (read.accounts.some((a) => a.id === opts.accountId && a.source === 'simplefin')) {
+      throw new NotFound('That account is kept up to date through SimpleFIN, which reports balances, not positions: it has no holdings.');
+    }
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
     return {
       accounts: [],

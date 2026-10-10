@@ -156,6 +156,9 @@ export async function PATCH(req: Request) {
     const balanceChanged = existing.balance !== result.value.balance;
     const account: ManualAccount = {
       ...result.value,
+      // The form doesn't change the currency: an account kept from a
+      // connector in another currency stays in it (lib/manual.ts).
+      ...(existing.currency ? { currency: existing.currency } : {}),
       account_id,
       // Only stamp updated_at when the balance actually moved, so the "Updated
       // ..." line reflects the last real balance change rather than a rename.

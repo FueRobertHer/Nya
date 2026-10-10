@@ -5,7 +5,9 @@
 // the amount first, on the decimal keypad, with Spent or Received instead of
 // a minus sign (that keypad has none); today's date and the last account used
 // already filled in; the category taken from the last time the same payee
-// was entered.
+// was entered. The category is one of yours (lib/categories.ts), chosen from
+// the list by group (components/CategoryPicker.tsx) and sent by id; with your
+// categories not loaded, the form offers the words in use, as before.
 //
 // A manual account's balance is what was typed, and adding a transaction
 // doesn't change it. The form says so, and offers to update it as well, as an
@@ -25,6 +27,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { categoryOptions, type Txn } from './MonthBreakdown';
+import CategoryPicker from './CategoryPicker';
+import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { TxnSaved } from './transaction-edits';
 import { isOwedType } from '@/lib/balance';
 import { formatMoney } from '@/lib/format';
@@ -43,10 +47,12 @@ import {
  *  from its card), or one to edit. */
 export type ManualTxnTarget = { mode: 'add'; account_id: string | null } | { mode: 'edit'; txn: Txn };
 
-/** What the form needs of the dashboard's institutions: the manual ones. */
+/** What the form needs of the dashboard's institutions: the manual ones (not
+ *  those SimpleFIN feeds, `manual` too, whose rows are the bank's). */
 export type SheetInstitution = {
   institution_name: string;
   manual?: boolean;
+  connector?: string;
   accounts: { account_id: string; name: string; type: string; balance: number | null; currency: string | null; hidden?: boolean }[];
 };
 
@@ -61,6 +67,9 @@ type Draft = {
   name: string;
   date: string;
   account_id: string;
+  /** The category chosen: one of yours by id, '' for none. */
+  category_id: string;
+  /** With your categories not loaded: its words, '' for none. */
   category: string;
   note: string;
   updateBalance: boolean;
@@ -94,34 +103,43 @@ async function send(method: 'POST' | 'PATCH' | 'DELETE', body: unknown) {
   return { res, data: await res.json().catch(() => null) };
 }
 
-type Fields = { date: string; amount: number | null; currency: string; name: string; category: string | null; note: string | null };
+type Fields = { date: string; amount: number | null; currency: string; name: string; note: string | null } & ({ category_id: string | null } | { category: string | null });
 
 /** Whether a saved row isn't what the form says now (the server keeps a
  *  payee's spaces single). */
 function differs(t: Txn, fields: Fields, account_id: string): boolean {
+  const category = 'category_id' in fields ? (t.category_name === null ? null : (t.category_id ?? null)) !== fields.category_id : (t.category ?? null) !== fields.category;
   return (
     t.date !== fields.date ||
     t.amount !== fields.amount ||
     t.iso_currency_code !== fields.currency ||
     t.name !== fields.name.replace(/\s+/g, ' ') ||
-    (t.category ?? null) !== fields.category ||
+    category ||
     (t.note ?? null) !== fields.note ||
     t.account_id !== account_id
   );
 }
 
+/** The category a row is filed under, for the form: none when it says none. */
+const chosenOf = (t: Txn) => (t.category_name === null ? '' : (t.category_id ?? ''));
+
 export default function ManualTxnSheet({
   target,
   institutions,
   txns,
+  taxonomy = null,
   onClose,
   onSaved,
   onBalanceStale,
 }: {
   target: ManualTxnTarget | null;
   institutions: SheetInstitution[];
-  /** The loaded transactions: the categories to offer, and past payees. */
+  /** The loaded transactions: past payees, and with your categories not
+   *  loaded, the words to offer. */
   txns: Txn[] | null;
+  /** Your categories (components/categories-state.ts), the list to choose
+   *  from. */
+  taxonomy?: Taxonomy | null;
   onClose: () => void;
   /** After any save or delete: the row as saved, or the one deleted, and
    *  `balanceChanged` when the balance moved too. */
@@ -132,7 +150,7 @@ export default function ManualTxnSheet({
   const accounts = useMemo<Account[]>(
     () =>
       institutions
-        .filter((i) => i.manual)
+        .filter((i) => i.manual && !i.connector)
         .flatMap((i) => i.accounts.filter((a) => !a.hidden).map((a) => ({ ...a, institution_name: i.institution_name }))),
     [institutions]
   );
@@ -172,6 +190,7 @@ export default function ManualTxnSheet({
         name: t.name,
         date: t.date,
         account_id: t.account_id ?? '',
+        category_id: chosenOf(t),
         category: t.category ?? '',
         note: t.note ?? '',
         updateBalance: false,
@@ -185,10 +204,12 @@ export default function ManualTxnSheet({
       id: newManualTxnId(),
       direction: 'out',
       amount: '',
-      currency: DEFAULT_CURRENCY,
+      // The account's own: US dollars, unless it was kept from SimpleFIN in another.
+      currency: accounts.find((a) => a.account_id === start)?.currency ?? DEFAULT_CURRENCY,
       name: '',
       date: localDate(),
       account_id: start,
+      category_id: '',
       category: '',
       note: '',
       updateBalance: false,
@@ -218,26 +239,42 @@ export default function ManualTxnSheet({
   const account = options.find((a) => a.account_id === draft.account_id) ?? null;
   const owed = account ? isOwedType(account.type) : false;
   // The balance can follow only a new transaction in the balance's own
-  // currency (manual balances are in dollars, lib/manual.ts).
-  const balance = !edit && account && account.balance !== null && currency === DEFAULT_CURRENCY && signed !== null ? account.balance : null;
+  // currency (US dollars, unless the account was kept from SimpleFIN in
+  // another, lib/manual.ts).
+  const keptIn = account?.currency ?? DEFAULT_CURRENCY;
+  const balance = !edit && account && account.balance !== null && currency === keptIn && signed !== null ? account.balance : null;
   const after = balance === null ? null : balanceAfter(balance, signed!, owed);
   const negativeOwed = after !== null && owed && after < 0;
   const updating = draft.updateBalance && after !== null && !negativeOwed;
   const ready = signed !== null && !!draft.name.trim() && !!draft.date && !future && !!account && isCurrencyCode(currency);
   const busy = saving || done;
-  const money = (n: number) => formatMoney(n, DEFAULT_CURRENCY);
+  const money = (n: number) => formatMoney(n, keptIn);
 
   /** A typed payee seen before brings its last category, until one is picked. */
   function setName(name: string) {
     const known = categoryTouched ? null : pastRows.find((t) => t.name.toLowerCase() === name.trim().toLowerCase() && t.category);
-    setDraft({ ...draft!, name, ...(known ? { category: known.category! } : {}) });
+    setDraft({ ...draft!, name, ...(known ? { category: known.category!, category_id: chosenOf(known) } : {}) });
   }
+
+  // The chosen category's kind, to say when money in isn't a transfer.
+  const chosen = taxonomy && draft.category_id ? categoryById(indexTaxonomy(taxonomy), draft.category_id) : null;
+  const transferChosen = taxonomy ? !!chosen && groupOf(indexTaxonomy(taxonomy), chosen).kind === 'transfer' : draft.category.startsWith('transfer');
 
   async function save() {
     if (!ready || busy) return;
     setSaving(true);
     setError('');
-    const fields = { date: draft!.date, amount: signed, currency, name: draft!.name.trim(), category: draft!.category || null, note: draft!.note.trim() || null };
+    const fields: Fields = {
+      date: draft!.date,
+      amount: signed,
+      currency,
+      name: draft!.name.trim(),
+      // By id, and its words beside it (choiceText), which this release
+      // ignores when the id is there: a page still open after a rollback
+      // posts to the release before, which reads only the words.
+      ...(taxonomy ? { category_id: draft!.category_id || null, category: chosen ? choiceText(chosen) : null } : { category: draft!.category || null }),
+      note: draft!.note.trim() || null,
+    };
     try {
       const { res, data } = edit
         ? await send('PATCH', {
@@ -318,8 +355,8 @@ export default function ManualTxnSheet({
   let balanceNote: string;
   if (edit) balanceNote = `Editing or deleting a transaction doesn't change ${name}'s balance. Update that from the account itself.`;
   else if (negativeOwed) balanceNote = `This would take the amount owed on ${name} below zero, so update that from the account itself.`;
-  else if (account && currency !== DEFAULT_CURRENCY && isCurrencyCode(currency))
-    balanceNote = `${name}'s balance is kept in ${DEFAULT_CURRENCY}, so a transaction in ${currency} leaves it as it is.`;
+  else if (account && currency !== keptIn && isCurrencyCode(currency))
+    balanceNote = `${name}'s balance is kept in ${keptIn}, so a transaction in ${currency} leaves it as it is.`;
   else balanceNote = `Adding a transaction doesn't change ${name}'s balance, which stays what you typed${after !== null ? '. Tick the box to update it too.' : '.'}`;
 
   return (
@@ -402,23 +439,37 @@ export default function ManualTxnSheet({
         </label>
         <label className="field">
           Category
-          <select
-            value={draft.category}
-            onChange={(e) => {
-              setCategoryTouched(true);
-              set({ category: e.target.value });
-            }}
-            disabled={busy}
-          >
-            <option value="">No category</option>
-            {[...new Set([...categories, ...(draft.category ? [draft.category] : [])])].sort().map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          {taxonomy ? (
+            <CategoryPicker
+              taxonomy={taxonomy}
+              className=""
+              value={draft.category_id}
+              none="No category"
+              onChange={(id) => {
+                setCategoryTouched(true);
+                set({ category_id: id });
+              }}
+              disabled={busy}
+            />
+          ) : (
+            <select
+              value={draft.category}
+              onChange={(e) => {
+                setCategoryTouched(true);
+                set({ category: e.target.value });
+              }}
+              disabled={busy}
+            >
+              <option value="">No category</option>
+              {[...new Set([...categories, ...(draft.category ? [draft.category] : [])])].sort().map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          )}
         </label>
-        {draft.direction === 'in' && !draft.category.startsWith('transfer') && (
+        {draft.direction === 'in' && !transferChosen && (
           <p className="panel-note" style={{ margin: 0 }}>
             Cash taken out of another of your accounts? Choose transfer in, so it isn&apos;t counted as income.
           </p>

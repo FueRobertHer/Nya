@@ -32,6 +32,12 @@ import { loggable } from '@/lib/log-safe';
 // credit, loan, investment), so the cash forecast counts only what leaves or
 // reaches checking and savings, never a card's own charges beside the card's
 // payment (lib/forecast.ts).
+//
+// CATEGORIES. Every row is filed into the person's categories after the
+// cache (lib/activity.ts finishActivity): this route seeds them on the first
+// load and grows them by any category a row carries that none has yet, and
+// sends the set it filed by (`categories`), which the pickers and the group
+// rollups read, so renaming or regrouping a category needs no cache dropped.
 
 export async function GET(req: Request) {
   try {
@@ -55,7 +61,7 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes, incomplete, history } = await finishActivity(ctx, plaid, hidden);
+    const { transactions, notes, incomplete, history, taxonomy } = await finishActivity(ctx, plaid, hidden, { grow: true });
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -66,6 +72,7 @@ export async function GET(req: Request) {
       without_transactions: plaid.without_transactions ?? [],
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
       recurring_history: history,
+      categories: taxonomy,
       as_of: plaid.as_of,
       from_cache: fromCache,
     });

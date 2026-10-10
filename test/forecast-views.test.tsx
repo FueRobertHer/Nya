@@ -12,6 +12,7 @@ import { addMonths } from '@/lib/calendar';
 import { EMPTY_PLANNED, type Planned } from '@/lib/planned';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { localDate } from '@/lib/local-date';
+import { EMPTY_BUDGETS } from '@/lib/budget-set';
 
 // The forecast, the calendar, the recurring list and the planned items as the
 // Budgets tab renders them, and Home's upcoming bills: what each says, and
@@ -367,7 +368,7 @@ describe('on the Budgets tab', () => {
         <BudgetsTab
           txns={txns}
           series={detectRecurring(txns)}
-          budgets={{}}
+          budgets={EMPTY_BUDGETS}
           onSave={async () => true}
           goals={[]}
           onSaveGoals={async () => true}
@@ -393,7 +394,7 @@ describe('Home\'s upcoming bills', () => {
   const bills = dates.map((d, i) => txn({ transaction_id: `gym-${i}`, date: d, name: 'Gym', amount: 40, category: 'personal care' }));
   // Detected once, by the dashboard, and handed down.
   const home = (over: Partial<Parameters<typeof Insights>[0]> = {}) =>
-    text(renderToStaticMarkup(<Insights txns={bills} series={detectRecurring(over.txns ?? bills)} budgets={{}} accounts={[]} {...over} />));
+    text(renderToStaticMarkup(<Insights txns={bills} series={detectRecurring(over.txns ?? bills)} accounts={[]} {...over} />));
   const day = new Date(`${next}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
   test('use the date the cadence names', () => {

@@ -8,20 +8,46 @@
 // money in / money out / net (transfers and loan payments excluded, so
 // credit-card payments don't double-count as both spending and income, and so
 // is anything the person excluded; every total is in one currency and says
-// what it left out in others: lib/spending.ts); top spending categories
-// draw as single-hue horizontal bars (magnitude lives in length, not color);
-// and finally the searchable transaction list, where a manual row can be
-// edited and any row excluded from budgets and reports.
+// what it left out in others: lib/spending.ts); top spending, rolled up to
+// your category groups (components/CategoryRollup.tsx), draws as single-hue
+// horizontal bars (magnitude lives in length, not color); and finally the
+// searchable transaction list, where a manual row can be edited, any row
+// given another of your categories, and any row excluded from budgets and
+// reports. Each row shows the name of the category it is filed under
+// (lib/categories.ts), so renaming a category renames it here at once.
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
-import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency } from "@/lib/spending";
+import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
 import { IMPORTED_TXN_PREFIX, importedRowsNote } from "@/lib/history-import/view";
+import { isConnectorKind } from "@/lib/connectors/types";
+import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
+import CategoryRollup from "./CategoryRollup";
+import CategoryPicker from "./CategoryPicker";
+import type { CategoryChoice } from "./transaction-edits";
+
+/** What one side of a pair Nya worked out between two SimpleFIN accounts
+ *  (lib/manual-txns.ts connectorTransfers) is. */
+const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
+  card: "Card payment between your accounts",
+  loan: "Loan payment between your accounts",
+  transfer: "Transfer between your accounts",
+};
+
+/** The mark on one side of a pair: what it is, worked out from the amounts,
+ *  and, while its category leaves it out of the totals, how to count it. It
+ *  counts once its category is moved into a spending group (lib/spending.ts
+ *  isTransfer: loan payments, say), and then says only what it is. */
+export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "category" | "category_kind">): string | null {
+  if (!t.paired) return null;
+  const what = `${PAIRED_WORDS[t.paired]}, worked out from the amounts`;
+  return isTransfer(t) ? `${what}: give it a category to count it` : what;
+}
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -38,7 +64,13 @@ export type Txn = {
   // As in lib/transactions.ts: the account's type, for the cash forecast.
   account_type?: string | null;
   institution_name: string;
+  // As in lib/transactions.ts: the category words the rules read, and, once
+  // filed into the person's categories, the category's id, the name to show
+  // (null for a row that says nothing) and the kind it counts as.
   category: string | null;
+  category_id?: string;
+  category_name?: string | null;
+  category_kind?: CategoryKind;
   iso_currency_code: string | null;
   unofficial_currency_code?: string | null;
   vendor_key: string;
@@ -62,6 +94,9 @@ export type Txn = {
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
+  // As in lib/transactions.ts: one side of a pair Nya worked out between two
+  // SimpleFIN accounts.
+  paired?: "card" | "loan" | "transfer";
 };
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
@@ -148,8 +183,16 @@ const BASE_CATEGORIES = [
   "other",
 ];
 
-/** The categories to choose from: the base ones and every one in the data,
- *  sorted. Shared with the quick-add form (components/ManualTxnSheet.tsx). */
+/** A row's category as the list shows it: the name of the category it is
+ *  filed under, or, on a row not filed (no categories loaded), its words. */
+export function categoryLabel(t: Pick<Txn, "category" | "category_name">): string | null {
+  const name = t.category_name !== undefined ? t.category_name : t.category;
+  return name ? displayName(name) : null;
+}
+
+/** The categories to choose from when the person's own couldn't be loaded:
+ *  the base ones and every one in the data, sorted, as before categories had
+ *  ids. Shared with the quick-add form (components/ManualTxnSheet.tsx). */
 export function categoryOptions(txns: Txn[] | null): string[] {
   const set = new Set(BASE_CATEGORIES);
   (txns ?? []).forEach((t) => {
@@ -214,6 +257,7 @@ export default function MonthBreakdown({
   txns,
   notes,
   loading,
+  taxonomy = null,
   onRecategorize,
   onRename,
   onAddTransaction,
@@ -228,7 +272,10 @@ export default function MonthBreakdown({
   txns: Txn[] | null;
   notes: string[];
   loading: boolean;
-  onRecategorize: (transaction_id: string, category: string) => void;
+  /** Your categories (components/categories-state.ts): the list to choose
+   *  one from, and the groups top spending rolls up to. Null until loaded. */
+  taxonomy?: Taxonomy | null;
+  onRecategorize: (transaction_id: string, choice: CategoryChoice) => void;
   onRename: (vendor_key: string, name: string) => void;
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
@@ -297,10 +344,14 @@ export default function MonthBreakdown({
     return { excludedCount, unknownCount };
   }, [monthTxns]);
 
-  const { moneyIn, moneyOut, categories } = useMemo(() => {
+  const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
     let inflow = 0;
     let outflow = 0;
+    // By the words a row carries (no categories loaded), and by the id of
+    // the category it is filed under, for the rollup to groups.
     const byCategory: Record<string, number> = {};
+    const byCategoryId = new Map<string, number>();
+    const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
     for (const t of monthTxns) {
       if (!countsInTotals(t, currency)) continue;
       if (t.amount < 0) {
@@ -309,13 +360,17 @@ export default function MonthBreakdown({
         outflow += t.amount;
         const cat = t.category ?? "other";
         byCategory[cat] = (byCategory[cat] ?? 0) + t.amount;
+        if (ix) {
+          const id = filedId(ix, t);
+          byCategoryId.set(id, (byCategoryId.get(id) ?? 0) + t.amount);
+        }
       }
     }
     const categories = Object.entries(byCategory)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-    return { moneyIn: inflow, moneyOut: outflow, categories };
-  }, [monthTxns, currency]);
+    return { moneyIn: inflow, moneyOut: outflow, categories, byCategoryId };
+  }, [monthTxns, currency, taxonomy]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -378,7 +433,7 @@ export default function MonthBreakdown({
     return monthTxns.filter(
       (t) =>
         t.name.toLowerCase().includes(q) ||
-        (t.category ?? "").includes(q) ||
+        (categoryLabel(t) ?? "").toLowerCase().includes(q) ||
         t.account_name.toLowerCase().includes(q) ||
         t.institution_name.toLowerCase().includes(q),
     );
@@ -463,8 +518,14 @@ export default function MonthBreakdown({
   const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
+  // SimpleFIN's rows come without categories: said while any counts.
+  const uncategorized = uncategorizedNote(uncategorizedFromConnector(monthTxns));
   const gapNotes = selected
-    ? [...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
+    ? [
+        ...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)),
+        ...missingMonthNotes(withoutTransactions),
+        ...(uncategorized ? [uncategorized] : []),
+      ]
     : [];
   // When only rows entered by hand are here, the connections that bring in
   // none are named beside the totals: where they come from, not a warning.
@@ -554,7 +615,17 @@ export default function MonthBreakdown({
         ))}
       </div>
 
-      {categories.length > 0 && (
+      {taxonomy && byCategoryId.size > 0 && (
+        <div className="card">
+          <div className="inst-header">
+            <div className="inst-name">Top spending</div>
+            <div className="inst-total">by group</div>
+          </div>
+          <CategoryRollup taxonomy={taxonomy} byCategory={byCategoryId} currency={currency} />
+        </div>
+      )}
+
+      {!taxonomy && categories.length > 0 && (
         <div className="card">
           <div className="inst-header">
             <div className="inst-name">Top spending</div>
@@ -709,7 +780,7 @@ export default function MonthBreakdown({
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
-                              {t.category ? ` · ${t.category}` : ""}
+                              {categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
                               {t.source ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
@@ -718,6 +789,10 @@ export default function MonthBreakdown({
                                 Excluded from budgets and reports
                               </div>
                             )}
+                            {/* A pair Nya worked out between two SimpleFIN
+                                accounts (lib/manual-txns.ts): said, so a
+                                wrong one is seen and given a category. */}
+                            {t.paired && <div className="excluded-tag">{pairedWords(t)}</div>}
                             {t.excluded === null && (
                               <div className="excluded-tag">
                                 Couldn&apos;t read whether you excluded this
@@ -730,22 +805,38 @@ export default function MonthBreakdown({
                             className="txn-edit"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <select
-                              className="text-input recat-select"
-                              value={t.category ?? "other"}
-                              onChange={(e) => {
-                                onRecategorize(t.transaction_id, e.target.value);
-                                setRecatId(null);
-                              }}
-                              aria-label={`Category for ${t.name}`}
-                            >
-                              {pickable.map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
-                              ))}
-                            </select>
-                            {t.source && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX) && onEditTransaction && (
+                            {taxonomy ? (
+                              <CategoryPicker
+                                taxonomy={taxonomy}
+                                className="text-input recat-select"
+                                value={t.category_id ?? taxonomy.uncategorized}
+                                onChange={(id) => {
+                                  if (id && id !== t.category_id) onRecategorize(t.transaction_id, { category_id: id });
+                                  setRecatId(null);
+                                }}
+                                label={`Category for ${t.name}`}
+                              />
+                            ) : (
+                              <select
+                                className="text-input recat-select"
+                                value={t.category ?? "other"}
+                                onChange={(e) => {
+                                  onRecategorize(t.transaction_id, { category: e.target.value });
+                                  setRecatId(null);
+                                }}
+                                aria-label={`Category for ${t.name}`}
+                              >
+                                {pickable.map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {/* Not a row SimpleFIN brought nor one imported into
+                                a linked account: the bank's or the file's
+                                record, whose category alone is the person's. */}
+                            {t.source && !isConnectorKind(t.source) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX) && onEditTransaction && (
                               <div className="rename-row">
                                 <button
                                   className="secondary"

@@ -165,6 +165,27 @@ describe('the sharing drawer', () => {
     expect(html).not.toContain('Create invite link');
   });
 
+  test('an account waiting for its balance is listed only where it is shared, to keep or end, and not counted as seen', () => {
+    const withWaiting = [
+      ...accounts,
+      { id: 'w', label: 'My Bank Visa', institution: 'My Bank', name: 'Visa', waiting: true },
+      { id: 'x', label: 'My Bank Loan', institution: 'My Bank', name: 'Loan', waiting: true },
+    ];
+    const sharing = { ...pat, sharing: { a: 'exists', w: 'balance' } };
+    const list = panel({ enabled: true, connections: [sharing], accounts: withWaiting });
+    expect(list).toContain(`Sees 1 of your accounts · since ${shortDate('2026-09-28')}`);
+    const html = panel({ enabled: true, connections: [sharing], accounts: withWaiting }, { current: sharing, draft: { a: 'exists', w: 'balance', x: 'none' } });
+    expect(html).toContain('Pat can see 1 of your accounts');
+    expect(text(html)).toContain('Visa Waiting for its balance: shown to them again once it has one');
+    // Only to keep at its level, or to end.
+    const visa = html.slice(html.indexOf('What they see of My Bank Visa'), html.indexOf('</select>', html.indexOf('What they see of My Bank Visa')));
+    expect(visa.match(/<option/g)).toHaveLength(2);
+    expect(visa).toContain('<option value="none">Not shared</option>');
+    expect(visa).toContain('<option value="balance" selected="">Balance</option>');
+    // One shared nowhere here isn't listed.
+    expect(html).not.toContain('My Bank Loan');
+  });
+
   test('a connection’s accounts are grouped by institution, each by its own name', () => {
     const grouped = [
       { id: 'a', label: 'Chase Checking ••1111', institution: 'Chase', name: 'Checking ••1111' },

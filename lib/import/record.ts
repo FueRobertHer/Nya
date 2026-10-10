@@ -20,9 +20,9 @@
 // review stage between match and commit, and a SimpleFIN connector adds a
 // parser; neither changes the rest.
 
-/** Where a record came from. A file's format today; a connector's name later
- *  ('simplefin'), each with its own parser. */
-export type SourceKind = 'ofx' | 'csv' | 'qif';
+/** Where a record came from: a file's format, or a connector's name
+ *  ('simplefin', lib/connectors/), each with its own parser. */
+export type SourceKind = 'ofx' | 'csv' | 'qif' | 'simplefin';
 
 /** The formats a file can be in. QFX is OFX with Intuit's extra tags, read the
  *  same way. */
@@ -94,8 +94,9 @@ export function capField(s: string): string {
   return s.length > MAX_FIELD_CHARS ? s.slice(0, MAX_FIELD_CHARS) : s;
 }
 
-/** The source a row imported from a file of this format carries
- *  (lib/manual-txns.ts ManualTxn.source). */
+/** The source a row carries (lib/manual-txns.ts ManualTxn.source): a file's
+ *  "import:<format>", or a connector's own name, since its rows are not an
+ *  import the person made but a feed Nya keeps up to date. */
 export function sourceOf(format: SourceKind): string {
-  return `import:${format}`;
+  return format === 'simplefin' ? 'simplefin' : `import:${format}`;
 }

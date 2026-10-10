@@ -11,6 +11,7 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
 import { instantDay } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
@@ -31,13 +32,17 @@ import ImportSheet, { type ImportTarget } from './ImportSheet';
 import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
+import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
 import { totalNotes } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
-import BudgetsTab, { type Budgets } from './BudgetsTab';
+import BudgetsTab from './BudgetsTab';
+import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
+import { useCategories, useCategoriesForBudgets } from './categories-state';
+import CategoriesCard from './CategoriesCard';
 import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
@@ -163,6 +168,10 @@ type Institution = {
   // charted point for three days with nothing to explain it.
   unconfirmed_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
+  // Set on the accounts SimpleFIN feeds (lib/connectors/), `manual` too: they
+  // are not Plaid's, and their balances aren't typed (components/Connectors.tsx).
+  connector?: string;
+  connection_id?: string;
   // The connection's health: state, when it last synced, whose side a problem
   // is on and what to do (lib/connection-state.ts). Optional: a payload
   // cached before it existed has none, and nothing is said then.
@@ -455,6 +464,10 @@ export default function Dashboard({
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
+  // Your categories (components/categories-state.ts): the lists to choose one
+  // from, the group rollups, and what budgets are set on.
+  const categories = useCategories();
+  const acceptCategories = categories.accept;
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
@@ -481,16 +494,20 @@ export default function Dashboard({
   // Budgets and goals are each saved as one whole list, so their loading and
   // saving go through lib/whole-list-store.ts, which never lets an unloaded or
   // stale list be saved over what is stored.
-  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState({}));
+  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState(EMPTY_BUDGETS));
   const [goalsState, setGoalsState] = useState<ListState<Goal[]>>(initialListState<Goal[]>([]));
   const budgetsStore = useMemo(
     () =>
       createWholeListStore<Budgets>({
         url: '/api/budgets',
-        field: 'budgets',
+        // By category and group id (lib/budget-set.ts).
+        field: 'budget_set',
         noun: 'budgets',
-        empty: {},
-        isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+        empty: EMPTY_BUDGETS,
+        isValid: (v): v is Budgets => {
+          const b = v as Budgets | null;
+          return !!b && typeof b.categories === 'object' && b.categories !== null && typeof b.groups === 'object' && b.groups !== null;
+        },
         onChange: setBudgetsState,
       }),
     []
@@ -523,6 +540,7 @@ export default function Dashboard({
     []
   );
   const budgets = budgetsState.value;
+  useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
@@ -535,6 +553,8 @@ export default function Dashboard({
   const [payoffOpen, setPayoffOpen] = useState(false);
   const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
+  // What the SimpleFIN drawer is asked to do (components/Connectors.tsx).
+  const [connectorAsk, setConnectorAsk] = useState<ConnectorAsk | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
   const [disconnectInput, setDisconnectInput] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
@@ -655,6 +675,8 @@ export default function Dashboard({
       }
       const data = await res.json();
       setTxns(data.transactions);
+      // The categories the rows were filed by.
+      acceptCategories(data.categories);
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
@@ -666,7 +688,7 @@ export default function Dashboard({
     } finally {
       setTxnsLoading(false);
     }
-  }, []);
+  }, [acceptCategories]);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
   // makes every API call answer 401; send the dashboard to the login page instead
@@ -779,6 +801,7 @@ export default function Dashboard({
     loadTransactions,
     loadNetWorth,
     requestBackfill,
+    taxonomy: categories.taxonomy,
   });
 
   // File import into a manual account (components/ImportSheet.tsx). After an
@@ -994,6 +1017,19 @@ export default function Dashboard({
     },
     [loadNetWorth, requestBackfill, loadTransactions]
   );
+
+  // After a change through SimpleFIN (components/Connectors.tsx): balances and
+  // transactions reload, and when accounts were added, retyped, kept or
+  // removed, the estimated history is rebuilt too, as after a manual save.
+  const connectorChanged = useCallback(
+    async (accountsChanged: boolean) => {
+      await loadNetWorth(true);
+      if (accountsChanged) requestBackfill(() => loadNetWorth());
+      if (txns !== null) loadTransactions(true);
+    },
+    [loadNetWorth, requestBackfill, loadTransactions, txns]
+  );
+  const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
 
   const startAddManual = useCallback(() => {
     setManualError('');
@@ -1573,7 +1609,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
+              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1596,6 +1632,8 @@ export default function Dashboard({
               </p>
               {error && <div className="error">{error}</div>}
             </div>
+            {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
+            <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
             {clerk && <SharedWithMe refreshKey={asOf} />}
           </>
@@ -1666,6 +1704,7 @@ export default function Dashboard({
                 <Insights
                   txns={txns}
                   budgets={budgets}
+                  taxonomy={categories.taxonomy}
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
@@ -1710,7 +1749,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -1757,7 +1796,13 @@ export default function Dashboard({
                     setDisconnectInput('');
                     setDisconnectTarget(target);
                   }}
+                  onConnector={setConnectorAsk}
                 />
+
+                {/* Each SimpleFIN connection: when it last answered, what it
+                    reported in its own words, Refresh, Choose accounts and
+                    Disconnect. Nothing when there is none. */}
+                <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
 
                 {/* Behind Manage accounts, like the other account upkeep, so
                     it doesn't take space in the everyday view; mounting only
@@ -1790,7 +1835,7 @@ export default function Dashboard({
                       <div className="inst-header">
                         <div className="inst-name">
                           {inst.institution_name}
-                          {inst.manual && <span className="manual-badge">Manual</span>}
+                          {inst.manual && <span className="manual-badge">{inst.connector ? 'via SimpleFIN' : 'Manual'}</span>}
                         </div>
                         <div className="inst-header-right">
                           <div className="inst-total">{fmt(instTotal, instCurrency)}</div>
@@ -1850,7 +1895,8 @@ export default function Dashboard({
                                         typed one has to say when it was set. */}
                                     {inst.manual && a.updated_at && (
                                       <div className="manual-updated">
-                                        Updated {fmtAsOf(a.updated_at)}
+                                        {/* SimpleFIN's balance is as of the day the bank gave it. */}
+                                        {inst.connector ? `Balance as of ${fmtInstantDay(a.updated_at)}` : `Updated ${fmtAsOf(a.updated_at)}`}
                                       </div>
                                     )}
                                     {util != null && (
@@ -1904,14 +1950,14 @@ export default function Dashboard({
                                   </td>
                                   <td className="num">
                                     {fmt(signedBalance(a), a.currency)}
-                                    {(inst.manual || manageMode) && (
+                                    {((inst.manual && !inst.connector) || manageMode) && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
                                       <div
                                         className="manual-row-actions"
                                         onClick={(e) => e.stopPropagation()}
                                       >
-                                        {inst.manual && (
+                                        {inst.manual && !inst.connector && (
                                           <button
                                             className="link-btn"
                                             disabled={savingManual || togglingHidden !== null}
@@ -1929,12 +1975,12 @@ export default function Dashboard({
                                             Update
                                           </button>
                                         )}
-                                        {inst.manual && (
+                                        {inst.manual && !inst.connector && (
                                           <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
                                             Add transaction
                                           </button>
                                         )}
-                                        {inst.manual && !a.hidden && (
+                                        {inst.manual && !inst.connector && !a.hidden && (
                                           <button className="link-btn" onClick={() => setImportTarget({ account_id: a.account_id })}>
                                             Import
                                           </button>
@@ -1951,7 +1997,7 @@ export default function Dashboard({
                                             {togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}
                                           </button>
                                         )}
-                                        {inst.manual && manageMode && (
+                                        {inst.manual && !inst.connector && manageMode && (
                                           <button
                                             className="link-btn danger-link"
                                             disabled={savingManual || togglingHidden !== null}
@@ -2337,12 +2383,36 @@ export default function Dashboard({
 
                 {/* Download my data, with the rest of the account upkeep
                     behind Manage accounts; after the accounts, so it doesn't
-                    push them down. It asks for a fresh sign-in itself. */}
-                {manageMode && <DownloadMyData clerk={clerk} />}
+                    push them down. It asks for a fresh sign-in itself. The
+                    accounts are what an OFX statement can be of. */}
+                {manageMode && (
+                  <DownloadMyData
+                    clerk={clerk}
+                    accounts={institutions.flatMap((i) =>
+                      i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
+                    )}
+                  />
+                )}
+
+                {/* Reports for an accountant (app/reports), beside the other
+                    ways to take your data out. */}
+                {manageMode && <ReportsEntry />}
 
                 {/* API tokens for the read-only API and the MCP server, with
                     the rest of the account upkeep (components/ApiTokens.tsx). */}
                 {manageMode && <ApiTokens clerk={clerk} />}
+
+                {/* Your categories and their groups (components/CategoriesCard.tsx):
+                    a change shows on the next read of the transactions and budgets. */}
+                {manageMode && (
+                  <CategoriesCard
+                    categories={categories}
+                    onChanged={() => {
+                      loadTransactions();
+                      budgetsStore.load();
+                    }}
+                  />
+                )}
 
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
@@ -2356,11 +2426,12 @@ export default function Dashboard({
                 txns={txns}
                 notes={txnNotes}
                 loading={txnsLoading}
+                taxonomy={categories.taxonomy}
                 onRecategorize={txnEdits.recategorize}
                 onRename={renameVendor}
                 // Only with a manual account to add to (hidden ones aren't offered).
                 onAddTransaction={
-                  institutions.some((i) => i.manual && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
+                  institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
                 }
                 onImport={() => setImportTarget({ account_id: null })}
                 onEditTransaction={txnEdits.openEdit}
@@ -2372,10 +2443,15 @@ export default function Dashboard({
               />
             )}
 
+            {/* Reports for an accountant (app/reports), under the transactions. */}
+            {tab === 'activity' && <ReportsEntry />}
+
             {tab === 'budgets' && (
               <BudgetsTab
                 txns={txns}
                 budgets={budgets}
+                taxonomy={categories.taxonomy}
+                categoriesError={categories.error}
                 budgetsStatus={budgetsState.status}
                 budgetsError={budgetsState.error}
                 budgetsSaveError={budgetsState.saveError}
@@ -2600,6 +2676,7 @@ export default function Dashboard({
         target={txnEdits.sheet}
         institutions={institutions}
         txns={txns}
+        taxonomy={categories.taxonomy}
         onClose={txnEdits.closeSheet}
         onSaved={txnEdits.onSaved}
         onBalanceStale={() => loadNetWorth(true)}
@@ -2617,6 +2694,7 @@ export default function Dashboard({
           void loadNetWorth();
         }}
       />
+      <ConnectorSheet ask={connectorAsk} onClose={() => setConnectorAsk(null)} onChanged={connectorChanged} />
 
       <Sheet
         open={!!redirect}

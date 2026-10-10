@@ -89,6 +89,11 @@ export type ForecastInstitution = {
   institution_name: string;
   item_id?: string;
   manual?: boolean;
+  /** Set on a bank whose accounts a connector the person brought feeds
+   *  (SimpleFIN's, lib/connectors/institutions.ts), `manual` too: its
+   *  balances are the bank's, not typed, and its `error` says why it is held
+   *  in its card's own words. */
+  connector?: string;
   error?: string | null;
   needs_reauth?: boolean;
   /** The day its balances are from, when they were recovered. */
@@ -110,6 +115,7 @@ export type CashAccount = {
   name: string;
   institution: string;
   balance: number;
+  /** Typed by hand: a manual account's, never one a connector feeds. */
   manual: boolean;
   updated_at?: string;
 };
@@ -158,7 +164,7 @@ const toMinor = (n: number, scale: number) => Math.round(n * scale);
  *  less the charges pending on them (see the header). */
 export function cashPosition(institutions: readonly ForecastInstitution[], txns: readonly PendingRow[] = []): CashPosition {
   const cash = institutions.flatMap((i) =>
-    i.accounts.filter((a) => a.type === 'depository' && !a.hidden).map((a) => ({ a, institution: i.institution_name, manual: !!i.manual }))
+    i.accounts.filter((a) => a.type === 'depository' && !a.hidden).map((a) => ({ a, institution: i.institution_name, manual: !!i.manual && !i.connector }))
   );
   const currency = dominantCurrency(cash.map(({ a }) => ({ iso_currency_code: a.currency })));
   const scale = minorScale(currency);
@@ -481,15 +487,23 @@ export function forecastNotes(opts: {
    *  whose kind wasn't remembered. */
   const unshownCash = (i: ForecastInstitution) => (i.unshown_accounts ?? []).filter((a) => a.type === undefined || a.type === 'depository').map((a) => a.name);
 
-  // Balances recovered from an earlier day, on an account the forecast starts from.
+  // Balances recovered from an earlier day, on an account the forecast starts
+  // from; or a connector's bank held, which its card says why in its own
+  // words (it may have answered today, held only for a card's question).
   for (const i of institutions) {
     if (!i.stale_as_of || !i.accounts.some((a) => included.has(a.account_id))) continue;
+    const on = days.snapshot(i.stale_as_of, i.stale_as_of_at);
+    if (i.connector && i.error) {
+      notes.push(`${i.error.replace(/[.\s]+$/, '')}, so this starts from ${i.institution_name}'s balances on ${on}.`);
+      continue;
+    }
     const why = i.needs_reauth ? 'needs reconnecting' : "couldn't refresh";
-    notes.push(`${i.institution_name} ${why}, so this starts from its balances on ${days.snapshot(i.stale_as_of, i.stale_as_of_at)}.`);
+    notes.push(`${i.institution_name} ${why}, so this starts from its balances on ${on}.`);
   }
   // Couldn't be reached, with nothing recovered: its cash is missing, named
-  // when its accounts are known.
-  const unreached = institutions.filter((i) => !i.manual && (i.error || i.needs_reauth) && !i.stale_as_of && i.accounts.length === 0);
+  // when its accounts are known. A manual account is never reached for; a
+  // connector's accounts that couldn't be read are.
+  const unreached = institutions.filter((i) => (!i.manual || !!i.connector) && (i.error || i.needs_reauth) && !i.stale_as_of && i.accounts.length === 0);
   const unknownCash = unique(unreached.filter((i) => !i.unshown_accounts).map((i) => i.institution_name));
   if (unknownCash.length > 0)
     notes.push(`${join(unknownCash)} couldn't be reached, so any checking or savings there ${unknownCash.length === 1 ? "isn't" : "aren't"} in this forecast.`);
@@ -574,7 +588,8 @@ export function forecastNotes(opts: {
   for (const s of opts.series?.varied ?? [])
     notes.push(`${s.name} comes on a schedule, but its amount varies too much to forecast, so it isn't in this. Add what you expect as planned income.`);
 
-  // A typed balance holds until it is updated.
+  // A typed balance holds until it is updated. (A connector's is the bank's,
+  // held with its own date when it is old: said above.)
   for (const a of position.included) {
     if (!a.manual || !a.updated_at) continue;
     const at = new Date(a.updated_at);

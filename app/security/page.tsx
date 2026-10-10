@@ -7,6 +7,7 @@ import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -22,7 +23,8 @@ export const metadata: Metadata = {
 // (lib/crypto.ts), how backups are kept (lib/backup.ts backupRetention, the
 // rule the deletion receipt uses too) and whether this copy sends email
 // (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
-// write to), since each changes what is true of this copy.
+// write to, which also decides whether a download is emailed), since each
+// changes what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -48,6 +50,10 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     'Your bank login, typed into Plaid’s window or your bank’s own page (Nya never sees it). Then your accounts, balances and transactions, and holdings and loan details where you have them, under Plaid’s own privacy policy.',
   ],
   [
+    'SimpleFIN, if you connect it',
+    'Your bank connections, which you make and pay for in your own SimpleFIN account (or another paid service that speaks its protocol, such as Redbark), under its own terms, and when Nya reads your accounts there. Nya contacts only the host in the Setup Token you paste, to claim it, and the host of the access that claim returns, to read your accounts; never a private or internal address.',
+  ],
+  [
     'Clerk, the sign-in service',
     'Your email address and your sign-in activity, and your name and picture if you sign in with Google or another account. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs. Only when this copy of Nya uses Clerk accounts rather than a shared password.',
   ],
@@ -55,7 +61,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     ? ([
         [
           'Resend, the email service',
-          'Your email address and the emails Nya sends you about your bank connections: which bank needs you and what to do, never a balance, an amount or an account number.',
+          'Your email address and the emails Nya sends you about your bank connections, and each time your data is downloaded or an API token is made: which bank needs you and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number.',
         ],
       ] as [string, string][])
     : []),
@@ -78,10 +84,10 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
     <>
       <p>
         These values are encrypted with AES-256-GCM before they are written to the database: the tokens that connect
-        your banks through Plaid, balances, net-worth history, transactions, budgets, goals, the categories you set and
-        the names you give merchants, manual accounts, how each bank connection is doing, the records of when shared
-        accounts were shown, and the short-lived copies of what the dashboard last showed. Some details around them
-        are not; they are listed below.
+        your banks through Plaid, the access your own SimpleFIN account gives Nya, balances, net-worth history,
+        transactions, budgets, goals, the categories you set and the names you give merchants, manual accounts, how
+        each bank connection is doing, the records of when shared accounts were shown, and the short-lived copies of
+        what the dashboard last showed. Some details around them are not; they are listed below.
       </p>
       {envelope ? (
         <>
@@ -139,7 +145,8 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
         A backup holds the same kinds of data as the database, apart from API tokens: the encrypted values and the plain
         text listed above{envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read
         without the keys kept in the server’s environment. API tokens are never backed up, so restoring a backup ends every
-        token, and none revoked before it can work again.
+        token, and none revoked before it can work again. It never holds the access a SimpleFIN account gives Nya, which
+        works on its own: restoring a backup ends that access, and you connect again with a new Setup Token.
       </p>
     </>
   );
@@ -184,7 +191,9 @@ export default function SecurityPage() {
             Nya is not encrypted end to end. Whoever runs Nya holds the keys, so they can read your data. The encryption
             protects against someone who gets the database or a backup without those keys.
           </li>
-          <li>Bank connections work for US institutions only.</li>
+          <li>
+            Bank connections through Plaid work for US institutions only; your own SimpleFIN account may reach others.
+          </li>
           <li>No outside security audit has been done yet.</li>
         </ul>
       </InfoSection>
@@ -198,8 +207,9 @@ export default function SecurityPage() {
         <ul>
           <li>dates and times: which days have a recorded balance, and when things were saved;</li>
           <li>
-            ids: of your accounts, transactions and bank connections (random strings from Plaid), of your sign-in
-            account, and of your API tokens (random, and not enough to use one);
+            ids: of your accounts, transactions and bank connections (random strings from Plaid, or made by Nya for
+            manual accounts and a SimpleFIN connection), of your sign-in account, and of your API tokens (random, and
+            not enough to use one);
           </li>
           <li>the names of the banks you linked, and whether Plaid included transactions when each connection was linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
@@ -310,6 +320,25 @@ export default function SecurityPage() {
         </p>
       </InfoSection>
 
+      <InfoSection title="Downloading your data">
+        <p>
+          A download of your data needs a fresh sign-in, as making an API token does, and each account can download{' '}
+          {DOWNLOADS_PER_WINDOW} times an hour.{' '}
+          {mail
+            ? 'Each download is emailed to you, so one you didn’t make shows.'
+            : 'This copy of Nya sends no email, so a download isn’t emailed to you.'}{' '}
+          The file is made as it is sent to your browser and never written anywhere on the way.
+        </p>
+        <p>
+          You can protect it with a passphrase. It is then encrypted as it is sent, in the age format
+          (age-encryption.org): a key made from your passphrase with scrypt, at the setting age itself uses, which makes
+          each guess at it slow, locks a random key, and the file is encrypted with ChaCha20-Poly1305 in parts that each
+          carry a check, so a file that was changed, cut short or put back together in another order doesn’t open. The
+          passphrase is sent to Nya with the request, used for that, and never stored or logged. Nobody can recover a lost
+          one.
+        </p>
+      </InfoSection>
+
       <InfoSection title="Security headers">
         <p>Every response from the app carries these headers:</p>
         <ul>
@@ -344,6 +373,13 @@ export default function SecurityPage() {
           you connect. Anything else, such as a bank in another country, an institution Plaid cannot reach, or a house or
           a car, can be tracked as a manual account: you enter the balance in US dollars, the only currency manual
           accounts take for now, and update it when you like.
+        </p>
+        <p>
+          Your own SimpleFIN account may reach banks Plaid can’t (Redbark, a separate paid service that speaks the same
+          protocol, covers Australia and New Zealand): you pay for it, connect your banks there, and paste a Setup Token
+          into Nya. Nya exchanges the token, once, for read-only access, keeps that access encrypted, never writes it to a
+          log, and asks for your accounts about once a day. It brings no pending transactions, no holdings and no
+          categories.
         </p>
       </InfoSection>
     </InfoPage>

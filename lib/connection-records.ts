@@ -70,7 +70,7 @@ export type ConnectionNotice = {
 const isTime = (v: unknown): v is string => typeof v === 'string' && v.length <= 64 && Number.isFinite(Date.parse(v));
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const STATES = new Set<unknown>(HEALTH_STATES);
-const SIDES = new Set<unknown>(['none', 'you', 'bank', 'plaid', 'nya', 'unknown'] satisfies Side[]);
+const SIDES = new Set<unknown>(['none', 'you', 'bank', 'plaid', 'nya', 'unknown', 'connector'] satisfies Side[]);
 
 export function isWarning(v: unknown): v is ConnectionWarning {
   return (

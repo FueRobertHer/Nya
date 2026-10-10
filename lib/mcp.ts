@@ -97,12 +97,16 @@ function missingAccounts(missing: readonly ApiMissing[], withoutBalance = 0): st
   const count = (pred: (m: ApiMissing) => boolean) => missing.filter(pred).length;
   const unreadable = count((m) => m.account_id === null && m.reason === 'unreadable');
   const notLoaded = count((m) => m.reason === 'not_loaded');
-  const manual = count((m) => m.account_id !== null);
+  const manual = count((m) => m.account_id !== null && m.source !== 'simplefin');
+  const fed = count((m) => m.account_id !== null && m.source === 'simplefin');
   const parts = [
     unreadable > 0 ? `the accounts of ${plural(unreadable, 'connection')} couldn’t be read` : '',
     notLoaded > 0 ? `${plural(notLoaded, 'connection')} ${notLoaded === 1 ? 'hasn’t' : 'haven’t'} been loaded yet` : '',
     manual > 0 ? `${plural(manual, 'manual account')} couldn’t be read` : '',
-    withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no measured balance` : '',
+    fed > 0 ? `${plural(fed, 'SimpleFIN account')} couldn’t be read` : '',
+    // Never measured, or a card SimpleFIN reports as money held, waiting for
+    // the person's answer (the notes say which).
+    withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no balance to count` : '',
   ].filter(Boolean);
   return parts.length === 0 ? '' : ` Incomplete: ${parts.join('; ')}. See missing_accounts and notes.`;
 }
@@ -142,12 +146,13 @@ const SUMMARIES: Record<string, Tool['summary']> = {
     `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,
   spending_by_category: (r) =>
     `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
-  get_budgets: (r) => `${plural(r.budgets.length, 'budget')} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}.${withoutTransactions(r)}`,
+  get_budgets: (r) =>
+    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}.${withoutTransactions(r)}`,
   list_recurring_bills: (r) => {
     const ended = r.bills.filter((b: any) => b.ended).length;
     return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;
   },
-  list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')}.${withoutTransactions(r)}`,
+  list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')} in use, in ${plural(r.groups.length, 'group')}.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
 };
 

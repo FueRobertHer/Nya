@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { getManualAccount, isManualId, moveManualBalance, MAX_BALANCE, type ManualAccount } from '@/lib/manual';
+import { getKeptAccount } from '@/lib/kept-accounts';
 import { isOwedType } from '@/lib/balance';
 import { clearNetWorthCache } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
@@ -23,6 +24,8 @@ import {
 } from '@/lib/manual-txns';
 import { forgetAnnotations } from '@/lib/txn-annotations';
 import { storeFailure } from '@/lib/store-failure';
+import { choiceForId, fileForAnswer } from '@/lib/category-store';
+import { CategoryError } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { loggable } from '@/lib/log-safe';
 
@@ -58,6 +61,12 @@ import { loggable } from '@/lib/log-safe';
 // the client reloads net worth, which records it in the real history layer
 // like any typed balance. Once the balance moved, the answer says so whatever
 // fails after. Editing or deleting a row never changes the balance.
+//
+// A CATEGORY is chosen from the person's categories (lib/categories.ts) by id
+// (`category_id`, null for none), and kept on the row as that category's words
+// (choiceText), which the release before categories had ids reads too; a page
+// from that release still sends the words themselves (`category`). The row in
+// each answer is filed as the Activity tab files it.
 
 /** Far more than any one transaction's fields need. */
 const MAX_BODY_CHARS = 8 * 1024;
@@ -99,10 +108,24 @@ function readUpdateBalance(v: unknown): { from: number; to: number } | null | 'i
   return { from, to };
 }
 
-/** The row as the Activity tab shows it, on the account it is on now. */
+/** The row as the Activity tab shows it, on the account it is on now, filed
+ *  into the person's categories. */
 async function shown(ctx: Ctx, row: ManualTxn, account: ManualAccount) {
   const on = row.account_id === account.account_id ? account : await getManualAccount(ctx, row.account_id).catch(() => null);
-  return on ? manualRowForDisplay(on, row) : manualRowForDisplay(account, { ...row, account_id: account.account_id });
+  return fileForAnswer(ctx, on ? manualRowForDisplay(on, row) : manualRowForDisplay(account, { ...row, account_id: account.account_id }));
+}
+
+/** A category chosen by id, as the words the row keeps, in place of any
+ *  sent as words; the response refusing it, or null. */
+async function chosenCategory(ctx: Ctx, body: Record<string, unknown>): Promise<NextResponse | null> {
+  if (body.category_id === undefined) return null;
+  try {
+    body.category = body.category_id === null ? null : await choiceForId(ctx, body.category_id);
+    return null;
+  } catch (err) {
+    if (err instanceof CategoryError) return NextResponse.json({ error: err.message }, { status: err.status });
+    throw err;
+  }
 }
 
 /** Why a balance update can't be made as asked, before anything is moved. */
@@ -110,10 +133,13 @@ type BalanceRefusal = 'currency' | 'account-changed' | 'too-large' | 'owed-negat
 
 /** What the request alone says against moving the balance from `from` to
  *  `to` for this transaction on this account, or null. */
+/** The currency a manual account's balance is kept in (lib/manual.ts). */
+const keptIn = (account: ManualAccount) => account.currency ?? DEFAULT_CURRENCY;
+
 function balanceRefusal(account: ManualAccount, fields: { amount: number; currency: string }, update: { from: number; to: number }): BalanceRefusal | null {
-  // Manual balances are kept in US dollars (lib/manual.ts toInstitutions): an
-  // amount in another currency can't be taken off one.
-  if (fields.currency !== DEFAULT_CURRENCY) return 'currency';
+  // A manual balance is kept in one currency (lib/manual.ts toInstitutions):
+  // an amount in another can't be taken off it.
+  if (fields.currency !== keptIn(account)) return 'currency';
   // The figure the form said must be what this transaction makes of the one
   // it showed, for the account as it is: one whose type changed since (held
   // to owed) would move the other way.
@@ -129,7 +155,7 @@ function balanceRefusal(account: ManualAccount, fields: { amount: number; curren
 function refusedBeforeSaving(why: BalanceRefusal, account: ManualAccount, currency: string): NextResponse {
   switch (why) {
     case 'currency':
-      return NextResponse.json({ error: `${account.name}'s balance is kept in ${DEFAULT_CURRENCY}, so a transaction in ${currency} can't update it.` }, { status: 400 });
+      return NextResponse.json({ error: `${account.name}'s balance is kept in ${keptIn(account)}, so a transaction in ${currency} can't update it.` }, { status: 400 });
     case 'account-changed':
       return NextResponse.json(
         { error: `${account.name} changed since this form opened, so nothing was saved. Check it and save again.`, balance: account.balance },
@@ -149,7 +175,7 @@ function refusedBeforeSaving(why: BalanceRefusal, account: ManualAccount, curren
  *  and its balance isn't moved. */
 function refusedAfterSaving(why: BalanceRefusal, account: ManualAccount, currency: string, transaction: unknown): NextResponse {
   const reason = {
-    currency: `${account.name}'s balance is kept in ${DEFAULT_CURRENCY}, so a transaction in ${currency} can't update it`,
+    currency: `${account.name}'s balance is kept in ${keptIn(account)}, so a transaction in ${currency} can't update it`,
     'account-changed': `${account.name} changed since this form opened, so its balance wasn't updated. Check it on the account`,
     'too-large': `that would make ${account.name}'s balance too large, so it wasn't updated`,
     'owed-negative': `that would make the amount owed on ${account.name} negative, so it wasn't updated`,
@@ -168,6 +194,8 @@ export async function POST(req: Request) {
     if (body instanceof NextResponse) return body;
     if (body.id !== undefined && !isManualTxnId(body.id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
     const id = (body.id as string | undefined) ?? newManualTxnId();
+    const refused = await chosenCategory(ctx, body);
+    if (refused) return refused;
     const read = readTxnFields(body, { partial: false, today: today() });
     if ('error' in read) return NextResponse.json({ error: read.error }, { status: 400 });
     const fields = { date: read.fields.date!, amount: read.fields.amount!, currency: read.fields.currency!, name: read.fields.name!, category: read.fields.category ?? null, note: read.fields.note ?? null };
@@ -197,7 +225,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             error: moved
-              ? `This transaction was saved already, for ${saved}, and ${movedOn}'s balance moved to ${formatMoney(moved.to, DEFAULT_CURRENCY)} with it, so nothing more was changed. To change it, edit the transaction, then update the balance from the account.`
+              ? `This transaction was saved already, for ${saved}, and ${movedOn}'s balance moved to ${formatMoney(moved.to, keptIn(account))} with it, so nothing more was changed. To change it, edit the transaction, then update the balance from the account.`
               : `This transaction was saved already, for ${saved}, so nothing more was changed and the balance wasn't updated. To change it, edit the transaction, then update the balance from the account.`,
             transaction,
             added: false,
@@ -225,7 +253,7 @@ export async function POST(req: Request) {
         if (cents(update.from) !== cents(account.balance)) {
           return NextResponse.json(
             {
-              error: `${account.name}'s balance changed to ${formatMoney(account.balance, DEFAULT_CURRENCY)} since this form opened, so nothing was saved. Check it and save again.`,
+              error: `${account.name}'s balance changed to ${formatMoney(account.balance, keptIn(account))} since this form opened, so nothing was saved. Check it and save again.`,
               balance: account.balance,
             },
             { status: 409 }
@@ -309,6 +337,8 @@ export async function PATCH(req: Request) {
     if (body instanceof NextResponse) return body;
     if (!isManualTxnId(body.id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
     if (body.account_id !== undefined && !isAccountId(body.account_id)) return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
+    const refused = await chosenCategory(ctx, body);
+    if (refused) return refused;
     const read = readTxnFields(body, { partial: true, today: today() });
     if ('error' in read) return NextResponse.json({ error: read.error }, { status: 400 });
     const changes: ManualTxnChanges = { ...read.fields };
@@ -330,9 +360,10 @@ export async function PATCH(req: Request) {
       await removeAccountTxns(ctx, target.account_id);
       return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
     }
-    const on = target ?? (await getManualAccount(ctx, saved.account_id));
+    // A SimpleFIN account's row (its category changed) answers like the rest.
+    const on = target ?? (await getKeptAccount(ctx, saved.account_id));
     if (!on) return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
-    return NextResponse.json({ transaction: manualRowForDisplay(on, saved) });
+    return NextResponse.json({ transaction: await fileForAnswer(ctx, manualRowForDisplay(on, saved)) });
   } catch (err) {
     if (err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     return storeFailure(err, 'Failed to save the transaction');
@@ -356,6 +387,8 @@ export async function DELETE(req: Request) {
     await forgetAnnotations(ctx, [body.id]).catch((err) => console.warn('manual-transactions: an exclusion was left behind', loggable(err)));
     return NextResponse.json({ success: true, deleted });
   } catch (err) {
+    // A row from SimpleFIN: the bank's, never deleted alone.
+    if (err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     return storeFailure(err, 'Failed to delete the transaction');
   }
 }

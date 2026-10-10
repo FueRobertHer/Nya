@@ -7,6 +7,8 @@ import { apiTokenStore, cleanLabel, createToken, listTokens, revokeToken, TokenL
 import { clerkEnabled } from '@/lib/auth-mode';
 import { isDemoUser } from '@/lib/demo';
 import { loggable } from '@/lib/log-safe';
+import { sendAccessNotice } from '@/lib/download-notice';
+import { background } from '@/lib/background';
 
 // The API tokens card (components/ApiTokens.tsx): the person's own tokens for
 // the read-only API and the MCP server (lib/api-tokens.ts). Behind the session
@@ -30,6 +32,10 @@ import { loggable } from '@/lib/log-safe';
 // data, and a token would go on reading what later visitors type. A sandbox
 // for developers is a later step. Revoking needs only the session: it only
 // ever takes access away.
+//
+// The owner is emailed that a token was made (lib/download-notice.ts), as for
+// a download of their data: one they didn't make means someone else has
+// signed in as them. Never waited for, and never in the way of the answer.
 //
 // A token whose record can't be read is listed by id under `unreadable`
 // (damaged: DELETE removes it once the person confirms, with unreadable:
@@ -106,9 +112,11 @@ export async function POST(req: Request) {
   if (signedIn.userId && isDemoUser(signedIn.userId)) return NextResponse.json({ error: DEMO_REFUSAL }, { status: 403 });
 
   try {
-    const { token, info } = await createToken(ctx, label, new Date(), signedIn.userId);
-    // Never the token itself: it is in this answer alone.
+    const made = new Date();
+    const { token, info } = await createToken(ctx, label, made, signedIn.userId);
+    // Never the token itself: it is in this answer alone, and not in the email.
     console.log('API token made');
+    background(sendAccessNotice(ctx, { kind: 'api-token' }, made));
     return NextResponse.json({ token, info }, { headers: noStore });
   } catch (err) {
     if (err instanceof TokenLimitError) return NextResponse.json({ error: err.message }, { status: 409 });
