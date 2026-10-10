@@ -129,12 +129,36 @@ export async function ensureTaxonomy(ctx: Ctx, keys: TaxonomyKeys = {}): Promise
  */
 export async function taxonomyForReading(ctx: Ctx, keys: TaxonomyKeys = {}): Promise<{ taxonomy: Taxonomy; stored: boolean }> {
   const stored = await taxonomyStore.get(ctx);
+  return { taxonomy: await readingSet(ctx, stored, keys), stored: stored !== null };
+}
+
+/**
+ * taxonomyForReading, for a reader that names what it can't use instead of
+ * stopping (the download of my data, lib/user-export.ts): a stored set that
+ * is damaged, or saved in a form this release doesn't know, is reported as
+ * `problem`, and the set answered is the seed made in memory, as the app
+ * files transactions while it can't read them (fileTransactions). What says
+ * nothing about the set (storage out of reach, a key this deployment can't
+ * load) throws, as every read does (lib/repo.ts getReport).
+ */
+export async function taxonomyReport(
+  ctx: Ctx,
+  keys: TaxonomyKeys = {}
+): Promise<{ taxonomy: Taxonomy; stored: boolean; problem: 'unreadable' | 'unrecognised' | null }> {
+  const report = await taxonomyStore.getReport(ctx);
+  const problem = report.unreadable ? 'unreadable' : report.unrecognised ? 'unrecognised' : null;
+  return { taxonomy: await readingSet(ctx, report.value, keys), stored: report.value !== null, problem };
+}
+
+/** The stored set, or the seed it would be, grown in memory by the keys it
+ *  lacks, with provisional ids. */
+async function readingSet(ctx: Ctx, stored: Taxonomy | null, keys: TaxonomyKeys): Promise<Taxonomy> {
   const extra = stored ? {} : await seedKeys(ctx);
   const all: TaxonomyKeys = {
     required: [...(keys.required ?? []), ...(extra.required ?? [])],
     observed: [...(extra.observed ?? []), ...(keys.observed ?? [])],
   };
-  return { taxonomy: grown(stored, all, provisionalIds()), stored: stored !== null };
+  return grown(stored, all, provisionalIds());
 }
 
 /**

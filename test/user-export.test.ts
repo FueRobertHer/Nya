@@ -906,9 +906,13 @@ describe('what can’t be read is named, and everything else is in the file', ()
     await fake.set(ctxKey('goals'), await enc({ not: 'goals' }));
     const doc = await download();
     expect(doc['budgets']).toBeNull();
+    // The budgets on groups are read with them, so null and named with them,
+    // and said once, in the budgets' note.
+    expect(doc['group_budgets']).toBeNull();
     expect(doc['goals']).toBeNull();
     expect(doc.problems).toEqual([
       { section: 'budgets', problem: 'unreadable' },
+      { section: 'group_budgets', problem: 'unreadable' },
       { section: 'goals', problem: 'unrecognised' },
     ]);
     expect(doc.notes).toEqual([
@@ -919,9 +923,66 @@ describe('what can’t be read is named, and everything else is in the file', ()
     expect(doc.accounts.map((a) => a.account_id)).toContain('acc_chk');
     expect(doc.transactions.length).toBeGreaterThan(0);
     // Neither is in a CSV: only the JSON file is missing them.
-    expect(exportFile(doc, 'json').incomplete).toEqual(['budgets', 'goals']);
+    expect(exportFile(doc, 'json').incomplete).toEqual(['budgets', 'group_budgets', 'goals']);
     expect(exportFile(doc, 'transactions-csv').incomplete).toEqual([]);
     expect(exportFile(doc, 'balances-csv').incomplete).toEqual([]);
+  });
+
+  test('budgets on categories and on groups are read together: a set that can’t be used makes both null, named, and said once', async () => {
+    for (const [stored, problem] of [
+      [DAMAGED, 'unreadable'],
+      // Saved by a later release with a field this one doesn't know.
+      [await enc({ version: 1, categories: { c1: { amount: 5, rollover: 2 } }, groups: {}, mirror: {}, mirror_before: null }), 'unrecognised'],
+    ] as const) {
+      await fake.set(ctxKey('budget-set'), stored);
+      const doc = await download();
+      expect([doc['budgets'], doc['group_budgets']]).toEqual([null, null]);
+      expect(doc.problems).toEqual([
+        { section: 'budgets', problem },
+        { section: 'group_budgets', problem },
+      ]);
+      expect(doc.notes).toHaveLength(1);
+      expect(doc.notes[0]).toStartWith('Your budgets could not be read (');
+      expect(fake.strings.get(ctxKey('budget-set'))).toBe(stored);
+    }
+    // Storage out of reach still stops it, naming the store.
+    const real = fake.get.bind(fake);
+    (fake as any).get = async (key: string) => {
+      if (key === ctxKey('budget-set')) throw new Error('FakeRedis: out of reach');
+      return real(key);
+    };
+    try {
+      const err = await collectUserData({ ctx, userId: 'user_me' }).catch((e) => e);
+      expect(err).toBeInstanceOf(ExportReadError);
+      expect(err.message).toContain('Your budgets could not be read');
+    } finally {
+      (fake as any).get = real;
+    }
+  });
+
+  test('categories that can’t be read: everything else is in the file, each transaction filed by what it came with, each budget by its id, said once', async () => {
+    // The app has stored my categories, and moved my budgets onto their ids.
+    const { loadBudgets, budgetSetStore } = await import('@/lib/budget-store');
+    await loadBudgets(ctx);
+    const ids = Object.keys((await budgetSetStore.get(ctx))!.categories).sort();
+    await fake.set(ctxKey('categories'), DAMAGED);
+    const doc = await download();
+    expect(doc['categories']).toBeNull();
+    expect(doc.problems).toEqual([{ section: 'categories', problem: 'unreadable' }]);
+    expect(doc.notes).toEqual([
+      `Your categories could not be read (the stored data is damaged), so this file does not have them. Each transaction’s nya_category is the category it came with, its nya_category_id is empty, and each budget is listed by its category’s id alone. ${unchanged}`,
+    ]);
+    expect(doc.transactions.find((t) => t.transaction_id === 't_coffee')).toMatchObject({ nya_category: 'Treats', nya_category_id: null, nya_group: 'Other' });
+    expect(doc.budgets).toEqual(ids.map((id) => ({ category: null, monthly_amount: expect.any(Number), category_id: id, group: null })));
+    expect(doc.group_budgets).toEqual([]);
+    // The transactions CSV is filed by them too, and says so in its own words; the balances CSV isn't.
+    const csv = exportFile(doc, 'transactions-csv');
+    expect(csv.incomplete).toEqual(['categories']);
+    expect(csv.notes).toEqual([
+      `Your categories could not be read (the stored data is damaged), so each transaction’s nya_category is the category it came with, and its nya_category_id is empty. ${unchanged}`,
+    ]);
+    expect(exportFile(doc, 'balances-csv')).toMatchObject({ incomplete: [], notes: [] });
+    expect(fake.strings.get(ctxKey('categories'))).toBe(DAMAGED);
   });
 
   test('sharing names its own problems once each, beside the marks it makes where each record belongs', async () => {
@@ -1387,7 +1448,7 @@ describe('writing it out', () => {
     const file = exportFile(doc, 'transactions-csv');
     const [header, ...rows] = parseCsv([...file.pieces()].join(''));
     expect(header).toEqual([...TRANSACTION_COLUMNS]);
-    expect(header.slice(-2)).toEqual(['source', 'note']);
+    expect(header.slice(-5)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
     // Newest first, among the bank's rows; on a day, after the rows with a time.
     expect(rows.map((r) => col(r, 'transaction_id'))).toEqual(['t_evil', 't_posted', typed, 't_card', 't_pending', imported, 't_coffee', 't_bakery']);
@@ -1424,9 +1485,37 @@ describe('writing it out', () => {
       source: 'import:ofx',
       note: '',
     });
+    // Each filed by its own category, as the app files it: by name, with its
+    // group, and no id for one the app hasn't stored yet; one saying nothing
+    // of its category has none, in the uncategorized one's group.
+    expect(cells(typed, ['nya_category', 'nya_category_id', 'nya_group'])).toEqual({ nya_category: 'food', nya_category_id: '', nya_group: 'Other' });
+    expect(cells(imported, ['nya_category', 'nya_category_id', 'nya_group'])).toEqual({ nya_category: '', nya_category_id: '', nya_group: 'Other' });
     // A bank's row says so.
     expect(cells('t_coffee', ['source', 'note'])).toEqual({ source: 'plaid', note: '' });
     expect(file).toMatchObject({ incomplete: [], notes: [] });
+  });
+
+  test('transactions.csv: a manual row is filed by its own category among the stored ones: renamed, by its new name, with its id and group', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const { ensureTaxonomy, changeTaxonomy } = await import('@/lib/category-store');
+    const { renameCategory, moveCategory, textKeys } = await import('@/lib/categories');
+    const at = '2026-09-30T10:00:00.000Z';
+    const id = 'manual-txn:00000000-0000-4000-8000-000000000004';
+    await manualTxnStore.set(ctx, 'manual_house', {
+      version: 1,
+      rows: [{ id, account_id: 'manual_house', date: '2026-01-02', amount: 9, currency: 'USD', name: 'Market', category: 'food', note: null, source: 'manual', source_id: null, created_at: at, updated_at: at }],
+    });
+    const t = await ensureTaxonomy(ctx, { observed: textKeys(['food']) });
+    // The category its words file into (a budget named Food made it, here).
+    const food = t.categories.find((c) => c.provider_keys.some((k) => k.provider === 'text' && k.key === 'food'))!;
+    const groceries = t.groups.find((g) => g.name === 'Food')!;
+    await changeTaxonomy(ctx, (cur) => moveCategory(renameCategory(cur, food.id, 'Market food'), food.id, groceries.id));
+    const doc = await download();
+    const [, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+    const row = rows.find((r) => r[TRANSACTION_COLUMNS.indexOf('transaction_id')] === id)!;
+    const cell = (name: (typeof TRANSACTION_COLUMNS)[number]) => row[TRANSACTION_COLUMNS.indexOf(name)];
+    // The words it was entered with stay its own; the name and group are the category's now.
+    expect([cell('category'), cell('nya_category'), cell('nya_category_id'), cell('nya_group')]).toEqual(['food', 'Market food', food.id, 'Food']);
   });
 
   test('transactions.csv: a manual account’s book that can’t be read leaves the rest in, and the file says it is incomplete', async () => {

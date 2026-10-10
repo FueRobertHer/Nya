@@ -45,7 +45,7 @@
 
 import { defineValueStore, UpdateConflictError } from './repo';
 import type { Ctx } from './containers';
-import { getBudgets, setBudgets } from './budgets';
+import { getBudgets, getBudgetsReport, setBudgets } from './budgets';
 import { categoryById, indexTaxonomy, isProvisionalId, textKeys, type CategoryIndex, type Taxonomy } from './categories';
 import { ensureTaxonomy, grown, provisionalIds } from './category-store';
 import {
@@ -152,6 +152,32 @@ export async function loadBudgets(ctx: Ctx): Promise<{ budgets: Budgets; taxonom
  */
 export async function budgetsForReading(ctx: Ctx, read: Taxonomy): Promise<{ budgets: Budgets; taxonomy: Taxonomy }> {
   const [raw, set] = await Promise.all([getBudgets(ctx), budgetSetStore.get(ctx)]);
+  return budgetsAsRead(raw, set, read);
+}
+
+/**
+ * budgetsForReading, for a reader that names what it can't use instead of
+ * stopping (the download of my data, lib/user-export.ts): when the set, or
+ * the name-keyed blob it is checked against (see MIRROR), was saved but can't
+ * be used, `problem` says why, since the budgets can't be told without both:
+ * `unreadable`, damaged; `unrecognised`, in a form this release doesn't know.
+ * What says nothing about them (storage out of reach, a key this deployment
+ * can't load) throws, as every read does.
+ */
+export async function budgetsReport(
+  ctx: Ctx,
+  read: Taxonomy
+): Promise<{ budgets: Budgets; taxonomy: Taxonomy; problem: null } | { problem: 'unreadable' | 'unrecognised' }> {
+  const [blob, set] = await Promise.all([getBudgetsReport(ctx), budgetSetStore.getReport(ctx)]);
+  const problem = set.unreadable ? 'unreadable' : set.unrecognised ? 'unrecognised' : blob.problem;
+  if (problem) return { problem };
+  return { ...budgetsAsRead(blob.budgets ?? {}, set.value, read), problem: null };
+}
+
+/** What loadBudgets would answer from these, with nothing written: the set
+ *  `read` grown in memory by the blob's names, for any it lacks (with
+ *  provisional ids), and the budgets in it. */
+function budgetsAsRead(raw: Record<string, unknown>, set: BudgetSet | null, read: Taxonomy): { budgets: Budgets; taxonomy: Taxonomy } {
   const legacy = legacyBudgets(raw);
   const taxonomy = grown(read, { required: textKeys(Object.keys(legacy)) }, provisionalIds());
   const state = mirrorState(set, legacy);
