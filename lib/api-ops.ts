@@ -28,6 +28,7 @@ import {
 } from './api-read';
 import { DEFAULT_PAGE_SIZE } from './api-limits';
 import { readTags } from './api-tags';
+import { readRules } from './api-rules';
 import { OPERATION_SPECS, BadRequest, NotFound, type Args, type OperationSpec } from './api-spec';
 
 export { argsFromQuery, argsFromJson, inputSchema, BadRequest, NotFound, type Arg, type Args } from './api-spec';
@@ -181,6 +182,8 @@ const RUNS: Record<string, Operation['run']> = {
   categories: async (auth, a) => readCategories(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
   tags: async (auth, a) => readTags(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+
+  rules: async (auth, a) => readRules(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
   budgets: async (auth, a) => readBudgets(auth.ctx, { month: str(a, 'month') ?? today().slice(0, 7), includeHidden: flag(a, 'include_hidden') }),
 

@@ -188,6 +188,7 @@ describe('tools', () => {
       'list_recurring_bills',
       'list_categories',
       'list_tags',
+      'list_rules',
       'get_holdings',
     ]);
     for (const t of tools) {

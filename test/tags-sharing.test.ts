@@ -9,6 +9,9 @@ import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKe
 // it is hidden), whatever the owner has put on it.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+// The real ceiling on a stored value: a file run before this one may have
+// lowered it for its own tests (lib/blob.ts reads it on every write).
+delete process.env.MAX_TXN_BLOB_CHARS;
 const DAY = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
 

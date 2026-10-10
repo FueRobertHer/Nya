@@ -610,6 +610,10 @@ export type ApiTransaction = {
   /** The tags it carries (lib/tags.ts), in the order they were made: put
    *  on by the person, carried from an earlier account, or added by a rule. */
   tags: { id: string; name: string }[];
+  /** The person's rules that match it (lib/rules.ts), in the order they run. */
+  rule_ids: string[];
+  /** It is excluded because a rule hides it, not by the person's own hand. */
+  excluded_by_rule: boolean;
 };
 
 /** An id as the API shows it: null for a provisional one (see CATEGORIES). */
@@ -657,6 +661,8 @@ function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex, tagNam
     region: t.region,
     website: t.website,
     tags: (t.tags ?? []).filter((id) => tagNames.has(id)).map((id) => ({ id, name: tagNames.get(id)! })),
+    rule_ids: t.rule_ids ?? [],
+    excluded_by_rule: t.excluded_by_rule === true,
   };
 }
 

@@ -81,8 +81,11 @@ export type Txn = {
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
-  // As in lib/transactions.ts: the ids of the tags it carries (lib/tags.ts).
+  // As in lib/transactions.ts: the ids of the tags it carries (lib/tags.ts),
+  // the rules that match it (lib/rules.ts), and whether a rule hid it.
   tags?: string[];
+  rule_ids?: string[];
+  excluded_by_rule?: true;
 };
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
@@ -257,6 +260,8 @@ export default function MonthBreakdown({
   tags = NO_TAGS,
   onChangeTags,
   onSaveNote,
+  onCreateRule,
+  ruleSentenceOf,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -295,12 +300,20 @@ export default function MonthBreakdown({
   onChangeTags?: (t: Txn, change: TagChange) => void;
   /** Saves a transaction's note (empty clears it). */
   onSaveNote?: (t: Txn, note: string) => void;
+  /** Opens the rule drawer on a rule made from a transaction, filing it
+   *  under `category_id` (the one just chosen) or the one it is under now. */
+  onCreateRule?: (t: Txn, category_id?: string) => void;
+  /** A rule, by id, in a sentence, for the rules a transaction matches. */
+  ruleSentenceOf?: (id: string) => string | null;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
   const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
   const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
   const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
+  // After a transaction is given another category: the offer to do the same
+  // for every transaction with its name, as a rule (#36).
+  const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -329,14 +342,16 @@ export default function MonthBreakdown({
 
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
-  const { excludedCount, unknownCount } = useMemo(() => {
+  const { excludedCount, hiddenCount, unknownCount } = useMemo(() => {
     let excludedCount = 0;
+    let hiddenCount = 0;
     let unknownCount = 0;
     for (const t of monthTxns) {
-      if (t.excluded === true) excludedCount++;
+      if (t.excluded === true && t.excluded_by_rule) hiddenCount++;
+      else if (t.excluded === true) excludedCount++;
       else if (t.excluded === null) unknownCount++;
     }
-    return { excludedCount, unknownCount };
+    return { excludedCount, hiddenCount, unknownCount };
   }, [monthTxns]);
 
   const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
@@ -583,6 +598,7 @@ export default function MonthBreakdown({
           Transfers and loan payments excluded
           {excludedCount > 0 &&
             `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
+          {hiddenCount > 0 && `, and ${hiddenCount} transaction${hiddenCount === 1 ? "" : "s"} a rule hides`}
           .
           {unknownCount > 0 &&
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
@@ -702,6 +718,27 @@ export default function MonthBreakdown({
         <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
 
         {actionError && <div className="error">{actionError}</div>}
+        {ruleOffer && onCreateRule && (
+          <div className="rule-offer">
+            <p className="panel-note" style={{ marginTop: 0 }}>
+              Do the same for every transaction named “{ruleOffer.t.name}”, past and future? A rule does it, and you can change or turn it off later.
+            </p>
+            <div className="button-pair" style={{ marginTop: 0 }}>
+              <button
+                className="secondary"
+                onClick={() => {
+                  onCreateRule(ruleOffer.t, ruleOffer.category_id);
+                  setRuleOffer(null);
+                }}
+              >
+                Make a rule
+              </button>
+              <button className="secondary" onClick={() => setRuleOffer(null)}>
+                No thanks
+              </button>
+            </div>
+          </div>
+        )}
 
         {visible.length === 0 ? (
           <p className="empty-note">
@@ -771,7 +808,7 @@ export default function MonthBreakdown({
                             </div>
                             {t.excluded === true && (
                               <div className="excluded-tag">
-                                Excluded from budgets and reports
+                                {t.excluded_by_rule ? "Hidden by a rule: out of budgets and reports" : "Excluded from budgets and reports"}
                               </div>
                             )}
                             {t.excluded === null && (
@@ -792,7 +829,10 @@ export default function MonthBreakdown({
                                 className="text-input recat-select"
                                 value={t.category_id ?? taxonomy.uncategorized}
                                 onChange={(id) => {
-                                  if (id && id !== t.category_id) onRecategorize(t.transaction_id, { category_id: id });
+                                  if (id && id !== t.category_id) {
+                                    onRecategorize(t.transaction_id, { category_id: id });
+                                    setRuleOffer({ t, category_id: id });
+                                  }
                                   setRecatId(null);
                                 }}
                                 label={`Category for ${t.name}`}
@@ -895,6 +935,30 @@ export default function MonthBreakdown({
                                 onChangeTags={(change) => onChangeTags(t, change)}
                                 onSaveNote={(note) => onSaveNote(t, note)}
                               />
+                            )}
+                            {onCreateRule && (
+                              <div className="rename-row">
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    onCreateRule(t);
+                                    setRecatId(null);
+                                  }}
+                                >
+                                  Create a rule from this
+                                </button>
+                              </div>
+                            )}
+                            {ruleSentenceOf && (t.rule_ids?.length ?? 0) > 0 && (
+                              <div className="rename-hint">
+                                {t.rule_ids!.length === 1 ? "A rule matches it" : "Rules match it"}, in the order they run (what you set here wins):
+                                <ul className="rule-matched">
+                                  {t.rule_ids!.map((id) => {
+                                    const sentence = ruleSentenceOf(id);
+                                    return sentence ? <li key={id}>{sentence}</li> : null;
+                                  })}
+                                </ul>
+                              </div>
                             )}
                             <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />
                           </div>

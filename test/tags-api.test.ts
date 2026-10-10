@@ -8,6 +8,9 @@ import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys } from 
 // person's.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+// The real ceiling on a stored value: a file run before this one may have
+// lowered it for its own tests (lib/blob.ts reads it on every write).
+delete process.env.MAX_TXN_BLOB_CHARS;
 mock.module('@/lib/plaid', () => ({
   plaidClient: new Proxy(
     {},

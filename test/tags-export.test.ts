@@ -8,6 +8,9 @@ import { parseCsv } from './csv-parse';
 // across a re-link too.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+// The real ceiling on a stored value: a file run before this one may have
+// lowered it for its own tests (lib/blob.ts reads it on every write).
+delete process.env.MAX_TXN_BLOB_CHARS;
 const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
@@ -99,7 +102,7 @@ describe('in the download', () => {
 
   test('the CSV gives every row’s tags, a manual row’s too, and a bank row’s note', async () => {
     const [header, ...rows] = parseCsv([...exportFile(await download(), 'transactions-csv').pieces()].join(''));
-    expect(header.at(-1)).toBe('tags');
+    expect(header.slice(-3)).toEqual(['tags', 'nya_name', 'excluded']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[header.indexOf(name)];
     const by = Object.fromEntries(rows.map((r) => [col(r, 'transaction_id'), r]));
     expect([col(by.t_hotel, 'tags'), col(by.t_hotel, 'note')]).toEqual(['Work; Vacation 2026', 'Paid back in October']);
@@ -116,5 +119,55 @@ describe('in the download', () => {
     expect(doc.transactions.find((t) => t.transaction_id === 't_hotel')!.tags).toEqual(['Vacation 2026']);
     await deleteTag(ctx, trip);
     expect((await download()).transactions.find((t) => t.transaction_id === 't_hotel')!.tags).toEqual([]);
+  });
+});
+
+const { assembleBankRows, finishActivity } = await import('@/lib/activity');
+const { ensureTaxonomy } = await import('@/lib/category-store');
+const { indexTaxonomy } = await import('@/lib/categories');
+const { addRule, changeRules, newRuleId } = await import('@/lib/rules');
+const { readTagSet } = await import('@/lib/tags');
+
+describe('rules in the download', () => {
+
+  /** The rows as the app shows them, its categories stored as its first load stores them. */
+  const appRows = async () => {
+    const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, withAccountIds: true, since: '2000-01-01' });
+    return (await finishActivity(ctx, bank.payload, bank.hidden, { since: '2000-01-01', grow: true })).transactions;
+  };
+  const rule = async (input: unknown) => {
+    const ix = indexTaxonomy(await ensureTaxonomy(ctx));
+    const tags = await readTagSet(ctx);
+    await changeRules(ctx, (s) => addRule(s, input, { ix, tags }, newRuleId).set);
+  };
+
+  test('every transaction, a bank’s and one entered by hand, is what the app shows: category, name, tags, exclusion', async () => {
+    await appRows();
+    const shopping = (await ensureTaxonomy(ctx)).categories.find((c) => c.name === 'general merchandise')!.id;
+    await rule({ conditions: [{ field: 'amount', op: 'gt', value: 20 }], actions: { set_category: shopping, set_name: 'Big spend', add_tags: [work], hide: true } });
+    const app = await appRows();
+    const doc = await download();
+    expect(doc.rules).toMatchObject({ version: 1, rules: [{ actions: { set_name: 'Big spend', hide: true } }] });
+    const tagName = new Map([[work, 'Work'], [trip, 'Vacation 2026']]);
+    for (const t of doc.transactions) {
+      const shown = app.find((x) => x.transaction_id === t.transaction_id)!;
+      expect([t.transaction_id, t.nya_category_id, t.nya_name, t.excluded, t.excluded_by_rule, t.tags, t.rule_ids] as unknown[]).toEqual([
+        t.transaction_id,
+        shown.category_id,
+        shown.name,
+        shown.excluded === true,
+        shown.excluded_by_rule === true,
+        (shown.tags ?? []).map((id) => tagName.get(id)),
+        shown.rule_ids ?? [],
+      ] as unknown[]);
+    }
+    expect(doc.transactions.find((t) => t.transaction_id === 't_taxi')).toMatchObject({ nya_category_id: shopping, nya_name: 'Big spend', excluded: true, excluded_by_rule: true, tags: ['Work'] });
+    // Entered by hand: filed by the rule (it has no category of its own), hidden, its name its own.
+    const [header, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+    const col = (r: string[], name: string) => r[header.indexOf(name)];
+    const typed = rows.find((r) => col(r, 'transaction_id') === MANUAL_ID)!;
+    expect([col(typed, 'nya_category_id'), col(typed, 'nya_name'), col(typed, 'excluded'), col(typed, 'tags')] as unknown[]).toEqual([shopping, 'Farmers market', 'true', 'Work; Vacation 2026']);
+    const appTyped = app.find((x) => x.transaction_id === MANUAL_ID)!;
+    expect([appTyped.category_id, appTyped.excluded, appTyped.tags]).toEqual([shopping, true, [work, trip]]);
   });
 });

@@ -41,6 +41,11 @@ import { useCategories, useCategoriesForBudgets } from './categories-state';
 import CategoriesCard from './CategoriesCard';
 import { useTagList } from './tags-state';
 import TagsCard from './TagsCard';
+import { newDraft, useRules } from './rules-state';
+import RulesCard from './RulesCard';
+import RuleSheet from './RuleSheet';
+import { indexTaxonomy } from '@/lib/categories';
+import { ruleSentence, sortedRules } from '@/lib/rules';
 import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
@@ -462,6 +467,8 @@ export default function Dashboard({
   // Your tags (components/tags-state.ts), from each transactions load.
   const tagList = useTagList();
   const acceptTags = tagList.accept;
+  // Your rules (components/rules-state.ts), and the rule drawer.
+  const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
@@ -781,6 +788,28 @@ export default function Dashboard({
     },
     [loadTransactions]
   );
+
+  // What a rule can name of the accounts, and a rule as a sentence, for the
+  // Rules screen, the rule drawer and a transaction's detail.
+  const ruleAccounts = useMemo(
+    () => institutions.flatMap((i) => i.accounts.map((a) => ({ id: a.account_id, label: `${i.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}` }))),
+    [institutions]
+  );
+  const ruleSentenceOf = useCallback(
+    (id: string) => {
+      const r = rules.set?.rules.find((x) => x.id === id);
+      if (!r) return null;
+      const ix = categories.taxonomy ? indexTaxonomy(categories.taxonomy) : null;
+      const account = (a: string) => ruleAccounts.find((x) => x.id === a)?.label ?? null;
+      return ruleSentence(r, { ix, tags: { version: 1, tags: tagList.tags }, account, money: (n) => n.toLocaleString(undefined, { maximumFractionDigits: 8 }) });
+    },
+    [rules.set, categories.taxonomy, tagList.tags, ruleAccounts]
+  );
+  const ruleUses = useMemo(() => {
+    const uses: Record<string, number> = {};
+    for (const r of sortedRules(rules.set)) for (const t of r.actions.add_tags ?? []) uses[t] = (uses[t] ?? 0) + 1;
+    return uses;
+  }, [rules.set]);
 
   // Transactions entered by hand, categories and the exclude flag
   // (components/transaction-edits.ts).
@@ -2354,7 +2383,13 @@ export default function Dashboard({
 
                 {/* Your tags (components/TagsCard.tsx): applied after the
                     server's cache, so a change shows on the next read. */}
-                {manageMode && <TagsCard tags={tagList.tags} onChanged={acceptTags} />}
+                {manageMode && <TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} />}
+
+                {/* Your rules (components/RulesCard.tsx): applied on every
+                    read, so a change shows when the transactions are read again. */}
+                {manageMode && (
+                  <RulesCard rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
+                )}
 
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
@@ -2381,6 +2416,10 @@ export default function Dashboard({
                 tags={tagList.tags}
                 onChangeTags={txnEdits.changeTags}
                 onSaveNote={txnEdits.saveNote}
+                onCreateRule={(t, category_id) =>
+                  rules.open(newDraft({ conditions: [{ field: 'name', op: 'equals', value: t.name, value2: '', direction: '' }], set_category: category_id ?? t.category_id ?? '' }))
+                }
+                ruleSentenceOf={ruleSentenceOf}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
@@ -2628,6 +2667,9 @@ export default function Dashboard({
       />
 
       <ImportSheet target={importTarget} institutions={institutions} onClose={() => setImportTarget(null)} onImported={onImported} />
+
+      {/* The rule drawer (#36), from the Rules screen or a transaction. */}
+      <RuleSheet rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
 
       <Sheet
         open={!!redirect}

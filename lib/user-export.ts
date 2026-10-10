@@ -101,7 +101,8 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
-import { exportLayers, layerBankRow, layerManualRow, type ExportLayers } from './export-layers';
+import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
+import { txnAnnotationStore } from './txn-annotations';
 import { taxonomyReport, taxonomyStore } from './category-store';
 import { budgetSetStore, budgetsReport } from './budget-store';
 import { placeBudgets } from './budget-set';
@@ -692,10 +693,21 @@ export type ExportTransaction = StoredTxn & {
   superseded_by_posted: boolean;
   account_hidden: boolean;
   /** The tags it carries, by name, as the app shows them (lib/txn-layers.ts):
-   *  put on by the person, or carried from an earlier account. */
+   *  put on by the person, carried from an earlier account, or added by a
+   *  rule. */
   tags: string[];
   /** The person's note on it, or null. */
   your_note: string | null;
+  /** The name the app shows: the person's for its merchant, else a rule's,
+   *  else the bank's. */
+  nya_name: string;
+  /** Left out of budgets and reports, as the app counts it: by the person,
+   *  carried from an earlier account, or hidden by a rule (excluded_by_rule);
+   *  null when the person's record couldn't be read (it counts then). */
+  excluded: boolean | null;
+  excluded_by_rule: boolean;
+  /** The person's rules that match it, in the order they run (lib/rules.ts). */
+  rule_ids: string[];
 };
 
 export type ExportInvestmentTransaction = Record<string, unknown> & {
@@ -1070,28 +1082,39 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   const filing = indexTaxonomy(
     growTaxonomy(data.taxonomy, observedKeys(data.stores.flatMap((s) => Object.values(s.txns).map(factsOf))), () => `new:${++provisional}`, { limit: Infinity }).taxonomy
   );
-  const filed = (t: StoredTxn) => filedAs(filing, factsOf(t));
-  // What the person said about each row, and what was carried across a
-  // re-link, from the file's own parts, as the app applies them.
+  // The rules, what the person said about each row, and what was carried
+  // across a re-link, from the file's own parts, as the app applies them; and
+  // each row filed with its rule's category among the rest.
   const sectionOf = new Map(data.sections);
-  const layers = exportLayers((key) => sectionOf.get(key), effective);
+  const layers = exportLayers((key) => sectionOf.get(key), { links: effective, ix: filing, unknown: missingIds(data.problems, txnAnnotationStore.name) });
+  const shown = (t: StoredTxn) => {
+    const facts = factsOf(t);
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null);
+    return { l, filed: filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }) };
+  };
   const transactions: ExportTransaction[] = data.stores
     .flatMap((s) => {
       const superseded = supersededPendingIds(s.txns);
-      return Object.values(s.txns).map(
-        (t): ExportTransaction => ({
+      return Object.values(s.txns).map((t): ExportTransaction => {
+        const { l, filed } = shown(t);
+        return {
           ...t,
           item_id: s.item_id,
           vendor_key: vendorKey(t),
           your_category: data.overrides.get(t.transaction_id) ?? null,
           your_category_from_earlier_account: carried.get(contentKey(t.account_id, t)) ?? null,
-          ...filed(t),
+          ...filed,
           your_merchant_name: data.renames.get(vendorKey(t)) ?? null,
           superseded_by_posted: superseded.has(t.transaction_id),
           account_hidden: hidden.has(t.account_id),
-          ...bankLayers(t, layers),
-        })
-      );
+          tags: l.tags,
+          your_note: l.note,
+          nya_name: l.name,
+          excluded: l.excluded,
+          excluded_by_rule: l.excluded_by_rule,
+          rule_ids: l.rule_ids,
+        };
+      });
     })
     // Newest first, as the app lists them; then by the event time, then the id,
     // so two downloads of the same data are the same file.
@@ -1286,12 +1309,6 @@ export function* jsonPieces(value: unknown, layout: JsonLayout = EVERY_OBJECT, p
   yield JSON.stringify(value) ?? 'null';
 }
 
-/** A bank row's tags and note, as the file gives them. */
-function bankLayers(t: StoredTxn, layers: ExportLayers): Pick<ExportTransaction, 'tags' | 'your_note'> {
-  const { tags, note } = layerBankRow(t, layers);
-  return { tags, your_note: note };
-}
-
 /** The columns of transactions.csv, in order (docs/data-export.md). */
 export const TRANSACTION_COLUMNS = [
   'date',
@@ -1349,8 +1366,10 @@ export const TRANSACTION_COLUMNS = [
   'nya_category',
   'nya_category_id',
   'nya_group',
-  // Added with tags (#40), at the end too.
+  // Added with tags (#40) and rules (#36), at the end too.
   'tags',
+  'nya_name',
+  'excluded',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
@@ -1413,6 +1432,8 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     nya_category_id: t.nya_category_id,
     nya_group: t.nya_group,
     tags: t.tags.join('; '),
+    nya_name: t.nya_name,
+    excluded: t.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1426,7 +1447,7 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | undefined, hidden: boolean, filed: NyaCategory, tags: string[]): CsvValue[] {
+function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | undefined, hidden: boolean, filed: NyaCategory, l: Layered): CsvValue[] {
   const cells: Record<TransactionColumn, CsvValue> = {
     ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
     date: row.date,
@@ -1446,7 +1467,9 @@ function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | und
     source: row.source,
     note: row.note,
     ...filed,
-    tags: tags.join('; '),
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1469,14 +1492,14 @@ function filedAs(ix: CategoryIndex, facts: CategoryFacts): NyaCategory {
  * stored yet, or ones that can't be read, which `problems` names), against
  * the seed the app would make.
  */
-function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): (row: ManualTxn) => NyaCategory {
+function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
   const stored = doc[taxonomyStore.name];
   let n = 0;
   const newId = () => `new:${++n}`;
   const facts = (r: ManualTxn): CategoryFacts => ({ category: r.category, source: r.source });
   const base = isTaxonomy(stored) ? stored : seedTaxonomy([], newId);
   const ix = indexTaxonomy(growTaxonomy(base, observedKeys(rows.map(facts)), newId, { limit: Infinity }).taxonomy);
-  return (r) => filedAs(ix, facts(r));
+  return { ix, filed: (r, rule_category) => filedAs(ix, { ...facts(r), ...(rule_category ? { rule_category } : {}) }) };
 }
 
 /** Every row of the manual accounts' books in the file, once each: a book
@@ -1509,16 +1532,21 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   const accounts = new Map(doc.manual_accounts.map((m) => [m.account_id, m]));
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   const manual = manualTransactionsIn(doc);
-  const filed = manualFiling(doc, manual);
-  // A manual row carries nothing from an earlier account: no links needed.
-  const layers = exportLayers((key) => doc[key], new Map());
+  const filing = manualFiling(doc, manual);
+  // A manual row carries nothing from an earlier account, and its account is
+  // never linked: no links needed.
+  const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institutionOf = new Map(doc.manual_accounts.map((m) => [m.account_id, m.institution_name]));
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
     ...manual.map((r) => ({
       date: r.date,
       time: '',
       id: r.id,
-      cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed(r), layerManualRow(r, layers).tags),
+      cells: () => {
+        const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? null);
+        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filing.filed(r, l.rule_category), l);
+      },
     })),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));

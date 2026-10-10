@@ -287,6 +287,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   },
   { name: 'categories', summary: 'The categories in use, on transactions or with a budget, each with its id and group, and every group with its categories.', args: { include_hidden: INCLUDE_HIDDEN } },
   { name: 'tags', summary: 'Your tags, each with its id and color and how many transactions carry it.', args: { include_hidden: INCLUDE_HIDDEN } },
+  { name: 'rules', summary: 'Your rules, in the order they run, each with what it matches and does, and how many transactions it matches.', args: { include_hidden: INCLUDE_HIDDEN } },
   {
     name: 'budgets',
     summary: 'Monthly budgets, per category and per group, with the month’s spending against each.',
@@ -444,6 +445,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'tags',
     'Tags',
     'The person’s tags (labels that cut across categories, several to a transaction, such as reimbursable or a trip), each with its id, its color and how many transactions carry it, put there by the person, by a rule or carried from an earlier account. Filter transactions by one with search_transactions.',
+    NARROW_HIDDEN
+  ),
+  fromOperation(
+    'list_rules',
+    'rules',
+    'Rules',
+    'The person’s rules, in the order they run: each matches transactions by name, amount, account, institution, category or source (all its conditions), then files them under a category, gives them a name, adds tags or hides them from budgets and reports. Each with a sentence saying it, whether it is on, what keeps it from working, and how many transactions it matches. A choice the person made on one transaction always wins over a rule.',
     NARROW_HIDDEN
   ),
   fromOperation(
