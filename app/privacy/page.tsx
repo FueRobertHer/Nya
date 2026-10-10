@@ -109,6 +109,10 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
     'Connects your banks. Sees your bank login (in Plaid’s window, never shown to Nya), then your accounts, balances and transactions, under Plaid’s own privacy policy.',
   ],
   [
+    'SimpleFIN, if you connect it',
+    'Only if you connect your own SimpleFIN account, which you pay SimpleFIN for (or another server that speaks its protocol, such as Redbark). It holds your bank connections, made through the provider it uses to reach banks, under its own terms, and sees when Nya asks. Nya keeps the read-only access it gives Nya, encrypted. About once a day Nya reads your accounts there, and keeps the balances and transactions of the ones you choose to track, and only the names of the others.',
+  ],
+  [
     'Clerk',
     'Signs you in, when this copy of Nya uses accounts rather than a shared password. Holds your email address and sign-in activity, and your name and picture if you sign in with Google or another account, and may email you sign-in codes and invitations. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs.',
   ],
@@ -151,6 +155,10 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   [
     'A bank you disconnect',
     'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
+  ],
+  [
+    'A SimpleFIN connection',
+    'The access SimpleFIN gave Nya, encrypted, and never in your download: until you disconnect it, or delete your account. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
   ],
   ['Nightly backups', backupsRow(backups)],
   [
@@ -247,8 +255,8 @@ export default function PrivacyPage() {
         </p>
         <p>
           The file itself is not encrypted, so keep it somewhere safe. It leaves out the tokens that reach your banks,
-          which are credentials rather than your data, your sign-in, and other people’s data; the JSON file lists what it
-          leaves out.
+          and the access a SimpleFIN account gives Nya, which are credentials rather than your data, your sign-in, and
+          other people’s data; the JSON file lists what it leaves out.
         </p>
       </InfoSection>
 
@@ -276,6 +284,10 @@ export default function PrivacyPage() {
               Plaid Portal (my.plaid.com)
             </a>
             .
+          </li>
+          <li>
+            SimpleFIN keeps your bank connections under its own terms. Deleting your account deletes the access it gave
+            Nya; to end it on SimpleFIN’s side too, remove Nya in your SimpleFIN account.
           </li>
           <li>The first account on a copy of Nya, the operator’s own, cannot be deleted from the app.</li>
           <li>With the shared password there is no delete button: ask the operator.</li>

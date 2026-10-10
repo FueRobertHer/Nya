@@ -12,6 +12,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
   - [Reconnect soon](#reconnect-soon)
   - [Email notices](#email-notices)
 - [Manual accounts](#manual-accounts)
+- [Bring your own sync](#bring-your-own-sync)
 - [Importing files](#importing-files)
 - [Excluding a transaction](#excluding-a-transaction)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
@@ -28,7 +29,7 @@ There are two because one Plaid connection request can't cover both. Plaid's Lin
 
 Link also "will only display account types that are compatible with all products supplied in the `products` parameter", in Plaid's words; only a bank's own sign-in window lists its accounts as the bank chooses. So a brokerage or retirement connection is for investment accounts, and may not offer a checking account or card at all: connect those with the bank option. Unless it does hold a bank (depository) account or a card, whose transactions Nya then asks Plaid for (see [Keeping Plaid costs down](#keeping-plaid-costs-down)), it brings in no spending transactions, with no warning about it. Its balances, holdings, daily snapshot and estimated history work as for any other institution, and Activity, the Budgets tab and the Plan say when none of your connections brings in spending ([When an institution can't be reached](#when-an-institution-cant-be-reached), and [the Plan's inputs](#where-the-inputs-come-from)).
 
-Bank connections work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. The app says so beside the ways to connect and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
+Bank connections through Plaid work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. Beside the Plaid buttons, **Connect with SimpleFIN** connects your own SimpleFIN account instead, which reaches banks Plaid doesn't, Redbark's in Australia and New Zealand among them ([Bring your own sync](#bring-your-own-sync)). The app says so beside the ways to connect and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in US dollars, the only currency manual accounts take for now.
 
 ### More accounts at an institution you already have
 
@@ -151,7 +152,7 @@ On the Accounts tab, the **Connection health** card lists every linked instituti
 
 - its state: working, reconnect soon (with the date), needs reconnecting, not updating (an outage or a temporary error), needs connecting again, no open accounts, or missing accounts;
 - when it last synced, as a date. Every load that reaches the institution and the daily snapshot record it;
-- whose side the problem is on: your sign-in at the bank, the bank, Plaid, or Nya itself. A broken link looks like a Nya problem from the outside, so it says which;
+- whose side the problem is on: your sign-in at the bank, the bank, Plaid, SimpleFIN for a bank it feeds, or Nya itself. A broken link looks like a Nya problem from the outside, so it says which;
 - which accounts are affected, and how much of your net worth is shown from last known balances rather than measured now, labeled as such. Accounts with nothing to recover are named as not counted;
 - the one thing to do about it.
 
@@ -168,6 +169,8 @@ Plaid's error codes decide the state, in one mapping (`lib/connection-state.ts`)
 A code Plaid adds later reads as "not updating" with the code shown, never as a guess at one of the others. The **Reconnect** button on an institution's card follows the same mapping, so the card and the health view always agree.
 
 If Nya can't read some of what it keeps about a connection (a damaged entry, or one a later version wrote), the card says so, open or closed, rather than looking fine: a warning that the connection is about to end may be missing. Nya leaves such an entry as it is; reconnecting or removing the connection clears it.
+
+A bank whose accounts come through your own SimpleFIN account has a row here too, marked **via SimpleFIN**, in SimpleFIN's words and with what to do about it there ([When SimpleFIN can't be read](#when-simplefin-cant-be-read)).
 
 ### Reconnect soon
 
@@ -189,9 +192,11 @@ When a connection breaks, the daily snapshot sends one email, and one reminder a
 
 Email is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `MAIL_FROM` ([deployment.md](deployment.md#email-notices)). Without them nothing is sent, the log says so once, and the Connection health card is the only place a broken connection shows.
 
+Only Plaid connections are emailed about. A problem with a bank SimpleFIN feeds shows on the Connection health card, on the connection's own card and under the Home total, but sends no email yet.
+
 ## Manual accounts
 
-Plaid's coverage is wide but uneven: small credit unions, HSAs, some 401k recordkeepers (try **Connect a brokerage or retirement account** first, where it is turned on), foreign banks, and anything that isn't a financial institution at all (property, crypto held off-exchange) may simply not be linkable. Those get tracked by hand.
+Plaid's coverage is wide but uneven: small credit unions, HSAs, some 401k recordkeepers (try **Connect a brokerage or retirement account** first, where it is turned on), foreign banks, and anything that isn't a financial institution at all (property, crypto held off-exchange) may simply not be linkable. Those get tracked by hand, or, for a bank your own SimpleFIN account reaches, through it ([Bring your own sync](#bring-your-own-sync)).
 
 Click **Add a manual account** (on the Accounts tab, or on the empty state before anything is connected), give it a name, an institution, a type, and a balance. Accounts sharing an institution name group into one card. Choose **Cash on hand** for the cash in your wallet (it is kept like a checking account, marked as cash), so the [Plan](#where-the-inputs-come-from) can tell the cash you take out of the bank and the cash spending you enter on it are the same money; an account added before that choice existed is a checking or savings account until you say otherwise under **Update**. From then on it behaves like a linked account: it counts toward net worth, appears in the Accounts tab, is selectable as a savings-goal source, and gets its own balance history chart.
 
@@ -223,10 +228,88 @@ The `account_id` is shown in the account's edit dialog. The response reports eac
 
 This is the escape hatch for filling Plaid's gaps however you like. Some options, roughly in order of how well they hold up:
 
-- **[SimpleFIN Bridge](https://beta-bridge.simplefin.org/)** (about $15 a year, read-only, daily refresh) is purpose-built for personal aggregation and is what Actual Budget and Firefly III use. It sometimes covers institutions Plaid misses.
+- **[SimpleFIN Bridge](https://beta-bridge.simplefin.org/)** (about $15 a year, read-only, daily refresh) is purpose-built for personal aggregation and is what Actual Budget and Firefly III use. It sometimes covers institutions Plaid misses, and Nya now connects to it directly, with no script: see [Bring your own sync](#bring-your-own-sync).
 - **OFX Direct Connect**, the pre-Plaid standard, is still enabled at many credit unions (often needing a separate enrollment and PIN) and is scriptable with [`ofxtools`](https://github.com/csingley/ofxtools). Check the [GnuCash bank list](https://wiki.gnucash.org/wiki/OFX_Direct_Connect_Bank_Settings) for a given institution. The industry is migrating away from it, so treat it as a bonus where it exists.
 - **Other aggregators** (Teller, MX, Akoya, Finicity) generally have *narrower* long-tail coverage than Plaid, so they rarely help with the exact institutions Plaid is missing.
 - **Scraping your own account** is possible but a maintenance treadmill: MFA and device binding break it, bank logins from datacenter IPs get flagged (so it can't run on Vercel), most bank terms prohibit automated access, and the failure mode is a locked account rather than a stale number. If you do it, run it on your own machine and push the result here rather than storing bank credentials in this app.
+
+## Bring your own sync
+
+Plaid reaches US institutions only, and not every one of them. Bring your own sync connects a service you pay for yourself, which reaches banks Plaid doesn't, and keeps their accounts up to date like any other. The first is SimpleFIN; the interface behind it ([architecture.md](architecture.md#connectors)) is built so others, such as Lunch Flow, can follow.
+
+### SimpleFIN, and what it costs
+
+[SimpleFIN Bridge](https://beta-bridge.simplefin.org/) connects to your banks, through the provider it uses to reach them, and lets apps you choose read your accounts, balances and transactions, read only. Actual Budget and Firefly III use it too. You pay SimpleFIN for it, about $15 a year when this was written. Whoever runs Nya pays nothing for it, unlike Plaid, which bills the deployment for each connection. Your bank login stays with SimpleFIN, and Nya never sees it.
+
+Any server that speaks the [SimpleFIN protocol](https://www.simplefin.org/protocol.html) works the same way: Redbark, for banks in Australia and New Zealand, is one. Nya never assumes SimpleFIN's own address: every address it reaches comes from the token you paste.
+
+### Connecting
+
+1. On the Accounts tab, or on the empty state before anything is connected, choose **Connect with SimpleFIN**, beside the Plaid buttons. Nothing about SimpleFIN happens until you do.
+2. In SimpleFIN Bridge, create a Setup Token for Nya, copy it, and paste it into the sheet.
+3. Nya claims the token at once, and SimpleFIN answers with an Access URL: the read-only access Nya keeps, encrypted. **A token works once.** Once it is claimed, SimpleFIN refuses it to anyone, Nya included, which is what makes pasting it safe. If Nya says a token was already used or isn't valid, create a new one; if you never used it yourself, someone else may have, so check the apps listed in your SimpleFIN account. A token is spent the moment it is claimed, so if anything fails after that, the sheet says the connection is made, and its card lets you carry on.
+4. Nya asks SimpleFIN once for your accounts, balances only, and lists them by bank with their balances. Choose which to track, and what each one is: checking or savings, credit card, loan, investment or other. The protocol doesn't say, so Nya guesses from each name and the sign of its balance, and asks you to check. What you choose names and groups the account; its contribution to net worth is the balance SimpleFIN reports (money held is positive, money owed negative) whichever you choose, so a wrong guess never misstates the total. An account in a currency Nya doesn't know (a server can have its own, such as points) can't be tracked.
+
+Nothing is tracked until you choose, and the balances of accounts you don't track are never stored: only their names, so **Choose accounts** on the connection's card can offer them later. Each account you choose gets its last 90 days of transactions at once, and older ones over the following nights.
+
+You can have two connections (SimpleFIN Bridge and another server, such as Redbark) with 100 accounts between them, and try 10 tokens an hour.
+
+### Where its accounts live
+
+Each account you track is kept the way a manual account is: an id of the same kind (`manual_` and a random id), and its transactions in the same per-account book that typed and imported transactions use, each marked as from SimpleFIN, with SimpleFIN's own id for it. Its own record (`connector-accounts`) is what makes it SimpleFIN's. It is never written to the directory of Plaid's accounts, so nothing Plaid-shaped (reconnecting through Link, linking history across a reconnect, Plaid's warnings) reaches for it, and keeping it as a manual account when you disconnect is the same account carried on.
+
+It counts everywhere an account does: net worth and its history, the Accounts tab (its bank's card says **via SimpleFIN** where a manual one says Manual, and each balance says the day the bank gave it), Activity ("from SimpleFIN"), the month's totals, budgets, insights, recurring bills, the Plan, allocation (as an account with no positions: SimpleFIN reports none), savings goals, hiding, sharing (its transactions are shared as a manual account's are) and the [download of your data](data-export.md). An account in another currency follows the [currency rule](#transactions-on-a-manual-account): nothing is converted.
+
+Its balance and transactions are the bank's, so **Update**, **Add transaction** and **Import a file** aren't offered on it, and a transaction's date, amount, payee and account stay as the bank gave them; nor can one be deleted. Its category and note are yours to change, and it can be [excluded](#excluding-a-transaction).
+
+### Keeping them up to date
+
+SimpleFIN updates from your banks about once a day and allows an app 24 requests a day. Nya makes at most 8 a day for all your connections together, counted before each is sent.
+
+- **Every day** the daily snapshot ([deployment.md](deployment.md#4-scheduled-jobs)) asks each connection for the balances and the transactions posted since five days before the last day fetched (never more than 90 days back), so a transaction that posts late is still caught. Its catch-up run two hours later asks again only if that failed or the last answer is more than 12 hours old. Opening the app never asks SimpleFIN anything: it shows what the last answer brought.
+- **Older history** arrives 90 days at a time going back, up to two windows at each daily run, each overlapping the next by five days, until SimpleFIN has nothing older or two years have come. The connection's card says how far it has come. The backfill always leaves three of the day's requests for you.
+- **Refresh**, on the connection's card, asks at once, from the same day's requests; once they are spent it says when they come back. SimpleFIN itself updates about once a day, so asking more often seldom brings anything new.
+- **Nothing twice.** A transaction is matched by SimpleFIN's own id for it, so a window fetched again, or one that overlaps, adds nothing, and one the bank has since changed (its date, amount or description) is brought up to date, keeping the category you gave it. Two identical purchases with two ids stay two.
+- **Pending transactions are left out.** Nya never asks for them, and skips any an answer holds all the same, counting them in the connection's latest request. The protocol doesn't tie a pending transaction to the posted one that replaces it, which often has another id, so keeping both would count a purchase twice. A purchase shows once it posts.
+
+### When SimpleFIN can't be read
+
+A request that fails changes nothing: no balance and no transaction. A bank's accounts count as measured only when their latest word is a whole answer. When the latest request failed, when SimpleFIN reported a problem that concerns that bank, when one of its tracked accounts is missing from the answer, before any answer held a balance, or when no answer has come for a day and a half, its balances are shown as last known with their date, no net-worth total is recorded that day (as when a Plaid bank can't be reached), and nothing is written to its history as measured or recovered from it. SimpleFIN's messages name the bank they are about, so a message naming one of your banks holds that bank only; one naming no bank could be about any, so it holds every bank on the connection; one naming only banks you don't track holds nothing.
+
+[Connection health](#connection-health) has a row for each bank SimpleFIN feeds, marked **via SimpleFIN**, with SimpleFIN's own words as it sent them, whose side the problem is on, and the one thing to do. Plaid's codes and buttons never apply to it.
+
+| What happened | Whose side | What to do |
+| --- | --- | --- |
+| SimpleFIN reports a problem with a bank ("Connection to My Bank may need attention") | SimpleFIN's: between it and your bank | Fix it in SimpleFIN, often by signing in to the bank there again (**Open SimpleFIN** links to it), then **Refresh**. |
+| SimpleFIN no longer accepts Nya's access: removed or reset there, or the subscription ended | Yours | **Connect again** with a new Setup Token: the same accounts carry on, with their history. |
+| SimpleFIN wants the subscription paid | Yours | Renew it at SimpleFIN; Nya picks up at its next update. |
+| A tracked account is missing from SimpleFIN's answer | SimpleFIN's | If you removed it there, stop tracking it with **Choose accounts**. |
+| SimpleFIN doesn't answer, or answers with something Nya can't read | SimpleFIN's | Nothing: Nya asks again at its next update. |
+| Nya can't read what it keeps, its daily update didn't run, or SimpleFIN refused how Nya asked or said it asked too often | Nya's | Nothing for you: whoever runs Nya looks at it. |
+| Nya can't use the access it keeps | Nya's | **Connect again** with a new Setup Token. |
+| The server's address isn't one Nya connects to (a private or internal one) | Not known | If you didn't expect this, connect again with a new Setup Token. |
+
+A month whose transactions may be incomplete because a SimpleFIN bank stopped answering says so under its totals, as for a Plaid one. Problems with SimpleFIN aren't [emailed](#email-notices) yet.
+
+### Disconnecting
+
+**Disconnect**, on the connection's card, deletes the Access URL and the connection, so nothing is fetched again, and asks what becomes of its accounts, as removing a Plaid connection does. You type its name to confirm.
+
+- **Keep them as manual accounts** (the default): each becomes a manual account under the same id, at the balance SimpleFIN last reported and in its currency, with its transactions, history, goals, shares and whether it is hidden. From then on you update it by hand. An account no answer ever held a balance for has nothing to keep, and goes.
+- **Remove them**: the accounts go, with their transactions and what you said about them. Their past balances stay in your net-worth history, which is never rewritten, as a disconnected bank's do.
+
+**Choose accounts** lets one account go the same way, kept or removed, while the rest stay connected. Nya can't tell SimpleFIN: Nya stays listed as an app in your SimpleFIN account until you remove it there, and the sheet says so.
+
+### What it doesn't do
+
+- **Holdings.** SimpleFIN reports balances, not positions, so an investment account has a balance and no holdings, and allocation counts its money as unclassified until you give the account a split, as for a manual investment account. With no subtype from SimpleFIN, its tax bucket is unclassified too until you set one.
+- **Account details.** No account number digits, credit limits, rates, minimum payments or due dates, and no account kinds: you say what each one is.
+- **Categories.** SimpleFIN gives none, so its transactions arrive without one until you set it.
+- **Pending transactions**, as above.
+- **Estimated history.** Before its first snapshot, an account is held flat at its balance in the estimated history, as a manual account is; its transactions aren't walked back yet.
+- **Earlier history from Plaid.** A bank you used to connect through Plaid isn't joined to its SimpleFIN accounts: account links are for Plaid's reconnects.
+- **Email notices**, as above.
+- **Other services.** Lunch Flow and others can be added behind the same interface; SimpleFIN is the only one today.
 
 ## Importing files
 

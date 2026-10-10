@@ -353,7 +353,7 @@ export function ConnectIntro({ again }: { again: boolean }) {
       </p>
       <p className="panel-note">
         In SimpleFIN Bridge, create a Setup Token for Nya and paste it below. A token works once: Nya exchanges it for read-only access to the accounts you shared there, keeps that
-        access encrypted, and never sees your bank password. Nya asks SimpleFIN once a day, a few times at most.
+        access encrypted, and never sees your bank password. Nya asks SimpleFIN about once a day, and never more than a few times a day.
       </p>
     </>
   );

@@ -249,6 +249,17 @@ describe('everywhere else, like any account', () => {
     expect((doc['connector-accounts'] as any[]).length).toBe(2);
   });
 
+  test('one kept as a manual account on a disconnect keeps its currency, in the download too', async () => {
+    server.accounts[0] = fakeAccount({ id: 'CHK', name: 'Everyday', currency: 'AUD', balance: '900.00', 'balance-date': ago(1), transactions: [] });
+    const id = await connectAndTrack();
+    const gone = await call(connectors.DELETE, 'DELETE', { connection_id: id });
+    expect([gone.status, gone.body.kept]).toEqual([200, 2]);
+    const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
+    const kept = Object.fromEntries(doc.manual_accounts.map((m) => [m.name, [m.currency ?? null, m.balance]]));
+    expect(kept).toEqual({ Everyday: ['AUD', 900], Visa: [null, 432.1] });
+    expect(doc.accounts).toEqual([]);
+  });
+
   test('the nightly snapshot fetches from SimpleFIN and records the day', async () => {
     const id = await connectAndTrack();
     await connectionsStore.update(ctx, id, (c) => (c ? { ...c, last_answer_at: new Date(NOW - 13 * 3_600_000).toISOString() } : c));

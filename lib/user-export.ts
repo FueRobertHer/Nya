@@ -438,6 +438,10 @@ export type ExportManualAccount = {
   type: string;
   subtype: string | null;
   balance: number;
+  /** Only on an account SimpleFIN fed in another currency, kept as a manual
+   *  account on a disconnect: its currency code. Every other manual balance
+   *  carries none, and is in US dollars. */
+  currency?: string;
   updated_at: string | null;
   hidden: boolean;
   hidden_at: string | null;
@@ -712,6 +716,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       type: m.type,
       subtype: m.subtype,
       balance: m.balance,
+      ...(m.currency ? { currency: m.currency } : {}),
       updated_at: realTime(m.updated_at),
       hidden: !!h,
       hidden_at: realTime(h?.hidden_at),
@@ -1074,7 +1079,7 @@ export function* balancesCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(BALANCE_COLUMNS);
   const about = new Map<string, { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean }>();
   for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden });
-  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: null, hidden: m.hidden });
+  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: m.currency ?? null, hidden: m.hidden });
 
   type Row = { date: string; rank: number; cells: CsvValue[] };
   const rows: Row[] = doc.net_worth_history.points.map((p) => ({

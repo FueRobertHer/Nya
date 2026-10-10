@@ -18,7 +18,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Format | File | What it holds |
 | --- | --- | --- |
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
-| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction stored from your banks, one per row. Those on manual accounts, entered by hand or imported, are in the JSON file. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction stored from your banks through Plaid, one per row. Those on manual accounts, entered by hand or imported, and those SimpleFIN brought are in the JSON file. |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
@@ -40,6 +40,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 The JSON file lists these itself, under `not_included`.
 
 - **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
+- **The access a SimpleFIN account gives Nya.** The Access URL Nya keeps when you connect SimpleFIN ([features.md](features.md#bring-your-own-sync)): a credential that reads your accounts there, not your data. Remove Nya in your SimpleFIN account to end it.
 - **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
 - **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
 - **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
@@ -53,7 +54,7 @@ The JSON file lists these itself, under `not_included`.
 - **Balances** of credit cards and loans are positive amounts owed. Net worth adds every other account and subtracts those.
 - **Dates.** History is kept per UTC day (`YYYY-MM-DD`). Times (`..._at`, `datetime`) are ISO 8601 instants in UTC, except `investment_transactions[].seen_at`, which is a UTC day. `first_seen` and `last_seen` are days too.
 - **`null`** means not known or never stored, never zero. A time Nya never recorded is `null`, not a made-up date.
-- **Ids** are Plaid's (`account_id`, `item_id` for a connection, `transaction_id`) or Nya's own (`manual_...` for manual accounts). They tie the parts of the file together.
+- **Ids** are Plaid's (`account_id`, `item_id` for a connection, `transaction_id`) or Nya's own (`manual_...` for manual accounts and for the accounts SimpleFIN keeps up to date, `conn_...` for a connection to SimpleFIN). They tie the parts of the file together.
 
 ## The JSON file
 
@@ -67,13 +68,13 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `documentation` | A link to this page. |
 | `not_included` | What the file leaves out, and why ([above](#what-is-not-in-it)). |
 | `notes` | Caveats about this download, if any: for example that the newest transactions from an institution could not be saved, so they may be missing. Usually empty. |
-| `institutions` | Your linked connections. |
+| `institutions` | Your linked connections: Plaid's, and your connections to SimpleFIN. |
 | `accounts` | Every account the file mentions anywhere, apart from the manual accounts you have now. |
 | `manual_accounts` | Accounts you track by hand. |
 | `hidden_accounts` | Accounts you hid. |
 | `net_worth_history` | Your net worth by day. |
 | `account_history` | Each account's balance by day. |
-| `transactions` | Every transaction stored from your banks. Those on manual accounts, entered by hand or imported, are in `manual-transactions`. |
+| `transactions` | Every transaction stored from your banks through Plaid. Those on manual accounts, entered by hand or imported, and those SimpleFIN brought are in `manual-transactions`. |
 | `category_overrides` | Every category you set on a transaction. |
 | `merchant_renames` | Every merchant you renamed. |
 | `investment_transactions` | Every stored investment transaction. |
@@ -82,25 +83,25 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets. |
 | `goals` | Your savings goals. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `institutions[]`
 
 | Field | Meaning |
 | --- | --- |
-| `item_id` | Plaid's id for the connection. |
-| `institution_name` | The bank's name, as Plaid Link gave it. |
-| `institution_id` | Plaid's id for the bank, or `null` for a connection made before it was stored. |
-| `provider` | `"plaid"`. |
+| `item_id` | Plaid's id for the connection, or Nya's (`conn_...`) for a connection to SimpleFIN. |
+| `institution_name` | The bank's name, as Plaid Link gave it. For a connection to SimpleFIN, `SimpleFIN` and the host it reaches, in brackets: the banks behind it are on its accounts. |
+| `institution_id` | Plaid's id for the bank, or `null` for a connection made before it was stored, and for a connection to SimpleFIN. |
+| `provider` | `"plaid"`, or `"simplefin"`. |
 
 ### `accounts[]`
 
-Every account the file mentions anywhere, apart from the manual accounts you have now (those are in `manual_accounts`): connected ones, earlier ones whose institution you disconnected (kept for their history), and any id known only from its balance history, a link, a declined offer, a goal or something you share. Each detail comes from the freshest record that has it: what the last good balance fetch remembered, then the directory of every account seen, then the transaction store, then the investment store.
+Every account the file mentions anywhere, apart from the manual accounts you have now (those are in `manual_accounts`): connected ones, those SimpleFIN keeps up to date, earlier ones whose institution you disconnected (kept for their history), and any id known only from its balance history, a link, a declined offer, a goal or something you share. Each detail comes from the freshest record that has it: what the last good balance fetch remembered, then the directory of every account seen, then the transaction store, then the investment store.
 
 | Field | Meaning |
 | --- | --- |
-| `account_id` | Plaid's id for the account, or Nya's (`manual_...`) for a manual account you removed. |
-| `provider` | `"plaid"`; `"manual"` for a manual account you removed, which only its history (or a goal or share naming it) still mentions; `null` when nothing stored says. |
+| `account_id` | Plaid's id for the account, or Nya's (`manual_...`) for one SimpleFIN keeps up to date, or a manual account you removed. |
+| `provider` | `"plaid"`; `"simplefin"` for one SimpleFIN keeps up to date; `"manual"` for a manual account you removed, which only its history (or a goal or share naming it) still mentions; `null` when nothing stored says. |
 | `item_id` | The connection it belongs to, or `null` if unknown. |
 | `institution_name`, `institution_id` | Its bank. |
 | `connected` | Whether its connection is still linked. |
@@ -116,9 +117,11 @@ Every account the file mentions anywhere, apart from the manual accounts you hav
 
 An account known only by its id has `null` for everything Nya never learned about it.
 
+One SimpleFIN keeps up to date is described from its entry in [`connector-accounts`](#connector-accounts): `type` is what you said it is, `currency` SimpleFIN's, `connected` whether its connection is still there, `first_seen` the day you started tracking it and `last_seen` the day of the latest balance an answer held for it. SimpleFIN gives no `official_name`, `mask`, `credit_limit` or `persistent_account_id`, so those are `null`. Kept as a manual account when you disconnected, it is in `manual_accounts` instead, under the same id.
+
 ### `manual_accounts[]`
 
-`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency; the app shows them in US dollars.
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency, and the app shows them in US dollars, except an account SimpleFIN kept up to date in another currency, kept as a manual account when you disconnected it: it has `currency`, its currency code.
 
 ### `hidden_accounts[]`
 
@@ -282,6 +285,47 @@ Plaid's warnings that a working connection is going to end, under its `item_id`,
 | `ends_estimated` | Whether `ends_at` is Nya's estimate. |
 | `reason` | Plaid's reason for a pending disconnect (`INSTITUTION_MIGRATION`), or `null`. |
 
+#### `connector-accounts`
+
+The accounts SimpleFIN keeps up to date ([features.md](features.md#bring-your-own-sync)), one entry per account you track: `id` is the account's id (as in `accounts`), and `value` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `account_id` | The account's id, as `id`. |
+| `connection_id` | Its connection, in `connector-connections` and `institutions`. |
+| `connector` | `simplefin`. |
+| `remote_id` | SimpleFIN's own id for the account. |
+| `name`, `institution_name` | Its name and its bank's, as SimpleFIN gave them. |
+| `institution_key` | SimpleFIN's key for the bank, which groups its accounts: the bank's id there, else its web domain, else its name. |
+| `institution_ref` | A random id the accounts of one bank on one connection share: its card's id on the Accounts tab. |
+| `type`, `subtype` | What you said it is (`depository`, `credit`, `loan`, `investment` or `other`), and `null`: SimpleFIN says neither. |
+| `currency` | Its currency's ISO 4217 code. |
+| `reported_balance`, `reported_available` | The balance and available balance as SimpleFIN reported them, from the holder's side: money held is positive, money owed negative (`accounts` and `account_history` give it in Nya's sign, a card's debt positive). `null` until an answer held one. |
+| `balance_at` | When the bank says that balance was, or `null` if it didn't say. |
+| `fetched_at` | When Nya received it. |
+| `created_at` | When you started tracking it. |
+
+It goes when you stop tracking the account or disconnect: kept as a manual account, it moves to `manual_accounts`.
+
+#### `connector-connections`
+
+Your connections to SimpleFIN, one entry per connection: `id` is its id (as `item_id` in `institutions`), and `value` holds what Nya knows about it, never the access it gives Nya:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `connector` | `simplefin`. |
+| `host` | The server it reaches, without the credentials. |
+| `created_at` | When you connected it. |
+| `last_fetch` | What the latest request for balances came to, or `null`: `at`, when Nya asked; `failure`, `null` when an answer came, else `kind`, `side` (whose side it was on), `message` (in words for you, SimpleFIN's own among them) and `status` (the HTTP status, or `null`); `problems`, what SimpleFIN reported beside its answer, each `message` as it sent it, `side`, and `accounts`, the tracked accounts it concerns (`null`: any of them); `missing`, tracked accounts the answer didn't hold; `added`, `updated`, the transactions it added and brought up to date; `pending` and `unreadable`, the pending transactions it left out and those it couldn't read; and `note`, something about the answer Nya couldn't keep, if any. |
+| `last_answer_at` | When an answer last came, whatever it reported, or `null`. |
+| `tracked[]` | The accounts you track: `remote_id`, SimpleFIN's id, and `account_id`, Nya's. |
+| `available[]` | The accounts SimpleFIN offers that you don't track, names only, never a balance: `remote_id`, `name`, `institution`, `institution_key`, `currency` (`null` for one Nya doesn't know) and `currency_text`, the currency as SimpleFIN wrote it. |
+| `history` | How much history has been fetched, or `null` before the first: `from` and `to`, UTC days with no gap between them, `complete` once SimpleFIN had nothing older or two years were fetched, and `failed`, when the last try at an older window failed. |
+
+It goes when you disconnect.
+
 #### `fire-plan`
 
 The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never saved any. Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in, as the tab reads it.
@@ -347,20 +391,20 @@ Deleting the account deletes its entry.
 
 #### `manual-transactions`
 
-Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or imported from a file, all of them, not just the year the Activity tab shows. One entry per manual account: `id` is the account's id (as in `manual_accounts`), and `value` holds `version` (the shape's version: 1) and `rows`, the account's transactions in the order they were added:
+Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or imported from a file, and those SimpleFIN brought to the accounts it keeps up to date, all of them, not just the year the Activity tab shows. One entry per account: `id` is the account's id (as in `manual_accounts`, or in `accounts` for one SimpleFIN keeps up to date), and `value` holds `version` (the shape's version: 1) and `rows`, the account's transactions in the order they were added:
 
 | Field | Meaning |
 | --- | --- |
 | `id` | The transaction's id: `manual-txn:` and a random id. It is its `transaction_id` in the app, and the key of anything said about it in `transaction-annotations`. |
-| `account_id` | The manual account. |
+| `account_id` | The account. |
 | `date` | The day it happened, as you entered it. |
 | `amount` | Plaid's sign: positive is money out. |
 | `currency` | Its currency's ISO 4217 code. |
 | `name` | Who was paid, or who paid you. |
 | `category` | Its category, or `null`. |
 | `note` | Your note, or `null`. |
-| `source` | Where it came from: `manual` for one entered in the app; `import:ofx`, `import:csv` or `import:qif` for one imported from a file. |
-| `source_id` | The source's own id for it, which is how a later file recognizes it: an OFX file's FITID; for a CSV or QIF file, which have no ids, what the file said when it was imported (its date, currency, amount in the currency's smallest unit and its description, lower-cased with only letters and digits, joined by `\|`). `null` for one entered by hand. |
+| `source` | Where it came from: `manual` for one entered in the app; `import:ofx`, `import:csv` or `import:qif` for one imported from a file; `simplefin` for one SimpleFIN brought from your bank. |
+| `source_id` | The source's own id for it, which is how a later file or fetch recognizes it: SimpleFIN's id for one it brought; an OFX file's FITID; for a CSV or QIF file, which have no ids, what the file said when it was imported (its date, currency, amount in the currency's smallest unit and its description, lower-cased with only letters and digits, joined by `\|`). `null` for one entered by hand. |
 | `source_key` | For one imported from an OFX file, the same summary of what the file said, hashed to 16 characters: with the FITID, it tells a later file's version of it that is exactly what was imported, however you changed it since. Absent otherwise. |
 | `transaction_code` | Plaid's code for what its file said it was, when the file says so outright: `atm` for an OFX file's ATM transaction, which the spending rules read as they read a bank's. Absent otherwise. |
 | `import_id` | The import it came in with (in [`imports`](#imports)), so that import can be taken out whole; absent or `null` for one entered by hand. |
@@ -385,7 +429,7 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 ### `nya-transactions-<date>.csv`
 
-One row per transaction stored from your banks, newest first, with the [transaction fields](#transactions) flattened (transactions on manual accounts, entered by hand or imported, are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
+One row per transaction stored from your banks through Plaid, newest first, with the [transaction fields](#transactions) flattened (transactions on manual accounts, entered by hand or imported, and those SimpleFIN brought are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
 
 `date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`.
 
@@ -430,7 +474,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `download-count`, the counter behind the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries`, each import's entry without its records, which `imports` holds whole, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `connector-secrets`, the access each connection to SimpleFIN gives Nya (a credential), `connector-requests` and `connector-claims`, the counters behind the eight requests a day to SimpleFIN and the ten tokens tried an hour, `download-count`, the counter behind the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries`, each import's entry without its records, which `imports` holds whole, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only. Your records of when what you share was shown are in your container (`sharing-access-log`, a store on the seam); the other person's record of when what they share was shown to you is in theirs, and read from there, as they see it.
 
