@@ -92,6 +92,7 @@ import { accessLogStore, type Showing } from './access-log';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
 
 export const EXPORT_FORMAT = 'nya-export';
 export const EXPORT_VERSION = 1;
@@ -1100,12 +1101,18 @@ export const TRANSACTION_COLUMNS = [
   'vendor_key',
   'logo_url',
   'category_icon_url',
+  // Added with the rows of manual accounts, at the end, so every column
+  // before them keeps its place.
+  'source',
+  'note',
 ] as const;
+
+type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
 
 function transactionRow(t: ExportTransaction): CsvValue[] {
   const loc = t.location ?? null;
   const pay = t.payment_meta ?? null;
-  const cells: Record<(typeof TRANSACTION_COLUMNS)[number], CsvValue> = {
+  const cells: Record<TransactionColumn, CsvValue> = {
     date: t.date,
     account_name: t.account_name,
     institution_name: t.institution_name,
@@ -1154,14 +1161,84 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     vendor_key: t.vendor_key,
     logo_url: t.logo_url,
     category_icon_url: t.personal_finance_category_icon_url,
+    source: PROVIDER,
+    note: null,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
 
-/** transactions.csv: one row per stored transaction, newest first. */
+/**
+ * A transaction on a manual account, entered by hand or imported (the
+ * `manual-transactions` part of the file), in the same columns as a bank's:
+ * its own payee, category (its own, so nothing is in your_category), amount
+ * and currency, its account as `manual_accounts` names it (empty for one that
+ * couldn't be read, which `problems` names), where it came from (`source`)
+ * and its note. What only a bank sends is empty, and so is item_id: a manual
+ * account has no connection.
+ */
+function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | undefined, hidden: boolean): CsvValue[] {
+  const cells: Record<TransactionColumn, CsvValue> = {
+    ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
+    date: row.date,
+    account_name: account?.name ?? null,
+    institution_name: account?.institution_name ?? null,
+    name: row.name,
+    amount: row.amount,
+    iso_currency_code: row.currency,
+    category: row.category,
+    pending: false,
+    superseded_by_posted: false,
+    account_hidden: hidden,
+    // Plaid's code for what its file said it was ("atm"), where it said so.
+    transaction_code: row.transaction_code ?? null,
+    transaction_id: row.id,
+    account_id: row.account_id,
+    source: row.source,
+    note: row.note,
+  };
+  return TRANSACTION_COLUMNS.map((c) => cells[c]);
+}
+
+/** Every row of the manual accounts' books in the file, once each: a book
+ *  restored from a backup could repeat one, which counts once, the copy
+ *  saved last, as the app shows it (lib/manual-txns.ts). */
+function manualTransactionsIn(doc: UserExport): ManualTxn[] {
+  const entries = doc[manualTxnStore.name] ?? [];
+  if (!Array.isArray(entries)) throw new Error('The manual transactions in the file have an unexpected shape');
+  const byId = new Map<string, ManualTxn>();
+  for (const entry of entries) {
+    const book = (entry as { value?: unknown } | null)?.value;
+    if (!isManualTxnBook(book)) throw new Error('A manual account’s transactions have an unexpected shape');
+    for (const row of book.rows) {
+      const seen = byId.get(row.id);
+      if (!seen || row.updated_at > seen.updated_at) byId.set(row.id, row);
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * transactions.csv: one row per transaction, newest first: every one stored
+ * from the banks, and every one on a manual account (manualTransactionRow).
+ * In the order the bank's rows are listed in the file (then by the event
+ * time, which a manual row doesn't have, then the id), so two downloads of
+ * the same data are the same file.
+ */
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
-  for (const t of doc.transactions) yield csvRow(transactionRow(t));
+  const accounts = new Map(doc.manual_accounts.map((m) => [m.account_id, m]));
+  const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
+  const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
+    ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
+    ...manualTransactionsIn(doc).map((r) => ({
+      date: r.date,
+      time: '',
+      id: r.id,
+      cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id)),
+    })),
+  ];
+  rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
+  for (const row of rows) yield csvRow(row.cells());
 }
 
 /** The columns of balances.csv, in order (docs/data-export.md). */
@@ -1225,7 +1302,8 @@ export type ExportFile = { filename: string; contentType: string; pieces: () => 
  * every part.
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
-  'transactions-csv': [],
+  // The books of the manual accounts, and the names of the accounts they are on.
+  'transactions-csv': ['manual-transactions', 'manual_accounts'],
   // The days, and the names of the manual accounts the rows are for.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
 };

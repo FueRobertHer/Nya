@@ -29,7 +29,8 @@ describe('download my data, on screen', () => {
     // The limit the server applies, not a number written out separately.
     expect(html).toContain(`Up to ${DOWNLOADS_PER_WINDOW} downloads an hour.`);
     for (const f of formatsFor(true)) expect(html).toContain(f.label);
-    // The transactions CSV is bank and card transactions; investments are in the JSON.
+    // The transactions CSV is every transaction, manual ones too; investments are in the JSON.
+    expect(html).toContain('Every stored transaction, from your banks and entered by hand or imported, one per row');
     expect(html).toContain('Investment transactions are in the JSON file only.');
   });
 

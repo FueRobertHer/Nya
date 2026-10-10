@@ -1186,6 +1186,105 @@ describe('writing it out', () => {
     expect(col(rows.find((r) => col(r, 'transaction_id') === 't_card')!, 'account_hidden')).toBe('true');
   });
 
+  test('transactions.csv: the rows of manual accounts too, entered by hand or imported, in the same columns, with their account, source and currency', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const at = '2026-09-30T10:00:00.000Z';
+    const typed = 'manual-txn:00000000-0000-4000-8000-000000000001';
+    const imported = 'manual-txn:00000000-0000-4000-8000-000000000002';
+    const row = (over: Record<string, unknown>) => ({
+      id: typed,
+      account_id: 'manual_house',
+      date: '2026-01-04',
+      amount: 12.5,
+      currency: 'EUR',
+      name: 'Bakery',
+      category: 'food',
+      note: 'croissants, for the office',
+      source: 'manual',
+      source_id: null,
+      created_at: at,
+      updated_at: at,
+      ...over,
+    });
+    await manualTxnStore.set(ctx, 'manual_house', {
+      version: 1,
+      rows: [
+        row({}),
+        // From a file: a payee that would run as a formula, money in, an ATM.
+        row({ id: imported, date: '2026-01-03', amount: -40, currency: 'USD', name: '=HYPERLINK("http://evil.example","x")', category: null, note: null, source: 'import:ofx', source_id: 'FITID-1', import_id: 'import:0f1e2d3c-aaaa', transaction_code: 'atm' }),
+      ],
+    } as any);
+    // A hidden manual account's rows are there, marked, as a bank's are.
+    await fake.hset(ctxKey('hidden:accounts'), { manual_house: await enc({ type: 'other', hidden_at: '2026-03-01T00:00:00.000Z' }) });
+    const doc = await download();
+    // The JSON keeps them where they are stored, apart from the bank's.
+    expect(doc.transactions.map((t) => t.transaction_id)).not.toContain(typed);
+    const file = exportFile(doc, 'transactions-csv');
+    const [header, ...rows] = parseCsv([...file.pieces()].join(''));
+    expect(header).toEqual([...TRANSACTION_COLUMNS]);
+    expect(header.slice(-2)).toEqual(['source', 'note']);
+    const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
+    // Newest first, among the bank's rows; on a day, after the rows with a time.
+    expect(rows.map((r) => col(r, 'transaction_id'))).toEqual(['t_evil', 't_posted', typed, 't_card', 't_pending', imported, 't_coffee', 't_bakery']);
+    const byId = Object.fromEntries(rows.map((r) => [col(r, 'transaction_id'), r]));
+    const cells = (id: string, names: (typeof TRANSACTION_COLUMNS)[number][]) => Object.fromEntries(names.map((n) => [n, col(byId[id], n)]));
+    const shown = ['date', 'account_name', 'institution_name', 'name', 'merchant_name', 'amount', 'iso_currency_code', 'category', 'your_category', 'pending', 'superseded_by_posted', 'account_hidden', 'transaction_code', 'account_id', 'item_id', 'vendor_key', 'source', 'note'] as const;
+    expect(cells(typed, [...shown])).toEqual({
+      date: '2026-01-04',
+      account_name: 'House',
+      institution_name: 'Zillow estimate',
+      name: 'Bakery',
+      merchant_name: '',
+      amount: '12.5',
+      iso_currency_code: 'EUR',
+      category: 'food',
+      your_category: '',
+      pending: 'false',
+      superseded_by_posted: 'false',
+      account_hidden: 'true',
+      transaction_code: '',
+      account_id: 'manual_house',
+      item_id: '',
+      vendor_key: '',
+      source: 'manual',
+      note: 'croissants, for the office',
+    });
+    expect(cells(imported, ['name', 'amount', 'iso_currency_code', 'category', 'transaction_code', 'source', 'note'])).toEqual({
+      // The guard, as on a bank's row; a negative amount stays a number.
+      name: '\'=HYPERLINK("http://evil.example","x")',
+      amount: '-40',
+      iso_currency_code: 'USD',
+      category: '',
+      transaction_code: 'atm',
+      source: 'import:ofx',
+      note: '',
+    });
+    // A bank's row says so.
+    expect(cells('t_coffee', ['source', 'note'])).toEqual({ source: 'plaid', note: '' });
+    expect(file).toMatchObject({ incomplete: [], notes: [] });
+  });
+
+  test('transactions.csv: a manual account’s book that can’t be read leaves the rest in, and the file says it is incomplete', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const at = '2026-09-30T10:00:00.000Z';
+    const id = 'manual-txn:00000000-0000-4000-8000-000000000003';
+    await manualTxnStore.set(ctx, 'manual_house', {
+      version: 1,
+      rows: [{ id, account_id: 'manual_house', date: '2026-01-02', amount: 3, currency: 'USD', name: 'Tea', category: null, note: null, source: 'manual', source_id: null, created_at: at, updated_at: at }],
+    });
+    await fake.hset(ctxKey('manual-transactions'), { manual_gone: DAMAGED });
+    const doc = await download();
+    const file = exportFile(doc, 'transactions-csv');
+    const [, ...rows] = parseCsv([...file.pieces()].join(''));
+    expect(rows.map((r) => r[TRANSACTION_COLUMNS.indexOf('transaction_id')])).toContain(id);
+    expect(file.incomplete).toEqual(['manual-transactions']);
+    expect(file.notes).toEqual([
+      'Not all of your manual transactions could be read, so this file is missing 1 entry whose stored data is damaged. The JSON file lists them under problems. Nothing was changed: what could not be read is still stored as it was.',
+    ]);
+    // The balances CSV isn't made from them.
+    expect(exportFile(doc, 'balances-csv')).toMatchObject({ incomplete: [], notes: [] });
+  });
+
   test('balances.csv: the total and each account by day, oldest first, recorded and estimated marked', async () => {
     const doc = await download();
     const file = exportFile(doc, 'balances-csv');

@@ -44,7 +44,7 @@ export function formatsFor(sharing: boolean): { value: Format; label: string; no
     {
       value: 'transactions-csv',
       label: 'Transactions (CSV)',
-      note: 'Every stored bank and card transaction, one per row, for a spreadsheet. Investment transactions are in the JSON file only.',
+      note: 'Every stored transaction, from your banks and entered by hand or imported, one per row, for a spreadsheet. Investment transactions are in the JSON file only.',
     },
     { value: 'balances-csv', label: 'Balance history (CSV)', note: 'Net worth and each account’s balance, day by day.' },
   ];
