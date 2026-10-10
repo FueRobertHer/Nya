@@ -52,6 +52,10 @@ export default function OpenDownloadPage() {
             A file that was cut short while it was saved, or changed since, doesn’t open at all rather than opening in
             part. Download it again.
           </li>
+          <li>
+            Unlocking the file takes about 256 MB of memory for a few seconds, then room for what it opens. An older
+            phone may stop the page, or say it can’t spare the memory: open the file on a computer instead.
+          </li>
           <li>Once opened, the file isn’t protected any more, so keep it somewhere safe.</li>
         </ul>
       </InfoSection>

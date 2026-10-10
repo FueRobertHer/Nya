@@ -145,6 +145,12 @@ export function unbase64(text: string): Uint8Array<ArrayBuffer> | null {
 
 // ---- HKDF and HMAC, from Web Crypto ----
 
+/** HKDF's salt where age gives none ("header"). RFC 5869 makes an absent
+ *  salt 32 zero bytes for SHA-256, and HMAC pads a shorter key with zeros, so
+ *  this derives the same key as an empty salt, in a form no Web Crypto engine
+ *  can balk at. */
+const NO_SALT = new Uint8Array(32);
+
 async function hkdf(ikm: Uint8Array, salt: Uint8Array, info: string): Promise<Uint8Array<ArrayBuffer>> {
   const key = await crypto.subtle.importKey('raw', new Uint8Array(ikm), 'HKDF', false, ['deriveBits']);
   return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(salt), info: utf8(info) }, key, 256));
@@ -189,7 +195,7 @@ export async function passphraseHeader(
   const body = seal(await wrapKey(passphrase, opts.salt, workFactor, opts.scrypt), ZERO_NONCE, fileKey);
   // 32 bytes are 43 characters: one body line, shorter than 64 as the last must be.
   const text = `${INTRO}\n-> scrypt ${base64(opts.salt)} ${workFactor}\n${base64(body)}\n---`;
-  const mac = await hmac(await hkdf(fileKey, new Uint8Array(0), 'header'), utf8(text));
+  const mac = await hmac(await hkdf(fileKey, NO_SALT, 'header'), utf8(text));
   return utf8(`${text} ${base64(mac)}\n`);
 }
 
@@ -257,6 +263,23 @@ export type Header = {
   /** Where the payload (its nonce first) starts. */
   end: number;
 };
+
+/**
+ * A file to read a range at a time: a Blob on the page (blobSource), so a
+ * large one is never in memory whole, or bytes already in memory
+ * (bytesSource). Reading asks for at most READ_SIZE bytes at once.
+ */
+export type AgeSource = { size: number; read: (start: number, end: number) => Promise<Uint8Array> };
+
+export const bytesSource = (file: Uint8Array): AgeSource => ({ size: file.length, read: async (start, end) => file.subarray(start, end) });
+
+export const blobSource = (blob: Blob): AgeSource => ({
+  size: blob.size,
+  read: async (start, end) => new Uint8Array(await blob.slice(start, end).arrayBuffer()),
+});
+
+/** How much of the payload is read at once: 64 sealed chunks, about 4 MB. */
+export const READ_SIZE = 64 * (CHUNK_SIZE + TAG_SIZE);
 
 /** A header line's characters: printable ASCII only (no CR, no tab). */
 const isLine = (s: string) => /^[\x20-\x7e]*$/.test(s);
@@ -347,7 +370,7 @@ async function unwrapWithPassphrase(header: Header, passphrase: string, kdf: Scr
 
 /** Throws `mac` unless the header's MAC is the file key's. */
 async function checkMac(header: Header, fileKey: Uint8Array): Promise<void> {
-  const mac = await hmac(await hkdf(fileKey, new Uint8Array(0), 'header'), header.signed);
+  const mac = await hmac(await hkdf(fileKey, NO_SALT, 'header'), header.signed);
   if (!sameBytes(mac, header.mac)) fail('mac', 'This file’s header was changed after it was made, so it can’t be trusted.');
 }
 
@@ -358,15 +381,25 @@ async function checkMac(header: Header, fileKey: Uint8Array): Promise<void> {
  * as the last. Throws `payload` at the first chunk that doesn't open, at an
  * end with no last chunk, at anything after the last chunk, and at an empty
  * last chunk after others. `from` is where the chunks start (after the
- * nonce).
+ * nonce). Read READ_SIZE bytes at a time, so only those are held.
  */
-export function* openPayload(file: Uint8Array, from: number, key: Uint8Array): Generator<Uint8Array<ArrayBuffer>> {
+export async function* openPayload(source: AgeSource, from: number, key: Uint8Array): AsyncGenerator<Uint8Array<ArrayBuffer>> {
+  // The part of the file read last. READ_SIZE is a whole number of sealed
+  // chunks and each read starts where a chunk does, so no chunk is ever
+  // split between two reads.
+  let window: Uint8Array = new Uint8Array(0);
+  let windowAt = from;
   let pos = from;
   for (let counter = 0; ; counter++) {
-    const left = file.length - pos;
+    const left = source.size - pos;
     if (left === 0) fail('payload', 'The file is cut short: it ends before its last part.');
     const take = Math.min(left, CHUNK_SIZE + TAG_SIZE);
-    const sealed = file.subarray(pos, pos + take);
+    if (pos + take > windowAt + window.length) {
+      windowAt = pos;
+      window = await source.read(pos, Math.min(source.size, pos + READ_SIZE));
+      if (window.length < take) fail('payload', 'The file is cut short: it ends before its last part.');
+    }
+    const sealed = window.subarray(pos - windowAt, pos - windowAt + take);
     pos += take;
     let last = take < CHUNK_SIZE + TAG_SIZE;
     let plain = last ? null : open(key, chunkNonce(counter, false), sealed);
@@ -378,17 +411,23 @@ export function* openPayload(file: Uint8Array, from: number, key: Uint8Array): G
     if (last && plain.length === 0 && counter > 0) fail('payload', 'The file is damaged: it ends with an empty part.');
     yield plain;
     if (last) {
-      if (pos !== file.length) fail('payload', 'The file is damaged: something was added after its end.');
+      if (pos !== source.size) fail('payload', 'The file is damaged: something was added after its end.');
       return;
     }
   }
 }
 
+/** The header, from the start of the file: one is never longer than
+ *  MAX_HEADER, so nothing past that is read for it. */
+async function readHeader(source: AgeSource): Promise<Header> {
+  return parseHeader(await source.read(0, Math.min(source.size, MAX_HEADER)));
+}
+
 /** The payload's nonce and key, from the file key: `header` if the nonce
  *  isn't all there (age's test vectors count it as the header's). */
-async function payloadStart(file: Uint8Array, header: Header, fileKey: Uint8Array): Promise<{ from: number; key: Uint8Array }> {
-  if (file.length - header.end < NONCE_SIZE) fail('header', 'The file ends before its contents start.');
-  const nonce = file.subarray(header.end, header.end + NONCE_SIZE);
+async function payloadStart(source: AgeSource, header: Header, fileKey: Uint8Array): Promise<{ from: number; key: Uint8Array }> {
+  if (source.size - header.end < NONCE_SIZE) fail('header', 'The file ends before its contents start.');
+  const nonce = await source.read(header.end, header.end + NONCE_SIZE);
   return { from: header.end + NONCE_SIZE, key: await payloadKey(fileKey, nonce) };
 }
 
@@ -403,27 +442,41 @@ export type OpenOptions = {
 };
 
 /**
- * The plaintext of a file locked with a passphrase, as its chunks, once every
- * chunk has opened: never part of one. Throws AgeError saying why it didn't
- * open. Lets the page draw between chunks.
+ * Opens a file locked with a passphrase, handing each chunk's plaintext to
+ * `onChunk`, in order, once its tag has checked out. Throws AgeError saying
+ * why it didn't open, and then whatever was handed over is to be thrown
+ * away: it is whole only once this returns. Lets the page draw between
+ * reads.
  */
-export async function decryptWithPassphrase(file: Uint8Array, passphrase: string, opts: OpenOptions): Promise<Uint8Array[]> {
-  const header = parseHeader(file);
+export async function openWithPassphrase(
+  source: AgeSource,
+  passphrase: string,
+  opts: OpenOptions,
+  onChunk: (plain: Uint8Array<ArrayBuffer>) => void
+): Promise<void> {
+  const header = await readHeader(source);
   const fileKey = await unwrapWithPassphrase(header, passphrase, opts.scrypt, opts.maxWorkFactor ?? MAX_WORK_FACTOR);
   await checkMac(header, fileKey);
-  const { from, key } = await payloadStart(file, header, fileKey);
-  const parts: Uint8Array[] = [];
+  const { from, key } = await payloadStart(source, header, fileKey);
   let at = from;
-  for (const part of openPayload(file, from, key)) {
-    parts.push(part);
+  let count = 0;
+  for await (const part of openPayload(source, from, key)) {
+    onChunk(part);
     at += part.length + TAG_SIZE;
-    // About every 4 MB, a moment for the page to draw.
-    if (parts.length % 64 === 0) {
-      opts.onPayloadProgress?.((at - from) / Math.max(1, file.length - from));
+    // A read's worth of chunks: a moment for the page to draw.
+    if (++count % 64 === 0) {
+      opts.onPayloadProgress?.((at - from) / Math.max(1, source.size - from));
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
   opts.onPayloadProgress?.(1);
+}
+
+/** The plaintext of a file in memory locked with a passphrase, as its
+ *  chunks, once every chunk has opened (openWithPassphrase). */
+export async function decryptWithPassphrase(file: Uint8Array, passphrase: string, opts: OpenOptions): Promise<Uint8Array[]> {
+  const parts: Uint8Array[] = [];
+  await openWithPassphrase(bytesSource(file), passphrase, opts, (part) => parts.push(part));
   return parts;
 }
 
@@ -432,9 +485,9 @@ export async function decryptWithPassphrase(file: Uint8Array, passphrase: string
  * parsed and its MAC checked with that key, then the payload's chunks as they
  * open (openPayload), whatever opened before a failure included.
  */
-export async function openWithFileKey(file: Uint8Array, fileKey: Uint8Array): Promise<Generator<Uint8Array<ArrayBuffer>>> {
-  const header = parseHeader(file);
+export async function* openWithFileKey(source: AgeSource, fileKey: Uint8Array): AsyncGenerator<Uint8Array<ArrayBuffer>> {
+  const header = await readHeader(source);
   await checkMac(header, fileKey);
-  const { from, key } = await payloadStart(file, header, fileKey);
-  return openPayload(file, from, key);
+  const { from, key } = await payloadStart(source, header, fileKey);
+  yield* openPayload(source, from, key);
 }

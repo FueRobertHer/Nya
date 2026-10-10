@@ -15,10 +15,19 @@
 // which is what makes guessing a passphrase slow too. The page says how far
 // it has got. A file protected with a slower setting than a browser can
 // manage is sent to the age app.
+//
+// MEMORY. A phone may stop a page that holds too much, so the file is never
+// read whole: its header first, then a few megabytes at a time after the
+// key is unlocked (lib/age/age.ts blobSource), and what has opened is kept
+// as Blobs a few megabytes each, which a browser can hold outside the page's
+// own memory, rather than as one growing array. At the peak, during the
+// unlocking, that is the 256 MB and little else. A device that can't spare
+// that much is told so, and to use a computer.
 
 import { useState } from 'react';
-import { AgeError, WORK_FACTOR, decryptWithPassphrase } from '@/lib/age/age';
+import { AgeError, WORK_FACTOR, blobSource, openWithPassphrase } from '@/lib/age/age';
 import { scrypt } from '@/lib/age/scrypt';
+import { NOT_A_SIGN_IN } from '@/components/DownloadOptions';
 
 export type OpenPhase =
   | { kind: 'idle' }
@@ -35,9 +44,14 @@ export function sizeOf(n: number): string {
 }
 
 /** The opened file's name: the protected one's without ".age", or with
- *  ".opened" added when it didn't end so. */
+ *  ".opened" added when it didn't end so. A number a browser added to a
+ *  second copy ("x.json (1).age", "x.json(1).age", "x.json-2.age") goes
+ *  before the extension, so the opened file still opens by its type. */
 export function openedName(name: string): string {
-  return /\.age$/i.test(name) && name.length > 4 ? name.slice(0, -4) : `${name}.opened`;
+  if (!/\.age$/i.test(name) || name.length <= 4) return `${name}.opened`;
+  const bare = name.slice(0, -4);
+  const copy = /^(.+)(\.(?:json|csv|ofx))( ?\(\d+\)|-\d+)$/i.exec(bare);
+  return copy ? `${copy[1]}${copy[3]}${copy[2]}` : bare;
 }
 
 /** The opened file's type, from its name: what a protected download holds. */
@@ -50,7 +64,14 @@ function typeOf(name: string): string {
 
 /** Why a file didn't open, in words for the person (lib/age/age.ts AgeFailure). */
 export function openFailure(err: unknown): string {
-  if (!(err instanceof AgeError)) return 'The file couldn’t be opened here. Try again, or open it with the age app.';
+  if (!(err instanceof AgeError)) {
+    // What a browser throws when it can't find the memory for the key's
+    // work: a RangeError, or Firefox's InternalError, saying so.
+    if (err instanceof RangeError || (err instanceof Error && /memory|allocat/i.test(err.message))) {
+      return 'This device couldn’t spare the memory to open the file here. Open it on a computer, on this page or with the age app.';
+    }
+    return 'The file couldn’t be opened here. Try again, or open it with the age app.';
+  }
   switch (err.kind) {
     case 'passphrase':
       return err.message === 'That passphrase doesn’t open this file.'
@@ -81,19 +102,38 @@ function save(blob: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/** How much of the opened file is gathered before it becomes a Blob. */
+const GATHER = 4 * 1024 * 1024;
+
 /** Opens `file` with `passphrase`, saying how far it has got: its contents,
- *  once every part has opened. */
+ *  once every part has opened (see MEMORY in the header). */
 export async function openFile(file: Blob, passphrase: string, onPhase: (p: OpenPhase) => void): Promise<Blob> {
   onPhase({ kind: 'working', step: 'key', done: 0 });
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const parts = await decryptWithPassphrase(bytes, passphrase, {
-    scrypt: (p, salt, N, r, par, len) => scrypt(p, salt, N, r, par, len, (done) => onPhase({ kind: 'working', step: 'key', done })),
-    // What Nya writes, which is what the age app writes too: a slower
-    // setting needs more memory than a browser tab can count on.
-    maxWorkFactor: WORK_FACTOR,
-    onPayloadProgress: (done) => onPhase({ kind: 'working', step: 'contents', done }),
-  });
-  return new Blob(parts as BlobPart[]);
+  const opened: Blob[] = [];
+  let gathered: Uint8Array[] = [];
+  let bytes = 0;
+  await openWithPassphrase(
+    blobSource(file),
+    passphrase,
+    {
+      scrypt: (p, salt, N, r, par, len) => scrypt(p, salt, N, r, par, len, (done) => onPhase({ kind: 'working', step: 'key', done })),
+      // What Nya writes, which is what the age app writes too: a slower
+      // setting needs more memory than a browser tab can count on.
+      maxWorkFactor: WORK_FACTOR,
+      onPayloadProgress: (done) => onPhase({ kind: 'working', step: 'contents', done }),
+    },
+    (part) => {
+      gathered.push(part);
+      bytes += part.length;
+      if (bytes >= GATHER) {
+        opened.push(new Blob(gathered as BlobPart[]));
+        gathered = [];
+        bytes = 0;
+      }
+    }
+  );
+  opened.push(new Blob(gathered as BlobPart[]));
+  return new Blob(opened);
 }
 
 export default function OpenProtectedDownload() {
@@ -161,7 +201,7 @@ export function OpenProtectedDownloadView({
         Its passphrase
         <input
           type="password"
-          autoComplete="off"
+          {...NOT_A_SIGN_IN}
           value={passphrase}
           onChange={(e) => onPassphrase(e.target.value)}
           onKeyDown={(e) => {

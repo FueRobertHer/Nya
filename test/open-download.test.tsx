@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import OpenDownloadPage from '@/app/open-download/page';
 import { OpenProtectedDownloadView, openFile, openFailure, openedName, sizeOf, type OpenPhase } from '@/components/OpenProtectedDownload';
-import { AgeError } from '@/lib/age/age';
+import { AgeError, READ_SIZE } from '@/lib/age/age';
 import { protectFile } from '@/lib/protected-download';
 
 // The page that opens a protected download in the browser (app/open-download,
@@ -34,6 +34,8 @@ describe('the page', () => {
     expect(words).toContain('age -d -o nya-data-2026-10-10.json nya-data-2026-10-10.json.age');
     for (const install of ['brew install age', 'apt install age', 'winget install --id FiloSottile.age']) expect(words).toContain(install);
     expect(words).toContain('Nya never keeps it, so nobody can recover a lost one');
+    expect(words).toContain('Unlocking the file takes about 256 MB of memory for a few seconds');
+    expect(words).toContain('open the file on a computer instead.');
     // The frame of the public pages: back into the app, and the other pages.
     expect(html).toContain('href="/security"');
     expect(html).toContain('href="/privacy"');
@@ -49,7 +51,10 @@ describe('the page', () => {
     const button = (html: string) => /<button[^>]*>([^<]*)<\/button>/.exec(html)!;
     expect(view()).toContain('type="file"');
     expect(view()).toContain('accept=".age"');
-    expect(view()).toContain('type="password"');
+    // The passphrase is the file's: nothing fills the app's password in.
+    const field = /<input type="password"[^>]*>/.exec(view())![0];
+    expect(field).toMatch(/autocomplete="off"/i);
+    expect(field).toContain('data-1p-ignore="true"');
     expect(button(view())[0]).toMatch(/disabled/);
     expect(button(view({ fileName: 'f.json.age' }))[0]).toMatch(/disabled/);
     expect(button(view({ fileName: 'f.json.age', passphrase: 'x' }))[0]).not.toMatch(/disabled/);
@@ -70,6 +75,12 @@ describe('the page', () => {
     expect(openedName('statement.OFX.AGE')).toBe('statement.OFX');
     expect(openedName('notes.txt')).toBe('notes.txt.opened');
     expect(openedName('.age')).toBe('.age.opened');
+    // A second copy, as browsers name one: the number goes before the type.
+    expect(openedName('nya-data-2026-10-10.json (1).age')).toBe('nya-data-2026-10-10 (1).json');
+    expect(openedName('nya-data-2026-10-10.json(2).age')).toBe('nya-data-2026-10-10(2).json');
+    expect(openedName('nya-chase-checking-1111-2026-10-10.ofx-2.age')).toBe('nya-chase-checking-1111-2026-10-10-2.ofx');
+    expect(openedName('nya-transactions-2026-10-10.csv (12).age')).toBe('nya-transactions-2026-10-10 (12).csv');
+    expect(openedName('report (1).age')).toBe('report (1)');
     expect([sizeOf(512), sizeOf(4096), sizeOf(3 * 1024 * 1024)]).toEqual(['512 bytes', '4 KB', '3.0 MB']);
   });
 });
@@ -117,7 +128,26 @@ describe('opening a file', () => {
     expect(await failure(enc('{"format":"nya-export"}'))).toBe('This isn’t a protected download: those end in .age. A file ending in .json, .csv or .ofx is already open.');
     expect(openFailure(new AgeError('mac', 'x'))).toBe('This file was changed after it was made, so it can’t be trusted, and nothing was opened. Download it again.');
     expect(openFailure(new Error('boom'))).toBe('The file couldn’t be opened here. Try again, or open it with the age app.');
+    // What a browser throws when it can't allocate the key's memory.
+    const noMemory = 'This device couldn’t spare the memory to open the file here. Open it on a computer, on this page or with the age app.';
+    expect(openFailure(new RangeError('Array buffer allocation failed'))).toBe(noMemory);
+    const firefox = Object.assign(new Error('out of memory'), { name: 'InternalError' });
+    expect(openFailure(firefox)).toBe(noMemory);
   });
+
+  test('a large file is read a few megabytes at a time and never held whole', async () => {
+    const contents = 'x'.repeat(9 * 1024 * 1024 + 17);
+    const file = await protectedFile(contents);
+    const blob = new Blob([file]);
+    const slice = blob.slice.bind(blob);
+    let largest = 0;
+    blob.slice = ((start = 0, end = blob.size) => ((largest = Math.max(largest, end - start)), slice(start, end))) as Blob['slice'];
+    const opened = await openFile(blob, PASSPHRASE, () => {});
+    expect(opened.size).toBe(contents.length);
+    expect(await opened.text()).toBe(contents);
+    expect(largest).toBe(READ_SIZE);
+    expect(largest).toBeLessThan(file.length / 2);
+  }, 30_000);
 
   test('a slower setting than a browser can manage is sent to the age app, before any of the slow work', async () => {
     const file = await protectedFile('x');

@@ -12,11 +12,16 @@ import {
   WORK_FACTOR,
   base64,
   unbase64,
+  READ_SIZE,
+  blobSource,
+  bytesSource,
   decryptWithPassphrase,
   encryptedSize,
   openWithFileKey,
+  openWithPassphrase,
   parseHeader,
   type AgeFailure,
+  type AgeSource,
 } from '@/lib/age/age';
 import { protectFile, nativeScrypt } from '@/lib/protected-download';
 
@@ -251,22 +256,23 @@ describe('age’s own test vectors', () => {
       const expected = values('expect')[0];
       const [passphrase] = values('passphrase');
       const [fileKey] = values('file key');
-      const released: Uint8Array[] = [];
-      let got: AgeFailure | 'opened';
-      if (passphrase !== undefined) {
-        got = await why(decryptWithPassphrase(file, passphrase, { scrypt }).then((parts) => void released.push(...parts)));
-      } else {
-        if (expected === 'no match') return; // needs the X25519 key itself
-        got = await why(
-          (async () => {
-            for (const part of await openWithFileKey(file, fromHex(fileKey))) released.push(part);
-          })()
-        );
+      if (passphrase === undefined && expected === 'no match') return; // needs the X25519 key itself
+      // Read from memory, and from a Blob as the page reads a file.
+      for (const source of [bytesSource(file), blobSource(new Blob([file]))] as AgeSource[]) {
+        const released: Uint8Array[] = [];
+        const got =
+          passphrase !== undefined
+            ? await why(openWithPassphrase(source, passphrase, { scrypt }, (part) => void released.push(part)))
+            : await why(
+                (async () => {
+                  for await (const part of openWithFileKey(source, fromHex(fileKey))) released.push(part);
+                })()
+              );
+        expect(EXPECTED[got]).toBe(expected);
+        // Everything released, even before a failure, is what the vector says.
+        const [payload] = values('payload');
+        if (payload) expect(sha256(...released)).toBe(payload);
       }
-      expect(EXPECTED[got]).toBe(expected);
-      // Everything released, even before a failure, is what the vector says.
-      const [payload] = values('payload');
-      if (payload) expect(sha256(...released)).toBe(payload);
     });
   }
 });
@@ -413,6 +419,29 @@ describe('a protected download', () => {
     expect(ran).toBe(false);
     expect(await why(decryptWithPassphrase(file, PASSPHRASE, { scrypt, maxWorkFactor: 12 }))).toBe('opened');
   });
+
+  test('a Blob is read a few megabytes at a time, never whole, across the edge of a read', async () => {
+    for (const size of [64 * CHUNK_SIZE - 1, 64 * CHUNK_SIZE, 64 * CHUNK_SIZE + 1, 128 * CHUNK_SIZE + 5]) {
+      const text = 'nya '.repeat(Math.ceil(size / 4)).slice(0, size);
+      const { file } = await protect(text, { pieces: 50_000 });
+      const blob = new Blob([file]);
+      const slice = blob.slice.bind(blob);
+      const asked: number[] = [];
+      blob.slice = ((start = 0, end = blob.size) => (asked.push(end - start), slice(start, end))) as Blob['slice'];
+      const parts: Uint8Array[] = [];
+      await openWithPassphrase(blobSource(blob), PASSPHRASE, { scrypt }, (part) => void parts.push(part));
+      expect(new TextDecoder().decode(Buffer.concat(parts))).toBe(text);
+      // The header, the nonce, then the chunks a read at a time.
+      const chunks = file.length - parseHeader(file).end - 16;
+      expect(Math.max(...asked)).toBe(Math.min(READ_SIZE, chunks));
+      expect(asked.length).toBe(2 + Math.ceil(chunks / READ_SIZE));
+      // Cut short where a read ends: no chunk marked last, nothing opened.
+      if (size > 64 * CHUNK_SIZE) {
+        const cut = file.subarray(0, parseHeader(file).end + 16 + READ_SIZE);
+        expect(await why(openWithPassphrase(blobSource(new Blob([cut])), PASSPHRASE, { scrypt }, () => {}))).toBe('payload');
+      }
+    }
+  }, 30_000);
 });
 
 // The age command, where it is installed, through a pseudo-terminal (`script`):

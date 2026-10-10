@@ -512,7 +512,7 @@ Tick **Protect the file with a passphrase** on the card and type one twice, of a
 
 ### Opening it
 
-- **In your browser**, on Nya's **Open a protected download** page (`/open-download` on your Nya, linked from the card): choose the file, type the passphrase, and the opened file is saved. The page opens it on your device and never uploads it, and needs no sign-in, so a file still opens after the account it came from is deleted. Unlocking takes a few seconds, on purpose.
+- **In your browser**, on Nya's **Open a protected download** page (`/open-download` on your Nya, linked from the card): choose the file, type the passphrase, and the opened file is saved. The page opens it on your device and never uploads it, and needs no sign-in, so a file still opens after the account it came from is deleted. Unlocking takes a few seconds, on purpose, and about 256 MB of memory. The page reads the file a few megabytes at a time, and hands what it has opened to the browser a few megabytes at a time rather than holding it all itself, but an older phone may still stop the page, or say it can't spare the memory: open a large file on a computer.
 - **With the age app**, without Nya at all: `age -d -o nya-data-2026-10-10.json nya-data-2026-10-10.json.age` asks for the passphrase and writes the opened file. age runs on macOS (`brew install age`), Linux (`apt install age` on Debian and Ubuntu) and Windows (`winget install --id FiloSottile.age`), and other implementations of the format open it too. The test suite opens Nya's files with the age command where it is installed, and opens the age command's own files with Nya's page code.
 
 ### The format
