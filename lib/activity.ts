@@ -50,9 +50,11 @@ import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
-import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
+import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
 import { fileTransactions } from './category-store';
 import type { Taxonomy } from './categories';
+import { tagsForDisplay, type TagSet } from './tags';
+import { applyLayers } from './txn-layers';
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -63,12 +65,15 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
  *  tells it from the payload cached before, which held the manual rows too
  *  and must not be merged with them again, `account_types` from one cached
  *  before rows carried their account's type (account_type, which the cash
- *  forecast reads), and `category_facts` from one cached before rows carried
- *  what files them into the person's categories: any is a miss. */
+ *  forecast reads), `category_facts` from one cached before rows carried
+ *  what files them into the person's categories, and `layer_facts` from one
+ *  cached before rows carried what rules and what was carried across a
+ *  re-link are applied by (lib/txn-layers.ts): any is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
   account_types: true;
   category_facts: true;
+  layer_facts: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -97,6 +102,7 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     p.plaid_only === true &&
     p.account_types === true &&
     p.category_facts === true &&
+    p.layer_facts === true &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
     typeof p.as_of === 'string'
@@ -135,7 +141,7 @@ export type BankSource = {
  * the app goes on without them.
  */
 async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boolean) {
-  const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), annotations: new Map<string, CarriedAnnotation>(), ok: true };
   // No links, read as none: nothing could be carried, so nothing is missing,
   // whatever the live accounts' read said (a damaged record of a connection
   // long gone must not put a gap on every report).
@@ -143,9 +149,14 @@ async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boo
   if (!links || !liveOk) return { ...nothing, read: { categories: false, exclusions: false } };
   const earlier = [...links.keys()];
   const [categories, annotations] = await Promise.all([getCarriedReport(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
+  // What carries, by row: the exclusions are marked on the cached rows, and
+  // the rest (an include, tags, a note) rides beside them for
+  // lib/txn-layers.ts.
+  const carried = carriedAnnotations(annotations.carried, links);
   return {
     categories: carriedCategories(categories.carried, links),
-    excluded: carriedExclusions(annotations.carried, links),
+    excluded: new Set([...carried].filter(([, a]) => a.excluded === true).map(([k]) => k)),
+    annotations: carried,
     ok: annotations.ok,
     read: { categories: categories.ok, exclusions: annotations.ok },
   };
@@ -206,6 +217,7 @@ export async function assembleBankRows(
     hiddenAccountIds: leftOut,
     carriedIn: carried.then((c) => c.categories),
     carriedExclusionsIn: carried.then((c) => c.excluded),
+    carriedAnnotationsIn: carried.then((c) => c.annotations),
     withAccountIds: opts.withAccountIds,
     since: opts.since,
   };
@@ -226,7 +238,9 @@ export async function assembleBankRows(
   // The person's own changes win over Plaid's data: recategorization by
   // transaction (a category's words, filed by finishActivity, which marks
   // them as the person's), vendor rename by vendor key (so it covers every row
-  // from that merchant).
+  // from that merchant). A renamed row keeps the bank's name beside it
+  // (renamed_from, never sent): a rule's name condition reads it too, and a
+  // rule's name never replaces the person's (lib/txn-layers.ts).
   const transactions = results.flatMap((r) => r.txns);
   const older = results.flatMap((r) => r.older);
   for (const t of [...transactions, ...older]) {
@@ -236,7 +250,10 @@ export async function assembleBankRows(
       t.category_set = true;
     }
     const renamed = renames.renames[t.vendor_key];
-    if (renamed) t.name = renamed;
+    if (renamed) {
+      t.renamed_from = t.name;
+      t.name = renamed;
+    }
   }
   const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
   // Every one of these comes with a note, so a payload holding any is never cached.
@@ -254,6 +271,7 @@ export async function assembleBankRows(
       plaid_only: true,
       account_types: true,
       category_facts: true,
+      layer_facts: true,
       transactions,
       notes,
       incomplete,
@@ -288,11 +306,14 @@ export async function assembleBankRows(
  * payee are the manual row's own, changed by editing it, so no override or
  * rename applies to one.
  *
- * Left out of budgets and reports (lib/spending.ts), still listed: what the
- * person said on the row itself, else an exclusion carried across a re-link
- * (already on the row). A row whose record couldn't be read is marked as not
- * known (`excluded: null`): it counts, and the Activity tab says a total may
- * include one the person excluded.
+ * What the person said about each row (lib/txn-annotations.ts: an
+ * exclusion, tags, a bank row's note), what was carried across a re-link,
+ * and the rules are applied in one place, lib/txn-layers.ts, the person's own
+ * on top. Left out of budgets and reports (lib/spending.ts), still listed:
+ * what the person said on the row itself, else what was carried (an
+ * exclusion already on the row, or an include). A row whose record couldn't
+ * be read is marked as not known (`excluded: null`): it counts, and the
+ * Activity tab says a total may include one the person excluded.
  *
  * `since` is the first day of rows to read, as assembleBankRows's: by default
  * the same trailing window as the banks' rows. The manual rows are read back
@@ -322,13 +343,20 @@ export async function finishActivity(
    *  readManualTxnsForDisplay), or 'all'. */
   manual_unread: string[] | 'all';
   taxonomy: Taxonomy;
+  /** The tags that exist (lib/tags.ts), each row's among them; null when
+   *  none were ever saved or they couldn't be read (a note says which). */
+  tags: TagSet | null;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   // The manual rows back to the earlier of the two: the history's first day,
   // and the transactions' own (a report's period can start before it).
   const readFrom = cutoff < since ? cutoff : since;
-  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }), readExclusions(ctx)]);
+  const [manual, annotations, tagRead] = await Promise.all([
+    readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
+    readAnnotations(ctx),
+    tagsForDisplay(ctx),
+  ]);
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
   const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);
@@ -354,25 +382,24 @@ export async function finishActivity(
         vendor_key: t.vendor_key,
         logo_url: t.logo_url,
         source: t.source,
+        account_ref: t.account_id,
       })),
   ];
-  for (const t of [...transactions, ...candidates]) {
-    const own = exclusions.records.get(t.transaction_id);
-    if (own === true) t.excluded = true;
-    else if (own === false) delete t.excluded;
-    else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
-  }
+  // What the person said about each row, and what was carried across a
+  // re-link, over the bank's data (lib/txn-layers.ts).
+  applyLayers([...transactions, ...candidates], { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set });
   const filed = await fileTransactions(ctx, [...transactions, ...candidates], { grow: !!opts.grow });
   // The institutions whose rows aren't all here (the banks' part: a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
-    notes: [...plaid.notes, ...manual.notes, ...filed.notes],
+    notes: [...plaid.notes, ...manual.notes, ...(tagRead.note ? [tagRead.note] : []), ...filed.notes],
     incomplete: plaid.incomplete ?? [],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),
     taxonomy: filed.taxonomy,
+    tags: tagRead.set,
     manual_unread: manual.unread,
   };
 }

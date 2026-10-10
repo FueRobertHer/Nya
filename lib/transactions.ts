@@ -46,7 +46,7 @@ import {
 import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
-import { pruneOrphanAnnotations } from './txn-annotations';
+import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -119,8 +119,27 @@ export type Txn = {
   // reads the same.
   source?: string; // a manual row's source: 'manual' for one entered by hand (lib/manual-txns.ts)
   account_id?: string; // a manual row's account, for editing it
-  note?: string | null; // a manual row's note
+  note?: string | null; // a manual row's own note, or a bank row's (lib/txn-annotations.ts)
   excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
+
+  // Applied on read (lib/txn-layers.ts), absent when there is nothing to say:
+  // the tags it carries (ids of tags that exist, lib/tags.ts), put on by the
+  // person, carried across a re-link or added by a rule; the rules that match
+  // it (lib/rules.ts), in the order they run; and whether its exclusion is a
+  // rule's hide rather than the person's own.
+  tags?: string[];
+  rule_ids?: string[];
+  excluded_by_rule?: true;
+  // What a row is assembled with until lib/txn-layers.ts applies it (never
+  // sent): the account it is on, for a rule's account condition (a bank
+  // row's account_id isn't sent to the Activity tab, nor an older manual
+  // row's); a bank row's name as the bank gives it when the person renamed
+  // its merchant (lib/renames.ts), which a rule's name condition also reads
+  // and a rule's name never replaces; and what a bank row carries from an
+  // earlier account's row besides an exclusion.
+  account_ref?: string;
+  renamed_from?: string;
+  carried?: CarriedRowFacts;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which
@@ -152,6 +171,11 @@ export type OlderTxn = Pick<
   | 'logo_url'
   | 'excluded'
   | 'source'
+  | 'excluded_by_rule'
+  | 'rule_ids'
+  | 'account_ref'
+  | 'renamed_from'
+  | 'carried'
 >;
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.
@@ -1087,6 +1111,11 @@ type DisplayInputs = {
    *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
    *  same reason; what the person says on the row itself still wins. */
   carriedExclusionsIn?: Set<string> | Promise<Set<string>>;
+  /** Everything else carried across a re-link, by contentKey
+   *  (lib/txn-annotations.ts carriedAnnotations): an include, tags, a note,
+   *  put on posted rows here as `carried` (never sent) for lib/txn-layers.ts
+   *  to apply, below what the person says on the row itself. */
+  carriedAnnotationsIn?: Map<string, CarriedAnnotation> | Promise<Map<string, CarriedAnnotation>>;
   /** Puts each row's account_id on it, for a reader that filters by account
    *  (the read-only API). The Activity tab's rows go without, as before: on
    *  them it marks a manual row. */
@@ -1111,6 +1140,7 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
   const { hiddenAccountIds } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
+  const carriedAnnotations = await inputs.carriedAnnotationsIn;
   const cutoff = inputs.since ?? daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name, which recurring detection and search
@@ -1151,8 +1181,18 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       payment_processor: resolveProcessor(t),
       payment_reference: t.payment_meta?.reference_number ?? null,
       ...(carriedExclusions?.size && !t.pending && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+      ...carriedFacts(t, carriedAnnotations),
       ...(inputs.withAccountIds ? { account_id: t.account_id } : {}),
+      account_ref: t.account_id,
     }));
+}
+
+/** What a posted row carries from an earlier account's row besides an
+ *  exclusion (`carried`, never sent), or nothing. */
+function carriedFacts(t: StoredTxn, carried: Map<string, CarriedAnnotation> | undefined): { carried?: CarriedRowFacts } {
+  if (!carried?.size || t.pending) return {};
+  const facts = carriedExtras(carried.get(contentKey(t.account_id, t)));
+  return facts ? { carried: facts } : {};
 }
 
 /**
@@ -1169,6 +1209,7 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
   const { hiddenAccountIds } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
+  const carriedAnnotations = await inputs.carriedAnnotationsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const since = daysAgoIso(RECURRING_LOOKBACK_DAYS);
   return Object.values(state.txns)
@@ -1189,6 +1230,8 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
       vendor_key: vendorKey(t),
       logo_url: t.logo_url,
       ...(carriedExclusions?.size && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+      ...carriedFacts(t, carriedAnnotations),
+      account_ref: t.account_id,
     }));
 }
 
@@ -1213,7 +1256,7 @@ export async function syncItemTransactions(ctx: Ctx,
   hiddenAccountIds?: Set<string>,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
-  opts: { withAccountIds?: boolean; since?: string } = {}
+  opts: { withAccountIds?: boolean; since?: string; carriedAnnotationsIn?: DisplayInputs['carriedAnnotationsIn'] } = {}
 ): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
@@ -1221,7 +1264,14 @@ export async function syncItemTransactions(ctx: Ctx,
   // incomplete. Why it has none goes back beside the rows: the views that
   // count spending say so, and a refused bank account leaves spending unknown.
   if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
-  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds, since: opts.since };
+  const inputs: DisplayInputs = {
+    hiddenAccountIds,
+    carriedIn,
+    carriedExclusionsIn,
+    carriedAnnotationsIn: opts.carriedAnnotationsIn,
+    withAccountIds: opts.withAccountIds,
+    since: opts.since,
+  };
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
 }

@@ -38,6 +38,10 @@ import { loggable } from '@/lib/log-safe';
 // load and grows them by any category a row carries that none has yet, and
 // sends the set it filed by (`categories`), which the pickers and the group
 // rollups read, so renaming or regrouping a category needs no cache dropped.
+//
+// TAGS AND NOTES are applied after the cache too (lib/txn-layers.ts), with
+// the tags that exist sent beside the rows (`tags`): a tag put on, a note
+// written or a tag renamed shows on the next load with nothing dropped.
 
 export async function GET(req: Request) {
   try {
@@ -61,7 +65,7 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes, incomplete, history, taxonomy } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const { transactions, notes, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -73,6 +77,8 @@ export async function GET(req: Request) {
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
       recurring_history: history,
       categories: taxonomy,
+      // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
+      tags: tags?.tags ?? [],
       as_of: plaid.as_of,
       from_cache: fromCache,
     });

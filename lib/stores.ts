@@ -30,6 +30,7 @@ import './manual-txns';
 import './planned-store';
 import './rate-limit';
 import './report/store';
+import './tags';
 import './txn-annotations';
 
 import { storesDeclaredSoFar, type Store } from './repo';
