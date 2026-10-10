@@ -305,6 +305,38 @@ describe('overlapping saves (two devices)', () => {
     expect(stored()).toEqual(before);
   });
 
+  test('a read landing between a slow save’s stale copy and its correction corrects it too, never takes it for a rollback’s change', async () => {
+    const t: Taxonomy = (await get()).body.categories;
+    const food = named(t, 'food and drink');
+    const travel = named(t, 'travel');
+    const housing = group(t, 'Housing');
+    // Device 1 writes its set; its copy write is held...
+    const slow = fake.hold(copyWrite);
+    const one = put({ budget_set: { categories: { [food.id]: { amount: 100 } }, groups: {} } });
+    await slow.reached;
+    // ...while device 2 saves whole, its set written last.
+    expect((await put({ budget_set: { categories: { [travel.id]: { amount: 300 } }, groups: { [housing.id]: { amount: 2000 } } } })).status).toBe(200);
+    // Device 1's stale copy lands, and its correction is held.
+    const correction = fake.hold(copyWrite);
+    slow.release();
+    await correction.reached;
+    expect(await getBudgets(ctx)).toEqual({ 'food and drink': 100 });
+    // A third request reads now: the copy is one this release replaced moments
+    // ago, so it is corrected, never taken in over device 2's save.
+    const read = await get();
+    expect(read.status).toBe(200);
+    expect(byName(read.body.categories, read.body.budget_set)).toEqual({ travel: 300 });
+    expect(read.body.budget_set.groups).toEqual({ [housing.id]: { amount: 2000 } });
+    expect(await getBudgets(ctx)).toEqual({ travel: 300 });
+    correction.release();
+    expect((await one).status).toBe(200);
+    // Device 2's save stands whole, and the copy is its.
+    const set = (await budgetSetStore.get(ctx))!;
+    expect(byName(t, set)).toEqual({ travel: 300 });
+    expect(set.groups).toEqual({ [housing.id]: { amount: 2000 } });
+    expect(await getBudgets(ctx)).toEqual({ travel: 300 });
+  });
+
   test('a read finishing a stopped save, overtaken by a save, leaves that save’s copy, never its own stale one', async () => {
     await setBudgets(ctx, LEGACY);
     const t: Taxonomy = (await get()).body.categories;

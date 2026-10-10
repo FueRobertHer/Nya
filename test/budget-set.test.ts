@@ -9,6 +9,9 @@ import {
   mirrorState,
   placeBudgets,
   readBudgets,
+  replacedAfter,
+  REPLACED_MAX,
+  REPLACED_MS,
   spendingByGroup,
   BudgetError,
   type Budgets,
@@ -133,6 +136,38 @@ describe('budgets saved under names, and the copy the release before reads', () 
     expect(mirrorState(set, { a: 2 })).toBe('unfinished');
     expect(mirrorState(set, { a: 3 })).toBe('changed');
     expect(mirrorState({ ...set, mirror_before: null }, { a: 2 })).toBe('changed');
+  });
+
+  test('a copy this release replaced minutes ago at most is a slow save’s write, behind; one replaced longer ago is a change', () => {
+    const now = Date.parse('2026-10-10T12:00:00.000Z');
+    const at = (msAgo: number) => new Date(now - msAgo).toISOString();
+    const set = { version: 1 as const, categories: {}, groups: {}, mirror: { a: 3 }, mirror_before: null, replaced: [{ copy: { a: 2 }, at: at(1000) }, { copy: { a: 1 }, at: at(REPLACED_MS + 1) }] };
+    expect(isBudgetSet(set)).toBe(true);
+    expect(mirrorState(set, { a: 2 }, now)).toBe('behind');
+    // Replaced too long ago: only the release before writes it now, after a rollback.
+    expect(mirrorState(set, { a: 1 }, now)).toBe('changed');
+    expect(mirrorState(set, { a: 3 }, now)).toBe('in-sync');
+  });
+
+  test('a save keeps the copy it replaces, newest first, the recent ones after it, a few at most', () => {
+    const now = Date.parse('2026-10-10T12:00:00.000Z');
+    const stamp = new Date(now).toISOString();
+    const cur = { version: 1 as const, categories: {}, groups: {}, mirror: { a: 2 }, mirror_before: null, replaced: [{ copy: { a: 1 }, at: new Date(now - 5000).toISOString() }] };
+    expect(replacedAfter(cur, { a: 3 }, now)).toEqual([
+      { copy: { a: 2 }, at: stamp },
+      { copy: { a: 1 }, at: new Date(now - 5000).toISOString() },
+    ]);
+    // Saving the same copy again replaces none.
+    expect(replacedAfter(cur, { a: 2 }, now)).toEqual(cur.replaced);
+    // Old ones go; never more than REPLACED_MAX.
+    expect(replacedAfter({ ...cur, replaced: [{ copy: { a: 1 }, at: new Date(now - REPLACED_MS - 1).toISOString() }] }, { a: 3 }, now)).toEqual([{ copy: { a: 2 }, at: stamp }]);
+    const many = Array.from({ length: REPLACED_MAX }, (_, i) => ({ copy: { a: 10 + i }, at: stamp }));
+    expect(replacedAfter({ ...cur, replaced: many }, { a: 3 }, now)).toHaveLength(REPLACED_MAX);
+    expect(replacedAfter(null, { a: 3 }, now)).toEqual([]);
+    // Stored only as written: each a copy and when, at most REPLACED_MAX.
+    for (const bad of [[{ copy: { a: 1 } }], [{ copy: { a: 1 }, at: 'never' }], [{ copy: { a: 1 }, at: stamp, more: 1 }], Array.from({ length: REPLACED_MAX + 1 }, () => ({ copy: {}, at: stamp }))]) {
+      expect(isBudgetSet({ ...cur, replaced: bad })).toBe(false);
+    }
   });
 
   test('a name-keyed blob’s usable entries: positive amounts only, as its route required', () => {
