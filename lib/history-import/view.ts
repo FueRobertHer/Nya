@@ -9,6 +9,19 @@
 
 import type { WalkState } from './store';
 
+/** The prefix of a row's id imported into a linked account
+ *  (lib/history-import/store.ts), here so client code can tell one apart:
+ *  never edited as a manual row is, and named under a month's totals. */
+export const IMPORTED_TXN_PREFIX = 'imported-txn:';
+
+/** Under a month's totals on the Activity tab: how many of its rows came from
+ *  files imported into linked accounts rather than from the bank, or null. */
+export function importedRowsNote(rows: readonly { transaction_id: string }[]): string | null {
+  const n = rows.filter((t) => t.transaction_id.startsWith(IMPORTED_TXN_PREFIX)).length;
+  if (n === 0) return null;
+  return `${n.toLocaleString('en-US')} of this month’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+}
+
 export type ImportedHistoryView = {
   /** Estimated points before this day are built from imported transactions:
    *  the chart's earliest point before them, which they join. */

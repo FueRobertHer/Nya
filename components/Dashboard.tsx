@@ -28,6 +28,9 @@ import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
+import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
+import ImportedHistoryNote from './ImportedHistoryNote';
+import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
@@ -442,6 +445,9 @@ export default function Dashboard({
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [netWorth, setNetWorth] = useState(0);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  // What the estimated history drawn from imported files covers (#52), for
+  // the note under the chart. Sent beside the payload, never cached with it.
+  const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -590,6 +596,7 @@ export default function Dashboard({
       setNetWorth(data.netWorth);
       setHistory(data.history ?? []);
       setHiddenMeta(data.hidden ?? []);
+      setImportedHistory(data.imported_history ?? null);
       setAsOf(data.as_of ?? null);
       setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
@@ -778,6 +785,10 @@ export default function Dashboard({
   // import or an undo the list is read again, and when the statement's
   // balance was set too, net worth as after the account's Update form.
   const [importTarget, setImportTarget] = useState<ImportTarget | null>(null);
+  // Importing a linked account's history (components/HistoryImportSheet.tsx):
+  // its rows join the Activity tab, and the estimated history is drawn back
+  // through them, so both are read again.
+  const [historyTarget, setHistoryTarget] = useState<HistoryImportTarget | null>(null);
   const onImported = useCallback(
     async ({ balanceChanged }: { balanceChanged: boolean }) => {
       loadTransactions();
@@ -1626,7 +1637,10 @@ export default function Dashboard({
                     <div className="inst-name">Over time</div>
                   </div>
                   {history.length >= 2 ? (
-                    <NetWorthChart points={history} />
+                    <>
+                      <NetWorthChart points={history} />
+                      {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
+                    </>
                   ) : (
                     <p className="empty-note">
                       History builds as you use the app — check back tomorrow for your first
@@ -1992,6 +2006,24 @@ export default function Dashboard({
                                           accountId={a.account_id}
                                           itemId={inst.item_id}
                                         />
+                                      )}
+                                      {/* Years of a linked account's history
+                                          from its bank's own files (#52). */}
+                                      {!inst.manual && (
+                                        <button
+                                          className="link-btn history-import-link"
+                                          onClick={() =>
+                                            setHistoryTarget({
+                                              account_id: a.account_id,
+                                              name: a.name,
+                                              institution_name: inst.institution_name,
+                                              type: a.type,
+                                              currency: a.currency ?? null,
+                                            })
+                                          }
+                                        >
+                                          Import history from a file
+                                        </button>
                                       )}
                                     </td>
                                   </tr>
@@ -2574,6 +2606,14 @@ export default function Dashboard({
       />
 
       <ImportSheet target={importTarget} institutions={institutions} onClose={() => setImportTarget(null)} onImported={onImported} />
+      <HistoryImportSheet
+        target={historyTarget}
+        onClose={() => setHistoryTarget(null)}
+        onImported={() => {
+          loadTransactions();
+          void loadNetWorth();
+        }}
+      />
 
       <Sheet
         open={!!redirect}

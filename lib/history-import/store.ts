@@ -66,12 +66,14 @@ import { defineMapStore } from '../repo';
 import { isCalendarDay, isCurrencyCode } from '../manual-txn-input';
 import { FILE_FORMATS, type FileFormat } from '../import/record';
 import type { StoredStatement } from '../import/store';
+import { IMPORTED_TXN_PREFIX } from './view';
 
-/** The prefix of an imported row's id, so it is never taken for a bank's
+/** The prefix of an imported row's id (kept in lib/history-import/view.ts,
+ *  which client code can import), so it is never taken for a bank's
  *  transaction id or a manual row's: what's said about it isn't pruned with
  *  the bank's (lib/overrides.ts, lib/txn-annotations.ts), and the Activity
  *  tab never offers to edit it as a manual row. */
-export const IMPORTED_TXN_PREFIX = 'imported-txn:';
+export { IMPORTED_TXN_PREFIX };
 
 export function newImportedTxnId(): string {
   return `${IMPORTED_TXN_PREFIX}${crypto.randomUUID()}`;
