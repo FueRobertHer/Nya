@@ -152,9 +152,14 @@ describe('when Plaid gives no balances', () => {
       ['ITEM_ERROR', 'ITEM_NOT_FOUND'],
       ['ITEM_ERROR', 'NO_ACCOUNTS'],
     ]) {
+      errors.length = 0;
       plaid.balancesFail = answered(type, code);
       const before = stored();
+      // The skip, exactly as the transactions read in that state answers it:
+      // nothing shows it, and the Connection health card already says what
+      // the connection needs, so it carries no message and logs none.
       expect([code, await backfill()]).toEqual([code, { status: 200, body: { skipped: true, reason: 'institutions not ready' } }]);
+      expect([code, errors]).toEqual([code, []]);
       expect(stored()).toBe(before);
       expect(await isBackfillDone(TEST_CTX)).toBe(false);
     }

@@ -11,6 +11,7 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
 import { instantDay } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
@@ -2324,6 +2325,10 @@ export default function Dashboard({
                     push them down. It asks for a fresh sign-in itself. */}
                 {manageMode && <DownloadMyData clerk={clerk} />}
 
+                {/* Reports for an accountant (app/reports), beside the other
+                    ways to take your data out. */}
+                {manageMode && <ReportsEntry />}
+
                 {/* API tokens for the read-only API and the MCP server, with
                     the rest of the account upkeep (components/ApiTokens.tsx). */}
                 {manageMode && <ApiTokens clerk={clerk} />}
@@ -2368,6 +2373,9 @@ export default function Dashboard({
                 withoutTransactions={txnWithout}
               />
             )}
+
+            {/* Reports for an accountant (app/reports), under the transactions. */}
+            {tab === 'activity' && <ReportsEntry />}
 
             {tab === 'budgets' && (
               <BudgetsTab

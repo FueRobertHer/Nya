@@ -27,7 +27,7 @@ import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'pl
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
-import { redis, kc, type StoredItem } from './storage';
+import { redis, kc, getItems, type StoredItem } from './storage';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
 import {
@@ -46,6 +46,7 @@ import {
 import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
+import { pruneOrphanAnnotations } from './txn-annotations';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -608,6 +609,49 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
 }
 
 /**
+ * Every transaction id the Items stored now hold, or null when the Items or
+ * a store couldn't be read or a store is behind (rows shown from a store too
+ * large to save, or whose last save failed, aren't in it), so that nothing is
+ * pruned on a partial answer: for the prunes of what was said about
+ * transactions no Item holds any more (lib/overrides.ts pruneOrphanOverrides,
+ * lib/txn-annotations.ts pruneOrphanAnnotations). The Items are read when it
+ * is called, never passed in: a prune reads its records first and this after,
+ * so an Item linked meanwhile, and every row it stored before a record was
+ * set on it, are among those read. A list read earlier (when a forget or a
+ * disconnect started) would take that Item's records for orphans.
+ */
+export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null> {
+  const known = new Set<string>();
+  try {
+    for (const { item_id } of await getItems(ctx)) {
+      if (await storeIsBehind(ctx, item_id)) return null;
+      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
+    }
+  } catch {
+    return null;
+  }
+  return known;
+}
+
+/**
+ * After a sync saved an Item's store without rows the bank removed: what the
+ * person said about those transactions (an exclusion) can never be shown
+ * again, so it goes, by the rules every such prune keeps (nothing while a
+ * store can't be read or is behind, nor a record this release doesn't
+ * recognise; lib/txn-annotations.ts pruneOrphanAnnotations). Only those
+ * transactions' records, and the stores are read only when one has one.
+ * Never fails the sync: a record left is pruned by the next disconnect or
+ * forget, and is never shown meanwhile, its transaction being gone.
+ */
+async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
+  try {
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+}
+
+/**
  * An Item's stored transactions, read without syncing (no Plaid call), for
  * the paths that must not reach Plaid: a disconnect (the Item is already
  * removed there) and the Accounts tab. Throws when the store can't be read.
@@ -886,6 +930,9 @@ async function syncItem(ctx: Ctx,
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
     // page's deltas onto an already-mutated set.
     const state: ItemState = JSON.parse(JSON.stringify(stored));
+    // The rows the bank removed that this store held, or that an earlier page
+    // of this sync added.
+    const removed = new Set<string>();
     let cursor: string | undefined = state.cursor || undefined;
     let hasMore = true;
     let pages = 0;
@@ -912,7 +959,9 @@ async function syncItem(ctx: Ctx,
           state.txns[t.transaction_id] = toStored(t, state.accounts, item.institution_name);
         }
         for (const r of res.data.removed) {
-          if (r.transaction_id) delete state.txns[r.transaction_id];
+          if (!r.transaction_id || !state.txns[r.transaction_id]) continue;
+          delete state.txns[r.transaction_id];
+          removed.add(r.transaction_id);
         }
         hasMore = res.data.has_more;
         cursor = res.data.next_cursor;
@@ -981,6 +1030,9 @@ async function syncItem(ctx: Ctx,
     if (hasMore) state.importing = true;
     else delete state.importing;
     const write = await writeState(ctx, item.item_id, state);
+    // Saved without them: what was said about them goes too. Not when the
+    // write was refused or failed, which leaves them stored.
+    if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed);
 
     // Too large to persist. `state` is still complete (nothing was trimmed), so
     // return it: accurate figures this request plus a note that they won't
@@ -1039,22 +1091,27 @@ type DisplayInputs = {
    *  (the read-only API). The Activity tab's rows go without, as before: on
    *  them it marks a manual row. */
   withAccountIds?: boolean;
+  /** The first day of rows to keep (YYYY-MM-DD), in place of the trailing
+   *  LOOKBACK window: for a report on an earlier period (lib/report/read.ts).
+   *  The store keeps every row, so nothing else changes. */
+  since?: string;
 };
 
 /**
  * An Item's rows as the Activity tab shows a transaction: inside the trailing
- * LOOKBACK window, a pending row its posted row replaced left out, and the
- * hidden accounts' rows too (`hiddenAccountIds`, filtered here: the display
- * row has no account_id afterwards). Account names are re-resolved from the
- * merged map (an account can arrive on a later page than a transaction
- * referencing it). The one projection, for a sync (syncItemTransactions) and
- * for a read without one (storedItemTransactions), so both show a row alike.
+ * LOOKBACK window (or from `since`), a pending row its posted row replaced
+ * left out, and the hidden accounts' rows too (`hiddenAccountIds`, filtered
+ * here: the display row has no account_id afterwards). Account names are
+ * re-resolved from the merged map (an account can arrive on a later page than
+ * a transaction referencing it). The one projection, for a sync
+ * (syncItemTransactions) and for a read without one (storedItemTransactions),
+ * so both show a row alike.
  */
 async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn[]> {
   const { hiddenAccountIds } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
-  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const cutoff = inputs.since ?? daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name, which recurring detection and search
   // depend on; StoredTxn keeps both parts.
@@ -1106,6 +1163,9 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
  * the year's. lib/activity.ts keeps those detection can use.
  */
 async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<OlderTxn[]> {
+  // A reader that sets its own first day (a report) reads every row from it
+  // in displayRows, and needs none before it.
+  if (inputs.since !== undefined) return [];
   const { hiddenAccountIds } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
@@ -1153,7 +1213,7 @@ export async function syncItemTransactions(ctx: Ctx,
   hiddenAccountIds?: Set<string>,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
-  opts: { withAccountIds?: boolean } = {}
+  opts: { withAccountIds?: boolean; since?: string } = {}
 ): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
@@ -1161,7 +1221,7 @@ export async function syncItemTransactions(ctx: Ctx,
   // incomplete. Why it has none goes back beside the rows: the views that
   // count spending say so, and a refused bank account leaves spending unknown.
   if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
-  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds };
+  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds, since: opts.since };
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
 }
@@ -1196,30 +1256,78 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
  * (storedNoTransactions), which a sync would answer the same way, without a
  * note (`noTransactions`). Storage failing is a store that can't be read
  * here, as it is for a sync.
+ *
+ * `first_date` is the oldest day among the rows the store holds, the hidden
+ * accounts' and the replaced pending ones left out, whatever the window: how
+ * far back this institution's history in Nya reaches, as far as its rows
+ * show, so a report on an earlier period can say when it doesn't reach back
+ * that far (lib/report/build.ts). Null with no rows.
+ *
+ * `never_synced` marks a `missing` that is known to hold nothing: the store
+ * was read and no transactions were ever stored in it. Never on a store that
+ * couldn't be read, which may hold rows from any day.
  */
 export async function storedItemTransactions(
   ctx: Ctx,
   item: StoredItem,
   inputs: DisplayInputs = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; synced_at: string | null; noTransactions?: NoTransactionsReason }> {
+): Promise<{
+  txns: Txn[];
+  older: OlderTxn[];
+  note: string | null;
+  coverage: TxnCoverage;
+  synced_at: string | null;
+  first_date: string | null;
+  noTransactions?: NoTransactionsReason;
+  never_synced?: true;
+}> {
   let state: ItemState;
   try {
     state = await readState(ctx, item.item_id);
   } catch (err) {
     if (!(err instanceof StateUnreadableError)) throw err;
     console.error(err.message, err.kind);
-    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null };
+    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null };
   }
   if (state.cursor === '' && Object.keys(state.txns).length === 0) {
     const noTransactions = await storedNoTransactions(ctx, item, state);
-    if (noTransactions) return { txns: [], older: [], note: null, coverage: 'complete', synced_at: null, noTransactions };
-    return { txns: [], older: [], note: `${item.institution_name}: no transactions stored yet; open the app to load them`, coverage: 'missing', synced_at: null };
+    if (noTransactions) return { txns: [], older: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions };
+    return {
+      txns: [],
+      older: [],
+      note: `${item.institution_name}: no transactions stored yet; open the app to load them`,
+      coverage: 'missing',
+      synced_at: null,
+      first_date: null,
+      never_synced: true,
+    };
   }
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
+  const first_date = firstStoredDate(state, inputs.hiddenAccountIds);
   if (state.importing) {
-    return { txns, older, note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`, coverage: 'importing', synced_at: state.synced_at };
+    return {
+      txns,
+      older,
+      note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`,
+      coverage: 'importing',
+      synced_at: state.synced_at,
+      first_date,
+    };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date };
+}
+
+/** The oldest day among an Item's stored rows that would be shown in some
+ *  window: not a pending row its posted row replaced, nor a hidden account's.
+ *  Null with none. */
+function firstStoredDate(state: ItemState, hiddenAccountIds?: Set<string>): string | null {
+  const superseded = supersededPendingIds(state.txns);
+  let first: string | null = null;
+  for (const t of Object.values(state.txns)) {
+    if (superseded.has(t.transaction_id) || hiddenAccountIds?.has(t.account_id)) continue;
+    if (first === null || t.date < first) first = t.date;
+  }
+  return first;
 }
 
 /**
