@@ -1,7 +1,8 @@
 'use client';
 
-// Budgets tab -- the Mint core loop: monthly budgets per spending category
-// with progress meters (fill carries severity: accent -> warning -> over),
+// Budgets tab -- the Mint core loop: monthly budgets per category or per
+// category group, rolled up to your groups (components/BudgetsCard.tsx), with
+// progress meters (fill carries severity: accent -> warning -> over),
 // then savings goals, and what is coming: the cash forecast with its what-if
 // (components/ForecastCard.tsx), the calendar (components/CalendarView.tsx),
 // the recurring bills and income detected (components/RecurringCard.tsx) and
@@ -11,10 +12,13 @@
 // others), from the already-loaded transactions: the same rule as the
 // Activity tab and the Home insights, so a budget agrees with both.
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
-import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
+import { leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
+import type { Budgets } from '@/lib/budget-set';
+import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import BudgetsCard, { budgetTotals } from './BudgetsCard';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
@@ -37,7 +41,7 @@ const NO_INSTITUTIONS: ForecastInstitution[] = [];
 const NO_ITEMS: PlannedItem[] = [];
 const NO_DISMISSED: string[] = [];
 
-export type Budgets = Record<string, number>;
+export type { Budgets };
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
   if (ratio >= 1) return ' over';
@@ -48,6 +52,8 @@ function meterState(ratio: number): '' | ' warn' | ' over' {
 export default function BudgetsTab({
   txns,
   budgets,
+  taxonomy = null,
+  categoriesError = null,
   budgetsStatus = 'ready',
   budgetsError = null,
   budgetsSaveError = null,
@@ -75,6 +81,11 @@ export default function BudgetsTab({
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
+  /** Your categories (components/categories-state.ts): what budgets are set
+   *  on, and the groups they roll up to. Null until loaded. */
+  taxonomy?: Taxonomy | null;
+  /** Why they couldn't be loaded. */
+  categoriesError?: string | null;
   /** Until 'ready', the list is unknown: shown as loading, never as "none",
    *  and not editable (lib/whole-list-store.ts). */
   budgetsStatus?: ListStatus;
@@ -123,11 +134,6 @@ export default function BudgetsTab({
   plannedSaveError?: string | null;
   onSavePlanned?: (next: Planned) => Promise<boolean>;
 }) {
-  const [editing, setEditing] = useState<string | null>(null); // category being edited
-  const [editAmount, setEditAmount] = useState('');
-  const [newCategory, setNewCategory] = useState('');
-  const [newAmount, setNewAmount] = useState('');
-
   const thisMonth = localMonth();
   const monthName = new Date().toLocaleDateString(undefined, { month: 'long' });
 
@@ -136,12 +142,12 @@ export default function BudgetsTab({
   // tab's totals are.
   const displayCurrency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
 
-  // Current-month spending per category (lib/totals.ts, which the API's
+  // Current-month spending per category id (lib/totals.ts, which the API's
   // budgets share).
-  const spendByCat = useMemo(
-    () => spendingByCategory(txns ?? [], (date) => date.slice(0, 7) === thisMonth, displayCurrency),
-    [txns, thisMonth, displayCurrency]
-  );
+  const spendByCat = useMemo(() => {
+    const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
+    return spendingByCategory(txns ?? [], (date) => date.slice(0, 7) === thisMonth, displayCurrency, ix ? (t) => filedId(ix, t) : undefined);
+  }, [txns, thisMonth, displayCurrency, taxonomy]);
 
   // This month's spending in other currencies, named rather than added.
   const leftOut = useMemo(
@@ -157,22 +163,8 @@ export default function BudgetsTab({
     [txns, thisMonth, displayCurrency]
   );
 
-  // Categories seen anywhere in the window, offered when adding a budget.
-  const availableCategories = useMemo(() => {
-    const seen = new Set<string>();
-    (txns ?? []).forEach((t) => {
-      if (t.amount > 0 && countsInTotals(t, displayCurrency)) seen.add(t.category ?? 'other');
-    });
-    return [...seen].filter((c) => !(c in budgets)).sort();
-  }, [txns, budgets, displayCurrency]);
-
-  const budgetedCategories = useMemo(
-    () =>
-      Object.keys(budgets).sort(
-        (a, b) => (spendByCat[b] ?? 0) / budgets[b] - (spendByCat[a] ?? 0) / budgets[a]
-      ),
-    [budgets, spendByCat]
-  );
+  // Every limit and what counts against it, each group's once (lib/budget-set.ts).
+  const totals = useMemo(() => (taxonomy ? budgetTotals(taxonomy, budgets, spendByCat) : { budget: 0, spent: 0 }), [taxonomy, budgets, spendByCat]);
 
   // Bills and income detected (lib/recurring.ts), for the recurring list, the
   // forecast and the calendar alike.
@@ -198,8 +190,8 @@ export default function BudgetsTab({
     );
   }
 
-  const totalBudget = Object.values(budgets).reduce((a, b) => a + b, 0);
-  const totalSpent = budgetedCategories.reduce((sum, c) => sum + (spendByCat[c] ?? 0), 0);
+  const totalBudget = totals.budget;
+  const totalSpent = totals.spent;
   const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : 0;
   // No connection can bring in spending, and none came from anywhere else
   // (rows entered by hand count): say so, rather than "$0 of" every limit.
@@ -208,32 +200,6 @@ export default function BudgetsTab({
   const noSpending = txns ? noSpendingOf(withoutTransactions, txns.length) : null;
   const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions);
   const namedWithout = withoutNote(withoutTransactions, txns?.length ?? 0);
-
-  function startEdit(category: string) {
-    setEditing(category);
-    setEditAmount(String(budgets[category]));
-  }
-
-  async function saveEdit(category: string) {
-    const value = Number(editAmount);
-    if (!Number.isFinite(value) || value <= 0) return;
-    if (await onSave({ ...budgets, [category]: value })) setEditing(null);
-  }
-
-  async function removeBudget(category: string) {
-    const next = { ...budgets };
-    delete next[category];
-    if (await onSave(next)) setEditing(null);
-  }
-
-  async function addBudget() {
-    const value = Number(newAmount);
-    if (!newCategory || !Number.isFinite(value) || value <= 0) return;
-    if (await onSave({ ...budgets, [newCategory]: value })) {
-      setNewCategory('');
-      setNewAmount('');
-    }
-  }
 
   return (
     <>
@@ -269,101 +235,21 @@ export default function BudgetsTab({
           </div>
         )}
 
-        {budgetedCategories.length === 0 && (
-          <p className="empty-note">
-            No budgets yet — add one below to start tracking spending against a monthly limit.
+        {taxonomy ? (
+          <BudgetsCard
+            taxonomy={taxonomy}
+            budgets={budgets}
+            spent={spendByCat}
+            currency={displayCurrency}
+            editable={budgetsStatus === 'ready'}
+            noSpending={!!noSpending}
+            onSave={onSave}
+          />
+        ) : (
+          <p className={categoriesError ? 'stale-note' : 'empty-note'}>
+            {categoriesError ? `${categoriesError} Budgets are shown once they are.` : 'Loading your categories…'}
           </p>
         )}
-
-        {budgetedCategories.map((cat) => {
-          const spent = spendByCat[cat] ?? 0;
-          const budget = budgets[cat];
-          const ratio = spent / budget;
-          return (
-            <div className="budget-row" key={cat}>
-              {editing === cat ? (
-                <div className="budget-edit">
-                  <span className="budget-name">{cat}</span>
-                  <input
-                    className="text-input budget-input"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    aria-label={`Monthly budget for ${cat}`}
-                  />
-                  <div className="card-actions">
-                    <button onClick={() => saveEdit(cat)}>Save</button>
-                    <button className="secondary" onClick={() => removeBudget(cat)}>
-                      Remove
-                    </button>
-                    <button className="secondary" onClick={() => setEditing(null)}>
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button className="budget-summary" onClick={() => startEdit(cat)}>
-                  <div className="budget-line">
-                    <span className="budget-name">{cat}</span>
-                    <span className="budget-amounts">
-                      {noSpending ? (
-                        `${formatMoney(budget, displayCurrency)} limit`
-                      ) : (
-                        <>
-                          {formatMoney(spent, displayCurrency)} of{' '}
-                          {formatMoney(budget, displayCurrency)}
-                          {ratio >= 1 && <span className="over-tag"> · over</span>}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  {!noSpending && (
-                    <div className={`meter-track${meterState(ratio)}`}>
-                      <div
-                        className={`meter-fill${meterState(ratio)}`}
-                        style={{ width: `${Math.min(ratio * 100, 100)}%` }}
-                      />
-                    </div>
-                  )}
-                </button>
-              )}
-            </div>
-          );
-        })}
-
-        <div className="budget-add">
-          <select
-            className="text-input budget-select"
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            aria-label="Category to budget"
-          >
-            <option value="">Choose a category…</option>
-            {availableCategories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-                {spendByCat[c]
-                  ? ` (${formatMoney(spendByCat[c], displayCurrency)} this month)`
-                  : ''}
-              </option>
-            ))}
-          </select>
-          <input
-            className="text-input budget-input"
-            type="number"
-            min="1"
-            step="1"
-            placeholder="Monthly limit"
-            value={newAmount}
-            onChange={(e) => setNewAmount(e.target.value)}
-            aria-label="Monthly limit"
-          />
-          <button onClick={addBudget} disabled={!newCategory || !newAmount}>
-            Add Budget
-          </button>
-        </div>
           </>
         )}
 

@@ -22,7 +22,9 @@
 //     (lib/connectors/institutions.ts connectorBanksReport), and the accounts
 //     a connection fed that the person let go (connector-ended): removed with
 //     their transactions, or kept as manual accounts, unless tracked again;
-//   - the categories the person marked (lib/report/store.ts).
+//   - the categories the person marked (lib/report/store.ts), found among
+//     their categories as the rows were filed by them (finishActivity, which
+//     files without writing: the report never grows the stored categories).
 //
 // READ ONLY, and for display: nothing here writes, deletes or records anything
 // on what it reads (readOnly). Every read that can't be made is said on the
@@ -193,6 +195,8 @@ export async function readReport(
     ownRead: bank.own_read,
     marked: settings.ok ? (settings.value?.marked ?? null) : null,
     markedUnreadable: !settings.ok,
+    // The categories the rows were filed by, read without writing anything.
+    taxonomy: activity.taxonomy,
     hidden: hidden.size > 0,
     healthUnread: facts.note !== null,
     appendixLimit: opts.appendixLimit,

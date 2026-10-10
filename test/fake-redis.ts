@@ -592,6 +592,22 @@ export class FakeRedis {
       else this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
+    // A value store's key, read and changed exactly (ValueStore.update). A
+    // hash at the key is WRONGTYPE, as GET answers it; SET drops an expiry.
+    if (name === '-- nya:repo-read-value') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.strings.get(keys[0]);
+      return value === undefined ? '' : `v${value}`;
+    }
+    if (name === '-- nya:repo-update-value') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const cur = this.strings.get(keys[0]);
+      if ((cur === undefined ? '' : sha1(cur)) !== args[0]) return 0;
+      if (args[1] === '') this.strings.delete(keys[0]);
+      else this.strings.set(keys[0], args[1]);
+      this.ttls.delete(keys[0]);
+      return 1;
+    }
     // Several fields at once (MapStore.updateMany): every one compared, then
     // all written, or none. "" deletes a field, "=" leaves it as it is.
     if (name === '-- nya:repo-update-entries') {

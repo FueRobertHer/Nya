@@ -17,6 +17,11 @@ import type { Txn } from './MonthBreakdown';
 import type { ManualTxnTarget } from './ManualTxnSheet';
 import type { Incomplete } from '@/lib/month-coverage';
 import { noTransactionsView, type NoTransactionsView } from '@/lib/no-transactions';
+import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+
+/** A category chosen for a transaction: one of the person's, by id, or, with
+ *  no categories loaded, words (as before categories had ids). */
+export type CategoryChoice = { category_id: string } | { category: string };
 
 /** Newest first, as /api/transactions orders them; the sort is stable. */
 function newestFirst(a: Txn, b: Txn): number {
@@ -45,6 +50,7 @@ export function useTransactionEdits({
   loadTransactions,
   loadNetWorth,
   requestBackfill,
+  taxonomy = null,
 }: {
   txns: Txn[] | null;
   setTxns: Dispatch<SetStateAction<Txn[] | null>>;
@@ -57,6 +63,9 @@ export function useTransactionEdits({
   loadTransactions: () => unknown;
   loadNetWorth: (force?: boolean) => Promise<unknown>;
   requestBackfill: (reload: () => void) => void;
+  /** The person's categories, for a choice to show at once as it will be
+   *  filed (components/categories-state.ts). */
+  taxonomy?: Taxonomy | null;
 }) {
   const [sheet, setSheet] = useState<ManualTxnTarget | null>(null);
   // Why the last change didn't save, shown on the Activity tab until the next
@@ -137,19 +146,26 @@ export function useTransactionEdits({
 
   /** A new category for one transaction: Plaid's is overridden, a manual
    *  row's is changed on the row (sent with its account, so the server reads
-   *  only that book). */
+   *  only that book). Shown at once as it will be filed: the category's id,
+   *  name and kind, and the words it is stored as (lib/categories.ts). */
   const recategorize = useCallback(
-    async (transaction_id: string, category: string) => {
+    async (transaction_id: string, choice: CategoryChoice) => {
       setError(null);
       changes.current++;
       const t = current.current?.find((x) => x.transaction_id === transaction_id);
-      setTxns((prev) => (prev ? prev.map((x) => (x.transaction_id === transaction_id ? { ...x, category } : x)) : prev));
+      let shown: Partial<Txn> = 'category' in choice ? { category: choice.category, category_id: undefined, category_name: choice.category, category_kind: undefined } : {};
+      if ('category_id' in choice && taxonomy) {
+        const ix = indexTaxonomy(taxonomy);
+        const c = categoryById(ix, choice.category_id);
+        if (c) shown = { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
+      }
+      setTxns((prev) => (prev ? prev.map((x) => (x.transaction_id === transaction_id ? { ...x, ...shown } : x)) : prev));
       let res: Response | null = null;
       try {
         res = await fetch('/api/recategorize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transaction_id, category, ...(t?.source && t.account_id ? { account_id: t.account_id } : {}) }),
+          body: JSON.stringify({ transaction_id, ...choice, ...(t?.source && t.account_id ? { account_id: t.account_id } : {}) }),
         });
         if (res.ok) return;
       } catch {
@@ -157,7 +173,7 @@ export function useTransactionEdits({
       }
       await undo(res, 'Could not change the category. Please try again.');
     },
-    [setTxns, undo]
+    [setTxns, undo, taxonomy]
   );
 
   /** Leaves a transaction out of budgets and reports, or puts it back: shown at

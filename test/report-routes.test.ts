@@ -203,8 +203,8 @@ describe('a report from stored data', () => {
     expect(r.caveats).toMatchObject({ hidden: true, marked: 'set', not_over: false, health_unread: false });
     // The marked group and its appendix: where each row came from.
     expect(r.marked!.categories).toEqual([
-      { category: 'medical', money_in: 0, money_out: 280, transactions: 4 },
-      { category: 'charity', money_in: 0, money_out: 0, transactions: 0 },
+      { category: 'medical', key: 'medical', money_in: 0, money_out: 280, transactions: 4 },
+      { category: 'charity', key: 'charity', money_in: 0, money_out: 0, transactions: 0 },
     ]);
     expect(r.appendix!.rows.map((x) => [x.date, x.institution, x.source])).toEqual([
       ['2025-02-03', 'Chase', 'plaid'],
@@ -298,10 +298,68 @@ describe('a report from stored data', () => {
       left_out: api.left_out,
       left_out_text: api.left_out_text,
     });
-    expect(report.money_out.map((c) => ({ category: c.category, spent: c.amount, transactions: c.transactions }))).toEqual(api.categories);
+    // By category, named as the API names them (which adds the ids and groups).
+    expect(report.money_out.map((c) => ({ category: c.category, spent: c.amount, transactions: c.transactions }))).toEqual(
+      api.categories.map((c) => ({ category: c.category, spent: c.spent, transactions: c.transactions }))
+    );
     // The fixture's own: pay in, its rename and override applied, the excluded and hidden rows out.
     expect(report.money_in).toEqual([{ category: 'income', amount: 3000, transactions: 1 }]);
+    // Filed into the person's categories without writing any: a report never
+    // grows the stored set, as the API doesn't.
+    expect(fake.strings.has(ctxKey('categories'))).toBe(false);
     expect(report.money_out.map((c) => c.category)).toContain('housing');
+  });
+
+  test('a mark saved as words keeps working as the categories change: renamed, it is the same category; merged, its marks and rows go with it', async () => {
+    const { ensureTaxonomy, changeTaxonomy } = await import('@/lib/category-store');
+    const { renameCategory, mergeCategories, textKeys } = await import('@/lib/categories');
+    await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('a1') });
+    await fake.set(
+      ctxKey('txns:item_chase'),
+      await store([
+        txn('g1', 'acc_chk', 10, 40, { category: 'groceries' }),
+        txn('g2', 'acc_chk', 9, 60, { category: 'groceries' }),
+        txn('f1', 'acc_chk', 8, 25, { category: 'food and drink' }),
+        txn('x1', 'acc_chk', 7, 10),
+      ])
+    );
+    const t = await ensureTaxonomy(ctx, { observed: textKeys(['groceries']) });
+    const groceries = t.categories.find((c) => c.name === 'groceries')!;
+    const food = t.categories.find((c) => c.name === 'food and drink')!;
+    // Saved before any of it, as the release before saves a mark: words.
+    const saved = { v: 1 as const, marked: ['groceries'] };
+    await reportSettingsStore.set(ctx, saved);
+    const [from, to] = [daysAgo(30), daysAgo(0)];
+    const period = resolvePeriod({ kind: 'range', start: from, end: to }, 'UTC', Date.now());
+    if ('error' in period) throw new Error(period.error);
+    const report = () => quiet(() => readReport(ctx, period, { currency: 'USD' }));
+    const spending = async () => (await quiet(() => readSpending(ctx, { from, to, currency: 'USD' }))).categories.map((c) => ({ category: c.category, spent: c.spent, transactions: c.transactions }));
+    const totals = (r: Awaited<ReturnType<typeof report>>) => r.money_out.map((c) => ({ category: c.category, spent: c.amount, transactions: c.transactions }));
+
+    // Renamed: still marked, under its new name, its rows with it.
+    await changeTaxonomy(ctx, (cur) => renameCategory(cur, groceries.id, 'Supermarket'));
+    let r = await report();
+    expect(r.marked!.categories).toEqual([{ category: 'Supermarket', key: 'groceries', money_in: 0, money_out: 100, transactions: 2 }]);
+    expect(r.appendix!.rows.map((x) => [x.name, x.category])).toEqual([
+      ['G1', 'Supermarket'],
+      ['G2', 'Supermarket'],
+    ]);
+    expect(r.categories).toContainEqual({ key: 'groceries', name: 'Supermarket' });
+    expect(totals(r)).toEqual(await spending());
+    expect(totals(r).find((c) => c.category === 'Supermarket')).toEqual({ category: 'Supermarket', spent: 100, transactions: 2 });
+
+    // Merged into food and drink: the mark goes there, and the rows of both
+    // are one category, never split between two lines.
+    await changeTaxonomy(ctx, (cur) => mergeCategories(cur, groceries.id, food.id));
+    r = await report();
+    expect(r.marked!.categories).toEqual([{ category: 'food and drink', key: 'food and drink', money_in: 0, money_out: 125, transactions: 3 }]);
+    expect(r.appendix!.rows.map((x) => x.name)).toEqual(['G1', 'G2', 'F1']);
+    expect(r.categories.filter((c) => c.name === 'food and drink' || c.name === 'Supermarket')).toEqual([{ key: 'food and drink', name: 'food and drink' }]);
+    expect(totals(r)).toEqual(await spending());
+    expect(totals(r).find((c) => c.category === 'food and drink')).toEqual({ category: 'food and drink', spent: 125, transactions: 3 });
+    // The setting itself is as it was saved: words, until the person saves the
+    // sheet again, which saves each category's own (its key here).
+    expect(await reportSettingsStore.get(ctx)).toEqual(saved);
   });
 
   test('an empty period says so, and what it is missing', async () => {

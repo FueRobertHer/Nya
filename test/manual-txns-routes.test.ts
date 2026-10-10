@@ -178,9 +178,14 @@ describe('adding a transaction', () => {
     expect(stored).toMatchObject({ id, account_id: WALLET.account_id, ...FIELDS, note: 'team coffee', source: 'manual', source_id: null });
     expect(stored.balance_update).toBeUndefined();
 
-    // Only the book changed: the balance, the history layer, the backfill
-    // flag and every cache are as they were.
-    expect(changedKeys(before, snapshot())).toEqual([ctxKey('manual-transactions')]);
+    // Filed into the person's categories, as the list files it.
+    expect(body.transaction).toMatchObject({ category: FIELDS.category, category_name: FIELDS.category, category_kind: 'expense' });
+    expect(body.transaction.category_id).toEqual(expect.any(String));
+
+    // Only the book changed, and the categories, made on this first read of
+    // them (lib/category-store.ts): the balance, the history layer, the
+    // backfill flag and every cache are as they were.
+    expect(changedKeys(before, snapshot())).toEqual([ctxKey('categories'), ctxKey('manual-transactions')]);
     expect(await getManualAccount(ctx, WALLET.account_id)).toEqual(WALLET);
   });
 

@@ -293,13 +293,27 @@ describe('the page around it', () => {
 
   test('marking categories: the person chooses, and nothing suggests how any is taxed', () => {
     const s = renderToStaticMarkup(
-      <MarkCategoriesView categories={['charity', 'medical']} chosen={['medical']} unreadable={false} saving={false} error={null} onToggle={() => {}} onSave={() => {}} />
+      <MarkCategoriesView
+        categories={[
+          { key: 'charity', name: 'charity' },
+          { key: 'medical', name: 'Doctors and dentists' },
+        ]}
+        chosen={['medical']}
+        unreadable={false}
+        saving={false}
+        error={null}
+        onToggle={() => {}}
+        onSave={() => {}}
+      />
     );
     expect(s.match(/type="checkbox"/g)?.length).toBe(2);
-    expect(s).toMatch(/checked=""[^>]*\/><span>medical/);
+    // Shown by its name now, chosen by its key.
+    expect(s).toMatch(/checked=""[^>]*\/><span>Doctors and dentists/);
     expect(text(s)).toContain('You choose: Nya doesn’t say how any category is taxed.');
     for (const word of ['deduct', 'write-off', 'taxable']) expect(text(s).toLowerCase()).not.toContain(word);
-    const unreadable = renderToStaticMarkup(<MarkCategoriesView categories={['medical']} chosen={[]} unreadable saving={false} error={null} onToggle={() => {}} onSave={() => {}} />);
+    const unreadable = renderToStaticMarkup(
+      <MarkCategoriesView categories={[{ key: 'medical', name: 'medical' }]} chosen={[]} unreadable saving={false} error={null} onToggle={() => {}} onSave={() => {}} />
+    );
     expect(text(unreadable)).toContain('couldn’t be read, so they can’t be changed here');
     expect(unreadable).not.toContain('<button');
   });
