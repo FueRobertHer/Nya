@@ -80,7 +80,7 @@ describe('walking back from the anchor', () => {
       ids: ['card'],
       type: 'credit',
       flows: new Map([['2025-01-10', 40]]), // a purchase raised what is owed on the anchor's day
-      covered: [{ from: '2025-01-01', to: '2025-01-31', kind: 'bank' }],
+      covered: [{ from: '2025-01-01', to: '2025-01-31', kind: 'import' }],
     });
     const out = extendHistory({ anchor, accounts: [chk, card] });
     const day = (d: string) => out.points.find((p) => p.date === d)!;
@@ -94,7 +94,16 @@ describe('walking back from the anchor', () => {
 
   test('an account is held, at the balance it reached, on days before its own covered run, never drawn there as its own point', () => {
     const long = account({ flows: new Map([['2024-12-20', 10]]), covered: [{ from: '2024-12-01', to: '2025-01-31', kind: 'import' }] });
-    const short = account({ account_id: 'card', ids: ['card'], type: 'credit', flows: new Map([['2025-01-05', 25]]), covered: [{ from: '2025-01-03', to: '2025-01-31', kind: 'bank' }] });
+    const short = account({
+      account_id: 'card',
+      ids: ['card'],
+      type: 'credit',
+      flows: new Map([['2025-01-05', 25]]),
+      covered: [
+        { from: '2025-01-03', to: '2025-01-09', kind: 'import' },
+        { from: '2025-01-10', to: '2025-01-31', kind: 'bank' },
+      ],
+    });
     const out = extendHistory({ anchor, accounts: [long, short] });
     const early = out.points.find((p) => p.date === '2024-12-25')!;
     expect(early.walked).toEqual({ chk: 1000 });
@@ -122,11 +131,30 @@ describe('walking back from the anchor', () => {
     expect('chk' in out.points[0].held).toBe(false);
   });
 
-  test('nothing covered before the anchor draws nothing', () => {
-    const out = extendHistory({ anchor, accounts: [account({ covered: [{ from: '2025-01-10', to: '2025-01-31', kind: 'bank' }] })] });
-    // Covered from the anchor's own day: one point, the day before it.
-    expect(out.points.map((p) => p.date)).toEqual(['2025-01-09']);
+  test('nothing imported before the anchor draws nothing: the bank’s own days alone are the backfill’s', () => {
+    const bankOnly = extendHistory({ anchor, accounts: [account({ covered: [{ from: '2024-06-01', to: '2025-01-31', kind: 'bank' }] })] });
+    expect(bankOnly.points).toEqual([]);
+    expect(bankOnly.accounts[0]).toMatchObject({ reach: null, why: null, gaps: [] });
+    const fromTheAnchor = extendHistory({ anchor, accounts: [account({ covered: [{ from: '2025-01-10', to: '2025-01-31', kind: 'import' }] })] });
+    expect(fromTheAnchor.points).toEqual([]);
     expect(extendHistory({ anchor, accounts: [] }).points).toEqual([]);
+  });
+
+  test('an import reaching the bank’s days walks through them too, back to its own start', () => {
+    const out = extendHistory({
+      anchor,
+      accounts: [
+        account({
+          flows: new Map([['2024-12-15', 100]]),
+          covered: [
+            { from: '2024-12-01', to: '2025-01-31', kind: 'bank' },
+            { from: '2024-10-01', to: '2024-11-30', kind: 'import' },
+          ],
+        }),
+      ],
+    });
+    expect(out.from).toBe('2024-09-30');
+    expect(out.points.find((p) => p.date === '2024-12-14')?.walked).toEqual({ chk: 1100 });
   });
 });
 

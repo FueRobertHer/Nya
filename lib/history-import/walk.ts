@@ -136,7 +136,9 @@ export function mergeRanges(ranges: readonly CoveredRange[]): { from: number; to
  * How far back one account can be walked from the anchor (see the header):
  * to the day before the covered run holding the anchor's day begins, no
  * further than MAX_EXTENSION_DAYS; with the imported stretches before that
- * run, which aren't drawn, each with the uncovered days cutting it off.
+ * run, which aren't drawn, each with the uncovered days cutting it off. Only
+ * an import reaching before the anchor is walked: a run of the bank's own days
+ * alone is the backfill's (lib/backfill.ts), which stops where it stops.
  */
 export function reachOf(account: Pick<WalkAccount, 'account_id' | 'covered'>, anchor: string, counted: boolean, maxDays: number = MAX_EXTENSION_DAYS): AccountReach {
   const blocks = mergeRanges(account.covered);
@@ -152,12 +154,14 @@ export function reachOf(account: Pick<WalkAccount, 'account_id' | 'covered'>, an
     const until = i + 1 < before.length ? before[i + 1].from - 1 : end;
     return [{ imported: { from: dayOf(b.from), to: dayOf(b.to) }, uncovered: { from: dayOf(b.to + 1), to: dayOf(until) } }];
   });
-  if (!counted) return { account_id: account.account_id, reach: null, why: 'not-counted', gaps, capped: false };
-  if (!holding) return { account_id: account.account_id, reach: null, why: 'anchor-not-covered', gaps, capped: false };
+  const none = (why: AccountReach['why']): AccountReach => ({ account_id: account.account_id, reach: null, why, gaps, capped: false });
+  if (!holding) return none(gaps.length > 0 ? 'anchor-not-covered' : null);
+  // An import in the run, before the anchor's day: what there is to draw.
+  const importedBefore = account.covered.some((r) => r.kind === 'import' && dayNumber(r.from) < a && dayNumber(r.from) >= holding.from);
+  if (!importedBefore) return none(null);
+  if (!counted) return none('not-counted');
   const furthest = a - maxDays;
   const reach = Math.max(holding.from - 1, furthest);
-  // Nothing before the anchor to walk: the run begins on the anchor's day
-  // and its day before is the anchor's own previous day, still a point.
   return { account_id: account.account_id, reach: dayOf(reach), why: null, gaps, capped: holding.from - 1 < furthest };
 }
 
