@@ -35,6 +35,8 @@ import { totalNotes } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab, { type Budgets } from './BudgetsTab';
+import { detectRecurring, type RecurringRow } from '@/lib/recurring';
+import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { formatMoney, dominantCurrency } from '@/lib/format';
@@ -452,7 +454,14 @@ export default function Dashboard({
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
   // Connections that bring in no transactions, so the spending views say why.
   const [txnWithout, setTxnWithout] = useState<NoTransactionsView>(NO_CONNECTIONS_WITHOUT);
+  // The rows before the loaded year that recurring detection needs.
+  const [txnHistory, setTxnHistory] = useState<RecurringRow[]>([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
+  // The last transactions load failed: the forecast and the calendar say so.
+  const [txnsFailed, setTxnsFailed] = useState(false);
+  // The balances shown are the ones saved on this device, not yet replaced
+  // by a load: the forecast says when they are from.
+  const [balancesSaved, setBalancesSaved] = useState(false);
   // Connection health (components/ConnectionHealth.tsx): whether the server
   // could read Plaid's warnings, and whether a notice email's link opened it.
   const [healthUnavailable, setHealthUnavailable] = useState(false);
@@ -489,6 +498,21 @@ export default function Dashboard({
         empty: [],
         isValid: (v): v is Goal[] => Array.isArray(v),
         onChange: setGoalsState,
+      }),
+    []
+  );
+  // The forecast's planned items and dismissals (lib/planned.ts), saved whole
+  // the same way.
+  const [plannedState, setPlannedState] = useState<ListState<Planned>>(initialListState<Planned>(EMPTY_PLANNED));
+  const plannedItemsStore = useMemo(
+    () =>
+      createWholeListStore<Planned>({
+        url: '/api/planned-items',
+        field: 'planned',
+        noun: 'planned items',
+        empty: EMPTY_PLANNED,
+        isValid: isPlanned,
+        onChange: setPlannedState,
       }),
     []
   );
@@ -567,6 +591,7 @@ export default function Dashboard({
       setHistory(data.history ?? []);
       setHiddenMeta(data.hidden ?? []);
       setAsOf(data.as_of ?? null);
+      setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
       setHealthUnavailable(!!data.health_unavailable);
       setConnected(data.institutions.length > 0);
@@ -618,6 +643,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnsFailed(true);
         return;
       }
       const data = await res.json();
@@ -625,8 +651,11 @@ export default function Dashboard({
       setTxnNotes(data.notes ?? []);
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
+      setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
+      setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnsFailed(true);
     } finally {
       setTxnsLoading(false);
     }
@@ -674,6 +703,7 @@ export default function Dashboard({
           setHistory(Array.isArray(snap.history) ? snap.history : []);
           setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
           setAsOf(snap.as_of ?? null);
+          setBalancesSaved(true);
           setConnected(snap.institutions.length > 0);
           setLoading(false);
         }
@@ -700,7 +730,8 @@ export default function Dashboard({
     loadTransactions();
     budgetsStore.load();
     goalsStore.load();
-  }, [loadTransactions, budgetsStore, goalsStore]);
+    plannedItemsStore.load();
+  }, [loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
 
   const renameVendor = useCallback(
     async (vendor_key: string, name: string) => {
@@ -1227,6 +1258,9 @@ export default function Dashboard({
   // Not a connection that holds no bank account or card: it brings no
   // transactions in, so its lapse leaves no month short (lib/no-transactions.ts).
   const stoppedTxns = useMemo(() => stoppedConnections(institutions, quietItemIds(txnWithout)), [institutions, txnWithout]);
+  // Recurring bills and income, detected once (lib/recurring.ts) for Home and
+  // the Budgets tab, from the year loaded and the rows before it.
+  const recurring = useMemo(() => (txns ? detectRecurring([...txns, ...txnHistory]) : null), [txns, txnHistory]);
   // Connections whose transactions weren't allowed: their card offers to.
   const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);
 
@@ -1621,6 +1655,8 @@ export default function Dashboard({
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
+                  series={recurring ?? undefined}
+                  dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
                   incomplete={txnIncomplete}
                   stopped={stoppedTxns}
                   accounts={institutions.flatMap((i) =>
@@ -2334,6 +2370,17 @@ export default function Dashboard({
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
                 withoutTransactions={txnWithout}
+                // The forecast, the calendar and the recurring list.
+                series={recurring}
+                txnsFailed={txnsFailed && txns === null}
+                institutions={institutions}
+                balancesAsOf={asOf}
+                balancesSaved={balancesSaved}
+                planned={plannedState.value}
+                plannedStatus={plannedState.status}
+                plannedError={plannedState.error}
+                plannedSaveError={plannedState.saveError}
+                onSavePlanned={plannedItemsStore.save}
               />
             )}
 

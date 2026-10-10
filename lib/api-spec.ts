@@ -296,7 +296,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   },
   {
     name: 'recurring',
-    summary: 'Recurring bills detected from transactions, with each one’s estimated next date.',
+    summary: 'Recurring bills detected from transactions, with how often each comes and its estimated next date.',
     args: { include_hidden: INCLUDE_HIDDEN },
   },
   {
@@ -420,7 +420,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'list_recurring_bills',
     'recurring',
     'Recurring bills',
-    'Recurring bills detected from transactions (a merchant charging about monthly at a steady amount), with each one’s estimated next date; detection and dates are estimates.',
+    'Recurring bills detected from transactions (a merchant charging on a schedule, from weekly to yearly, at a steady or similar amount), with how often each comes, its estimated next date and what the bills come to in a month. Bills the person marked not recurring in the app are left out. Detection and dates are estimates.',
     NARROW_HIDDEN
   ),
   fromOperation(

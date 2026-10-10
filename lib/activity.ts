@@ -22,23 +22,41 @@
 // why (without_transactions, lib/item-products.ts), with how many connections
 // there are, so the app's views and the API say the same of them
 // (lib/no-transactions.ts).
+//
+// BEFORE THE YEAR. Beside the year's rows, each part gives the rows before it
+// that recurring detection may need, as it sees a yearly charge twice only in
+// two years: compact (OlderTxn), with the same categories, names and
+// exclusions, narrowed to those detection can use (lib/recurring.ts
+// olderRowsForDetection). The banks' part keeps a wider set (CACHED_HISTORY),
+// chosen before the person's own exclusions are applied, and finishActivity
+// narrows it after them (`history`), so an excluded row never keeps another
+// from being used.
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
 import { getOverrides, getCarried, carriedCategories } from './overrides';
 import { getRenames } from './renames';
-import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type Txn, type TxnCoverage } from './transactions';
+import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type OlderTxn, type Txn, type TxnCoverage } from './transactions';
+import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
 
+/** What the banks' part keeps of the rows before the year: wider than
+ *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
+ *  person's exclusions, applied after, may change which merchants qualify. */
+const CACHED_HISTORY = { recent: 4, older: 6 };
+
 /** The banks' part as assembled (and, by the app, cached). `plaid_only`
  *  tells it from the payload cached before, which held the manual rows too
- *  and must not be merged with them again: that one is a miss. */
+ *  and must not be merged with them again, and `account_types` from one
+ *  cached before rows carried their account's type (account_type, which the
+ *  cash forecast reads): either is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
+  account_types: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -54,12 +72,22 @@ export type PlaidPayload = {
   // figure that looks complete (lib/no-transactions.ts).
   without_transactions?: WithoutTransactions[];
   connections?: number;
+  // The banks' rows from before the lookback that recurring detection can use
+  // (see BEFORE THE YEAR). Absent on a payload cached before they were kept.
+  older?: OlderTxn[];
   as_of: string;
 };
 
 export function isPlaidPayload(v: unknown): v is PlaidPayload {
   const p = v as Partial<PlaidPayload> | null;
-  return !!p && p.plaid_only === true && Array.isArray(p.transactions) && Array.isArray(p.notes) && typeof p.as_of === 'string';
+  return (
+    !!p &&
+    p.plaid_only === true &&
+    p.account_types === true &&
+    Array.isArray(p.transactions) &&
+    Array.isArray(p.notes) &&
+    typeof p.as_of === 'string'
+  );
 }
 
 /** One institution's part in an assembly: how much of it is here, and, read
@@ -150,7 +178,8 @@ export async function assembleBankRows(
   // transaction, vendor rename by vendor key (so it covers every row from that
   // merchant).
   const transactions = results.flatMap((r) => r.txns);
-  for (const t of transactions) {
+  const older = results.flatMap((r) => r.older);
+  for (const t of [...transactions, ...older]) {
     const manual = overrides[t.transaction_id];
     if (manual) t.category = manual;
     const renamed = renames[t.vendor_key];
@@ -168,7 +197,17 @@ export async function assembleBankRows(
     r.noTransactions ? [{ item_id: items[i].item_id, institution_name: items[i].institution_name, reason: r.noTransactions }] : []
   );
   return {
-    payload: { plaid_only: true, transactions, notes, incomplete, without_transactions, connections: items.length, as_of: at },
+    payload: {
+      plaid_only: true,
+      account_types: true,
+      transactions,
+      notes,
+      incomplete,
+      without_transactions,
+      connections: items.length,
+      older: olderRowsForDetection(transactions, older, CACHED_HISTORY),
+      as_of: at,
+    },
     hidden: hiddenIds,
     // Same rule as net-worth: only clean payloads, so syncing or reauth
     // institutions get re-checked on the next load instead of hiding for the
@@ -197,18 +236,48 @@ export async function assembleBankRows(
  * (already on the row). A row whose record couldn't be read is marked as not
  * known (`excluded: null`): it counts, and the Activity tab says a total may
  * include one the person excluded.
+ *
+ * `history` is the rows before the year that recurring detection can use
+ * (see BEFORE THE YEAR): the banks', as kept, and the manual accounts',
+ * chosen once the exclusions are on them.
  */
 export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
   hidden: Set<string>
-): Promise<{ transactions: Txn[]; notes: string[]; incomplete: NonNullable<PlaidPayload['incomplete']> }> {
+): Promise<{ transactions: Txn[]; notes: string[]; incomplete: NonNullable<PlaidPayload['incomplete']>; history: OlderTxn[] }> {
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff }), readExclusions(ctx)]);
+  const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+  // The manual rows back to `since`, for the history.
+  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff: since }), readExclusions(ctx)]);
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
-  const transactions = [...plaid.transactions, ...manual.txns].sort(newestFirst);
-  for (const t of transactions) {
+  const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);
+  // The rows before the year that could be used: the banks', as kept, and the
+  // manual accounts', compact.
+  const candidates: OlderTxn[] = [
+    ...(plaid.older ?? []),
+    ...manual.txns
+      .filter((t) => t.date < cutoff && !t.pending)
+      .map((t) => ({
+        transaction_id: t.transaction_id,
+        date: t.date,
+        name: t.name,
+        amount: t.amount,
+        account_name: t.account_name,
+        account_type: t.account_type ?? null,
+        institution_name: t.institution_name,
+        category: t.category,
+        subcategory: t.subcategory,
+        iso_currency_code: t.iso_currency_code,
+        unofficial_currency_code: t.unofficial_currency_code ?? null,
+        transaction_code: t.transaction_code,
+        vendor_key: t.vendor_key,
+        logo_url: t.logo_url,
+        source: t.source,
+      })),
+  ];
+  for (const t of [...transactions, ...candidates]) {
     const own = exclusions.records.get(t.transaction_id);
     if (own === true) t.excluded = true;
     else if (own === false) delete t.excluded;
@@ -216,5 +285,12 @@ export async function finishActivity(
   }
   // The institutions whose rows aren't all here (the banks' part: a manual
   // account has no connection, so it is never incomplete).
-  return { transactions, notes: [...plaid.notes, ...manual.notes], incomplete: plaid.incomplete ?? [] };
+  return {
+    transactions,
+    notes: [...plaid.notes, ...manual.notes],
+    incomplete: plaid.incomplete ?? [],
+    // Chosen once the exclusions are on the rows, so an excluded row neither
+    // counts toward a merchant's limit nor is used.
+    history: olderRowsForDetection(transactions, candidates),
+  };
 }

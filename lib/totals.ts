@@ -3,8 +3,10 @@
 // Totals over transactions, by the rules of lib/spending.ts, as pure
 // functions: the Budgets tab's spending per category (components/BudgetsTab.tsx)
 // and the read-only API's totals (lib/api-read.ts), so a budget's spent figure
-// is the same number in the app and through the API. Safe to import from
-// client code.
+// is the same number in the app and through the API. The monthly figure of
+// recurring bills and income (recurringMonthly) is here too, for the same
+// reason: the Budgets tab's recurring list and the API add it up alike. Safe
+// to import from client code.
 //
 // Every total goes through countsInTotals: one currency per total (the one
 // the caller passes, totalsCurrency over the rows the app shows), what the
@@ -13,6 +15,7 @@
 // currency named, never added.
 
 import { countsInTotals, isTransfer, isExcluded, leftOutByCurrency, leftOutText, type Countable, type LeftOut } from './spending';
+import { expectedDates, perMonth, type RecurringSeries } from './recurring';
 
 /** What these totals read of a transaction. */
 export type TotalsRow = Countable & { date: string; amount: number; category: string | null };
@@ -117,4 +120,33 @@ export function summarize(rows: readonly TotalsRow[], inRange: (date: string) =>
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency),
   };
+}
+
+/** Whether a recurring series counts in a monthly figure (recurringMonthly):
+ *  still coming on `today` (not one whose expected dates went by with nothing
+ *  arriving, lib/recurring.ts expectedDates), its amount known (not pay that
+ *  varies too much to forecast), and not a card's payment, the card's own
+ *  charges being counted where they are charged. */
+export function countsInMonthly(s: RecurringSeries, today: string): boolean {
+  return s.agreement !== 'varies' && !s.paysCard && expectedDates(s, today, today).status !== 'ended';
+}
+
+/**
+ * What recurring series come to in a month, as the Budgets tab's recurring
+ * list adds them (components/RecurringCard.tsx) and the read-only API answers
+ * (lib/api-read.ts): those that count (countsInMonthly), each at what it comes
+ * to in an average month (perMonth: a weekly 10 is about 43), kept in
+ * `currency`. One that says no currency counts in it; those in another are
+ * left out, counted by currency, never added. Unrounded, as summed.
+ */
+export function recurringMonthly(series: readonly RecurringSeries[], today: string, currency: string | null): { total: number; leftOut: LeftOut } {
+  let total = 0;
+  const others = new Map<string, number>();
+  for (const s of series) {
+    if (!countsInMonthly(s, today)) continue;
+    const c = s.currency ?? currency;
+    if (c === currency || currency === null) total += perMonth(s);
+    else if (c) others.set(c, (others.get(c) ?? 0) + 1);
+  }
+  return { total, leftOut: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count) };
 }

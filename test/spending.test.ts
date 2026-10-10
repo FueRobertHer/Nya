@@ -313,8 +313,10 @@ describe('no total adds up amounts in two currencies', () => {
       bill(n, { name: 'Streaming', amount: 15, category: 'entertainment' }),
       bill(n, { name: 'Gym', amount: 30, category: 'personal care', iso_currency_code: 'EUR' }),
     ]);
+    // Detected once for the dashboard, and handed down (components/Dashboard.tsx).
+    const txns = [COUNTED, RAMEN, ...bills];
     const t = text(
-      renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [COUNTED, RAMEN, ...bills], budgets: { 'food and drink': 600 } }))
+      renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns, series: detectRecurring(txns), budgets: { 'food and drink': 600 } }))
     );
     expect(t).toContain('food and drink $30.00 of $600.00');
     expect(t).toContain("1 transaction in JPY isn't in these budgets, which are in USD.");

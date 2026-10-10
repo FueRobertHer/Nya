@@ -11,8 +11,8 @@
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring, upcomingBills } from '@/lib/recurring';
-import { instantDay, localMonth } from '@/lib/local-date';
+import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
+import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
@@ -34,6 +34,8 @@ export type ReconnectSoon = {
 };
 
 const NO_RECONNECTS: ReconnectSoon[] = [];
+const NO_SERIES: RecurringSeries[] = [];
+const NO_DISMISSED: string[] = [];
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
 
@@ -121,6 +123,8 @@ export default function Insights({
   idleCash = NO_IDLE_CASH,
   reconnectSoon = NO_RECONNECTS,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  series = NO_SERIES,
+  dismissed = NO_DISMISSED,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
 }: {
@@ -133,6 +137,13 @@ export default function Insights({
    *  bank account or card whose transactions don't come in leaves the budget
    *  alerts and the pace short, as on the Activity and Budgets tabs. */
   withoutTransactions?: NoTransactionsView;
+  /** The bills and income detected (lib/recurring.ts), once for the whole
+   *  dashboard, from the year loaded and the rows before it a yearly charge
+   *  needs. */
+  series?: RecurringSeries[];
+  /** Detected bills the person said aren't recurring, as saved
+   *  (lib/planned.ts), matched to series by dismissedSeries. */
+  dismissed?: string[];
   /** What may leave this month's spending short, as Activity and Budgets say
    *  it (lib/month-coverage.ts): an institution whose transactions didn't
    *  load or are still importing, and connections that stopped syncing. A
@@ -262,16 +273,21 @@ export default function Insights({
       });
     }
 
-    // Recurring bills expected within a week (soonest first, max 2,
-    // deduped by name -- the same bill on two linked accounts is one bill).
+    // Recurring bills expected within a week, on the dates their cadence
+    // names (lib/recurring.ts): soonest first, max 2, deduped by name (the
+    // same bill on two linked accounts is one bill), none the person said
+    // isn't recurring. One due before today and not in yet says so.
     if (txns) {
       const seen = new Set<string>();
-      for (const b of upcomingBills(detectRecurring(txns), 7)) {
+      const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const gone = new Set(dismissedSeries(series, dismissed).keys());
+      for (const { series: b, due, late } of upcomingBills(series, 7, localDate(now), gone)) {
         if (seen.has(b.name)) continue;
         seen.add(b.name);
+        const amount = `~${formatMoney(b.amount, b.currency ?? displayCurrency)}`;
         out.push({
           key: `bill-${b.name}`,
-          text: `Upcoming: ${b.name} (~${formatMoney(b.amount, b.currency ?? displayCurrency)}) around ${new Date(`${b.nextDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+          text: late ? `Expected: ${b.name} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${b.name} (${amount}) around ${day(due)}`,
           tone: 'neutral',
         });
         if (seen.size >= 2) break;
@@ -350,7 +366,7 @@ export default function Insights({
         ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
         : [],
     };
-  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions, incomplete, stopped]);
+  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped]);
 
   if (insights.length === 0) return null;
 
