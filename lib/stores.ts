@@ -22,6 +22,7 @@ import './allocation-settings';
 import './api-token-store';
 import './connection-records';
 import './fire-plan';
+import './history-import/store';
 import './holdings-history';
 import './import/store';
 import './manual-txns';

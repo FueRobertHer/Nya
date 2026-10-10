@@ -9,6 +9,7 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { contentKey, storedTransactionIds, type StoredTxn } from './transactions';
 import { resolveId, type Link } from './link-core';
+import { IMPORTED_TXN_PREFIX } from './history-import/store';
 
 const OVERRIDES_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-overrides');
 
@@ -51,6 +52,15 @@ export async function readOverridesStrict(ctx: Ctx): Promise<Map<string, string>
 
 export async function setOverride(ctx: Ctx, transaction_id: string, category: string): Promise<void> {
   await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(category) });
+}
+
+/** Deletes the overrides of rows that are gone (an undone import's rows into
+ *  a linked account, lib/history-import/commit.ts), readable or not. */
+export async function forgetOverrides(ctx: Ctx, transaction_ids: string[]): Promise<void> {
+  for (let i = 0; i < transaction_ids.length; i += 1000) {
+    const ids = transaction_ids.slice(i, i + 1000);
+    if (ids.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...ids);
+  }
 }
 
 // Carrying categories across a re-link (#46)
@@ -221,7 +231,8 @@ export async function readCarriedStrict(ctx: Ctx): Promise<Carried> {
  * Only when the Items and every store could be read, and no store is behind
  * (rows shown from a store too large to save aren't in it, and their
  * overrides are live); otherwise nothing (lib/transactions.ts
- * storedTransactionIds).
+ * storedTransactionIds). A row imported into a linked account is in no Item's
+ * store: its override goes with the row (lib/history-import/commit.ts).
  */
 export async function pruneOrphanOverrides(ctx: Ctx): Promise<number> {
   // The overrides first, then the Items and their stores: a category set on a
@@ -231,7 +242,7 @@ export async function pruneOrphanOverrides(ctx: Ctx): Promise<number> {
   if (ids.length === 0) return 0;
   const known = await storedTransactionIds(ctx);
   if (!known) return 0;
-  const orphans = ids.filter((id) => !known.has(id));
+  const orphans = ids.filter((id) => !known.has(id) && !id.startsWith(IMPORTED_TXN_PREFIX));
   if (orphans.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...orphans);
   return orphans.length;
 }

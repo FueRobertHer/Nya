@@ -23,6 +23,7 @@ import {
 import { clearCaches } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
 import { classifyFailure, CAUSES } from '@/lib/connection-state';
+import { drawImportedHistory, drawIsStale, yieldToBackfill } from '@/lib/history-import/extend';
 
 // Reconstructs up to a year of ESTIMATED history from transaction data, the same
 // trick Monarch/Copilot use. Plaid has no historical balances, but it has
@@ -88,6 +89,24 @@ async function settleDoneFlag(ctx: Ctx, invPending: boolean): Promise<boolean> {
 }
 
 /**
+ * The estimated history drawn back through transactions imported into linked
+ * accounts (#52, lib/history-import/extend.ts), when it is marked to draw:
+ * after an import or an undo, a link or a forget, and after every run here,
+ * whose earliest point it joins. Only once the backfill is done (it waits
+ * otherwise). Answers how many points it wrote. Never fails the run: a
+ * drawing that fails stays marked, and a later load draws it.
+ */
+async function drawIfMarked(ctx: Ctx): Promise<number> {
+  try {
+    if (!(await drawIsStale(ctx))) return 0;
+    return (await drawImportedHistory(ctx)).points;
+  } catch (err) {
+    console.error('Backfill: the history drawn from imports was not drawn', loggable(err));
+    return 0;
+  }
+}
+
+/**
  * A balance read that failed for now (see balancesFailure): Plaid gave no
  * answer, or Plaid or the bank is failing, which a later load tries again.
  * Every estimate starts from every institution's balance today, so the run
@@ -142,6 +161,10 @@ export async function POST() {
   try {
     const ctx = await dataCtx();
     if (await isBackfillDone(ctx)) {
+      // The backfill's own points are built; history from imports may still
+      // be marked to draw (an import, an undo, a link since).
+      const drawn = await drawIfMarked(ctx);
+      if (drawn > 0) return NextResponse.json({ backfilled: drawn, from_imports: drawn });
       return NextResponse.json({ skipped: true, reason: 'already backfilled' });
     }
 
@@ -298,10 +321,12 @@ export async function POST() {
 
     if (!oldestTxn) {
       await settleDoneFlag(ctx, invPending);
+      // Imported history may still reach back from the earliest point there is.
+      const drawn = await drawIfMarked(ctx);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
       await clearCaches(ctx);
-      return NextResponse.json({ backfilled: 0, reason: 'no transaction history' });
+      return NextResponse.json({ backfilled: drawn, reason: 'no transaction history', ...(drawn > 0 ? { from_imports: drawn } : {}) });
     }
 
     // Everything not being walked is held flat at today's value.
@@ -358,6 +383,13 @@ export async function POST() {
       return NextResponse.json({ skipped: true, reason: 'institutions changed' });
     }
 
+    // Every estimate from this run's oldest point on is this run's own: history
+    // drawn from imports there (lib/history-import/extend.ts) stops claiming
+    // those days, and is drawn again from the new earliest point once the run
+    // is done. Before the writes, so a drawing can't take them for its own.
+    const baseFrom = [...estimatedTotals, ...estimatedAccounts.filter((p) => p.date >= oldestTxn)].reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+    await yieldToBackfill(ctx, baseFrom);
+
     // Breakdowns before totals (the order recordSnapshot keeps, for the same
     // reason): a forget of a hidden account reading between the writes must see
     // new breakdowns beside old totals, never the reverse.
@@ -378,10 +410,13 @@ export async function POST() {
     await replaceEstimatedFlat(ctx, estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
     await replaceEstimated(ctx, estimatedTotals);
     const waiting = await settleDoneFlag(ctx, invPending);
+    const drawn = await drawIfMarked(ctx);
     await clearCaches(ctx); // cached payloads don't include the new history yet
 
     return NextResponse.json({
-      backfilled: estimatedTotals.length,
+      backfilled: estimatedTotals.length + drawn,
+      // Of them, the days drawn back through imported transactions (#52).
+      ...(drawn > 0 ? { from_imports: drawn } : {}),
       from: estimatedTotals.length > 0 ? estimatedTotals[estimatedTotals.length - 1].date : null,
       // Investment accounts whose flows out-ran their balance and were floored at
       // zero partway back. Reported, not silent: a number that stays high run

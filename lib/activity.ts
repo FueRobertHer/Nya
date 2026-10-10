@@ -10,7 +10,9 @@
 //     categories and exclusions carried across a re-link, and the person's own
 //     category (by transaction) and vendor name (by vendor) applied. The app
 //     syncs each institution with Plaid first (`sync`); the API reads only
-//     what is stored, and never calls Plaid.
+//     what is stored, and never calls Plaid. With them, the rows imported into
+//     linked accounts from files (#52, lib/history-import/read.ts), counted
+//     only where no bank row supersedes them.
 //   - the rest (finishActivity): the rows entered on manual accounts, and what
 //     the person said about each row (lib/txn-annotations.ts), read on every
 //     request and merged after the banks' part. So entering, editing or
@@ -43,6 +45,7 @@ import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
+import { importedForActivity } from './history-import/read';
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -161,7 +164,7 @@ export async function assembleBankRows(
     withAccountIds: opts.withAccountIds,
   };
   const at = new Date().toISOString();
-  const [results, overrides, renames, carry] = await Promise.all([
+  const [results, overrides, renames, carry, imported] = await Promise.all([
     Promise.all(
       items.map(async (item) =>
         opts.sync
@@ -172,20 +175,24 @@ export async function assembleBankRows(
     getOverrides(ctx),
     getRenames(ctx),
     carried,
+    // The rows imported into linked accounts (#52), each counted only where
+    // no bank row supersedes it: part of the banks' part, so a category or a
+    // rename applies to them as to the bank's own.
+    importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds }),
   ]);
 
   // The person's own changes win over Plaid's data: recategorization by
   // transaction, vendor rename by vendor key (so it covers every row from that
   // merchant).
-  const transactions = results.flatMap((r) => r.txns);
-  const older = results.flatMap((r) => r.older);
+  const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
+  const older = [...results.flatMap((r) => r.older), ...imported.older];
   for (const t of [...transactions, ...older]) {
     const manual = overrides[t.transaction_id];
     if (manual) t.category = manual;
     const renamed = renames[t.vendor_key];
     if (renamed) t.name = renamed;
   }
-  const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
+  const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.
   const incomplete = results.flatMap((r, i) =>
     r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]

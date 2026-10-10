@@ -16,6 +16,8 @@ import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
 import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
 import { loggable } from '@/lib/log-safe';
+import { readDrawState } from '@/lib/history-import/extend';
+import { importedHistoryView, type ImportedHistoryView } from '@/lib/history-import/view';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -39,9 +41,17 @@ type NetWorthPayload = {
 // TTL, and cached false would swallow a recompute clearBackfillDone() just asked
 // for. The backups' state rides along for the same reason: a frozen notice would
 // outlive a backup that just recovered (lib/backup.ts).
-async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null }> {
-  const [done, backup_problem] = await Promise.all([isBackfillDone(ctx), backupProblem()]);
-  return { backfill_stale: !done, backup_problem };
+//
+// The estimated history drawn back through imported transactions (#52) rides
+// along the same way: whether it is marked to draw again (one more reason to
+// ask /api/backfill), and what it covers, for the chart to say which stretch
+// comes from imported rows and what it couldn't draw (imported_history).
+async function staleFlag(
+  ctx: Ctx
+): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null; imported_history?: ImportedHistoryView }> {
+  const [done, backup_problem, drawn] = await Promise.all([isBackfillDone(ctx), backupProblem(), readDrawState(ctx)]);
+  const view = importedHistoryView(drawn);
+  return { backfill_stale: !done || (!!drawn && drawn.built !== drawn.generation), backup_problem, ...(view ? { imported_history: view } : {}) };
 }
 
 /**
