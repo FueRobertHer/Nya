@@ -51,6 +51,15 @@ describe('a statement’s balance', () => {
     expect(statementBalance(checking, null, TODAY)).toBeNull();
   });
 
+  test('in the currency the account’s balance is kept in: one kept from SimpleFIN in Australian dollars takes theirs, never US dollars', () => {
+    const everyday = { type: 'depository' as const, balance: 900, currency: 'AUD' };
+    expect(statementBalance(everyday, statement({ currency: 'AUD' }), TODAY)?.refusal).toBeNull();
+    expect(statementBalance(everyday, statement({ currency: 'USD' }), TODAY)?.refusal).toBe('currency');
+    // A statement that names none is read in the account's own.
+    expect(statementBalance(everyday, statement({ currency: null }), TODAY)?.refusal).toBeNull();
+    expect(statementBalance(checking, statement({ currency: 'AUD' }), TODAY)?.refusal).toBe('currency');
+  });
+
   test('a card’s balance is negative while money is owed, and the account keeps what is owed as a positive amount', () => {
     const owed = statement({ kind: 'creditcard', account: { bank_id: null, mask: '4321', type: null }, ledger: { amount: -1234.56, as_of: TODAY } });
     expect(statementBalance(card, owed, TODAY)).toEqual({ amount: 1234.56, as_of: TODAY, from: 500, refusal: null });

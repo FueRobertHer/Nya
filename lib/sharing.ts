@@ -99,7 +99,7 @@ import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
-import { getManualAccounts } from './manual';
+import { getKeptAccounts, heldAccountIds, heldAccounts } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
@@ -403,10 +403,15 @@ export type ConnectionChange = { label?: unknown; accounts?: Record<string, unkn
 /**
  * Saves a change to one of my connections, all of it or none: everything is
  * checked before anything is written. Every account must be one I can share
- * now; a share on an account I've hidden stays as it was (paused, not ended),
- * since the settings don't show it. Sharing nothing ends the share and its end
- * date, which then isn't checked: taking everything back never fails on a
- * date.
+ * now. A share on an account I've hidden is paused, not ended, as is one on an
+ * account a connector feeds that has no balance to count just now
+ * (lib/kept-accounts.ts heldAccounts: its first balance, or my answer about a
+ * card's sign, is still to come): a change that doesn't name it keeps it as
+ * it was, one that names it "none" ends it, and its level can't change while
+ * it is paused. The settings list a held account that is shared, marked as
+ * waiting (waitingAccounts), so taking everything back there takes it back
+ * too. Sharing nothing ends the share and its end date, which then isn't
+ * checked: taking everything back never fails on a date.
  */
 export async function saveConnection(ctx: Ctx, me: string, id: string, change: ConnectionChange, now: number = Date.now()): Promise<void> {
   const c = await connectionOf(me, id);
@@ -428,15 +433,31 @@ async function nextShare(ctx: Ctx, me: string, c: Conn, change: ConnectionChange
   const current = c.shares[me];
   let accounts: Record<string, Level> = current?.accounts ?? {};
   if (change.accounts !== undefined) {
-    const [shareable, { hidden }] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx)]);
+    const [shareable, { hidden }, held] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx), heldAccountIds(ctx)]);
     const allowed = new Set(shareable.map((a) => a.id));
     const clean: Record<string, Level> = {};
-    for (const [acct, level] of Object.entries(current?.accounts ?? {})) if (hidden.has(acct)) clean[acct] = level;
+    // Paused, not ended: the share of an account I've hidden, or of one a
+    // connector feeds that is only held (no balance to count just now). Kept
+    // as it was unless the change names it: "none" ends it, whatever paused
+    // it, and the same level keeps it; another level waits until it isn't
+    // paused, since it can't be shown meanwhile.
+    const paused = (acct: string) => hidden.has(acct) || held.has(acct);
+    for (const [acct, level] of Object.entries(current?.accounts ?? {})) if (paused(acct)) clean[acct] = level;
     for (const [acct, level] of Object.entries(change.accounts ?? {})) {
-      if (level === null || level === 'none') continue;
+      if (level === null || level === 'none') {
+        delete clean[acct];
+        continue;
+      }
       if (!isLevel(level)) throw new SharingRefused(`Unknown level for ${acct}.`);
-      if (hidden.has(acct) && acct in clean) continue; // paused: kept as it was
-      if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
+      if (paused(acct) && acct in clean) {
+        if (clean[acct] === level) continue; // paused: kept as it was
+        throw new SharingRefused(
+          held.has(acct)
+            ? 'An account waiting for its balance keeps what you share of it, or stops being shared: what they see of it can change once it has one.'
+            : 'A hidden account keeps what you share of it, or stops being shared: what they see of it can change once you show it again.'
+        );
+      }
+      if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, waiting for its balance, or no longer yours).');
       clean[acct] = level;
     }
     accounts = clean;
@@ -915,13 +936,14 @@ export type Shareable = {
   name: string;
 };
 
-/** The accounts I could share: my live and manual accounts, minus hidden ones,
- *  by institution and then name. `readOnly` changes nothing while reading (see
+/** The accounts I could share: my live and manual accounts, and those
+ *  SimpleFIN keeps up to date (lib/kept-accounts.ts), minus hidden ones, by
+ *  institution and then name. `readOnly` changes nothing while reading (see
  *  liveAccountIds), for a read made on someone else's behalf. */
 export async function shareableAccounts(ctx: Ctx, opts: { readOnly?: boolean } = {}): Promise<Shareable[]> {
   const [live, manual, { hidden }] = await Promise.all([
     liveAccountIds(ctx, { strict: true, readOnly: opts.readOnly }),
-    getManualAccounts(ctx),
+    getKeptAccounts(ctx),
     getEffectiveHidden(ctx, { readOnly: opts.readOnly }),
   ]);
   const plaidIds = [...live].filter((id) => !hidden.has(id));
@@ -939,6 +961,19 @@ export async function shareableAccounts(ctx: Ctx, opts: { readOnly?: boolean } =
   return out.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
 }
 
+/** An account a connector feeds that is only held just now (heldAccounts),
+ *  not hidden, as the sharing settings list it beside the shareable ones:
+ *  marked as waiting, so a share of it can be ended while it waits (an
+ *  explicit "none", saveConnection), though not begun or changed. */
+export type WaitingAccount = Shareable & { waiting: true };
+
+export async function waitingAccounts(ctx: Ctx, opts: { readOnly?: boolean } = {}): Promise<WaitingAccount[]> {
+  const [held, { hidden }] = await Promise.all([heldAccounts(ctx), getEffectiveHidden(ctx, { readOnly: opts.readOnly })]);
+  return held
+    .filter((a) => !hidden.has(a.account_id))
+    .map((a) => ({ id: a.account_id, label: `${a.institution_name} ${a.name}`, institution: a.institution_name, name: a.name, waiting: true as const }));
+}
+
 /** One shared transaction, with Plaid's sign (positive is money out).
  *  `currency`: its ISO code, Plaid's unofficial one (a cryptocurrency), or a
  *  manual row's own; null only for a bank's row stored before its currency
@@ -950,14 +985,15 @@ export type SharedAccount = {
   level: Level;
   /** Null at the exists level, or before any balance was measured. */
   balance: number | null;
-  /** The currency the balance is in (bankCurrencies), or USD on a manual
-   *  account, the only currency a manual balance is kept in (lib/manual.ts
-   *  toInstitutions). Null at the exists level, which says nothing of its
-   *  money, or when nothing says, shown in the main currency as it is
-   *  throughout the app. */
+  /** The currency the balance is in (bankCurrencies), or a manual account's:
+   *  USD unless it says (lib/manual.ts), or the currency SimpleFIN gives one
+   *  it feeds. Null at the exists level, which says nothing of its money, or
+   *  when nothing says, shown in the main currency as it is throughout the
+   *  app. */
   currency: string | null;
-  /** When that balance was measured: an ISO time (a manual account, to the
-   *  hour), or a YYYY-MM-DD (a snapshot's day). shortDate reads both. */
+  /** When that balance was measured: an ISO time (a manual account's, or the
+   *  time the bank gave one SimpleFIN feeds, to the hour), or a YYYY-MM-DD (a
+   *  snapshot's day). shortDate reads both. */
   as_of: string | null;
   /** Money owed (a card, a loan) rather than held. */
   debt: boolean;
@@ -1060,7 +1096,9 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
   const granted = Object.entries(share.accounts).filter(([id]) => still.has(id));
   if (granted.length === 0) return null;
 
-  const manual = new Map((await getManualAccounts(theirs)).map((m) => [m.account_id, m]));
+  // Manual accounts, and those SimpleFIN keeps up to date, the same way: the
+  // balance kept with its time, and the rows in their book.
+  const manual = new Map((await getKeptAccounts(theirs)).map((m) => [m.account_id, m]));
   const types = await directoryTypes(theirs, granted.map(([id]) => id).filter((id) => !manual.has(id)));
   const currencies = await bankCurrencies(theirs, granted.filter(([id, level]) => level !== 'exists' && !manual.has(id)).map(([id]) => id));
 
@@ -1122,7 +1160,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
       label: still.get(id)!,
       level,
       balance,
-      currency: level === 'exists' ? null : m ? 'USD' : (currencies.get(id) ?? null),
+      currency: level === 'exists' ? null : m ? (m.currency ?? 'USD') : (currencies.get(id) ?? null),
       as_of,
       debt: DEBT_TYPES.has((m ? m.type : types[id]) ?? ''),
       ...(level === 'transactions'

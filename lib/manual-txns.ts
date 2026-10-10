@@ -8,6 +8,42 @@
 // stored, and with the import it came in (`import_id`), so one import can be
 // taken out whole.
 //
+// FROM SIMPLEFIN. An account a connector feeds (lib/connectors/) keeps its
+// rows in a book here too, under its own id, each with source 'simplefin' and
+// SimpleFIN's id as its source_id (lib/connectors/sync.ts writes them, matched
+// by that id). They are the bank's record: their category is the person's to
+// change, as a bank's transaction's category is, but never their date,
+// amount, payee, account or note, and they are never deleted one by one
+// (InvalidTxnError). A disconnect takes them out with the account, or keeps
+// them with it as a manual account's.
+//
+// TRANSFERS BETWEEN THEM. SimpleFIN gives no category, so nothing says a row
+// is a card payment or a move between the person's own accounts, and each
+// side would count, as spending on one account and income on the other. So
+// when two of the person's connector accounts hold an exact opposite pair (the
+// same amount out of one and into the other, in one currency, within
+// TRANSFER_DAYS), neither categorized by the person, and the money leaves a
+// checking or savings account (a card payment, a loan payment, a move
+// between cash accounts: never a purchase on a card matched with a deposit
+// elsewhere, which is how an unrelated charge and an unrelated deposit of the
+// same amount would look), both are shown as a bank shows the same pair: a
+// payment into a card as Plaid's card payment (loan payments, credit card
+// payment), one into a loan as a loan payment, and any other as a transfer
+// (transfer out or in, by its side). Those words file each into the person's
+// categories as a bank's row is filed (lib/categories.ts), in the Transfers
+// group when seeded, so every total leaves them out (lib/spending.ts
+// isTransfer, by the group's kind); moved to a group of another kind, the
+// category counts as that kind, a bank's rows and these alike. A
+// card's or a loan's payment from cash is a bill the cash forecast counts
+// when it repeats, as a bank's is (lib/recurring.ts, which reads the words,
+// never the group), while a transfer is neither. Each row is marked
+// (`paired`) as worked out from the amounts on the Activity tab, where a
+// wrong pair is seen and given a category. Amounts alone can't
+// tell every pair: a purchase paid from checking and an unrelated refund to a
+// card of the same amount, within the days, look like a card payment, and
+// pair. Worked out each time the rows are read, never stored, so a category
+// the person gives either one wins.
+//
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the
 // shape lib/transactions.ts keeps an Item's rows in, and the one #43 asks for.
@@ -54,6 +90,9 @@
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { getManualAccounts, toInstitutions, type ManualAccount } from './manual';
+import { keptFrom } from './kept-accounts';
+import { isConnectorKind } from './connectors/types';
+import { connectionsStore, connectorAccountsStore, type ConnectorAccount } from './connectors/store';
 import { amountUnitsError, isCalendarDay, isCurrencyCode, MANUAL_TXN_PREFIX, newManualTxnId, type TxnFields } from './manual-txn-input';
 import type { Txn } from './transactions';
 
@@ -183,12 +222,29 @@ export function newManualTxn(account_id: string, fields: TxnFields, now: Date = 
 }
 
 /** A change a stored row can't take (an amount more precise than its
- *  currency): refused before anything is written. */
+ *  currency, or a change to what a bank said of a row a connector brought):
+ *  refused before anything is written. */
 export class InvalidTxnError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'InvalidTxnError';
   }
+}
+
+/** Whether a row came from a connector the person brought (SimpleFIN): its
+ *  source is the connector's name (lib/connectors/sync.ts). */
+export function isConnectorRow(row: Pick<ManualTxn, 'source'>): boolean {
+  return isConnectorKind(row.source);
+}
+
+/** Why a change can't be made to a connector's row, or null: only its
+ *  category is the person's (see the header). */
+function connectorRowRefusal(row: ManualTxn, changes: ManualTxnChanges): string | null {
+  if (!isConnectorRow(row)) return null;
+  const banks = (['date', 'amount', 'currency', 'name', 'account_id', 'note'] as const).filter((k) => changes[k] !== undefined && changes[k] !== row[k]);
+  return banks.length > 0
+    ? 'This transaction came from your bank through SimpleFIN, so it stays as the bank gave it. Its category is yours to change, and you can leave it out of budgets.'
+    : null;
 }
 
 /**
@@ -277,6 +333,8 @@ export async function editManualTxn(
     const row = book?.rows.find((r) => r.id === id);
     // Deleted or moved by another device since it was found: nothing to change.
     if (!book || !row) return new Map();
+    const refused = connectorRowRefusal(row, changes);
+    if (refused) throw new InvalidTxnError(refused);
     const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
     // A name the person gives a row that came with one (imported, or from
     // SimpleFIN) is theirs: no rule renames it (ManualTxn.named).
@@ -331,7 +389,13 @@ export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Prom
     let removed = false;
     await manualTxnStore.updateMany(ctx, [found.account_id], (books) => {
       const book = books.get(found.account_id) ?? null;
-      removed = !!book?.rows.some((r) => r.id === id);
+      const row = book?.rows.find((r) => r.id === id);
+      // The bank's record: left out of budgets if the person wants, never
+      // deleted alone (the next fetch would only bring it back).
+      if (row && isConnectorRow(row)) {
+        throw new InvalidTxnError('This transaction came from your bank through SimpleFIN, so it can’t be deleted here. You can leave it out of budgets instead.');
+      }
+      removed = !!row;
       return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
     });
     if (removed) return true;
@@ -385,9 +449,99 @@ function institutionsOf(accounts: ManualAccount[]): Map<string, string> {
   return out;
 }
 
-/** One manual row as the Activity tab shows a transaction. `layered`: for
- *  the read layer (lib/txn-layers.ts), with what it reads and never sends. */
-function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, layered = false): Txn {
+/** How many days apart the two sides of a move between two connector
+ *  accounts may post (see TRANSFERS BETWEEN THEM in the header). */
+export const TRANSFER_DAYS = 4;
+
+const dayIndex = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
+
+/** What a pair between two connector accounts is, by the account the money
+ *  goes into: a card's payment, a loan's, or a transfer (see the header). */
+export type PairKind = 'card' | 'loan' | 'transfer';
+
+/** How each kind of pair is shown: as a bank shows the same, in Plaid's
+ *  words, which file it into the person's categories as a bank's row is
+ *  filed (lib/categories.ts: seeded, all three are in the Transfers group,
+ *  so every total leaves them out): a card's payment as loan payments with
+ *  Plaid's card-payment detail, a loan's as loan payments, and any other
+ *  move as transfer out or in, by its side. No code: a US bank gives none,
+ *  so the category alone decides, as for a bank's row. */
+const PAIRED: Readonly<Record<PairKind, (amount: number) => { category: string; subcategory: string | null }>> = {
+  card: () => ({ category: 'loan payments', subcategory: 'credit card payment' }),
+  loan: () => ({ category: 'loan payments', subcategory: null }),
+  transfer: (amount) => ({ category: amount > 0 ? 'transfer out' : 'transfer in', subcategory: null }),
+};
+
+/**
+ * The connector rows that are one side of an exact opposite pair between two
+ * connector accounts (see the header), by id, each with what the pair is: each
+ * row money out (a positive amount) of a checking or savings account (`typeOf`
+ * gives each account's type) is paired with the nearest unpaired row of the
+ * opposite amount and the same currency on another such account, within
+ * TRANSFER_DAYS, oldest first, and both are a card's payment, a loan's or a
+ * transfer by the type of the account the money goes into. Only rows nobody
+ * categorized take part. Pure.
+ */
+export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): Map<string, PairKind> {
+  const candidates = rows.filter((r) => isConnectorRow(r) && r.category === null && !r.transaction_code && r.amount !== 0);
+  const ins = new Map<string, ManualTxn[]>();
+  for (const r of candidates) if (r.amount < 0) ins.set(`${r.currency}|${-r.amount}`, [...(ins.get(`${r.currency}|${-r.amount}`) ?? []), r]);
+  // Money out of cash only: a purchase on a card is never one side.
+  const outs = candidates
+    .filter((r) => r.amount > 0 && typeOf.get(r.account_id) === 'depository')
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1));
+  const paired = new Map<string, PairKind>();
+  for (const o of outs) {
+    let best: ManualTxn | null = null;
+    let gap = Infinity;
+    for (const i of ins.get(`${o.currency}|${o.amount}`) ?? []) {
+      if (paired.has(i.id) || i.account_id === o.account_id) continue;
+      const d = Math.abs(dayIndex(i.date) - dayIndex(o.date));
+      if (d > TRANSFER_DAYS) continue;
+      if (d < gap || (d === gap && best !== null && i.id < best.id)) {
+        best = i;
+        gap = d;
+      }
+    }
+    if (best) {
+      const into = typeOf.get(best.account_id);
+      const kind: PairKind = into === 'credit' ? 'card' : into === 'loan' ? 'loan' : 'transfer';
+      paired.set(o.id, kind);
+      paired.set(best.id, kind);
+    }
+  }
+  return paired;
+}
+
+/**
+ * The pairs among stored rows, as the app works them out over the rows it
+ * shows (connectorTransfers): only rows on an account `typeOf` knows take
+ * part, as the app shows no other. For the download (lib/user-export.ts
+ * transactions.csv, lib/ofx-export.ts), which lists the stored rows. Pure.
+ */
+export function knownPairs(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): Map<string, PairKind> {
+  return connectorTransfers(rows.filter((r) => typeOf.has(r.account_id)), typeOf);
+}
+
+/**
+ * The stored rows, each side of a pair (knownPairs) with the pair's words in
+ * place of the category it has none of, as the app shows it: for the
+ * download's transactions.csv (lib/user-export.ts), which lists the stored
+ * rows and files them as the app does. Pure.
+ */
+export function withPairWords(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): ManualTxn[] {
+  const pairs = knownPairs(rows, typeOf);
+  return rows.map((r) => {
+    const kind = pairs.get(r.id);
+    return kind ? { ...r, category: PAIRED[kind](r.amount).category } : r;
+  });
+}
+
+/** One manual row as the Activity tab shows a transaction: one side of a
+ *  pair as the pair is shown (PAIRED), marked. `layered`: for the read layer
+ *  (lib/txn-layers.ts), with what it reads and never sends. */
+function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, layered = false, pair?: PairKind): Txn {
+  const shown = pair ? PAIRED[pair](row.amount) : null;
   return {
     transaction_id: row.id,
     date: row.date,
@@ -397,11 +551,13 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, 
     account_name: account.name,
     account_type: account.type,
     institution_name: institution,
-    category: row.category,
+    category: shown ? shown.category : row.category,
     iso_currency_code: row.currency,
     vendor_key: '',
     ...NO_PLAID_DETAIL,
-    transaction_code: row.transaction_code ?? null,
+    subcategory: shown ? shown.subcategory : null,
+    transaction_code: shown ? null : (row.transaction_code ?? null),
+    ...(pair ? { paired: pair } : {}),
     source: row.source,
     account_id: row.account_id,
     note: row.note,
@@ -436,61 +592,107 @@ export function manualRowsForDisplay(
   // restored from a backup could still repeat one, which shows once.
   const byId = new Map<string, { row: ManualTxn; account: ManualAccount }>();
   for (const account of accounts) {
-    if (opts.hidden.has(account.account_id)) continue;
     for (const row of books.get(account.account_id)?.rows ?? []) {
       if (row.date < opts.cutoff) continue;
       const seen = byId.get(row.id);
       if (!seen || row.updated_at > seen.row.updated_at) byId.set(row.id, { row, account });
     }
   }
+  // Paired across every account, hidden ones too, so the side shown never
+  // counts alone because its other side is hidden.
+  const transfers = connectorTransfers(
+    [...byId.values()].map((x) => x.row),
+    new Map(accounts.map((a) => [a.account_id, a.type]))
+  );
   return [...byId.values()]
+    .filter(({ account }) => !opts.hidden.has(account.account_id))
     .sort(
       (a, b) =>
         (a.row.date < b.row.date ? 1 : a.row.date > b.row.date ? -1 : 0) ||
         (a.row.created_at < b.row.created_at ? 1 : a.row.created_at > b.row.created_at ? -1 : 0) ||
         (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0)
     )
-    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual', true));
+    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual', true, transfers.get(row.id)));
 }
+
+/** A display read's answer, or what it failed with. */
+const settled = <T>(p: Promise<T>) =>
+  p.then(
+    (value) => ({ ok: true as const, value }),
+    (err: unknown) => ({ ok: false as const, err })
+  );
+
+const why = (err: unknown) => (err instanceof Error ? err.message : err);
 
 /**
  * The manual rows for /api/transactions, with a note for each account whose
  * rows could not be read ("<institution>: ..."), as an institution that
  * failed to sync gets one. The rest are shown: a book that can't be read
- * hides only its own account's rows, and says so. Strict underneath: nothing
- * unreadable is ever shown as no rows without a note. `unread` names the
- * accounts whose rows aren't here for that, or is 'all' when none could be
- * read, so a report never counts one as having none (lib/report/build.ts).
+ * hides only its own account's rows, and says so, and the manual accounts and
+ * the accounts SimpleFIN feeds are read apart, so either one that can't be
+ * read hides only its own rows, under a note naming it. Strict underneath:
+ * nothing unreadable is ever shown as no rows without a note. `unread` names
+ * the accounts whose rows aren't here for that, or is 'all' when the manual
+ * accounts or their books couldn't be read, so a report never counts one as
+ * having none (lib/report/build.ts).
+ *
+ * `incomplete` names, as importing, the banks of each SimpleFIN connection
+ * whose older history is still arriving (lib/connectors/sync.ts), so the
+ * months it hasn't reached say they may be short, as a Plaid bank's do.
  */
 export async function readManualTxnsForDisplay(
   ctx: Ctx,
   opts: { hidden: Set<string>; cutoff: string }
-): Promise<{ txns: Txn[]; notes: string[]; unread: string[] | 'all' }> {
-  const [accounts, report] = await Promise.all([
-    getManualAccounts(ctx).then(
-      (value) => ({ ok: true as const, value }),
-      (err: unknown) => ({ ok: false as const, err })
-    ),
-    manualTxnStore.getAllReport(ctx).then(
-      (value) => ({ ok: true as const, value }),
-      (err: unknown) => ({ ok: false as const, err })
-    ),
+): Promise<{
+  txns: Txn[];
+  notes: string[];
+  incomplete: { institution_name: string; coverage: 'importing' }[];
+  unread: string[] | 'all';
+}> {
+  const [manual, fed, connections, report] = await Promise.all([
+    settled(getManualAccounts(ctx)),
+    settled(connectorAccountsStore.getAll(ctx)),
+    // Lenient: only to say whose history is still arriving.
+    connectionsStore.getAllReport(ctx).catch(() => null),
+    settled(manualTxnStore.getAllReport(ctx)),
   ]);
-  if (!accounts.ok) {
-    console.error('manual-txns: manual accounts could not be read', accounts.err instanceof Error ? accounts.err.message : accounts.err);
-    return { txns: [], notes: ["Manual accounts: couldn't be read, so transactions entered for them aren't shown"], unread: 'all' };
+  const notes: string[] = [];
+  if (!manual.ok) {
+    console.error('manual-txns: manual accounts could not be read', why(manual.err));
+    notes.push("Manual accounts: couldn't be read, so transactions entered for them aren't shown");
   }
+  if (!fed.ok) {
+    console.error('manual-txns: the accounts SimpleFIN feeds could not be read', why(fed.err));
+    notes.push("SimpleFIN accounts: couldn't be read, so their transactions aren't shown");
+  }
+  const tracked: ConnectorAccount[] = fed.ok ? [...fed.value.values()] : [];
+  // Every account whose rows are shown, a connector's with no balance to count
+  // among them (its transactions show all the same).
+  const accounts = keptFrom(manual.ok ? manual.value : [], tracked, { named: true });
+  const importing = new Set<string>();
+  for (const a of tracked) {
+    const history = connections?.entries.get(a.connection_id)?.history;
+    if (connections?.entries.has(a.connection_id) && (!history || !history.complete) && !opts.hidden.has(a.account_id)) importing.add(a.institution_name);
+  }
+  const incomplete = [...importing].sort().map((institution_name) => ({ institution_name, coverage: 'importing' as const }));
   if (!report.ok) {
-    console.error('manual-txns: manual transactions could not be read', report.err instanceof Error ? report.err.message : report.err);
+    console.error('manual-txns: manual transactions could not be read', why(report.err));
     // Only an account that could have rows makes this worth saying.
-    return accounts.value.length > 0
-      ? { txns: [], notes: ["Manual accounts: transactions entered for them couldn't be read"], unread: 'all' }
-      : { txns: [], notes: [], unread: [] };
+    if (accounts.length > 0) notes.push("Manual accounts: transactions entered for them couldn't be read");
+    return { txns: [], notes, incomplete, unread: accounts.length > 0 || !manual.ok ? 'all' : [] };
   }
   const { entries, unreadable, unrecognised } = report.value;
   const flawed = new Set([...unreadable, ...unrecognised]);
-  const institutionOf = institutionsOf(accounts.value);
-  const unshown = accounts.value.filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id));
-  const notes = unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions entered for ${a.name} couldn't be read`);
-  return { txns: manualRowsForDisplay(accounts.value, entries, opts), notes, unread: unshown.map((a) => a.account_id) };
+  const institutionOf = institutionsOf(accounts);
+  const unshown = accounts.filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id));
+  notes.push(
+    // An account SimpleFIN feeds holds its rows, not ones entered by hand.
+    ...unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions ${a.connector ? 'from SimpleFIN' : 'entered'} for ${a.name} couldn't be read`)
+  );
+  return {
+    txns: manualRowsForDisplay(accounts, entries, opts),
+    notes,
+    incomplete,
+    unread: manual.ok ? unshown.map((a) => a.account_id) : 'all',
+  };
 }

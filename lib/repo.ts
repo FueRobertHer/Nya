@@ -65,8 +65,9 @@
 // person's data download (lib/user-export.ts), where each store declared
 // exportable is a section of its own. The name is the key family, so a
 // declared store is in the key inventory by construction. A store holding a
-// credential that a restore must never bring back (API tokens) is declared
-// `backup: false`, and lib/export.ts leaves its key out of every backup.
+// credential that a restore must never bring back (API tokens, a connector's
+// credential) is declared `backup: false`, and lib/export.ts leaves its key out
+// of every backup.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with
 // what is stored, or says exactly why it cannot:
@@ -246,10 +247,12 @@ export type StoreOptions<T> = {
    *  large. Reads take either form, so it can be switched on or off later. */
   compress?: boolean;
   /** False only for a credential a restore must never bring back (an API
-   *  token, which a restore could otherwise revive after it was revoked): its
-   *  key is left out of every backup, and lib/export.ts must list it in
-   *  EXCLUDED_PREFIXES, which declare() checks both ways. A restore then
-   *  deletes what is there and brings none back. Backed up by default. */
+   *  token, which a restore could otherwise revive after it was revoked, or a
+   *  connector's credential, which it could revive after the person
+   *  disconnected it): its key is left out of every backup, and lib/export.ts
+   *  must list it in EXCLUDED_PREFIXES, which declare() checks both ways. A
+   *  restore then deletes what is there and brings none back. Backed up by
+   *  default. */
   backup?: false;
 };
 

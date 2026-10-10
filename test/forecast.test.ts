@@ -526,6 +526,26 @@ describe('what it says it may be missing', () => {
     ]);
   });
 
+  test('a SimpleFIN bank: its balances are the bank’s, never typed, and when it is held its card says why', () => {
+    const fed = { institution_name: 'My Bank', manual: true, connector: 'simplefin' };
+    // The bank's balance from ten days ago: held, said once, in its own words.
+    const old = inst({
+      ...fed,
+      error: "SimpleFIN's latest balance is from Sep 29",
+      stale_as_of: '2026-09-29',
+      accounts: [acct({ account_id: 'c', name: 'Checking', updated_at: '2026-09-29T12:00:00Z' })],
+    });
+    expect(notes([old])).toEqual(["SimpleFIN's latest balance is from Sep 29, so this starts from My Bank's balances on snap 2026-09-29."]);
+    // Held only for a card's question: never said to have failed to refresh.
+    const asked = inst({ ...fed, error: 'SimpleFIN reports a card or loan as money held: say which way it goes', stale_as_of: '2026-10-08', accounts: [acct({ account_id: 'c', name: 'Checking' })] });
+    expect(notes([asked])).toEqual(["SimpleFIN reports a card or loan as money held: say which way it goes, so this starts from My Bank's balances on snap 2026-10-08."]);
+    // Its accounts couldn't be read: its cash is missing, and said.
+    expect(notes([inst(), inst({ institution_name: 'SimpleFIN accounts', manual: true, connector: 'simplefin', error: 'x', accounts: [] })])).toEqual([
+      "SimpleFIN accounts couldn't be reached, so any checking or savings there isn't in this forecast.",
+    ]);
+    expect(cashPosition([old]).included.map((a) => a.manual)).toEqual([false]);
+  });
+
   test('a typed balance a week old, and what was left out', () => {
     const wallet = inst({ institution_name: 'Cash', manual: true, accounts: [acct({ account_id: 'w', name: 'Wallet', updated_at: '2026-09-20T12:00:00Z' })] });
     const fresh = inst({ institution_name: 'Cash', manual: true, accounts: [acct({ account_id: 'w', name: 'Wallet', updated_at: '2026-10-05T12:00:00Z' })] });

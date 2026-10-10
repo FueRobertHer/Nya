@@ -26,6 +26,24 @@ import type { TagChange } from './TxnTagsNote';
  *  no categories loaded, words (as before categories had ids). */
 export type CategoryChoice = { category_id: string } | { category: string };
 
+/**
+ * What a row shows at once when a category is chosen for it, as it will be
+ * filed: the category's id, name and kind, and the words it is stored as
+ * (lib/categories.ts). One side of a pair Nya worked out between two SimpleFIN
+ * accounts (`paired`) is a pair no more once it has a category of the
+ * person's: its mark goes, with the detail the pair gave it, and its other
+ * side is read again from the server (lib/manual-txns.ts).
+ */
+export function recategorizedRow(t: Pick<Txn, 'paired'> | undefined, choice: CategoryChoice, taxonomy: Taxonomy | null): Partial<Txn> {
+  let shown: Partial<Txn> = 'category' in choice ? { category: choice.category, category_id: undefined, category_name: choice.category, category_kind: undefined } : {};
+  if ('category_id' in choice && taxonomy) {
+    const ix = indexTaxonomy(taxonomy);
+    const c = categoryById(ix, choice.category_id);
+    if (c) shown = { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
+  }
+  return t?.paired ? { ...shown, paired: undefined, subcategory: null } : shown;
+}
+
 /** Newest first, as /api/transactions orders them; the sort is stable. */
 function newestFirst(a: Txn, b: Txn): number {
   if (a.date !== b.date) return a.date < b.date ? 1 : -1;
@@ -186,12 +204,7 @@ export function useTransactionEdits({
       setError(null);
       changes.current++;
       const t = current.current?.find((x) => x.transaction_id === transaction_id);
-      let shown: Partial<Txn> = 'category' in choice ? { category: choice.category, category_id: undefined, category_name: choice.category, category_kind: undefined } : {};
-      if ('category_id' in choice && taxonomy) {
-        const ix = indexTaxonomy(taxonomy);
-        const c = categoryById(ix, choice.category_id);
-        if (c) shown = { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
-      }
+      const shown = recategorizedRow(t, choice, taxonomy);
       setTxns((prev) => (prev ? prev.map((x) => (x.transaction_id === transaction_id ? { ...x, ...shown } : x)) : prev));
       let res: Response | null = null;
       try {
@@ -200,13 +213,17 @@ export function useTransactionEdits({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ transaction_id, ...choice, ...(t?.source && t.account_id ? { account_id: t.account_id } : {}) }),
         });
-        if (res.ok) return;
+        if (res.ok) {
+          // Its other side, a pair no more, as the server now shows it.
+          if (t?.paired) void refreshQuietly();
+          return;
+        }
       } catch {
         res = null;
       }
       await undo(res, 'Could not change the category. Please try again.');
     },
-    [setTxns, undo, taxonomy]
+    [setTxns, undo, taxonomy, refreshQuietly]
   );
 
   /** Leaves a transaction out of budgets and reports, or puts it back: shown at

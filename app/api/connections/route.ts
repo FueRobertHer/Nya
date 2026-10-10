@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { signedInCtx, containerUnavailable } from '@/lib/data-ctx';
-import { myConnections, removeConnection, saveConnection, shareableAccounts, SharingRefused } from '@/lib/sharing';
+import { myConnections, removeConnection, saveConnection, shareableAccounts, SharingRefused, waitingAccounts } from '@/lib/sharing';
 
 // My connections and what I share on each (lib/sharing.ts). Only with Clerk
 // on: the shared password has one user and nobody to connect with. No record
@@ -24,7 +24,12 @@ export async function GET() {
   return handle(async () => {
     const me = await signedInCtx();
     if (!me) return NextResponse.json({ enabled: false });
-    const [mine, accounts] = await Promise.all([myConnections(me.userId), shareableAccounts(me.ctx)]);
+    const [mine, shareable, waiting] = await Promise.all([myConnections(me.userId), shareableAccounts(me.ctx), waitingAccounts(me.ctx)]);
+    // A shared account that is only waiting for its balance is listed too,
+    // marked, so its share can be ended (lib/sharing.ts saveConnection).
+    const shared = waiting.filter((w) => mine.connections.some((c) => c.sharing[w.id]));
+    const byText = (a: string, b: string) => a.localeCompare(b);
+    const accounts = [...shareable, ...shared].sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
     return NextResponse.json({ enabled: true, connections: mine.connections, blocked: mine.blocked, accounts }, { headers: { 'Cache-Control': 'no-store' } });
   }, 'read');
 }

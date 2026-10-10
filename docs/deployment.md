@@ -11,6 +11,7 @@ Nya runs on Vercel, with Upstash Redis for storage and Plaid for bank data. Bun 
 - [7. Install on your phone](#7-install-on-your-phone)
 - [Email notices](#email-notices)
 - [Brokerage and retirement connections](#brokerage-and-retirement-connections)
+- [Bring your own sync](#bring-your-own-sync)
 - [Security headers and the Content-Security-Policy](#security-headers-and-the-content-security-policy)
 - [Preview deployments](#preview-deployments)
 
@@ -55,7 +56,7 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `CONTAINER_ID` | optional | Which container this deployment serves. See [operations.md](operations.md#containers). |
 | `REDIS_PREFIX` | optional | Overrides the key namespace (defaults to the Vercel environment name, or `dev` locally). |
 | `DEMO_USER_IDS` | optional | Preview only: one-click demo accounts. |
-| `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
+| `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, and about each download of someone's data or new API token, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
 | `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Without it nothing is sent, and `/privacy` and `/security` name no email service. Ignored with Clerk, where each account's notices go to its own verified address. |
 | `APP_URL` | optional | The app's public `https` address, for the link in a notice email (`http://localhost:3000` works locally). Unset, the email says to open Nya without a link. |
 
@@ -65,7 +66,7 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 
 | Time (UTC) | Route | Job |
 | --- | --- | --- |
-| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, and sends the [email notices](#email-notices) about its connections. |
+| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, fetching from the [SimpleFIN connections](#bring-your-own-sync) people made beside Plaid, and sends the [email notices](#email-notices) about its connections. |
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
@@ -99,6 +100,8 @@ vercel deploy --prod
 
 Vercel gives you a free HTTPS domain automatically.
 
+**Memory.** A download protected with a passphrase works out its key on the server with scrypt at age's own setting, which holds 256 MB for about a second (`lib/protected-download.ts`), on top of the decrypted data every download is made from. Downloads are few (five an hour per container), but protected ones that meet on one function instance add up, so leave the functions' memory at Vercel's default or above.
+
 **One Plaid-specific step:** in the [Plaid Dashboard](https://dashboard.plaid.com), under Team Settings > API, add your deployed URL to the allowed redirect URIs. Some bank logins use OAuth screens that redirect back to a registered domain.
 
 ## 7. Install on your phone
@@ -125,6 +128,8 @@ The emails go once every container's snapshot has run, so they never use the sna
 
 **What the log tells you.** Problems on Nya's side are never emailed to anyone, so the log is where they show: each run lists the connections that fail for a reason on Nya's side, with Plaid's codes (`Connection notices: N connection(s) in M container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (12))`). `INVALID_ACCESS_TOKEN` across every connection means `PLAID_ENV`, `PLAID_CLIENT_ID` or `PLAID_SECRET` is not the set the connections were made with, a Preview value on Production, say; `INVALID_API_KEYS`, that the client id and secret don't match. Put the settings back and the connections work as before: don't remove them, which would delete their stored transactions and leave them live, and billed, at Plaid. When emails about a cause on Plaid's side or one Nya can't place first become due on the same run in three or more containers with the same Plaid code, the run holds them back and says so, with the code and the day they go (`... those 3 email(s) are held back until October 7 (UTC), and go with that day's run if the problem is still there`); each later run says what is still held. Fix the setup in those three days and the breaks end with nothing sent; otherwise each email goes once, and is never held again. Holds are recorded within the run's mail deadline, a few at a time: one left unrecorded only means that email isn't held, and it goes with the next run. An email about a sign-in or a bank's own problem is never held.
 
+**Downloads and API tokens.** Each download of someone's data, and each API token they make, sends them one email of its own, to the same address as the connection notices: when it happened (in UTC), the format and whether a passphrase protects it (for a download), and what to do if it wasn't them ([data-export.md](data-export.md#getting-a-copy), `lib/download-notice.ts`). It is sent as the download starts, or as the token is made, and never waited for: a failing or slow email service never holds up or fails either, and a send that fails is logged with Resend's status alone (`Download notice: not sent (email service status 503).`), tried once more under the same idempotency key after a rate limit, no answer, or an error of Resend's own (a 5xx), and not tried again after that. One that has nobody to go to is logged as that, and without `RESEND_API_KEY` and `MAIL_FROM` none is sent.
+
 ## Brokerage and retirement connections
 
 **Connect a brokerage or retirement account** reaches 401(k) and IRA recordkeepers that the bank option can't list, since those offer Investments but not Transactions ([features.md](features.md#connecting-accounts)). Connections made with it have no Transactions, and the app decides alone whether one ever gets it: a first call for a connection's transactions starts Plaid's Transactions product, billed monthly until the connection is removed, so the transactions sync makes that call only for a connection holding a bank account or a card ([Keeping Plaid costs down](features.md#keeping-plaid-costs-down)).
@@ -144,6 +149,15 @@ A release from before this one has no such check, and calls for every connection
 5. Connect a real 401(k) or IRA, and a brokerage account, with the new option. Each one's record should carry `"transactions_billed":false`: Plaid isn't billing Transactions on it. Its card on the Accounts tab shows its holdings and no error, and nothing on the Activity tab names it as failing.
 
 From then on, never roll back to a release from before this one: see [operations.md](operations.md#rolling-back-once-the-brokerage-option-is-on). Turning the option off again hides the button and refuses new brokerage link tokens; connections already made with it keep working.
+
+## Bring your own sync
+
+**Connect with SimpleFIN** ([features.md](features.md#bring-your-own-sync)) needs no environment variable and nothing set up: it is offered to everyone beside the Plaid buttons, and each person brings and pays for their own SimpleFIN account. It costs the deployment nothing, and there is no setting to turn it off.
+
+- **Outbound HTTPS.** The server reaches the host a person's Setup Token names, to claim it, and the host of the access that claim returns, to read their accounts (SimpleFIN Bridge, Redbark or another that speaks the protocol), at public addresses only ([architecture.md](architecture.md#connectors)). Vercel's functions reach the internet as they are; where outbound traffic is restricted, allow HTTPS to the servers your people use. The browser never talks to SimpleFIN, so the Content-Security-Policy needs nothing for it.
+- **The daily fetch** runs inside `/api/snapshot`, beside Plaid's fetch, within 60 seconds per container (each request at most 20). The day's total waits only for each connection's recent window; older history goes on while the snapshot is recorded and its emails are prepared, and the container's run waits for it before it ends. Beside Plaid's fetch it adds no time unless SimpleFIN is the slower, and 60 seconds is under Plaid's own worst case, so the email notices keep their time. A container with only SimpleFIN connections, which used to take a second or two, can take up to a minute when SimpleFIN is slow, so on a busy night more containers may be left to the catch-up run. Crons run only on production, so elsewhere a connection is fetched only when someone chooses its accounts or presses **Refresh**.
+- **Requests** are bounded per person: at most 8 a day to SimpleFIN for all their connections together (SimpleFIN allows 24 per connection), and 10 tokens claimed an hour.
+- **The access each connection gives** (its Access URL, which holds the credentials) is encrypted like a Plaid access token and stored through the storage seam (`connector-secrets`), never in a person's download, a log or an error message, and never in a backup: it works on its own, so a backup must neither carry it nor bring one back after the person disconnected. A restore therefore ends every SimpleFIN access, and each person connects again with a new Setup Token; their accounts, history and transactions carry on. The counts of requests and claims are left out of backups too. Deleting an account deletes the access; ending it on SimpleFIN's side is the person's to do there.
 
 ## Security headers and the Content-Security-Policy
 

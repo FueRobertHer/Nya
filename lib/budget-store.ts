@@ -33,10 +33,12 @@
 // reads the set again after it, and writes the set's copy instead when it is
 // no longer its own (writeCopy), so the last to write the blob always leaves
 // it the copy of the set as last saved, never a copy that would read as a
-// rollback's change. What is left is the moment between such a stale write
-// and its correction: a read landing exactly then reads it as changed. A
-// read takes a change in only over the set it read beside the blob, so a
-// save landing between the two is read again, never overwritten.
+// rollback's change. A read landing between such a stale write and its
+// correction finds a copy the set says it replaced minutes ago at most
+// (`replaced`, lib/budget-set.ts), so it is behind: the read corrects it as
+// it finishes an unfinished save, never takes it in. A read takes a change
+// in only over the set it read beside the blob, so a save landing between
+// the two is read again, never overwritten.
 //
 // READS ARE STRICT. Both stores are read strictly before anything is decided:
 // a blob or a set that can't be read stops the read with
@@ -56,6 +58,7 @@ import {
   legacyBudgets,
   legacyCopy,
   mirrorState,
+  replacedAfter,
   sameLegacy,
   BUDGET_SET_VERSION,
   type BudgetSet,
@@ -125,7 +128,7 @@ export async function loadBudgets(ctx: Ctx): Promise<{ budgets: Budgets; taxonom
     const set = await budgetSetStore.get(ctx);
     const state = mirrorState(set, legacy);
     if (state === 'in-sync') return { budgets: budgetsOf(set!), taxonomy };
-    if (state === 'unfinished') {
+    if (state === 'unfinished' || state === 'behind') {
       await writeCopy(ctx, set!.mirror);
       return { budgets: budgetsOf(set!), taxonomy };
     }
@@ -181,7 +184,7 @@ function budgetsAsRead(raw: Record<string, unknown>, set: BudgetSet | null, read
   const legacy = legacyBudgets(raw);
   const taxonomy = grown(read, { required: textKeys(Object.keys(legacy)) }, provisionalIds());
   const state = mirrorState(set, legacy);
-  if (state === 'in-sync' || state === 'unfinished') return { budgets: budgetsOf(set!), taxonomy };
+  if (state === 'in-sync' || state === 'unfinished' || state === 'behind') return { budgets: budgetsOf(set!), taxonomy };
   return { budgets: budgetsOf(takeIn(set, legacy, indexTaxonomy(taxonomy))), taxonomy };
 }
 
@@ -211,7 +214,12 @@ export async function saveBudgets(ctx: Ctx, next: Budgets, taxonomy: Taxonomy): 
   // What the blob holds before this save: the copy of the set it replaces
   // (the route reads budgets first, so a rollback's change is taken in), or,
   // with no set yet, the blob as read.
-  await budgetSetStore.update(ctx, (cur) => ({ version: BUDGET_SET_VERSION, ...budgets, mirror: copy, mirror_before: cur ? cur.mirror : legacyNow }));
+  await budgetSetStore.update(ctx, (cur) => {
+    // The copy it replaces, kept a few minutes: a slow save's write of it,
+    // landing after this one's, is then corrected, never taken in.
+    const replaced = replacedAfter(cur, copy, Date.now());
+    return { version: BUDGET_SET_VERSION, ...budgets, mirror: copy, mirror_before: cur ? cur.mirror : legacyNow, ...(replaced.length > 0 ? { replaced } : {}) };
+  });
   await writeCopy(ctx, copy);
   return budgets;
 }

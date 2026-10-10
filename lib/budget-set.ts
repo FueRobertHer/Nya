@@ -58,7 +58,37 @@ export type BudgetSet = {
    *  (lib/budget-store.ts). */
   mirror: Record<string, number>;
   mirror_before: Record<string, number> | null;
+  /** Copies this release wrote there and has since replaced, newest first,
+   *  each with when it was replaced, for a few minutes (REPLACED_MS): a
+   *  slow save's write of one can still land after a later save's, and is
+   *  then corrected, never taken for a change the release before made.
+   *  Absent when there is none. */
+  replaced?: ReplacedCopy[];
 };
+
+export type ReplacedCopy = { copy: Record<string, number>; at: string };
+
+/** How long a copy this release replaced still marks a blob holding it as a
+ *  slow save's write (see BudgetSet replaced): far longer than any save takes,
+ *  far shorter than a deploy of the release before, the only other writer. */
+export const REPLACED_MS = 2 * 60_000;
+/** The most replaced copies kept: saves overlapping on more devices than this
+ *  at once are not a person's. */
+export const REPLACED_MAX = 5;
+
+/** The copies replaced within REPLACED_MS of `now`. */
+export function recentlyReplaced(set: Pick<BudgetSet, 'replaced'> | null, now: number): ReplacedCopy[] {
+  return (set?.replaced ?? []).filter((r) => now - Date.parse(r.at) <= REPLACED_MS);
+}
+
+/** The replaced copies a save writing `copy` over `cur` leaves: the copy it
+ *  replaces first, if it replaces one, then those still recent, at most
+ *  REPLACED_MAX. */
+export function replacedAfter(cur: BudgetSet | null, copy: Record<string, number>, now: number): ReplacedCopy[] {
+  const recent = recentlyReplaced(cur, now);
+  const out = cur && !sameLegacy(cur.mirror, copy) ? [{ copy: cur.mirror, at: new Date(now).toISOString() }, ...recent] : recent;
+  return out.slice(0, REPLACED_MAX);
+}
 
 /** The budgets the person edits: a set without its bookkeeping. */
 export type Budgets = Pick<BudgetSet, 'categories' | 'groups'>;
@@ -89,7 +119,13 @@ export function isLegacyBudgets(v: unknown): v is Record<string, number> {
   return isRecord(v) && Object.values(v).every(isBudgetAmount);
 }
 
-const SET_FIELDS = new Set(['version', 'categories', 'groups', 'mirror', 'mirror_before']);
+const SET_FIELDS = new Set(['version', 'categories', 'groups', 'mirror', 'mirror_before', 'replaced']);
+
+/** The replaced copies as stored: each a copy and when, nothing else. */
+const isReplaced = (v: unknown): boolean =>
+  Array.isArray(v) &&
+  v.length <= REPLACED_MAX &&
+  v.every((r) => isRecord(r) && Object.keys(r).length === 2 && isLegacyBudgets(r.copy) && typeof r.at === 'string' && !Number.isNaN(Date.parse(r.at)));
 
 /**
  * The stored shape, closed: a field this release doesn't know, on the set or
@@ -108,7 +144,8 @@ export function isBudgetSet(v: unknown): v is BudgetSet {
     isAmounts(v.categories) &&
     isAmounts(v.groups) &&
     isLegacyBudgets(v.mirror) &&
-    (v.mirror_before === null || isLegacyBudgets(v.mirror_before))
+    (v.mirror_before === null || isLegacyBudgets(v.mirror_before)) &&
+    (v.replaced === undefined || isReplaced(v.replaced))
   );
 }
 
@@ -158,14 +195,16 @@ export function legacyBudgets(raw: Record<string, unknown>): Record<string, numb
 /** How the stored set stands against the name-keyed copy (see MIRROR in
  *  lib/budget-store.ts): no set yet; the copy is what this release last wrote
  *  there; it is what was there before that write (a save stopped between its
- *  two writes); or anything else, which only the release before this one
- *  writes, after a rollback. */
-export type MirrorState = 'none' | 'in-sync' | 'unfinished' | 'changed';
+ *  two writes); it is a copy this release replaced minutes ago at most (a
+ *  slow save's write, landing after a later save's: `behind`); or anything
+ *  else, which only the release before this one writes, after a rollback. */
+export type MirrorState = 'none' | 'in-sync' | 'unfinished' | 'behind' | 'changed';
 
-export function mirrorState(set: BudgetSet | null, legacy: Record<string, number>): MirrorState {
+export function mirrorState(set: BudgetSet | null, legacy: Record<string, number>, now: number = Date.now()): MirrorState {
   if (!set) return 'none';
   if (sameLegacy(legacy, set.mirror)) return 'in-sync';
   if (set.mirror_before && sameLegacy(legacy, set.mirror_before)) return 'unfinished';
+  if (recentlyReplaced(set, now).some((r) => sameLegacy(legacy, r.copy))) return 'behind';
   return 'changed';
 }
 

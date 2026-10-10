@@ -123,6 +123,12 @@ export type Txn = {
   account_id?: string; // a manual row's account, for editing it
   note?: string | null; // a manual row's own note, or a bank row's (lib/txn-annotations.ts)
   excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
+  // One side of a pair Nya worked out from the amounts between two of the
+  // person's SimpleFIN accounts (lib/manual-txns.ts connectorTransfers): a
+  // card's payment, a loan's or a transfer, shown with the category a bank
+  // gives the same, filed into the person's categories as a bank's row is.
+  // Never the bank's word or the person's.
+  paired?: 'card' | 'loan' | 'transfer';
 
   // Applied on read (lib/txn-layers.ts), absent when there is nothing to say:
   // the tags it carries (ids of tags that exist, lib/tags.ts), put on by the

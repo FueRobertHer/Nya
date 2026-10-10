@@ -441,14 +441,15 @@ export async function finishActivity(
       ? ["Rules that name a category aren't applied until your categories can be read."]
       : []),
   ];
-  // The institutions whose rows aren't all here (the banks' part: a manual
+  // The institutions whose rows aren't all here: Plaid's, and the banks of a
+  // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
     notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes],
     tags_note: tagRead.note,
     ...(account ? { accountOf: account } : {}),
-    incomplete: plaid.incomplete ?? [],
+    incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),

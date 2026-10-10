@@ -81,7 +81,8 @@ export function reportCsv(report: Report): string {
     const parts = i.no_transactions
       ? [NO_TRANSACTIONS_WORDS[i.no_transactions]]
       : [
-          i.problem ? `${STATE_WORDS[i.problem.state] ?? i.problem.state} since ${i.problem.since}` : null,
+          i.connector?.host ? `at ${i.connector.host}` : null,
+          i.connector ? i.connector.state : i.problem ? `${STATE_WORDS[i.problem.state] ?? i.problem.state} since ${i.problem.since}` : null,
           i.synced_at ? `transactions last brought in ${i.synced_at}` : 'when its transactions were last brought in isn’t known',
           i.first_date ? `transactions in Nya from ${i.first_date}` : null,
           ...report.gaps.filter((g) => g.item_id === i.item_id).map((g) => gapShort(g, iso)),

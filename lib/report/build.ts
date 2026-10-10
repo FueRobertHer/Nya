@@ -47,6 +47,10 @@
 //     connection's own gaps say how far back it reaches. Decided per account,
 //     so a second login at the same bank, or the same login added back with
 //     fewer accounts, never passes for the one removed;
+//   - disconnected: an account a SimpleFIN connection kept up to date was
+//     let go during the period and kept as a manual account, so from that
+//     day its transactions are only the ones entered or imported (one let go
+//     and removed is `removed`, its transactions having gone with it);
 //   - removed_unknown: whether a connection was removed couldn't all be read;
 //   - own_categories, own_exclusions: the person's own categories, or the
 //     exclusions they carried across a re-link, couldn't be read, so the
@@ -57,6 +61,15 @@
 // card, brings in no transactions by design: it is listed, never a gap, and
 // the report says what it doesn't cover. A period with no transactions says
 // so rather than showing zeros.
+//
+// SIMPLEFIN. Each bank a SimpleFIN connection reaches is an institution here
+// too, with the connection it comes through and its state in its card's own
+// words: stale from its last clean sync (a request that failed, a problem
+// SimpleFIN reported, a bank balance days old: what it holds after that day
+// may not have come), importing while its older history arrives (only when
+// the period starts before what has come), begins_late once that history is
+// all in. A card waiting for the person's answer about its sign holds its
+// balance in the app, never its transactions: said beside it, not a gap.
 //
 // NO TAX ADVICE. The person marks the categories that matter to them
 // (lib/report/settings.ts) and gets them as a group, with their transactions
@@ -90,7 +103,13 @@ export const POST_DAYS = 3;
 /** The most transactions the appendix lists; the totals count them all. */
 export const APPENDIX_LIMIT = 500;
 
-/** What the report knows of one linked institution (lib/report/read.ts). */
+/** For a bank a SimpleFIN connection reaches: the connection it comes
+ *  through, its state in its card's badge's words, and the cards or loans
+ *  there waiting for the person's answer about their sign (lib/connectors/). */
+export type ConnectorSourceFacts = { label: string; host: string | null; state: string; waiting: string[] };
+
+/** What the report knows of one linked institution (lib/report/read.ts), or
+ *  of one bank a SimpleFIN connection reaches (`connector`). */
 export type SourceFacts = {
   item_id: string;
   institution_name: string;
@@ -117,7 +136,15 @@ export type SourceFacts = {
   /** Whether it holds investment or loan accounts, as last loaded: their
    *  activity is never in a report. */
   holds: { investment: boolean; loans: boolean };
+  /** Set for a bank a SimpleFIN connection reaches. */
+  connector?: ConnectorSourceFacts;
 };
+
+/** Accounts a SimpleFIN connection kept up to date, let go on one day and
+ *  kept as manual accounts (lib/connectors/store.ts connector-ended): from
+ *  then on their transactions are only the ones entered or imported. `since`
+ *  is that day on the person's calendar. */
+export type KeptFacts = { institution: string; since: string; accounts: string[] };
 
 /** A manual account, as the report lists it. */
 export type ManualFacts = { account_id: string; name: string; institution: string; type: string; updated_at: string | null };
@@ -155,9 +182,13 @@ export type ReportInput = {
   manual: readonly ManualFacts[];
   /** The manual accounts whose rows couldn't be read, or 'all'. */
   manualUnread: readonly string[] | 'all';
-  /** Removed connections, or null when the directory couldn't be read. */
+  /** Removed connections, or null when none could be read: those the
+   *  directory remembers and the SimpleFIN accounts let go and removed. */
   removed: readonly RemovedFacts[] | null;
-  /** Directory entries that couldn't be read. */
+  /** Accounts a SimpleFIN connection fed, kept as manual accounts when let go. */
+  kept?: readonly KeptFacts[];
+  /** Directory entries, or records of SimpleFIN accounts let go, that
+   *  couldn't be read (1 for a directory that couldn't be read at all). */
   removedUnreadable: number;
   /** The accounts of the connections stored now, and the person's links from
    *  an earlier account's id to the one it is now (lib/link-core.ts). */
@@ -188,13 +219,17 @@ export type Gap =
   | { kind: 'missing'; item_id: string; institution: string; reach: string | null }
   | { kind: 'stale'; item_id: string; institution: string; since: string | null }
   | { kind: 'partial'; item_id: string; institution: string; since: string }
-  | { kind: 'importing'; item_id: string; institution: string }
+  /** `before`: for a bank a SimpleFIN connection reaches, the first day of
+   *  what has come: the days before it are what may be missing. */
+  | { kind: 'importing'; item_id: string; institution: string; before?: string }
   /** `first`: its oldest stored transaction ('stored'), or, with none
    *  stored, the earliest day its history can reach ('reach'). */
   | { kind: 'begins_late'; item_id: string; institution: string; first: string; from: 'stored' | 'reach' }
   | { kind: 'refused'; item_id: string; institution: string }
   | { kind: 'no_consent'; item_id: string; institution: string }
   | { kind: 'removed'; item_id: null; institution: string; last_seen: string; accounts: string[]; partly_back: boolean }
+  /** Let go on `since` and kept as manual accounts (KeptFacts). */
+  | { kind: 'disconnected'; item_id: null; institution: string; since: string; accounts: string[] }
   | { kind: 'removed_unknown'; item_id: null; institution: null }
   | { kind: 'own_categories'; item_id: null; institution: null }
   | { kind: 'own_exclusions'; item_id: null; institution: null }
@@ -357,6 +392,7 @@ export type Report = {
 const GAP_ORDER: GapKind[] = [
   'missing',
   'removed',
+  'disconnected',
   'removed_unknown',
   'refused',
   'no_consent',
@@ -411,7 +447,9 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   const gone = s.problem?.state === 'partial' ? dayIn(s.problem.since, period.time_zone) : null;
   if (gone !== null && gone < allIn) gaps.push({ kind: 'partial', ...at, since: gone });
   // Still importing: its oldest rows are still on their way, which says it.
-  if (s.coverage === 'importing') gaps.push({ kind: 'importing', ...at });
+  // A SimpleFIN bank's history comes a window a night, back from today, so
+  // only the days before what has come are short.
+  if (s.coverage === 'importing') gaps.push({ kind: 'importing', ...at, ...(s.connector && s.first_date ? { before: s.first_date } : {}) });
   else if (s.first_date !== null && s.first_date > period.start) gaps.push({ kind: 'begins_late', ...at, first: s.first_date, from: 'stored' });
   else gaps.push(...beyondReach);
   return gaps;
@@ -440,6 +478,10 @@ function gapTouches(g: Gap, start: string, end: string): boolean {
       return start < g.first;
     case 'removed':
       return start <= g.last_seen;
+    case 'disconnected':
+      return end >= g.since;
+    case 'importing':
+      return g.before === undefined || start < g.before;
     case 'missing':
       return g.reach === null || end >= g.reach;
     default:
@@ -525,6 +567,10 @@ export function buildReport(input: ReportInput): Report {
         accounts: notBack.map(accountLabel),
         partly_back: notBack.length < r.accounts.length,
       })),
+    // Let go during the period and kept by hand since: later days may be short.
+    ...(input.kept ?? [])
+      .filter((k) => k.since >= period.start && k.since <= period.through)
+      .map((k): Gap => ({ kind: 'disconnected', item_id: null, institution: k.institution, since: k.since, accounts: k.accounts })),
     ...(input.removed === null || input.removedUnreadable > 0 ? [loose('removed_unknown')] : []),
     ...(input.ownRead.categories ? [] : [loose('own_categories')]),
     ...(input.ownRead.exclusions ? [] : [loose('own_exclusions')]),

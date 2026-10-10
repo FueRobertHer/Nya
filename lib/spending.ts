@@ -107,6 +107,24 @@ export function isTransfer(t: Pick<Countable, 'transaction_code' | 'category' | 
   return isMoneyMovement(t) || categoryKey(t) === LOAN_PAYMENTS;
 }
 
+/**
+ * How many rows from a connector the person brought (SimpleFIN) have no
+ * category and still count in totals. SimpleFIN gives no categories, so
+ * nothing says such a row is a card payment or a move between the person's
+ * own accounts: it counts as spending or income until they categorize it,
+ * except a pair between two of their SimpleFIN accounts, which is shown as a
+ * transfer (lib/manual-txns.ts connectorTransfers).
+ */
+export function uncategorizedFromConnector(rows: readonly (Countable & { source?: string | null })[]): number {
+  return rows.filter((t) => t.source === 'simplefin' && t.category === null && !isExcluded(t) && !isTransfer(t)).length;
+}
+
+/** What to say under a total that counts them, or null when there are none. */
+export function uncategorizedNote(n: number): string | null {
+  if (n <= 0) return null;
+  return `${n} transaction${n === 1 ? '' : 's'} from SimpleFIN ${n === 1 ? 'has' : 'have'} no category, so ${n === 1 ? 'it counts' : 'they count'} as spending or income. A move between two of your SimpleFIN accounts is left out on its own; categorize any other card payment or move between your accounts as a transfer to leave it out too.`;
+}
+
 /** You excluded it from budgets and reports. When whether you did could not be
  *  read (null), it counts: a total that may include it is shown with a note,
  *  never one that silently leaves out something you did not exclude. */

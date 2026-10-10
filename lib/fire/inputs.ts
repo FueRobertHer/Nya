@@ -133,6 +133,9 @@ export function planFlow(t: Txn): PlanFlow {
   if (sub === CARD_PAYMENT) return t.amount > 0 ? 'card-payment' : 'transfer';
   if (category === 'loan payments') {
     if (t.amount <= 0) return 'transfer'; // the loan's side of a payment
+    // A payment Nya paired from cash into an account the person called a
+    // loan (lib/manual-txns.ts connectorTransfers): a loan's, never a card's.
+    if (t.paired === 'loan') return 'loan';
     return LOAN_DETAILS.has(sub) ? 'loan' : 'unclear-loan';
   }
   if (t.amount > 0) {
@@ -174,6 +177,10 @@ export type TrailingFlows = {
   cashEnteredOn: string[];
   /** Loan payments NOT counted because they can't be told from card payments. */
   unclearLoans: number;
+  /** Of those, the ones not from a bank Plaid reads: entered, imported, or
+   *  from SimpleFIN, with nothing but a category to say what they pay, so
+   *  the words say so rather than that Plaid didn't. Absent is none. */
+  unclearLoansElsewhere?: number;
   /** The largest single refund taken off, as it was (not scaled), so an odd
    *  large one can be seen. */
   largestRefund: { amount: number; date: string; name: string } | null;
@@ -196,6 +203,9 @@ export type TrailingFlows = {
   /** Transactions that would count but are in another currency: in none of
    *  the figures, by currency. */
   leftOut: LeftOut;
+  /** Transactions from SimpleFIN with no category, counted as spending or
+   *  income (lib/spending.ts uncategorizedFromConnector); absent is none. */
+  uncategorized?: number;
 };
 
 const DAY_MS = 86_400_000;
@@ -225,6 +235,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
   const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && counts(planFlow(t))));
   const leftOutBy = new Map<string, number>();
   let cashEntered = 0;
+  let unclearElsewhere = 0;
   const cashEnteredOn = new Set<string>();
   const sums: Record<PlanFlow, number> = {
     spending: 0,
@@ -239,6 +250,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
   let count = 0;
   let excludedCount = 0;
   let hiddenCount = 0;
+  let uncategorized = 0;
   let earliest = end;
   let largestRefund: TrailingFlows['largestRefund'] = null;
   for (const t of inWindow) {
@@ -258,6 +270,8 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       continue;
     }
     sums[flow] += t.amount;
+    if (flow === 'unclear-loan' && t.source) unclearElsewhere += t.amount;
+    if (t.source === 'simplefin' && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
     // A row on the cash account, typed or imported (any source but a bank's,
     // which has none): spending of the cash withdrawn.
     if (flow === 'spending' && t.source && t.account_id && opts.cashAccounts?.has(t.account_id)) {
@@ -289,6 +303,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     cashEntered: cashEntered * scale,
     cashEnteredOn: [...cashEnteredOn].sort(),
     unclearLoans: sums['unclear-loan'] * scale,
+    unclearLoansElsewhere: unclearElsewhere * scale,
     largestRefund,
     from: isoDay(earliest),
     to: today,
@@ -299,6 +314,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     hiddenCount,
     currency,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    uncategorized,
   };
 }
 
