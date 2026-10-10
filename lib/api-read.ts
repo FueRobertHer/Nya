@@ -573,9 +573,11 @@ export type ApiHistory = {
 export type HistoryQuery = { accountId?: string; from?: string; to?: string; includeEstimated?: boolean; includeHidden?: boolean; interval?: Interval };
 
 /** The stretch of estimated points that follows imported transactions
- *  (ApiHistory.from_imports): net worth's, or one account's (any of its ids). */
-function fromImports(drawn: WalkState | null, ids: readonly string[] | null): ApiHistory['from_imports'] {
-  return importedStretch(drawn, ids);
+ *  (ApiHistory.from_imports): net worth's, or one account's (any of its ids).
+ *  `hidden`, the accounts net worth leaves out (every id each has had), are
+ *  left out of it too, as the chart's note leaves them out. */
+function fromImports(drawn: WalkState | null, ids: readonly string[] | null, hidden: ReadonlySet<string> = new Set()): ApiHistory['from_imports'] {
+  return importedStretch(drawn, ids, hidden);
 }
 
 /** A series as answered: recorded points only unless estimated ones are
@@ -605,7 +607,7 @@ function seriesOf(
 /** Net worth's history from a read already made. */
 function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState | null): ApiHistory {
   const { currency, mixed } = netWorthCurrency(nw.read.accounts);
-  return seriesOf(nw.history, q, { account_id: null, currency, mixed }, [], fromImports(drawn, null));
+  return seriesOf(nw.history, q, { account_id: null, currency, mixed }, [], fromImports(drawn, null, q.includeHidden ? new Set() : new Set(nw.read.hidden.keys())));
 }
 
 /**

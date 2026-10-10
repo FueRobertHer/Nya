@@ -272,6 +272,12 @@ describe('the estimated history after an import', () => {
     expect((await readBalanceHistory(ctx, { accountId: 'acc_card', includeEstimated: true }))!.from_imports).toBeNull();
     // Recorded points only, none of them is.
     expect((await readBalanceHistory(ctx, {}))!.from_imports).toBeNull();
+    // Hidden, the only account that follows them leaves net worth's stretch
+    // with it, unless hidden accounts are asked for.
+    await setAccountHidden(ctx, 'acc_chk', 'depository', true);
+    expect((await readBalanceHistory(ctx, { includeEstimated: true }))!.from_imports).toBeNull();
+    expect((await readBalanceHistory(ctx, { includeEstimated: true, includeHidden: true }))!.from_imports).toEqual(drawn);
+    await setAccountHidden(ctx, 'acc_chk', 'depository', false);
     await undo('acc_chk', body.import_id);
     expect((await readBalanceHistory(ctx, { includeEstimated: true }))!.from_imports).toBeNull();
   });
