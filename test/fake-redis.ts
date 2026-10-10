@@ -625,6 +625,44 @@ export class FakeRedis {
       }
       return name === '-- nya:repo-counter-read' ? [`v${value}`, ttl] : [Number(value), ttl];
     }
+    // A counter map store's: one id's count and the end of its window, as one
+    // step, the hash kept two windows past it (lib/repo.ts COUNTERS_TAKE).
+    if (name === '-- nya:repo-counters-take') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const [id, now, window] = [args[0], Number(args[1]), Number(args[2])];
+      const raw = this.hashes.get(keys[0])?.get(id);
+      let [count, ends] = [0, 0];
+      if (raw !== undefined) {
+        const m = /^([1-9][0-9]*):([1-9][0-9]*)$/.exec(raw);
+        if (!m) {
+          if ((this.ttls.get(keys[0]) ?? -1) < 0) this.ttls.set(keys[0], 2 * window);
+          throw new Error('ERR nya: the stored count is not a count');
+        }
+        [count, ends] = [Number(m[1]), Number(m[2])];
+      }
+      if (ends <= now || ends - now > 2 * window) [count, ends] = [0, now + window];
+      count++;
+      this.hash(keys[0]).set(id, `${count}:${ends}`);
+      this.ttls.set(keys[0], 2 * window);
+      return [count, ends - now];
+    }
+    // The rate limits counted by address (lib/rate-limit.ts): INCR or GET,
+    // with the window as the expiry wherever the count has none. Like Redis,
+    // INCR refuses what is not an integer as it writes them, and a hash at the
+    // key is WRONGTYPE.
+    if (name === '-- nya:ratelimit-count' || name === '-- nya:ratelimit-read') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.strings.get(keys[0]);
+      if (name === '-- nya:ratelimit-read' && value === undefined) return 0;
+      let answer: unknown = this.out(value);
+      if (name === '-- nya:ratelimit-count') {
+        if (value !== undefined && !/^(0|-?[1-9][0-9]*)$/.test(value)) throw new Error('ERR value is not an integer or out of range');
+        answer = Number(value ?? 0) + 1;
+        this.strings.set(keys[0], String(answer));
+      }
+      if ((this.ttls.get(keys[0]) ?? -1) < 0) this.ttls.set(keys[0], Number(args[0]));
+      return answer;
+    }
     throw new Error(`FakeRedis: unknown script ${name}`);
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
-import { FakeRedis, storageMock, registerTestContainer } from './fake-redis';
+import { FakeRedis, storageMock, registerTestContainer, testKey } from './fake-redis';
 
 // Tickets, mocked at our own module, not Clerk's.
 const tickets: string[] = [];
@@ -16,7 +16,7 @@ mock.module('@/lib/clerk-tickets', () => ({
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { demoUsers, isDemoUser, demoEnvironment } = await import('@/lib/demo');
+const { demoUsers, isDemoUser, demoEnvironment, DEMO_SIGN_INS_PER_WINDOW, DEMO_WINDOW_SECONDS } = await import('@/lib/demo');
 const { clerkUserAllowed } = await import('@/lib/auth-mode');
 const { deletionCheck } = await import('@/lib/account-deletion');
 const { POST } = await import('@/app/api/demo/sign-in/route');
@@ -98,6 +98,19 @@ describe('the demo sign-in', () => {
     for (let i = 0; i < 20; i++) expect((await signIn('user_alex')).status).toBe(303);
     expect((await signIn('user_alex')).status).toBe(429);
     expect((await signIn('user_alex', '5.6.7.8')).status).toBe(303);
+  });
+
+  test('counted with its window’s end in one step, so a sign-in that dies part way never shuts the address out for good', async () => {
+    const key = testKey('ratelimit:demo:1.2.3.4');
+    // Where a count sent as INCR and then EXPIRE lost its end: the second
+    // request failing after the first had counted.
+    fake.failNext('expire');
+    expect((await signIn('user_alex')).status).toBe(303);
+    expect(fake.ttls.get(key)).toBe(DEMO_WINDOW_SECONDS);
+    // A count already left without one is given one, refused or not.
+    await fake.set(key, String(DEMO_SIGN_INS_PER_WINDOW));
+    expect((await signIn('user_alex')).status).toBe(429);
+    expect(fake.ttls.get(key)).toBe(DEMO_WINDOW_SECONDS);
   });
 
   test('Clerk failing sends them back to sign in, saying so', async () => {

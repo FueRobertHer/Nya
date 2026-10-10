@@ -53,18 +53,21 @@
 // derived from the months. If it is ever missing while months remain, the next
 // recording derives it before claiming anything, so no month is stored twice
 // and every recorded day stays readable (not around a month this version does
-// not recognise, which could be any month: recording then fails, counted). If
+// not recognise, which could be any month: recording then fails, counted).
+// Until it is derived, every read answers that the months can't be read, never
+// that nothing was recorded, and the person is offered the repair below. If
 // its bytes are damaged, recording stops (it is read strictly) and every read
 // answers that it can't be read; the person is offered a repair
 // (repairHoldingsIndex), which, once confirmed, puts a derived index in place
-// of the damaged bytes in one step (MapStore.replaceUnreadable). Nothing that
-// can be read is ever removed for it.
+// of the damaged bytes in one step (MapStore.replaceUnreadable), or of a
+// missing one. Nothing that can be read is ever removed for it.
 //
 // READ strictly (readHoldingsHistory, and readHoldingsMonth, readHoldingsRange
 // and readHoldingsSpan on it): nothing recorded is an empty answer, and
-// anything the seam cannot use throws. Account links are followed on read, as
-// balance history follows them (getAccountHistory in lib/history.ts): what an
-// account held under an earlier id continues under its current one.
+// anything the seam cannot use throws, as do months a missing index leaves
+// unplaced (HoldingsIndexMissingError). Account links are followed on read,
+// as balance history follows them (getAccountHistory in lib/history.ts): what
+// an account held under an earlier id continues under its current one.
 //
 // THE STORED SHAPE IS CLOSED: a field this code does not know, at any level,
 // makes the value unrecognised (a later version wrote it), so an older version
@@ -911,6 +914,36 @@ function accountSpansOf(index: HoldingsIndex | null, place: ReturnType<typeof pl
 }
 
 /**
+ * The months can't be read: the index is missing while they remain (deleted
+ * by hand, or a rollback), so nothing says which month is which until it is
+ * derived from them again, as the next recording or the repair does (see THE
+ * INDEX IS BOOKKEEPING). What was recorded is there, so a read says it can't
+ * be read, never that nothing was. Never beside a month this version does not
+ * recognise, which the read names instead (UnreadableEntriesError): nothing
+ * can be derived around it. `repairable`: some month can be read, so
+ * repairHoldingsIndex has an index to derive (with every month damaged it has
+ * none, and refuses).
+ */
+export class HoldingsIndexMissingError extends StoredDataUnreadableError {
+  constructor(readonly repairable: boolean) {
+    super(historyStore.what, new Error('the holdings index is missing while months remain'));
+    this.name = 'HoldingsIndexMissingError';
+  }
+}
+
+/** Why months remaining without an index can't be read: one this version does
+ *  not recognise, named, or else the missing index. Reads every month, which
+ *  only a read finding the index missing beside them pays for. */
+async function unindexed(ctx: Ctx): Promise<StoredDataUnreadableError> {
+  const { entries, unreadable, unrecognised } = await historyStore.getAllReport(ctx);
+  if (unrecognised.length > 0) {
+    const cause = new Error('the holdings index is missing beside months this version does not recognise');
+    return new UnreadableEntriesError(historyStore.what, unreadable, unrecognised, cause);
+  }
+  return new HoldingsIndexMissingError(entries.size > 0);
+}
+
+/**
  * STRICT. When anything (or the account asked for, following its links) was
  * recorded, and, given a range of UTC dates, every day recorded within it
  * (inclusive), oldest first, with each account's positions under the id it is
@@ -919,7 +952,8 @@ function accountSpansOf(index: HoldingsIndex | null, place: ReturnType<typeof pl
  * on from one before or after it was. The index is read once for all of it,
  * so they agree. Nothing recorded is an empty answer; anything stored that
  * cannot be used throws (UnreadableEntriesError naming the entries, or the
- * deployment's own error), and never reads as empty.
+ * deployment's own error), and so do months with no index to place them
+ * (HoldingsIndexMissingError): none of it ever reads as empty.
  */
 export async function readHoldingsHistory(
   ctx: Ctx,
@@ -928,6 +962,8 @@ export async function readHoldingsHistory(
 ): Promise<{ span: HoldingsSpan; accounts: Map<string, { first: string; last: string }>; days: HoldingsDay[] }> {
   if (range && (!DAY.test(range.from) || !DAY.test(range.to))) throw new TypeError('holdings-history: from and to are YYYY-MM-DD dates');
   const index = await indexStore.get(ctx, INDEX_ID);
+  // No index is nothing recorded only while no month is stored either.
+  if (!index && (await historyStore.count(ctx)) > 0) throw await unindexed(ctx);
   const place = placer(opts);
   const span = spanOf(index, place);
   const accounts = accountSpansOf(index, place);

@@ -472,6 +472,82 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
   return null;
 }
 
+/** One account's newest measured balance (latestMeasuredBalances). */
+export type MeasuredBalance = {
+  /** The UTC day it was measured. */
+  date: string;
+  value: number;
+  /** Where it was found: the map recorded with a total ('recorded'), or a
+   *  partial one, measured on a day one institution failed ('partial'). */
+  layer: 'recorded' | 'partial';
+};
+
+/**
+ * Each account's newest MEASURED balance and its UTC day, never an estimate:
+ * the balance the read-only API gives a linked account (lib/api-read.ts),
+ * which never asks Plaid. The precedence of getAccountHistory's measured
+ * points, which this must keep agreeing with: on each date, a partial map
+ * naming the account wins (recordSnapshot clears the day's partial map when it
+ * records a total, so one beside a recorded map is newer), then the recorded
+ * map; within a map, the account's current id, then its earlier ids in order
+ * (`accounts` maps each account to its ids, current first). Future dates are
+ * passed over, as getLatestAccountSnapshot passes them: clock skew can mint
+ * one. Reads the dates, then only the maps it needs, newest first and a few
+ * more each round trip, until every account has a balance: on most days the
+ * newest map names them all. A map damaged for good (unreadableForGood) is
+ * passed over (the next date down answers, with its own date); a failure that
+ * may pass (storage, or the key store, out of reach) throws, never "an older
+ * balance". An account no measured map names is left out.
+ */
+export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, string[]>): Promise<Map<string, MeasuredBalance>> {
+  const found = new Map<string, MeasuredBalance>();
+  if (accounts.size === 0) return found;
+  const [recordedDates, partialDates] = await Promise.all([redis().hkeys(ACCOUNTS_HASH(ctx)), redis().hkeys(ACCOUNTS_PARTIAL_HASH(ctx))]);
+  const recorded = new Set(recordedDates);
+  const partial = new Set(partialDates);
+  const today = new Date().toISOString().slice(0, 10);
+  const dates = [...new Set([...recordedDates, ...partialDates])].filter((d) => d <= today).sort().reverse();
+
+  const mapAt = async (key: string, date: string): Promise<Record<string, number> | null> => {
+    const blob = await redis().hget<string>(key, date); // uncaught: storage failing is never "no balance"
+    if (!blob) return null;
+    try {
+      return await decryptMap(blob);
+    } catch (err) {
+      if (!unreadableForGood(err)) throw err;
+      return null; // damaged for good: the date before answers
+    }
+  };
+  const valueIn = (map: Record<string, number> | null, ids: string[]): number | null => {
+    for (const id of ids) {
+      const v = map?.[id];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return null;
+  };
+
+  for (let i = 0, size = 1; i < dates.length && found.size < accounts.size; i += size, size = Math.min(size * 4, 32)) {
+    const batch = await Promise.all(
+      dates.slice(i, i + size).map(async (date) => {
+        const [p, r] = await Promise.all([
+          partial.has(date) ? mapAt(ACCOUNTS_PARTIAL_HASH(ctx), date) : null,
+          recorded.has(date) ? mapAt(ACCOUNTS_HASH(ctx), date) : null,
+        ]);
+        return { date, p, r };
+      })
+    );
+    for (const { date, p, r } of batch) {
+      for (const [account, ids] of accounts) {
+        if (found.has(account)) continue;
+        const fromPartial = valueIn(p, ids);
+        const value = fromPartial ?? valueIn(r, ids);
+        if (value !== null) found.set(account, { date, value, layer: fromPartial !== null ? 'partial' : 'recorded' });
+      }
+    }
+  }
+  return found;
+}
+
 /** The moment the snapshot dated `date` was last written, or null if unknown. */
 export async function snapshotTakenAt(ctx: Ctx, date: string): Promise<string | null> {
   try {

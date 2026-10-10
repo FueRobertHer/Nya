@@ -104,7 +104,7 @@ import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredItem, readStoredTxns, StateUnreadableError, type StoredAccount } from './transactions';
-import { rememberedAccountsByItem } from './last-known';
+import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
 import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
 import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARED_TXN_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
@@ -1142,13 +1142,16 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
  * last transactions sync stored it (lib/transactions.ts): its ISO code, then
  * Plaid's unofficial one (a cryptocurrency's). An account neither names is
  * left out. Strict, as every read here is, but for the one lenient read below.
+ * Also the read-only API's rule for a linked account's currency
+ * (lib/api-read.ts), which passes the remembered records it has read already
+ * (`remembered`), so they are read once.
  */
-async function bankCurrencies(theirs: Ctx, ids: string[]): Promise<Map<string, string>> {
+export async function bankCurrencies(theirs: Ctx, ids: string[], remembered?: Record<string, RememberedAccount[]>): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (ids.length === 0) return out;
   const wanted = new Set(ids);
   const unnamed = new Map<string, string[]>(); // an Item, and its accounts its record gives no currency
-  for (const [item_id, accounts] of Object.entries(await rememberedAccountsByItem(theirs))) {
+  for (const [item_id, accounts] of Object.entries(remembered ?? (await rememberedAccountsByItem(theirs)))) {
     for (const a of accounts) {
       if (!wanted.has(a.account_id)) continue;
       if (a.currency) out.set(a.account_id, a.currency);

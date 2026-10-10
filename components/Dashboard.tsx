@@ -11,6 +11,7 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import ApiTokens from './ApiTokens';
 import { instantDay } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
@@ -1656,12 +1657,15 @@ export default function Dashboard({
                   withoutTransactions={txnWithout}
                   series={recurring ?? undefined}
                   dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
+                  incomplete={txnIncomplete}
+                  stopped={stoppedTxns}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
                       .map((a) => ({
                         name: a.name,
                         type: a.type,
+                        subtype: a.subtype,
                         balance: a.balance,
                         currency: a.currency,
                         liability: a.liability,
@@ -2303,6 +2307,10 @@ export default function Dashboard({
                     behind Manage accounts; after the accounts, so it doesn't
                     push them down. It asks for a fresh sign-in itself. */}
                 {manageMode && <DownloadMyData clerk={clerk} />}
+
+                {/* API tokens for the read-only API and the MCP server, with
+                    the rest of the account upkeep (components/ApiTokens.tsx). */}
+                {manageMode && <ApiTokens clerk={clerk} />}
 
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I

@@ -11,6 +11,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
+- [An address locked out of the login](#an-address-locked-out-of-the-login)
 
 ## Backups
 
@@ -53,7 +54,7 @@ Not everything in it is encrypted, so still treat the file as private: dates, ac
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
-Caches and the login's rate-limit counters are left out on purpose. Each account's count of data downloads is a store on the storage seam, so it is kept like the rest, with its expiry. Avoid running it around 13:00 UTC, when the daily snapshot writes.
+Caches and the login's rate-limit counters are left out on purpose. So are API tokens and their request counts (`api-tokens`, `api-requests`, declared `backup: false` on the storage seam): a backup must never bring back a token revoked after it was taken, which nothing could tell its owner, so a restore ends every token and people make new ones. Each account's count of data downloads is a store on the storage seam, so it is kept like the rest, with its expiry. Avoid running it around 13:00 UTC, when the daily snapshot writes.
 
 ## Restoring a backup
 
@@ -78,7 +79,7 @@ The command refuses, and writes nothing, when:
 - it would replace data with an archive holding no keys (`--allow-empty` overrides), or with one taken from a different environment (`--allow-different-source` overrides). Restoring into an **empty** target from anywhere, like production into `restore-test`, needs neither;
 - the target has containers (see [Containers](#containers)) and the archive's are not the same, for example an archive from before containers existed: restoring it would leave `CONTAINER_ID` naming a container that no longer exists. `--replace-registry` overrides; afterwards set `CONTAINER_ID` again (or create a container, if the archive has none). A dry run reports this too.
 
-With `--overwrite`, it prints how many keys it is about to replace, saves the target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file, and checks that file holds every key it is about to delete. Then it **replaces** the target entirely (login rate-limit counters aside), so nothing newer than the archive survives. If the target changes while this is going on, it stops before deleting anything. It finishes by reading everything back and comparing it with the archive, and reports success only if they match exactly. If a restore stops part way, run it again with `--overwrite`.
+With `--overwrite`, it prints how many keys it is about to replace, saves the target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file, and checks that file holds every key it is about to delete. Then it **replaces** the target entirely (login rate-limit counters aside), so nothing newer than the archive survives. API tokens are in no backup, so afterwards every token is gone: tell the people who use the deployment to make new ones under **Manage**, **API tokens**. If the target changes while this is going on, it stops before deleting anything. It finishes by reading everything back and comparing it with the archive, and reports success only if they match exactly. If a restore stops part way, run it again with `--overwrite`.
 
 File paths are resolved from the repo root, since `bun run` runs there, and that is also where the pre-restore file is written.
 
@@ -249,3 +250,7 @@ It is refused unless a report shows nothing left to copy, refresh or delete and 
 Once `PLAID_BROKERAGE_LINK=1` is set and anyone has connected with **Connect a brokerage or retirement account** ([deployment.md](deployment.md#brokerage-and-retirement-connections)), **never roll back to a release from before the one that added it.** Those releases ask Plaid for every connection's transactions on every load, and on a connection made with the brokerage option that first call starts Plaid's Transactions product, billed monthly until the connection is removed, wherever the institution offers it. It can't be taken off a connection again. Turning the option off doesn't help: it only stops new connections. Rolling back to that release or any later one is safe.
 
 If you have to go back further, first find those connections. In the Upstash console, each container's `<prefix>:c:<id>:plaid:items` hash holds one record per connection, and the ones made with the brokerage option carry `"transactions_billed":false` (`null` means the lookup when it was linked failed, so it could be either). Disconnect each of them on the Accounts tab (**Manage**, then **Disconnect** on its card) before the rollback, and connect them again once you are back on a release with the check, linking each new account to the one it replaces ([features.md](features.md#removing-an-institution-and-adding-it-back)) so its history carries on. Or keep them, and accept the fee on each.
+
+## An address locked out of the login
+
+Ten wrong passwords from one address (the login and the password asked for before a data download count together) shut that address out of the password login for 15 minutes from the first of them. Each count is written together with its expiry in one step (`lib/rate-limit.ts`), so a lockout always ends on its own: there is no key to delete by hand. A count left without an expiry by an older release (which set the expiry with a second request that could fail) is given a whole window the next time that address tries. The demo sign-in's limit per address (on Preview) is counted the same way.

@@ -20,6 +20,7 @@ import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
 import { EMPTY_PLANNED, type Planned, type PlannedItem } from '@/lib/planned';
 import { formatMoney } from '@/lib/format';
+import { spendingByCategory } from '@/lib/totals';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import { missingMonthNotes, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
@@ -135,16 +136,12 @@ export default function BudgetsTab({
   // tab's totals are.
   const displayCurrency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
 
-  // Current-month spending per category.
-  const spendByCat = useMemo(() => {
-    const map: Record<string, number> = {};
-    (txns ?? []).forEach((t) => {
-      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || !countsInTotals(t, displayCurrency)) return;
-      const cat = t.category ?? 'other';
-      map[cat] = (map[cat] ?? 0) + t.amount;
-    });
-    return map;
-  }, [txns, thisMonth, displayCurrency]);
+  // Current-month spending per category (lib/totals.ts, which the API's
+  // budgets share).
+  const spendByCat = useMemo(
+    () => spendingByCategory(txns ?? [], (date) => date.slice(0, 7) === thisMonth, displayCurrency),
+    [txns, thisMonth, displayCurrency]
+  );
 
   // This month's spending in other currencies, named rather than added.
   const leftOut = useMemo(

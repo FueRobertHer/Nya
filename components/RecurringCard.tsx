@@ -8,13 +8,15 @@
 // forecast. Tap one for "Not recurring", which dismisses it from here, the
 // forecast, the calendar and Home's upcoming bills; it is saved with the
 // planned items (lib/planned.ts), and the dismissed are listed to restore.
-// The monthly figures add up what is in the totals' currency.
+// The monthly figures add up what is in the totals' currency, as the read-only
+// API does (lib/totals.ts recurringMonthly).
 
 import { useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
-import { addDays, cadenceLabel, expectedDates, perMonth, type RecurringSeries } from '@/lib/recurring';
+import { addDays, cadenceLabel, expectedDates, type RecurringSeries } from '@/lib/recurring';
 import { formatMoney } from '@/lib/format';
-import { leftOutText, type LeftOut } from '@/lib/spending';
+import { leftOutText } from '@/lib/spending';
+import { countsInMonthly, recurringMonthly } from '@/lib/totals';
 import type { NoSpending } from '@/lib/no-transactions';
 
 function fmtDay(iso: string): string {
@@ -77,23 +79,19 @@ export default function RecurringCard({
   const dismissedRows = series.filter((s) => gone.has(s.id));
 
   // In a monthly figure: still coming, its amount known, and not a card's
-  // payment (its card's bills are counted where they are charged).
-  const inTotal = (r: Row) => r.status !== 'ended' && r.series.agreement !== 'varies' && !r.series.paysCard;
-  // A month's worth of what is still coming, in one currency; the rest named.
-  const monthly = (list: Row[]) => {
-    let total = 0;
-    const others = new Map<string, number>();
-    for (const r of list) {
-      if (!inTotal(r)) continue;
-      const c = r.series.currency ?? currency;
-      if (c === currency || currency === null) total += perMonth(r.series);
-      else if (c) others.set(c, (others.get(c) ?? 0) + 1);
-    }
-    const leftOut: LeftOut = [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count);
-    return { total, leftOut };
-  };
-  const billsMonthly = monthly(bills);
-  const incomeMonthly = monthly(income);
+  // payment (its card's bills are counted where they are charged). A month's
+  // worth of what is still coming, in one currency; the rest named.
+  const inTotal = (r: Row) => countsInMonthly(r.series, today);
+  const billsMonthly = recurringMonthly(
+    bills.map((r) => r.series),
+    today,
+    currency
+  );
+  const incomeMonthly = recurringMonthly(
+    income.map((r) => r.series),
+    today,
+    currency
+  );
   const leftOut = [
     leftOutText(billsMonthly.leftOut, currency, { noun: 'bill', where: 'this total', plural: false }),
     leftOutText(incomeMonthly.leftOut, currency, { noun: 'deposit', where: 'the income total', plural: false }),

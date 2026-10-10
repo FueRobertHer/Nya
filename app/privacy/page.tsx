@@ -6,6 +6,7 @@ import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/dele
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
+import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -82,15 +83,22 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   },
   {
     promise: 'AI features are opt-in and act only on what you point them at.',
-    today: 'Nya has no AI features, and sends nothing to an AI provider.',
+    today:
+      'Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.',
     next: { label: 'Planned', text: 'Reading receipts: off unless you turn it on, and only for the receipt you choose.' },
   },
   {
     promise: 'You can leave.',
-    today: 'You can download everything stored about you, and delete your account and everything stored for you, at any time.',
+    today: (
+      <>
+        You can download everything stored about you, and delete your account and everything stored for you, at any time.
+        A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the{' '}
+        <a href="/developers">Developers page</a>).
+      </>
+    ),
     next: {
       label: 'Not built yet',
-      text: 'A public API, a way to bring your download into another copy of Nya, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
+      text: 'Writing through the API, a way to bring your download into another copy of Nya, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
     },
   },
 ];
@@ -163,9 +171,18 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
     'Copies of what the dashboard shows',
     'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted.',
   ],
+  [
+    'API tokens',
+    'Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.',
+  ],
+  [
+    'Requests counted for each API token',
+    `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`,
+  ],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],
+  ['Requests with API tokens that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
   [
     'What your device keeps',
     'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere.',
@@ -247,8 +264,8 @@ export default function PrivacyPage() {
         </p>
         <p>
           The file itself is not encrypted, so keep it somewhere safe. It leaves out the tokens that reach your banks,
-          which are credentials rather than your data, your sign-in, and other people’s data; the JSON file lists what it
-          leaves out.
+          which are credentials rather than your data, your API tokens themselves (each one’s name and dates are in), your
+          sign-in, and other people’s data; the JSON file lists what it leaves out.
         </p>
       </InfoSection>
 

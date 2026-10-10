@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, testKey, unscopedDataKeys } from './fake-redis';
+import { startRedis, type RealRedis } from './real-redis';
 
 const fake = new FakeRedis({ deserialize: true });
 // Nothing may be written outside a container (#53).
@@ -212,30 +213,22 @@ describe('the route', () => {
 // The create script on a real Redis, where one is installed (not in CI).
 const hasRedis = Bun.which('redis-server') !== null;
 describe.skipIf(!hasRedis && !process.env.CI)('the create script, on a real Redis', () => {
-  const port = 30000 + Math.floor(Math.random() * 20000);
-  let server: ReturnType<typeof Bun.spawn> | null = null;
-  let client: InstanceType<typeof Bun.RedisClient>;
+  // Started by test/real-redis.ts, which tries another port when one is taken
+  // and bounds every wait, so a server that won't start fails the test rather
+  // than hanging it.
+  let real: RealRedis | null = null;
 
   beforeEach(async () => {
-    if (!server) {
-      server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
-      client = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
-      for (let i = 0; i < 50; i++) {
-        try {
-          await client.send('PING', []);
-          break;
-        } catch {
-          await Bun.sleep(50);
-        }
-      }
-    }
-    await client.send('FLUSHALL', []);
+    real ??= await startRedis();
+    await real.client.send('FLUSHALL', []);
   });
   afterAll(() => {
-    server?.kill();
+    real?.stop();
+    real = null;
   });
 
   test('writes only into an empty registry', async () => {
+    const client = real!.client;
     expect(await client.send('EVAL', [CREATE_FIRST, '1', 'reg', 'a', '{}'])).toBe(1);
     expect(await client.send('EVAL', [CREATE_FIRST, '1', 'reg', 'b', '{}'])).toBe(0);
     expect(await client.send('HKEYS', ['reg'])).toEqual(['a']);

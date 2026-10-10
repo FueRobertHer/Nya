@@ -17,7 +17,10 @@
 // the line is a note, not a figure. If what is stored can't be read (409),
 // recording has stopped too, and it says so, since a day not recorded is lost
 // for good. When only the index is damaged it offers to rebuild it from the
-// months, and does so only once the person confirms.
+// months, and does so only once the person confirms. An index gone missing
+// beside the months (deleted by hand, or a rollback) stops no recording, which
+// derives it again, but until then the months can't be read: it says so, never
+// that nothing was recorded, and offers the same rebuild.
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -39,9 +42,11 @@ export type SummaryState =
   /** A passing failure: nothing to say. */
   | { kind: 'quiet' }
   | { kind: 'recorded'; span: RecordedSpan }
-  /** What is stored can't be read, so recording has stopped. `repairable`:
-   *  only the index, damaged, which the months can rebuild. */
-  | { kind: 'unreadable'; repairable: boolean };
+  /** What is stored can't be read. Recording has stopped too, unless
+   *  `indexMissing`: the index is missing beside the months, which recording
+   *  derives again. `repairable`: only the index, damaged or missing, which
+   *  the months can rebuild. */
+  | { kind: 'unreadable'; repairable: boolean; indexMissing?: boolean };
 
 /** Where a repair is: not asked for, asked and waiting for the person's
  *  word, under way, or refused with the server's reason. */
@@ -95,7 +100,9 @@ const isInstantOrNull = (v: unknown) => v === undefined || v === null || (typeof
 /** What a summary answer means for the line. Pure. */
 export function summaryState(status: number, body: unknown): SummaryState {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
-  if (status === 409 && b.unreadable === true) return { kind: 'unreadable', repairable: b.repairable === true };
+  if (status === 409 && b.unreadable === true) {
+    return { kind: 'unreadable', repairable: b.repairable === true, ...(b.index_missing === true ? { indexMissing: true } : {}) };
+  }
   if (status !== 200 || !isDayOrNull(b.first_recorded) || !isDayOrNull(b.last_recorded)) return { kind: 'quiet' };
   if (!isInstantOrNull(b.first_recorded_at) || !isInstantOrNull(b.last_recorded_at)) return { kind: 'quiet' };
   return {
@@ -109,12 +116,15 @@ export function summaryState(status: number, body: unknown): SummaryState {
   };
 }
 
-/** Asks the server to rebuild the index: what it answered, in the person's
- *  words. `damagedMonths` counts months too damaged to read, left as they
- *  were. */
-export async function requestRepair(
-  send: typeof fetch = fetch
-): Promise<{ ok: true; damagedMonths: number } | { ok: false; error: string }> {
+/** What the server answered a repair: done, with `damagedMonths` too damaged
+ *  to read and left as they were, or refused in the person's words.
+ *  `readAgain`: refused with nothing unreadable (a 409 without the flag), so
+ *  the index reads now or just changed: a recording derived a missing one
+ *  first, say. */
+export type RepairResult = { ok: true; damagedMonths: number } | { ok: false; error: string; readAgain: boolean };
+
+/** Asks the server to rebuild the index. */
+export async function requestRepair(send: typeof fetch = fetch): Promise<RepairResult> {
   try {
     const res = await send('/api/holdings-history', {
       method: 'POST',
@@ -123,10 +133,25 @@ export async function requestRepair(
     });
     const body = await res.json().catch(() => ({}));
     if (res.ok) return { ok: true, damagedMonths: Number.isSafeInteger(body?.damaged_months) ? body.damaged_months : 0 };
-    return { ok: false, error: typeof body?.error === 'string' && body.error ? body.error : 'Could not repair holdings history. Try again.' };
+    return {
+      ok: false,
+      error: typeof body?.error === 'string' && body.error ? body.error : 'Could not repair holdings history. Try again.',
+      readAgain: res.status === 409 && body?.unreadable !== true,
+    };
   } catch {
-    return { ok: false, error: 'Could not reach Nya. Try again.' };
+    return { ok: false, error: 'Could not reach Nya. Try again.', readAgain: false };
   }
+}
+
+/** What a repair's answer does, pure: done, or refused with nothing left to
+ *  repair, closes the sheet and reads the line again (so a line that said the
+ *  history can't be read never stays after the index came back); any other
+ *  refusal stays on the sheet, in the server's words. `damagedMonths` is what
+ *  the line says was left damaged, when it is read again. */
+export function afterRepair(result: RepairResult): { phase: RepairPhase; readAgain: boolean; damagedMonths: number } {
+  if (result.ok) return { phase: { kind: 'closed' }, readAgain: true, damagedMonths: result.damagedMonths };
+  if (result.readAgain) return { phase: { kind: 'closed' }, readAgain: true, damagedMonths: 0 };
+  return { phase: { kind: 'failed', error: result.error }, readAgain: false, damagedMonths: 0 };
 }
 
 /** The line, or what stopped it, pure. */
@@ -146,7 +171,11 @@ export function HoldingsRecordedView({
   if (state.kind === 'unreadable') {
     return (
       <div className="as-of stale">
-        Holdings history can&apos;t be read, so it isn&apos;t being recorded.
+        {state.indexMissing ? (
+          <>Holdings history can&apos;t be read: the list of where its months are kept is missing.</>
+        ) : (
+          <>Holdings history can&apos;t be read, so it isn&apos;t being recorded.</>
+        )}
         {state.repairable && (
           <>
             {' '}
@@ -172,16 +201,34 @@ export function HoldingsRecordedView({
   );
 }
 
-/** What the repair says before it does anything, pure. */
-export function RepairConfirm({ phase, onCancel, onConfirm }: { phase: RepairPhase; onCancel: () => void; onConfirm: () => void }) {
+/** What the repair says before it does anything, pure. `missing`: the list
+ *  is missing rather than damaged, which stops no recording. */
+export function RepairConfirm({
+  phase,
+  missing = false,
+  onCancel,
+  onConfirm,
+}: {
+  phase: RepairPhase;
+  missing?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   const busy = phase.kind === 'repairing';
   return (
     <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
-        are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
-        damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
-      </p>
+      {missing ? (
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          The list of where each month of your holdings history is kept is missing, so what was recorded can&apos;t be
+          read. Nya can rebuild it from the months themselves. Nothing is lost: every month stays as it is.
+        </p>
+      ) : (
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
+          are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
+          damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
+        </p>
+      )}
       {phase.kind === 'failed' && <div className="error">{phase.error}</div>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
@@ -223,13 +270,10 @@ export default function HoldingsRecorded({ accountId }: { accountId: string }) {
 
   const repair = useCallback(async () => {
     setPhase({ kind: 'repairing' });
-    const result = await requestRepair();
-    if (!result.ok) {
-      setPhase({ kind: 'failed', error: result.error });
-      return;
-    }
-    setPhase({ kind: 'closed' });
-    setDamagedMonths(result.damagedMonths);
+    const next = afterRepair(await requestRepair());
+    setPhase(next.phase);
+    if (!next.readAgain) return;
+    setDamagedMonths(next.damagedMonths);
     setReload((n) => n + 1);
   }, []);
 
@@ -250,7 +294,7 @@ export default function HoldingsRecorded({ accountId }: { accountId: string }) {
         state.repairable &&
         createPortal(
           <Sheet open={phase.kind !== 'closed'} title="Repair holdings history" onClose={close}>
-            <RepairConfirm phase={phase} onCancel={close} onConfirm={() => void repair()} />
+            <RepairConfirm phase={phase} missing={state.indexMissing === true} onCancel={close} onConfirm={() => void repair()} />
           </Sheet>,
           portal
         )}
