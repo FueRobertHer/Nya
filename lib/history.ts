@@ -700,7 +700,15 @@ export async function readMeasuredBalances(
 }
 
 /** One day of a stored series, as the download of my data gives it. */
-export type StoredPoint = { date: string; value: number; estimated: boolean };
+export type StoredPoint = {
+  date: string;
+  value: number;
+  estimated: boolean;
+  /** An account's balance measured on a day the snapshot was partial
+   *  (ACCOUNTS_PARTIAL_HASH): the moment that day's snapshot was taken
+   *  (snapshotTakenAt) isn't this balance's. */
+  partial?: true;
+};
 
 /** The days a series has stored that can't be used, by why, each in date
  *  order, as the storage seam reports entries (lib/repo.ts getAllReport):
@@ -827,7 +835,7 @@ export async function readHistoryForExport(
     for (const id of ids) {
       let point: StoredPoint | null = null;
       const measured = num(partial, id);
-      if (measured !== null) point = { date, value: measured, estimated: false };
+      if (measured !== null) point = { date, value: measured, estimated: false, partial: true };
       else if (Object.hasOwn(realAcc, date)) {
         // A recorded map that doesn't name the account says it wasn't there
         // that day: no estimate stands in for it. Nor for a recorded map that

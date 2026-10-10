@@ -86,8 +86,8 @@ describe('with Clerk on', () => {
     }
   });
 
-  test('so do the security, privacy and developer pages, and the password login (which sends people to sign-in)', async () => {
-    for (const path of ['/security', '/privacy', '/developers', '/login']) {
+  test('so do the security, privacy, developer and protected-download pages, and the password login (which sends people to sign-in)', async () => {
+    for (const path of ['/security', '/privacy', '/developers', '/open-download', '/login']) {
       const res = await call(path);
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();

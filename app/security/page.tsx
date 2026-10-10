@@ -7,6 +7,7 @@ import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -22,7 +23,8 @@ export const metadata: Metadata = {
 // (lib/crypto.ts), how backups are kept (lib/backup.ts backupRetention, the
 // rule the deletion receipt uses too) and whether this copy sends email
 // (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
-// write to), since each changes what is true of this copy.
+// write to, which also decides whether a download is emailed), since each
+// changes what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -55,7 +57,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     ? ([
         [
           'Resend, the email service',
-          'Your email address and the emails Nya sends you about your bank connections: which bank needs you and what to do, never a balance, an amount or an account number.',
+          'Your email address and the emails Nya sends you about your bank connections, and each time your data is downloaded or an API token is made: which bank needs you and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number.',
         ],
       ] as [string, string][])
     : []),
@@ -307,6 +309,25 @@ export default function SecurityPage() {
           everywhere or a change of the shared password; with sign-in accounts it stops when the account that made it is
           taken off the list of people allowed in. Deleting your account deletes every token with the rest of your data,
           and restoring a backup ends every token, since backups leave them out.
+        </p>
+      </InfoSection>
+
+      <InfoSection title="Downloading your data">
+        <p>
+          A download of your data needs a fresh sign-in, as making an API token does, and each account can download{' '}
+          {DOWNLOADS_PER_WINDOW} times an hour.{' '}
+          {mail
+            ? 'Each download is emailed to you, so one you didn’t make shows.'
+            : 'This copy of Nya sends no email, so a download isn’t emailed to you.'}{' '}
+          The file is made as it is sent to your browser and never written anywhere on the way.
+        </p>
+        <p>
+          You can protect it with a passphrase. It is then encrypted as it is sent, in the age format
+          (age-encryption.org): a key made from your passphrase with scrypt, at the setting age itself uses, which makes
+          each guess at it slow, locks a random key, and the file is encrypted with ChaCha20-Poly1305 in parts that each
+          carry a check, so a file that was changed, cut short or put back together in another order doesn’t open. The
+          passphrase is sent to Nya with the request, used for that, and never stored or logged. Nobody can recover a lost
+          one.
         </p>
       </InfoSection>
 
