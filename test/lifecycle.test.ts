@@ -36,6 +36,7 @@ const {
 } = await import('@/lib/lifecycle');
 const { getHistory, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates, endBreaks } = await import('@/lib/history');
 const { UnreadableEntriesError } = await import('@/lib/repo');
+const { recordDirectory, forgetEarlierAccount, ForgetRefused } = await import('@/lib/links');
 const { timelineNotesStore, autoNoteId } = await import('@/lib/timeline-notes');
 type Link = { to: string; linked_at: string; evidence: Record<string, unknown> };
 
@@ -350,6 +351,39 @@ describe('the math, applied on read', () => {
     await recordDay('2026-03-11', { chk: 500 }, TYPES); // the bank stopped returning it
     await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
     expect(byDate(await getHistory(ctx, undefined, (await view()).ended))).toEqual({ '2026-03-10': 1500, '2026-03-11': 500 });
+  });
+});
+
+describe('forgetting an account that ended', () => {
+  // Known from an institution since disconnected (no stored Item): an earlier
+  // account that can be forgotten.
+  async function disconnected(id: string) {
+    await recordDirectory(ctx, [{ item_id: 'item_gone', institution_name: 'Ally', error: null, accounts: [{ account_id: id, type: 'depository', subtype: 'savings' }] }] as any);
+  }
+
+  test('is refused while its balances after its end keep it out of the totals, which stay as they were', async () => {
+    await seedThreeDays();
+    await disconnected('sav');
+    await markEnded(ctx, 'sav', { state: 'left', on: '2026-03-11' }, ABOUT, NOW);
+    const shown = await getHistory(ctx, undefined, (await getEffectiveLifecycle(ctx, new Map())).ended);
+    const err = await forgetEarlierAccount(ctx, 'sav').catch((e) => e);
+    expect(err).toBeInstanceOf(ForgetRefused);
+    expect(err.message).toContain('It stopped counting on 2026-03-11');
+    expect(await getHistory(ctx, undefined, (await getEffectiveLifecycle(ctx, new Map())).ended)).toEqual(shown);
+  });
+
+  test('one not reported after its end, the usual closure, is forgotten as any other', async () => {
+    await recordDay('2026-03-10', { sav: 1000, chk: 500 }, TYPES);
+    await recordDay('2026-03-11', { chk: 500 }, TYPES);
+    await disconnected('sav');
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
+    const before = await getHistory(ctx);
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).not.toBeNull();
+    await forgetEarlierAccount(ctx, 'sav');
+    expect(await getHistory(ctx)).toEqual(before);
+    // Its closure and its note named it: they go with the rest of it.
+    expect(await lifecycleStore.get(ctx, 'sav')).toBeNull();
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toBeNull();
   });
 });
 

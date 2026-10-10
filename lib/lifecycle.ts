@@ -56,13 +56,13 @@
 // something it isn't. Only an entry whose bytes are damaged may be removed,
 // and only once the person confirms (removeUnreadable, app/api/account-lifecycle).
 
-import { defineMapStore, UnreadableEntriesError, type MapStore } from './repo';
+import { defineMapStore, StoredDataUnreadableError, UnreadableEntriesError, type MapStore } from './repo';
 import type { Ctx } from './containers';
 import { isCalendarDay, addDays } from './manual-txn-input';
 import { resolveId, sameAccountIds, getLinks, effectiveLinks, type Link } from './link-core';
 import { liveAccountIds } from './links';
 import { writeAutoNote, removeAutoNote } from './timeline-notes';
-import type { EndedAccounts } from './history';
+import { getHistory, type EndedAccounts } from './history';
 
 export type { EndedAccounts } from './history';
 
@@ -338,6 +338,40 @@ export function answersFrom(view: LifecycleView): LifecycleAnswers {
 /** Strict: every entry, or UnreadableEntriesError. */
 export async function readLifecycleEntries(ctx: Ctx): Promise<Map<string, LifecycleEntry>> {
   return lifecycleStore.getAll(ctx);
+}
+
+/**
+ * Why an earlier account can't be forgotten while it has an end, or null.
+ * From its end on, an account is taken out of each stored total by its own
+ * balances (getHistory): forgetting those (lib/links.ts forgetEarlierAccount)
+ * would put it back into every total from its end, and forgetting promises
+ * the past totals stay as they were. So it is refused only when that would
+ * change a point: an account not reported after its end, the usual closure,
+ * is forgotten as any other. A hidden one is folded out of every total by
+ * the forget itself. Strict: closures that can't be read throw.
+ */
+export async function endedForgetRefusal(ctx: Ctx, id: string, hidden: boolean): Promise<string | null> {
+  if (hidden) return null;
+  const entry = await lifecycleStore.get(ctx, id);
+  const end = entry ? endOf(entry.lifecycle) : null;
+  if (!entry || !end) return null;
+  const ended: EndedAccounts = new Map([[id, { type: entry.type, from: end }]]);
+  const [withEnd, without] = await Promise.all([getHistory(ctx, undefined, ended), getHistory(ctx)]);
+  const same = withEnd.length === without.length && withEnd.every((p, i) => p.date === without[i].date && p.value === without[i].value);
+  if (same) return null;
+  return `It stopped counting on ${end}, but balances after that are recorded, and forgetting them would put it back into your totals from then on. Reopen it first if that is what you want.`;
+}
+
+/**
+ * Forgetting an earlier account (lib/links.ts forgetEarlierAccount) takes its
+ * closure, which names it, and Nya's note about it, which does too. A note
+ * that can't be read holds nothing anyone can read, and is passed over.
+ */
+export async function forgetLifecycle(ctx: Ctx, id: string): Promise<void> {
+  await lifecycleStore.update(ctx, id, () => null);
+  await removeAutoNote(ctx, id).catch((err) => {
+    if (!(err instanceof StoredDataUnreadableError)) throw err;
+  });
 }
 
 /** A read that failed on closures that can't be read: the dashboard then
