@@ -96,7 +96,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `problems`
 
@@ -363,6 +363,23 @@ Your connections to SimpleFIN, one entry per connection: `id` is its id (as `ite
 | `history` | How much history has been fetched, or `null` before the first: `from` and `to`, UTC days with no gap between them, `complete` once two whole answers in a row had nothing older or two years were fetched, `failed`, when the last try at an older window got no whole answer, and `empty`, how many whole answers in a row brought nothing older. |
 
 It goes when you disconnect.
+
+#### `connector-ended`
+
+The accounts SimpleFIN kept up to date that you stopped tracking or disconnected, one entry per account under its id, kept so a [report](features.md#reports) on a period it was tracked in can say its transactions may be gone, or since then only the ones you entered. `value` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `connector` | `simplefin`. |
+| `connection_id` | The connection it came through (gone, after a disconnect). |
+| `host` | The server that connection reached, without the credentials, or `null` when the connection was already gone. |
+| `remote_id` | SimpleFIN's own id for the account. |
+| `name`, `institution_name`, `type` | Its name, its bank's and what you said it was. |
+| `tracked_at` | When you started tracking it. |
+| `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any. |
+| `ended_at` | When you let it go. |
+| `kept` | `true` when it was kept as a manual account, its transactions with it; `false` when it was removed, with them. |
 
 #### `fire-plan`
 

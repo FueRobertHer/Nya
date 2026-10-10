@@ -88,6 +88,13 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         );
         break;
       }
+      case 'disconnected': {
+        const one = g.accounts.length === 1;
+        out.push(
+          `${joinNames(g.accounts)} at ${g.institution} ${one ? 'was' : 'were'} disconnected on ${day(g.since)} and kept as ${one ? 'a manual account' : 'manual accounts'}, so from then on ${one ? 'its' : 'their'} transactions are only the ones you entered or imported: this report may be missing some of them.`
+        );
+        break;
+      }
       case 'removed_unknown':
       case 'own_categories':
       case 'own_exclusions':
@@ -121,6 +128,8 @@ export function gapShort(g: Gap, day: DayFormat): string {
       return 'You didn’t allow its bank or card transactions';
     case 'removed':
       return `Removed on or after ${day(g.last_seen)}`;
+    case 'disconnected':
+      return `Disconnected on ${day(g.since)}, kept as a manual account`;
     case 'removed_unknown':
     case 'own_categories':
     case 'own_exclusions':
@@ -181,6 +190,16 @@ export const MANUAL_NOTE = 'Transactions on a manual account are the ones you en
 export function caveatLines(report: Report, day: DayFormat): string[] {
   const { caveats, period } = report;
   const out: string[] = [];
+  // A card SimpleFIN reports as money held, waiting for an answer: its
+  // balance is held in the app, never its transactions.
+  for (const i of report.institutions) {
+    const c = i.connector;
+    if (!c || c.waiting.length === 0) continue;
+    const one = c.waiting.length === 1;
+    out.push(
+      `${c.label} reports ${joinNames(c.waiting)} at ${i.institution_name} as money held, and Nya is waiting for your answer about ${one ? 'it' : 'them'}: that holds ${one ? 'its' : 'their'} balance in the app, not ${one ? 'its' : 'their'} transactions, which are in this report as ${c.label} reports them.`
+    );
+  }
   if (caveats.not_over) out.push(`${period.start.slice(0, 4)} isn’t over: this report covers ${day(period.start)} to ${day(period.through)}.`);
   if (caveats.settling) out.push('Banks can take a few days to post a transaction, so the last days of this period may still change.');
   const scope = scopeLine(caveats.scope);

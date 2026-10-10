@@ -187,7 +187,8 @@ export default function ManualTxnSheet({
       id: newManualTxnId(),
       direction: 'out',
       amount: '',
-      currency: DEFAULT_CURRENCY,
+      // The account's own: US dollars, unless it was kept from SimpleFIN in another.
+      currency: accounts.find((a) => a.account_id === start)?.currency ?? DEFAULT_CURRENCY,
       name: '',
       date: localDate(),
       account_id: start,
@@ -220,14 +221,16 @@ export default function ManualTxnSheet({
   const account = options.find((a) => a.account_id === draft.account_id) ?? null;
   const owed = account ? isOwedType(account.type) : false;
   // The balance can follow only a new transaction in the balance's own
-  // currency (manual balances are in dollars, lib/manual.ts).
-  const balance = !edit && account && account.balance !== null && currency === DEFAULT_CURRENCY && signed !== null ? account.balance : null;
+  // currency (US dollars, unless the account was kept from SimpleFIN in
+  // another, lib/manual.ts).
+  const keptIn = account?.currency ?? DEFAULT_CURRENCY;
+  const balance = !edit && account && account.balance !== null && currency === keptIn && signed !== null ? account.balance : null;
   const after = balance === null ? null : balanceAfter(balance, signed!, owed);
   const negativeOwed = after !== null && owed && after < 0;
   const updating = draft.updateBalance && after !== null && !negativeOwed;
   const ready = signed !== null && !!draft.name.trim() && !!draft.date && !future && !!account && isCurrencyCode(currency);
   const busy = saving || done;
-  const money = (n: number) => formatMoney(n, DEFAULT_CURRENCY);
+  const money = (n: number) => formatMoney(n, keptIn);
 
   /** A typed payee seen before brings its last category, until one is picked. */
   function setName(name: string) {
@@ -320,8 +323,8 @@ export default function ManualTxnSheet({
   let balanceNote: string;
   if (edit) balanceNote = `Editing or deleting a transaction doesn't change ${name}'s balance. Update that from the account itself.`;
   else if (negativeOwed) balanceNote = `This would take the amount owed on ${name} below zero, so update that from the account itself.`;
-  else if (account && currency !== DEFAULT_CURRENCY && isCurrencyCode(currency))
-    balanceNote = `${name}'s balance is kept in ${DEFAULT_CURRENCY}, so a transaction in ${currency} leaves it as it is.`;
+  else if (account && currency !== keptIn && isCurrencyCode(currency))
+    balanceNote = `${name}'s balance is kept in ${keptIn}, so a transaction in ${currency} leaves it as it is.`;
   else balanceNote = `Adding a transaction doesn't change ${name}'s balance, which stays what you typed${after !== null ? '. Tick the box to update it too.' : '.'}`;
 
   return (

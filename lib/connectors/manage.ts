@@ -45,12 +45,28 @@
 //     never rewritten, so past net-worth totals still hold them, as they do a
 //     disconnected bank's; a hidden account stays hidden, so those totals
 //     read as they did.
+// Either way, what was let go is recorded first (connector-ended: what it
+// was, when, and which way), so a report on a period it was tracked in says
+// its transactions may be gone, or since then only entered by hand, as the
+// account directory lets it say of a removed Plaid connection.
 // A disconnect then deletes the Access URL and the connection, so nothing is
 // fetched again. SimpleFIN can't be told: the person removes Nya from their
 // SimpleFIN account themselves, and the routes say so.
 
 import type { Ctx } from '../containers';
-import { connectionsStore, connectorAccountsStore, secretsStore, claimsCount, CLAIMS_PER_HOUR, newConnectionId, type ConnectorAccount, type ConnectorConnection, type OwedSign } from './store';
+import {
+  connectionsStore,
+  connectorAccountsStore,
+  endedAccountsStore,
+  secretsStore,
+  claimsCount,
+  CLAIMS_PER_HOUR,
+  newConnectionId,
+  type ConnectorAccount,
+  type ConnectorConnection,
+  type EndedAccount,
+  type OwedSign,
+} from './store';
 import { connectorOf } from './registry';
 import { syncConnection, type SyncResult } from './sync';
 import { institutionRef, needsSign, nyaBalance, trackedElsewhere } from './institutions';
@@ -358,6 +374,37 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
   const accounts = [...(await connectorAccountsStore.getMany(ctx, account_ids)).values()];
   const refused = keep ? keepRefusal(accounts) : null;
   if (refused) throw new ConnectorRefused(refused, 409);
+  // What is let go, and how, recorded before anything changes, so a report on
+  // a period it was tracked in says its transactions may be gone, or since
+  // then only entered by hand (lib/report/read.ts). Strict: an account goes
+  // only once that is kept.
+  if (accounts.length > 0) {
+    const conns = await connectionsStore.getMany(ctx, [...new Set(accounts.map((a) => a.connection_id))]);
+    const at = new Date(now).toISOString();
+    await endedAccountsStore.setMany(
+      ctx,
+      accounts.map((a): [string, EndedAccount] => {
+        const conn = conns.get(a.connection_id);
+        return [
+          a.account_id,
+          {
+            version: 1,
+            connector: a.connector,
+            connection_id: a.connection_id,
+            host: conn?.host ?? null,
+            remote_id: a.remote_id,
+            name: a.name,
+            institution_name: a.institution_name,
+            type: a.type,
+            tracked_at: a.created_at,
+            history_from: conn?.history?.from ?? null,
+            ended_at: at,
+            kept: keep && nyaBalance(a) !== null,
+          },
+        ];
+      })
+    );
+  }
   const out: Released = { kept: [], removed: [], nothing_to_keep: [] };
   const manual = keep ? new Set((await getManualAccounts(ctx)).map((a) => a.account_id)) : new Set<string>();
   for (const a of accounts) {

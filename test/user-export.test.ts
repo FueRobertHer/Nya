@@ -1020,6 +1020,7 @@ describe('stores built on the storage seam', () => {
       'connection-warnings',
       'connector-accounts',
       'connector-connections',
+      'connector-ended',
       'export-test-plans',
       'export-test-settings',
       'fire-plan',

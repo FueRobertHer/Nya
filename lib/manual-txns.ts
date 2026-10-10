@@ -639,7 +639,10 @@ export async function readManualTxnsForDisplay(
   const flawed = new Set([...unreadable, ...unrecognised]);
   const institutionOf = institutionsOf(accounts);
   const unshown = accounts.filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id));
-  notes.push(...unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions entered for ${a.name} couldn't be read`));
+  notes.push(
+    // An account SimpleFIN feeds holds its rows, not ones entered by hand.
+    ...unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions ${a.connector ? 'from SimpleFIN' : 'entered'} for ${a.name} couldn't be read`)
+  );
   return {
     txns: manualRowsForDisplay(accounts, entries, opts),
     notes,

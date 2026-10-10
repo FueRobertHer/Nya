@@ -166,7 +166,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   ],
   [
     'A SimpleFIN connection',
-    'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
+    'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing: it goes with your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
   ],
   ['Nightly backups', backupsRow(backups)],
   [

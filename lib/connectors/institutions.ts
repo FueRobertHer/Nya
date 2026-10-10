@@ -221,6 +221,8 @@ function errorLine(issue: ConnectorIssue, label: string, messages: string[]): st
       return `${label} needs connecting again`;
     case 'payment':
       return `${label} says your subscription needs paying`;
+    case 'unreadable':
+      return `What Nya keeps about this ${label} connection couldn't be read`;
     default:
       return `Couldn't refresh from ${label}`;
   }
@@ -317,6 +319,59 @@ export async function connectorInstitutions(ctx: Ctx, now: number = Date.now()):
   if (accounts.size === 0) return [];
   const connections = await connectionsStore.getAll(ctx);
   return buildConnectorInstitutions(connections, accounts.values(), now);
+}
+
+/** What a read-only display needs of the connector's banks (the API,
+ *  lib/api-read.ts, and reports, lib/report/read.ts): each card, the
+ *  connection it comes through, and what couldn't be read, named. */
+export type ConnectorBanksReport = {
+  cards: InstitutionResult[];
+  /** The readable account entries, by id: what each card shows them from. */
+  accounts: ReadonlyMap<string, ConnectorAccount>;
+  /** The readable connection entries, by id: their history, host and label. */
+  connections: ReadonlyMap<string, ConnectorConnection>;
+  /** Each card's connection entry that couldn't be read, by connection id:
+   *  how its banks are doing isn't known (their cards say `unreadable`). */
+  unreadableConnections: ReadonlySet<string>;
+  /** Account entries that couldn't be read, by id and why: never listed as
+   *  accounts, and never taken for none. */
+  unreadable: { account_id: string; reason: 'unreadable' | 'unrecognised' }[];
+  /** When each card's latest request was made, by card id (`item_id`): when
+   *  what is wrong was last found, or null before any. */
+  askedAt: ReadonlyMap<string, string | null>;
+};
+
+/**
+ * The cards, read for a display that names what it can't read rather than
+ * stopping: the read-only API and reports. LENIENT, for those displays only,
+ * which nothing writes, deletes or records on: an account entry that can't be
+ * read is named (`unreadable`) and left out; a connection entry that can't be
+ * read leaves its banks' cards saying so (issue 'unreadable'), never gone.
+ * Recording a snapshot reads both stores strictly (connectorInstitutions).
+ * Storage out of reach still throws.
+ */
+export async function connectorBanksReport(ctx: Ctx, now: number = Date.now()): Promise<ConnectorBanksReport> {
+  const accounts = await connectorAccountsStore.getAllReport(ctx);
+  const unreadable = [
+    ...accounts.unreadable.map((account_id) => ({ account_id, reason: 'unreadable' as const })),
+    ...accounts.unrecognised.map((account_id) => ({ account_id, reason: 'unrecognised' as const })),
+  ];
+  if (accounts.entries.size === 0) return { cards: [], accounts: accounts.entries, connections: new Map(), unreadableConnections: new Set(), unreadable, askedAt: new Map() };
+  const connections = await connectionsStore.getAllReport(ctx);
+  const damaged = new Set([...connections.unreadable, ...connections.unrecognised]);
+  const cards = buildConnectorInstitutions(connections.entries, accounts.entries.values(), now).map((card) => {
+    const id = card.connection_id ?? null;
+    if (!id || !damaged.has(id) || !card.health?.detail) return card;
+    const detail: ConnectorDetail = { ...card.health.detail, issue: 'unreadable', messages: [], accounts: [] };
+    return { ...card, error: errorLine('unreadable', detail.label, []), health: connectorHealth(detail, card.health.last_ok_at) };
+  });
+  const askedAt = new Map(
+    cards.map((card) => {
+      const conn = card.connection_id ? connections.entries.get(card.connection_id) : undefined;
+      return [card.item_id, conn?.last_fetch?.at ?? null] as const;
+    })
+  );
+  return { cards, accounts: accounts.entries, connections: connections.entries, unreadableConnections: damaged, unreadable, askedAt };
 }
 
 /** The card for connector accounts that couldn't be read: no accounts, an

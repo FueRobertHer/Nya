@@ -1,7 +1,7 @@
 // lib/connectors/store.ts
 //
 // What Nya keeps for the connectors a person brings (lib/connectors/types.ts),
-// in five stores on the storage seam (lib/repo.ts), all inside the person's
+// in six stores on the storage seam (lib/repo.ts), all inside the person's
 // container, so deleting the account deletes them:
 //
 //   connector-secrets      one entry per connection: the credential the
@@ -32,6 +32,16 @@
 //                          sign of its balance, its currency, and the balance
 //                          as the connector reported it, with the day the
 //                          institution gave it. In the download.
+//   connector-ended        one entry per account the person let go (stopped
+//                          tracking, or disconnected), under its id: what it
+//                          was, the connection it came through, when it was
+//                          tracked and let go, and whether it was kept as a
+//                          manual account (its transactions with it) or
+//                          removed with them. Written before anything goes,
+//                          so a report on a period it was tracked in can say
+//                          its transactions may be gone, as the account
+//                          directory lets it say of a removed Plaid
+//                          connection (lib/report/read.ts). In the download.
 //   connector-requests     a count per container: the requests made to
 //                          connectors in the current day's window, the budget
 //                          that keeps Nya well under what a connector allows
@@ -274,6 +284,48 @@ export function isConnectorAccount(v: unknown): v is ConnectorAccount {
   );
 }
 
+/** An account the person let go: see connector-ended in the header. */
+export type EndedAccount = {
+  version: 1;
+  connector: ConnectorKind;
+  connection_id: string;
+  /** The host its connection reached (never the credential), or null when
+   *  the connection was gone already (a disconnect that stopped part way). */
+  host: string | null;
+  /** The connector's own id for it. */
+  remote_id: string;
+  name: string;
+  institution_name: string;
+  type: ManualType;
+  /** When it was first tracked. */
+  tracked_at: string;
+  /** The first day of transactions its connection had fetched, or null
+   *  before any. */
+  history_from: string | null;
+  /** When it was let go. */
+  ended_at: string;
+  /** Kept as a manual account, with its transactions; or removed, with them. */
+  kept: boolean;
+};
+
+function isEndedAccount(v: unknown): v is EndedAccount {
+  return (
+    isRecord(v) &&
+    v.version === 1 &&
+    isConnectorKind(v.connector) &&
+    isText(v.connection_id, 200) &&
+    (v.host === null || isText(v.host, 300)) &&
+    isText(v.remote_id, 200) &&
+    isText(v.name, 200) &&
+    isText(v.institution_name, 200) &&
+    (MANUAL_TYPES as readonly unknown[]).includes(v.type) &&
+    isTime(v.tracked_at) &&
+    (v.history_from === null || isCalendarDay(v.history_from)) &&
+    isTime(v.ended_at) &&
+    typeof v.kept === 'boolean'
+  );
+}
+
 function isSecret(v: unknown): v is ConnectorSecret {
   return isRecord(v) && isConnectorKind(v.connector) && typeof v.secret === 'string' && v.secret.length > 0 && v.secret.length <= 4096;
 }
@@ -287,6 +339,12 @@ export const connectionsStore = defineMapStore<ConnectorConnection>('connector-c
 export const connectorAccountsStore = defineMapStore<ConnectorAccount>('connector-accounts', {
   what: 'accounts from SimpleFIN',
   isValid: isConnectorAccount,
+  exportable: true,
+});
+
+export const endedAccountsStore = defineMapStore<EndedAccount>('connector-ended', {
+  what: 'accounts you stopped tracking through SimpleFIN',
+  isValid: isEndedAccount,
   exportable: true,
 });
 
