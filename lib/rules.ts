@@ -428,6 +428,20 @@ export function ruleProblem(r: Rule, ix: CategoryIndex | null): string | null {
 /** A rule that does nothing: no action left (its tags were deleted). */
 export const doesNothing = (r: Rule): boolean => Object.keys(r.actions).length === 0;
 
+/** A rule with each category it names as it is known now, following a merge
+ *  to where it went: what the screens and the API show, so a rule on a
+ *  category merged away is edited with the one it went into. One that is
+ *  gone stays as it is (ruleProblem). Nothing stored changes until the rule
+ *  is saved. */
+export function withCurrentCategories(r: Rule, ix: CategoryIndex | null): Rule {
+  if (!ix) return r;
+  const now = (id: string) => categoryById(ix, id)?.id ?? id;
+  const conditions = r.conditions.map((c) => (c.field === 'category' && now(c.value) !== c.value ? { ...c, value: now(c.value) } : c));
+  const set = r.actions.set_category;
+  const actions = set && now(set) !== set ? { ...r.actions, set_category: now(set) } : r.actions;
+  return conditions.every((c, i) => c === r.conditions[i]) && actions === r.actions ? r : { ...r, conditions, actions };
+}
+
 // ---- Applying ----
 
 /** What conditions read of a transaction, worked out once per row

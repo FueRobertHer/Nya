@@ -17,6 +17,7 @@ import {
   ruleProblem,
   RuleError,
   sortedRules,
+  withCurrentCategories,
   type RuleContext,
   type RuleSet,
 } from '@/lib/rules';
@@ -24,8 +25,9 @@ import {
 // Your rules (lib/rules.ts), for the Rules screen under Manage
 // (components/RulesCard.tsx) and "Create a rule from this" on a transaction.
 //
-// GET answers the rules in the order they run (`rules`), and, by id, what
-// keeps one from working (`problems`: a category it names was deleted).
+// GET answers the rules in the order they run (`rules`, each category they
+// name as it is known now, following a merge), and, by id, what keeps one
+// from working (`problems`: a category it names was deleted).
 //
 // POST makes one change, named by `action`, in one compare-and-set, and
 // answers the rules as they are after it:
@@ -52,7 +54,7 @@ function failure(err: unknown, what: string): NextResponse {
 /** The answer: the rules in order, and what keeps any from working. */
 async function answer(set: RuleSet, ctx: Awaited<ReturnType<typeof dataCtx>>, extra: Record<string, unknown> = {}) {
   const ix = indexTaxonomy(await ensureTaxonomy(ctx));
-  const rules = sortedRules(set);
+  const rules = sortedRules(set).map((r) => withCurrentCategories(r, ix));
   const problems = Object.fromEntries(rules.flatMap((r) => {
     const p = ruleProblem(r, ix);
     return p ? [[r.id, p]] : [];

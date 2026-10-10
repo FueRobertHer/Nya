@@ -197,7 +197,11 @@ describe('applied on read, to every past and future match', () => {
     const into = catId('general merchandise');
     await route('categories', 'POST', { action: 'merge', id: online, into });
     expect((await rowOf('t_recent')).category_id).toBe(into);
-    expect((await route('rules', 'GET')).body.problems).toEqual({});
+    const after = (await route('rules', 'GET')).body;
+    expect(after.problems).toEqual({});
+    // Shown, and so edited, with the category it went into; stored as it was until saved.
+    expect(after.rules.rules[0].actions.set_category).toBe(into);
+    expect((await rulesStore.get(ctx))!.rules[0].actions.set_category).toBe(online);
   });
 
   test('a rule whose category is gone is shown broken and does nothing, never re-pointed', async () => {

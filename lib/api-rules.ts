@@ -10,7 +10,7 @@
 
 import type { Ctx } from './containers';
 import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
-import { readRuleSet, ruleProblem, ruleSentence, sortedRules, type RuleActions, type RuleCondition } from './rules';
+import { readRuleSet, ruleProblem, ruleSentence, sortedRules, withCurrentCategories, type RuleActions, type RuleCondition } from './rules';
 
 export type ApiRule = {
   id: string;
@@ -38,7 +38,9 @@ export async function readRules(ctx: Ctx, opts: { includeHidden?: boolean } = {}
   const names = { ix: activity.ix, tags: activity.tags };
   return {
     from: firstDay(),
-    rules: sortedRules(set).map((r) => ({
+    // Each category a rule names as it is known now: one merged away is
+    // answered as the one it went into, which categories lists.
+    rules: sortedRules(set).map((stored) => withCurrentCategories(stored, activity.ix)).map((r) => ({
       id: r.id,
       enabled: r.enabled,
       priority: r.priority,
