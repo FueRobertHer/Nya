@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { planHistoryImport, type PlanHeld } from '@/lib/history-import/plan';
-import { bankKey, type BankRow } from '@/lib/history-import/match';
+import { bankKey, settle, type BankRow } from '@/lib/history-import/match';
 import { normalizeRecords } from '@/lib/import/normalize';
 import { readImport } from '@/lib/import/read';
 import type { RawRecord } from '@/lib/import/record';
@@ -44,8 +44,8 @@ function keptFrom(plan: ReturnType<typeof planHistoryImport>, import_id: string)
       source: r.row.source,
       source_id: r.row.source_id,
       ...(r.row.source_key ? { source_key: r.row.source_key } : {}),
-      ...(pair && action === 'duplicate' ? { same_as: bankKey(pair.bank) } : {}),
-      ...(pair && action === 'add' ? { distinct_from: [bankKey(pair.bank)] } : {}),
+      ...(pair && action === 'duplicate' ? ('key' in pair.twin.names ? { same_as: pair.twin.names.key } : { same_as_row: pair.twin.names.row }) : {}),
+      ...(pair && action === 'add' && pair.twin.kind === 'bank' ? { distinct_from: [bankKey(pair.twin)] } : {}),
     });
   });
   return out;
@@ -120,11 +120,11 @@ describe('against the bank’s own rows', () => {
         rec({ date: '2026-07-15', amount: 22, description: 'Old purchase', line: 4 }),
       ],
     });
-    expect(p.proposals.map((x) => [x.index, x.bank.transaction_id, x.days, x.confidence, x.choice])).toEqual([
+    expect(p.proposals.map((x) => [x.index, x.twin.id, x.days, x.confidence, x.choice])).toEqual([
       [0, 'rent', 0, 'high', 'same'],
       [1, 'coffee', 2, 'high', 'same'],
     ]);
-    expect(p.proposals[1].bank).toMatchObject({ name: 'Blue Bottle Coffee', descriptor: 'SQ *BLUE BOTTLE', date: '2026-09-05', amount: 4.5 });
+    expect(p.proposals[1].twin).toMatchObject({ name: 'Blue Bottle Coffee', descriptor: 'SQ *BLUE BOTTLE', date: '2026-09-05', amount: 4.5 });
     expect(p.actions).toEqual(['duplicate', 'duplicate', 'add']);
     expect(p.counts).toMatchObject({ new: 1, duplicates: 2 });
     expect([p.before_bank, p.within_bank]).toEqual([1, 0]);
@@ -158,12 +158,18 @@ describe('against the bank’s own rows', () => {
     expect(after.review).not.toBe(before.review);
   });
 
-  test('a bank row an earlier import already claimed, or that already supersedes one of its rows, is no proposal', () => {
+  test('a bank row an earlier import already stands on is still proposed, and the same names that row: one claim on it, never two', () => {
     const b = bank({ transaction_id: 'b', amount: 10 });
     const claimed: PlanHeld = { id: 'imported-txn:c', import_id: 'history-import:a', date: '2026-09-01', amount: 10, currency: 'USD', name: 'Claims it', source: 'import:csv', source_id: 'k1', same_as: bankKey(b) };
-    expect(plan({ records: [rec({ amount: 10, description: 'Other words' })], banks: [b], held: [claimed] }).proposals).toEqual([]);
+    const p = plan({ records: [rec({ amount: 10, description: 'Other words' })], banks: [b], held: [claimed] });
+    expect(p.proposals.map((x) => [x.twin.kind, x.twin.id])).toEqual([['bank', 'b']]);
+    expect(p.pairs.get(0)?.twin.names).toEqual({ row: 'imported-txn:c' });
+    // A bank row that superseded an earlier import's row is named by that row.
     const superseded: PlanHeld = { ...claimed, same_as: undefined, source_id: 'k2' };
-    expect(plan({ records: [rec({ amount: 10, description: 'Other words' })], banks: [b], held: [superseded] }).proposals).toEqual([]);
+    const q = plan({ records: [rec({ amount: 10, description: 'Other words' })], banks: [b], held: [superseded], bankFrom: '2026-01-01' });
+    expect(q.pairs.get(0)?.twin.names).toEqual({ row: 'imported-txn:c' });
+    // A free one by its key.
+    expect(plan({ records: [rec({ amount: 10 })], banks: [b] }).pairs.get(0)?.twin.names).toEqual({ key: bankKey(b) });
   });
 
   test('a row whose only look-alike at the bank is pending is new, and said so', () => {
@@ -189,7 +195,7 @@ describe('signs and days, as each format writes them', () => {
       bank({ transaction_id: 'pay', account_id: 'acct_card', date: '2026-09-15', amount: -500, name: 'PAYMENT THANK YOU' }),
     ];
     const p = planHistoryImport({ rows: normalized, problems, held: [], banks, order: [], bankFrom: '2026-01-01' });
-    expect(p.proposals.map((x) => [x.bank.transaction_id, x.days, x.confidence]).sort()).toEqual([
+    expect(p.proposals.map((x) => [x.twin.id, x.days, x.confidence]).sort()).toEqual([
       ['pay', 0, 'high'],
       ['tj', 0, 'high'],
     ]);
@@ -221,7 +227,7 @@ describe('signs and days, as each format writes them', () => {
         bank({ transaction_id: `${type}-in`, account_id, date: '2026-09-15', amount: -500, name: credit }),
       ];
       const p = planHistoryImport({ rows: normalized, problems, held: [], banks, order: [], bankFrom: '2026-01-01' });
-      expect(p.proposals.map((x) => [x.bank.transaction_id, x.days, x.confidence]).sort()).toEqual([
+      expect(p.proposals.map((x) => [x.twin.id, x.days, x.confidence]).sort()).toEqual([
         [`${type}-in`, 0, 'high'],
         [`${type}-tj`, 1, 'high'],
       ]);
@@ -247,5 +253,99 @@ describe('what the review sums', () => {
     expect(p.totals).toEqual({ out: 12.5, in: 100 });
     expect([p.first_date, p.last_date, p.currency]).toEqual(['2026-09-01', '2026-09-03', 'USD']);
     expect(p.counts.unreadable).toBe(1);
+  });
+});
+
+describe('what earlier imports and the edges of each side’s days change', () => {
+  const day = (n: number) => new Date(Date.UTC(2025, 0, 1) + n * 86_400_000).toISOString().slice(0, 10);
+  const fare = (index: number, date: string, source: 'csv' | 'ofx' = 'csv', id?: string) =>
+    rec({ source, ...(source === 'ofx' ? { source_id: id ?? `F${index}` } : {}), date, amount: 2.75, description: 'MTA NYCT PAYGO', line: index + 2 });
+  const bankFare = (d: number) => bank({ transaction_id: `b${d}`, date: day(d), amount: 2.75, name: 'MTA*NYCT PAYGO', merchant_name: 'MTA' });
+
+  test('a bank’s CSV and then its OFX of the same days: each OFX row is proposed as the CSV’s, and the same counts it once', () => {
+    const csv = plan({
+      records: [
+        rec({ date: day(10), amount: 54.12, description: 'SQ *COFFEE 1234 SEATTLE WA' }),
+        rec({ date: day(11), amount: 1850, description: 'ONLINE TRANSFER TO LANDLORD REF 99812', line: 3 }),
+        rec({ date: day(12), amount: 4.5, description: 'BLUE BOTTLE COFFEE #12 OAKLAND CA', line: 4 }),
+      ],
+      bankFrom: day(30),
+    });
+    const kept = keptFrom(csv, 'a').map((r) => ({ ...r, import_id: 'history-import:a' }));
+    const ofx = plan({
+      records: [
+        rec({ source: 'ofx', source_id: 'FIT0', date: day(10), amount: 54.12, description: 'SQ *COFFEE 1234' }),
+        rec({ source: 'ofx', source_id: 'FIT1', date: day(11), amount: 1850, description: 'ONLINE TRANSFER TO LANDLORD', line: 3 }),
+        rec({ source: 'ofx', source_id: 'FIT2', date: day(12), amount: 4.5, description: 'BLUE BOTTLE COFFEE #12', line: 4 }),
+      ],
+      held: kept,
+      bankFrom: day(30),
+    });
+    expect(ofx.proposals.map((p) => [p.twin.kind, p.days, p.confidence, p.choice])).toEqual([
+      ['imported', 0, 'high', 'same'],
+      ['imported', 0, 'high', 'same'],
+      ['imported', 0, 'high', 'same'],
+    ]);
+    expect(ofx.counts).toMatchObject({ new: 0, already: 3, duplicates: 0 });
+    // Stored as duplicates of the CSV's rows: the three count once.
+    const both = [...kept, ...keptFrom(ofx, 'b').map((r) => ({ ...r, import_id: 'history-import:b' }))];
+    expect(settle(both, [], ['history-import:a', 'history-import:b'], { bankFrom: day(30) }).counted.length).toBe(3);
+    // The CSV undone, the OFX's count instead.
+    expect(settle(both.filter((r) => r.import_id === 'history-import:b'), [], ['history-import:b'], { bankFrom: day(30) }).counted.length).toBe(3);
+  });
+
+  test('a row said to be its own leaves the bank’s row free: the next statement’s real twin of it is proposed, and counted once', () => {
+    const banks = [25, 27, 30, 32].map(bankFare);
+    // Statement 1: the fare on day 29 the bank never sent pairs with its day 32
+    // fare; the person says it is its own.
+    const s1 = [25, 27, 29, 30].map((d, i) => fare(i, day(d), 'ofx', `S1-${d}`));
+    const first = plan({ records: s1, banks, bankFrom: day(25) });
+    const at29 = first.proposals.find((p) => p.file.date === day(29))!;
+    const answered = plan({ records: s1, banks, bankFrom: day(25), choices: { proposals: { each: { [at29.index]: 'new' } } } });
+    const kept = keptFrom(answered, 'a').map((r) => ({ ...r, import_id: 'history-import:a' }));
+    // Statement 2 holds the day-32 fare: the bank's day 32 is this one.
+    const s2 = plan({ records: [fare(0, day(32), 'ofx', 'S2-32')], banks, held: kept, bankFrom: day(25) });
+    expect(s2.proposals.map((p) => [p.twin.id, p.days, p.choice])).toEqual([['b32', 0, 'same']]);
+    expect(s2.counts).toMatchObject({ new: 0, duplicates: 1 });
+    const all = [...kept, ...keptFrom(s2, 'b').map((r) => ({ ...r, import_id: 'history-import:b' }))];
+    const counted = settle(all, banks, ['history-import:a', 'history-import:b'], { bankFrom: day(25) }).counted;
+    expect(counted.filter((r) => r.date === day(32)).length).toBe(0);
+    expect(counted.map((r) => r.date)).toEqual([day(29)]);
+  });
+
+  test('a pair across the bank’s first day is possibly the same, says why, and waits for an answer; for an OFX file it isn’t made', () => {
+    const banks = [30, 31, 32, 33, 34].map(bankFare);
+    // A CSV dated by purchase, exported up to the bank's first day.
+    const csv = plan({ records: [25, 26, 27, 28, 29, 30].map((d, i) => fare(i, day(d))), banks, bankFrom: day(30) });
+    const across = csv.proposals.filter((p) => p.file.date < day(30));
+    expect(across.length).toBeGreaterThan(0);
+    for (const p of across) expect(p).toMatchObject({ confidence: 'low', choice: null, edge: { kind: 'before-bank', day: day(30) } });
+    expect(csv.counts.unanswered).toBe(across.length);
+    // The same days in an OFX file, dated by posting: only day 30 is the bank's.
+    const ofx = plan({ records: [25, 26, 27, 28, 29, 30].map((d, i) => fare(i, day(d), 'ofx')), banks, bankFrom: day(30) });
+    expect(ofx.proposals.map((p) => [p.file.date, p.twin.id, p.days, p.edge])).toEqual([[day(30), 'b30', 0, null]]);
+    expect(ofx.counts).toMatchObject({ new: 5, duplicates: 1, unanswered: 0 });
+  });
+
+  test('a bank row after the period the file covers is one only through a lag', () => {
+    const banks = [bankFare(31)];
+    const p = planHistoryImport({ ...rows([fare(0, day(30))]), held: [], banks, order: [], bankFrom: day(1), covers: { from: day(1), to: day(30) } });
+    expect(p.proposals[0]).toMatchObject({ confidence: 'low', choice: null, edge: { kind: 'outside-file', from: day(1), to: day(30) } });
+  });
+
+  test('a daily fare dated two days before the bank posts it: every one of the bank’s is proposed with its own', () => {
+    const banks = Array.from({ length: 13 }, (_, i) => bankFare(10 + i));
+    const p = plan({ records: Array.from({ length: 21 }, (_, i) => fare(i, day(i))), banks, bankFrom: day(10) });
+    expect(p.proposals.length).toBe(13);
+    expect(p.proposals.every((x) => x.days === 2)).toBe(true);
+    expect(p.counts.new + p.counts.unanswered + p.counts.duplicates).toBe(21);
+  });
+
+  test('the review’s key holds what each row says and the period: another file of as many rows is another review', () => {
+    const a = planHistoryImport({ ...rows([rec({ amount: 10 })]), held: [], banks: [], order: [], bankFrom: null, covers: { from: '2026-09-01', to: '2026-09-01' } });
+    const b = planHistoryImport({ ...rows([rec({ amount: 11 })]), held: [], banks: [], order: [], bankFrom: null, covers: { from: '2026-09-01', to: '2026-09-01' } });
+    const wider = planHistoryImport({ ...rows([rec({ amount: 10 })]), held: [], banks: [], order: [], bankFrom: null, covers: { from: '2026-08-01', to: '2026-09-01' } });
+    expect(a.review).not.toBe(b.review);
+    expect(a.review).not.toBe(wider.review);
   });
 });

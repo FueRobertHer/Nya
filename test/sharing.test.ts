@@ -358,6 +358,7 @@ describe('sharing accounts on a connection', () => {
 
   test('with transactions: rows imported into the account from files count too, where the bank has nothing like them (#52)', async () => {
     const { importedTxnStore } = await import('@/lib/history-import/store');
+    const { bankKey } = await import('@/lib/history-import/match');
     const at = new Date().toISOString();
     const imported = (id: string, days: number, amount: number, over: Record<string, unknown> = {}) => ({
       id: `imported-txn:${id}0000-0000`,
@@ -382,14 +383,17 @@ describe('sharing accounts on a connection', () => {
         imported('a2', 3, 12),
         // Older than the 30 days shared.
         imported('a3', 40, 9),
-        // Kept as the bank's duplicate: never counted.
-        imported('a4', 6, 7, { same_as: 'some bank row' }),
+        // Kept as the duplicate of the bank's 99, which is there: never counted.
+        imported('a4', 6, 7, { same_as: bankKey({ date: daysAgo(60), amount: 99, name: 'BLUE BOTTLE' }) }),
+        // Kept as the duplicate of a bank row that is gone: counted again,
+        // never lost with it.
+        imported('a5', 8, 5, { same_as: bankKey({ date: daysAgo(8), amount: 5, name: 'GONE' }) }),
       ],
     });
     await share({ acct_joint: 'transactions' });
     const [from] = await sharedWithPartner();
     const joint = from.accounts.find((a: any) => a.id === 'acct_joint');
-    expect(joint.transactions.map((t: any) => t.amount).sort((a: number, b: number) => a - b)).toEqual([12, 30]);
+    expect(joint.transactions.map((t: any) => t.amount).sort((a: number, b: number) => a - b)).toEqual([5, 12, 30]);
     // A book that can't be read: the account says its transactions can't be, never a short list.
     await fake.hset(ctxKey('imported-transactions'), { acct_joint: 'damaged' });
     const [again] = await quietly(() => sharedWithPartner()).then((r) => r.result);

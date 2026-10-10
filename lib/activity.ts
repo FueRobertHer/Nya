@@ -12,7 +12,9 @@
 //     syncs each institution with Plaid first (`sync`); the API reads only
 //     what is stored, and never calls Plaid. With them, the rows imported into
 //     linked accounts from files (#52, lib/history-import/read.ts), counted
-//     only where no bank row supersedes them.
+//     only where no bank row stands for them, matched against the rows each
+//     sync has just written; and what the person said about an imported row
+//     (its category, an exclusion) carried to the bank row that stands for it.
 //   - the rest (finishActivity): the rows entered on manual accounts, and what
 //     the person said about each row (lib/txn-annotations.ts), read on every
 //     request and merged after the banks' part. So entering, editing or
@@ -46,6 +48,7 @@ import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
 import { importedForActivity } from './history-import/read';
+import type { StoredTxn } from './transactions';
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -121,6 +124,29 @@ async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boo
   return { categories: carriedCategories(categories, links), excluded: carriedExclusions(annotations.carried, links), ok: annotations.ok };
 }
 
+/**
+ * What the person said about imported rows a bank row now stands for
+ * (lib/history-import/read.ts importedForActivity's `represents`), by the
+ * bank row: a category set on any of them (the earliest import's first), and
+ * whether one was excluded (true), or whether that couldn't be read (null).
+ */
+async function carriedFromImports(
+  ctx: Ctx,
+  represents: ReadonlyMap<string, readonly string[]>,
+  overrides: Readonly<Record<string, string>>
+): Promise<{ categories: Map<string, string>; excluded: Map<string, true | null> }> {
+  const categories = new Map<string, string>();
+  const excluded = new Map<string, true | null>();
+  const exclusions = await readExclusions(ctx);
+  for (const [bankId, rows] of represents) {
+    const category = rows.map((id) => overrides[id]).find((c) => !!c);
+    if (category) categories.set(bankId, category);
+    if (rows.some((id) => exclusions.records.get(id) === true)) excluded.set(bankId, true);
+    else if (rows.some((id) => exclusions.unknown.has(id))) excluded.set(bankId, null);
+  }
+  return { categories, excluded };
+}
+
 /** Newest first. Within a day the posting `date` is equal, so fall back to the
  *  true event `datetime` when Plaid provides it for a precise order; rows
  *  without one keep the order they came in (the sort is stable). */
@@ -164,21 +190,30 @@ export async function assembleBankRows(
     withAccountIds: opts.withAccountIds,
   };
   const at = new Date().toISOString();
+  const banks = Promise.all(
+    items.map(async (item) =>
+      opts.sync
+        ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, { ...inputs, withStored: true })), synced_at: null }
+        : storedItemTransactions(ctx, item, inputs, { withStored: true })
+    )
+  );
   const [results, overrides, renames, carry, imported] = await Promise.all([
-    Promise.all(
-      items.map(async (item) =>
-        opts.sync
-          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null }
-          : storedItemTransactions(ctx, item, inputs)
-      )
-    ),
+    banks,
     getOverrides(ctx),
     getRenames(ctx),
     carried,
     // The rows imported into linked accounts (#52), each counted only where
-    // no bank row supersedes it: part of the banks' part, so a category or a
-    // rename applies to them as to the bank's own.
-    importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds }),
+    // no bank row stands for it: part of the banks' part, so a category or a
+    // rename applies to them as to the bank's own. Matched once the syncs
+    // are done, against the rows they wrote (never read twice), so a row the
+    // sync just brought supersedes in this very answer.
+    banks.then((done) => {
+      const bankStates = new Map<string, Record<string, StoredTxn> | null>();
+      done.forEach((r, i) => {
+        if (r.stored !== undefined) bankStates.set(items[i].item_id, r.stored);
+      });
+      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates });
+    }),
   ]);
 
   // The person's own changes win over Plaid's data: recategorization by
@@ -186,11 +221,17 @@ export async function assembleBankRows(
   // merchant).
   const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
   const older = [...results.flatMap((r) => r.older), ...imported.older];
+  // A bank row standing for imported rows the person said something about
+  // takes that, unless they said otherwise on it: its own category wins, and
+  // its own exclusion (finishActivity).
+  const said = imported.represents.size > 0 ? await carriedFromImports(ctx, imported.represents, overrides) : null;
   for (const t of [...transactions, ...older]) {
-    const manual = overrides[t.transaction_id];
+    const manual = overrides[t.transaction_id] ?? said?.categories.get(t.transaction_id);
     if (manual) t.category = manual;
     const renamed = renames[t.vendor_key];
     if (renamed) t.name = renamed;
+    const excluded = said?.excluded.get(t.transaction_id);
+    if (excluded !== undefined && !('pending' in t && t.pending) && t.excluded !== true) t.excluded = excluded;
   }
   const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.

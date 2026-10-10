@@ -32,9 +32,9 @@
 // except those a later import found already there, which it hands to the
 // earliest such import, and what was said about them (an exclusion, a
 // category), then its records. The import changed nothing else, so the
-// account is exactly as it was before it; which rows a bank row supersedes is
-// worked out on every read (lib/history-import/read.ts), so that is as it was
-// too.
+// account is exactly as it was before it; which rows count is worked out on
+// every read (lib/history-import/match.ts settle), so that is as it was too:
+// a later import's duplicate of one of its rows counts again.
 
 import { createHash } from 'node:crypto';
 import type { Ctx } from '../containers';
@@ -46,8 +46,8 @@ import type { FileFormat, Problem } from '../import/record';
 import type { NormalizedRecord } from '../import/normalize';
 import type { StatementInfo } from '../import/read';
 import { importSettingsStore, type StoredStatement } from '../import/store';
-import { bankKey as keyOf, type BankRow } from './match';
-import { planHistoryImport, type HistoryChoices, type HistoryPlan } from './plan';
+import { bankKey as keyOf, type BankRow, type Settled } from './match';
+import { planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from './plan';
 import {
   historyImportStore,
   historyImportSummaryStore,
@@ -144,10 +144,11 @@ export type HistoryCommitInput = {
   statement: StatementInfo | null;
   columns: string[] | null;
   covers: Covers;
-  /** The account's bank rows, its imports in order, and where the bank's
-   *  rows begin, as read for the review. */
+  /** The account's bank rows, its imports in order with the period each
+   *  covers, and where the bank's rows begin, as read for the review. */
   banks: readonly BankRow[];
   order: readonly string[];
+  imports: ReadonlyMap<string, { covers: Period | null }>;
   bank_from: string | null;
   choices: HistoryChoices;
   /** The digest of the review the person saw (reviewDigest). */
@@ -168,20 +169,22 @@ function entryOf(input: HistoryCommitInput, plan: HistoryPlan, rowIds: string[],
     const action = plan.actions[i];
     const pair = plan.pairs.get(i);
     const raw = r.record.raw;
-    const bank = pair
+    const twin = pair
       ? {
-          transaction_id: pair.bank.transaction_id,
-          date: pair.bank.date,
-          name: pair.bank.merchant_name || pair.bank.name,
-          amount: pair.bank.amount,
+          kind: pair.twin.kind,
+          id: pair.twin.id,
+          date: pair.twin.date,
+          name: (pair.twin.kind === 'bank' && pair.twin.merchant_name) || pair.twin.name,
+          amount: pair.twin.amount,
           days: pair.days,
           confidence: pair.confidence,
+          ...(pair.edge ? { edge: pair.edge.kind } : {}),
           chose: action === 'duplicate' ? ('same' as const) : ('new' as const),
         }
       : undefined;
     let record: HistoryImportRecord;
-    if (action === 'add') record = { line: r.line, outcome: 'imported', row_id: rowIds[i], ...(bank ? { bank } : {}), raw };
-    else if (action === 'duplicate') record = { line: r.line, outcome: 'duplicate', row_id: rowIds[i], bank, raw };
+    if (action === 'add') record = { line: r.line, outcome: 'imported', row_id: rowIds[i], ...(twin ? { twin } : {}), raw };
+    else if (action === 'duplicate') record = { line: r.line, outcome: 'duplicate', row_id: rowIds[i], twin, raw };
     else if (o.outcome === 'present') record = { line: r.line, outcome: 'present', row_id: o.row_id, raw };
     else if (o.outcome === 'repeated') record = { line: r.line, outcome: 'repeated', raw };
     else record = { line: r.line, outcome: 'skipped', ...(o.outcome === 'conflict' ? { row_id: o.row_id } : {}), reason: SKIPPED, raw };
@@ -190,7 +193,7 @@ function entryOf(input: HistoryCommitInput, plan: HistoryPlan, rowIds: string[],
   for (const p of plan.problems) records.push({ line: p.line, record: { line: p.line || null, outcome: 'unreadable', reason: p.reason, raw: p.raw ?? null } });
   records.sort((a, b) => a.line - b.line);
   const c = plan.counts;
-  const counts: HistoryImportCounts = { imported: c.new, duplicates: c.duplicates, present: c.present, repeated: c.repeated, skipped: c.skipped, unreadable: c.unreadable };
+  const counts: HistoryImportCounts = { imported: c.new, duplicates: c.duplicates, already: c.already, present: c.present, repeated: c.repeated, skipped: c.skipped, unreadable: c.unreadable };
   return {
     version: 1,
     account_id: input.account_id,
@@ -214,7 +217,9 @@ function entryOf(input: HistoryCommitInput, plan: HistoryPlan, rowIds: string[],
 }
 
 /** The rows an import keeps: its counted rows and its duplicates, each with
- *  what the review decided. */
+ *  what the review decided: a duplicate names its twin (the bank's row by its
+ *  key, or the earlier import's row standing on it), and a row of its own
+ *  the bank's row it was shown beside, so that pair is never made again. */
 function rowsOf(input: HistoryCommitInput, plan: HistoryPlan, import_id: string, rowIds: string[], at: string): ImportedTxn[] {
   const out: ImportedTxn[] = [];
   plan.rows.forEach((r, i) => {
@@ -236,8 +241,8 @@ function rowsOf(input: HistoryCommitInput, plan: HistoryPlan, import_id: string,
       ...(source_key ? { source_key } : {}),
       ...(transaction_code ? { transaction_code } : {}),
       import_id,
-      ...(pair && action === 'duplicate' ? { same_as: keyOf(pair.bank) } : {}),
-      ...(pair && action === 'add' ? { distinct_from: [keyOf(pair.bank)] } : {}),
+      ...(pair && action === 'duplicate' ? ('key' in pair.twin.names ? { same_as: pair.twin.names.key } : { same_as_row: pair.twin.names.row }) : {}),
+      ...(pair && action === 'add' && pair.twin.kind === 'bank' ? { distinct_from: [keyOf(pair.twin)] } : {}),
       created_at: at,
     });
   });
@@ -245,7 +250,7 @@ function rowsOf(input: HistoryCommitInput, plan: HistoryPlan, import_id: string,
 }
 
 /** Whether an import keeps anything: rows to add, or duplicates to keep. */
-const changes = (plan: HistoryPlan) => plan.counts.new + plan.counts.duplicates > 0;
+const changes = (plan: HistoryPlan) => plan.counts.new + plan.counts.duplicates + plan.counts.already > 0;
 
 /** The plan, or the refusal: a review that changed, or answers missing. */
 function checked(plan: HistoryPlan, reviewed: string): HistoryPlan {
@@ -275,6 +280,8 @@ export async function commitHistoryImport(ctx: Ctx, input: HistoryCommitInput): 
       banks: input.banks,
       order: input.order,
       bankFrom: input.bank_from,
+      covers: input.covers,
+      imports: input.imports,
       choices: input.choices,
     });
   // Strict: a book that can't be read is never matched as an empty one.
@@ -417,7 +424,7 @@ export async function historyUndoPlan(ctx: Ctx, ids: readonly string[], import_i
       if (r.import_id !== import_id) continue;
       const by = basis.relied.get(r.id);
       if (by) kept.set(by, (kept.get(by) ?? 0) + 1);
-      else if (r.same_as) plan.duplicates++;
+      else if (r.same_as || r.same_as_row) plan.duplicates++;
       else plan.remove++;
     }
   }
@@ -429,7 +436,15 @@ export async function historyUndoPlan(ctx: Ctx, ids: readonly string[], import_i
   return plan;
 }
 
-export type HistoryUndoResult = { removed: number; duplicates: number; kept: number; ids: string[] };
+export type HistoryUndoResult = {
+  removed: number;
+  duplicates: number;
+  kept: number;
+  ids: string[];
+  /** The days of the rows taken out: the backfill walks those after the
+   *  chart's earliest point (lib/history-import/extend.ts). */
+  dates: string[];
+};
 
 /**
  * Takes an import out (see the header). Undoing again after an undo that
@@ -440,7 +455,7 @@ export type HistoryUndoResult = { removed: number; duplicates: number; kept: num
  */
 export async function undoHistoryImport(ctx: Ctx, ids: readonly string[], import_id: string): Promise<HistoryUndoResult> {
   const basis = await undoBasis(ctx, ids, import_id);
-  const result: HistoryUndoResult = { removed: 0, duplicates: 0, kept: 0, ids: [] };
+  const result: HistoryUndoResult = { removed: 0, duplicates: 0, kept: 0, ids: [], dates: [] };
   const handed = new Map<string, number>();
   const report = await importedTxnStore.getAllReport(ctx);
   const flawed = ids.filter((id) => report.unreadable.includes(id) || report.unrecognised.includes(id));
@@ -451,7 +466,7 @@ export async function undoHistoryImport(ctx: Ctx, ids: readonly string[], import
   const holding = [...report.entries].filter(([, book]) => book.rows.some((r) => r.import_id === import_id)).map(([id]) => id);
   for (let i = 0; i < holding.length; i += MANY_AT_ONCE) {
     const chunk = holding.slice(i, i + MANY_AT_ONCE);
-    let taken: { id: string; duplicate: boolean }[] = [];
+    let taken: { id: string; duplicate: boolean; date: string }[] = [];
     let passed: string[] = [];
     await importedTxnStore.updateMany(ctx, chunk, (books) => {
       taken = [];
@@ -471,7 +486,7 @@ export async function undoHistoryImport(ctx: Ctx, ids: readonly string[], import
           if (by) {
             rows.push({ ...r, import_id: by });
             passed.push(by);
-          } else taken.push({ id: r.id, duplicate: !!r.same_as });
+          } else taken.push({ id: r.id, duplicate: !!(r.same_as || r.same_as_row), date: r.date });
         }
         if (changed) next.set(id, rows.length > 0 ? { ...book, rows } : null);
       }
@@ -479,6 +494,7 @@ export async function undoHistoryImport(ctx: Ctx, ids: readonly string[], import
     });
     for (const t of taken) {
       result.ids.push(t.id);
+      result.dates.push(t.date);
       if (t.duplicate) result.duplicates++;
       else result.removed++;
     }
@@ -515,41 +531,45 @@ export type HistoryImportListed = {
   currency: string | null;
   statement: string | null;
   taken_over: number;
-  /** Its rows stored now: counted ones, duplicates, and of the counted ones
-   *  those a bank row now supersedes. Null when a book of the account can't be
-   *  read, so they can't be counted. */
+  /** Its rows stored now, as they count (lib/history-import/match.ts
+   *  settle): those counted; duplicates standing for their twin; rows a bank
+   *  row now stands for; and of those counted, duplicates whose twin is gone
+   *  (the bank no longer holds it, or its import was undone), counted again.
+   *  Null when a book of the account can't be read, so they can't be told. */
   rows_now: number | null;
   duplicates_now: number | null;
   superseded_now: number | null;
+  returned_now: number | null;
 };
 
 /**
  * An account's imports, newest first, with what is left of each: a display
  * read of the summaries and the account's books, never of a file's records
  * (but for an import whose summary is gone while rows still name it, read
- * alone, so Undo can take them out). `superseded` are the ids of the
- * account's rows a bank row now supersedes (lib/history-import/read.ts).
+ * alone, so Undo can take them out). `settled` is how the account's rows
+ * count now (lib/history-import/read.ts countedRows).
  */
-export async function listHistoryImports(ctx: Ctx, ids: readonly string[], superseded: ReadonlySet<string>): Promise<HistoryImportListed[]> {
+export async function listHistoryImports(ctx: Ctx, ids: readonly string[], settled: Settled<ImportedTxn>): Promise<HistoryImportListed[]> {
   const mine = new Set(ids);
   const [summaries, books] = await Promise.all([historyImportSummaryStore.getAllReport(ctx), importedTxnStore.getAllReport(ctx)]);
   const complete = !ids.some((id) => books.unreadable.includes(id) || books.unrecognised.includes(id));
-  const live = new Map<string, { rows: number; duplicates: number; superseded: number }>();
+  const counted = new Set(settled.counted.map((r) => r.id));
+  const live = new Map<string, { rows: number; duplicates: number; superseded: number; returned: number }>();
   for (const id of ids) {
     for (const r of books.entries.get(id)?.rows ?? []) {
-      const n = live.get(r.import_id) ?? { rows: 0, duplicates: 0, superseded: 0 };
-      if (r.same_as) n.duplicates++;
-      else {
+      const n = live.get(r.import_id) ?? { rows: 0, duplicates: 0, superseded: 0, returned: 0 };
+      if (counted.has(r.id)) {
         n.rows++;
-        if (superseded.has(r.id)) n.superseded++;
-      }
+        if (r.same_as || r.same_as_row) n.returned++;
+      } else if (settled.standing.has(r.id)) n.duplicates++;
+      else n.superseded++;
       live.set(r.import_id, n);
     }
   }
   const now = (id: string) => {
     const n = live.get(id);
-    if (!complete && !n) return { rows_now: null, duplicates_now: null, superseded_now: null };
-    return { rows_now: n?.rows ?? 0, duplicates_now: n?.duplicates ?? 0, superseded_now: n?.superseded ?? 0 };
+    if (!complete && !n) return { rows_now: null, duplicates_now: null, superseded_now: null, returned_now: null };
+    return { rows_now: n?.rows ?? 0, duplicates_now: n?.duplicates ?? 0, superseded_now: n?.superseded ?? 0, returned_now: n?.returned ?? 0 };
   };
   const listed = (id: string, s: HistoryImportSummary): HistoryImportListed => ({
     id,
@@ -602,13 +622,17 @@ export async function listHistoryImports(ctx: Ctx, ids: readonly string[], super
  * For forgetting an earlier account (lib/links.ts forgetEarlierAccount): the
  * rows imported under its id, its imports' records and summaries, what was
  * said about those rows, and how its last file was read. Readable or not: the
- * person asked for everything about it to go. Throws only when storage can't
- * be reached.
+ * person asked for everything about it to go. But a row an import into
+ * another account found already there (an import made while the two were
+ * linked) is that import's transaction too: it is handed to the earliest
+ * such import, into its account's book, with what was said about it, as an
+ * undo hands it over. Answers the accounts rows were handed to. Throws only
+ * when storage can't be reached, or a book a row is handed to can't be read.
  */
-export async function forgetImportedHistory(ctx: Ctx, account_id: string): Promise<void> {
-  let rowIds: string[] = [];
+export async function forgetImportedHistory(ctx: Ctx, account_id: string): Promise<{ handedTo: string[] }> {
+  let rows: ImportedTxn[] = [];
   try {
-    rowIds = (await importedTxnStore.get(ctx, account_id))?.rows.map((r) => r.id) ?? [];
+    rows = (await importedTxnStore.get(ctx, account_id))?.rows ?? [];
   } catch (err) {
     if (!(err instanceof StoredDataUnreadableError)) throw err;
   }
@@ -622,13 +646,55 @@ export async function forgetImportedHistory(ctx: Ctx, account_id: string): Promi
       if (!(err instanceof StoredDataUnreadableError)) throw err;
     }
   }
+
+  // The rows other accounts' imports relied on, each with the earliest such
+  // import and its account. Entries that can't be read rely on nothing known.
+  const mine = new Set(rows.map((r) => r.id));
+  const relied = new Map<string, { by: string; account: string; at: string }>();
+  if (mine.size > 0) {
+    for (const [id, s] of summaries.entries) {
+      if (s.account_id === account_id || s.counts.present === 0) continue;
+      let e: HistoryImportEntry | null = null;
+      try {
+        e = await historyImportStore.get(ctx, id);
+      } catch (err) {
+        if (!(err instanceof StoredDataUnreadableError)) throw err;
+      }
+      if (!e) continue;
+      for (const r of e.records) {
+        if (r.outcome !== 'present' || !r.row_id || !mine.has(r.row_id)) continue;
+        const seen = relied.get(r.row_id);
+        if (!seen || e.imported_at < seen.at) relied.set(r.row_id, { by: id, account: e.account_id, at: e.imported_at });
+      }
+    }
+  }
+  const handed = new Map<string, ImportedTxn[]>();
+  for (const r of rows) {
+    const to = relied.get(r.id);
+    if (!to) continue;
+    const list = handed.get(to.account) ?? [];
+    list.push({ ...r, account_id: to.account, import_id: to.by });
+    handed.set(to.account, list);
+  }
+  // First into their new books (a row already there is left as it is), so a
+  // forget stopped part way loses none: running it again finishes.
+  for (const [to, moved] of handed) {
+    await importedTxnStore.update(ctx, to, (book) => {
+      const have = new Set((book?.rows ?? []).map((r) => r.id));
+      const add = moved.filter((r) => !have.has(r.id));
+      return add.length === 0 && book ? book : { version: 1, rows: [...(book?.rows ?? []), ...add] };
+    });
+  }
+
   await importedTxnStore.remove(ctx, account_id);
   if (ids.length > 0) {
     await historyImportStore.remove(ctx, ...ids);
     await historyImportSummaryStore.remove(ctx, ...ids);
   }
-  await forgetAnnotations(ctx, rowIds);
-  await forgetOverrides(ctx, rowIds);
+  const gone = rows.filter((r) => !relied.has(r.id)).map((r) => r.id);
+  await forgetAnnotations(ctx, gone);
+  await forgetOverrides(ctx, gone);
   // How its last file was read (lib/import/store.ts), kept per account.
   await importSettingsStore.remove(ctx, account_id);
+  return { handedTo: [...handed.keys()] };
 }

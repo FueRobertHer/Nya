@@ -6,9 +6,8 @@ import {
   daysApart,
   MATCH_DAYS,
   pairUp,
+  settle,
   similarity,
-  supersede,
-  unclaimed,
   type BankRow,
   type FileRow,
   type HeldRow,
@@ -16,8 +15,9 @@ import {
 
 // Matching a file's rows against a linked account's own (lib/history-import/
 // match.ts): the bank's rows by exact amount and a date within a few days,
-// the description only a tiebreak, one to one, never a pending row; and which
-// kept rows a later sync's rows supersede.
+// the description only a tiebreak, one to one and as many as can be, never a
+// pending row; and which kept rows count (settle): a duplicate only while its
+// twin is there, a row a later sync's row supersedes not at all.
 
 const bank = (over: Partial<BankRow> & { transaction_id: string }): BankRow => ({
   account_id: 'acct_chk',
@@ -99,8 +99,8 @@ describe('pairing rows with the bank’s, one to one', () => {
   test('the same amount twice in a week is two transactions both ways: each pairs with the nearest', () => {
     const banks = [bank({ transaction_id: 'mon', date: '2025-03-10' }), bank({ transaction_id: 'thu', date: '2025-03-13' })];
     const pairs = pairUp([row(0, { date: '2025-03-13' }), row(1, { date: '2025-03-10' })], banks);
-    expect(pairs.get(0)?.bank.transaction_id).toBe('thu');
-    expect(pairs.get(1)?.bank.transaction_id).toBe('mon');
+    expect(pairs.get(0)?.twin.transaction_id).toBe('thu');
+    expect(pairs.get(1)?.twin.transaction_id).toBe('mon');
     expect(pairs.get(0)?.days).toBe(0);
   });
 
@@ -108,7 +108,7 @@ describe('pairing rows with the bank’s, one to one', () => {
     const pairs = pairUp([row(0, { date: '2025-03-10' }), row(1, { date: '2025-03-12' })], [bank({ transaction_id: 'only', date: '2025-03-11' })]);
     expect(pairs.size).toBe(1);
     // A tie on days goes to the more alike description, then to file order.
-    expect(pairs.get(0)?.bank.transaction_id).toBe('only');
+    expect(pairs.get(0)?.twin.transaction_id).toBe('only');
   });
 
   test('the description breaks a tie between two bank rows the same days away', () => {
@@ -116,7 +116,7 @@ describe('pairing rows with the bank’s, one to one', () => {
       bank({ transaction_id: 'gym', date: '2025-03-09', name: 'PLANET FITNESS', merchant_name: 'Planet Fitness' }),
       bank({ transaction_id: 'coffee', date: '2025-03-11' }),
     ];
-    expect(pairUp([row(0, { date: '2025-03-10' })], banks).get(0)?.bank.transaction_id).toBe('coffee');
+    expect(pairUp([row(0, { date: '2025-03-10' })], banks).get(0)?.twin.transaction_id).toBe('coffee');
   });
 
   test('a pair the person said is not one is left out', () => {
@@ -125,44 +125,116 @@ describe('pairing rows with the bank’s, one to one', () => {
   });
 });
 
-describe('the bank rows decisions have taken', () => {
-  test('a duplicate claims its bank row and a row kept apart marks it, one each, by key', () => {
-    const twins = [bank({ transaction_id: 'a' }), bank({ transaction_id: 'b' }), bank({ transaction_id: 'c', amount: 3 })];
-    const key = bankKey(twins[0]);
-    expect(unclaimed(twins, []).map((b) => b.transaction_id)).toEqual(['a', 'b', 'c']);
-    expect(unclaimed(twins, [held('r1', { same_as: key })]).map((b) => b.transaction_id)).toEqual(['b', 'c']);
-    expect(unclaimed(twins, [held('r1', { same_as: key }), held('r2', { distinct_from: [key] })]).map((b) => b.transaction_id)).toEqual(['c']);
+describe('which kept rows count', () => {
+  const order = ['history-import:a', 'history-import:b'];
+  const counted = (rows: HeldRow[], banks: BankRow[], bankFrom: string | null = '2025-01-01') => settle(rows, banks, order, { bankFrom }).counted.map((r) => r.id);
+
+  test('a duplicate stands for its bank row while the bank holds it, and counts again once it doesn’t', () => {
+    const b = bank({ transaction_id: 'rent', amount: 1850, name: 'ZELLE TO LANDLORD' });
+    const dup = held('dup', { amount: 1850, same_as: bankKey(b) });
+    expect(counted([dup], [b])).toEqual([]);
+    expect(settle([dup], [b], order, { bankFrom: '2025-01-01' }).standing.get('dup')).toEqual({ bank: b });
+    // A re-link whose window starts later: the bank no longer has the rent.
+    expect(counted([dup], [], '2025-06-01')).toEqual(['dup']);
+  });
+
+  test('a duplicate whose bank row the bank renamed is matched again, never counted twice', () => {
+    const before = bank({ transaction_id: 'old', name: 'SQ *BLUE BOTTLE 1234' });
+    const after = bank({ transaction_id: 'new', name: 'SQUARE BLUE BOTTLE' });
+    const dup = held('dup', { same_as: bankKey(before) });
+    const out = settle([dup], [after], order, { bankFrom: '2025-01-01' });
+    expect(out.counted).toEqual([]);
+    expect(out.superseded.get('dup')?.transaction_id).toBe('new');
+  });
+
+  test('two identical bank rows on a day hold two duplicates; one taken back leaves one counted', () => {
+    const one = bank({ transaction_id: 'c1' });
+    const two = bank({ transaction_id: 'c2' });
+    const rows = [held('d1', { same_as: bankKey(one) }), held('d2', { same_as: bankKey(two) })];
+    expect(counted(rows, [one, two])).toEqual([]);
+    // The bank took one back and nothing else of that amount is near: the
+    // other coffee counts again.
+    expect(counted(rows, [one]).length).toBe(1);
+  });
+
+  test('a duplicate of an earlier import’s row stands while that row is kept, and counts when it is undone', () => {
+    const csv = held('csv', { import_id: 'history-import:a', name: 'SQ *COFFEE 1234 SEATTLE WA' });
+    const ofx = held('ofx', { import_id: 'history-import:b', name: 'SQ *COFFEE 1234', same_as_row: 'csv' });
+    expect(counted([csv, ofx], [])).toEqual(['csv']);
+    expect(counted([ofx], [])).toEqual(['ofx']);
+    // Never a later import's row: no chain of names goes round. (Here the
+    // OFX row's twin is gone too, so both count.)
+    const back = held('back', { import_id: 'history-import:a', same_as_row: 'ofx' });
+    expect(counted([back, ofx], []).sort()).toEqual(['back', 'ofx']);
+  });
+
+  test('a counted row the bank now has is superseded; earlier imports are matched first', () => {
+    const b = bank({ transaction_id: 'posted', date: '2025-03-11' });
+    const rows = [held('later', { import_id: 'history-import:b', date: '2025-03-11' }), held('earlier', { import_id: 'history-import:a', date: '2025-03-10' })];
+    const out = settle(rows, [b], order, { bankFrom: '2025-01-01' });
+    expect([...out.superseded.keys()]).toEqual(['earlier']);
+    expect(out.counted.map((r) => r.id)).toEqual(['later']);
+  });
+
+  test('a row kept apart from a bank row is never superseded by it, and leaves it free for its real twin', () => {
+    const b = bank({ transaction_id: 't', date: '2025-03-13' });
+    const kept = held('kept', { date: '2025-03-10', distinct_from: [bankKey(b)] });
+    const twin = held('twin', { import_id: 'history-import:b', date: '2025-03-13' });
+    const out = settle([kept, twin], [b], order, { bankFrom: '2025-01-01' });
+    expect(out.superseded.get('twin')?.transaction_id).toBe('t');
+    expect(out.counted.map((r) => r.id)).toEqual(['kept']);
+  });
+
+  test('pending bank rows supersede nothing, but stand in for a row like them in what is shown', () => {
+    const p = bank({ transaction_id: 'p', pending: true });
+    expect(settle([held('r')], [p], order, { bankFrom: '2025-01-01' }).counted.length).toBe(1);
+    const shown = settle([held('r')], [p], order, { bankFrom: '2025-01-01', pending: true });
+    expect(shown.counted).toEqual([]);
+    expect(shown.pendingStood.get('r')?.transaction_id).toBe('p');
+  });
+
+  test('a row dated by posting (OFX) is never superseded across the bank’s window edge; others may be, by a posting lag', () => {
+    const b = bank({ transaction_id: 'first', date: '2025-02-01' });
+    const ofxRow = held('ofx', { date: '2025-01-30', source: 'import:ofx' });
+    const csvRow = held('csv', { date: '2025-01-30', source: 'import:csv' });
+    expect(counted([ofxRow], [b], '2025-02-01')).toEqual(['ofx']);
+    expect(counted([csvRow], [b], '2025-02-01')).toEqual([]);
+    // Nor by a bank row after the period its file covers.
+    const covers = new Map([['history-import:a', { from: '2025-01-01', to: '2025-01-31' }]]);
+    const inside = held('in', { date: '2025-01-31', source: 'import:ofx' });
+    expect(settle([inside], [bank({ transaction_id: 'feb', date: '2025-02-02' })], order, { bankFrom: '2025-01-01', covers }).counted.map((r) => r.id)).toEqual(['in']);
   });
 });
 
-describe('a later sync superseding imported rows', () => {
-  test('a counted row the bank now has supersedes; a duplicate is never counted, so never superseded', () => {
-    const b = bank({ transaction_id: 'posted', date: '2025-03-11' });
-    const out = supersede([held('r1'), held('r2', { amount: 99 })], [b], ['history-import:a']);
-    expect([...out.keys()]).toEqual(['r1']);
-    expect(out.get('r1')?.transaction_id).toBe('posted');
+describe('as many pairs as can be', () => {
+  const day = (n: number) => new Date(Date.UTC(2025, 0, 1) + n * 86_400_000).toISOString().slice(0, 10);
+
+  test('a daily fare dated by purchase in the file and two days later by posting: every bank fare finds its own, none counted twice', () => {
+    const file = Array.from({ length: 21 }, (_, i) => row(i, { date: day(i), amount: 2.75, name: 'MTA SUBWAY' }));
+    // The bank's window starts on day 10: the fares made on days 8 to 20.
+    const banks = Array.from({ length: 13 }, (_, i) => bank({ transaction_id: `b${i}`, date: day(10 + i), amount: 2.75, name: 'MTA*NYCT PAYGO', merchant_name: 'MTA' }));
+    const pairs = pairUp(file, banks);
+    expect(pairs.size).toBe(13);
+    expect([...pairs.values()].every((p) => p.days === 2)).toBe(true);
+    // Through the later sync too: 8 of the file's fares are the bank's only ones.
+    const rows = file.map((r) => held(`r${r.index}`, { date: r.date, amount: 2.75, name: r.name }));
+    const out = settle(rows, banks, ['history-import:a'], { bankFrom: day(10) });
+    expect(out.counted.length + banks.length).toBe(21);
   });
 
-  test('a bank row claimed by a duplicate is not free: two coffees, one already the bank’s, the other stays', () => {
-    const mon = bank({ transaction_id: 'mon', date: '2025-03-10' });
-    const rows = [held('dup', { same_as: bankKey(mon) }), held('wed', { date: '2025-03-12' })];
-    expect(supersede(rows, [mon], ['history-import:a']).size).toBe(0);
+  test('the closest pairing among the fullest: a gap never pairs a row with its neighbour’s twin', () => {
+    const file = [row(0, { date: '2025-03-10' }), row(1, { date: '2025-03-12' })];
+    const banks = [bank({ transaction_id: 'a', date: '2025-03-10' }), bank({ transaction_id: 'b', date: '2025-03-12' })];
+    const pairs = pairUp(file, banks);
+    expect([pairs.get(0)?.twin.transaction_id, pairs.get(1)?.twin.transaction_id]).toEqual(['a', 'b']);
+    expect(pairs.get(0)?.days).toBe(0);
   });
 
-  test('a row kept apart from a bank row is never superseded by it, nor is any other row', () => {
-    const b = bank({ transaction_id: 't' });
-    const rows = [held('kept', { distinct_from: [bankKey(b)] }), held('other', { date: '2025-03-11' })];
-    expect(supersede(rows, [b], ['history-import:a']).size).toBe(0);
-  });
-
-  test('earlier imports are matched first, so a later one never takes their bank row', () => {
-    const b = bank({ transaction_id: 't', date: '2025-03-11' });
-    const rows = [held('later', { import_id: 'history-import:b', date: '2025-03-11' }), held('earlier', { import_id: 'history-import:a', date: '2025-03-10' })];
-    const out = supersede(rows, [b], ['history-import:a', 'history-import:b']);
-    expect([...out.keys()]).toEqual(['earlier']);
-  });
-
-  test('pending bank rows supersede nothing', () => {
-    expect(supersede([held('r')], [bank({ transaction_id: 'p', pending: true })], []).size).toBe(0);
+  test('years of one amount every day still pair quickly', () => {
+    const file = Array.from({ length: 1460 }, (_, i) => row(i, { date: day(i), amount: 2.75 }));
+    const banks = Array.from({ length: 730 }, (_, i) => bank({ transaction_id: `b${i}`, date: day(730 + i), amount: 2.75 }));
+    const started = performance.now();
+    expect(pairUp(file, banks).size).toBe(730);
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });

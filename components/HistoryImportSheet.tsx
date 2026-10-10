@@ -11,14 +11,17 @@
 //   2. The file read in the browser to ask its questions (which statement,
 //      which columns, the order of its dates).
 //   3. The REVIEW, from the server against the account as it is: rows the
-//      bank already has are proposals, each with the bank's row beside it and
-//      a confidence, answered one by one or all at once (the same
-//      transaction, or one of its own; a low-confidence one has no answer
-//      until the person gives it); rows already imported are skipped; the new
-//      rows, and how many are older than the bank's own; the period the file
-//      covers, which the person can widen to the one they exported; and the
-//      lines that can't be read. Nothing is kept until Import, and the import
-//      is refused if the account changed since this review.
+//      account already has (the bank's, or an earlier file's in another
+//      format) are proposals, each with that transaction beside it and a
+//      confidence, answered one by one or all at once (the same transaction,
+//      or one of its own; a low-confidence one has no answer until the person
+//      gives it, and one across the edge of either side's days says why);
+//      rows already imported are skipped; the new rows, and how many are
+//      older than the bank's own; the period the file covers, which the person
+//      can widen to the one they exported; and the lines that can't be read,
+//      with whether they are transactions, which decides whether the chart is
+//      drawn through the file's period. Nothing is kept until Import, and the
+//      import is refused if the account changed since this review.
 //
 // The file is sent for the review and again for the import, as for a manual
 // account: nothing is staged on the server between them.
@@ -44,14 +47,17 @@ type ConflictChoice = 'new' | 'skip';
 type ChoiceSet<T> = { all?: T; each: Record<string, T> };
 
 type Shown = { date: string; name: string; amount: number; currency: string | null };
+type Edge = { kind: 'before-bank'; day: string } | { kind: 'outside-file'; from: string; to: string } | { kind: 'outside-import'; from: string; to: string };
 type Proposal = {
   index: number;
   line: number | null;
   file: Shown;
-  bank: Shown & { transaction_id: string; descriptor: string };
+  /** The transaction already there: the bank's, or one an earlier file kept. */
+  twin: Shown & { kind: 'bank' | 'imported'; id: string; descriptor: string | null; import_id: string | null; file_name?: string | null; imported_at?: string };
   days: number;
   confidence: 'high' | 'medium' | 'low';
   similar: boolean;
+  edge: Edge | null;
   choice: Choice | null;
 };
 type Conflict = {
@@ -64,7 +70,7 @@ type Conflict = {
   file: Shown;
   stored: Shown;
 };
-type Counts = { new: number; duplicates: number; present: number; repeated: number; skipped: number; conflicts: number; unanswered: number; unreadable: number };
+type Counts = { new: number; duplicates: number; already: number; present: number; repeated: number; skipped: number; conflicts: number; unanswered: number; unreadable: number };
 
 /** The server's review (app/api/history-import reviewOf). */
 export type Review = {
@@ -82,8 +88,10 @@ export type Review = {
   kinds: { transfers: number; atm: number; payments: number; fees: number };
   first_date: string | null;
   last_date: string | null;
-  covers: { from: string; to: string; stated: boolean } | null;
+  covers: { from: string; to: string; stated: boolean; whole?: true } | null;
   bank_from: string | null;
+  /** The connection's older transactions are still on their way to Nya. */
+  history_pending?: boolean;
   before_bank: number;
   within_bank: number;
   pending_alike: number;
@@ -92,7 +100,7 @@ export type Review = {
   totals: { out: number; in: number };
   shortened: number;
   warnings: string[];
-  account_mismatch: { expected: string; found: string } | null;
+  account_mismatch: { expected: string; found: string; basis?: 'last-file' | 'mask' } | null;
   review: string;
 };
 
@@ -111,13 +119,15 @@ type Listed = {
   rows_now: number | null;
   duplicates_now: number | null;
   superseded_now: number | null;
+  returned_now?: number | null;
 };
 type UndoPlan = { record: 'ok' | 'unreadable'; remove: number; duplicates: number; kept: { file_name: string | null; count: number }[]; incomplete: boolean };
-type Reach = { reach: string | null; why: 'not-counted' | 'anchor-not-covered' | null; gaps: { imported: { from: string; to: string }; uncovered: { from: string; to: string } }[] };
+type Reach = { reach: string | null; why: 'not-counted' | 'anchor-not-covered' | 'held-flat' | null; gaps: { imported: { from: string; to: string }; uncovered: { from: string; to: string } }[] };
 type Past = {
   imports: Listed[];
   settings: Settings | null;
   bank_from: string | null;
+  history_pending: boolean;
   walked: boolean;
   reach: Reach | null;
 };
@@ -126,7 +136,19 @@ type Settings = {
   ofx?: { flip: boolean; currency?: string } | null;
   qif?: { date_order: DateOrder | null; decimal: DecimalMark | null; flip: boolean; currency: string } | null;
 };
-type Done = { imported: number; duplicates: number; present: number; repeated: number; skipped: number; unreadable: number; before_bank?: number; history: { drawn: boolean; from: string | null } };
+type Done = {
+  imported: number;
+  duplicates: number;
+  already?: number;
+  present: number;
+  repeated: number;
+  skipped: number;
+  unreadable: number;
+  before_bank?: number;
+  /** Drawn again at once (how far back this account's estimate now follows
+   *  imported rows), or after the backfill runs again (`backfill`). */
+  history: { drawn: boolean; from: string | null; reach?: string | null; backfill?: boolean };
+};
 type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done';
 
 const NONE = <T,>(): ChoiceSet<T> => ({ each: {} });
@@ -142,18 +164,27 @@ const choiceOf = (c: ChoiceSet<Choice>, p: Pick<Proposal, 'index' | 'confidence'
 
 const CONFIDENCE_TEXT = { high: 'very likely the same', medium: 'likely the same', low: 'possibly the same' } as const;
 
+/** Why a proposal is the same transaction only through a posting lag, in
+ *  words (lib/history-import/plan.ts Edge). */
+export function edgeText(edge: Edge, bank: string): string {
+  if (edge.kind === 'before-bank') return `${bank} has nothing before ${fmtDay(edge.day)}: the same only if it posted days later`;
+  if (edge.kind === 'outside-file') return `this file covers ${fmtRange(edge.from, edge.to)}: the same only if dated otherwise in it`;
+  return `that import covers ${fmtRange(edge.from, edge.to)}: the same only if dated otherwise in it`;
+}
+
 /** The review's counts with the answers given since it was asked for: the
- *  listed proposals moved between "the bank's", "new" and "to answer". Those
- *  not listed follow the answer for every one, which asks for the review again. */
+ *  listed proposals moved between "already there", "new" and "to answer".
+ *  Those not listed follow the answer for every one, which asks for the
+ *  review again. */
 export function countsNow(r: Pick<Review, 'counts' | 'proposals'>, sent: ChoiceSet<Choice>, now: ChoiceSet<Choice>): Counts {
   const counts = { ...r.counts };
-  const bucket = (c: Choice | null): keyof Counts => (c === 'same' ? 'duplicates' : c === 'new' ? 'new' : 'unanswered');
+  const bucket = (c: Choice | null, p: Proposal): keyof Counts => (c === 'same' ? (p.twin.kind === 'imported' ? 'already' : 'duplicates') : c === 'new' ? 'new' : 'unanswered');
   for (const p of r.proposals) {
     const before = choiceOf(sent, p);
     const after = choiceOf(now, p);
     if (before === after) continue;
-    counts[bucket(before)]--;
-    counts[bucket(after)]++;
+    counts[bucket(before, p)]--;
+    counts[bucket(after, p)]++;
   }
   return counts;
 }
@@ -214,6 +245,7 @@ export default function HistoryImportSheet({
   const [sentChoices, setSentChoices] = useState<ChoiceSet<Choice>>(NONE);
   const [conflicts, setConflicts] = useState<ChoiceSet<ConflictChoice>>(NONE);
   const [covers, setCovers] = useState<{ from: string; to: string } | null>(null);
+  const [whole, setWhole] = useState(false);
   const [undoing, setUndoing] = useState<Listed | null>(null);
   const [undoPlan, setUndoPlan] = useState<{ plan: UndoPlan | null; error: string } | null>(null);
   const [notice, setNotice] = useState('');
@@ -231,7 +263,14 @@ export default function HistoryImportSheet({
         setPastError(data?.error ?? 'Past imports couldn’t be loaded.');
         return;
       }
-      setPast({ imports: Array.isArray(data?.imports) ? data.imports : [], settings: data?.settings ?? null, bank_from: data?.bank_from ?? null, walked: data?.walked !== false, reach: data?.reach ?? null });
+      setPast({
+        imports: Array.isArray(data?.imports) ? data.imports : [],
+        settings: data?.settings ?? null,
+        bank_from: data?.bank_from ?? null,
+        history_pending: data?.history_pending === true,
+        walked: data?.walked !== false,
+        reach: data?.reach ?? null,
+      });
     } catch {
       setPast(null);
       setPastError('Past imports couldn’t be loaded: the server couldn’t be reached.');
@@ -255,6 +294,7 @@ export default function HistoryImportSheet({
     setSentChoices(NONE);
     setConflicts(NONE);
     setCovers(null);
+    setWhole(false);
     setUndoing(null);
     setUndoPlan(null);
     setNotice('');
@@ -285,6 +325,7 @@ export default function HistoryImportSheet({
           options: next,
           choices: { proposals: wire(chosen), conflicts: wire(conflictChoices) },
           ...(period ? { covers: period } : {}),
+          ...(whole ? { whole: true } : {}),
         },
         picked
       );
@@ -349,6 +390,7 @@ export default function HistoryImportSheet({
       setSentChoices(NONE);
       setConflicts(NONE);
       setCovers(null);
+      setWhole(false);
       // What this account's last file of the same kind taught; else the
       // account's own currency for a file that doesn't say one.
       const s = past?.settings ?? null;
@@ -393,6 +435,7 @@ export default function HistoryImportSheet({
           options,
           choices: { proposals: wire(choices), conflicts: wire(conflicts) },
           ...(covers ? { covers } : {}),
+          ...(whole ? { whole: true } : {}),
           review: review.review,
           acknowledge_account: acknowledged,
         },
@@ -413,7 +456,9 @@ export default function HistoryImportSheet({
       }
       setError(data?.error ?? 'The file couldn’t be imported. Please try again.');
     } catch {
-      setError('Could not reach the server, so it may not have been imported. Check the list of imports before trying again.');
+      // Back to the list of imports, which says whether it went in.
+      setStep('pick');
+      setError('Could not reach the server, so it may not have been imported. The list of imports below shows whether it was; if it isn’t there, choose the file again.');
       void loadPast(account.account_id);
     } finally {
       setBusy(false);
@@ -472,6 +517,7 @@ export default function HistoryImportSheet({
     setSentChoices(NONE);
     setConflicts(NONE);
     setCovers(null);
+    setWhole(false);
     setStep('pick');
   }
 
@@ -493,8 +539,10 @@ export default function HistoryImportSheet({
             {MAX_FILE_BYTES / (1024 * 1024)} MB and {MAX_IMPORT_ROWS.toLocaleString()} transactions a file.
           </p>
           <p className="panel-note">
-            Transactions {shown.institution_name} already gave Nya are found and shown beside the file’s, for you to confirm, before anything is kept.
+            Transactions {shown.institution_name} already gave Nya, and those an earlier file brought in, are found and shown beside the file’s, for you to
+            confirm, before anything is kept.
           </p>
+          {past?.history_pending && <HistoryPendingNote bank={shown.institution_name} />}
           {past?.bank_from && (
             <p className="panel-note">
               {shown.institution_name}’s own transactions for this connection start on {fmtDay(past.bank_from)}. Export a period that reaches up to that day, or
@@ -527,6 +575,7 @@ export default function HistoryImportSheet({
             past={past}
             error={pastError}
             account={name}
+            bank={shown.institution_name}
             busy={busy}
             undoing={undoing}
             plan={undoPlan}
@@ -601,6 +650,8 @@ export default function HistoryImportSheet({
             setCovers(period);
             void requestReview(options, file, choices, conflicts, period);
           }}
+          whole={whole}
+          onWhole={setWhole}
           onFlip={(flip) => {
             const next = { ...options, flip: flip || undefined };
             setOptions(next);
@@ -619,6 +670,7 @@ export default function HistoryImportSheet({
           <p className="panel-note">
             {[
               done.duplicates > 0 ? `${done.duplicates.toLocaleString()} kept as ${shown.institution_name}’s own, not counted twice` : null,
+              (done.already ?? 0) > 0 ? `${done.already!.toLocaleString()} kept as rows an earlier file brought in, not counted twice` : null,
               done.present > 0 ? `${done.present.toLocaleString()} already imported` : null,
               done.skipped > 0 ? `${done.skipped.toLocaleString()} skipped` : null,
               done.repeated > 0 ? `${done.repeated.toLocaleString()} listed twice in the file` : null,
@@ -627,10 +679,13 @@ export default function HistoryImportSheet({
               .filter(Boolean)
               .join(' · ') || 'Every row in the file was read.'}
           </p>
-          {done.history.drawn && done.history.from && (
-            <p className="status-note">The net worth chart now reaches back to {fmtDay(done.history.from)}, estimated from what you imported.</p>
+          {done.history.drawn && done.history.reach && (
+            <p className="status-note">{name}’s estimated history now reaches back to {fmtDay(done.history.reach)}, through what you imported.</p>
           )}
-          {!done.history.drawn && done.imported > 0 && past?.walked !== false && (
+          {done.history.backfill && done.imported > 0 && (
+            <p className="panel-note">The estimated history is being worked out again with these transactions: the chart shows them in a moment.</p>
+          )}
+          {!done.history.drawn && !done.history.backfill && done.imported > 0 && past?.walked !== false && (
             <p className="panel-note">The net worth chart is drawn back through it on the next load.</p>
           )}
           <p className="panel-note">
@@ -641,6 +696,7 @@ export default function HistoryImportSheet({
             past={past}
             error={pastError}
             account={name}
+            bank={shown.institution_name}
             busy={busy}
             undoing={undoing}
             plan={undoPlan}
@@ -686,6 +742,8 @@ export function ReviewView({
   onConflict,
   onConflictAll,
   onCovers,
+  whole = false,
+  onWhole = () => {},
   onFlip,
   onImport,
   onBack,
@@ -706,6 +764,9 @@ export function ReviewView({
   onConflict: (index: number, choice: ConflictChoice) => void;
   onConflictAll: (choice: ConflictChoice) => void;
   onCovers: (period: { from: string; to: string }) => void;
+  /** The person says the lines that can't be read aren't transactions. */
+  whole?: boolean;
+  onWhole?: (v: boolean) => void;
   onFlip: (flip: boolean) => void;
   onImport: () => void;
   onBack: () => void;
@@ -717,7 +778,7 @@ export function ReviewView({
   const c = countsNow(r, sentChoices, choices);
   const waiting = c.conflicts + c.unanswered;
   const blocked = !!r.account_mismatch && !acknowledged;
-  const canImport = c.new + c.duplicates > 0 && waiting === 0;
+  const canImport = c.new + c.duplicates + c.already > 0 && waiting === 0;
   const kinds = kindsText(r.kinds);
   const shownProblems = allProblems ? r.problems : r.problems.slice(0, 5);
   const total = r.proposals.length + r.more_proposals;
@@ -729,6 +790,7 @@ export function ReviewView({
       <p className="panel-note" style={{ marginTop: 4 }}>
         {[
           c.duplicates > 0 ? `${c.duplicates.toLocaleString()} ${c.duplicates === 1 ? 'is' : 'are'} ${bank}’s own` : null,
+          c.already > 0 ? `${c.already.toLocaleString()} ${c.already === 1 ? 'is' : 'are'} already in from another file` : null,
           c.present > 0 ? `${c.present.toLocaleString()} already imported` : null,
           waiting > 0 ? `${plural(waiting, 'row')} to decide` : null,
           c.skipped > 0 ? `${c.skipped.toLocaleString()} skipped` : null,
@@ -746,6 +808,7 @@ export function ReviewView({
       ) : (
         <p className="panel-note">{bank} hasn’t given Nya any of {name}’s transactions, so every row is matched against earlier imports only.</p>
       )}
+      {r.history_pending && <HistoryPendingNote bank={bank} />}
       {r.pending_alike > 0 && (
         <p className="panel-note">
           {plural(r.pending_alike, 'row')} {r.pending_alike === 1 ? 'looks' : 'look'} like a transaction still pending at {bank}: once it posts, {bank}’s takes its place.
@@ -760,6 +823,22 @@ export function ReviewView({
             Change
           </button>
         </p>
+      )}
+      {r.covers && c.unreadable > 0 && (
+        <>
+          <label className="quick-add-check">
+            <input type="checkbox" checked={whole} disabled={busy} onChange={(e) => onWhole(e.target.checked)} />
+            <span>
+              The {plural(c.unreadable, 'line')} that can’t be read {c.unreadable === 1 ? 'isn’t a transaction' : 'aren’t transactions'} (a total, a title): draw the
+              estimated history through this file’s period
+            </span>
+          </label>
+          {!whole && (
+            <p className="panel-note">
+              Until you say so, this file’s period isn’t used to draw the estimated history: it may lack {c.unreadable === 1 ? 'that line’s transaction' : 'those lines’ transactions'}.
+            </p>
+          )}
+        </>
       )}
       {editingPeriod && (
         <div className="sheet-form history-import-period">
@@ -804,7 +883,9 @@ export function ReviewView({
       {r.account_mismatch && (
         <>
           <p className="stale-note">
-            This file is for {r.account_mismatch.found}, but {name}’s last OFX file was for {r.account_mismatch.expected}.
+            {r.account_mismatch.basis === 'mask'
+              ? `This file is for ${r.account_mismatch.found}, but ${name} is ${r.account_mismatch.expected}.`
+              : `This file is for ${r.account_mismatch.found}, but ${name}’s last OFX file was for ${r.account_mismatch.expected}.`}
           </p>
           <label className="quick-add-check">
             <input type="checkbox" checked={acknowledged} disabled={busy} onChange={(e) => onAcknowledge(e.target.checked)} />
@@ -822,11 +903,12 @@ export function ReviewView({
       {total > 0 && (
         <>
           <p className="section-label" style={{ marginTop: 16 }}>
-            Likely already from {bank}
+            {r.proposals.some((p) => p.twin.kind === 'imported') ? 'Likely already here' : `Likely already from ${bank}`}
           </p>
           <p className="panel-note" style={{ marginTop: 0 }}>
-            {total === 1 ? 'This row has' : `These ${total.toLocaleString()} rows have`} the same amount as a transaction {bank} gave Nya, dated a few days apart at most.
-            The same transaction is kept once, as {bank}’s; one of its own is kept beside it. Nothing is merged without your say: check the ones that need an answer.
+            {total === 1 ? 'This row has' : `These ${total.toLocaleString()} rows have`} the same amount as a transaction {bank} gave Nya
+            {r.proposals.some((p) => p.twin.kind === 'imported') ? ' or an earlier file brought in' : ''}, dated a few days apart at most. The same transaction is kept
+            once, as the one already here; one of its own is kept beside it. Nothing is merged without your say: check the ones that need an answer.
           </p>
           {total > 1 && (
             <div className="import-choices" role="group" aria-label="For every row">
@@ -851,21 +933,24 @@ export function ReviewView({
                     </div>
                     <div className="import-row-meta">{fmtDay(p.file.date)}</div>
                     <div className="import-row-meta" style={{ marginTop: 6 }}>
-                      From {bank}
+                      {p.twin.kind === 'imported'
+                        ? `Imported from ${p.twin.file_name ?? 'an earlier file'}${p.twin.imported_at ? ` on ${instantDay(p.twin.imported_at) ?? p.twin.imported_at.slice(0, 10)}` : ''}`
+                        : `From ${bank}`}
                     </div>
                     <div className="import-conflict-version">
-                      <span className="import-row-name">{p.bank.name}</span>
-                      <span className={`import-row-amount${p.bank.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(p.bank.amount, p.bank.currency ?? p.file.currency)}</span>
+                      <span className="import-row-name">{p.twin.name}</span>
+                      <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(p.twin.amount, p.twin.currency ?? p.file.currency)}</span>
                     </div>
                     <div className="import-row-meta">
-                      {fmtDay(p.bank.date)}
-                      {p.bank.descriptor !== p.bank.name ? ` · ${p.bank.descriptor}` : ''}
+                      {fmtDay(p.twin.date)}
+                      {p.twin.descriptor && p.twin.descriptor !== p.twin.name ? ` · ${p.twin.descriptor}` : ''}
                     </div>
                     <div className="import-row-meta">
                       {p.days === 0 ? 'The same day' : `${plural(p.days, 'day')} apart`}
                       {p.similar ? ', alike in name' : ''} · {CONFIDENCE_TEXT[p.confidence]}
                       {chosen === null ? ' · choose one' : ''}
                     </div>
+                    {p.edge && <div className="import-row-meta">{edgeText(p.edge, bank)}.</div>}
                     <div className="import-choices" role="group" aria-label={`What ${p.file.name} is`}>
                       <button className="secondary" disabled={busy} aria-pressed={chosen === 'same'} onClick={() => onChoose(p.index, 'same')}>
                         The same
@@ -882,7 +967,7 @@ export function ReviewView({
           {r.more_proposals > 0 && (
             <p className="panel-note">
               {plural(r.more_proposals, 'more row')} like these {r.more_proposals === 1 ? 'isn’t' : 'aren’t'} listed: {r.more_proposals === 1 ? 'it follows' : 'they follow'} the
-              choice for every row above, or else count as {bank}’s own unless {r.more_proposals === 1 ? 'it is' : 'they are'} only possibly the same.
+              choice for every row above, or else {r.more_proposals === 1 ? 'is' : 'are'} kept as the one already here unless only possibly the same.
             </p>
           )}
         </>
@@ -1016,6 +1101,7 @@ function PastHistoryImports({
   past,
   error,
   account,
+  bank,
   busy,
   undoing,
   plan,
@@ -1026,6 +1112,7 @@ function PastHistoryImports({
   past: Past | null;
   error: string;
   account: string;
+  bank: string;
   busy: boolean;
   undoing: Listed | null;
   plan: { plan: UndoPlan | null; error: string } | null;
@@ -1065,7 +1152,13 @@ function PastHistoryImports({
               </div>
               {(i.superseded_now ?? 0) > 0 && (
                 <div className="import-row-meta">
-                  {plural(i.superseded_now!, 'of them', 'of them')} {i.superseded_now === 1 ? 'is' : 'are'} now the bank’s own, sent since: counted once, as the bank’s.
+                  {plural(i.superseded_now!, 'of them', 'of them')} {i.superseded_now === 1 ? 'is' : 'are'} now {bank}’s own, sent since: counted once, as {bank}’s.
+                </div>
+              )}
+              {(i.returned_now ?? 0) > 0 && (
+                <div className="import-row-meta">
+                  {plural(i.returned_now!, 'row')} kept as already here {i.returned_now === 1 ? 'counts' : 'count'} again: {bank} no longer has{' '}
+                  {i.returned_now === 1 ? 'it' : 'them'}, or the file {i.returned_now === 1 ? 'it was' : 'they were'} in was undone.
                 </div>
               )}
               {i.taken_over > 0 && <div className="import-row-meta">{plural(i.taken_over, 'transaction')} an earlier import added {i.taken_over === 1 ? 'is' : 'are'} kept for this one.</div>}
@@ -1101,6 +1194,17 @@ function PastHistoryImports({
         })}
       </ul>
     </>
+  );
+}
+
+/** That the connection's older transactions are still on their way to Nya,
+ *  and what importing before they arrive means. */
+function HistoryPendingNote({ bank }: { bank: string }) {
+  return (
+    <p className="panel-note">
+      {bank} is still sending this connection’s older transactions to Nya: it was linked recently. You can import now. Transactions {bank} sends later take the
+      place of the imported ones, and a category or an exclusion you set on those carries over.
+    </p>
   );
 }
 

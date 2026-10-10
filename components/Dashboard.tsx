@@ -2611,6 +2611,9 @@ export default function Dashboard({
         onClose={() => setHistoryTarget(null)}
         onImported={() => {
           loadTransactions();
+          // The backfill draws it, running again first when rows after its
+          // earliest point changed (lib/history-import/extend.ts).
+          requestBackfill(() => loadNetWorth());
           void loadNetWorth();
         }}
       />

@@ -22,7 +22,7 @@ import {
   unlinkAccount,
 } from '@/lib/links';
 import { clearCaches } from '@/lib/cache';
-import { markDrawStaleQuietly } from '@/lib/history-import/extend';
+import { linksChanged } from '@/lib/history-import/extend';
 import { contentKey, readStoredTxns } from '@/lib/transactions';
 import { carriedCategories, carryCounts, getCarried, getOverrides } from '@/lib/overrides';
 import { rememberedIdsByItem } from '@/lib/last-known';
@@ -204,8 +204,10 @@ async function linkPair(ctx: Ctx, old: string, to: string) {
   );
   // Cached payloads carry per-account history and hidden subtraction.
   await clearCaches(ctx);
-  // An import into the earlier account now walks with this one (#52).
-  await markDrawStaleQuietly(ctx);
+  // An import into the earlier account is matched against this one's bank
+  // rows now, and walks with it (#52): the backfill runs again, then the
+  // drawing.
+  await linksChanged(ctx);
   return NextResponse.json({ linked: true });
 }
 
@@ -237,7 +239,7 @@ export async function POST(req: Request) {
           // Even a forget that stopped part way changed totals: a payload
           // cached before it (or while it ran) must not outlive it.
           await clearCaches(ctx).catch(() => {});
-          await markDrawStaleQuietly(ctx);
+          await linksChanged(ctx);
         }
       });
     }
@@ -303,7 +305,7 @@ export async function DELETE(req: Request) {
     return await locked(ctx, async () => {
       await unlinkAccount(ctx, old);
       await clearCaches(ctx);
-      await markDrawStaleQuietly(ctx);
+      await linksChanged(ctx);
       return NextResponse.json({ unlinked: true });
     });
   } catch (err) {

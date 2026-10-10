@@ -4,49 +4,60 @@
 // the bank's rows, as Plaid synced them (lib/transactions.ts), and the rows
 // earlier imports kept for it (lib/history-import/store.ts). Pure, no storage.
 //
-// AGAINST THE BANK, NEVER SILENTLY. Plaid has no FITID and names merchants its
-// own way, so a bank's row and a file's version of it can only be told by what
-// they have in common: exactly the same amount, in the same currency, dated
-// within MATCH_DAYS of each other (a bank's export often dates a purchase the
-// day it was made, Plaid the day it posted). The description is only a
-// tiebreak, and a nudge to the confidence: a bank's CSV says
-// "SQ *COFFEE 1234 SEATTLE WA" where Plaid says "Coffee Shop", so it is least
-// reliable exactly where it is most needed. Each pair is a PROPOSAL with a
-// confidence; the person sees every one, with the bank's row beside it, and
-// says what it is before anything is stored (lib/history-import/plan.ts).
+// NEVER SILENTLY. Plaid has no FITID and names merchants its own way, and a
+// bank's CSV and its OFX file describe one transaction differently, so two
+// rows can only be told to be one transaction by what they have in common:
+// exactly the same amount, in the same currency, dated within MATCH_DAYS of
+// each other (a bank's export often dates a purchase the day it was made,
+// Plaid the day it posted). The description is only a tiebreak, and a nudge
+// to the confidence: a bank's CSV says "SQ *COFFEE 1234 SEATTLE WA" where
+// Plaid says "Coffee Shop", so it is least reliable exactly where it is most
+// needed. Each pair is a PROPOSAL with a confidence; the person sees every
+// one, with the row it looks like beside it, and says what it is before
+// anything is stored (lib/history-import/plan.ts).
 //
-// ONE TO ONE. A bank's row is the match of one file row at most, and the other
-// way round, so two identical coffees in a week are two in both: the closest
-// pair first (the fewest days apart, then the most alike descriptions, then
-// file order), each row taken once. A pending row is never a match: its amount
-// can still change, and it is replaced by the posted row, which is.
+// ONE TO ONE, AS MANY AS CAN BE. A row is the match of one row at most, the
+// other way round too, so two identical coffees in a week are two in both.
+// Of every way to pair a run of one amount, the one with the most pairs
+// wins, and of those the one whose pairs are fewest days apart in all, then
+// the most alike: with a daily fare dated by purchase in the file and by
+// posting at the bank, every fare finds its own, never its neighbour's, and
+// none at the edge of a window is left over to be counted twice (pairUp). A
+// pending row is never a match: its amount can still change, and it is
+// replaced by the posted row, which is.
 //
-// WHAT A DECISION LEAVES. A row the person says is the bank's is kept, never
-// counted, as a DUPLICATE naming the bank's row by its key (bankKey: the day,
-// the amount and the bank's own descriptor, which survive a re-link, where
-// Plaid's transaction ids don't): that bank row is CLAIMED, so no other row
-// can be matched to it later. A row the person says is a transaction of its
-// own is kept and counted, and names the bank's row it is not
-// (distinct_from): that bank row is MARKED, reviewed and kept apart, so
-// nothing is matched to it later either.
+// WHAT A DECISION LEAVES. A row the person says is a transaction already
+// there is kept, never counted, as a DUPLICATE naming its twin: the bank's
+// row by its key (`same_as`, bankKey: the day, the amount and the bank's own
+// descriptor, which survive a re-link, where Plaid's transaction ids don't),
+// or a row an earlier import kept (`same_as_row`, by its id). A duplicate
+// STANDS for its twin only while the twin is there: once the bank no longer
+// holds that row (a re-link whose window starts later, a row the bank took
+// back), or that earlier import is undone, the duplicate is a transaction
+// like any other again, so nothing a later change does can lose it (settle).
+// A row the person says is a transaction of its own is kept and counted, and
+// names the bank's row it is not (`distinct_from`): that pair is never made
+// again behind their back, and the bank's row stays free for its real twin.
 //
-// SUPERSEDED BY A LATER SYNC. When the bank later sends a period an import
-// covered (a re-link that brings more history, or a row the bank hadn't sent
-// yet when the file was read), its rows win: an imported row the bank's row
-// matches by the same rule retires, uncounted, while the bank's row stays
-// (supersede). Only bank rows no decision claimed or marked are matched, so a
-// row the person reviewed is never matched again behind their back, and
-// earlier imports' rows are matched first, so what an import showed in its
-// review is what it does once committed. Worked out on every read, never
-// stored: undoing an import, or the bank removing its row, puts the imported
-// row back exactly as it was.
+// SUPERSEDED BY A LATER SYNC. Where the bank's window reaches, its rows win:
+// an imported row a free bank row matches by the same rule retires,
+// uncounted, while the bank's row stays (settle). Earlier imports' rows are
+// matched first, so what an import showed in its review is what it does once
+// committed. ACROSS AN EDGE (a row dated before the bank's earliest posted
+// row, or a bank row dated outside the period the file covers) two rows can
+// only be one transaction through a posting lag: a file dated by purchase
+// (many a CSV) beside the bank's posting dates. An OFX file is dated by
+// posting (DTPOSTED), as the bank's rows are, so for its rows such a pair is
+// never made; for others it is, and the review shows it as possibly the same,
+// for the person to answer (lib/history-import/plan.ts). Worked out on every
+// read, never stored: undoing an import, or the bank removing its row, puts
+// the imported row back exactly as it was.
 
 import { digitsOf, normalizeDescription } from '../import/normalize';
 
-/** How far apart, in days, a file's row and a bank's row of the same amount
- *  may be dated and still be proposed as one transaction. Off by one to three
- *  days is routine between a purchase and its posting; a weekend or a holiday
- *  adds two. */
+/** How far apart, in days, two rows of the same amount may be dated and
+ *  still be proposed as one transaction. Off by one to three days is routine
+ *  between a purchase and its posting; a weekend or a holiday adds two. */
 export const MATCH_DAYS = 5;
 
 /** A bank's row (lib/transactions.ts StoredTxn) as matching reads it. */
@@ -77,8 +88,12 @@ export type HeldRow = {
   amount: number;
   currency: string;
   name: string;
-  /** Kept as a duplicate of the bank's row with this key: never counted. */
+  /** Where it came from ('import:ofx', ...): an OFX row is dated by posting. */
+  source?: string;
+  /** A duplicate of the bank's row with this key (bankKey). */
   same_as?: string | null;
+  /** A duplicate of the row with this id, which an earlier import kept. */
+  same_as_row?: string | null;
   /** The bank's rows (by key) the person said it is not. */
   distinct_from?: string[];
 };
@@ -87,13 +102,17 @@ export type HeldRow = {
  *  a manual transaction's fields (lib/import/normalize.ts ImportRow). */
 export type FileRow = { index: number; date: string; amount: number; currency: string; name: string };
 
+/** What a row can be paired with: a bank's row, or a row an earlier import
+ *  kept. A pending one never pairs. */
+export type Matchable = { date: string; amount: number; currency: string | null; name: string; merchant_name?: string | null; pending?: boolean };
+
 export type Confidence = 'high' | 'medium' | 'low';
 
-/** One file row and the bank's row it looks like. */
-export type Pair = { bank: BankRow; days: number; similarity: number; confidence: Confidence };
+/** One row and the row it looks like. */
+export type Pair<T extends Matchable = BankRow> = { twin: T; days: number; similarity: number; confidence: Confidence };
 
-/** The key a bank's row is claimed or marked by (see the header): its day, its
- *  amount in thousandths (enough for every currency's minor unit) and its
+/** The key a bank's row is claimed by (see the header): its day, its amount
+ *  in thousandths (enough for every currency's minor unit) and its
  *  descriptor, normalized. Kept inside an encrypted record, never a field
  *  name: it names a day, an amount and a merchant. */
 export function bankKey(r: { date: string; amount: number; name: string }): string {
@@ -153,10 +172,10 @@ export function similarity(a: string, b: string): number {
   return (2 * shared) / (x.length + y.length);
 }
 
-/** How alike a file row's description is to a bank's row: the closer of the
- *  bank's own descriptor and Plaid's merchant name. */
-function likeness(name: string, bank: BankRow): number {
-  return Math.max(similarity(name, bank.name), bank.merchant_name ? similarity(name, bank.merchant_name) : 0);
+/** How alike a row's description is to another's: the closer of its own
+ *  description and, for a bank's row, Plaid's merchant name. */
+function likeness(name: string, twin: Matchable): number {
+  return Math.max(similarity(name, twin.name), twin.merchant_name ? similarity(name, twin.merchant_name) : 0);
 }
 
 /** Descriptions this alike or more share a word that says who. */
@@ -174,114 +193,268 @@ export function confidenceOf(days: number, similar: number): Confidence {
   return 'low';
 }
 
-/** Whether a bank's row could be a file row's: posted, the same amount in the
- *  same currency (or none), dated within MATCH_DAYS. */
-export function couldBe(row: Pick<FileRow, 'date' | 'amount' | 'currency'>, bank: BankRow): boolean {
-  if (bank.pending) return false;
-  if (bank.currency !== null && bank.currency !== row.currency) return false;
-  return sameAmount(row.amount, bank.amount, row.currency) && daysApart(row.date, bank.date) <= MATCH_DAYS;
+/** Whether a row could be another's: not pending, the same amount in the
+ *  same currency (or the other names none), dated within MATCH_DAYS. */
+export function couldBe(row: Pick<FileRow, 'date' | 'amount' | 'currency'>, twin: Matchable): boolean {
+  if (twin.pending) return false;
+  if (twin.currency !== null && twin.currency !== row.currency) return false;
+  return sameAmount(row.amount, twin.amount, row.currency) && daysApart(row.date, twin.date) <= MATCH_DAYS;
 }
 
-/** The bank's rows by amount, so each row is compared only with the few of
- *  the same amount: a key per amount, rounded to thousandths. */
-function byAmount(banks: readonly BankRow[]): Map<number, BankRow[]> {
-  const out = new Map<number, BankRow[]>();
-  for (const b of banks) {
-    if (b.pending) continue;
-    const k = Math.round(b.amount * 1000);
-    const list = out.get(k);
-    if (list) list.push(b);
-    else out.set(k, [b]);
+/** Above this many cells in one run, pairing falls back to the greedy way
+ *  (still as many pairs as can be, not always the closest): a run that long
+ *  is years of one amount every day. */
+const DP_LIMIT = 4_000_000;
+
+type Scored = { count: number; days: number; sim: number };
+const better = (a: Scored, b: Scored) => a.count > b.count || (a.count === b.count && (a.days < b.days || (a.days === b.days && a.sim > b.sim + 1e-9)));
+const NOTHING: Scored = { count: 0, days: 0, sim: 0 };
+
+/**
+ * The best pairing of one run (see the header): rows and twins of one
+ * amount, each sorted by date, as many pairs as can be, then the fewest days
+ * apart in all, then the most alike. Pairs on a line never need to cross (two
+ * crossing pairs within MATCH_DAYS can be swapped for two that don't, never
+ * further apart in all), so the best pairings of prefixes build the whole.
+ */
+function pairRun<T extends Matchable>(rows: FileRow[], twins: T[], ok: (row: FileRow, twin: T) => boolean, out: Map<number, Pair<T>>): void {
+  const n = rows.length;
+  const m = twins.length;
+  if (n * m > DP_LIMIT) return pairGreedy(rows, twins, ok, out);
+  const W = m + 1;
+  const twinDays = twins.map((t) => dayNumber(t.date));
+  let prev: Scored[] = new Array<Scored>(W).fill(NOTHING);
+  // 1: leave the row out; 2: leave the twin out; 3: pair them.
+  const back = new Uint8Array((n + 1) * W);
+  for (let i = 1; i <= n; i++) {
+    const cur: Scored[] = new Array<Scored>(W);
+    cur[0] = NOTHING;
+    back[i * W] = 1;
+    const r = rows[i - 1];
+    const day = dayNumber(r.date);
+    for (let j = 1; j <= m; j++) {
+      let best = prev[j];
+      let from = 1;
+      if (better(cur[j - 1], best)) {
+        best = cur[j - 1];
+        from = 2;
+      }
+      const t = twins[j - 1];
+      if (Math.abs(day - twinDays[j - 1]) <= MATCH_DAYS && ok(r, t)) {
+        const p = prev[j - 1];
+        const paired = { count: p.count + 1, days: p.days + daysApart(r.date, t.date), sim: p.sim + likeness(r.name, t) };
+        if (better(paired, best)) {
+          best = paired;
+          from = 3;
+        }
+      }
+      cur[j] = best;
+      back[i * W + j] = from;
+    }
+    prev = cur;
   }
-  return out;
+  for (let i = n, j = m; i > 0 && j > 0; ) {
+    const from = back[i * W + j];
+    if (from === 3) {
+      const r = rows[i - 1];
+      const t = twins[j - 1];
+      const days = daysApart(r.date, t.date);
+      const sim = likeness(r.name, t);
+      out.set(r.index, { twin: t, days, similarity: sim, confidence: confidenceOf(days, sim) });
+      i--;
+      j--;
+    } else if (from === 2) j--;
+    else i--;
+  }
+}
+
+/** As many pairs as can be, for a run too long to weigh every way: each row,
+ *  oldest first, takes the oldest twin it can, which never leaves undone a
+ *  pair another order would make. */
+function pairGreedy<T extends Matchable>(rows: FileRow[], twins: T[], ok: (row: FileRow, twin: T) => boolean, out: Map<number, Pair<T>>): void {
+  const used = new Uint8Array(twins.length);
+  let lo = 0;
+  for (const r of rows) {
+    const day = dayNumber(r.date);
+    while (lo < twins.length && dayNumber(twins[lo].date) < day - MATCH_DAYS) lo++;
+    for (let j = lo; j < twins.length && dayNumber(twins[j].date) <= day + MATCH_DAYS; j++) {
+      if (used[j] || !ok(r, twins[j])) continue;
+      used[j] = 1;
+      const days = daysApart(r.date, twins[j].date);
+      const sim = likeness(r.name, twins[j]);
+      out.set(r.index, { twin: twins[j], days, similarity: sim, confidence: confidenceOf(days, sim) });
+      break;
+    }
+  }
 }
 
 /**
- * The bank's row each file row looks like, one to one (see the header): of
- * every pair that couldBe, the closest first. `forbidden` leaves out a pair
- * the person said is not one. Rows and bank rows not in a pair are left out of
+ * The twin each row looks like, one to one (see the header): of the pairs
+ * that couldBe, as many as can be, the closest. `forbidden` leaves out a pair
+ * the person said is not one. Rows and twins not in a pair are left out of
  * the answer.
  */
-export function pairUp(rows: readonly FileRow[], banks: readonly BankRow[], forbidden?: (row: FileRow, bank: BankRow) => boolean): Map<number, Pair> {
-  const index = byAmount(banks);
-  const order = new Map(banks.map((b, i) => [b, i]));
-  const candidates: { row: FileRow; bank: BankRow; days: number; similarity: number }[] = [];
-  for (const row of rows) {
-    for (const bank of index.get(Math.round(row.amount * 1000)) ?? []) {
-      if (!couldBe(row, bank) || forbidden?.(row, bank)) continue;
-      candidates.push({ row, bank, days: daysApart(row.date, bank.date), similarity: likeness(row.name, bank) });
+export function pairUp<T extends Matchable>(rows: readonly FileRow[], twins: readonly T[], forbidden?: (row: FileRow, twin: T) => boolean): Map<number, Pair<T>> {
+  const out = new Map<number, Pair<T>>();
+  // By amount in thousandths: only rows of one amount can pair.
+  const groups = new Map<number, { rows: FileRow[]; twins: { t: T; at: number }[] }>();
+  twins.forEach((t, at) => {
+    if (t.pending) return;
+    const k = Math.round(t.amount * 1000);
+    let g = groups.get(k);
+    if (!g) groups.set(k, (g = { rows: [], twins: [] }));
+    g.twins.push({ t, at });
+  });
+  for (const r of rows) groups.get(Math.round(r.amount * 1000))?.rows.push(r);
+  const ok = (row: FileRow, twin: T) => couldBe(row, twin) && !forbidden?.(row, twin);
+  for (const g of groups.values()) {
+    if (g.rows.length === 0 || g.twins.length === 0) continue;
+    const rs = [...g.rows].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.index - b.index));
+    const ts = [...g.twins].sort((a, b) => (a.t.date < b.t.date ? -1 : a.t.date > b.t.date ? 1 : a.at - b.at)).map((x) => x.t);
+    // Runs no pair can cross: split where more than MATCH_DAYS separate one
+    // row or twin from the next, in date order.
+    let i = 0;
+    let j = 0;
+    while (i < rs.length || j < ts.length) {
+      const runRows: FileRow[] = [];
+      const runTwins: T[] = [];
+      let last: number | null = null;
+      while (i < rs.length || j < ts.length) {
+        const nextRow = i < rs.length ? dayNumber(rs[i].date) : Infinity;
+        const nextTwin = j < ts.length ? dayNumber(ts[j].date) : Infinity;
+        const next = Math.min(nextRow, nextTwin);
+        if (last !== null && next - last > MATCH_DAYS) break;
+        if (nextRow <= nextTwin) runRows.push(rs[i++]);
+        else runTwins.push(ts[j++]);
+        last = next;
+      }
+      if (runRows.length > 0 && runTwins.length > 0) pairRun(runRows, runTwins, ok, out);
     }
   }
-  candidates.sort(
-    (a, b) => a.days - b.days || b.similarity - a.similarity || a.row.index - b.row.index || order.get(a.bank)! - order.get(b.bank)!
-  );
-  const out = new Map<number, Pair>();
-  const used = new Set<BankRow>();
-  for (const c of candidates) {
-    if (out.has(c.row.index) || used.has(c.bank)) continue;
-    used.add(c.bank);
-    out.set(c.row.index, { bank: c.bank, days: c.days, similarity: c.similarity, confidence: confidenceOf(c.days, c.similarity) });
-  }
   return out;
 }
 
-/** A count of keys: two identical coffees on one day share a key, and are
- *  claimed (or marked) one at a time. */
-type KeyCounts = Map<string, number>;
-
-function countKeys(keys: Iterable<string>): KeyCounts {
-  const out: KeyCounts = new Map();
-  for (const k of keys) out.set(k, (out.get(k) ?? 0) + 1);
-  return out;
+/** Whether a pair would cross the edge of either side's coverage (see the
+ *  header): the row dated before the bank's earliest posted row, or the twin
+ *  outside the period the row's file covers. */
+export function crossesEdge(rowDate: string, twinDate: string, bankFrom: string | null, covers: { from: string; to: string } | null): boolean {
+  return (bankFrom !== null && rowDate < bankFrom) || (covers !== null && (twinDate > covers.to || twinDate < covers.from));
 }
+
+/** A source dated by posting, as the bank's rows are: OFX's DTPOSTED. */
+export const POSTED_DATED = (source: string | undefined) => source === 'import:ofx';
+
+/** What a duplicate stands for while it stands: the bank's row it claims, or
+ *  the earlier import's row it names. */
+export type Standing = { bank: BankRow } | { row: string };
+
+export type Settled<T extends HeldRow> = {
+  /** The rows that count as transactions of the account. */
+  counted: T[];
+  /** Duplicates standing for their twin: never counted while it is there. */
+  standing: Map<string, Standing>;
+  /** Rows a posted bank row now stands for. */
+  superseded: Map<string, BankRow>;
+  /** With `pending`: rows a pending bank row stands for until it posts. */
+  pendingStood: Map<string, BankRow>;
+};
 
 /**
- * The bank's rows no decision has claimed or marked (see the header), in the
- * order given: for each key, as many of its rows as the duplicates claiming
- * it and the rows marked distinct from it don't account for.
+ * Which of an account's kept rows count, and what each one that doesn't is
+ * (see the header). `held` and `banks` are one account's, every id it has had;
+ * `order` its imports, earliest first; `bankFrom` its connection's earliest
+ * posted row; `covers` the period each import's file covers, where known.
+ *
+ *   1. A duplicate of the bank's row stands while a posted bank row has its
+ *      key, one bank row to one duplicate, earlier imports first.
+ *   2. A duplicate of an earlier import's row stands while that row is kept.
+ *   3. Every other row (and a duplicate whose twin is gone) counts, unless a
+ *      posted bank row no duplicate holds is its twin by the matching rule:
+ *      then that bank row stands for it. Earlier imports are matched first; a
+ *      pair the person said is not one never is, nor a pair across an edge
+ *      for a row dated by posting (crossesEdge, POSTED_DATED).
+ *   4. With `pending` (what is shown and listed, never the estimated history,
+ *      which walks posted rows only): a row left over that a pending bank row
+ *      looks like isn't shown beside it until it posts, or goes.
  */
-export function unclaimed(banks: readonly BankRow[], held: readonly HeldRow[]): BankRow[] {
-  const taken = countKeys(held.flatMap((r) => [...(r.same_as ? [r.same_as] : []), ...(r.distinct_from ?? [])]));
-  if (taken.size === 0) return [...banks];
-  const out: BankRow[] = [];
-  for (const b of banks) {
-    const key = bankKey(b);
-    const left = taken.get(key) ?? 0;
-    if (left > 0) taken.set(key, left - 1);
-    else out.push(b);
-  }
-  return out;
-}
-
-/**
- * Which of an account's kept rows a bank's row now supersedes (see the
- * header): its counted rows (not duplicates), matched one to one against the
- * bank's rows no decision claimed or marked, an import at a time in `order`
- * (the order they were made, earliest first), never against a bank row a row
- * said it is not. Answers each superseded row's id with the bank's row.
- * `banks` and `held` are one account's, every id it has had.
- */
-export function supersede(held: readonly HeldRow[], banks: readonly BankRow[], order: readonly string[]): Map<string, BankRow> {
-  const out = new Map<string, BankRow>();
-  let free = unclaimed(banks, held);
-  if (free.length === 0) return out;
-  const counted = held.filter((r) => !r.same_as);
-  if (counted.length === 0) return out;
+export function settle<T extends HeldRow>(
+  held: readonly T[],
+  banks: readonly BankRow[],
+  order: readonly string[],
+  opts: { bankFrom: string | null; pending?: boolean; covers?: ReadonlyMap<string, { from: string; to: string }> }
+): Settled<T> {
   const rank = new Map(order.map((id, i) => [id, i]));
-  const imports = [...new Set(counted.map((r) => r.import_id))].sort(
-    (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER) || (a < b ? -1 : a > b ? 1 : 0)
-  );
-  for (const import_id of imports) {
-    const rows = counted.filter((r) => r.import_id === import_id);
-    const asFile = rows.map((r, index) => ({ index, date: r.date, amount: r.amount, currency: r.currency, name: r.name }));
-    const pairs = pairUp(asFile, free, (row, bank) => (rows[row.index].distinct_from ?? []).includes(bankKey(bank)));
-    if (pairs.size === 0) continue;
+  const rankOf = (import_id: string) => rank.get(import_id) ?? Number.MAX_SAFE_INTEGER;
+  const before = (a: string, b: string) => rankOf(a) - rankOf(b) || (a < b ? -1 : a > b ? 1 : 0);
+  // Earlier imports first; within an import, in the order kept.
+  const sorted = [...held].sort((a, b) => before(a.import_id, b.import_id));
+  const posted = banks.filter((b) => !b.pending);
+
+  // 1. Claims on the bank's rows, while those rows are there.
+  const byKey = new Map<string, BankRow[]>();
+  for (const b of posted) {
+    const k = bankKey(b);
+    const list = byKey.get(k);
+    if (list) list.push(b);
+    else byKey.set(k, [b]);
+  }
+  const consumed = new Set<BankRow>();
+  const standing = new Map<string, Standing>();
+  for (const r of sorted) {
+    if (!r.same_as) continue;
+    const b = byKey.get(r.same_as)?.find((x) => !consumed.has(x));
+    if (!b) continue;
+    consumed.add(b);
+    standing.set(r.id, { bank: b });
+  }
+  // 2. Claims on an earlier import's rows, while they are kept. Only an
+  //    earlier import's: a row naming its own import's or a later one's is
+  //    taken as a transaction of its own, so no chain of names goes round.
+  const importOf = new Map(held.map((r) => [r.id, r.import_id]));
+  for (const r of sorted) {
+    if (!r.same_as_row || standing.has(r.id)) continue;
+    const named = importOf.get(r.same_as_row);
+    if (named !== undefined && before(named, r.import_id) < 0) standing.set(r.id, { row: r.same_as_row });
+  }
+
+  // 3. Superseded: the rest against the free posted rows.
+  const candidates = sorted.filter((r) => !standing.has(r.id));
+  const forbidden = (r: T, b: BankRow) =>
+    (r.distinct_from ?? []).includes(bankKey(b)) || (POSTED_DATED(r.source) && crossesEdge(r.date, b.date, opts.bankFrom, opts.covers?.get(r.import_id) ?? null));
+  const match = (rows: T[], twins: BankRow[], into: Map<string, BankRow>): Set<BankRow> => {
+    const asRows = rows.map((r, index) => ({ index, date: r.date, amount: r.amount, currency: r.currency, name: r.name }));
+    const pairs = pairUp(asRows, twins, (row, b) => forbidden(rows[row.index], b));
     const used = new Set<BankRow>();
     for (const [index, pair] of pairs) {
-      out.set(rows[index].id, pair.bank);
-      used.add(pair.bank);
+      into.set(rows[index].id, pair.twin);
+      used.add(pair.twin);
     }
-    free = free.filter((b) => !used.has(b));
+    return used;
+  };
+  const superseded = new Map<string, BankRow>();
+  let free = posted.filter((b) => !consumed.has(b));
+  for (const import_id of [...new Set(candidates.map((r) => r.import_id))]) {
+    if (free.length === 0) break;
+    const rows = candidates.filter((r) => r.import_id === import_id);
+    if (rows.length === 0) continue;
+    const used = match(rows, free, superseded);
+    if (used.size > 0) free = free.filter((b) => !used.has(b));
   }
-  return out;
+
+  // 4. For display: a pending bank row stands in until it posts.
+  const pendingStood = new Map<string, BankRow>();
+  if (opts.pending) {
+    const pendings = banks.filter((b) => b.pending);
+    const left = candidates.filter((r) => !superseded.has(r.id));
+    if (pendings.length > 0 && left.length > 0) {
+      const asPosted = pendings.map((b) => ({ ...b, pending: false }));
+      const original = new Map(asPosted.map((b, i) => [b, pendings[i]]));
+      const stood = new Map<string, BankRow>();
+      match(left, asPosted, stood);
+      for (const [id, b] of stood) pendingStood.set(id, original.get(b)!);
+    }
+  }
+
+  const counted = candidates.filter((r) => !superseded.has(r.id) && !pendingStood.has(r.id));
+  return { counted, standing, superseded, pendingStood };
 }

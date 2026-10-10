@@ -210,6 +210,12 @@ type ItemState = {
   // says the rows aren't all here yet, as the sync's own `importing` does.
   // Gone once a sync gets to the end.
   importing?: true;
+  // Plaid said its first pull for the Item is done and its full history
+  // (the rest of the days asked for) is still on the way
+  // (INITIAL_UPDATE_COMPLETE): a fresh connection holds about a month until
+  // then. Gone once Plaid says the history is complete. Read by importing
+  // history into a linked account (lib/history-import/), which says so.
+  history_pending?: true;
 };
 
 // Trailing window callers display / reconstruct by default.
@@ -507,6 +513,7 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
         synced_at: typeof parsed.synced_at === 'string' && !Number.isNaN(Date.parse(parsed.synced_at)) ? parsed.synced_at : null,
         ...(isRefusal(parsed.refused) ? { refused: parsed.refused } : {}),
         ...(parsed.importing === true ? { importing: true as const } : {}),
+        ...(parsed.history_pending === true ? { history_pending: true as const } : {}),
       };
     }
     // Older or unversioned: upgrade in place, keeping every row and the cursor.
@@ -651,9 +658,9 @@ export async function readStoredTxns(ctx: Ctx, item_id: string, opts: { shown?: 
 export async function readStoredItem(
   ctx: Ctx,
   item_id: string
-): Promise<{ accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn> }> {
-  const { accounts, txns } = await readState(ctx, item_id);
-  return { accounts, txns };
+): Promise<{ accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; history_pending?: true }> {
+  const { accounts, txns, history_pending } = await readState(ctx, item_id);
+  return { accounts, txns, ...(history_pending ? { history_pending } : {}) };
 }
 
 /**
@@ -1003,6 +1010,8 @@ async function syncItem(ctx: Ctx,
     delete state.refused;
     if (hasMore) state.importing = true;
     else delete state.importing;
+    if (lastStatus === TransactionsUpdateStatus.InitialUpdateComplete) state.history_pending = true;
+    else if (lastStatus === TransactionsUpdateStatus.HistoricalUpdateComplete) delete state.history_pending;
     const write = await writeState(ctx, item.item_id, state);
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.
@@ -1165,8 +1174,8 @@ export async function syncItemTransactions(ctx: Ctx,
   hiddenAccountIds?: Set<string>,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
-  opts: { withAccountIds?: boolean } = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
+  opts: { withAccountIds?: boolean; withStored?: boolean } = {}
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn> }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
   // missing from this load on its account, so it is never named as
@@ -1175,7 +1184,10 @@ export async function syncItemTransactions(ctx: Ctx,
   if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
   const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds };
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
-  return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
+  // `stored` (asked for with `withStored`): every row as the sync left it,
+  // for a reader of the same rows that would otherwise read them again
+  // (lib/history-import/read.ts).
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...(opts.withStored ? { stored: state.txns } : {}) };
 }
 
 /**
@@ -1212,15 +1224,19 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
 export async function storedItemTransactions(
   ctx: Ctx,
   item: StoredItem,
-  inputs: DisplayInputs = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; synced_at: string | null; noTransactions?: NoTransactionsReason }> {
+  inputs: DisplayInputs = {},
+  opts: { withStored?: boolean } = {}
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; synced_at: string | null; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn> | null }> {
+  // `stored` (asked for with `withStored`): every row as read, null when the
+  // store can't be read, as syncItemTransactions gives it.
+  const stored = (rows: Record<string, StoredTxn> | null) => (opts.withStored ? { stored: rows } : {});
   let state: ItemState;
   try {
     state = await readState(ctx, item.item_id);
   } catch (err) {
     if (!(err instanceof StateUnreadableError)) throw err;
     console.error(err.message, err.kind);
-    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null };
+    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, ...stored(null) };
   }
   if (state.cursor === '' && Object.keys(state.txns).length === 0) {
     const noTransactions = await storedNoTransactions(ctx, item, state);
@@ -1229,9 +1245,9 @@ export async function storedItemTransactions(
   }
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   if (state.importing) {
-    return { txns, older, note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`, coverage: 'importing', synced_at: state.synced_at };
+    return { txns, older, note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`, coverage: 'importing', synced_at: state.synced_at, ...stored(state.txns) };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, ...stored(state.txns) };
 }
 
 /**

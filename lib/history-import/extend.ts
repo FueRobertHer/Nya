@@ -16,6 +16,20 @@
 // backfill's own earliest point, not today's, or the backfill's later run
 // would cut it in two.
 //
+// THE BACKFILL FIRST, FOR ROWS AFTER THE ANCHOR. The backfill walks the
+// imported rows that count dated in its own window (importedFlowsForBackfill),
+// so the anchor's balances hold them. A change to which of them count (an
+// import or an undo with a row dated after the earliest point, a link or an
+// unlink, a forget) asks for it to run again first (importedRowsChanged):
+// until it has, the drawing waits, so it is never joined to a balance made
+// without them. A backfill that ran while such a change landed doesn't call
+// itself done (`rows`).
+//
+// NEVER WITHOUT SAYING SO. A drawing that can't read everything it needs (an
+// account's imported rows, its bank's, the imports' periods, a connection's
+// accounts) draws nothing, keeps what was drawn, records why (`problem`, for
+// the chart's note), and stays marked, so a later load draws it once it can.
+//
 // WHAT IT KEEPS (lib/history-import/store.ts imported-history-walk): the
 // anchor, the oldest day drawn, the exact days it drew (so the next drawing
 // clears exactly them and nothing an earlier reconstruction made), how far
@@ -24,18 +38,26 @@
 // import landing while it ran) leaves the record marked to draw again.
 
 import type { Ctx } from '../containers';
-import { getItems } from '../storage';
+import { getItems, type StoredItem } from '../storage';
 import { getLinks, effectiveLinks } from '../link-core';
 import { liveAccountIds } from '../links';
-import { readEarliestPoint, replaceEstimatedBefore, isBackfillDone } from '../history';
+import { readEarliestPoint, replaceEstimatedBefore, isBackfillDone, clearBackfillDone } from '../history';
 import { clearNetWorthCache } from '../cache';
 import { loggable } from '../log-safe';
-import { countedRows, readImported } from './read';
+import { countedRows, readImported, type ImportedAccountRead, type ImportedRead } from './read';
 import { extendHistory, type CoveredRange, type WalkAccount } from './walk';
-import { historyWalkStore, WALK_ID, type WalkState } from './store';
+import { historyWalkStore, WALK_ID, type ExcludedImport, type WalkAccountState, type WalkState } from './store';
 import { StoredDataUnreadableError } from '../repo';
 
-const EMPTY: WalkState = { version: 1, generation: 0, built: null, built_at: null, anchor: null, from: null, drawn: null, accounts: [] };
+const EMPTY: WalkState = { version: 1, generation: 0, built: null, built_at: null, anchor: null, from: null, drawn: null, accounts: [], rows: 0, problem: null };
+
+/** A drawing that can't read what it needs (see the header). */
+export class DrawUnreadableError extends Error {
+  constructor(readonly accounts: string[]) {
+    super('The estimated history from imported transactions was not drawn: what it needs can’t be read');
+    this.name = 'DrawUnreadableError';
+  }
+}
 
 /** Whether the estimated history from imports needs drawing again. Strict: a
  *  record that can't be read throws (the caller answers as for any store). */
@@ -62,14 +84,81 @@ export async function markDrawStale(ctx: Ctx): Promise<void> {
   await historyWalkStore.update(ctx, WALK_ID, (current) => ({ ...(current ?? EMPTY), generation: (current?.generation ?? 0) + 1 }));
 }
 
-/** The same where nothing may have been imported (a link, a forget): only a
- *  record already there is marked, so nobody who never imported gets one.
- *  Best effort, for paths whose own work is done either way: a record not
- *  marked costs a drawing until the next change marks it. */
-export async function markDrawStaleQuietly(ctx: Ctx): Promise<void> {
-  await historyWalkStore
-    .update(ctx, WALK_ID, (current) => (current ? { ...current, generation: current.generation + 1 } : null))
-    .catch((err) => console.warn('history import: the estimated history could not be marked to draw again', loggable(err)));
+
+/**
+ * After a change to which imported rows count (see THE BACKFILL FIRST): marks
+ * the drawing to be done again, and, when `dates` holds a day after the
+ * chart's earliest estimated point, or with `any` (a link, an unlink, a
+ * forget, whose rows aren't listed), the backfill to run again before it.
+ * Answers whether the backfill must. A record is made only when something
+ * was imported (`any` marks only one already there).
+ */
+export async function importedRowsChanged(ctx: Ctx, changed: { dates: readonly string[] } | 'any'): Promise<boolean> {
+  const state = await historyWalkStore.get(ctx, WALK_ID);
+  if (changed === 'any' && !state) return false;
+  let rerun = false;
+  if (await isBackfillDone(ctx)) {
+    if (changed === 'any') rerun = true;
+    else if (changed.dates.length > 0) {
+      const anchor = await readEarliestPoint(ctx, state?.drawn ?? null);
+      rerun = !!anchor && anchor.estimated && changed.dates.some((d) => d > anchor.date);
+    }
+  }
+  await historyWalkStore.update(ctx, WALK_ID, (current) => {
+    const now = current ?? EMPTY;
+    return { ...now, generation: now.generation + 1, rows: now.rows + (rerun ? 1 : 0) };
+  });
+  if (rerun) await clearBackfillDone(ctx);
+  return rerun;
+}
+
+/** importedRowsChanged for a link, an unlink or a forget, which change which
+ *  account's bank rows an import is matched against (and so which imported
+ *  rows count) whether or not anything was imported: only a record already
+ *  there is marked, so nobody who never imported gets one. Best effort, for
+ *  paths whose own work is done either way: a change not recorded costs a
+ *  drawing until the next change records one. */
+export async function linksChanged(ctx: Ctx): Promise<void> {
+  await importedRowsChanged(ctx, 'any').catch((err) => console.warn('history import: the estimated history could not be marked to draw again', loggable(err)));
+}
+
+/** The change count a backfill starts from (see the header): read before it
+ *  reads the imported rows, compared once it is done (rowsUnchangedSince).
+ *  Lenient: a record that can't be read is 0, as for none. */
+export async function rowsVersion(ctx: Ctx): Promise<number> {
+  return (await readDrawState(ctx))?.rows ?? 0;
+}
+
+/** Whether no change to the imported rows landed since a backfill began. */
+export async function rowsUnchangedSince(ctx: Ctx, version: number): Promise<boolean> {
+  return (await rowsVersion(ctx)) === version;
+}
+
+/**
+ * The imported rows the backfill walks (see THE BACKFILL FIRST): those that
+ * count (a bank row standing for none of them) of the accounts it walks
+ * (`walked`, each with its currency), dated `since` to `today`, in each
+ * account's currency, by day; and the accounts whose imported rows can't be
+ * read, which the backfill walks without them (the drawing then waits, and
+ * says so).
+ */
+export async function importedFlowsForBackfill(
+  ctx: Ctx,
+  opts: { items: StoredItem[]; walked: ReadonlyMap<string, string | null>; since: string; today: string }
+): Promise<{ flows: { date: string; account_id: string; amount: number }[]; unreadable: string[] }> {
+  const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+  const read = await readImported(ctx, { items: opts.items, links: effectiveLinks(links, live), only: new Set(opts.walked.keys()) });
+  const flows: { date: string; account_id: string; amount: number }[] = [];
+  for (const a of read.accounts) {
+    const currency = opts.walked.get(a.account.account_id) ?? a.account.currency;
+    const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
+    for (const r of counted) {
+      if (r.date < opts.since || r.date > opts.today) continue;
+      if (currency && r.currency !== currency) continue;
+      flows.push({ date: r.date, account_id: a.account.account_id, amount: r.amount });
+    }
+  }
+  return { flows, unreadable: [...read.flawed] };
 }
 
 /**
@@ -98,10 +187,59 @@ export async function yieldToBackfill(ctx: Ctx, baseFrom: string | null): Promis
 
 const DEPOSITORY_OR_CREDIT = new Set(['depository', 'credit']);
 
+/** Records why a drawing couldn't be made, leaving the drawing as it was. */
+async function recordProblem(ctx: Ctx, accounts: string[]): Promise<void> {
+  await historyWalkStore
+    .update(ctx, WALK_ID, (current) => ({ ...(current ?? EMPTY), problem: { kind: 'unreadable', accounts } }))
+    .catch((err) => console.warn('history import: why the estimated history was not drawn could not be kept', loggable(err)));
+}
+
+/** One bank account's or card's walk (lib/history-import/walk.ts), and what
+ *  is said of it: where its bank's rows begin, and the imports not used. */
+function walkOf(a: ImportedAccountRead, read: ImportedRead, anchorDate: string, today: string): { walk: WalkAccount; excluded: ExcludedImport[]; importedAfter: boolean } {
+  const currency = a.account.currency;
+  const inCurrency = (c: string) => currency === null || c === currency;
+  const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
+  const flows = new Map<string, number>();
+  let movedAfter = false;
+  let importedAfter = false;
+  const add = (date: string, amount: number, imported: boolean) => {
+    if (date > anchorDate) {
+      movedAfter = true;
+      importedAfter ||= imported;
+      return;
+    }
+    flows.set(date, (flows.get(date) ?? 0) + amount);
+  };
+  for (const b of a.banks) if (!b.pending) add(b.date, b.amount, false);
+  for (const r of counted) if (inCurrency(r.currency)) add(r.date, r.amount, true);
+  // The days covered: the bank's window, and each import's period but for one
+  // whose file had lines that couldn't be read (unless the person said they
+  // aren't transactions) or rows in another currency, which aren't walked.
+  const covered: CoveredRange[] = a.bank_from ? [{ from: a.bank_from, to: today, kind: 'bank' }] : [];
+  const excluded: ExcludedImport[] = [];
+  const foreign = new Map<string, string>();
+  for (const r of counted) if (!inCurrency(r.currency)) foreign.set(r.import_id, r.currency);
+  for (const [id, s] of read.summaries) {
+    if (!a.ids.includes(s.account_id)) continue;
+    const other = foreign.get(id) ?? (currency && s.currency && s.currency !== currency ? s.currency : null);
+    if (s.counts.unreadable > 0 && !s.covers.whole) excluded.push({ from: s.covers.from, to: s.covers.to, why: 'unreadable', lines: s.counts.unreadable });
+    else if (other) excluded.push({ from: s.covers.from, to: s.covers.to, why: 'currency', currency: other });
+    else covered.push({ from: s.covers.from, to: s.covers.to, kind: 'import' });
+  }
+  excluded.sort((x, y) => (x.from < y.from ? -1 : x.from > y.from ? 1 : 0));
+  return {
+    walk: { account_id: a.account.account_id, ids: a.ids, type: a.account.type as 'depository' | 'credit', flows, covered, movedAfter },
+    excluded,
+    importedAfter,
+  };
+}
+
 /**
  * Draws it (see the header) and answers how many points were written. Waits
- * for the backfill: before it has run once, nothing is drawn and the record
- * stays marked. `today` is the server's UTC day.
+ * for the backfill: before it has run, nothing is drawn and the record stays
+ * marked. Throws DrawUnreadableError, having drawn nothing, when what it needs
+ * can't be read. `today` is the server's UTC day.
  */
 export async function drawImportedHistory(ctx: Ctx, opts: { today?: string } = {}): Promise<{ points: number; state: WalkState }> {
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
@@ -112,8 +250,14 @@ export async function drawImportedHistory(ctx: Ctx, opts: { today?: string } = {
   // The links that apply now, strictly: a link that can't be read would put
   // an account's earlier rows on the wrong account, or none.
   const [items, links, live] = await Promise.all([getItems(ctx), getLinks(ctx), liveAccountIds(ctx, { strict: true })]);
-  const effective = effectiveLinks(links, live);
-  const read = await readImported(ctx, { items, links: effective });
+  const read = await readImported(ctx, { items, links: effectiveLinks(links, live) });
+  // Everything it needs, read: an account's rows, its bank's, every import's
+  // period and order, and whose each book is.
+  if (read.flawed.size > 0 || read.unresolved || read.summariesUnreadable.length > 0) {
+    const accounts = [...read.flawed];
+    await recordProblem(ctx, accounts);
+    throw new DrawUnreadableError(accounts);
+  }
   const walkable = read.accounts.filter((a) => DEPOSITORY_OR_CREDIT.has(a.account.type));
 
   // The earliest point the chart has, leaving out what an earlier drawing
@@ -122,21 +266,27 @@ export async function drawImportedHistory(ctx: Ctx, opts: { today?: string } = {
   const anchor = walkable.length > 0 || drawn ? await readEarliestPoint(ctx, drawn) : null;
 
   const accounts: WalkAccount[] = [];
+  const said = new Map<string, { bank_from: string | null; excluded: ExcludedImport[]; importedAfter: boolean }>();
   if (anchor) {
     for (const a of walkable) {
-      const flows = new Map<string, number>();
-      const add = (date: string, amount: number) => {
-        if (date > anchor.date) return;
-        flows.set(date, (flows.get(date) ?? 0) + amount);
-      };
-      for (const b of a.banks) if (!b.pending) add(b.date, b.amount);
-      for (const r of countedRows(a.held, a.banks, read.order).counted) add(r.date, r.amount);
-      const covered: CoveredRange[] = a.bank_from ? [{ from: a.bank_from, to: today, kind: 'bank' }] : [];
-      for (const s of read.summaries.values()) if (a.ids.includes(s.account_id)) covered.push({ from: s.covers.from, to: s.covers.to, kind: 'import' });
-      accounts.push({ account_id: a.account.account_id, ids: a.ids, type: a.account.type as 'depository' | 'credit', flows, covered });
+      const w = walkOf(a, read, anchor.date, today);
+      accounts.push(w.walk);
+      said.set(a.account.account_id, { bank_from: a.bank_from, excluded: w.excluded, importedAfter: w.importedAfter });
     }
   }
-  const extension = anchor ? extendHistory({ anchor, accounts }) : { points: [], accounts: [], from: null };
+  const extension = anchor
+    ? extendHistory({ anchor: { date: anchor.date, total: anchor.total, balances: anchor.balances, walked: anchor.estimated ? anchor.walked : null }, accounts, today })
+    : { points: [], accounts: [], from: null };
+  // What each account's estimate follows: imported rows back to its reach
+  // when drawn here; back to the anchor when the backfill walked those dated
+  // after it, though nothing before it was drawn.
+  const backfilled = new Set(anchor?.estimated ? (anchor.walked ?? []) : []);
+  const reached: WalkAccountState[] = extension.accounts.map((r) => {
+    const w = said.get(r.account_id)!;
+    const ids = accounts.find((x) => x.account_id === r.account_id)?.ids ?? [r.account_id];
+    const viaBackfill = r.reach === null && r.why === null && w.importedAfter && ids.some((i) => backfilled.has(i));
+    return { ...r, reach: viaBackfill ? anchor!.date : r.reach, bank_from: w.bank_from, excluded: w.excluded };
+  });
 
   // The days the earlier drawing drew that are still its own (older than the
   // anchor): cleared, but for those this one draws again.
@@ -162,7 +312,8 @@ export async function drawImportedHistory(ctx: Ctx, opts: { today?: string } = {
       anchor: anchor?.date ?? null,
       from: extension.from,
       drawn: range,
-      accounts: extension.accounts,
+      accounts: reached,
+      problem: null,
     };
   });
   await clearNetWorthCache(ctx);

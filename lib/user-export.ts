@@ -104,7 +104,8 @@ import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
 import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedBook, type ImportedTxn } from './history-import/store';
-import { supersede, type BankRow } from './history-import/match';
+import { settle, type BankRow } from './history-import/match';
+import { standsFor } from './history-import/read';
 
 export const EXPORT_FORMAT = 'nya-export';
 /** 2 since a part that can't be read is named under `problems` instead of
@@ -1327,12 +1328,16 @@ function manualTransactionsIn(doc: UserExport): ManualTxn[] {
 /**
  * The rows imported into linked accounts from files (#52, the
  * `imported-transactions` part of the file) that count as transactions of
- * their accounts: not those kept as the bank's own duplicates, nor those a
- * bank row in the file now supersedes (lib/history-import/match.ts), which
- * are in the JSON file only, so no transaction is in transactions.csv twice.
- * Each with the id its account is known by now, following the file's links.
+ * their accounts, as the Activity tab counts them (lib/history-import/match.ts
+ * settle, over the file's own rows): not those standing for a transaction
+ * already there (a duplicate whose twin is in the file), nor those a bank row
+ * in the file now stands for, which are in the JSON file only, so no
+ * transaction is in transactions.csv twice. Each with the id its account is
+ * known by now, following the file's links. And, by the bank row's id, the
+ * category you set on an imported row a bank row now stands for (`carried`),
+ * which that row shows as yours, as the app does.
  */
-function importedTransactionsIn(doc: UserExport): { row: ImportedTxn; account_id: string }[] {
+function importedTransactionsIn(doc: UserExport): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string> } {
   const entries = doc[importedTxnStore.name] ?? [];
   if (!Array.isArray(entries)) throw new Error('The imported transactions in the file have an unexpected shape');
   const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
@@ -1345,9 +1350,13 @@ function importedTransactionsIn(doc: UserExport): { row: ImportedTxn; account_id
       held.set(current, [...(held.get(current) ?? []), row]);
     }
   }
-  if (held.size === 0) return [];
+  const carried = new Map<string, string>();
+  if (held.size === 0) return { rows: [], carried };
+  // The bank's rows of those accounts, and where each connection's begin.
   const banks = new Map<string, BankRow[]>();
+  const firstPosted = new Map<string, string>();
   for (const t of doc.transactions) {
+    if (!t.pending && (!firstPosted.has(t.item_id) || t.date < firstPosted.get(t.item_id)!)) firstPosted.set(t.item_id, t.date);
     const current = resolveId(t.account_id, links);
     if (!held.has(current)) continue;
     const list = banks.get(current) ?? [];
@@ -1363,18 +1372,26 @@ function importedTransactionsIn(doc: UserExport): { row: ImportedTxn; account_id
     });
     banks.set(current, list);
   }
-  // The imports in the order they were made: earlier ones are matched first.
-  const imports = (Array.isArray(doc[historyImportStore.name]) ? (doc[historyImportStore.name] as { id?: unknown; value?: unknown }[]) : [])
-    .filter((e) => typeof e?.id === 'string' && isHistoryImportEntry(e.value))
-    .map((e) => ({ id: e.id as string, at: (e.value as { imported_at: string }).imported_at }))
-    .sort((a, b) => byCodePoint(a.at, b.at) || byCodePoint(a.id, b.id))
-    .map((e) => e.id);
+  const itemOf = new Map(doc.accounts.map((a) => [a.account_id, a.item_id]));
+  // The imports in the order they were made, earlier ones matched first, and
+  // the period each covers.
+  const imports = (Array.isArray(doc[historyImportStore.name]) ? (doc[historyImportStore.name] as { id?: unknown; value?: unknown }[]) : []).filter(
+    (e): e is { id: string; value: { imported_at: string; covers: { from: string; to: string } } } => typeof e?.id === 'string' && isHistoryImportEntry(e.value)
+  );
+  const order = [...imports].sort((a, b) => byCodePoint(a.value.imported_at, b.value.imported_at) || byCodePoint(a.id, b.id)).map((e) => e.id);
+  const covers = new Map(imports.map((e) => [e.id, { from: e.value.covers.from, to: e.value.covers.to }]));
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
   const out: { row: ImportedTxn; account_id: string }[] = [];
   for (const [account_id, rows] of held) {
-    const superseded = supersede(rows, banks.get(account_id) ?? [], imports);
-    for (const row of rows) if (!row.same_as && !superseded.has(row.id)) out.push({ row, account_id });
+    const item = itemOf.get(account_id) ?? null;
+    const settled = settle(rows, banks.get(account_id) ?? [], order, { bankFrom: item ? (firstPosted.get(item) ?? null) : null, covers, pending: true });
+    for (const row of settled.counted) out.push({ row, account_id });
+    for (const [rowId, bankId] of standsFor(settled)) {
+      const category = yours.get(rowId);
+      if (category && !carried.has(bankId)) carried.set(bankId, category);
+    }
   }
-  return out;
+  return { rows: out, carried };
 }
 
 /**
@@ -1421,15 +1438,21 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   const linked = new Map(doc.accounts.map((a) => [a.account_id, a]));
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const imported = importedTransactionsIn(doc);
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
-    ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
+    ...doc.transactions.map((t) => {
+      // A category set on an imported row this bank row now stands for is
+      // yours on it too, unless you set one on it.
+      const carried = t.your_category === null ? imported.carried.get(t.transaction_id) : undefined;
+      return { date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(carried ? { ...t, your_category: carried } : t) };
+    }),
     ...manualTransactionsIn(doc).map((r) => ({
       date: r.date,
       time: '',
       id: r.id,
       cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id)),
     })),
-    ...importedTransactionsIn(doc).map(({ row, account_id }) => ({
+    ...imported.rows.map(({ row, account_id }) => ({
       date: row.date,
       time: '',
       id: row.id,

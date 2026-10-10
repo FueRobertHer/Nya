@@ -10,21 +10,26 @@ import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscop
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
-// What a later sync brings: rows the bank sends after the import.
-const plaid = { later: [] as unknown[] };
+// What a later sync brings: rows the bank sends after the import, rows it
+// takes back, how far its pull of the history has got, and how long it takes
+// to answer (Plaid is over the network).
+const plaid = { later: [] as unknown[], removed: [] as string[], status: 'HISTORICAL_UPDATE_COMPLETE', delay: 0 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
-    transactionsSync: async () => ({
-      data: {
-        added: plaid.later.splice(0),
-        modified: [],
-        removed: [],
-        accounts: [],
-        next_cursor: 'c-next',
-        has_more: false,
-        transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
-      },
-    }),
+    transactionsSync: async () => {
+      if (plaid.delay > 0) await new Promise((r) => setTimeout(r, plaid.delay));
+      return {
+        data: {
+          added: plaid.later.splice(0),
+          modified: [],
+          removed: plaid.removed.splice(0).map((transaction_id) => ({ transaction_id })),
+          accounts: [],
+          next_cursor: 'c-next',
+          has_more: false,
+          transactions_update_status: plaid.status,
+        },
+      };
+    },
   },
 }));
 
@@ -36,7 +41,7 @@ const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem, removeItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
-const { linkAccounts } = await import('@/lib/links');
+const { linkAccounts, unlinkAccount, forgetEarlierAccount, recordDirectory } = await import('@/lib/links');
 const { setExcluded, txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { getOverrides } = await import('@/lib/overrides');
 const { assembleBankRows, finishActivity } = await import('@/lib/activity');
@@ -100,7 +105,7 @@ const BANK = [
 
 /** An OFX 2.x checking statement with these transactions (Plaid's sign
  *  reversed: an OFX debit is negative), covering `start` to `end`. */
-function ofx(trns: { fitid: string; days: number; amount: number; name: string }[], period: { start: number; end: number }, acct = '0001234567') {
+function ofx(trns: { fitid: string; days: number; amount: number; name: string }[], period: { start: number; end: number }, acct = '0009991111') {
   const list = trns
     .map((t) => `<STMTTRN><TRNTYPE>${t.amount < 0 ? 'DEBIT' : 'CREDIT'}</TRNTYPE><DTPOSTED>${compact(daysAgo(t.days))}120000[-5:EST]</DTPOSTED><TRNAMT>${t.amount.toFixed(2)}</TRNAMT><FITID>${t.fitid}</FITID><NAME>${t.name}</NAME></STMTTRN>`)
     .join('\n');
@@ -188,6 +193,9 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   plaid.later = [];
+  plaid.removed = [];
+  plaid.status = 'HISTORICAL_UPDATE_COMPLETE';
+  plaid.delay = 0;
   await registerTestContainer(fake);
   delete process.env.MAX_TXN_BLOB_CHARS;
   await seed();
@@ -200,13 +208,13 @@ describe('the review', () => {
     expect(status).toBe(200);
     const p = body.preview;
     expect(p.counts).toMatchObject({ new: 3, duplicates: 4, present: 0, unanswered: 0 });
-    expect(p.proposals.map((x: any) => [x.file.name, x.bank.transaction_id, x.days, x.confidence, x.choice])).toEqual([
+    expect(p.proposals.map((x: any) => [x.file.name, x.twin.id, x.days, x.confidence, x.choice])).toEqual([
       ['Online Transfer to Landlord', 'b_rent', 0, 'high', 'same'],
       ['PAYROLL ACME CORP', 'b_pay', 0, 'high', 'same'],
       ['BLUE BOTTLE COFFEE', 'b_coffee1', 1, 'high', 'same'],
       ['BLUE BOTTLE COFFEE', 'b_coffee2', 0, 'high', 'same'],
     ]);
-    expect(p.proposals[2].bank).toMatchObject({ name: 'Blue Bottle Coffee', descriptor: 'SQ *BLUE BOTTLE', amount: 4.5 });
+    expect(p.proposals[2].twin).toMatchObject({ name: 'Blue Bottle Coffee', descriptor: 'SQ *BLUE BOTTLE', amount: 4.5 });
     expect([p.bank_from, p.before_bank, p.within_bank]).toEqual([daysAgo(60), 2, 1]);
     // The statement's own period, from its DTSTART and DTEND.
     expect(p.covers).toEqual({ from: daysAgo(365), to: daysAgo(35), stated: false });
@@ -227,14 +235,16 @@ describe('the review', () => {
     const p = await post({ action: 'preview', account_id: 'acc_chk', options }, csv, 'export.csv');
     expect(p.status).toBe(200);
     expect(p.body.preview.format).toBe('csv');
-    expect(p.body.preview.counts).toMatchObject({ new: 1, duplicates: 2, unanswered: 0 });
-    expect(p.body.preview.proposals.map((x: any) => [x.file.name, x.file.amount, x.bank.transaction_id, x.days, x.confidence, x.choice]).sort()).toEqual([
-      ['Online Transfer to Landlord', 1850, 'b_rent', 0, 'high', 'same'],
-      ['PAYROLL ACME CORP', -2500, 'b_pay', 1, 'high', 'same'],
+    expect(p.body.preview.counts).toMatchObject({ new: 1, duplicates: 1, unanswered: 1 });
+    // The pay posted the day after the file's last day: the same only through
+    // that lag, so possibly the same, with why, and waiting for an answer.
+    expect(p.body.preview.proposals.map((x: any) => [x.file.name, x.file.amount, x.twin.id, x.days, x.confidence, x.choice, x.edge?.kind ?? null]).sort()).toEqual([
+      ['Online Transfer to Landlord', 1850, 'b_rent', 0, 'high', 'same', null],
+      ['PAYROLL ACME CORP', -2500, 'b_pay', 1, 'low', null, 'outside-file'],
     ]);
     expect(changedKeys(before, snapshot())).toEqual([ctxKey('import-requests')]);
-    // Answered otherwise for the pay, and imported as reviewed.
-    const choices = { proposals: { each: { [p.body.preview.proposals.find((x: any) => x.bank.transaction_id === 'b_pay').index]: 'new' } } };
+    // Answered for the pay (its own), and imported as reviewed.
+    const choices = { proposals: { each: { [p.body.preview.proposals.find((x: any) => x.twin.id === 'b_pay').index]: 'new' } } };
     const done = await post({ action: 'import', account_id: 'acc_chk', options, choices, review: p.body.preview.review }, csv, 'export.csv');
     expect(done.status).toBe(200);
     expect(done.body).toMatchObject({ imported: 2, duplicates: 1 });
@@ -308,7 +318,7 @@ describe('the import', () => {
     expect(changedKeys(before, snapshot()).filter((k) => !k.endsWith('import-requests'))).toEqual([]);
     // Reviewed again, the new bank row is a proposal.
     const again = await preview('acc_chk', STATEMENT);
-    expect(again.body.preview.proposals.some((x: any) => x.bank.transaction_id === 'b_mid')).toBe(true);
+    expect(again.body.preview.proposals.some((x: any) => x.twin.id === 'b_mid')).toBe(true);
   });
 
   test('refused while a low-confidence proposal has no answer; imported once it has one', async () => {
@@ -346,15 +356,22 @@ describe('a later sync', () => {
     // Kept, and said so in the list of imports.
     expect((await book()).length).toBe(7);
     const listed = await list('acc_chk');
-    expect(listed.body.imports[0]).toMatchObject({ id: body.import_id, rows_now: 3, duplicates_now: 4, superseded_now: 2 });
+    expect(listed.body.imports[0]).toMatchObject({ id: body.import_id, rows_now: 1, duplicates_now: 4, superseded_now: 2, returned_now: 0 });
   });
 
-  test('a pending row supersedes nothing; once posted, it does', async () => {
-    await importReviewed('acc_chk', ofx([{ fitid: 'P1', days: 1, amount: -15, name: 'LUNCH SPOT' }], { start: 2, end: 1 }));
-    expect((await activity()).transactions.filter((t) => t.source === 'import:ofx').length).toBe(1);
+  test('a pending row stands in for its look-alike while it is pending, so the month never counts it twice; once posted, the posted row supersedes', async () => {
+    const { body } = await importReviewed('acc_chk', ofx([{ fitid: 'P1', days: 1, amount: -15, name: 'LUNCH SPOT' }], { start: 2, end: 1 }));
+    expect(body.imported).toBe(1);
+    const pending = (await activity()).transactions;
+    expect(pending.filter((t) => t.source === 'import:ofx')).toEqual([]);
+    expect(pending.filter((t) => t.amount === 15).map((t) => t.transaction_id)).toEqual(['b_pending']);
     plaid.later.push(bankTxn('b_lunch_posted', 'acc_chk', 0, 15, { name: 'LUNCH', pending_transaction_id: 'b_pending' }));
     await transactions.GET(new Request('http://localhost/api/transactions'));
     expect((await activity()).transactions.filter((t) => t.source === 'import:ofx').length).toBe(0);
+    // The estimated history walks posted rows only: the imported lunch counts there.
+    const { countedRows } = await import('@/lib/history-import/read');
+    const settled = countedRows(await book(), [{ transaction_id: 'b_pending', account_id: 'acc_chk', date: daysAgo(1), amount: 15, currency: 'USD', name: 'LUNCH', merchant_name: null, pending: true }], [], { bankFrom: daysAgo(60) });
+    expect(settled.counted.length).toBe(1);
   });
 
   test('after a re-link the imported rows follow the account, and the new connection’s rows supersede them', async () => {
@@ -384,21 +401,216 @@ describe('a later sync', () => {
     await linkAccounts(ctx, 'acc_chk', 'acc_chk_new', { basis: 'by_hand' });
     const shown = (await activity()).transactions.filter((t) => t.source === 'import:ofx');
     // OLD STORE is the new connection's own now; CORNER SHOP and OLD DEPOSIT
-    // the bank never had. The rent duplicate claimed the bank's rent by its key,
-    // which survives the re-link.
-    expect(shown.map((t) => [t.name, t.account_id])).toEqual(
-      expect.arrayContaining([
-        ['OLD DEPOSIT', 'acc_chk_new'],
-        ['CORNER SHOP', 'acc_chk_new'],
-      ])
-    );
-    expect(shown.length).toBe(2);
+    // the bank never had. The rent duplicate stands for the bank's rent by its
+    // key, which survives the re-link. The pay and the two coffees were kept as
+    // the old connection's rows, which the new one doesn't have: they count
+    // again, never lost with the old connection's store.
+    expect(shown.map((t) => [t.name, t.account_id]).sort()).toEqual([
+      ['BLUE BOTTLE COFFEE', 'acc_chk_new'],
+      ['BLUE BOTTLE COFFEE', 'acc_chk_new'],
+      ['CORNER SHOP', 'acc_chk_new'],
+      ['OLD DEPOSIT', 'acc_chk_new'],
+      ['PAYROLL ACME CORP', 'acc_chk_new'],
+    ]);
     // Listed, and undone, from the account's current id.
     const listed = await list('acc_chk_new');
     expect(listed.body.imports.length).toBe(1);
     const undone = await undo({ account_id: 'acc_chk_new', import_id: listed.body.imports[0].id, confirm: true });
     expect(undone.body).toMatchObject({ removed: 3, duplicates: 4 });
     expect((await activity()).transactions.filter((t) => t.source === 'import:ofx')).toEqual([]);
+  });
+});
+
+describe('as the bank’s rows change after the review', () => {
+  test('a duplicate counts again once the bank no longer has its row: one the bank takes back, and the list says so', async () => {
+    const { body } = await importReviewed('acc_chk', STATEMENT);
+    expect((await activity()).transactions.some((t) => t.name === 'Online Transfer to Landlord')).toBe(false);
+    plaid.removed.push('b_rent');
+    await transactions.GET(new Request('http://localhost/api/transactions'));
+    const shown = (await activity()).transactions;
+    expect(shown.some((t) => t.transaction_id === 'b_rent')).toBe(false);
+    expect(shown.filter((t) => t.name === 'Online Transfer to Landlord').map((t) => [t.amount, t.date, t.source])).toEqual([[1850, daysAgo(55), 'import:ofx']]);
+    const listed = await list('acc_chk');
+    expect(listed.body.imports[0]).toMatchObject({ id: body.import_id, rows_now: 4, duplicates_now: 3, superseded_now: 0, returned_now: 1 });
+  });
+
+  test('the load whose sync brings the bank’s row shows it in place of the imported one, in its own answer and in the one it caches', async () => {
+    const { body } = await importReviewed('acc_chk', ofx([{ fitid: 'R', days: 20, amount: -1850, name: 'RENT' }], { start: 40, end: 4 }));
+    expect(body.imported).toBe(1);
+    // Plaid answers over the network, after the imported rows could be read.
+    plaid.delay = 50;
+    plaid.later.push(bankTxn('b_rent2', 'acc_chk', 20, 1850, { name: 'RENT PAYMENT' }));
+    const rents = (answer: any) => answer.transactions.filter((t: any) => t.amount === 1850 && t.date === daysAgo(20)).map((t: any) => t.transaction_id);
+    const first = await (await transactions.GET(new Request('http://localhost/api/transactions'))).json();
+    expect(first.from_cache).toBe(false);
+    expect(rents(first)).toEqual(['b_rent2']);
+    const second = await (await transactions.GET(new Request('http://localhost/api/transactions'))).json();
+    expect(second.from_cache).toBe(true);
+    expect(rents(second)).toEqual(['b_rent2']);
+  });
+
+  test('each connection’s rows are read once for a load: the imported rows are matched against what the bank part read', async () => {
+    await importReviewed('acc_chk', STATEMENT);
+    const get = fake.get.bind(fake);
+    let reads = 0;
+    (fake as any).get = async (key: string) => {
+      if (key === ctxKey('txns:item_chase')) reads++;
+      return get(key);
+    };
+    try {
+      await activity();
+      expect(reads).toBe(1);
+      reads = 0;
+      await transactions.GET(new Request('http://localhost/api/transactions?refresh=1'));
+      expect(reads).toBe(1);
+    } finally {
+      (fake as any).get = get;
+    }
+  });
+
+  test('what the person said about an imported row carries to the bank’s row that takes its place, unless they say otherwise on that row', async () => {
+    await importReviewed('acc_chk', STATEMENT);
+    const shop = (await activity()).transactions.find((t) => t.name === 'CORNER SHOP')!;
+    await setExcluded(ctx, shop.transaction_id, true);
+    const recategorized = (transaction_id: string, category: string) =>
+      recategorize.POST(new Request('http://localhost/api/recategorize', { method: 'POST', body: JSON.stringify({ transaction_id, category }) }));
+    await recategorized(shop.transaction_id, 'groceries');
+    // The bank sends the same purchase: its row takes the imported one's place,
+    // excluded and in groceries, as the person left it.
+    plaid.later.push(bankTxn('b_mid', 'acc_chk', 49, 60, { name: 'CORNER SHOP #12' }));
+    await transactions.GET(new Request('http://localhost/api/transactions'));
+    const shown = (await activity()).transactions;
+    expect(shown.some((t) => t.transaction_id === shop.transaction_id)).toBe(false);
+    expect(shown.find((t) => t.transaction_id === 'b_mid')).toMatchObject({ category: 'groceries', excluded: true });
+    // The bank row's own category and exclusion win.
+    await recategorized('b_mid', 'household');
+    await setExcluded(ctx, 'b_mid', false);
+    const own = (await activity()).transactions.find((t) => t.transaction_id === 'b_mid')!;
+    expect(own.category).toBe('household');
+    expect(own.excluded).toBeUndefined();
+  });
+
+  test('while the bank’s pull of the connection’s history is still arriving, the review and the list say so; once it is done, they don’t', async () => {
+    plaid.status = 'INITIAL_UPDATE_COMPLETE';
+    await transactions.GET(new Request('http://localhost/api/transactions?refresh=1'));
+    expect((await list('acc_chk')).body.history_pending).toBe(true);
+    expect((await preview('acc_chk', STATEMENT)).body.preview.history_pending).toBe(true);
+    plaid.status = 'HISTORICAL_UPDATE_COMPLETE';
+    await transactions.GET(new Request('http://localhost/api/transactions?refresh=1'));
+    expect((await list('acc_chk')).body.history_pending).toBe(false);
+    expect((await preview('acc_chk', STATEMENT)).body.preview.history_pending).toBe(false);
+  });
+
+  test('a CSV and then the OFX of the same days: each OFX row is proposed as the CSV’s, named by its file, and the same keeps it once', async () => {
+    const csv = ['Date,Description,Amount', `${daysAgo(300)},OLD STORE PURCHASE 0042,-100.00`, `${daysAgo(200)},DEPOSIT FROM EMPLOYER,500.00`].join('\n');
+    const options = { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } };
+    const p1 = await post({ action: 'preview', account_id: 'acc_chk', options }, csv, 'export.csv');
+    const first = await post({ action: 'import', account_id: 'acc_chk', options, review: p1.body.preview.review }, csv, 'export.csv');
+    expect(first.body).toMatchObject({ imported: 2 });
+
+    const file = ofx(
+      [
+        { fitid: 'X1', days: 300, amount: -100, name: 'OLD STORE' },
+        { fitid: 'X2', days: 200, amount: 500, name: 'OLD DEPOSIT' },
+        { fitid: 'X3', days: 250, amount: -7, name: 'NEWSSTAND' },
+      ],
+      { start: 330, end: 150 }
+    );
+    const p = await preview('acc_chk', file);
+    expect(p.body.preview.counts).toMatchObject({ new: 1, already: 2, duplicates: 0, unanswered: 0 });
+    expect(p.body.preview.proposals.map((x: any) => [x.file.name, x.twin.kind, x.twin.name, x.twin.file_name, x.choice]).sort()).toEqual([
+      ['OLD DEPOSIT', 'imported', 'DEPOSIT FROM EMPLOYER', 'export.csv', 'same'],
+      ['OLD STORE', 'imported', 'OLD STORE PURCHASE 0042', 'export.csv', 'same'],
+    ]);
+    const second = await post({ action: 'import', account_id: 'acc_chk', review: p.body.preview.review }, file);
+    expect(second.body).toMatchObject({ imported: 1, already: 2 });
+    const imported = async () =>
+      (await activity()).transactions
+        .filter((t) => t.source)
+        .map((t) => [t.name, t.source])
+        .sort();
+    expect(await imported()).toEqual([
+      ['DEPOSIT FROM EMPLOYER', 'import:csv'],
+      ['NEWSSTAND', 'import:ofx'],
+      ['OLD STORE PURCHASE 0042', 'import:csv'],
+    ]);
+    // The OFX's rows are kept as the CSV's: undone, the CSV leaves them counted.
+    expect((await book()).filter((r) => r.same_as_row).length).toBe(2);
+    await undo({ account_id: 'acc_chk', import_id: first.body.import_id, confirm: true });
+    expect(await imported()).toEqual([
+      ['NEWSSTAND', 'import:ofx'],
+      ['OLD DEPOSIT', 'import:ofx'],
+      ['OLD STORE', 'import:ofx'],
+    ]);
+  });
+
+  test('the first OFX file of an account is checked against its number as the bank gives it: another account’s waits for the person to say it is right', async () => {
+    const other = ofx([{ fitid: 'Z1', days: 300, amount: -10, name: 'ELSEWHERE' }], { start: 330, end: 290 }, '0009992222');
+    const p = await preview('acc_chk', other);
+    expect(p.body.preview.account_mismatch).toMatchObject({ basis: 'mask', expected: 'an account ending 1111' });
+    const refused = await post({ action: 'import', account_id: 'acc_chk', review: p.body.preview.review }, other);
+    expect(refused.status).toBe(409);
+    expect(refused.body.account_mismatch.basis).toBe('mask');
+    expect(await book()).toEqual([]);
+    const done = await post({ action: 'import', account_id: 'acc_chk', review: p.body.preview.review, acknowledge_account: true }, other);
+    expect(done.body.imported).toBe(1);
+    // Its own number matches: nothing to ask.
+    expect((await preview('acc_card', ofx([], { start: 330, end: 290 }, '4111000000002222'))).body.preview.account_mismatch).toBeNull();
+  });
+});
+
+describe('forgetting an earlier account', () => {
+  test('hands the rows a later import into the account it was linked to found already there to that import, with what was said about them', async () => {
+    await importReviewed('acc_chk', ofx(FILE_ROWS.slice(0, 2), { start: 365, end: 150 }));
+    await recordDirectory(ctx, [
+      { item_id: 'item_chase', institution_name: 'Chase', error: null, accounts: [{ account_id: 'acc_chk', type: 'depository', subtype: 'checking', name: 'Checking', mask: '1111' }] },
+    ] as any);
+    // Re-linked as a new connection, and the same statement imported into it:
+    // its rows are found already there, under the earlier account.
+    await removeItem(ctx, 'item_chase');
+    await fake.del(ctxKey('txns:item_chase'));
+    await fake.hdel(ctxKey('accounts:meta'), 'item_chase');
+    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase-2') });
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_chase2: await encrypt(JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+    });
+    await fake.set(
+      ctxKey('txns:item_chase2'),
+      await encodeJsonBlob({
+        schema_version: 2,
+        cursor: 'c1',
+        accounts: { acc_chk_new: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
+        txns: { n_rent: bankTxn('n_rent', 'acc_chk_new', 55, 1850, { name: 'ZELLE PAYMENT TO LANDLORD' }) },
+        synced_at: new Date().toISOString(),
+      })
+    );
+    await linkAccounts(ctx, 'acc_chk', 'acc_chk_new', { basis: 'by_hand' });
+    const later = await importReviewed('acc_chk_new', ofx([...FILE_ROWS.slice(0, 2), { fitid: 'F_more', days: 120, amount: -9, name: 'MORE' }], { start: 365, end: 100 }));
+    expect(later.body).toMatchObject({ imported: 1, present: 2 });
+    const deposit = (await activity()).transactions.find((t) => t.name === 'OLD DEPOSIT')!;
+    await setExcluded(ctx, deposit.transaction_id, true);
+
+    // Unlinked, then forgotten: the later import keeps its transactions.
+    await unlinkAccount(ctx, 'acc_chk');
+    await forgetEarlierAccount(ctx, 'acc_chk');
+    expect(await book('acc_chk')).toEqual([]);
+    const kept = await book('acc_chk_new');
+    expect(kept.map((r) => [r.name, r.account_id, r.import_id]).sort()).toEqual([
+      ['MORE', 'acc_chk_new', later.body.import_id],
+      ['OLD DEPOSIT', 'acc_chk_new', later.body.import_id],
+      ['OLD STORE', 'acc_chk_new', later.body.import_id],
+    ]);
+    const shown = (await activity()).transactions.filter((t) => t.source === 'import:ofx');
+    expect(shown.map((t) => [t.name, t.account_id]).sort()).toEqual([
+      ['MORE', 'acc_chk_new'],
+      ['OLD DEPOSIT', 'acc_chk_new'],
+      ['OLD STORE', 'acc_chk_new'],
+    ]);
+    expect(shown.find((t) => t.name === 'OLD DEPOSIT')!.excluded).toBe(true);
+    // And undone with it.
+    const undone = await undo({ account_id: 'acc_chk_new', import_id: later.body.import_id, confirm: true });
+    expect(undone.body).toMatchObject({ removed: 3 });
+    expect(await book('acc_chk_new')).toEqual([]);
   });
 });
 
@@ -479,6 +691,14 @@ describe('what the route takes and how it answers', () => {
     const shown = await activity();
     expect(shown.notes).toContain("Chase: transactions imported for Checking couldn't be read");
     expect(shown.transactions.some((t) => t.transaction_id === 'b_rent')).toBe(true);
+  });
+
+  test('a connection whose accounts can’t be read: its accounts’ imported rows aren’t shown, and Activity says so', async () => {
+    await importReviewed('acc_chk', STATEMENT);
+    await fake.hset(ctxKey('accounts:meta'), { item_chase: 'damaged' });
+    const shown = await quietly(() => activity());
+    expect(shown.transactions.some((t) => t.source === 'import:ofx')).toBe(false);
+    expect(shown.notes).toContain("Chase: transactions imported for its accounts aren't shown while its accounts can't be read");
   });
 
   test('the bank’s store can’t be read: 409, and no file is matched against nothing', async () => {

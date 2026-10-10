@@ -53,11 +53,13 @@
 // 'import:qif'), its source's id (OFX's FITID, or a CSV or QIF row's content
 // key: lib/import/normalize.ts), the hashed key of an OFX row, its import, and
 // what the review decided: nothing (a transaction of its own), `same_as` (the
-// bank's row, by its key: kept so that bank row is claimed and a re-import of
-// the same period finds it, never counted), or `distinct_from` (the bank rows
-// the person said it is not). Rows are never edited: a category is changed
-// over them (lib/overrides.ts) and an exclusion beside them
-// (lib/txn-annotations.ts), as a bank's row is, and both go with the row.
+// bank's row, by its key) or `same_as_row` (a row an earlier import kept, by
+// its id): a duplicate, kept so a re-import of the same period finds it and
+// never counted while its twin is there (lib/history-import/match.ts settle);
+// or `distinct_from` (the bank rows the person said it is not). Rows are never
+// edited: a category is changed over them (lib/overrides.ts) and an exclusion
+// beside them (lib/txn-annotations.ts), as a bank's row is, and both go with
+// the row, or carry to the bank's row that later stands for it.
 //
 // READS ARE STRICT, as the seam's are. A book that can't be read is named and
 // its account's imported rows aren't shown or walked, never read as none.
@@ -106,9 +108,11 @@ export type ImportedTxn = {
   transaction_code?: string | null;
   import_id: string;
   /** A duplicate: the bank's row it is, by key (lib/history-import/match.ts
-   *  bankKey). Never counted; kept so that row is claimed and a re-import
-   *  finds it. */
+   *  bankKey). Not counted while the bank holds that row. */
   same_as?: string | null;
+  /** A duplicate: the row an earlier import kept that it is, by id. Not
+   *  counted while that row is kept. */
+  same_as_row?: string | null;
   /** The bank's rows (by key) the person said it is not. */
   distinct_from?: string[];
   created_at: string;
@@ -143,6 +147,7 @@ export function isImportedTxn(v: unknown): v is ImportedTxn {
     (v.transaction_code === undefined || v.transaction_code === null || (typeof v.transaction_code === 'string' && v.transaction_code.length <= 40)) &&
     typeof v.import_id === 'string' &&
     (v.same_as === undefined || v.same_as === null || isKey(v.same_as)) &&
+    (v.same_as_row === undefined || v.same_as_row === null || (isImportedTxnId(v.same_as_row) && v.same_as_row !== v.id && !(typeof v.same_as === 'string'))) &&
     (v.distinct_from === undefined || (Array.isArray(v.distinct_from) && v.distinct_from.length <= 64 && v.distinct_from.every(isKey))) &&
     isInstant(v.created_at)
   );
@@ -174,15 +179,20 @@ export const importedTxnStore = defineMapStore<ImportedBook>('imported-transacti
 /** What became of one record of the file. */
 export type HistoryRecordOutcome = 'imported' | 'duplicate' | 'present' | 'repeated' | 'skipped' | 'unreadable';
 
-/** The bank's row a proposal named, as it was shown, and what the person
- *  said: the same transaction, or one of its own. */
+/** The transaction a proposal named, as it was shown (a bank's row, or a row
+ *  an earlier import kept), and what the person said: the same transaction,
+ *  or one of its own. */
 export type ProposalRecord = {
-  transaction_id: string;
+  kind: 'bank' | 'imported';
+  /** The bank's transaction id, or the kept row's id. */
+  id: string;
   date: string;
   name: string;
   amount: number;
   days: number;
   confidence: 'high' | 'medium' | 'low';
+  /** Why it was a pair only through a posting lag, when it was. */
+  edge?: 'before-bank' | 'outside-file' | 'outside-import';
   chose: 'same' | 'new';
 };
 
@@ -191,8 +201,8 @@ export type HistoryImportRecord = {
   outcome: HistoryRecordOutcome;
   /** The row it became (imported, duplicate), or was found as (present). */
   row_id?: string;
-  /** The bank's row it was proposed as. */
-  bank?: ProposalRecord;
+  /** The transaction it was proposed as. */
+  twin?: ProposalRecord;
   /** Why it wasn't read, or was skipped. */
   reason?: string;
   /** As the file had it. */
@@ -204,6 +214,9 @@ export type HistoryImportCounts = {
   imported: number;
   /** Kept as duplicates of the bank's rows. */
   duplicates: number;
+  /** Kept as duplicates of rows earlier imports kept (a file of the same
+   *  period in another format). */
+  already: number;
   /** Already imported for the account. */
   present: number;
   repeated: number;
@@ -213,8 +226,11 @@ export type HistoryImportCounts = {
 
 /** The days a file covers, which the walk may cross: its statement's period
  *  (OFX), or its first to last day, or wider where the person said so
- *  (`stated`). */
-export type Covers = { from: string; to: string; stated: boolean };
+ *  (`stated`). A file with lines that couldn't be read covers its period only
+ *  when the person said those lines aren't transactions (`whole`): otherwise
+ *  the walk could cross a day whose transactions it knows it lacks
+ *  (lib/history-import/extend.ts). */
+export type Covers = { from: string; to: string; stated: boolean; whole?: true };
 
 export type HistoryImportEntry = {
   version: 1;
@@ -241,16 +257,19 @@ export type HistoryImportEntry = {
 
 const OUTCOMES: ReadonlySet<string> = new Set(['imported', 'duplicate', 'present', 'repeated', 'skipped', 'unreadable']);
 const CONFIDENCES: ReadonlySet<unknown> = new Set(['high', 'medium', 'low']);
+const EDGES: ReadonlySet<unknown> = new Set(['before-bank', 'outside-file', 'outside-import']);
 
 function isProposalRecord(v: unknown): v is ProposalRecord {
   return (
     isRecord(v) &&
-    typeof v.transaction_id === 'string' &&
+    (v.kind === 'bank' || v.kind === 'imported') &&
+    typeof v.id === 'string' &&
     typeof v.date === 'string' &&
     typeof v.name === 'string' &&
     typeof v.amount === 'number' &&
     isCount(v.days) &&
     CONFIDENCES.has(v.confidence) &&
+    (v.edge === undefined || EDGES.has(v.edge)) &&
     (v.chose === 'same' || v.chose === 'new')
   );
 }
@@ -262,18 +281,27 @@ function isRecordOf(v: unknown): v is HistoryImportRecord {
     typeof v.outcome === 'string' &&
     OUTCOMES.has(v.outcome) &&
     (v.row_id === undefined || typeof v.row_id === 'string') &&
-    (v.bank === undefined || isProposalRecord(v.bank)) &&
+    (v.twin === undefined || isProposalRecord(v.twin)) &&
     (v.reason === undefined || typeof v.reason === 'string') &&
     'raw' in v
   );
 }
 
 function isCounts(v: unknown): v is HistoryImportCounts {
-  return isRecord(v) && isCount(v.imported) && isCount(v.duplicates) && isCount(v.present) && isCount(v.repeated) && isCount(v.skipped) && isCount(v.unreadable);
+  return (
+    isRecord(v) &&
+    isCount(v.imported) &&
+    isCount(v.duplicates) &&
+    isCount(v.already) &&
+    isCount(v.present) &&
+    isCount(v.repeated) &&
+    isCount(v.skipped) &&
+    isCount(v.unreadable)
+  );
 }
 
 export function isCovers(v: unknown): v is Covers {
-  return isRecord(v) && isCalendarDay(v.from) && isCalendarDay(v.to) && v.from <= v.to && typeof v.stated === 'boolean';
+  return isRecord(v) && isCalendarDay(v.from) && isCalendarDay(v.to) && v.from <= v.to && typeof v.stated === 'boolean' && (v.whole === undefined || v.whole === true);
 }
 
 const isDayOrNull = (v: unknown) => v === null || isCalendarDay(v);
@@ -386,13 +414,31 @@ export function isHistoryImportId(id: unknown): id is string {
 
 // ---- What the estimated history built from imports covers ----
 
-/** One account's reach, as lib/history-import/walk.ts AccountReach. */
+/** Why an account's imported history isn't drawn (lib/history-import/walk.ts):
+ *  the chart's earliest point doesn't count it; no covered run holds that
+ *  point's day; or that point held it at its balance then while it had
+ *  transactions since, so its balance there isn't known. */
+export type WalkWhy = 'not-counted' | 'anchor-not-covered' | 'held-flat';
+
+/** An import whose period isn't used to draw: lines of its file couldn't be
+ *  read (and the person didn't say they aren't transactions), or rows of it
+ *  are in another currency than the account's. */
+export type ExcludedImport = { from: string; to: string; why: 'unreadable' | 'currency'; lines?: number; currency?: string };
+
+/** One account's reach, as lib/history-import/walk.ts AccountReach, with
+ *  where its bank's own transactions begin. */
 export type WalkAccountState = {
   account_id: string;
+  /** The oldest day its estimated balance follows imported transactions
+   *  back to, or null when they aren't drawn. */
   reach: string | null;
-  why: 'not-counted' | 'anchor-not-covered' | null;
+  why: WalkWhy | null;
   gaps: { imported: { from: string; to: string }; uncovered: { from: string; to: string } }[];
   capped: boolean;
+  /** Its connection's earliest posted row: before it, its estimate follows
+   *  the transactions imported for it, from it on the bank's own. */
+  bank_from: string | null;
+  excluded: ExcludedImport[];
 };
 
 export type WalkState = {
@@ -410,19 +456,43 @@ export type WalkState = {
   /** The days it drew, so the next drawing clears exactly them. */
   drawn: { from: string; until: string } | null;
   accounts: WalkAccountState[];
+  /** Bumped by every change to which imported rows count after the earliest
+   *  point, which the backfill walks (app/api/backfill): a backfill records
+   *  itself done only if it is as it read it, so a backfill under way never
+   *  leaves a drawing joined to points made without them. */
+  rows: number;
+  /** Why the last drawing couldn't be made, while it can't: what it needs
+   *  can't be read, for these accounts (by their current ids). What was drawn
+   *  before is kept, and it is tried again on a later load. */
+  problem: { kind: 'unreadable'; accounts: string[] } | null;
 };
 
 const isDayRange = (v: unknown) => isRecord(v) && isCalendarDay(v.from) && isCalendarDay(v.to);
+const WHYS: ReadonlySet<unknown> = new Set(['not-counted', 'anchor-not-covered', 'held-flat']);
+
+function isExcludedImport(v: unknown): v is ExcludedImport {
+  return (
+    isRecord(v) &&
+    isCalendarDay(v.from) &&
+    isCalendarDay(v.to) &&
+    (v.why === 'unreadable' || v.why === 'currency') &&
+    (v.lines === undefined || isCount(v.lines)) &&
+    (v.currency === undefined || isCurrencyCode(v.currency))
+  );
+}
 
 function isWalkAccountState(v: unknown): v is WalkAccountState {
   return (
     isRecord(v) &&
     typeof v.account_id === 'string' &&
     isDayOrNull(v.reach) &&
-    (v.why === null || v.why === 'not-counted' || v.why === 'anchor-not-covered') &&
+    (v.why === null || WHYS.has(v.why)) &&
     Array.isArray(v.gaps) &&
     v.gaps.every((g) => isRecord(g) && isDayRange(g.imported) && isDayRange(g.uncovered)) &&
-    typeof v.capped === 'boolean'
+    typeof v.capped === 'boolean' &&
+    isDayOrNull(v.bank_from) &&
+    Array.isArray(v.excluded) &&
+    v.excluded.every(isExcludedImport)
   );
 }
 
@@ -437,7 +507,10 @@ export function isWalkState(v: unknown): v is WalkState {
     isDayOrNull(v.from) &&
     (v.drawn === null || (isRecord(v.drawn) && isCalendarDay(v.drawn.from) && isCalendarDay(v.drawn.until))) &&
     Array.isArray(v.accounts) &&
-    v.accounts.every(isWalkAccountState)
+    v.accounts.every(isWalkAccountState) &&
+    isCount(v.rows) &&
+    (v.problem === null ||
+      (isRecord(v.problem) && v.problem.kind === 'unreadable' && Array.isArray(v.problem.accounts) && v.problem.accounts.every((a) => typeof a === 'string')))
   );
 }
 

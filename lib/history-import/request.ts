@@ -32,6 +32,9 @@ export type HistoryMeta = {
   /** The review the person saw (an import): its digest. */
   review: string | null;
   acknowledge_account: boolean;
+  /** The person says the file's lines that couldn't be read aren't
+   *  transactions, so its period may be drawn through (Covers.whole). */
+  whole: boolean;
 };
 
 const OPTION_KEYS = new Set(['statement', 'flip', 'currency', 'date_order', 'decimal', 'csv']);
@@ -122,12 +125,13 @@ export function cleanFileName(v: unknown): string | null {
 /** The request, checked strictly, or why not. */
 export function readHistoryMeta(v: unknown): HistoryMeta | string {
   if (!isRecord(v)) return 'Invalid request';
-  const known = new Set(['action', 'account_id', 'file_name', 'options', 'choices', 'covers', 'review', 'acknowledge_account']);
+  const known = new Set(['action', 'account_id', 'file_name', 'options', 'choices', 'covers', 'review', 'acknowledge_account', 'whole']);
   if (Object.keys(v).some((k) => !known.has(k))) return 'Invalid request';
   if (v.action !== 'preview' && v.action !== 'import') return 'Invalid request';
   if (typeof v.account_id !== 'string' || !ACCOUNT_ID.test(v.account_id)) return 'Choose one of your linked accounts';
   if (v.file_name !== undefined && v.file_name !== null && typeof v.file_name !== 'string') return 'Invalid request';
   if (v.acknowledge_account !== undefined && typeof v.acknowledge_account !== 'boolean') return 'Invalid request';
+  if (v.whole !== undefined && typeof v.whole !== 'boolean') return 'Invalid request';
   const options = readOptions(v.options);
   if (typeof options === 'string') return options;
   let choices: HistoryChoices = {};
@@ -163,5 +167,6 @@ export function readHistoryMeta(v: unknown): HistoryMeta | string {
     covers,
     review,
     acknowledge_account: v.acknowledge_account === true,
+    whole: v.whole === true,
   };
 }

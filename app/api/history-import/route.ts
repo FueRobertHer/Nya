@@ -39,8 +39,8 @@ import {
   undoHistoryImport,
 } from '@/lib/history-import/commit';
 import { countedRows, liveLinkedAccounts, readAccountContext, type AccountContext, type LinkedAccount } from '@/lib/history-import/read';
-import { drawImportedHistory, markDrawStale, readDrawState } from '@/lib/history-import/extend';
-import { importedTxnStore, isHistoryImportId } from '@/lib/history-import/store';
+import { drawImportedHistory, importedRowsChanged, readDrawState } from '@/lib/history-import/extend';
+import { importedTxnStore, isHistoryImportId, type Covers } from '@/lib/history-import/store';
 import { readHistoryMeta, type HistoryMeta } from '@/lib/history-import/request';
 
 // Importing years of history into a LINKED account (#52; lib/history-import/,
@@ -65,8 +65,9 @@ import { readHistoryMeta, type HistoryMeta } from '@/lib/history-import/request'
 //                        beside it, rows repeated in the file, FITID
 //                        conflicts, the new rows and how many of them are
 //                        older than the bank's own, the rows that can't be
-//                        read, the period the file covers, and the review's
-//                        fingerprint (`review`).
+//                        read, the period the file covers, whether the
+//                        connection's older transactions may still be on the
+//                        way, and the review's fingerprint (`review`).
 //            "import"    the same, with the person's choices and the
 //                        fingerprint of the review they saw: refused (409,
 //                        needs "review") when the account changed since
@@ -178,18 +179,27 @@ async function readSettings(ctx: Ctx, account_id: string): Promise<ImportSetting
   }
 }
 
-/** Draws the estimated history again after a change, if the backfill it joins
- *  has run: best effort, since the change is made either way and the record
- *  stays marked for the next load to draw. Answers the oldest day drawn. */
-async function redraw(ctx: Ctx): Promise<{ drawn: boolean; from: string | null }> {
+/** What a change did to the estimated history: drawn again at once (with the
+ *  oldest day drawn, and how far back this account's estimate now follows
+ *  imported transactions), or to be drawn on the next load, after the backfill
+ *  runs again when rows dated after its earliest point changed
+ *  (lib/history-import/extend.ts importedRowsChanged). */
+type Redrawn = { drawn: boolean; from: string | null; reach: string | null; backfill: boolean };
+
+/** Draws the estimated history again after a change to the account's rows
+ *  dated `dates` (only a bank account's or card's are walked): best effort,
+ *  since the change is made either way and the record stays marked for the
+ *  next load to draw. */
+async function redraw(ctx: Ctx, account: LinkedAccount, dates: readonly string[]): Promise<Redrawn> {
   try {
-    await markDrawStale(ctx);
-    if (!(await isBackfillDone(ctx))) return { drawn: false, from: null };
+    const walked = account.type === 'depository' || account.type === 'credit';
+    const backfill = await importedRowsChanged(ctx, { dates: walked ? dates : [] });
+    if (backfill || !(await isBackfillDone(ctx))) return { drawn: false, from: null, reach: null, backfill };
     const { state } = await drawImportedHistory(ctx);
-    return { drawn: true, from: state.from };
+    return { drawn: true, from: state.from, reach: state.accounts.find((a) => a.account_id === account.account_id)?.reach ?? null, backfill: false };
   } catch (err) {
     console.error('history import: the estimated history was not drawn again', loggable(err));
-    return { drawn: false, from: null };
+    return { drawn: false, from: null, reach: null, backfill: false };
   }
 }
 
@@ -207,17 +217,14 @@ export async function GET(req: Request) {
     if (undo !== null) return NextResponse.json({ undo: await historyUndoPlan(ctx, sameAccountIds(account.account_id, links), undo) });
     const context = await contextOf(ctx, account, links);
     if (context instanceof NextResponse) return context;
-    const { superseded } = countedRows(context.held, context.banks, context.order);
-    const [imports, settings, drawn] = await Promise.all([
-      listHistoryImports(ctx, context.ids, new Set(superseded.keys())),
-      readSettings(ctx, account.account_id),
-      readDrawState(ctx),
-    ]);
+    const settled = countedRows(context.held, context.banks, context.order, { bankFrom: context.bank_from, covers: context.covers });
+    const [imports, settings, drawn] = await Promise.all([listHistoryImports(ctx, context.ids, settled), readSettings(ctx, account.account_id), readDrawState(ctx)]);
     const reach = drawn?.accounts.find((a) => a.account_id === account.account_id) ?? null;
     return NextResponse.json({
       imports,
       settings,
       bank_from: context.bank_from,
+      history_pending: context.history_pending,
       walked: ['depository', 'credit'].includes(account.type),
       reach,
       limits: { max_bytes: MAX_FILE_BYTES, max_rows: MAX_IMPORT_ROWS },
@@ -275,10 +282,37 @@ function rowOutcome(plan: HistoryPlan, i: number): 'new' | 'present' | 'repeated
   return 'skip';
 }
 
+/** Whether an OFX statement is for another account than this one: the one
+ *  this account's last OFX file was for, or, before its first, the account's
+ *  own number as the bank gives Plaid its last digits (its mask). */
+function mismatchOf(
+  remembered: ImportSettings | null,
+  statement: Ready['statement'],
+  account: LinkedAccount
+): { expected: string; found: string; basis: 'last-file' | 'mask' } | null {
+  const last = accountMismatch(remembered?.ofx?.statement, statement);
+  if (last) return { ...last, basis: 'last-file' };
+  if (remembered?.ofx?.statement) return null;
+  const found = statement?.account?.mask?.trim();
+  const own = account.mask?.trim();
+  if (!found || !own) return null;
+  const n = Math.min(found.length, own.length);
+  if (found.slice(-n) === own.slice(-n)) return null;
+  return { expected: `an account ending ${own}`, found: `${statement!.kind === 'creditcard' ? 'a credit card' : 'an account'} ending ${found}`, basis: 'mask' };
+}
+
 function reviewOf(
   read: Ready,
   plan: HistoryPlan,
-  extra: { encoding: string; warnings: string[]; mismatch: { expected: string; found: string } | null; currency_from: 'file' | 'chosen' | 'account'; covers: ReturnType<typeof coveredPeriod> }
+  extra: {
+    encoding: string;
+    warnings: string[];
+    mismatch: ReturnType<typeof mismatchOf>;
+    currency_from: 'file' | 'chosen' | 'account';
+    covers: Covers | null;
+    history_pending: boolean;
+    files: ReadonlyMap<string, { file_name: string | null; imported_at: string }>;
+  }
 ) {
   return {
     format: read.format,
@@ -304,7 +338,11 @@ function reviewOf(
     })),
     problems: plan.problems.slice(0, LISTED_PROBLEMS).map((p) => ({ line: p.line, reason: p.reason })),
     more_problems: Math.max(0, plan.problems.length - LISTED_PROBLEMS),
-    proposals: plan.proposals.slice(0, LISTED_PROPOSALS),
+    // A proposal of a row an earlier import kept names that import's file.
+    proposals: plan.proposals.slice(0, LISTED_PROPOSALS).map((p) => {
+      const from = p.twin.import_id ? extra.files.get(p.twin.import_id) : undefined;
+      return from ? { ...p, twin: { ...p.twin, file_name: from.file_name, imported_at: from.imported_at } } : p;
+    }),
     more_proposals: Math.max(0, plan.proposals.length - LISTED_PROPOSALS),
     conflicts: plan.conflicts.slice(0, LISTED_CONFLICTS),
     more_conflicts: Math.max(0, plan.conflicts.length - LISTED_CONFLICTS),
@@ -313,6 +351,7 @@ function reviewOf(
     last_date: plan.last_date,
     covers: extra.covers,
     bank_from: plan.bank_from,
+    history_pending: extra.history_pending,
     before_bank: plan.before_bank,
     within_bank: plan.within_bank,
     pending_alike: plan.pending_alike,
@@ -375,6 +414,17 @@ export async function POST(req: Request) {
 
     const context = await contextOf(ctx, account, links);
     if (context instanceof NextResponse) return context;
+    // The period the file covers, before matching: a pair across its edge is
+    // one only through a posting lag (lib/history-import/plan.ts).
+    let first: string | null = null;
+    let last: string | null = null;
+    for (const { row } of normalized.rows) {
+      if (first === null || row.date < first) first = row.date;
+      if (last === null || row.date > last) last = row.date;
+    }
+    const covered = coverOf(meta, first, last, read, today, problems.length > 0);
+    if (typeof covered === 'string') return bad(covered);
+    const imports = new Map([...context.summaries].map(([id, s]) => [id, { covers: { from: s.covers.from, to: s.covers.to }, file_name: s.file_name, imported_at: s.imported_at }]));
     const plan = planHistoryImport({
       rows: normalized.rows,
       problems,
@@ -382,13 +432,13 @@ export async function POST(req: Request) {
       banks: context.banks,
       order: context.order,
       bankFrom: context.bank_from,
+      covers: covered,
+      imports,
       choices: meta.choices,
     });
-    const covered = coverOf(meta, plan, read, today);
-    if (typeof covered === 'string') return bad(covered);
 
     const settings = await readSettings(ctx, account.account_id);
-    const mismatch = format === 'ofx' ? accountMismatch(settings?.ofx?.statement, read.statement) : null;
+    const mismatch = format === 'ofx' ? mismatchOf(settings, read.statement, account) : null;
     const warnings: string[] = [...read.read.repairs];
     const named = formatFromName(meta.file_name);
     if (named && named !== format) warnings.push(`This file is named as ${FORMAT_NAMES[named]} but holds ${FORMAT_NAMES[format]}, so it was read as ${FORMAT_NAMES[format]}.`);
@@ -400,13 +450,18 @@ export async function POST(req: Request) {
     }
 
     if (meta.action === 'preview') {
-      return NextResponse.json({ preview: reviewOf(read, plan, { encoding, warnings, mismatch, currency_from, covers: covered }) });
+      return NextResponse.json({
+        preview: reviewOf(read, plan, { encoding, warnings, mismatch, currency_from, covers: covered, history_pending: context.history_pending, files: imports }),
+      });
     }
 
     if (mismatch && !meta.acknowledge_account) {
       return NextResponse.json(
         {
-          error: `This file is for ${mismatch.found}, but ${account.name}’s last OFX file was for ${mismatch.expected}. Check it is the right file, then import it anyway.`,
+          error:
+            mismatch.basis === 'mask'
+              ? `This file is for ${mismatch.found}, but ${account.name} is ${mismatch.expected}. Check it is the right file, then import it anyway.`
+              : `This file is for ${mismatch.found}, but ${account.name}’s last OFX file was for ${mismatch.expected}. Check it is the right file, then import it anyway.`,
           account_mismatch: mismatch,
         },
         { status: 409 }
@@ -431,6 +486,7 @@ export async function POST(req: Request) {
         covers: covered,
         banks: context.banks,
         order: context.order,
+        imports,
         bank_from: context.bank_from,
         choices: meta.choices,
         reviewed: meta.review!,
@@ -454,12 +510,15 @@ export async function POST(req: Request) {
     }
     await rememberSettings(ctx, account.account_id, settingsFor(format, meta.options, read, currency, settings));
     const c = result.plan.counts;
-    const counts = { imported: c.new, duplicates: c.duplicates, present: c.present, repeated: c.repeated, skipped: c.skipped, unreadable: c.unreadable };
-    if (!result.import_id) return NextResponse.json({ ...counts, import_id: null, history: { drawn: false, from: null } });
+    const counts = { imported: c.new, duplicates: c.duplicates, already: c.already, present: c.present, repeated: c.repeated, skipped: c.skipped, unreadable: c.unreadable };
+    if (!result.import_id) return NextResponse.json({ ...counts, import_id: null, history: { drawn: false, from: null, reach: null, backfill: false } });
     // The transactions cached for the Activity tab hold the banks' part, which
     // the imported rows are part of.
     await clearTransactionsCache(ctx);
-    const history = await redraw(ctx);
+    // The rows it added that count, by day: those after the earliest point the
+    // chart has are the backfill's to walk.
+    const added = result.plan.rows.flatMap((r, i) => (result.plan.actions[i] === 'add' ? [r.row.date] : []));
+    const history = await redraw(ctx, account, added);
     return NextResponse.json({ ...counts, import_id: result.import_id, before_bank: result.plan.before_bank, history });
   } catch (err) {
     return storeFailure(err, 'Failed to import the file');
@@ -468,16 +527,19 @@ export async function POST(req: Request) {
 
 /** The period the file covers (lib/history-import/commit.ts coveredPeriod),
  *  or why the one the person gave can't be: it may only widen the file's own,
- *  never leave a row out, and never reach past tomorrow. */
-function coverOf(meta: HistoryMeta, plan: HistoryPlan, read: Ready, today: string): ReturnType<typeof coveredPeriod> | string {
+ *  never leave a row out, and never reach past tomorrow. A file with lines
+ *  that couldn't be read covers it whole only when the person says those
+ *  lines aren't transactions (`whole`). */
+function coverOf(meta: HistoryMeta, first: string | null, last: string | null, read: Ready, today: string, unread: boolean): Covers | null | string {
   const stated = meta.covers;
-  if (stated && plan.first_date && plan.last_date) {
-    if (stated.from > plan.first_date || stated.to < plan.last_date) {
-      return `The period the file covers must hold every row in it, from ${plan.first_date} to ${plan.last_date}.`;
+  if (stated && first && last) {
+    if (stated.from > first || stated.to < last) {
+      return `The period the file covers must hold every row in it, from ${first} to ${last}.`;
     }
     if (stated.to > addDays(today, 1)) return 'The period the file covers can’t reach into the future.';
   }
-  return coveredPeriod(read.statement, plan.first_date, plan.last_date, today, stated);
+  const covers = coveredPeriod(read.statement, first, last, today, stated);
+  return covers && unread && meta.whole ? { ...covers, whole: true } : covers;
 }
 
 export async function DELETE(req: Request) {
@@ -500,7 +562,7 @@ export async function DELETE(req: Request) {
     // Only the account's ids: an undo needs nothing of the bank's.
     const undone = await undoHistoryImport(ctx, sameAccountIds(found.account.account_id, found.links), body.import_id);
     await clearTransactionsCache(ctx);
-    const history = await redraw(ctx);
+    const history = await redraw(ctx, found.account, undone.dates);
     return NextResponse.json({ removed: undone.removed, duplicates: undone.duplicates, kept: undone.kept, history });
   } catch (err) {
     if (err instanceof HistoryImportNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });

@@ -79,6 +79,7 @@ import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } f
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 import { readDrawState } from './history-import/extend';
+import { importedStretch } from './history-import/view';
 import type { WalkState } from './history-import/store';
 
 const DAY_MS = 86_400_000;
@@ -464,22 +465,20 @@ export type ApiHistory = {
    *  transactions rather than recorded (only with include_estimated). */
   points: { date: string; value: number; estimated: boolean }[];
   /** With include_estimated: the estimated points dated `from` up to (not
-   *  including) `until` are walked back through transactions imported from
-   *  files rather than the bank's (#52, lib/history-import/extend.ts); null
-   *  when none are. Added in version 1, as its promise allows. */
+   *  including) `until` follow, at least for one account, transactions
+   *  imported from files rather than the bank's own (#52,
+   *  lib/history-import/extend.ts); null when none do. Added in version 1,
+   *  as its promise allows. */
   from_imports: { from: string; until: string } | null;
   notes: string[];
 };
 
 export type HistoryQuery = { accountId?: string; from?: string; to?: string; includeEstimated?: boolean; includeHidden?: boolean; interval?: Interval };
 
-/** The stretch of estimated points drawn from imported transactions
+/** The stretch of estimated points that follows imported transactions
  *  (ApiHistory.from_imports): net worth's, or one account's (any of its ids). */
 function fromImports(drawn: WalkState | null, ids: readonly string[] | null): ApiHistory['from_imports'] {
-  if (!drawn?.anchor || !drawn.from || !drawn.drawn) return null;
-  if (ids === null) return { from: drawn.from, until: drawn.anchor };
-  const reach = drawn.accounts.find((a) => ids.includes(a.account_id))?.reach ?? null;
-  return reach && reach < drawn.anchor ? { from: reach, until: drawn.anchor } : null;
+  return importedStretch(drawn, ids);
 }
 
 /** A series as answered: recorded points only unless estimated ones are

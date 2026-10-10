@@ -10,7 +10,7 @@ import {
   isBackfillDone,
   type HistoryPoint,
 } from '@/lib/history';
-import { applyHidden } from '@/lib/hidden';
+import { applyHidden, getHiddenAccounts } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
@@ -45,12 +45,14 @@ type NetWorthPayload = {
 // The estimated history drawn back through imported transactions (#52) rides
 // along the same way: whether it is marked to draw again (one more reason to
 // ask /api/backfill), and what it covers, for the chart to say which stretch
-// comes from imported rows and what it couldn't draw (imported_history).
+// comes from imported rows and what it couldn't draw (imported_history),
+// never naming a hidden account, which the chart leaves out.
 async function staleFlag(
   ctx: Ctx
 ): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null; imported_history?: ImportedHistoryView }> {
   const [done, backup_problem, drawn] = await Promise.all([isBackfillDone(ctx), backupProblem(), readDrawState(ctx)]);
-  const view = importedHistoryView(drawn);
+  const hidden = drawn ? await getHiddenAccounts(ctx).then((h) => new Set(h.keys()), () => new Set<string>()) : new Set<string>();
+  const view = importedHistoryView(drawn, hidden);
   return { backfill_stale: !done || (!!drawn && drawn.built !== drawn.generation), backup_problem, ...(view ? { imported_history: view } : {}) };
 }
 

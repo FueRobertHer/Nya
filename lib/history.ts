@@ -1487,14 +1487,17 @@ async function anchorMap(blob: unknown): Promise<Record<string, number>> {
  * The net-worth series' earliest point, recorded or estimated, leaving out
  * the days `skip` names (an earlier drawing's own, [from, until)), with every
  * account's balance it was made of: the recorded map for a recorded point;
- * the walked map and the flat term for an estimate. Null when the series has
- * no point. Strict: anything that can't be read throws, since an extension
- * joined to a point read wrongly would be wrong for every day before it.
+ * the walked map and the flat term for an estimate, with the accounts walked
+ * (`walked`: each one's balance there follows its transactions; the flat
+ * term's are held at the balance the estimate began from). Null when the
+ * series has no point. Strict: anything that can't be read throws, since an
+ * extension joined to a point read wrongly would be wrong for every day
+ * before it.
  */
 export async function readEarliestPoint(
   ctx: Ctx,
   skip: { from: string; until: string } | null
-): Promise<{ date: string; total: number; balances: Record<string, number>; estimated: boolean } | null> {
+): Promise<{ date: string; total: number; balances: Record<string, number>; estimated: boolean; walked: string[] | null } | null> {
   const [real, est] = await Promise.all([redis().hkeys(HISTORY_HASH(ctx)), redis().hkeys(ESTIMATED_HASH(ctx))]);
   const today = new Date().toISOString().slice(0, 10);
   const kept = (d: string) => d <= today && !(skip && d >= skip.from && d < skip.until);
@@ -1509,7 +1512,7 @@ export async function readEarliestPoint(
     // A total recorded without its map (the two are separate writes) names
     // no account: nothing can be walked from it.
     const map = await redis().hget(ACCOUNTS_HASH(ctx), date);
-    return { date, total, balances: map === null || map === undefined ? {} : await anchorMap(map), estimated };
+    return { date, total, balances: map === null || map === undefined ? {} : await anchorMap(map), estimated, walked: null };
   }
   const [walkedBlob, flatBlob] = await Promise.all([redis().hget(ACCOUNTS_EST_HASH(ctx), date), redis().hget(ACCOUNTS_EST_FLAT_BY_DATE(ctx), date)]);
   const walked = walkedBlob === null || walkedBlob === undefined ? {} : await anchorMap(walkedBlob);
@@ -1520,7 +1523,7 @@ export async function readEarliestPoint(
     const legacy = await redis().get(ACCOUNTS_EST_FLAT_LEGACY(ctx));
     flat = legacy === null || legacy === undefined ? {} : await anchorMap(legacy);
   }
-  return { date, total, balances: { ...flat, ...walked }, estimated };
+  return { date, total, balances: { ...flat, ...walked }, estimated, walked: Object.keys(walked) };
 }
 
 /**

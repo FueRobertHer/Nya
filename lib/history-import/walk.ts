@@ -7,7 +7,8 @@
 //
 // FROM THE EARLIEST POINT BACK. The walk behind the estimated layer
 // (lib/backfill.ts) starts from today's balances and stops where the bank's
-// transactions do. This continues it from the earliest point the chart
+// transactions do; it walks the imported rows dated in its own window too
+// (app/api/backfill). This continues it from the earliest point the chart
 // already has (the ANCHOR: the oldest net-worth total, recorded or
 // estimated, that no earlier run of this wrote), with that day's own
 // balances, so the line joins it exactly and nothing at or after it is ever
@@ -22,12 +23,18 @@
 // a day only if every transaction of that day is known: the bank's window
 // (its earliest row on), and the period each import covers (its statement's,
 // or the file's first to last day, or wider where the person said so). These
-// are its COVERED RANGES. The walk goes back from the anchor through the run
-// of covered days that holds it, and stops where it ends: imports of 2019 and
-// 2023 without 2020 to 2022 extend the chart through 2023 and no further,
-// never interpolating across the hole, and the gap is reported, so the chart
-// can say what isn't drawn and why. The point the day before a covered run
-// begins is kept: it is what the account held before that run's first flow.
+// are its COVERED RANGES. The anchor's balance is only as good as every day
+// after it, so the run of covered days that holds the anchor must reach
+// today, and the walk goes back from the anchor through that run and stops
+// where it begins: imports of 2019 and 2023 without 2020 to 2022 extend the
+// chart through 2023 and no further, never interpolating across the hole, and
+// an import that ends before the bank's window begins isn't drawn at all. The
+// gaps are reported, so the chart can say what isn't drawn and why. The point
+// the day before a covered run begins is kept: it is what the account held
+// before that run's first flow. An account the anchor's estimate held at a
+// balance (one whose connection brings no transactions) is walked only if
+// nothing happened to it after the anchor: otherwise that balance is not what
+// it held then.
 //
 // ONLY BANK ACCOUNTS AND CARDS. Their transactions explain every change of
 // their balance; an investment account's don't (market movement isn't a
@@ -64,14 +71,19 @@ export type WalkAccount = {
   ids: string[];
   type: 'depository' | 'credit';
   /** Each day's flows, summed, in Plaid's sign (positive left the account):
-   *  the bank's posted rows and the imported rows that count. */
+   *  the bank's posted rows and the imported rows that count, up to the
+   *  anchor's day. */
   flows: ReadonlyMap<string, number>;
   covered: CoveredRange[];
+  /** It has a flow dated after the anchor's day. */
+  movedAfter?: boolean;
 };
 
 /** The earliest point the chart has: its day, its net-worth total, and every
- *  account's balance it was made of (walked and held, or recorded). */
-export type Anchor = { date: string; total: number; balances: Record<string, number> };
+ *  account's balance it was made of (walked and held, or recorded).
+ *  `walked` names the accounts an estimate walked to that balance, and is
+ *  null for a recorded point, whose balances were all measured. */
+export type Anchor = { date: string; total: number; balances: Record<string, number>; walked?: readonly string[] | null };
 
 /** A stretch imported for an account that isn't drawn, and the uncovered days
  *  that cut it off from the rest. */
@@ -83,9 +95,10 @@ export type AccountReach = {
   /** The oldest day its balance is estimated for, or null when it isn't
    *  walked at all. */
   reach: string | null;
-  /** Why it isn't walked: the anchor doesn't count it, or no covered range
-   *  holds the anchor's day. */
-  why: 'not-counted' | 'anchor-not-covered' | null;
+  /** Why it isn't walked: the anchor doesn't count it; no covered range
+   *  holds the anchor's day; or the anchor held it at a balance although it
+   *  had transactions since. */
+  why: 'not-counted' | 'anchor-not-covered' | 'held-flat' | null;
   gaps: Gap[];
   /** Its covered run reaches past MAX_EXTENSION_DAYS, which isn't drawn. */
   capped: boolean;
@@ -135,31 +148,43 @@ export function mergeRanges(ranges: readonly CoveredRange[]): { from: number; to
 /**
  * How far back one account can be walked from the anchor (see the header):
  * to the day before the covered run holding the anchor's day begins, no
- * further than MAX_EXTENSION_DAYS; with the imported stretches before that
- * run, which aren't drawn, each with the uncovered days cutting it off. Only
- * an import reaching before the anchor is walked: a run of the bank's own days
- * alone is the backfill's (lib/backfill.ts), which stops where it stops.
+ * further than MAX_EXTENSION_DAYS, when that run reaches `today`; with the
+ * imported stretches not drawn, each with the uncovered days cutting it off.
+ * Only an import reaching before the anchor is walked: a run of the bank's
+ * own days alone is the backfill's (lib/backfill.ts), which stops where it
+ * stops. `heldFlat` says the anchor held the account at a balance it walked
+ * no flow to (an estimate's flat term), which only holds if nothing happened
+ * to it since.
  */
-export function reachOf(account: Pick<WalkAccount, 'account_id' | 'covered'>, anchor: string, counted: boolean, maxDays: number = MAX_EXTENSION_DAYS): AccountReach {
+export function reachOf(
+  account: Pick<WalkAccount, 'account_id' | 'covered' | 'movedAfter'>,
+  anchor: string,
+  counted: boolean,
+  opts: { today: string; heldFlat?: boolean; maxDays?: number }
+): AccountReach {
   const blocks = mergeRanges(account.covered);
   const a = dayNumber(anchor);
-  const holding = blocks.find((b) => b.from <= a && a <= b.to) ?? null;
-  // The runs before the one holding the anchor (or before the anchor, when no
-  // run holds it), and of them those an import covers, each cut off by the
-  // uncovered days up to the next run, or up to the anchor's own run.
-  const end = holding ? holding.from - 1 : a;
-  const before = blocks.filter((b) => b.to < (holding ? holding.from : a));
-  const gaps: Gap[] = before.flatMap((b, i) => {
-    if (!b.imported) return [];
-    const until = i + 1 < before.length ? before[i + 1].from - 1 : end;
-    return [{ imported: { from: dayOf(b.from), to: dayOf(b.to) }, uncovered: { from: dayOf(b.to + 1), to: dayOf(until) } }];
+  const t = dayNumber(opts.today);
+  const maxDays = opts.maxDays ?? MAX_EXTENSION_DAYS;
+  const found = blocks.find((b) => b.from <= a && a <= b.to) ?? null;
+  // The run holding the anchor counts only if it reaches today: otherwise the
+  // anchor's balance rests on days nothing covers, and that run is cut off too.
+  const holding = found && found.to >= t ? found : null;
+  // The imported runs not drawn: every one beginning before the anchor but
+  // the one drawn through, each cut off by the uncovered days after it.
+  const gaps: Gap[] = [];
+  blocks.forEach((b, i) => {
+    if (!b.imported || b === holding || b.from >= a) return;
+    const next = i + 1 < blocks.length ? blocks[i + 1].from - 1 : t;
+    gaps.push({ imported: { from: dayOf(b.from), to: dayOf(b.to) }, uncovered: { from: dayOf(b.to + 1), to: dayOf(Math.max(b.to + 1, next)) } });
   });
   const none = (why: AccountReach['why']): AccountReach => ({ account_id: account.account_id, reach: null, why, gaps, capped: false });
-  if (!holding) return none(gaps.length > 0 ? 'anchor-not-covered' : null);
+  if (!holding) return none(!found && gaps.length > 0 ? 'anchor-not-covered' : null);
   // An import in the run, before the anchor's day: what there is to draw.
   const importedBefore = account.covered.some((r) => r.kind === 'import' && dayNumber(r.from) < a && dayNumber(r.from) >= holding.from);
   if (!importedBefore) return none(null);
   if (!counted) return none('not-counted');
+  if (opts.heldFlat && account.movedAfter) return none('held-flat');
   const furthest = a - maxDays;
   const reach = Math.max(holding.from - 1, furthest);
   return { account_id: account.account_id, reach: dayOf(reach), why: null, gaps, capped: holding.from - 1 < furthest };
@@ -171,13 +196,15 @@ export function reachOf(account: Pick<WalkAccount, 'account_id' | 'covered'>, an
  * each account reached, and the oldest day drawn. Nothing when no account
  * reaches before the anchor.
  */
-export function extendHistory(input: { anchor: Anchor; accounts: readonly WalkAccount[]; maxDays?: number }): Extension {
+export function extendHistory(input: { anchor: Anchor; accounts: readonly WalkAccount[]; today: string; maxDays?: number }): Extension {
   const { anchor } = input;
   const walking: { account: WalkAccount; reach: number; start: number }[] = [];
   const reaches: AccountReach[] = [];
+  const walkedThere = anchor.walked ? new Set(anchor.walked) : null;
   for (const account of input.accounts) {
     const id = account.ids.find((i) => typeof anchor.balances[i] === 'number' && Number.isFinite(anchor.balances[i]));
-    const reach = reachOf(account, anchor.date, id !== undefined, input.maxDays);
+    const heldFlat = walkedThere !== null && !account.ids.some((i) => walkedThere.has(i));
+    const reach = reachOf(account, anchor.date, id !== undefined, { today: input.today, heldFlat, maxDays: input.maxDays });
     reaches.push(reach);
     if (reach.reach === null || id === undefined || reach.reach >= anchor.date) continue;
     walking.push({ account, reach: dayNumber(reach.reach), start: anchor.balances[id] });

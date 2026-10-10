@@ -31,7 +31,7 @@ const REVIEW: Review = {
   format: 'ofx',
   statement: null,
   read: { date_order: null, decimal: null },
-  counts: { new: 3, duplicates: 1, present: 2, repeated: 0, skipped: 0, conflicts: 0, unanswered: 1, unreadable: 0 },
+  counts: { new: 3, duplicates: 1, already: 0, present: 2, repeated: 0, skipped: 0, conflicts: 0, unanswered: 1, unreadable: 0 },
   rows: [{ line: 10, date: '2024-03-01', name: 'OLD STORE', amount: 100, currency: 'USD', category: null, outcome: 'new' }],
   problems: [],
   more_problems: 0,
@@ -40,20 +40,22 @@ const REVIEW: Review = {
       index: 4,
       line: 40,
       file: { date: '2026-08-01', name: 'GROCERY OUTLET', amount: 60, currency: 'USD' },
-      bank: { date: '2026-08-06', name: 'Shell', amount: 60, currency: 'USD', transaction_id: 'b1', descriptor: 'SHELL OIL 5544' },
+      twin: { kind: 'bank', date: '2026-08-06', name: 'Shell', amount: 60, currency: 'USD', id: 'b1', descriptor: 'SHELL OIL 5544', import_id: null },
       days: 5,
       confidence: 'low',
       similar: false,
+      edge: null,
       choice: null,
     },
     {
       index: 7,
       line: 70,
       file: { date: '2026-08-10', name: 'Online Transfer to Landlord', amount: 1850, currency: 'USD' },
-      bank: { date: '2026-08-10', name: 'ZELLE PAYMENT TO LANDLORD', amount: 1850, currency: 'USD', transaction_id: 'b2', descriptor: 'ZELLE PAYMENT TO LANDLORD' },
+      twin: { kind: 'bank', date: '2026-08-10', name: 'ZELLE PAYMENT TO LANDLORD', amount: 1850, currency: 'USD', id: 'b2', descriptor: 'ZELLE PAYMENT TO LANDLORD', import_id: null },
       days: 0,
       confidence: 'high',
       similar: true,
+      edge: null,
       choice: 'same',
     },
   ],
@@ -141,17 +143,19 @@ describe('the note under the net-worth chart', () => {
         view={{
           until: '2025-10-10',
           from: '2021-12-31',
-          accounts: ['acc_chk'],
+          accounts: [{ account_id: 'acc_chk', reach: '2021-12-31', bank_from: null }],
           gaps: [{ account_id: 'acc_chk', imported: { from: '2019-01-01', to: '2019-12-31' }, uncovered: { from: '2020-01-01', to: '2021-12-31' } }],
           unwalked: [],
+          excluded: [],
           capped: [],
           redrawing: false,
+          problem: null,
         }}
         institutions={[{ institution_name: 'Chase', accounts: [{ account_id: 'acc_chk', name: 'Checking' }] }]}
       />
     );
     const t = text(html);
-    expect(t).toContain('the estimate reaches back through transactions you imported for Chase Checking');
+    expect(t).toContain('Chase Checking: the estimate follows the transactions you imported, back to');
     expect(t).toContain('Not drawn: Chase Checking’s import from');
     expect(t).not.toMatch(/[\u2013\u2014]/);
   });
