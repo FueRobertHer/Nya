@@ -37,12 +37,18 @@ export async function getKeptAccounts(ctx: Ctx, opts: { named?: boolean } = {}):
 
 /** The accounts a connector feeds that have no balance to count just now:
  *  none has come yet, or a card's or a loan's positive one waits for the
- *  person to say how to read it. Still the person's, only held: what is
- *  shared of them is kept (lib/sharing.ts). */
-export async function heldAccountIds(ctx: Ctx): Promise<Set<string>> {
+ *  person to say how to read it. Still the person's, only held: a share of
+ *  one is paused, never dropped by an edit that doesn't name it, and the
+ *  sharing settings list it as waiting so it can be ended (lib/sharing.ts). */
+export async function heldAccounts(ctx: Ctx): Promise<ConnectorAccount[]> {
   const [manual, fed] = await Promise.all([getManualAccounts(ctx), connectorAccountsStore.getAll(ctx)]);
   const own = new Set(manual.map((a) => a.account_id));
-  return new Set([...fed.values()].filter((a) => !own.has(a.account_id) && nyaBalance(a) === null).map((a) => a.account_id));
+  return [...fed.values()].filter((a) => !own.has(a.account_id) && nyaBalance(a) === null);
+}
+
+/** heldAccounts, by id. */
+export async function heldAccountIds(ctx: Ctx): Promise<Set<string>> {
+  return new Set((await heldAccounts(ctx)).map((a) => a.account_id));
 }
 
 /** One account Nya keeps, by id: a manual account, else a connector's

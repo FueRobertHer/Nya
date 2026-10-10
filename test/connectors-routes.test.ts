@@ -246,6 +246,66 @@ describe('connecting through the routes', () => {
     expect(after.filter((t: any) => t.account_id === visa.account_id).length).toBeGreaterThan(0);
   });
 
+  test('a keep that would be refused is refused before anything else in the request is saved', async () => {
+    server.accounts[1].balance = '432.10';
+    server.accounts.push(fakeAccount({ id: 'LOAN', name: 'Car loan', balance: '9000.00' }));
+    const id = await connectAndTrack();
+    const before = (await list()).body.connections[0].accounts;
+    const visa = before.find((a: any) => a.name === 'Visa');
+    const checking = before.find((a: any) => a.name === 'Checking');
+    // A sheet opened before the card was held: it retypes the checking
+    // account and stops the card, keeping it, with no answer about its sign.
+    const res = await call(accountsRoute.PUT, 'PUT', {
+      connection_id: id,
+      retype: [{ account_id: checking.account_id, type: 'investment' }],
+      stop: { account_ids: [visa.account_id], keep: true },
+    });
+    expect([res.status, res.body.error]).toEqual([409, expect.stringContaining('Say how to read Visa first')]);
+    const after = (await list()).body.connections[0].accounts;
+    expect(after.find((a: any) => a.name === 'Checking').type).toBe('depository');
+    expect(after.map((a: any) => a.name).sort()).toEqual(['Checking', 'Visa']);
+    // Retyped into a card in the same request, a positive balance waits for
+    // its answer too: refused, nothing saved.
+    const retyped = await call(accountsRoute.PUT, 'PUT', {
+      connection_id: id,
+      retype: [{ account_id: checking.account_id, type: 'credit' }],
+      sign: [{ account_id: visa.account_id, sign: 'owed_positive' }],
+      stop: { account_ids: [checking.account_id, visa.account_id], keep: true },
+    });
+    expect([retyped.status, retyped.body.error]).toEqual([409, expect.stringContaining('Say how to read Checking first')]);
+    const still = (await list()).body.connections[0].accounts;
+    expect(still.find((a: any) => a.name === 'Visa')).toMatchObject({ needs_sign: true });
+    expect(still.find((a: any) => a.name === 'Checking').type).toBe('depository');
+    // A disconnect alike: the answer it brings isn't saved when it is refused.
+    const { trackAccounts } = await import('@/lib/connectors/manage');
+    await trackAccounts(ctx, id, [{ remote_id: 'LOAN', type: 'loan' }]);
+    const gone = await call(connectors.DELETE, 'DELETE', { connection_id: id, sign: [{ account_id: visa.account_id, sign: 'as_reported' }] });
+    expect([gone.status, gone.body.error]).toEqual([409, expect.stringContaining('Say how to read Car loan first')]);
+    expect((await list()).body.connections[0].accounts.find((a: any) => a.name === 'Visa')).toMatchObject({ needs_sign: true });
+  });
+
+  test('a refusal only a later step finds says the changes before it were saved', async () => {
+    server.accounts.push(fakeAccount({ id: 'SAV', name: 'Savings', balance: '10.00' }));
+    const first = await connectAndTrack();
+    // A second connection to the same server, tracking the savings account.
+    const second = await call(connectRoute.POST, 'POST', { connector: 'simplefin', token: server.setupToken('again') });
+    expect(second.status).toBe(200);
+    expect((await call(accountsRoute.PUT, 'PUT', { connection_id: second.body.connection_id, track: [{ remote_id: 'SAV', type: 'depository' }] })).status).toBe(200);
+    const accountsOf = async (id: string) => (await list()).body.connections.find((c: any) => c.connection_id === id).accounts;
+    const visa = (await accountsOf(first)).find((a: any) => a.name === 'Visa');
+    // Tracked through the second already: refused, with nothing saved before it.
+    const refused = await call(accountsRoute.PUT, 'PUT', { connection_id: first, track: [{ remote_id: 'SAV', type: 'depository' }] });
+    expect([refused.status, refused.body.error]).toEqual([409, expect.not.stringContaining('were saved')]);
+    // Stopping the card in the same request: the stop was saved, and said.
+    const twice = await call(accountsRoute.PUT, 'PUT', {
+      connection_id: first,
+      stop: { account_ids: [visa.account_id], keep: false },
+      track: [{ remote_id: 'SAV', type: 'depository' }],
+    });
+    expect([twice.status, twice.body.error]).toEqual([409, expect.stringContaining('The changes before it were saved.')]);
+    expect((await accountsOf(first)).map((a: any) => a.name)).toEqual(['Checking']);
+  });
+
   test('stopping a card whose sign waits, keeping it, takes its answer in the same request', async () => {
     server.accounts[1].balance = '432.10';
     const id = await connectAndTrack();

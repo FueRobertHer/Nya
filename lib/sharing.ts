@@ -99,7 +99,7 @@ import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
-import { getKeptAccounts, heldAccountIds } from './kept-accounts';
+import { getKeptAccounts, heldAccountIds, heldAccounts } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
@@ -403,12 +403,15 @@ export type ConnectionChange = { label?: unknown; accounts?: Record<string, unkn
 /**
  * Saves a change to one of my connections, all of it or none: everything is
  * checked before anything is written. Every account must be one I can share
- * now; a share on an account I've hidden stays as it was (paused, not ended),
- * since the settings don't show it, as does one on an account a connector
- * feeds that has no balance to count just now (lib/kept-accounts.ts
- * heldAccountIds: its first balance, or my answer about a card's sign, is
- * still to come). Sharing nothing ends the share and its end date, which then
- * isn't checked: taking everything back never fails on a date.
+ * now. A share on an account I've hidden is paused, not ended, as is one on an
+ * account a connector feeds that has no balance to count just now
+ * (lib/kept-accounts.ts heldAccounts: its first balance, or my answer about a
+ * card's sign, is still to come): a change that doesn't name it keeps it as
+ * it was, one that names it "none" ends it, and its level can't change while
+ * it is paused. The settings list a held account that is shared, marked as
+ * waiting (waitingAccounts), so taking everything back there takes it back
+ * too. Sharing nothing ends the share and its end date, which then isn't
+ * checked: taking everything back never fails on a date.
  */
 export async function saveConnection(ctx: Ctx, me: string, id: string, change: ConnectionChange, now: number = Date.now()): Promise<void> {
   const c = await connectionOf(me, id);
@@ -433,16 +436,28 @@ async function nextShare(ctx: Ctx, me: string, c: Conn, change: ConnectionChange
     const [shareable, { hidden }, held] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx), heldAccountIds(ctx)]);
     const allowed = new Set(shareable.map((a) => a.id));
     const clean: Record<string, Level> = {};
-    // Paused, not ended: a hidden account's share, and that of an account a
-    // connector feeds that is only held (no balance to count just now), which
-    // the list to choose from can't show, so an edit never drops it.
+    // Paused, not ended: the share of an account I've hidden, or of one a
+    // connector feeds that is only held (no balance to count just now). Kept
+    // as it was unless the change names it: "none" ends it, whatever paused
+    // it, and the same level keeps it; another level waits until it isn't
+    // paused, since it can't be shown meanwhile.
     const paused = (acct: string) => hidden.has(acct) || held.has(acct);
     for (const [acct, level] of Object.entries(current?.accounts ?? {})) if (paused(acct)) clean[acct] = level;
     for (const [acct, level] of Object.entries(change.accounts ?? {})) {
-      if (level === null || level === 'none') continue;
+      if (level === null || level === 'none') {
+        delete clean[acct];
+        continue;
+      }
       if (!isLevel(level)) throw new SharingRefused(`Unknown level for ${acct}.`);
-      if (paused(acct) && acct in clean) continue; // paused: kept as it was
-      if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
+      if (paused(acct) && acct in clean) {
+        if (clean[acct] === level) continue; // paused: kept as it was
+        throw new SharingRefused(
+          held.has(acct)
+            ? 'An account waiting for its balance keeps what you share of it, or stops being shared: what they see of it can change once it has one.'
+            : 'A hidden account keeps what you share of it, or stops being shared: what they see of it can change once you show it again.'
+        );
+      }
+      if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, waiting for its balance, or no longer yours).');
       clean[acct] = level;
     }
     accounts = clean;
@@ -944,6 +959,19 @@ export async function shareableAccounts(ctx: Ctx, opts: { readOnly?: boolean } =
   ];
   const byText = (a: string, b: string) => a.localeCompare(b);
   return out.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
+}
+
+/** An account a connector feeds that is only held just now (heldAccounts),
+ *  not hidden, as the sharing settings list it beside the shareable ones:
+ *  marked as waiting, so a share of it can be ended while it waits (an
+ *  explicit "none", saveConnection), though not begun or changed. */
+export type WaitingAccount = Shareable & { waiting: true };
+
+export async function waitingAccounts(ctx: Ctx, opts: { readOnly?: boolean } = {}): Promise<WaitingAccount[]> {
+  const [held, { hidden }] = await Promise.all([heldAccounts(ctx), getEffectiveHidden(ctx, { readOnly: opts.readOnly })]);
+  return held
+    .filter((a) => !hidden.has(a.account_id))
+    .map((a) => ({ id: a.account_id, label: `${a.institution_name} ${a.name}`, institution: a.institution_name, name: a.name, waiting: true as const }));
 }
 
 /** One shared transaction, with Plaid's sign (positive is money out).

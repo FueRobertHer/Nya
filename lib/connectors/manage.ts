@@ -319,6 +319,25 @@ export async function confirmSigns(ctx: Ctx, answers: { account_id: string; sign
   return changed;
 }
 
+/**
+ * Why keeping these accounts as manual ones is refused, or null: a card or a
+ * loan among them whose positive balance waits for the person to say how to
+ * read it, so whether it is owed or held isn't known. `after`: the kinds and
+ * answers a request is about to save first, so a route can refuse before it
+ * saves anything (app/api/connectors).
+ */
+export function keepRefusal(
+  accounts: readonly ConnectorAccount[],
+  after: { types?: ReadonlyMap<string, ManualType>; signs?: ReadonlyMap<string, OwedSign> } = {}
+): string | null {
+  const unsure = accounts.filter((a) =>
+    needsSign({ ...a, type: after.types?.get(a.account_id) ?? a.type, sign: after.signs?.get(a.account_id) ?? a.sign ?? null })
+  );
+  if (unsure.length === 0) return null;
+  const one = unsure.length === 1;
+  return `Say how to read ${names(unsure.map((a) => a.name))} first: ${connectorOf(unsure[0].connector).label} reports ${one ? 'it' : 'them'} as money held, and a balance can't be kept as a manual account until it is known whether it is owed or held.`;
+}
+
 export type Released = {
   kept: string[];
   removed: string[];
@@ -337,14 +356,8 @@ export type Released = {
  */
 export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boolean, now: number = Date.now()): Promise<Released> {
   const accounts = [...(await connectorAccountsStore.getMany(ctx, account_ids)).values()];
-  const unsure = keep ? accounts.filter(needsSign) : [];
-  if (unsure.length > 0) {
-    const one = unsure.length === 1;
-    throw new ConnectorRefused(
-      `Say how to read ${names(unsure.map((a) => a.name))} first: ${connectorOf(unsure[0].connector).label} reports ${one ? 'it' : 'them'} as money held, and a balance can't be kept as a manual account until it is known whether it is owed or held.`,
-      409
-    );
-  }
+  const refused = keep ? keepRefusal(accounts) : null;
+  if (refused) throw new ConnectorRefused(refused, 409);
   const out: Released = { kept: [], removed: [], nothing_to_keep: [] };
   const manual = keep ? new Set((await getManualAccounts(ctx)).map((a) => a.account_id)) : new Set<string>();
   for (const a of accounts) {

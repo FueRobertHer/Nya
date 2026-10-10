@@ -3,7 +3,7 @@ import { dataCtx } from '@/lib/data-ctx';
 import { connectionsStore, connectorAccountsStore } from '@/lib/connectors/store';
 import { connectionView } from '@/lib/connectors/view';
 import { requestsLeft } from '@/lib/connectors/sync';
-import { confirmSigns, othersOf, releaseAccounts, retypeAccounts, trackAccounts, MAX_CONNECTOR_ACCOUNTS, type TrackChoice } from '@/lib/connectors/manage';
+import { confirmSigns, keepRefusal, othersOf, releaseAccounts, retypeAccounts, trackAccounts, ConnectorRefused, MAX_CONNECTOR_ACCOUNTS, type Released, type TrackChoice } from '@/lib/connectors/manage';
 import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId, MANUAL_TYPES, type ManualType } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
@@ -17,6 +17,12 @@ import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respo
 // its answer comes in `sign` first), then `track` adds accounts the
 // connection offers and fetches their recent transactions. Every account
 // named must be this connection's.
+//
+// A keep that would be refused is refused before anything is saved, with the
+// kinds and answers this request brings counted in. A refusal only a later
+// step can find (tracking an account another connection tracks, or a fetch
+// that changed an account meanwhile) comes after the steps before it were
+// saved, and says so.
 
 export const maxDuration = 60;
 
@@ -63,10 +69,28 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'That account is not one this connection tracks' }, { status: 400 });
     }
 
-    const retyped = retype.length > 0 ? await retypeAccounts(ctx, retype) : 0;
-    const signed = sign.length > 0 ? await confirmSigns(ctx, sign) : 0;
-    const released = stop && stop.account_ids.length > 0 ? await releaseAccounts(ctx, stop.account_ids, stop.keep) : { kept: [], removed: [], nothing_to_keep: [] };
-    const fetched = track.length > 0 ? await trackAccounts(ctx, body.connection_id, track) : null;
+    if (stop?.keep) {
+      const refused = keepRefusal(
+        stop.account_ids.map((id) => accounts.get(id)!),
+        { types: new Map(retype.map((r) => [r.account_id, r.type])), signs: new Map(sign.map((s) => [s.account_id, s.sign])) }
+      );
+      if (refused) return NextResponse.json({ error: refused }, { status: 409 });
+    }
+
+    let retyped = 0;
+    let signed = 0;
+    let released: Released = { kept: [], removed: [], nothing_to_keep: [] };
+    let fetched: Awaited<ReturnType<typeof trackAccounts>> | null = null;
+    try {
+      if (retype.length > 0) retyped = await retypeAccounts(ctx, retype);
+      if (sign.length > 0) signed = await confirmSigns(ctx, sign);
+      if (stop && stop.account_ids.length > 0) released = await releaseAccounts(ctx, stop.account_ids, stop.keep);
+      if (track.length > 0) fetched = await trackAccounts(ctx, body.connection_id, track);
+    } catch (err) {
+      const saved = retyped + signed + released.kept.length + released.removed.length > 0;
+      if (saved && err instanceof ConnectorRefused) throw new ConnectorRefused(`${err.message} The changes before it were saved.`, err.status);
+      throw err;
+    }
 
     const [conn, now, requests] = await Promise.all([connectionsStore.get(ctx, body.connection_id), connectorAccountsStore.getAll(ctx), requestsLeft(ctx)]);
     const all = [...now.values()];

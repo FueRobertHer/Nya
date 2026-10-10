@@ -29,9 +29,11 @@
 // same amount would look), both are shown as a transfer (transaction_code
 // 'transfer', lib/spending.ts): left out of every total, as a bank's
 // transfers are, and marked as worked out from the amounts on the Activity
-// tab, where a wrong pair is seen and given a category. Worked out each time
-// the rows are read, never stored, so a category the person gives either one
-// wins.
+// tab, where a wrong pair is seen and given a category. Amounts alone can't
+// tell every pair: a purchase paid from checking and an unrelated refund to a
+// card of the same amount, within the days, look like a card payment, and
+// pair. Worked out each time the rows are read, never stored, so a category
+// the person gives either one wins.
 //
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the

@@ -3,7 +3,7 @@ import { dataCtx } from '@/lib/data-ctx';
 import { connectionsStore, connectorAccountsStore } from '@/lib/connectors/store';
 import { accountView, connectionView } from '@/lib/connectors/view';
 import { requestsLeft, DAILY_REQUESTS } from '@/lib/connectors/sync';
-import { confirmSigns, disconnect, MAX_CONNECTIONS } from '@/lib/connectors/manage';
+import { confirmSigns, disconnect, keepRefusal, MAX_CONNECTIONS } from '@/lib/connectors/manage';
 import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
@@ -42,8 +42,8 @@ export async function GET() {
 /** Disconnects one connection: `keep` (the default) keeps its accounts as
  *  manual accounts, with their history and transactions; false removes them.
  *  Keeping a card or a loan whose positive balance waits for the person's
- *  answer is refused (409), so `sign` brings that answer with the request,
- *  as the accounts route takes it. */
+ *  answer is refused (409) before anything is saved, so `sign` brings that
+ *  answer with the request, as the accounts route takes it. */
 export async function DELETE(req: Request) {
   try {
     const ctx = await dataCtx();
@@ -57,14 +57,16 @@ export async function DELETE(req: Request) {
       return typeof a === 'object' && a !== null && typeof a.account_id === 'string' && a.account_id.length <= 80 && isManualId(a.account_id) && (OWED_SIGNS as readonly unknown[]).includes(a.sign);
     };
     if (!Array.isArray(sign) || sign.length > 100 || !sign.every(isAnswer)) return NextResponse.json({ error: 'Invalid answers about balances' }, { status: 400 });
-    if (sign.length > 0) {
-      const accounts = await connectorAccountsStore.getMany(ctx, sign.map((s) => s.account_id));
-      if (!sign.every((s) => accounts.get(s.account_id)?.connection_id === body.connection_id)) {
-        return NextResponse.json({ error: 'That account is not one this connection tracks' }, { status: 400 });
-      }
-      await confirmSigns(ctx, sign);
+    const keep = body.keep !== false;
+    const theirs = [...(await connectorAccountsStore.getAll(ctx)).values()].filter((a) => a.connection_id === body.connection_id);
+    if (!sign.every((s) => theirs.some((a) => a.account_id === s.account_id))) {
+      return NextResponse.json({ error: 'That account is not one this connection tracks' }, { status: 400 });
     }
-    const released = await disconnect(ctx, body.connection_id, body.keep !== false);
+    // Refused before anything is saved, the answers this request brings counted in.
+    const refused = keep ? keepRefusal(theirs, { signs: new Map(sign.map((s) => [s.account_id, s.sign])) }) : null;
+    if (refused) return NextResponse.json({ error: refused }, { status: 409 });
+    if (sign.length > 0) await confirmSigns(ctx, sign);
+    const released = await disconnect(ctx, body.connection_id, keep);
     return NextResponse.json({ success: true, kept: released.kept.length, removed: released.removed.length, nothing_to_keep: released.nothing_to_keep });
   } catch (err) {
     return connectorError(err, 'Failed to disconnect');
