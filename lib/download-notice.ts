@@ -24,8 +24,8 @@
 // says nothing: the connection notices already say mail is off, once.
 //
 // ONCE. Each download, and each token, has an idempotency key of its own, so
-// a send tried again (once, after a rate limit or no answer) is delivered
-// once.
+// a send tried again (once, after a rate limit, no answer, or an error of the
+// email service's own) is delivered once.
 
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from './containers';

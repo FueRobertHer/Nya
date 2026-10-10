@@ -17,6 +17,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Recurring bills and the cash forecast](#recurring-bills-and-the-cash-forecast)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 - [The API and the MCP server](#the-api-and-the-mcp-server)
+- [Downloading your data](#downloading-your-data)
 - [Planning](#planning)
 
 ## Connecting accounts
@@ -189,7 +190,7 @@ When a connection breaks, the daily snapshot sends one email, and one reminder a
 - **What an email says:** the institution's name, what to do, and for a connection about to end, around which day. Never a balance, an amount or an account number.
 - **Who gets it:** with Clerk, the primary email address of the account that owns the data, once Clerk has verified it, and only while the account is still allowed in. With the shared password, `NOTIFY_EMAIL`, and only for the deployment's own data.
 
-Email is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `MAIL_FROM` ([deployment.md](deployment.md#email-notices)). Without them nothing is sent, the log says so once, and the Connection health card is the only place a broken connection shows.
+Email is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `MAIL_FROM` ([deployment.md](deployment.md#email-notices)). Without them nothing is sent, the log says so once, and the Connection health card is the only place a broken connection shows. A download of your data and a new API token each send an email of their own, to the same address ([below](#downloading-your-data)).
 
 ## Manual accounts
 
@@ -367,6 +368,16 @@ Programs you choose can read your data: a script, a spreadsheet, a dashboard of 
 - **Version 1 is stable.** Fields may be added, but none removed, renamed or given a new meaning; a change that would do that comes as `/api/v2`, with version 1 kept beside it for at least six months.
 
 Each token may make 100 requests a minute, and one person may have 10 tokens; an address that sends too many tokens that don't work is turned away for a while. Restoring a backup ends every token (backups leave them out), and the demo accounts can't make any. Writing (adding a transaction, changing a budget), signing in with OAuth instead of a token, webhooks, live balances and calls from web pages on other sites (no CORS) are not part of version 1.
+
+## Downloading your data
+
+Under **Manage** on the Accounts tab, **Download my data** gives you everything Nya stores about you, decrypted, after a fresh sign-in, five times an hour. Field by field, with what is left out and why, in [data-export.md](data-export.md).
+
+- **Formats.** Everything as one JSON file; your transactions, or your balance history, as a CSV file for a spreadsheet; or one bank account's or card's posted transactions as an OFX statement (`lib/ofx-export.ts`), the file money apps import (GnuCash, Actual Budget and YNAB take it; Quicken takes such files only from banks it works with, and Monarch takes CSV). Each transaction's FITID is its id in Nya, so importing the same file twice, into Nya's own import or an app that honours FITIDs, adds nothing; signs are OFX's, days are the bank's, an excluded transaction is listed and marked in its memo, and the balance is the latest Nya recorded, with its day, or none. Loans and investment accounts aren't offered as OFX, and the card says why.
+- **A passphrase.** Any format can be protected with a passphrase of at least 12 characters, typed twice. The file is then encrypted as it is sent, in the [age](https://age-encryption.org) format, and saved with `.age` at the end of its name. It opens on the public **Open a protected download** page (`/open-download`), in the browser, without signing in and without the file leaving the device, or with the age app (`age -d`). Nya never keeps the passphrase, so a lost one can't be recovered.
+- **An email each time.** With email set up, each download emails you when it happened and which format, never what is in it, with what to do if it wasn't you; so does making an API token. The download never waits for the email or fails because of it.
+
+Bringing a download into another copy of Nya, or into a new account, comes later.
 
 ## Planning
 

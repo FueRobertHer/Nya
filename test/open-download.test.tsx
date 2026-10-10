@@ -38,7 +38,7 @@ describe('the page', () => {
     expect(html).toContain('href="/security"');
     expect(html).toContain('href="/privacy"');
     expect(html).not.toContain('aria-current');
-    expect(words).not.toMatch(/[–—]/);
+    expect(words).not.toMatch(/[\u2013\u2014]/);
   });
 
   test('asks for the file and its passphrase, and won’t open without both', () => {
