@@ -5,8 +5,10 @@ import {
   changeAnnotation,
   checkNote,
   isTransactionId,
+  stripTags,
   TooManyAnnotationsError,
   type AnnotationChange,
+  type TxnAnnotation,
 } from '@/lib/txn-annotations';
 import { ensureTag, isTagId, liveTagIds, MAX_TAGS_PER_TRANSACTION, readTagSet, TagError, type Tag } from '@/lib/tags';
 import { finishDeleting } from '@/lib/tag-delete';
@@ -40,6 +42,13 @@ import { storeFailure } from '@/lib/store-failure';
 //
 // Everything said here about a bank row's record is one compare-and-set, so
 // a change from another device at the same moment is never lost.
+//
+// TAGS THAT EXIST. Tags put on must exist; tags taken off that no longer do
+// are passed over, and an id of one deleted since is dropped from the record
+// as it changes. A tag deleted while this request put it on, whose deletion
+// swept the records before this one landed (lib/tag-delete.ts), is taken
+// back off once the record is saved, so the two end with no record holding
+// it, whichever lands first.
 
 const MAX_BODY_CHARS = 8 * 1024;
 
@@ -82,18 +91,21 @@ export async function PATCH(req: Request) {
     // Tags put on must exist (a tag deleted on another device since the page
     // loaded is refused, never put back); a name typed is found or made.
     let created: Tag | null = null;
-    if (add.length > 0 || body.new_tag !== undefined) {
+    let live: Set<string> | undefined;
+    if (add.length > 0 || remove.length > 0 || body.new_tag !== undefined) {
       await finishDeleting(ctx);
       if (body.new_tag !== undefined) {
         const made = await ensureTag(ctx, { name: body.new_tag });
         if (made.created) created = made.tag;
         if (!add.includes(made.tag.id)) add.push(made.tag.id);
       }
-      const live = liveTagIds(await readTagSet(ctx));
-      if (add.some((id) => !live.has(id))) {
+      live = liveTagIds(await readTagSet(ctx));
+      if (add.some((id) => !live!.has(id))) {
         return NextResponse.json({ error: 'That tag no longer exists. Reload to see your tags as they are.' }, { status: 404 });
       }
     }
+    // Taking off a tag that no longer exists changes nothing.
+    const off = live ? remove.filter((id) => live!.has(id)) : remove;
 
     // A manual row's note is the row's own.
     let rowNote: string | null | undefined;
@@ -105,10 +117,16 @@ export async function PATCH(req: Request) {
     const change: AnnotationChange = {
       ...(excluded !== undefined ? { excluded } : {}),
       ...(add.length > 0 ? { add } : {}),
-      ...(remove.length > 0 ? { remove } : {}),
+      ...(off.length > 0 ? { remove: off } : {}),
       ...(note !== undefined && !manual ? { note } : {}),
     };
-    const saved = Object.keys(change).length > 0 ? await changeAnnotation(ctx, transaction_id, change) : null;
+    let saved: TxnAnnotation | null = Object.keys(change).length > 0 ? await changeAnnotation(ctx, transaction_id, { ...change, ...(live ? { live } : {}) }) : null;
+    // A tag deleted while this was saved: taken back off (see TAGS THAT EXIST).
+    if (saved && add.length > 0) {
+      const now = liveTagIds(await readTagSet(ctx));
+      const gone = add.filter((id) => !now.has(id));
+      if (gone.length > 0) saved = await stripTags(ctx, transaction_id, gone);
+    }
     return NextResponse.json({
       transaction_id,
       excluded: saved?.excluded === true,

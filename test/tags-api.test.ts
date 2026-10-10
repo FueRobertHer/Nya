@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import './clerk-mock';
-import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys, ctxKey } from './fake-redis';
 
 // Tags and notes through the read-only API and the MCP server (#40): the
 // tags endpoint, tags and notes on transactions, the tag filters, spending by
@@ -126,6 +126,28 @@ describe('tags and notes on transactions, added to version 1', () => {
       { id: work, name: 'Work', spent: 85.5, transactions: 2 },
       { id: trip, name: 'Vacation 2026', spent: 105, transactions: 2 },
     ].sort((a, b) => b.spent - a.spent));
+  });
+
+  test('tags that can’t be read are a 409, never an empty list, nor “no tag has that id”', async () => {
+    await fake.set(ctxKey('tags'), 'not-ciphertext-but-long-enough-to-be-tried');
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      for (const [name, query] of [
+        ['tags', ''],
+        ['transactions', `tag_id=${work}`],
+        ['transactions', 'tag=work'],
+      ]) {
+        const r = await call(name, query);
+        expect([name, query, r.status, r.body.error.code]).toEqual([name, query, 409, 'unreadable']);
+      }
+      // Asked for nothing by tag, the transactions are answered, and say why none shows a tag.
+      const listed = await call('transactions', 'from=2000-01-01');
+      expect(listed.status).toBe(200);
+      expect(listed.body.notes).toContain("Your tags couldn't be read, so transactions show without them until they can be.");
+    } finally {
+      console.error = quiet;
+    }
   });
 
   test('never another person’s tags', async () => {

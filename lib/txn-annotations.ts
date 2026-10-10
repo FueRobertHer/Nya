@@ -159,8 +159,14 @@ async function changeRecord(ctx: Ctx, transaction_id: string, fn: (current: TxnA
 
 /** A change to what is said about one transaction: any of an exclusion
  *  (true or false), tags put on or taken off (by id), a bank row's note
- *  (empty clears it). */
-export type AnnotationChange = { excluded?: boolean; add?: readonly string[]; remove?: readonly string[]; note?: string };
+ *  (empty clears it). `live`, the tags that exist, when the change touches
+ *  tags: an id of one deleted since is dropped from the record as it is
+ *  changed. */
+export type AnnotationChange = { excluded?: boolean; add?: readonly string[]; remove?: readonly string[]; note?: string; live?: ReadonlySet<string> };
+
+/** Tags taken off one transaction that its record keeps (`untagged`), far
+ *  under the stored bound: each is a tag that exists, taken off by hand. */
+export const MAX_UNTAGGED = 100;
 
 /**
  * The record after a change, with whatever else is said kept: a tag put on
@@ -173,12 +179,16 @@ export function changedRecord(current: TxnAnnotation | null, change: AnnotationC
   const next: TxnAnnotation = { ...(current ?? {}), updated_at: now.toISOString() };
   if (change.excluded !== undefined) next.excluded = change.excluded;
   if (change.add?.length || change.remove?.length) {
+    const exists = (id: string) => !change.live || change.live.has(id);
     const add = [...new Set(change.add ?? [])];
     const remove = [...new Set(change.remove ?? [])].filter((id) => !add.includes(id));
-    const tags = [...(current?.tags ?? []).filter((id) => !remove.includes(id) && !add.includes(id)), ...add];
-    const untagged = [...(current?.untagged ?? []).filter((id) => !add.includes(id) && !remove.includes(id)), ...remove];
+    const tags = [...(current?.tags ?? []).filter((id) => exists(id) && !remove.includes(id) && !add.includes(id)), ...add];
+    const untagged = [...(current?.untagged ?? []).filter((id) => exists(id) && !add.includes(id) && !remove.includes(id)), ...remove];
     if (tags.length > MAX_TAGS_PER_TRANSACTION) {
       throw new AnnotationError(`A transaction can carry at most ${MAX_TAGS_PER_TRANSACTION} tags put on by hand.`);
+    }
+    if (untagged.length > MAX_UNTAGGED) {
+      throw new AnnotationError(`At most ${MAX_UNTAGGED} tags can be kept off one transaction. Put some back first.`);
     }
     if (tags.length > 0) next.tags = tags;
     else delete next.tags;
@@ -264,6 +274,39 @@ export async function forgetAnnotations(ctx: Ctx, transaction_ids: string[]): Pr
   for (let i = 0; i < ids.length; i += 1000) await txnAnnotationStore.remove(ctx, ...ids.slice(i, i + 1000));
 }
 
+/** A record, or a carried one, with the `gone` tags' ids taken out of both
+ *  its lists. */
+function withoutTagIds<T extends { tags?: string[]; untagged?: string[] }>(record: T, gone: ReadonlySet<string>): T {
+  const next: T = { ...record };
+  const tags = (record.tags ?? []).filter((t) => !gone.has(t));
+  const untagged = (record.untagged ?? []).filter((t) => !gone.has(t));
+  if (tags.length > 0) next.tags = tags;
+  else delete next.tags;
+  if (untagged.length > 0) next.untagged = untagged;
+  else delete next.untagged;
+  return next;
+}
+
+/** Whether a record holds any of the `gone` tags' ids. */
+const holdsAny = (a: { tags?: string[]; untagged?: string[] }, gone: ReadonlySet<string>) =>
+  !!a.tags?.some((t) => gone.has(t)) || !!a.untagged?.some((t) => gone.has(t));
+
+/**
+ * Takes tags deleted just now off one transaction's record, in one
+ * compare-and-set: what a change that put them on while they were being
+ * deleted (app/api/transaction-annotations) leaves, if the deletion's sweep
+ * ran before it landed. Returns the record as it is after: null when nothing
+ * is left said about it.
+ */
+export async function stripTags(ctx: Ctx, transaction_id: string, ids: readonly string[]): Promise<TxnAnnotation | null> {
+  const gone = new Set(ids);
+  return txnAnnotationStore.update(ctx, transaction_id, (current) => {
+    if (!current || !holdsAny(current, gone)) return current;
+    const next = withoutTagIds(current, gone);
+    return Object.keys(next).every((k) => k === 'updated_at') ? null : next;
+  });
+}
+
 /**
  * Takes deleted tags' ids off every record that holds them (lib/tag-delete.ts),
  * each in its own compare-and-set. A record left with nothing said is
@@ -274,20 +317,14 @@ export async function forgetAnnotations(ctx: Ctx, transaction_ids: string[]): Pr
 export async function sweepAnnotationTags(ctx: Ctx, ids: readonly string[]): Promise<number> {
   if (ids.length === 0) return 0;
   const gone = new Set(ids);
-  const holds = (a: { tags?: string[]; untagged?: string[] }) => !!a.tags?.some((t) => gone.has(t)) || !!a.untagged?.some((t) => gone.has(t));
+  const holds = (a: { tags?: string[]; untagged?: string[] }) => holdsAny(a, gone);
   const { entries } = await txnAnnotationStore.getAllReport(ctx);
   let changed = 0;
   for (const [id, record] of entries) {
     if (!holds(record)) continue;
     await txnAnnotationStore.update(ctx, id, (current) => {
       if (!current || !holds(current)) return current;
-      const next: TxnAnnotation = { ...current };
-      const tags = (current.tags ?? []).filter((t) => !gone.has(t));
-      const untagged = (current.untagged ?? []).filter((t) => !gone.has(t));
-      if (tags.length > 0) next.tags = tags;
-      else delete next.tags;
-      if (untagged.length > 0) next.untagged = untagged;
-      else delete next.untagged;
+      const next = withoutTagIds(current, gone);
       // Nothing left said about it: the record goes rather than stay empty.
       return Object.keys(next).every((k) => k === 'updated_at') ? null : next;
     });
@@ -306,13 +343,7 @@ export async function sweepAnnotationTags(ctx: Ctx, ids: readonly string[]): Pro
           rows[key] = r;
           continue;
         }
-        const next: CarriedAnnotation = { ...r };
-        const tags = (r.tags ?? []).filter((t) => !gone.has(t));
-        const untagged = (r.untagged ?? []).filter((t) => !gone.has(t));
-        if (tags.length > 0) next.tags = tags;
-        else delete next.tags;
-        if (untagged.length > 0) next.untagged = untagged;
-        else delete next.untagged;
+        const next = withoutTagIds(r, gone);
         // A key that carried only the deleted tags carries nothing now.
         if (Object.keys(next).length > 0) rows[key] = next;
       }

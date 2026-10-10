@@ -102,20 +102,37 @@ export default function RulesCard({
             <ol className="rule-list">
               {list.map((r, i) => (
                 <li key={r.id} className={`rule-row${r.enabled ? '' : ' off'}`}>
-                  <div className="rule-sentence">{ruleSentence(r, names)}</div>
+                  {/* Each control names the rule it acts on: its number, and
+                      its sentence as the description. */}
+                  <div className="rule-sentence" id={`rule-${r.id}`}>
+                    {ruleSentence(r, names)}
+                  </div>
                   {rules.problems[r.id] && <div className="stale-note">{rules.problems[r.id]}</div>}
                   <div className="rule-row-actions">
                     <label>
-                      <input type="checkbox" checked={r.enabled} onChange={(e) => void send({ action: 'enable', id: r.id, enabled: e.target.checked })} disabled={busy} />
+                      <input
+                        type="checkbox"
+                        checked={r.enabled}
+                        onChange={(e) => void send({ action: 'enable', id: r.id, enabled: e.target.checked })}
+                        disabled={busy}
+                        aria-label={`Rule ${i + 1} on`}
+                        aria-describedby={`rule-${r.id}`}
+                      />
                       On
                     </label>
-                    <button className="link-btn" onClick={() => move(r, -1)} disabled={busy || i === 0} aria-label="Run it earlier">
+                    <button className="link-btn" onClick={() => move(r, -1)} disabled={busy || i === 0} aria-label={`Run rule ${i + 1} earlier`} aria-describedby={`rule-${r.id}`}>
                       Up
                     </button>
-                    <button className="link-btn" onClick={() => move(r, 1)} disabled={busy || i === list.length - 1} aria-label="Run it later">
+                    <button
+                      className="link-btn"
+                      onClick={() => move(r, 1)}
+                      disabled={busy || i === list.length - 1}
+                      aria-label={`Run rule ${i + 1} later`}
+                      aria-describedby={`rule-${r.id}`}
+                    >
                       Down
                     </button>
-                    <button className="link-btn" onClick={() => rules.open(draftFromRule(r))} disabled={busy}>
+                    <button className="link-btn" onClick={() => rules.open(draftFromRule(r))} disabled={busy} aria-label={`Edit rule ${i + 1}`} aria-describedby={`rule-${r.id}`}>
                       Edit
                     </button>
                   </div>

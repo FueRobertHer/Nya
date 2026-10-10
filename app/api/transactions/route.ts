@@ -65,7 +65,8 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const { transactions, notes: read, tags_note, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const notes = tags_note ? [...read, tags_note] : read;
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).

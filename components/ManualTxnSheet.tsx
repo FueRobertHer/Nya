@@ -23,10 +23,18 @@
 // row is then changed to match it, unless the balance moved (or was to move)
 // with it and the amount changed: the server then says what was saved, and
 // the form leaves it so (app/api/manual-transactions).
+//
+// THE ROW'S OWN, NEVER A RULE'S. Rules apply on read (lib/txn-layers.ts): one
+// can file a row that has no category of its own, or name an imported or
+// SimpleFIN row, and the list shows that. The form edits what is stored, so it
+// starts from the row's own category and name (editStart), and an edit sends
+// the name or the category only when the person changed it (changedFields):
+// saving a note on a row a rule files never makes the rule's category the
+// row's, which turning the rule off would then no longer undo.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
-import { categoryOptions, type Txn } from './MonthBreakdown';
+import { categoryOptions, nameForRules, type Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { TxnSaved } from './transaction-edits';
@@ -101,7 +109,7 @@ async function send(method: 'POST' | 'PATCH' | 'DELETE', body: unknown) {
   return { res, data: await res.json().catch(() => null) };
 }
 
-type Fields = { date: string; amount: number | null; currency: string; name: string; note: string | null } & ({ category_id: string | null } | { category: string | null });
+export type Fields = { date: string; amount: number | null; currency: string; name: string; note: string | null } & ({ category_id: string | null; category: string | null } | { category: string | null });
 
 /** Whether a saved row isn't what the form says now (the server keeps a
  *  payee's spaces single). */
@@ -120,6 +128,32 @@ function differs(t: Txn, fields: Fields, account_id: string): boolean {
 
 /** The category a row is filed under, for the form: none when it says none. */
 const chosenOf = (t: Txn) => (t.category_name === null ? '' : (t.category_id ?? ''));
+
+/** What the form starts from on a row to edit: its own name and category
+ *  (see THE ROW'S OWN, NEVER A RULE'S): a rule's category is none of the
+ *  row's, and a rule's name isn't its name. */
+export function editStart(t: Txn): { name: string; category_id: string; category: string } {
+  return {
+    name: nameForRules(t),
+    category_id: t.category_by_rule ? '' : chosenOf(t),
+    category: t.category_by_rule ? '' : (t.category ?? ''),
+  };
+}
+
+/** What an edit sends of the form's fields: all of them, but the name and
+ *  the category only when the person changed them from where the form
+ *  started (editStart). */
+export function changedFields(fields: Fields, start: ReturnType<typeof editStart>): Partial<Fields> {
+  const out: Record<string, unknown> = { ...fields };
+  if (fields.name === start.name.replace(/\s+/g, ' ').trim()) delete out.name;
+  if ('category_id' in fields) {
+    if ((fields.category_id ?? '') === start.category_id) {
+      delete out.category_id;
+      delete out.category;
+    }
+  } else if ((fields.category ?? '') === start.category) delete out.category;
+  return out as Partial<Fields>;
+}
 
 export default function ManualTxnSheet({
   target,
@@ -179,17 +213,18 @@ export default function ManualTxnSheet({
     setSaving(false);
     if (target.mode === 'edit') {
       const t = target.txn;
+      const start = editStart(t);
       setCategoryTouched(true);
       setDraft({
         id: null,
         direction: t.amount > 0 ? 'out' : 'in',
         amount: String(Math.abs(t.amount)),
         currency: t.iso_currency_code ?? DEFAULT_CURRENCY,
-        name: t.name,
+        name: start.name,
         date: t.date,
         account_id: t.account_id ?? '',
-        category_id: chosenOf(t),
-        category: t.category ?? '',
+        category_id: start.category_id,
+        category: start.category,
         note: t.note ?? '',
         updateBalance: false,
       });
@@ -245,9 +280,15 @@ export default function ManualTxnSheet({
   const busy = saving || done;
   const money = (n: number) => formatMoney(n, DEFAULT_CURRENCY);
 
-  /** A typed payee seen before brings its last category, until one is picked. */
+  /** A typed payee seen before (as shown, or as it was before a rule named
+   *  it) brings its last category, until one is picked: one it was given,
+   *  never one a rule files it under (the rule files the new one too, while
+   *  it matches). */
   function setName(name: string) {
-    const known = categoryTouched ? null : pastRows.find((t) => t.name.toLowerCase() === name.trim().toLowerCase() && t.category);
+    const typed = name.trim().toLowerCase();
+    const known = categoryTouched
+      ? null
+      : pastRows.find((t) => (t.name.toLowerCase() === typed || nameForRules(t).toLowerCase() === typed) && t.category && !t.category_by_rule);
     setDraft({ ...draft!, name, ...(known ? { category: known.category!, category_id: chosenOf(known) } : {}) });
   }
 
@@ -276,7 +317,7 @@ export default function ManualTxnSheet({
             id: edit.transaction_id,
             // Where the list shows it, so only that account's rows are read.
             account_id: edit.account_id,
-            ...fields,
+            ...changedFields(fields, editStart(edit)),
             // Only a change of account moves it.
             ...(draft!.account_id !== edit.account_id ? { move_to: draft!.account_id } : {}),
           })
@@ -417,6 +458,11 @@ export default function ManualTxnSheet({
             <option key={p} value={p} />
           ))}
         </datalist>
+        {edit?.name_before_rules !== undefined && draft.name === edit.name_before_rules && (
+          <p className="panel-note" style={{ margin: 0 }}>
+            A rule shows it as “{edit.name}”. A name you give it here is its own, and no rule renames it.
+          </p>
+        )}
         <label className="field">
           Date
           <input type="date" value={draft.date} max={localDate()} onChange={(e) => set({ date: e.target.value })} disabled={busy} />
@@ -464,6 +510,11 @@ export default function ManualTxnSheet({
             </select>
           )}
         </label>
+        {edit?.category_by_rule && (taxonomy ? draft.category_id === '' : draft.category === '') && (
+          <p className="panel-note" style={{ margin: 0 }}>
+            A rule files it under {edit.category_name ?? edit.category} while it has no category of its own.
+          </p>
+        )}
         {draft.direction === 'in' && !transferChosen && (
           <p className="panel-note" style={{ margin: 0 }}>
             Cash taken out of another of your accounts? Choose transfer in, so it isn&apos;t counted as income.

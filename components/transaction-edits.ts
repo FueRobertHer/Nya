@@ -34,6 +34,32 @@ function newestFirst(a: Txn, b: Txn): number {
   return at < bt ? 1 : at > bt ? -1 : 0;
 }
 
+/**
+ * A manual row as the form's save answered it, shown until the list is read
+ * again: the answer is the row as stored, without what the read layer puts on
+ * it (lib/txn-layers.ts), so that is kept from the row it replaces: its tags,
+ * the rules that match it, its exclusion, and a rule's category or name where
+ * the save left the row without one of its own.
+ */
+export function withLayersOf(saved: Txn, prev: Txn): Txn {
+  const row: Txn = { ...saved, excluded: prev.excluded, excluded_by_rule: prev.excluded_by_rule, tags: prev.tags, rule_ids: prev.rule_ids };
+  if (prev.category_by_rule && (saved.category ?? null) === null) {
+    Object.assign(row, {
+      category: prev.category,
+      category_id: prev.category_id,
+      category_name: prev.category_name,
+      category_kind: prev.category_kind,
+      category_by_rule: true,
+    });
+  }
+  if (prev.name_before_rules !== undefined && saved.name === prev.name_before_rules) {
+    row.name = prev.name;
+    row.name_before_rules = prev.name_before_rules;
+  }
+  for (const k of ['excluded', 'excluded_by_rule', 'tags', 'rule_ids'] as const) if (row[k] === undefined) delete row[k];
+  return row;
+}
+
 /** What a save or delete in the quick-add form did. */
 export type TxnSaved = {
   /** The balance moved too. */
@@ -122,9 +148,9 @@ export function useTransactionEdits({
         setTxns((prev) => {
           if (!prev) return prev;
           const i = prev.findIndex((x) => x.transaction_id === transaction.transaction_id);
-          // What was said about the row (its exclusion) is the list's: the
-          // form's answer doesn't carry it.
-          const row = i >= 0 ? { ...transaction, excluded: prev[i].excluded } : transaction;
+          // What the read layer put on the row is the list's: the form's
+          // answer doesn't carry it (withLayersOf).
+          const row = i >= 0 ? withLayersOf(transaction, prev[i]) : transaction;
           const next = i >= 0 ? prev.map((x, j) => (j === i ? row : x)) : [...prev, row];
           return next.sort(newestFirst);
         });
@@ -189,8 +215,11 @@ export function useTransactionEdits({
     async (t: Txn, excluded: boolean) => {
       setError(null);
       changes.current++;
+      // The person's choice now decides, over a rule's hide either way.
       setTxns((prev) =>
-        prev ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, excluded: excluded ? true : undefined } : x)) : prev
+        prev
+          ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, excluded: excluded ? true : undefined, excluded_by_rule: undefined } : x))
+          : prev
       );
       let res: Response | null = null;
       try {

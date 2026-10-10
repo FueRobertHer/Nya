@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import { signedMoney } from '@/lib/format';
-import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, type RuleField } from '@/lib/rules';
+import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, sortedRules, type RuleField } from '@/lib/rules';
 import type { Taxonomy } from '@/lib/categories';
 import { shownColor, type Tag } from '@/lib/tags';
 import { blankCondition, draftComplete, draftInput, type DraftCondition, type RuleDraft, type RulesState } from './rules-state';
@@ -116,6 +116,8 @@ export default function RuleSheet({
   }, [open, complete, input]);
 
   if (!form) return null;
+  // Rules that run before this one: none for a new rule, which goes first.
+  const before = form.id ? sortedRules(rules.set).findIndex((r) => r.id === form.id) : 0;
   const set = (patch: Partial<RuleDraft>) => setForm((f) => (f ? { ...f, ...patch } : f));
   const setCondition = (i: number, patch: Partial<DraftCondition>) =>
     setForm((f) => (f ? { ...f, conditions: f.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)) } : f));
@@ -308,8 +310,13 @@ export default function RuleSheet({
           ) : (
             <>
               <p className="rule-matches">
-                Matches {preview.matches.toLocaleString()} transaction{preview.matches === 1 ? '' : 's'}
+                Matches {preview.matches.toLocaleString()} of your stored transaction{preview.matches === 1 ? '' : 's'}, of any date
               </p>
+              {preview.matches > 0 && before > 0 && (form.set_category || form.set_name.trim()) && (
+                <p className="panel-note">
+                  Where a rule above this one in your list also matches and sets the category or the name, that rule decides it.
+                </p>
+              )}
               {preview.keep_category > 0 && (
                 <p className="panel-note">
                   {preview.keep_category} keep{preview.keep_category === 1 ? 's' : ''} the category you chose for {preview.keep_category === 1 ? 'it' : 'them'}: a choice made on one
@@ -318,7 +325,8 @@ export default function RuleSheet({
               )}
               {preview.keep_name > 0 && (
                 <p className="panel-note">
-                  {preview.keep_name} keep{preview.keep_name === 1 ? 's' : ''} {preview.keep_name === 1 ? 'its' : 'their'} own name: one you renamed, or one entered by hand or imported.
+                  {preview.keep_name} keep{preview.keep_name === 1 ? 's' : ''} {preview.keep_name === 1 ? 'its' : 'their'} own name: a merchant you renamed, one you
+                  entered by hand, or an imported one you named yourself.
                 </p>
               )}
               {preview.samples.length > 0 && (

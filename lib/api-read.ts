@@ -62,7 +62,7 @@
 import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
-import { getEffectiveHidden, sameAccountIds, type Link } from './links';
+import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
@@ -86,7 +86,7 @@ import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
-import { tagNameKey, type TagSet } from './tags';
+import { readTagSet, tagNameKey, type TagSet } from './tags';
 import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
@@ -348,6 +348,18 @@ export type ApiAccounts = {
   missing_accounts: ApiMissing[];
   notes: string[];
 };
+
+/**
+ * Each account's name as the app labels it where a rule names one
+ * (components/Dashboard.tsx: the institution, the account and its mask), by
+ * id, hidden ones too, following links from an earlier account to the one
+ * it became; null for one no longer here. For saying a rule in words.
+ */
+export async function accountLabels(ctx: Ctx): Promise<(id: string) => string | null> {
+  const { accounts, links } = await accountsRead(ctx, true);
+  const byId = new Map(accounts.map((a) => [a.id, `${a.institution} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`]));
+  return (id) => byId.get(id) ?? byId.get(resolveId(id, links)) ?? null;
+}
 
 /** Every account: linked and manual, with its newest measured balance and as
  *  of when. Hidden ones only with `includeHidden`. */
@@ -692,11 +704,11 @@ export type ActivityRead = {
  *  memory where the app hasn't yet (see CATEGORIES). */
 export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const { transactions, notes, history, taxonomy, tags } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
+  const { transactions, notes, tags_note, history, taxonomy, tags } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
-    notes,
+    notes: tags_note ? [...notes, tags_note] : notes,
     ix: indexTaxonomy(taxonomy),
     tags,
     sources: bank.sources.map((s: BankSource) => ({
@@ -780,7 +792,9 @@ export type ApiTransactionPage = {
 
 /** One page of transactions, newest first, matching the query. */
 export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<ApiTransactionPage> {
-  const activity = await readActivity(ctx, !!q.includeHidden);
+  // Asked by tag: tags that can't be read are a 409 (unreadable), never "no
+  // tag has that id" or no transactions.
+  const [activity] = await Promise.all([readActivity(ctx, !!q.includeHidden), q.tagId !== undefined || q.tag !== undefined ? readTagSet(ctx) : null]);
   const text = q.text?.toLowerCase();
   const category = q.category?.toLowerCase();
   const describe = describer(activity.ix);

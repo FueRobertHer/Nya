@@ -17,6 +17,8 @@ import {
   ruleSentence,
   sortedRules,
   sourceKind,
+  withLiveTags,
+  deadRuleTags,
   withoutTags,
   type Rule,
   type RuleSet,
@@ -68,6 +70,14 @@ describe('matching text', () => {
     expect(matchText('ＡＭＺＮ Mktp')).toBe('amzn mktp');
     expect(sourceKind(undefined)).toBe('plaid');
     expect(sourceKind('import:csv')).toBe('import');
+  });
+
+  test('an apostrophe or a quote as a phone types it is the one a bank writes', () => {
+    expect(matchText('Trader Joe’s')).toBe(matchText("TRADER JOE'S"));
+    for (const typed of ['McDonald‘s', 'McDonald’s', 'McDonaldʼs', 'McDonald´s', 'McDonald＇s']) expect(matchText(typed)).toBe("mcdonald's");
+    expect(matchText('“Bob’s” Diner')).toBe(matchText('"BOB\'S" DINER'));
+    const set = setOf([{ conditions: [{ field: 'name', op: 'equals', value: 'Trader Joe’s' }], actions: { hide: true } }]);
+    expect(outcome(set, subject({ names: [matchText("TRADER JOE'S")] })).hide).toBeDefined();
   });
 });
 
@@ -148,6 +158,24 @@ describe('the stored shape is closed', () => {
     expect(isRuleSet(with_({ ...rule, conditions: [] }))).toBe(false);
     // Its tags deleted, a rule may do nothing: it still reads.
     expect(isRuleSet(with_({ ...rule, actions: {} }))).toBe(true);
+  });
+});
+
+describe('a tag deleted while a rule held it', () => {
+  test('is shown in no rule, found by deadRuleTags, and an edit of the rule drops it rather than refuse', () => {
+    const set = setOf([{ conditions: [{ field: 'name', op: 'contains', value: 'blue' }], actions: { add_tags: ['work', 'trip'], hide: true } }]);
+    const live = new Set(['work', 'gift']);
+    expect(withLiveTags(set.rules[0], live).actions).toEqual({ add_tags: ['work'], hide: true });
+    expect(withLiveTags(set.rules[0], new Set()).actions).toEqual({ hide: true });
+    expect(deadRuleTags(set, live)).toEqual(['trip']);
+    const without = { ix: indexTaxonomy(base), tags: { ...TAGS, tags: TAGS.tags.filter((t) => t.id !== 'trip') } };
+    const edited = editRule(set, set.rules[0].id, { conditions: [{ field: 'name', op: 'contains', value: 'blue' }], actions: { add_tags: ['work', 'trip'] } }, without);
+    expect(edited.rules[0].actions).toEqual({ add_tags: ['work'] });
+    // A new rule, or a tag the rule never had, is refused all the same.
+    expect(() => addRule(set, { conditions: [{ field: 'name', op: 'contains', value: 'x' }], actions: { add_tags: ['trip'] } }, without, newId)).toThrow('That tag no longer exists');
+    expect(() => editRule(set, set.rules[0].id, { conditions: [{ field: 'name', op: 'contains', value: 'x' }], actions: { add_tags: ['gone'] } }, without)).toThrow('That tag no longer exists');
+    // A preview takes any.
+    expect(checkRuleInput({ conditions: [{ field: 'name', op: 'contains', value: 'x' }], actions: { add_tags: ['gone'], hide: true } }, { ...without, had: 'any' }).actions).toEqual({ hide: true });
   });
 });
 
@@ -364,14 +392,34 @@ describe('applied to rows, under what the person says on each', () => {
     expect(unknownRow.excluded).toBeNull();
   });
 
-  test('a manual row keeps its own name and category; one without a category takes the rule’s, and its tags', () => {
+  test('a row entered by hand keeps its name and its category; one without a category takes the rule’s, marked as a rule’s, and its tags', () => {
     const [own, none] = run(
-      [row('manual-txn:a', { source: 'manual', category: 'groceries', account_ref: undefined, account_id: 'manual_x', note: 'mine' }), row('manual-txn:b', { source: 'simplefin', category: null })],
+      [row('manual-txn:a', { source: 'manual', category: 'groceries', account_ref: undefined, account_id: 'manual_x', note: 'mine' }), row('manual-txn:b', { source: 'manual', category: null })],
       [everything]
     );
-    expect([own.name, own.category, own.rule_category, own.note]).toEqual(['Blue Bottle', 'groceries', undefined, 'mine']);
+    expect([own.name, own.category, own.rule_category, own.note, own.category_by_rule, own.name_before_rules]).toEqual(['Blue Bottle', 'groceries', undefined, 'mine', undefined, undefined]);
     expect(own.tags).toEqual(['work']);
-    expect([none.name, none.rule_category, none.tags]).toEqual(['Blue Bottle', cat(base, 'restaurants'), ['work']]);
+    expect([none.name, none.rule_category, none.tags, none.category_by_rule]).toEqual(['Blue Bottle', cat(base, 'restaurants'), ['work'], true]);
+  });
+
+  test('an imported or SimpleFIN row takes a rule’s name over the name it came with, never over one the person gave it', () => {
+    const [csv, simplefin, named, later] = run(
+      [
+        row('manual-txn:c', { source: 'import:csv', category: null }),
+        row('manual-txn:d', { source: 'simplefin', category: null }),
+        row('manual-txn:e', { source: 'import:ofx', own_name: true }),
+        // A source this release doesn't know keeps its name.
+        row('manual-txn:f', { source: 'otherapp' }),
+      ],
+      [everything]
+    );
+    expect([csv.name, csv.name_before_rules]).toEqual(['BB', 'Blue Bottle']);
+    expect([simplefin.name, simplefin.name_before_rules]).toEqual(['BB', 'Blue Bottle']);
+    expect([named.name, named.name_before_rules, 'own_name' in named]).toEqual(['Blue Bottle', undefined, false]);
+    expect(later.name).toBe('Blue Bottle');
+    // A bank row a rule named says what it was named before, which rules match.
+    const [bank] = run([row('t_bank')], [everything]);
+    expect([bank.name, bank.name_before_rules, bank.category_by_rule]).toEqual(['BB', 'Blue Bottle', true]);
   });
 
   test('a category condition reads the category before any rule: rules never chain', () => {
@@ -441,11 +489,14 @@ describe('fast enough to run on every read', () => {
       counterparty: i % 9 === 0 ? 'Square' : null,
       account_ref: 'acc_1',
     })) as any[];
+    // Warmed up first, as a server is after its first request, then measured.
+    applyLayers(rows.slice(0, 200).map((r) => ({ ...r })), { records: new Map(), unknown: new Set(), tags: TAGS, rules, ix });
     const started = performance.now();
     applyLayers(rows, { records: new Map(), unknown: new Set(), tags: TAGS, rules, ix });
     const ms = performance.now() - started;
-    // Measured at about 60 ms when this was written; the bound leaves room for a slow CI.
-    expect(ms).toBeLessThan(1500);
+    // Measured at about 60 ms when this was written; the bound leaves five
+    // times that for a slow CI, and catches anything that makes it far slower.
+    expect(ms).toBeLessThan(300);
     expect(rows.filter((r) => r.rule_ids).length).toBeGreaterThan(1000);
   });
 });

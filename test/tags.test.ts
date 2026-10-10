@@ -186,6 +186,17 @@ describe('the tags', () => {
     const shown = await quietly(() => tags.tagsForDisplay(ctx));
     expect(shown).toEqual({ set: null, note: "Your tags couldn't be read, so transactions show without them until they can be." });
   });
+
+  test('that note is for what shows tags: the Activity tab has it, a report’s gaps don’t', async () => {
+    await addItem('item_a', 'acct_a', [row('t_a', 'acct_a')]);
+    await fake.set(ctxKey('tags'), 'not-ciphertext-but-long-enough-to-be-tried');
+    const note = "Your tags couldn't be read, so transactions show without them until they can be.";
+    expect((await quietly(() => listed())).notes).toContain(note);
+    const { assembleBankRows, finishActivity } = await import('@/lib/activity');
+    const bank = await assembleBankRows(ctx, { sync: false, readOnly: true });
+    const read = await quietly(() => finishActivity(ctx, bank.payload, bank.hidden));
+    expect([read.notes.includes(note), read.tags_note]).toEqual([false, note]);
+  });
 });
 
 describe('the tags route', () => {
@@ -282,7 +293,7 @@ describe('tags and notes on transactions', () => {
     expect(tagsOf(importedId)).toEqual([work]);
     expect(tagsOf('t_b')).toBeUndefined();
     // Nothing the read assembles with is ever sent.
-    for (const t of body.transactions) for (const k of ['account_ref', 'renamed_from', 'carried']) expect(k in t).toBe(false);
+    for (const t of body.transactions) for (const k of ['account_ref', 'renamed_from', 'carried', 'own_name']) expect(k in t).toBe(false);
   });
 
   test('a row brought in from SimpleFIN is tagged and noted like any other on a manual account', async () => {
@@ -362,6 +373,33 @@ describe('tags and notes on transactions', () => {
     for (const [body, status, error] of cases) expect([body, await annotate(body)]).toEqual([body, { status, body: { error } }]);
     expect(await ann.txnAnnotationStore.count(ctx)).toBe(0);
     expect((await route('transaction-annotations', 'PATCH', undefined, JSON.stringify({ transaction_id: 't_a', note: 'x'.repeat(9000) }))).status).toBe(413);
+  });
+
+  test('a tag taken off that no longer exists changes nothing; one deleted comes off a record as it changes', async () => {
+    await seed();
+    const [work, home] = [await made('Work'), await made('Home')];
+    await annotate({ transaction_id: 't_a', add_tags: [work, home] });
+    await annotate({ transaction_id: 't_b', remove_tags: [work] });
+    // Left in a record by a deletion that couldn't sweep it (see below).
+    await ann.txnAnnotationStore.set(ctx, 't_a', { tags: [work, home, 'gone-tag'], untagged: ['gone-too'], updated_at: '2026-10-01T00:00:00.000Z' });
+    const r = await annotate({ transaction_id: 't_a', remove_tags: ['never-a-tag', home] });
+    expect(r.status).toBe(200);
+    expect([r.body.tags, r.body.untagged]).toEqual([[work], [home]]);
+    expect((await annotate({ transaction_id: 't_b', remove_tags: ['never-a-tag'] })).status).toBe(200);
+    expect((await ann.txnAnnotationStore.get(ctx, 't_b'))!.untagged).toEqual([work]);
+  });
+
+  test('a record keeps at most so many tags taken off; a deletion that raced a change is taken back off', async () => {
+    const live = new Set(Array.from({ length: ann.MAX_UNTAGGED + 1 }, (_, i) => `tag-${i}`));
+    const full = { untagged: [...live].slice(0, ann.MAX_UNTAGGED), updated_at: '2026-10-01T00:00:00.000Z' };
+    expect(() => ann.changedRecord(full, { remove: [`tag-${ann.MAX_UNTAGGED}`], live }, new Date())).toThrow(ann.AnnotationError);
+    // Ids of tags that no longer exist make room.
+    expect(ann.changedRecord(full, { remove: ['tag-0'], live: new Set(['tag-0']) }, new Date()).untagged).toEqual(['tag-0']);
+    await ann.txnAnnotationStore.set(ctx, 't_x', { tags: ['kept', 'raced'], updated_at: '2026-10-01T00:00:00.000Z' });
+    expect((await ann.stripTags(ctx, 't_x', ['raced']))!.tags).toEqual(['kept']);
+    await ann.txnAnnotationStore.set(ctx, 't_y', { tags: ['raced'], updated_at: '2026-10-01T00:00:00.000Z' });
+    expect(await ann.stripTags(ctx, 't_y', ['raced'])).toBeNull();
+    expect(await ann.txnAnnotationStore.get(ctx, 't_y')).toBeNull();
   });
 
   test('at most so many tags by hand on one transaction', async () => {

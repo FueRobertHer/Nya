@@ -17,8 +17,9 @@
 //      their own category, carried category and merchant name, which the
 //      banks' part applies (lib/activity.ts assembleBankRows).
 // So a choice made on one transaction always wins: a category chosen for it,
-// a rename of its merchant, a tag taken off it, an exclusion set or cleared on
-// it.
+// a rename of its merchant (or a name given an imported or SimpleFIN row, or
+// typed on one entered by hand), a tag taken off it, an exclusion set or
+// cleared on it.
 //
 // FIELD BY FIELD:
 //   - excluded: the row's own record (true or false), else unknown when that
@@ -29,10 +30,19 @@
 //     put on, over the one before; only tags that exist are shown, in the
 //     order they were made (lib/tags.ts);
 //   - note: a bank row's own (an empty one is a note cleared), else carried;
-//     a manual or imported row's is its own, written with it.
+//     a manual or imported row's is its own, written with it;
+//   - category: a rule's only on a row with none of its own, marked
+//     category_by_rule, so an edit of a manual row never writes it into the
+//     row as the row's own (components/ManualTxnSheet.tsx);
+//   - name: a rule's on a bank's row whose merchant the person hasn't
+//     renamed, and on an imported or SimpleFIN row whose name they haven't
+//     given it themselves (own_name); never on a row entered by hand, whose
+//     name was typed. The name before is kept (name_before_rules): what rules
+//     match, so a rule made from the row matches it, and what an edit of the
+//     row starts from.
 //
-// The facts the banks' part keeps for this (account_ref, renamed_from,
-// carried) go once applied: they are never sent.
+// The facts the assembly keeps for this (account_ref, renamed_from, carried,
+// own_name) go once applied: they are never sent.
 
 import type { Txn, OlderTxn } from './transactions';
 import type { TxnAnnotation, CarriedRowFacts } from './txn-annotations';
@@ -68,6 +78,16 @@ type Row = Txn | OlderTxn;
  *  notes. */
 const isListed = (t: Row): t is Txn => 'pending' in t;
 
+/** Whether a rule may give the row its name: never over the person's own
+ *  (a rename of a bank's merchant, a name given an imported or SimpleFIN row
+ *  in the app, the name typed on a row entered by hand), nor on a row from a
+ *  source this release doesn't know. */
+function renamable(t: Row): boolean {
+  if (t.renamed_from !== undefined || t.own_name) return false;
+  const kind = sourceKind(t.source);
+  return kind === 'plaid' || kind === 'import' || kind === 'simplefin';
+}
+
 /** Takes off what a layer took off, then puts on what it put on. */
 function layer(set: Set<string>, l: { tags?: readonly string[]; untagged?: readonly string[] } | null | undefined): void {
   if (!l) return;
@@ -96,7 +116,7 @@ export function subjectOf(t: Row, ix: CategoryIndex | null, account: (id: string
     category: ix ? resolveCategory(ix, t).category.id : null,
     source: sourceKind(t.source),
     keeps_category: !!ix && !!ownCategory(ix, t),
-    keeps_name: t.source !== undefined || t.renamed_from !== undefined,
+    keeps_name: !renamable(t),
   };
 }
 
@@ -119,6 +139,11 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     }
     if (outcome.matched.length > 0) t.rule_ids = outcome.matched;
     else delete t.rule_ids;
+    const listed = isListed(t);
+    if (listed) {
+      delete t.category_by_rule;
+      delete t.name_before_rules;
+    }
     // A rule's category, unless the person chose one for the row (or wrote
     // one on a row they entered or imported): filed by id, and carrying its
     // words, as a category chosen does, for the rules that read words.
@@ -127,11 +152,14 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
       if (c) {
         t.rule_category = c.id;
         t.category = choiceText(c);
+        if (listed) t.category_by_rule = true;
       }
     }
-    // A rule's name, on a bank's row whose merchant the person hasn't
-    // renamed: a manual or imported row's name is its own.
-    if (outcome.name && t.source === undefined && t.renamed_from === undefined) t.name = outcome.name.value;
+    // A rule's name, over the name the row came with, never the person's own.
+    if (outcome.name && renamable(t)) {
+      if (listed) t.name_before_rules = t.name;
+      t.name = outcome.name.value;
+    }
 
     // Excluded. A carried exclusion is already on the cached row; a rule's
     // hide is under everything the person said.
@@ -165,5 +193,6 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     delete t.carried;
     delete t.account_ref;
     delete t.renamed_from;
+    delete t.own_name;
   }
 }

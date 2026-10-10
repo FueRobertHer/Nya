@@ -20,7 +20,10 @@
 // ids are swept, so a tag made meanwhile on another device, whose id this
 // request has never seen, is never taken for a deleted one. A record that
 // can't be read, or that this release doesn't recognise, is left as it is:
-// what it holds is never shown either way.
+// what it holds is never shown either way. Rules that can't be read keep the
+// note, so the next change sweeps them once they can be: a rule left holding
+// a deleted tag could not be saved again as it is. A rule saved while a tag
+// was being deleted, after the sweep, is swept by its own save (app/api/rules).
 
 import type { Ctx } from './containers';
 import { changeTagSet, emptyTagSet, markDeleted, readTagSet, sweptAway, type TagSet } from './tags';
@@ -44,6 +47,8 @@ export async function finishDeleting(ctx: Ctx, known?: TagSet | null): Promise<{
   if (!set || ids.length === 0) return { set: set ?? emptyTagSet(), transactions: 0, rules: 0 };
   const transactions = await sweepAnnotationTags(ctx, ids);
   const rules = await sweepRuleTags(ctx, ids);
+  // The rules couldn't be read: the note stays, for a later change to finish.
+  if (rules === null) return { set, transactions, rules: 0 };
   const after = await changeTagSet(ctx, (s) => sweptAway(s, ids));
   return { set: after, transactions, rules };
 }

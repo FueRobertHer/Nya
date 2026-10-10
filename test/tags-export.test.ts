@@ -170,4 +170,26 @@ describe('rules in the download', () => {
     const appTyped = app.find((x) => x.transaction_id === MANUAL_ID)!;
     expect([appTyped.category_id, appTyped.excluded, appTyped.tags]).toEqual([shopping, true, [work, trip]]);
   });
+
+  test('a rule names an imported row in the file as in the app, never one the person named; an account with no institution is “Manual” to a rule in both', async () => {
+    const at = NOW.toISOString();
+    const [plain, named] = ['manual-txn:6b1c2d3e-4f50-4a6b-9c7d-8e9fa0b1c2d3', 'manual-txn:7c2d3e4f-5061-4b7c-8d9e-9fa0b1c2d3e4'];
+    await saveManualAccount(ctx, { account_id: 'manual_jar', name: 'Jar', institution_name: '', type: 'depository', subtype: 'cash', balance: 5, updated_at: at } as any);
+    await manualTxnStore.set(ctx, 'manual_jar', {
+      version: 1,
+      rows: [
+        { id: plain, account_id: 'manual_jar', date: '2026-09-04', amount: 5, currency: 'USD', name: 'POS JAR 1', category: null, note: null, source: 'import:csv', source_id: 'k1', created_at: at, updated_at: at },
+        { id: named, account_id: 'manual_jar', date: '2026-09-05', amount: 6, currency: 'USD', name: 'Pocket money', named: 'Pocket money', category: null, note: null, source: 'import:csv', source_id: 'k2', created_at: at, updated_at: at },
+      ],
+    });
+    await appRows();
+    await rule({ conditions: [{ field: 'institution', op: 'equals', value: 'Manual' }], actions: { set_name: 'Jar spend', hide: true } });
+    const app = await appRows();
+    const [header, ...rows] = parseCsv([...exportFile(await download(), 'transactions-csv').pieces()].join(''));
+    const col = (r: string[], name: string) => r[header.indexOf(name)];
+    const csv = (id: string) => rows.find((r) => col(r, 'transaction_id') === id)!;
+    const shown = (id: string) => app.find((x) => x.transaction_id === id)!;
+    expect([shown(plain).name, shown(plain).excluded, shown(named).name, shown(named).excluded]).toEqual(['Jar spend', true, 'Pocket money', true]);
+    expect([col(csv(plain), 'nya_name'), col(csv(plain), 'excluded'), col(csv(named), 'nya_name'), col(csv(named), 'excluded')]).toEqual(['Jar spend', 'true', 'Pocket money', 'true']);
+  });
 });

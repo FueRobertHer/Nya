@@ -91,6 +91,12 @@ describe('the rules endpoint', () => {
     ]);
   });
 
+  test('an account a rule names is named as the app names it', async () => {
+    await rule({ conditions: [{ field: 'account', op: 'equals', value: 'acc_card' }], actions: { hide: true } });
+    const { body } = await call('rules');
+    expect(body.rules[0].sentence).toBe('If account is Chase Card ••2222: hide it from budgets and reports.');
+  });
+
   test('rules that can’t be read are a 409, never no rules', async () => {
     await fake.set(ctxKey('rules'), 'not-ciphertext-but-long-enough-to-be-tried');
     const quiet = console.error;

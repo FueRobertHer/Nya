@@ -45,9 +45,12 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const { encrypt } = await import('@/lib/crypto');
 const { rememberAccounts } = await import('@/lib/last-known');
 const { saveManualAccount } = await import('@/lib/manual');
-const { addManualTxn, newManualTxn } = await import('@/lib/manual-txns');
+const { addManualTxn, newManualTxn, manualTxnStore } = await import('@/lib/manual-txns');
 const { clearCaches } = await import('@/lib/cache');
 const { rulesStore } = await import('@/lib/rules');
+const { tagStore } = await import('@/lib/tags');
+const { editStart, changedFields } = await import('@/components/ManualTxnSheet');
+const { nameForRules } = await import('@/components/MonthBreakdown');
 
 const account = (id: string) => ({
   account_id: id,
@@ -321,5 +324,185 @@ describe('kept as every financial payload is', () => {
     expect(names).toContain('rules');
     expect(names).toContain('tags');
     expect(usage.stores.find((s: any) => s.store === 'rules')).toMatchObject({ what: 'rules', entries: 1 });
+  });
+});
+
+describe('editing a row a rule files or names', () => {
+  /** The edit form on a row, as it starts and as it sends a save with a new
+   *  note and nothing else changed (components/ManualTxnSheet.tsx). */
+  const saveNote = async (t: any, note: string) => {
+    const start = editStart(t);
+    const fields = { date: t.date, amount: t.amount, currency: t.iso_currency_code, name: start.name, category_id: start.category_id || null, category: null, note };
+    return route('manual-transactions', 'PATCH', { id: t.transaction_id, account_id: MANUAL, ...changedFields(fields, start) });
+  };
+  const stored = async (id: string) => (await manualTxnStore.get(ctx, MANUAL))!.rows.find((r) => r.id === id)!;
+
+  test('saving a row a rule files never makes the rule’s category its own: turned off, the row is uncategorized again', async () => {
+    const id = await amazonRule();
+    const shown = await rowOf(typed);
+    expect(shown).toMatchObject({ category_id: catId('general merchandise'), category_by_rule: true });
+    // The form starts from the row's own: no category.
+    expect(editStart(shown)).toMatchObject({ category_id: '', category: '', name: 'AMZN locker pickup' });
+    expect((await saveNote(shown, 'picked up at noon')).status).toBe(200);
+    expect(await stored(typed)).toMatchObject({ category: null, note: 'picked up at noon' });
+    expect(await rowOf(typed)).toMatchObject({ category_id: catId('general merchandise'), category_by_rule: true, note: 'picked up at noon' });
+    await ruleAction({ action: 'enable', id, enabled: false });
+    const after = await rowOf(typed);
+    expect([after.category_name, after.category_by_rule]).toEqual([null, undefined]);
+  });
+
+  test('a category picked in the form is the row’s own, and stays with the rule turned off', async () => {
+    const id = await amazonRule();
+    const shown = await rowOf(typed);
+    const start = editStart(shown);
+    const travel = catId('travel');
+    const sent = changedFields({ date: shown.date, amount: shown.amount, currency: 'USD', name: start.name, category_id: travel, category: 'travel', note: null }, start);
+    expect(sent).toMatchObject({ category_id: travel });
+    expect('name' in sent).toBe(false);
+    expect((await route('manual-transactions', 'PATCH', { id: typed, account_id: MANUAL, ...sent })).status).toBe(200);
+    await ruleAction({ action: 'enable', id, enabled: false });
+    expect(await rowOf(typed)).toMatchObject({ category_id: travel });
+    expect((await rowOf(typed)).category_by_rule).toBeUndefined();
+  });
+
+  test('a rule names an imported row, never over a name the person gives it; one entered by hand keeps its own', async () => {
+    const imported = { ...newManualTxn(MANUAL, { date: daysAgo(4), name: 'POS AMZN MKTP 4421', amount: 30, currency: 'USD', category: null, note: null }), source: 'import:csv', source_id: 'k1' };
+    await addManualTxn(ctx, imported);
+    await amazonRule({ set_name: 'Amazon' });
+    const shown = await rowOf(imported.id);
+    expect([shown.name, shown.name_before_rules]).toEqual(['Amazon', 'POS AMZN MKTP 4421']);
+    expect((await rowOf(typed)).name).toBe('AMZN locker pickup');
+    // A note saved from the form leaves the name it came with, which the rule still replaces.
+    expect((await saveNote(shown, 'gift')).status).toBe(200);
+    expect(await stored(imported.id)).toMatchObject({ name: 'POS AMZN MKTP 4421', note: 'gift' });
+    expect((await stored(imported.id)).named).toBeUndefined();
+    expect((await rowOf(imported.id)).name).toBe('Amazon');
+    // A name typed in the form is the person's: the rule still matches, and names it no longer.
+    const again = await rowOf(imported.id);
+    const start = editStart(again);
+    const sent = changedFields({ date: again.date, amount: again.amount, currency: 'USD', name: 'AMZN birthday gift', category_id: null, category: null, note: 'gift' }, start);
+    expect((await route('manual-transactions', 'PATCH', { id: imported.id, account_id: MANUAL, ...sent })).status).toBe(200);
+    expect(await stored(imported.id)).toMatchObject({ name: 'AMZN birthday gift', named: 'AMZN birthday gift' });
+    const named = await rowOf(imported.id);
+    expect([named.name, named.name_before_rules, named.rule_ids?.length]).toEqual(['AMZN birthday gift', undefined, 1]);
+    // The preview counts it among those that keep their own name, with the one entered by hand.
+    const preview = await route('rules/preview', 'POST', { rule: { conditions: [{ field: 'name', op: 'contains', value: 'amzn' }], actions: { set_name: 'Shop' } } });
+    expect([preview.body.matches, preview.body.keep_name]).toEqual([4, 2]);
+  });
+});
+
+describe('a rule made from a row another rule named', () => {
+  test('starts from the name rules match, so it matches the row; the offer names it so', async () => {
+    await amazonRule({ set_name: 'Amazon' });
+    const shown = await rowOf('t_recent');
+    expect([shown.name, nameForRules(shown)]).toEqual(['Amazon', 'AMZN MKTP US*2K4']);
+    // As "Create a rule from this" and the offer after a recategorize prefill it (components/Dashboard.tsx).
+    const draft = { conditions: [{ field: 'name', op: 'equals', value: nameForRules(shown) }], actions: { set_category: catId('travel') } };
+    const preview = await route('rules/preview', 'POST', { rule: draft });
+    expect(preview.body.samples.map((s: any) => s.transaction_id)).toContain('t_recent');
+    expect((await ruleAction({ action: 'add', rule: draft })).status).toBe(200);
+    expect((await rowOf('t_recent')).category_id).toBe(catId('travel'));
+  });
+});
+
+describe('a rule on an account', () => {
+  /** acct_b, another live account of the same Item, a row on each, and one
+   *  on acct_old, an earlier account linked to acct_a. */
+  const accounts = async (links: Record<string, string>) => {
+    plaidAccounts['token-item_a'] = [account('acct_a'), account('acct_b')];
+    plaidTxns['token-item_a'] = [...plaidTxns['token-item_a'], row('t_b', { account_id: 'acct_b', name: 'ON B' }), row('t_gone', { account_id: 'acct_old', name: 'ON OLD' })];
+    await rememberAccounts(ctx, [{ item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ ...account('acct_a'), balance: 1 }, { ...account('acct_b'), balance: 1 }] } as any]);
+    for (const [old, to] of Object.entries(links)) {
+      await fake.hset(ctxKey('account-links'), { [old]: to === 'unreadable' ? 'not-a-link' : await encrypt(JSON.stringify({ to, linked_at: '2026-01-01T00:00:00.000Z', evidence: {} })) });
+    }
+  };
+
+  test('follows the links that apply, as every reader does: never one whose old account is live again', async () => {
+    await accounts({ acct_old: 'acct_a', acct_b: 'acct_a' });
+    await ruleAction({ action: 'add', rule: { conditions: [{ field: 'account', op: 'equals', value: 'acct_a' }], actions: { set_name: 'On A' } } });
+    const body = await listed();
+    const name = (id: string) => body.transactions.find((t: any) => t.transaction_id === id)?.name;
+    expect([name('t_recent'), name('t_gone'), name('t_b')]).toEqual(['On A', 'On A', 'ON B']);
+  });
+
+  test('a preview follows them too, with no saved rule on an account', async () => {
+    await accounts({ acct_old: 'acct_a' });
+    await listed();
+    const r = await route('rules/preview', 'POST', { rule: { conditions: [{ field: 'account', op: 'equals', value: 'acct_a' }], actions: { hide: true } } });
+    expect(r.body.samples.map((s: any) => s.transaction_id)).toContain('t_gone');
+  });
+
+  test('links that can’t be read: the rule applies to the account’s own rows, and a note says so', async () => {
+    await accounts({ acct_old: 'unreadable' });
+    await ruleAction({ action: 'add', rule: { conditions: [{ field: 'account', op: 'equals', value: 'acct_a' }], actions: { set_name: 'On A' } } });
+    const body = await quietly(() => listed());
+    expect(body.transactions.find((t: any) => t.transaction_id === 't_recent').name).toBe('On A');
+    expect(body.notes).toContain(
+      "Your account links couldn't be read, so a rule on an account applies only to that account's own transactions until they can be, not to an earlier account's linked to it."
+    );
+  });
+});
+
+describe('rules that name a category, with the categories unreadable', () => {
+  test('are left out whole, and a note says so', async () => {
+    await amazonRule({ set_category: catId('travel'), set_name: 'Amazon' });
+    await fake.set(ctxKey('categories'), 'not-ciphertext-but-long-enough-to-be-tried');
+    const body = await quietly(() => listed());
+    expect(body.notes).toContain("Rules that name a category aren't applied until your categories can be read.");
+    expect((await quietly(() => rowOf('t_recent'))).name).toBe('AMZN MKTP US*2K4');
+  });
+});
+
+describe('a tag deleted while a rule holds it', () => {
+  const tag = async (name: string) => (await route('tags', 'POST', { action: 'add', name })).body.created as string;
+
+  test('with the rules unreadable, the deletion stays noted, and the next change sweeps them once they read', async () => {
+    const work = await tag('Work');
+    await amazonRule({ add_tags: [work], set_name: 'Amazon' });
+    const bytes = fake.strings.get(ctxKey('rules'))!;
+    await fake.set(ctxKey('rules'), 'not-ciphertext-but-long-enough-to-be-tried');
+    expect((await quietly(() => route('tags', 'POST', { action: 'delete', id: work }))).status).toBe(200);
+    expect((await tagStore.get(ctx))!.deleting).toEqual([work]);
+    await fake.set(ctxKey('rules'), bytes);
+    // Nothing shows it meanwhile.
+    expect((await route('rules', 'GET')).body.rules.rules[0].actions.add_tags).toBeUndefined();
+    await tag('Home');
+    expect((await rulesStore.get(ctx))!.rules[0].actions.add_tags).toBeUndefined();
+    expect((await tagStore.get(ctx))!.deleting).toBeUndefined();
+  });
+
+  test('one a rule was saved with as it was deleted is shown nowhere, can be edited and previewed, and the next save sweeps it', async () => {
+    const work = await tag('Work');
+    const id = await amazonRule({ add_tags: [work], hide: true });
+    await route('tags', 'POST', { action: 'delete', id: work });
+    // The save that landed after the deletion's sweep: the rule holds the deleted id.
+    const set = (await rulesStore.get(ctx))!;
+    await rulesStore.set(ctx, { ...set, rules: set.rules.map((r) => ({ ...r, actions: { ...r.actions, add_tags: [work] } })) });
+    expect((await route('rules', 'GET')).body.rules.rules[0].actions).toEqual({ hide: true });
+    // A page still holding it sends it back: previewed and saved, it simply comes out.
+    const stale = { conditions: [{ field: 'name', op: 'contains', value: 'amzn' }], actions: { hide: true, add_tags: [work] } };
+    expect((await route('rules/preview', 'POST', { rule: stale })).status).toBe(200);
+    const edited = await ruleAction({ action: 'edit', id, rule: stale });
+    expect(edited.status).toBe(200);
+    expect((await rulesStore.get(ctx))!.rules[0].actions).toEqual({ hide: true });
+    // A tag it never had is still refused.
+    const refused = await ruleAction({ action: 'edit', id, rule: { ...stale, actions: { add_tags: ['not-a-tag'] } } });
+    expect(refused.status).toBe(404);
+    // Any other save sweeps it out of every rule.
+    await rulesStore.set(ctx, { ...set, rules: set.rules.map((r) => ({ ...r, actions: { ...r.actions, add_tags: [work] } })) });
+    await ruleAction({ action: 'add', rule: { conditions: [{ field: 'name', op: 'contains', value: 'zzz' }], actions: { hide: true } } });
+    expect((await rulesStore.get(ctx))!.rules.every((r) => !r.actions.add_tags)).toBe(true);
+  });
+});
+
+describe('the rows before the year, for recurring bills', () => {
+  test('a rule reads the merchant behind a payment processor on them too', async () => {
+    const behind = [{ type: 'merchant', name: 'Blue Bottle Coffee' }];
+    const coffee = { name: 'BLUE BOTTLE', amount: 5, counterparties: behind, personal_finance_category: { primary: 'FOOD_AND_DRINK', detailed: 'FOOD_AND_DRINK_COFFEE' } };
+    // A yearly charge: one this year, one the year before, both through the processor.
+    plaidTxns['token-item_a'] = [...plaidTxns['token-item_a'], row('t_coffee_new', { ...coffee, date: daysAgo(30) }), row('t_coffee_old', { ...coffee, date: daysAgo(400) })];
+    await ruleAction({ action: 'add', rule: { conditions: [{ field: 'name', op: 'contains', value: 'blue bottle coffee' }], actions: { set_name: 'Coffee' } } });
+    const body = await listed();
+    expect(body.recurring_history.find((t: any) => t.transaction_id === 't_coffee_old')).toMatchObject({ name: 'Coffee', rule_ids: [expect.any(String)] });
   });
 });

@@ -9,8 +9,9 @@
 // to there. Read only: rules are made and changed in the app.
 
 import type { Ctx } from './containers';
-import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
-import { readRuleSet, ruleProblem, ruleSentence, sortedRules, withCurrentCategories, type RuleActions, type RuleCondition } from './rules';
+import { accountLabels, firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+import { readRuleSet, ruleProblem, ruleSentence, sortedRules, withCurrentCategories, withLiveTags, type RuleActions, type RuleCondition } from './rules';
+import { liveTagIds } from './tags';
 
 export type ApiRule = {
   id: string;
@@ -35,23 +36,32 @@ export async function readRules(ctx: Ctx, opts: { includeHidden?: boolean } = {}
   const [set, activity] = await Promise.all([readRuleSet(ctx), readActivity(ctx, !!opts.includeHidden)]);
   const counts = new Map<string, number>();
   for (const t of activity.rows) for (const id of t.rule_ids ?? []) counts.set(id, (counts.get(id) ?? 0) + 1);
-  const names = { ix: activity.ix, tags: activity.tags };
+  // Accounts named as the app names them, read only when a rule names one.
+  const account = set?.rules.some((r) => r.conditions.some((c) => c.field === 'account')) ? await accountLabels(ctx) : undefined;
+  const names = { ix: activity.ix, tags: activity.tags, account };
+  // The tags that exist, when they could be read: a rule's tags as stored
+  // otherwise, never none.
+  const live = activity.tags ? liveTagIds(activity.tags) : null;
   return {
     from: firstDay(),
     // Each category a rule names as it is known now: one merged away is
-    // answered as the one it went into, which categories lists.
-    rules: sortedRules(set).map((stored) => withCurrentCategories(stored, activity.ix)).map((r) => ({
-      id: r.id,
-      enabled: r.enabled,
-      priority: r.priority,
-      conditions: r.conditions,
-      actions: r.actions,
-      sentence: ruleSentence(r, names),
-      problem: ruleProblem(r, activity.ix),
-      transactions: counts.get(r.id) ?? 0,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-    })),
+    // answered as the one it went into, which categories lists; and only the
+    // tags that exist (a tag deleted while the rule was saved is in none).
+    rules: sortedRules(set)
+      .map((stored) => withCurrentCategories(stored, activity.ix))
+      .map((r) => (live ? withLiveTags(r, live) : r))
+      .map((r) => ({
+        id: r.id,
+        enabled: r.enabled,
+        priority: r.priority,
+        conditions: r.conditions,
+        actions: r.actions,
+        sentence: ruleSentence(r, names),
+        problem: ruleProblem(r, activity.ix),
+        transactions: counts.get(r.id) ?? 0,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      })),
     sources: activity.sources,
     notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
   };

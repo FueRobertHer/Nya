@@ -5,7 +5,6 @@ import { indexTaxonomy } from '@/lib/categories';
 import { ensureTaxonomy } from '@/lib/category-store';
 import { liveTagIds, readTagSet } from '@/lib/tags';
 import { assembleBankRows, finishActivity } from '@/lib/activity';
-import { readLinks, resolveId } from '@/lib/link-core';
 import { EARLIEST_DATE } from '@/lib/manual-txn-input';
 import { checkRuleInput, compileRules, RuleError, RULES_VERSION, type RuleSubject } from '@/lib/rules';
 import { currencyOf } from '@/lib/spending';
@@ -44,19 +43,21 @@ export async function POST(req: Request) {
     }
     const [taxonomy, tags] = await Promise.all([ensureTaxonomy(ctx), readTagSet(ctx)]);
     const ix = indexTaxonomy(taxonomy);
-    const input = checkRuleInput(body.rule, { ix, tags });
+    // A tag deleted since the form opened is no reason to refuse a preview:
+    // what the rule adds doesn't decide what it matches.
+    const input = checkRuleInput(body.rule, { ix, tags, had: 'any' });
     const at = new Date().toISOString();
     const draft = { id: 'preview', enabled: true, priority: 1, ...input, created_at: at, updated_at: at };
 
-    // Every stored row, with what each rule reads of it.
+    // Every stored row, with what each rule reads of it: the account each is
+    // on as known now, through the links that apply, when the rule names an
+    // account, as the rules follow them once it is saved (lib/activity.ts).
     const subjects = new Map<string, RuleSubject>();
-    const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: EARLIEST_DATE });
-    const { transactions } = await finishActivity(ctx, bank.payload, bank.hidden, { since: EARLIEST_DATE, subjects });
     const onAccount = input.conditions.some((c) => c.field === 'account');
-    const links = onAccount ? await readLinks(ctx).then((r) => r.links, () => new Map()) : null;
-    const account = links?.size ? (id: string) => resolveId(id, links) : undefined;
+    const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: EARLIEST_DATE });
+    const { transactions, accountOf } = await finishActivity(ctx, bank.payload, bank.hidden, { since: EARLIEST_DATE, subjects, followLinks: onAccount });
     // The draft's conditions alone: its actions don't decide what it matches.
-    const compiled = compileRules({ version: RULES_VERSION, rules: [{ ...draft, actions: { hide: true } }] }, { ix, liveTags: liveTagIds(tags), account });
+    const compiled = compileRules({ version: RULES_VERSION, rules: [{ ...draft, actions: { hide: true } }] }, { ix, liveTags: liveTagIds(tags), account: accountOf });
     const test = compiled.rules[0]?.test;
     const matched = test ? transactions.filter((t) => subjects.has(t.transaction_id) && test(subjects.get(t.transaction_id)!)) : [];
     return NextResponse.json({

@@ -127,21 +127,29 @@ export type Txn = {
   // Applied on read (lib/txn-layers.ts), absent when there is nothing to say:
   // the tags it carries (ids of tags that exist, lib/tags.ts), put on by the
   // person, carried across a re-link or added by a rule; the rules that match
-  // it (lib/rules.ts), in the order they run; and whether its exclusion is a
-  // rule's hide rather than the person's own.
+  // it (lib/rules.ts), in the order they run; whether its exclusion is a
+  // rule's hide rather than the person's own; whether its category is a
+  // rule's rather than its own (an edit of a manual row never takes it for
+  // the row's: components/ManualTxnSheet.tsx); and, when a rule named it, the
+  // name it had before (what rules match, so a rule made from it matches it).
   tags?: string[];
   rule_ids?: string[];
   excluded_by_rule?: true;
+  category_by_rule?: true;
+  name_before_rules?: string;
   // What a row is assembled with until lib/txn-layers.ts applies it (never
   // sent): the account it is on, for a rule's account condition (a bank
   // row's account_id isn't sent to the Activity tab, nor an older manual
   // row's); a bank row's name as the bank gives it when the person renamed
   // its merchant (lib/renames.ts), which a rule's name condition also reads
-  // and a rule's name never replaces; and what a bank row carries from an
-  // earlier account's row besides an exclusion.
+  // and a rule's name never replaces; what a bank row carries from an
+  // earlier account's row besides an exclusion; and on an imported or
+  // SimpleFIN row, that its name is one the person gave it in the app
+  // (lib/manual-txns.ts ManualTxn.named), which a rule's name never replaces.
   account_ref?: string;
   renamed_from?: string;
   carried?: CarriedRowFacts;
+  own_name?: true;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which
@@ -179,7 +187,11 @@ export type OlderTxn = Pick<
   | 'account_ref'
   | 'renamed_from'
   | 'carried'
->;
+  | 'own_name'
+> &
+  // The merchant behind a payment processor, where it differs from the name
+  // (a rule's name condition reads it); absent when it doesn't.
+  Partial<Pick<Txn, 'counterparty'>>;
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.
 // Adding a field later would cost a full re-sync (see TXN_SCHEMA_VERSION), and
@@ -322,6 +334,13 @@ function resolveCounterparty(t: StoredTxn): string | null {
   // Only interesting when it differs from what we already show as the name.
   const display = (t.merchant_name || t.name).toLowerCase().trim();
   return name && name.toLowerCase().trim() !== display ? name : null;
+}
+
+/** An older row's counterparty, only when there is one: older rows are kept
+ *  compact (OlderTxn). */
+function counterpartyOf(t: StoredTxn): { counterparty?: string } {
+  const c = resolveCounterparty(t);
+  return c ? { counterparty: c } : {};
 }
 
 function resolveProcessor(t: StoredTxn): string | null {
@@ -1234,6 +1253,7 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
       logo_url: t.logo_url,
       ...(carriedExclusions?.size && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
       ...carriedFacts(t, carriedAnnotations),
+      ...counterpartyOf(t),
       account_ref: t.account_id,
     }));
 }

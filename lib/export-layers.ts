@@ -119,12 +119,14 @@ export function layerBankRow(t: StoredTxn, inputs: ExportLayers, facts: Category
   return layered(row, inputs);
 }
 
-/** A manual or imported row: its name, note and category (when it has one)
- *  are its own. */
+/** A manual or imported row: its note and category (when it has one) are its
+ *  own, and so is its name when it was entered by hand or the person named it
+ *  (ManualTxn.named); a rule names an imported or SimpleFIN row otherwise.
+ *  `institution` is the one the Activity tab shows it under. */
 export function layerManualRow(
-  r: { id: string; account_id: string; date: string; name: string; amount: number; currency: string; category: string | null; note: string | null; source: string },
+  r: { id: string; account_id: string; date: string; name: string; amount: number; currency: string; category: string | null; note: string | null; source: string; named?: string },
   inputs: ExportLayers,
-  institution: string | null
+  institution: string
 ): Layered {
   const row = {
     transaction_id: r.id,
@@ -139,6 +141,7 @@ export function layerManualRow(
     source: r.source,
     note: r.note,
     iso_currency_code: r.currency,
+    ...(r.named !== undefined && r.named === r.name ? { own_name: true } : {}),
   } as unknown as Txn;
   return layered(row, inputs);
 }

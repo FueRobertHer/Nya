@@ -23,8 +23,9 @@
 // CONDITIONS, all of which must match (never a regular expression):
 //   - name: the merchant's name, as the bank gives it or as the person
 //     renamed it, or the merchant behind a payment processor, `contains`,
-//     `equals` or `starts_with` the text, in any case, with accents and
-//     repeated spaces ignored (matchText);
+//     `equals` or `starts_with` the text, in any case, with accents,
+//     repeated spaces and the kind of apostrophe or quote ignored
+//     (matchText);
 //   - amount: the size of the amount, never negative, `gt` (more than) or `lt`
 //     (less than) `value`, or `between` `value` and `value2`, both included;
 //     with `direction` "out" for money out (Plaid's positive amounts, a charge),
@@ -50,9 +51,13 @@
 // IDS, NEVER NAMES. A rule holds a category's id and tags' ids, so renaming
 // either changes nothing here, and a merge is followed. A rule whose category
 // was deleted is broken: it does nothing at all until it is fixed, never
-// files a transaction somewhere else (lib/categories.ts deleteCategory
-// refuses to delete a category a rule uses, so only a change from outside the
-// app leaves one). A deleted tag is taken out of every rule (lib/tag-delete.ts).
+// files a transaction somewhere else. lib/categories.ts deleteCategory refuses
+// to delete a category a rule uses, so only a change from outside the app
+// leaves one, or a rule saved on another device while the category was being
+// deleted (the deletion read the rules before it landed). A deleted tag is
+// taken out of every rule (lib/tag-delete.ts); one a rule was saved with while
+// it was being deleted is taken out after the save (app/api/rules), and no
+// screen or answer shows it meanwhile (withLiveTags).
 //
 // THE STORED SHAPE IS CLOSED. One value per container on the storage seam
 // (lib/repo.ts), the `rules` store, encrypted. A condition, an action or a
@@ -131,10 +136,23 @@ export const RULE_NAME_MAX = MAX_PAYEE_CHARS;
 
 // ---- Text ----
 
-/** Text as conditions compare it: in any case, accents and repeated spaces
- *  ignored, "Ｃａｆé" the same as "cafe". */
+/** Apostrophes and quotes as a phone's keyboard types them (“smart”
+ *  punctuation), and their look-alikes, as banks write them: ’ is '. */
+const APOSTROPHES = /[\u2018\u2019\u201A\u201B\u2032\u02BC\u00B4\uFF07]/g;
+const QUOTES = /[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB\uFF02]/g;
+
+/** Text as conditions compare it: in any case, accents, repeated spaces and
+ *  the kind of apostrophe or quote ignored, "Ｃａｆé" the same as "cafe" and
+ *  "Trader Joe’s" as "TRADER JOE'S". */
 export function matchText(s: string): string {
-  return s.normalize('NFKD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return s
+    .replace(APOSTROPHES, "'")
+    .replace(QUOTES, '"')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 /** Text as an edit keeps it: Unicode-normalized, spaces collapsed, trimmed. */
@@ -242,8 +260,11 @@ export class RuleError extends Error {
   }
 }
 
-/** What an edit checks a rule's categories and tags against. */
-export type RuleContext = { ix: CategoryIndex; tags: TagSet | null };
+/** What an edit checks a rule's categories and tags against. `had` is the
+ *  tags a deleted one is dropped from rather than refused: the rule's own
+ *  (an edit of a rule saved with a tag deleted since), or 'any' (a preview,
+ *  whose actions don't decide what it matches). */
+export type RuleContext = { ix: CategoryIndex; tags: TagSet | null; had?: ReadonlySet<string> | 'any' };
 
 /** A category an edit names, by id: one the set has, following a merge to
  *  where it went, never one the read-only API made up. */
@@ -323,8 +344,15 @@ function checkActions(raw: unknown, ctx: RuleContext): RuleActions {
       throw new RuleError(`A rule adds at most ${MAX_RULE_TAGS} tags.`);
     }
     const live = new Set((ctx.tags?.tags ?? []).map((t) => t.id));
-    if (raw.add_tags.some((id) => !live.has(id))) throw new RuleError('That tag no longer exists. Reload to see your tags as they are.', 404);
-    if (raw.add_tags.length > 0) out.add_tags = [...new Set(raw.add_tags as string[])];
+    const kept: string[] = [];
+    for (const id of raw.add_tags as string[]) {
+      if (live.has(id)) kept.push(id);
+      // Deleted since the rule was saved with it: it comes out, as the
+      // deletion's sweep takes it out (lib/tag-delete.ts).
+      else if (ctx.had === 'any' || ctx.had?.has(id)) continue;
+      else throw new RuleError('That tag no longer exists. Reload to see your tags as they are.', 404);
+    }
+    if (kept.length > 0) out.add_tags = [...new Set(kept)];
   }
   if (raw.hide !== undefined && raw.hide !== null && raw.hide !== false) {
     if (raw.hide !== true) throw new RuleError('Say whether the rule hides what it matches.');
@@ -366,7 +394,7 @@ export function addRule(set: RuleSet, raw: unknown, ctx: RuleContext, newId: () 
 /** New conditions and actions for a rule, where it stands in the order. */
 export function editRule(set: RuleSet, id: unknown, raw: unknown, ctx: RuleContext, now: Date = new Date()): RuleSet {
   const r = findRule(set, id);
-  const input = checkRuleInput(raw, ctx);
+  const input = checkRuleInput(raw, { ...ctx, had: new Set(r.actions.add_tags ?? []) });
   const enabled = isRecord(raw) && typeof raw.enabled === 'boolean' ? raw.enabled : r.enabled;
   const next: Rule = { ...r, ...input, enabled, updated_at: now.toISOString() };
   return { ...set, rules: set.rules.map((x) => (x.id === r.id ? next : x)) };
@@ -427,6 +455,25 @@ export function ruleProblem(r: Rule, ix: CategoryIndex | null): string | null {
 
 /** A rule that does nothing: no action left (its tags were deleted). */
 export const doesNothing = (r: Rule): boolean => Object.keys(r.actions).length === 0;
+
+/** A rule with only the tags that exist: what the screens and the API show,
+ *  so a tag deleted while the rule was being saved (lib/tag-delete.ts) is
+ *  never shown, nor sent back by an edit of it. Nothing stored changes until
+ *  the rule is saved, or the tag's id is swept out. */
+export function withLiveTags(r: Rule, live: ReadonlySet<string>): Rule {
+  const tags = r.actions.add_tags;
+  if (!tags || tags.every((id) => live.has(id))) return r;
+  const kept = tags.filter((id) => live.has(id));
+  const actions: RuleActions = { ...r.actions, add_tags: kept };
+  if (kept.length === 0) delete actions.add_tags;
+  return { ...r, actions };
+}
+
+/** The ids of tags the rules add that aren't among `live`: deleted since a
+ *  rule was saved with them. */
+export function deadRuleTags(set: RuleSet | null, live: ReadonlySet<string>): string[] {
+  return [...new Set((set?.rules ?? []).flatMap((r) => r.actions.add_tags ?? []))].filter((id) => !live.has(id));
+}
 
 /** A rule with each category it names as it is known now, following a merge
  *  to where it went: what the screens and the API show, so a rule on a
@@ -661,10 +708,12 @@ export async function changeRules(ctx: Ctx, op: (set: RuleSet) => RuleSet): Prom
 }
 
 /** Takes deleted tags' ids out of every rule (lib/tag-delete.ts). Returns how
- *  many rules changed. Rules that can't be read are left as they are: no
- *  rule is applied while they can't be, and nothing shows a deleted tag. */
-export async function sweepRuleTags(ctx: Ctx, ids: readonly string[]): Promise<number> {
+ *  many rules changed, or null when the rules can't be read: they are left
+ *  as they are (no rule is applied while they can't be, and nothing shows a
+ *  deleted tag), and the deletion stays noted, to be swept once they can. */
+export async function sweepRuleTags(ctx: Ctx, ids: readonly string[]): Promise<number | null> {
   const report = await rulesStore.getReport(ctx);
+  if (report.unreadable || report.unrecognised) return null;
   if (!report.value) return 0;
   const before = report.value.rules.filter((r) => r.actions.add_tags?.some((t) => ids.includes(t))).length;
   if (before === 0) return 0;

@@ -16,6 +16,15 @@ import { TAG_COLORS, TAG_NAME_MAX, shownColor, type Tag } from '@/lib/tags';
 
 type Level = { at: 'list' } | { at: 'tag'; id: string } | { at: 'add' };
 
+/** The color an arrow key moves a radio group's choice to, around the
+ *  colors, or null for any other key. */
+export function colorAfterKey(color: string, key: string): string | null {
+  const by = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 0;
+  if (by === 0) return null;
+  const at = Math.max(0, TAG_COLORS.indexOf(color as (typeof TAG_COLORS)[number]));
+  return TAG_COLORS[(at + by + TAG_COLORS.length) % TAG_COLORS.length];
+}
+
 /** Sends one change; the tags and counts as they are after it, or why not. */
 async function change(body: Record<string, unknown>): Promise<{ ok: true; data: any } | { ok: false; error: string }> {
   try {
@@ -47,6 +56,9 @@ export default function TagsCard({
   const [name, setName] = useState('');
   const [color, setColor] = useState<string>('gray');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Why the tags couldn't be read as the drawer opened, so an empty list is
+  // never shown as no tags.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // The counts of what each tag is on, read as the drawer opens.
   useEffect(() => {
@@ -55,14 +67,21 @@ export default function TagsCard({
       return;
     }
     let live = true;
+    setLoadError(null);
     void fetch('/api/tags')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!live || !data) return;
+      .then(async (res) => {
+        const data = await res.json().catch(() => null);
+        if (!live) return;
+        if (!res.ok || !data) {
+          setLoadError(typeof data?.error === 'string' ? data.error : 'Your tags couldn’t be loaded. Try again later.');
+          return;
+        }
         if (data.counts && typeof data.counts === 'object') setCounts(data.counts);
         onChanged(data.tags);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (live) setLoadError('Nya could not be reached to load your tags. Check your connection and try again.');
+      });
     return () => {
       live = false;
     };
@@ -97,8 +116,17 @@ export default function TagsCard({
     if (then) go(then);
   }
 
+  // A radio group as the keyboard expects one: Tab reaches the chosen color,
+  // and the arrow keys move the choice (and the focus) around the colors.
+  const onColorKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const next = colorAfterKey(color, e.key);
+    if (next === null || busy) return;
+    e.preventDefault();
+    setColor(next);
+    e.currentTarget.querySelector<HTMLButtonElement>(`[data-color="${next}"]`)?.focus();
+  };
   const colorChoice = (
-    <div className="tag-colors" role="radiogroup" aria-label="Color">
+    <div className="tag-colors" role="radiogroup" aria-label="Color" onKeyDown={onColorKey}>
       {TAG_COLORS.map((c) => (
         <button
           key={c}
@@ -106,6 +134,8 @@ export default function TagsCard({
           role="radio"
           aria-checked={color === c}
           aria-label={c}
+          data-color={c}
+          tabIndex={color === c ? 0 : -1}
           className={`tag-color tag-${c}${color === c ? ' chosen' : ''}`}
           onClick={() => setColor(c)}
           disabled={busy}
@@ -135,7 +165,7 @@ export default function TagsCard({
               </button>
             </li>
           ))}
-          {tags.length === 0 && <li className="panel-note">No tags yet.</li>}
+          {tags.length === 0 && (loadError ? <li className="error">{loadError}</li> : <li className="panel-note">No tags yet.</li>)}
         </ul>
       </>
     );

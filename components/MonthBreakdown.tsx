@@ -82,11 +82,30 @@ export type Txn = {
   note?: string | null;
   excluded?: boolean | null;
   // As in lib/transactions.ts: the ids of the tags it carries (lib/tags.ts),
-  // the rules that match it (lib/rules.ts), and whether a rule hid it.
+  // the rules that match it (lib/rules.ts), whether a rule hid it, whether
+  // its category is a rule's, and the name it had before a rule named it.
   tags?: string[];
   rule_ids?: string[];
   excluded_by_rule?: true;
+  category_by_rule?: true;
+  name_before_rules?: string;
 };
+
+/** The name rules match a row by: the one it had before any rule named it. */
+export const nameForRules = (t: Pick<Txn, "name" | "name_before_rules">) => t.name_before_rules ?? t.name;
+
+/**
+ * What a transaction's detail offers about leaving it out of budgets and
+ * reports: the button to exclude it or put it back ("toggle"), or why not yet
+ * ("wait"; "wait-rule" for one a rule hides). A pending row gets a new id
+ * when it posts, and an exclusion or an include is kept by id: offered once
+ * it has posted, so it can't quietly lapse.
+ */
+export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_by_rule">): "toggle" | "wait" | "wait-rule" {
+  if (!t.pending) return "toggle";
+  if (t.excluded_by_rule) return "wait-rule";
+  return t.excluded === true ? "toggle" : "wait";
+}
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
@@ -721,7 +740,9 @@ export default function MonthBreakdown({
         {ruleOffer && onCreateRule && (
           <div className="rule-offer">
             <p className="panel-note" style={{ marginTop: 0 }}>
-              Do the same for every transaction named “{ruleOffer.t.name}”, past and future? A rule does it, and you can change or turn it off later.
+              Do the same for every transaction named “{nameForRules(ruleOffer.t)}”
+              {ruleOffer.t.name_before_rules !== undefined && ` (shown as “${ruleOffer.t.name}”)`}, past and future? A rule does it, and you can change or turn it off
+              later.
             </p>
             <div className="button-pair" style={{ marginTop: 0 }}>
               <button
@@ -900,15 +921,16 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            {/* A pending row gets a new id when it posts,
-                                and an exclusion is kept by id: offered once
-                                it has posted, so it can't quietly lapse. */}
-                            {onToggleExcluded && t.pending && t.excluded !== true && (
+                            {/* Offered once a pending row has posted
+                                (exclusionOffer), one a rule hides too. */}
+                            {onToggleExcluded && exclusionOffer(t) !== "toggle" && (
                               <div className="rename-hint">
-                                Once it posts, it can be excluded from budgets and reports.
+                                {exclusionOffer(t) === "wait-rule"
+                                  ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
+                                  : "Once it posts, it can be excluded from budgets and reports."}
                               </div>
                             )}
-                            {onToggleExcluded && (!t.pending || t.excluded === true) && (
+                            {onToggleExcluded && exclusionOffer(t) === "toggle" && (
                               <>
                                 <div className="rename-row">
                                   <button

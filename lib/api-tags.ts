@@ -7,9 +7,11 @@
 // accounts left out unless asked for, and a tag counted wherever it is on a
 // row, put there by the person, carried from an earlier account, or added by
 // a rule. Only tags that exist are ever named: one deleted is in no answer.
+// Tags that can't be read are a 409 (unreadable), never an empty list.
 
 import type { Ctx } from './containers';
 import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+import { readTagSet } from './tags';
 
 export type ApiTag = {
   id: string;
@@ -23,7 +25,8 @@ export type ApiTag = {
 };
 
 export async function readTags(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; tags: ApiTag[]; sources: ApiSource[]; notes: string[] }> {
-  const activity = await readActivity(ctx, !!opts.includeHidden);
+  // Strict: the read that answers 409 when the tags can't be read.
+  const [activity] = await Promise.all([readActivity(ctx, !!opts.includeHidden), readTagSet(ctx)]);
   const seen = new Map<string, { transactions: number; last_date: string | null }>();
   for (const t of activity.rows) {
     for (const id of t.tags ?? []) {

@@ -82,7 +82,7 @@ export default function TxnTagsNote({
         </button>
       </div>
       {suggestions.length > 0 && (
-        <div className="tag-suggestions" aria-label="Your tags">
+        <div className="tag-suggestions" role="group" aria-label="Your tags">
           {suggestions.map((tag) => (
             <button key={tag.id} type="button" className="tag-suggestion" onClick={() => onChangeTags({ add: [tag.id] })}>
               {tag.name}

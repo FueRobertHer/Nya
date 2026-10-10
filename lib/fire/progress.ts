@@ -70,13 +70,17 @@ export function currencyNote({ flows, assets }: Pick<FiInputs, 'flows' | 'assets
 }
 
 /** What the year's spending and income leave out, as the Plan's label says
- *  it: transactions the person excluded from budgets and reports, and those
- *  in another currency, by currency. Null for each when there are none. */
+ *  it: transactions the person excluded from budgets and reports, those a
+ *  rule hides, as the Activity tab tells them apart, and those in another
+ *  currency, by currency. Null for each when there are none. */
 export function spendingLeftOut(flows: TrailingFlows | null): { excluded: string | null; otherCurrencies: string | null } {
   if (!flows) return { excluded: null, otherCurrencies: null };
-  const n = flows.excludedCount;
+  const byRule = flows.hiddenCount ?? 0;
+  const byYou = flows.excludedCount - byRule;
+  const words = (n: number) => `${n} transaction${n === 1 ? '' : 's'}`;
+  const parts = [...(byYou > 0 ? [`${words(byYou)} you excluded from budgets and reports`] : []), ...(byRule > 0 ? [byYou > 0 ? `${byRule} a rule hides` : `${words(byRule)} a rule hides`] : [])];
   return {
-    excluded: n > 0 ? `Leaves out ${n} transaction${n === 1 ? '' : 's'} you excluded from budgets and reports.` : null,
+    excluded: parts.length > 0 ? `Leaves out ${parts.join(' and ')}.` : null,
     otherCurrencies: leftOutText(flows.leftOut, flows.currency, { where: 'your spending or savings' }),
   };
 }

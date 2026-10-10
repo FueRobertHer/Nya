@@ -91,6 +91,13 @@ export type ManualTxn = TxnFields & {
    *  it made none. Kept so the same add sent again never moves the balance
    *  twice, nor leaves the row and the balance apart. */
   balance_update?: { from: number; to: number; account_id?: string } | null;
+  /** On an imported or SimpleFIN row: the name the person gave it in the app
+   *  (an edit), kept while it is the row's name. A rule's name (lib/rules.ts)
+   *  never replaces it; it does replace a name that came with the row, as it
+   *  replaces a bank's. A row whose name became another since (an import
+   *  that replaced it with its file's version) is renamed by rules again.
+   *  Absent on a row entered by hand, whose name is always the person's. */
+  named?: string;
   created_at: string;
   /** When it was last changed in the app. An import that replaces it with
    *  its file's version, and the undo of that, leave it as it was: neither is
@@ -142,6 +149,7 @@ export function isManualTxn(v: unknown): v is ManualTxn {
     (v.source_key === undefined || (typeof v.source_key === 'string' && v.source_key.length <= 64)) &&
     (v.transaction_code === undefined || v.transaction_code === null || (typeof v.transaction_code === 'string' && v.transaction_code.length <= 40)) &&
     isBalanceUpdate(v.balance_update) &&
+    (v.named === undefined || (typeof v.named === 'string' && v.named.length <= 1000)) &&
     isInstant(v.created_at) &&
     isInstant(v.updated_at)
   );
@@ -270,6 +278,9 @@ export async function editManualTxn(
     // Deleted or moved by another device since it was found: nothing to change.
     if (!book || !row) return new Map();
     const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
+    // A name the person gives a row that came with one (imported, or from
+    // SimpleFIN) is theirs: no rule renames it (ManualTxn.named).
+    if (changes.name !== undefined && changes.name !== row.name && row.source !== 'manual') next.named = changes.name;
     const units = amountUnitsError(next.amount, next.currency);
     if (units) throw new InvalidTxnError(units);
     saved = next;
@@ -374,8 +385,9 @@ function institutionsOf(accounts: ManualAccount[]): Map<string, string> {
   return out;
 }
 
-/** One manual row as the Activity tab shows a transaction. */
-function toDisplay(row: ManualTxn, account: ManualAccount, institution: string): Txn {
+/** One manual row as the Activity tab shows a transaction. `layered`: for
+ *  the read layer (lib/txn-layers.ts), with what it reads and never sends. */
+function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, layered = false): Txn {
   return {
     transaction_id: row.id,
     date: row.date,
@@ -393,6 +405,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string):
     source: row.source,
     account_id: row.account_id,
     note: row.note,
+    ...(layered && row.named !== undefined && row.named === row.name ? { own_name: true as const } : {}),
   };
 }
 
@@ -437,7 +450,7 @@ export function manualRowsForDisplay(
         (a.row.created_at < b.row.created_at ? 1 : a.row.created_at > b.row.created_at ? -1 : 0) ||
         (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0)
     )
-    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual'));
+    .map(({ row, account }) => toDisplay(row, account, institutionOf.get(account.account_id) ?? 'Manual', true));
 }
 
 /**

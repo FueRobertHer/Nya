@@ -79,7 +79,7 @@ import {
   type DirectoryEntry,
   type Link,
 } from './links';
-import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, type ManualAccount } from './manual';
+import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, normalizeInstitutionName, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -1536,7 +1536,9 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // A manual row carries nothing from an earlier account, and its account is
   // never linked: no links needed.
   const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
-  const institutionOf = new Map(doc.manual_accounts.map((m) => [m.account_id, m.institution_name]));
+  // Each account's institution as the Activity tab shows it (lib/manual.ts
+  // toInstitutions), which a rule's institution condition reads.
+  const institutionOf = new Map(doc.manual_accounts.map((m) => [m.account_id, normalizeInstitutionName(m.institution_name) || 'Manual']));
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
     ...manual.map((r) => ({
@@ -1544,7 +1546,7 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
       time: '',
       id: r.id,
       cells: () => {
-        const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? null);
+        const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? 'Manual');
         return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filing.filed(r, l.rule_category), l);
       },
     })),

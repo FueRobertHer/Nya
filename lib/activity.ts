@@ -48,15 +48,39 @@ import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type Older
 import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
-import { getEffectiveHidden, type Link } from './links';
+import { getEffectiveHidden, liveAccountIds, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
 import { filingSet, fileRows } from './category-store';
 import { indexTaxonomy, type Taxonomy } from './categories';
 import { liveTagIds, tagsForDisplay, type TagSet } from './tags';
 import { applyLayers } from './txn-layers';
-import { compileRules, rulesForDisplay, type RuleSubject } from './rules';
-import { readLinks, resolveId } from './link-core';
+import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
+import { effectiveLinks, getLinks, resolveId } from './link-core';
+
+/**
+ * How a rule's account condition knows an account now (lib/rules.ts): through
+ * the links that apply, as every reader follows them (lib/link-core.ts
+ * effectiveLinks: a link whose old id is live again is passed over, or two
+ * live accounts would be folded into one). Read only when a rule reads an
+ * account (`needed`). When the links or the live accounts can't be read, a
+ * rule matches only the account it names, and a note says so.
+ */
+async function ruleAccounts(ctx: Ctx, needed: boolean): Promise<{ account?: (id: string) => string; note: string | null }> {
+  if (!needed) return { note: null };
+  try {
+    const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+    const applied = effectiveLinks(links, live);
+    return applied.size ? { account: (id: string) => resolveId(id, applied), note: null } : { note: null };
+  } catch (err) {
+    console.error('activity: account links could not be read for rules', err instanceof Error ? err.name : 'error');
+    return { note: "Your account links couldn't be read, so a rule on an account applies only to that account's own transactions until they can be, not to an earlier account's linked to it." };
+  }
+}
+
+/** Whether any rule that is on is one `what` picks out (one that names an
+ *  account, say). */
+const rulesRead = (set: RuleSet | null, what: (r: RuleSet['rules'][number]) => boolean) => !!set?.rules.some((r) => r.enabled && what(r));
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -335,10 +359,17 @@ export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
   hidden: Set<string>,
-  opts: { since?: string; grow?: boolean; subjects?: Map<string, RuleSubject> } = {}
+  /** `subjects`, with `followLinks` for a rule being made that reads an
+   *  account: for a rule's preview (app/api/rules/preview). */
+  opts: { since?: string; grow?: boolean; subjects?: Map<string, RuleSubject>; followLinks?: boolean } = {}
 ): Promise<{
   transactions: Txn[];
   notes: string[];
+  /** When the tags couldn't be read, the note that says so: for a reader that
+   *  shows tags (the app, the read-only API), not one that doesn't (reports). */
+  tags_note: string | null;
+  /** How an account is known now, as the rules followed it (ruleAccounts). */
+  accountOf?: (id: string) => string;
   incomplete: NonNullable<PlaidPayload['incomplete']>;
   history: OlderTxn[];
   /** The manual accounts whose rows couldn't be read (lib/manual-txns.ts
@@ -386,6 +417,7 @@ export async function finishActivity(
         logo_url: t.logo_url,
         source: t.source,
         account_ref: t.account_id,
+        ...(t.own_name ? { own_name: true as const } : {}),
       })),
   ];
   // The categories first, which the rules read; then the rules, what was
@@ -394,19 +426,28 @@ export async function finishActivity(
   const rows = [...transactions, ...candidates];
   const filed = await filingSet(ctx, rows, { grow: !!opts.grow });
   const ix = indexTaxonomy(filed.taxonomy);
-  // Links only for a rule on an account, which follows them; read for display,
-  // so one that can't be read is passed over (the rule matches the id it names).
-  const onAccount = ruleRead.set?.rules.some((r) => r.enabled && r.conditions.some((c) => c.field === 'account'));
-  const links = onAccount ? await readLinks(ctx).then((r) => r.links, () => new Map()) : null;
-  const account = links?.size ? (id: string) => resolveId(id, links) : undefined;
+  const onAccount = rulesRead(ruleRead.set, (r) => r.conditions.some((c) => c.field === 'account'));
+  const links = await ruleAccounts(ctx, onAccount || !!opts.followLinks);
+  const account = links.account;
   const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
   applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects });
   fileRows(ix, rows);
+  // What keeps rules from applying as they say, beside the rules' own note:
+  // links that couldn't be read for a rule on an account, and categories that
+  // couldn't be read for a rule naming one (left out whole until they can be).
+  const ruleNotes = [
+    ...(onAccount && links.note ? [links.note] : []),
+    ...(filed.unreadable && rulesRead(ruleRead.set, (r) => ruleCategories(r).length > 0)
+      ? ["Rules that name a category aren't applied until your categories can be read."]
+      : []),
+  ];
   // The institutions whose rows aren't all here (the banks' part: a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
-    notes: [...plaid.notes, ...manual.notes, ...(tagRead.note ? [tagRead.note] : []), ...(ruleRead.note ? [ruleRead.note] : []), ...filed.notes],
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes],
+    tags_note: tagRead.note,
+    ...(account ? { accountOf: account } : {}),
     incomplete: plaid.incomplete ?? [],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.

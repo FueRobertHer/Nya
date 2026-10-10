@@ -186,9 +186,11 @@ export type TrailingFlows = {
   scaled: boolean;
   /** Transactions counted (transfers and card payments left out). */
   count: number;
-  /** Transactions in the window the person excluded, counted in none of
-   *  the figures. */
+  /** Transactions in the window the person excluded or a rule hides
+   *  (lib/rules.ts), counted in none of the figures; and of them, how many a
+   *  rule hides (absent: none). */
   excludedCount: number;
+  hiddenCount?: number;
   /** The currency the figures are in: the one most of them are in. */
   currency: string | null;
   /** Transactions that would count but are in another currency: in none of
@@ -236,6 +238,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
   };
   let count = 0;
   let excludedCount = 0;
+  let hiddenCount = 0;
   let earliest = end;
   let largestRefund: TrailingFlows['largestRefund'] = null;
   for (const t of inWindow) {
@@ -243,6 +246,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     if (d < earliest) earliest = d;
     if (isExcluded(t)) {
       excludedCount++;
+      if (t.excluded_by_rule) hiddenCount++;
       continue;
     }
     const flow = planFlow(t);
@@ -292,6 +296,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     scaled: scale !== 1,
     count,
     excludedCount,
+    hiddenCount,
     currency,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
   };

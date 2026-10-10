@@ -26,7 +26,7 @@ import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITH
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
-import MonthBreakdown, { type Txn } from './MonthBreakdown';
+import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
 import { useTransactionEdits } from './transaction-edits';
@@ -2416,8 +2416,16 @@ export default function Dashboard({
                 tags={tagList.tags}
                 onChangeTags={txnEdits.changeTags}
                 onSaveNote={txnEdits.saveNote}
+                // Prefilled from the row as rules read it: the name it had
+                // before any rule named it, which a new rule's condition
+                // matches (a rule never reads another's changes).
                 onCreateRule={(t, category_id) =>
-                  rules.open(newDraft({ conditions: [{ field: 'name', op: 'equals', value: t.name, value2: '', direction: '' }], set_category: category_id ?? t.category_id ?? '' }))
+                  rules.open(
+                    newDraft({
+                      conditions: [{ field: 'name', op: 'equals', value: nameForRules(t), value2: '', direction: '' }],
+                      set_category: category_id ?? t.category_id ?? '',
+                    })
+                  )
                 }
                 ruleSentenceOf={ruleSentenceOf}
                 actionError={txnEdits.error}

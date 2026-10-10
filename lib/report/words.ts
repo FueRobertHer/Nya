@@ -193,13 +193,19 @@ export function caveatLines(report: Report, day: DayFormat): string[] {
 }
 
 /** What the totals leave out, as the Activity tab says it under a month: the
- *  transfers, what the person excluded, what couldn't be read, and other
- *  currencies. */
+ *  transfers, what the person excluded and what a rule hides, what couldn't
+ *  be read, and other currencies. */
 export function totalsNote(report: Pick<Report, 'totals'>): string {
   const t = report.totals;
+  const byRule = t.hidden_by_rule;
+  const byYou = t.excluded - byRule;
+  const left = [
+    ...(byYou > 0 ? [`${plural(byYou, 'transaction')} you excluded from budgets and reports`] : []),
+    ...(byRule > 0 ? [byYou > 0 ? `${byRule} a rule hides` : `${plural(byRule, 'transaction')} a rule hides`] : []),
+  ];
   const parts = [
     `Transfers, cash withdrawals and loan payments (paying a card off among them) aren’t counted as money in or out${
-      t.excluded > 0 ? `, and ${plural(t.excluded, 'transaction')} you excluded from budgets and reports ${t.excluded === 1 ? 'is' : 'are'} left out` : ''
+      left.length > 0 ? `, and ${left.join(' and ')} ${t.excluded === 1 ? 'is' : 'are'} left out` : ''
     }.`,
   ];
   if (t.exclusion_unknown > 0) {
@@ -220,13 +226,14 @@ export function sourceName(source: string): string {
 /** The words for how an appendix row stands in the totals, or null when it
  *  counts as any other. */
 export function appendixStatus(row: {
-  not_counted: 'excluded' | 'transfer' | 'currency' | null;
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
   pending: boolean;
   exclusion_unknown: boolean;
   currency: string | null;
 }): string | null {
   const parts: string[] = [];
   if (row.not_counted === 'excluded') parts.push('Not counted: you excluded it');
+  if (row.not_counted === 'hidden') parts.push('Not counted: hidden by a rule');
   if (row.not_counted === 'transfer') parts.push('Not counted: a transfer or loan payment');
   if (row.not_counted === 'currency') parts.push(`Not counted: in ${row.currency}`);
   if (row.pending) parts.push('Pending');
