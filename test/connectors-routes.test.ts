@@ -205,6 +205,62 @@ describe('connecting through the routes', () => {
     expect(body.connections[0].accounts.find((a: any) => a.name === 'Visa')).toMatchObject({ balance: 432.1, sign: 'owed_positive', needs_sign: false });
   });
 
+  test('keeping a card whose sign waits is refused, changing nothing, until its answer comes with the request: disconnect and stop alike', async () => {
+    server.accounts[1].balance = '432.10';
+    // A third account no answer ever held a balance for: nothing to keep.
+    server.accounts.push(fakeAccount({ id: 'NEW', name: 'New savings', balance: '5.00' }));
+    const id = await connectAndTrack();
+    let { body } = await list();
+    const visa = body.connections[0].accounts.find((a: any) => a.name === 'Visa');
+    const rowsBefore = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions.length;
+
+    // Stopping it, keeping: refused, and nothing changed.
+    const stop = await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [visa.account_id], keep: true } });
+    expect([stop.status, stop.body.error]).toEqual([409, expect.stringContaining('Say how to read Visa first')]);
+    // Disconnecting, keeping: refused, and nothing changed.
+    const gone = await call(connectors.DELETE, 'DELETE', { connection_id: id });
+    expect([gone.status, gone.body.error]).toEqual([409, expect.stringContaining('Say how to read Visa first')]);
+    ({ body } = await list());
+    expect(body.connections[0].accounts.map((a: any) => a.name).sort()).toEqual(['Checking', 'Visa']);
+    expect((await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions.length).toBe(rowsBefore);
+
+    // A third account tracked, whose balance never came (as when its first
+    // fetch was out of requests): nothing to keep, and said so.
+    const { connectorAccountsStore: store } = await import('@/lib/connectors/store');
+    const { trackAccounts } = await import('@/lib/connectors/manage');
+    await trackAccounts(ctx, id, [{ remote_id: 'NEW', type: 'depository' }]);
+    const newer = [...(await store.getAll(ctx)).values()].find((a) => a.remote_id === 'NEW')!;
+    await store.set(ctx, newer.account_id, { ...newer, reported_balance: null });
+    // With the card's answer in the same request, it is kept, as what is owed.
+    const kept = await call(connectors.DELETE, 'DELETE', { connection_id: id, sign: [{ account_id: visa.account_id, sign: 'owed_positive' }] });
+    expect(kept.status).toBe(200);
+    expect(kept.body).toMatchObject({ kept: 2, removed: 1, nothing_to_keep: ['New savings'] });
+    const { getManualAccounts } = await import('@/lib/manual');
+    const manual = await getManualAccounts(ctx);
+    expect(manual.map((m) => [m.name, m.type, m.balance]).sort()).toEqual([
+      ['Checking', 'depository', 1500.25],
+      ['Visa', 'credit', 432.1],
+    ]);
+    // Its transactions stay with it.
+    const after = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions;
+    expect(after.filter((t: any) => t.account_id === visa.account_id).length).toBeGreaterThan(0);
+  });
+
+  test('stopping a card whose sign waits, keeping it, takes its answer in the same request', async () => {
+    server.accounts[1].balance = '432.10';
+    const id = await connectAndTrack();
+    const visa = (await list()).body.connections[0].accounts.find((a: any) => a.name === 'Visa');
+    const stopped = await call(accountsRoute.PUT, 'PUT', {
+      connection_id: id,
+      sign: [{ account_id: visa.account_id, sign: 'as_reported' }],
+      stop: { account_ids: [visa.account_id], keep: true },
+    });
+    expect([stopped.status, stopped.body.kept, stopped.body.nothing_to_keep]).toEqual([200, 1, []]);
+    const { getManualAccounts } = await import('@/lib/manual');
+    // Money held, as the person said: a credit of 432.10 on the card.
+    expect((await getManualAccounts(ctx)).map((m) => [m.name, m.balance])).toEqual([['Visa', -432.1]]);
+  });
+
   test('Refresh is refused once the day’s requests are spent, saying when they come back', async () => {
     const id = await connectAndTrack();
     let last = await call(refreshRoute.POST, 'POST', { connection_id: id });

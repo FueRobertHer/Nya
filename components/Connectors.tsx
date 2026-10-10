@@ -93,6 +93,22 @@ export function reportedWords(balance: number, currency: string): string {
 }
 
 const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
+
+/** When the day's requests to SimpleFIN come back, in words (" in about 5
+ *  hours"), or "" when that isn't known. */
+export function backIn(requests: { resets_in_seconds: number } | null | undefined): string {
+  if (!requests || !(requests.resets_in_seconds > 0)) return '';
+  const hours = Math.max(1, Math.ceil(requests.resets_in_seconds / 3600));
+  return ` in about ${hours} hour${hours === 1 ? '' : 's'}`;
+}
+
+/** What keeping accounts left out, in words: those no answer ever held a
+ *  balance for had nothing to keep, and went. */
+export function nothingToKeep(list: string[] | undefined): string {
+  if (!list || list.length === 0) return '';
+  const one = list.length === 1;
+  return ` Removed ${names(list)}: no balance had come for ${one ? 'it' : 'them'} yet, so there was nothing to keep.`;
+}
 /** "Sep 12" from a YYYY-MM-DD, at local midnight. */
 const calendarDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -350,11 +366,17 @@ export function ChooseView({
                       </div>
                     )}
                     {!o.currency && <div className="type-tag">In a currency Nya doesn’t know ({o.currency_text.slice(0, 40)}): can’t be tracked</div>}
-                    {o.elsewhere && <div className="type-tag">Tracked through your other connection ({o.elsewhere}): not tracked twice</div>}
+                    {o.elsewhere?.certain && <div className="type-tag">Tracked through your other connection ({o.elsewhere.host}): not tracked twice</div>}
+                    {o.elsewhere && !o.elsewhere.certain && (
+                      <div className="type-tag">
+                        Looks like the account your other connection ({o.elsewhere.host}) tracks: the same bank, name and balance. Tracked twice it would be counted twice, so
+                        choose a kind only if it is another account.
+                      </div>
+                    )}
                   </div>
                   <select
                     value={choices[o.remote_id] ?? ''}
-                    disabled={busy || !o.currency || !!o.elsewhere}
+                    disabled={busy || !o.currency || !!o.elsewhere?.certain}
                     onChange={(e) => onChoose(o.remote_id, e.target.value as Choice)}
                     aria-label={`Track ${o.name}`}
                   >
@@ -406,6 +428,12 @@ type Step =
   | { kind: 'sign'; connection_id: string; label: string; accounts: AccountView[]; lead: string | null }
   | { kind: 'working'; text: string }
   | { kind: 'done'; text: string };
+
+/** The tracked accounts being stopped whose sign waits for an answer: kept,
+ *  they need it first (lib/connectors/manage.ts releaseAccounts). */
+function stoppingUnsure(s: Extract<Step, { kind: 'choose' }>, choices: Record<string, Choice>): AccountView[] {
+  return s.tracked.filter((a) => a.needs_sign && choices[a.account_id] === 'stop');
+}
 
 /** The sign step for a connection, when an account of it needs one: what
  *  was done just before (`lead`) said first. */
@@ -551,7 +579,10 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     const f = conn?.last_fetch;
     const listed = f && !f.ok ? `Connected, but SimpleFIN didn’t list the accounts: ${f.message} Try again with Refresh on its card.` : null;
     // Spent requests mean no answer yet, never that the new token failed.
-    const later = res.data.skipped === 'budget' ? ' Nya has used today’s requests to SimpleFIN, so your accounts update with the next daily update.' : '';
+    const later =
+      res.data.skipped === 'budget'
+        ? ` Nya has used today’s requests to SimpleFIN; more are available${backIn(res.data.requests)}, and Refresh on its card then brings your accounts up to date.`
+        : '';
     if (connection_id) {
       onChanged(false);
       return setStep({ kind: 'done', text: listed ?? `Connected again. Your accounts carry on with their history.${later}` });
@@ -559,7 +590,10 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     onChanged(false);
     const offers = res.data.offers as OfferView[];
     if (res.data.skipped === 'budget') {
-      return setStep({ kind: 'done', text: 'Connected. Nya has used today’s requests to SimpleFIN, so choose your accounts on its card after the next daily update.' });
+      return setStep({
+        kind: 'done',
+        text: `Connected, but Nya has used today’s requests to SimpleFIN, so it couldn’t list your accounts yet. More are available${backIn(res.data.requests)}: then Refresh on its card lists them to choose from.`,
+      });
     }
     if (listed || offers.length === 0) return setStep({ kind: 'done', text: listed ?? 'Connected, but SimpleFIN listed no accounts. Add some in SimpleFIN Bridge, then choose them here.' });
     setChoices(guesses(offers));
@@ -574,23 +608,30 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     });
     const stop = s.tracked.filter((a) => choices[a.account_id] === 'stop').map((a) => a.account_id);
     if (track.length + retype.length + stop.length === 0) return close();
+    // A card or loan kept while its sign waits needs its answer first (it comes in the same request).
+    const sign = keep ? s.tracked.flatMap((a) => (choices[a.account_id] === 'stop' && a.needs_sign && signs[a.account_id] ? [{ account_id: a.account_id, sign: signs[a.account_id] }] : [])) : [];
     setBusy(true);
     setError('');
     const res = await send('/api/connectors/accounts', 'PUT', {
       connection_id: s.connection_id,
       ...(track.length ? { track } : {}),
       ...(retype.length ? { retype } : {}),
+      ...(sign.length ? { sign } : {}),
       ...(stop.length ? { stop: { account_ids: stop, keep } } : {}),
     });
     setBusy(false);
     if (!res.ok) return setError(res.error);
     onChanged(track.length > 0 || stop.length > 0 || retype.length > 0);
     const parts: string[] = [];
-    if (track.length) parts.push(`Tracking ${track.length} account${track.length === 1 ? '' : 's'}: the last 90 days are in, and older transactions arrive over the next few nights.`);
-    if (res.data.skipped === 'budget') parts.push('Nya has used today’s requests to SimpleFIN, so their balances come with tomorrow’s update.');
+    if (track.length) parts.push(`Tracking ${track.length} account${track.length === 1 ? '' : 's'}: the last three months are in, and older transactions arrive over the next few nights.`);
+    if (res.data.skipped === 'budget') {
+      parts.push(`Nya has used today’s requests to SimpleFIN, so their balances come once more are available${backIn(res.data.requests)}: Refresh on its card then, or the daily update brings them.`);
+    }
     if (retype.length) parts.push(`Changed what ${retype.length === 1 ? 'one account is' : `${retype.length} accounts are`}.`);
     if (res.data.kept) parts.push(`Kept ${res.data.kept} as manual account${res.data.kept === 1 ? '' : 's'}.`);
-    if (res.data.removed) parts.push(`Removed ${res.data.removed}.`);
+    const empty = res.data.nothing_to_keep as string[] | undefined;
+    if (keep && empty?.length) parts.push(nothingToKeep(empty).trim());
+    else if (res.data.removed) parts.push(`Removed ${res.data.removed}.`);
     // A card or loan reported as money held is asked about at once.
     const next = signStep(res.data.connection as ConnectionView | null, parts.join(' ') || null);
     if (next) return setStep(next);
@@ -614,15 +655,18 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   };
 
   const submitDisconnect = async (s: Extract<Step, { kind: 'disconnect' }>) => {
+    // A card or loan kept while its sign waits needs its answer first (it comes in the same request).
+    const sign = keep ? s.accounts.flatMap((a) => (a.needs_sign && signs[a.account_id] ? [{ account_id: a.account_id, sign: signs[a.account_id] }] : [])) : [];
     setBusy(true);
     setError('');
-    const res = await send('/api/connectors', 'DELETE', { connection_id: s.connection_id, keep });
+    const res = await send('/api/connectors', 'DELETE', { connection_id: s.connection_id, keep, ...(sign.length ? { sign } : {}) });
     setBusy(false);
     if (!res.ok) return setError(res.error);
     onChanged(true);
+    const kept = keep ? `${res.data.kept} account${res.data.kept === 1 ? ' is' : 's are'} now manual.${nothingToKeep(res.data.nothing_to_keep)}` : `${res.data.removed} account${res.data.removed === 1 ? '' : 's'} removed.`;
     setStep({
       kind: 'done',
-      text: `Disconnected: Nya deleted its access and stops asking. ${keep ? `${res.data.kept} account${res.data.kept === 1 ? ' is' : 's are'} now manual.` : `${res.data.removed} account${res.data.removed === 1 ? '' : 's'} removed.`} SimpleFIN still lists Nya as an app until you remove it there.`,
+      text: `Disconnected: Nya deleted its access and stops asking. ${kept} SimpleFIN still lists Nya as an app until you remove it there.`,
     });
   };
 
@@ -673,12 +717,15 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             onChoose={(id, c) => setChoices((all) => ({ ...all, [id]: c }))}
             onKeep={setKeep}
           />
+          {keep && stoppingUnsure(view, choices).length > 0 && (
+            <SignView label={view.label} accounts={stoppingUnsure(view, choices)} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
+          )}
           {error && <div className="error">{error}</div>}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button onClick={() => submitChoices(view)} disabled={busy}>
+            <button onClick={() => submitChoices(view)} disabled={busy || (keep && stoppingUnsure(view, choices).some((a) => !signs[a.account_id]))}>
               {busy ? 'Saving…' : 'Save'}
             </button>
           </div>
@@ -705,6 +752,15 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
               </span>
             </label>
           </fieldset>
+          {keep && view.accounts.some((a) => a.needs_sign) && (
+            <SignView
+              label={view.label}
+              accounts={view.accounts.filter((a) => a.needs_sign)}
+              signs={signs}
+              busy={busy}
+              onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))}
+            />
+          )}
           <p className="panel-note">
             Type <strong>{view.label}</strong> to confirm. To end its access on {view.label}’s side too, remove Nya in your {view.label} account.
           </p>
@@ -717,7 +773,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button className="danger" onClick={() => submitDisconnect(view)} disabled={busy || confirm.trim().toLowerCase() !== view.label.toLowerCase()}>
+            <button
+              className="danger"
+              onClick={() => submitDisconnect(view)}
+              disabled={busy || confirm.trim().toLowerCase() !== view.label.toLowerCase() || (keep && view.accounts.some((a) => a.needs_sign && !signs[a.account_id]))}
+            >
               {busy ? 'Disconnecting…' : 'Disconnect'}
             </button>
           </div>

@@ -22,10 +22,16 @@
 // side would count, as spending on one account and income on the other. So
 // when two of the person's connector accounts hold an exact opposite pair (the
 // same amount out of one and into the other, in one currency, within
-// TRANSFER_DAYS), neither categorized by the person, both are shown as a
-// transfer (transaction_code 'transfer', lib/spending.ts): left out of every
-// total, as a bank's transfers are. Worked out each time the rows are read,
-// never stored, so a category the person gives either one wins.
+// TRANSFER_DAYS), neither categorized by the person, and the money leaves a
+// checking or savings account (a card payment, a loan payment, a move
+// between cash accounts: never a purchase on a card matched with a deposit
+// elsewhere, which is how an unrelated charge and an unrelated deposit of the
+// same amount would look), both are shown as a transfer (transaction_code
+// 'transfer', lib/spending.ts): left out of every total, as a bank's
+// transfers are, and marked as worked out from the amounts on the Activity
+// tab, where a wrong pair is seen and given a category. Worked out each time
+// the rows are read, never stored, so a category the person gives either one
+// wins.
 //
 // ONE BOOK PER ACCOUNT. A map store on the storage seam (lib/repo.ts), keyed
 // by the manual account's id, each value that account's rows, compressed: the
@@ -430,15 +436,19 @@ const dayIndex = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86
 /**
  * The ids of connector rows that are one side of an exact opposite pair
  * between two connector accounts (see the header): each row money out (a
- * positive amount) is paired with the nearest unpaired row of the opposite
+ * positive amount) of a checking or savings account (`typeOf` gives each
+ * account's type) is paired with the nearest unpaired row of the opposite
  * amount and the same currency on another such account, within TRANSFER_DAYS,
  * oldest first. Only rows nobody categorized take part. Pure.
  */
-export function connectorTransfers(rows: readonly ManualTxn[]): Set<string> {
+export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): Set<string> {
   const candidates = rows.filter((r) => isConnectorRow(r) && r.category === null && !r.transaction_code && r.amount !== 0);
   const ins = new Map<string, ManualTxn[]>();
   for (const r of candidates) if (r.amount < 0) ins.set(`${r.currency}|${-r.amount}`, [...(ins.get(`${r.currency}|${-r.amount}`) ?? []), r]);
-  const outs = candidates.filter((r) => r.amount > 0).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1));
+  // Money out of cash only: a purchase on a card is never one side.
+  const outs = candidates
+    .filter((r) => r.amount > 0 && typeOf.get(r.account_id) === 'depository')
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1));
   const paired = new Set<string>();
   for (const o of outs) {
     let best: ManualTxn | null = null;
@@ -516,7 +526,10 @@ export function manualRowsForDisplay(
   }
   // Paired across every account, hidden ones too, so the side shown never
   // counts alone because its other side is hidden.
-  const transfers = connectorTransfers([...byId.values()].map((x) => x.row));
+  const transfers = connectorTransfers(
+    [...byId.values()].map((x) => x.row),
+    new Map(accounts.map((a) => [a.account_id, a.type]))
+  );
   return [...byId.values()]
     .filter(({ account }) => !opts.hidden.has(account.account_id))
     .sort(

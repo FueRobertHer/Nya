@@ -99,7 +99,7 @@ import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
-import { getKeptAccounts } from './kept-accounts';
+import { getKeptAccounts, heldAccountIds } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
@@ -404,9 +404,11 @@ export type ConnectionChange = { label?: unknown; accounts?: Record<string, unkn
  * Saves a change to one of my connections, all of it or none: everything is
  * checked before anything is written. Every account must be one I can share
  * now; a share on an account I've hidden stays as it was (paused, not ended),
- * since the settings don't show it. Sharing nothing ends the share and its end
- * date, which then isn't checked: taking everything back never fails on a
- * date.
+ * since the settings don't show it, as does one on an account a connector
+ * feeds that has no balance to count just now (lib/kept-accounts.ts
+ * heldAccountIds: its first balance, or my answer about a card's sign, is
+ * still to come). Sharing nothing ends the share and its end date, which then
+ * isn't checked: taking everything back never fails on a date.
  */
 export async function saveConnection(ctx: Ctx, me: string, id: string, change: ConnectionChange, now: number = Date.now()): Promise<void> {
   const c = await connectionOf(me, id);
@@ -428,14 +430,18 @@ async function nextShare(ctx: Ctx, me: string, c: Conn, change: ConnectionChange
   const current = c.shares[me];
   let accounts: Record<string, Level> = current?.accounts ?? {};
   if (change.accounts !== undefined) {
-    const [shareable, { hidden }] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx)]);
+    const [shareable, { hidden }, held] = await Promise.all([shareableAccounts(ctx), getEffectiveHidden(ctx), heldAccountIds(ctx)]);
     const allowed = new Set(shareable.map((a) => a.id));
     const clean: Record<string, Level> = {};
-    for (const [acct, level] of Object.entries(current?.accounts ?? {})) if (hidden.has(acct)) clean[acct] = level;
+    // Paused, not ended: a hidden account's share, and that of an account a
+    // connector feeds that is only held (no balance to count just now), which
+    // the list to choose from can't show, so an edit never drops it.
+    const paused = (acct: string) => hidden.has(acct) || held.has(acct);
+    for (const [acct, level] of Object.entries(current?.accounts ?? {})) if (paused(acct)) clean[acct] = level;
     for (const [acct, level] of Object.entries(change.accounts ?? {})) {
       if (level === null || level === 'none') continue;
       if (!isLevel(level)) throw new SharingRefused(`Unknown level for ${acct}.`);
-      if (hidden.has(acct) && acct in clean) continue; // paused: kept as it was
+      if (paused(acct) && acct in clean) continue; // paused: kept as it was
       if (!allowed.has(acct)) throw new SharingRefused('One of those accounts can’t be shared (hidden, or no longer yours).');
       clean[acct] = level;
     }

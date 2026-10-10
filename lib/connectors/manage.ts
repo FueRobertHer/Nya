@@ -19,11 +19,14 @@
 // see lib/connectors/institutions.ts), chosen inside the one compare-and-set
 // on the connection entry, so the same account tracked from two devices at
 // once is one account. One another connection already tracks (the same id on
-// the same host, or the same bank and account name) is refused, saying why:
-// tracked twice it would be counted twice. Its history is then fetched
-// afresh: the recent window at once, the older windows over the following
-// nights. A card or a loan whose balance comes positive waits for the person
-// to say how to read it (confirmSigns).
+// the same host) is refused, saying why: tracked twice it would be counted
+// twice. Names are never compared on the same host, where two people's own
+// "Checking" are two accounts; on another host only a likely match can be
+// told (the same bank, name and balance), which the screens say, leaving the
+// choice to the person. Its history is then fetched afresh: the recent window
+// at once, the older windows over the following nights. A card or a loan
+// whose balance comes positive waits for the person to say how to read it
+// (confirmSigns).
 //
 // LETTING GO, of one account or of the whole connection (a disconnect),
 // follows the rules of removing a Plaid connection: nothing Nya recorded of
@@ -32,7 +35,11 @@
 //     balance SimpleFIN last reported (in its currency), with its
 //     transactions, history, hidden state, goals and shares; from then on it
 //     is updated by hand, as any manual account is. One no answer ever held a
-//     balance for has nothing to keep, and goes;
+//     balance for has nothing to keep, and goes, named in the answer. A card
+//     or a loan whose positive balance waits for the person to say how to read
+//     it is never lost to that rule: keeping it is refused, changing nothing,
+//     until they answer (the screens ask in the same step, and send the answer
+//     with the request);
 //   - remove: the account and its transactions (and what was said about
 //     them) are deleted. Its past balances stay in the history layer, which is
 //     never rewritten, so past net-worth totals still hold them, as they do a
@@ -46,7 +53,7 @@ import type { Ctx } from '../containers';
 import { connectionsStore, connectorAccountsStore, secretsStore, claimsCount, CLAIMS_PER_HOUR, newConnectionId, type ConnectorAccount, type ConnectorConnection, type OwedSign } from './store';
 import { connectorOf } from './registry';
 import { syncConnection, type SyncResult } from './sync';
-import { institutionRef, nyaBalance, trackedElsewhere } from './institutions';
+import { institutionRef, needsSign, nyaBalance, trackedElsewhere } from './institutions';
 import type { ConnectorKind } from './types';
 import { CLAIM_TIMEOUT_MS } from './simplefin';
 import { getManualAccounts, newManualId, saveManualAccount, MANUAL_TYPES, type ManualType } from '../manual';
@@ -75,6 +82,9 @@ export class ConnectorRefused extends Error {
     this.name = 'ConnectorRefused';
   }
 }
+
+/** "A", "A and B", "A, B and C". */
+const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 
 /** Counts one claim against the hour's limit: refused past it. */
 async function takeClaim(ctx: Ctx): Promise<void> {
@@ -164,7 +174,7 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   for (const c of choices) {
     const a = offered.get(c.remote_id)!;
     const there = trackedElsewhere(a, conn.host, others);
-    if (there) {
+    if (there?.certain) {
       throw new ConnectorRefused(
         `${a.name} at ${a.institution} is already tracked through your other ${connectorOf(conn.connector).label} connection${there.host ? ` (${there.host})` : ''}, so it isn't tracked again here: it would be counted twice.`,
         409
@@ -309,17 +319,33 @@ export async function confirmSigns(ctx: Ctx, answers: { account_id: string; sign
   return changed;
 }
 
-export type Released = { kept: string[]; removed: string[] };
+export type Released = {
+  kept: string[];
+  removed: string[];
+  /** Accounts removed although keeping was asked for: no answer ever held a
+   *  balance for them, so there was nothing to keep. By name, to say so. */
+  nothing_to_keep: string[];
+};
 
 /**
  * Stops tracking accounts, keeping each as a manual account or removing it
  * (see the header). An account kept as a manual one is written there before
  * its connector entry goes, so it is never without one; the readers take the
- * manual account when both are there.
+ * manual account when both are there. Keeping is refused (ConnectorRefused,
+ * 409), with nothing changed, while a card's or a loan's positive balance
+ * waits for the person to say how to read it (confirmSigns first).
  */
 export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boolean, now: number = Date.now()): Promise<Released> {
   const accounts = [...(await connectorAccountsStore.getMany(ctx, account_ids)).values()];
-  const out: Released = { kept: [], removed: [] };
+  const unsure = keep ? accounts.filter(needsSign) : [];
+  if (unsure.length > 0) {
+    const one = unsure.length === 1;
+    throw new ConnectorRefused(
+      `Say how to read ${names(unsure.map((a) => a.name))} first: ${connectorOf(unsure[0].connector).label} reports ${one ? 'it' : 'them'} as money held, and a balance can't be kept as a manual account until it is known whether it is owed or held.`,
+      409
+    );
+  }
+  const out: Released = { kept: [], removed: [], nothing_to_keep: [] };
   const manual = keep ? new Set((await getManualAccounts(ctx)).map((a) => a.account_id)) : new Set<string>();
   for (const a of accounts) {
     const balance = nyaBalance(a);
@@ -341,6 +367,7 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
       const rows = await removeAccountTxns(ctx, a.account_id);
       await forgetAnnotations(ctx, rows).catch((err) => console.warn('connectors: exclusions were left behind', loggable(err)));
       out.removed.push(a.account_id);
+      if (keep) out.nothing_to_keep.push(a.name);
     }
   }
   if (accounts.length > 0) await connectorAccountsStore.remove(ctx, ...accounts.map((a) => a.account_id));

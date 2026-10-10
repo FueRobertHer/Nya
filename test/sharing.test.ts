@@ -386,6 +386,43 @@ describe('sharing accounts on a connection', () => {
     expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([['acct_joint', 'transactions'], ['acct_mine', 'balance']]);
   });
 
+  test('a SimpleFIN card only held (its sign waiting for an answer) keeps its share through an edit, and shows again once answered', async () => {
+    const { connectorAccountsStore } = await import('@/lib/connectors/store');
+    const card = 'manual_00000000-0000-4000-8000-00000000c4d0';
+    const entry = {
+      version: 1 as const,
+      account_id: card,
+      connection_id: 'conn_00000000-0000-4000-8000-00000000c0aa',
+      connector: 'simplefin' as const,
+      remote_id: 'CARD',
+      name: 'Visa',
+      institution_name: 'My Bank',
+      institution_key: 'name:my bank',
+      institution_ref: '0123456789abcdef',
+      type: 'credit' as const,
+      subtype: null,
+      currency: 'USD',
+      reported_balance: -40,
+      reported_available: null,
+      balance_at: new Date().toISOString(),
+      fetched_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    await connectorAccountsStore.set(TEST_CTX, card, entry);
+    expect((await share({ acct_joint: 'balance', [card]: 'balance' })).status).toBe(200);
+    // Now it comes positive, unanswered: held, so the settings don't offer it.
+    await connectorAccountsStore.set(TEST_CTX, card, { ...entry, reported_balance: 40 });
+    expect((await connectionsOf('user_owner')).accounts.map((a: any) => a.id)).not.toContain(card);
+    expect((await share({ acct_joint: 'transactions' })).status).toBe(200);
+    // Answered: it shows again, at the level it had.
+    await connectorAccountsStore.set(TEST_CTX, card, { ...entry, reported_balance: 40, sign: 'owed_positive' });
+    const [after] = await sharedWithPartner();
+    expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([
+      ['acct_joint', 'transactions'],
+      [card, 'balance'],
+    ]);
+  });
+
   test('a hidden account can’t be shared at all', async () => {
     await setAccountHidden(TEST_CTX, 'acct_mine', 'depository', true);
     expect((await share({ acct_mine: 'balance' })).status).toBe(409);

@@ -854,15 +854,33 @@ describe('never the same account twice', () => {
     const conn = (await connectionsStore.get(ctx, second))!;
     const { connectionView } = await import('@/lib/connectors/view');
     const view = connectionView(second, conn, all, await othersOf(ctx, second, all));
-    expect(view.available.find((a) => a.remote_id === 'CHK')?.elsewhere).toBe(`bridge.test:${server.port}`);
+    expect(view.available.find((a) => a.remote_id === 'CHK')?.elsewhere).toEqual({ host: `bridge.test:${server.port}`, certain: true });
     expect(view.available.find((a) => a.remote_id === 'CARD')?.elsewhere).toBeNull();
   });
 
-  test('on another server, the same bank and account name is the same account', () => {
-    const account = { remote_id: 'X1', name: 'Everyday  Checking', institution_name: 'Big Bank' } as Parameters<typeof trackedElsewhere>[2][number]['account'];
-    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK' }, 'other.host', [{ account, host: 'one.host' }])?.host).toBe('one.host');
-    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, 'other.host', [{ account, host: 'one.host' }])).toBeNull();
-    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, 'one.host', [{ account, host: 'one.host' }])?.host).toBe('one.host');
+  test('two people’s own "Checking" at one bank, on one server, are two accounts: both are tracked', async () => {
+    server.accounts = [fakeAccount({ id: 'ACT-alex', name: 'Checking', balance: '100.00', 'balance-date': ago(1) })];
+    const alex = await connect(ctx, 'simplefin', server.setupToken('alex'), NOW);
+    await trackAccounts(ctx, alex.connection_id, [{ remote_id: 'ACT-alex', type: 'depository' }], NOW);
+    server.accounts = [fakeAccount({ id: 'ACT-sam', name: 'Checking', balance: '9999.00', 'balance-date': ago(1) })];
+    const sam = await connect(ctx, 'simplefin', server.setupToken('sam'), NOW);
+    await trackAccounts(ctx, sam.connection_id, [{ remote_id: 'ACT-sam', type: 'depository' }], NOW);
+    expect([...(await connectorAccountsStore.getAll(ctx)).values()].map((a) => a.remote_id).sort()).toEqual(['ACT-alex', 'ACT-sam']);
+    expect((await computeNetWorth(ctx)).netWorth).toBe(10_099);
+  });
+
+  test('on another server, only the same bank, name and balance is a likely match, said and never refused', () => {
+    const account = { remote_id: 'X1', name: 'Everyday  Checking', institution_name: 'Big Bank', reported_balance: 50 } as Parameters<typeof trackedElsewhere>[2][number]['account'];
+    const others = [{ account, host: 'one.host' }];
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK', balance: 50 }, 'other.host', others)).toMatchObject({ host: 'one.host', certain: false });
+    // Another balance, no balance known, or another name: no match.
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK', balance: 51 }, 'other.host', others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK' }, 'other.host', others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank', balance: 50 }, 'other.host', others)).toBeNull();
+    // The same id on the same host is the same account, for certain.
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, 'one.host', others)).toMatchObject({ host: 'one.host', certain: true });
+    // On the same host, a name alone is never a match.
+    expect(trackedElsewhere({ remote_id: 'X2', name: 'Everyday Checking', institution: 'Big Bank', balance: 50 }, 'one.host', others)).toBeNull();
   });
 });
 
@@ -901,9 +919,16 @@ describe('connecting again, and what was pasted', () => {
 describe('transfers between two SimpleFIN accounts', () => {
   const row = (id: string, account_id: string, date: string, amount: number, over: Partial<Parameters<typeof connectorTransfers>[0][number]> = {}) =>
     ({ id, account_id, date, amount, currency: 'USD', name: id, category: null, note: null, source: 'simplefin', source_id: id, created_at: '', updated_at: '', ...over }) as Parameters<typeof connectorTransfers>[0][number];
+  const types = new Map([
+    ['chk', 'depository'],
+    ['sav', 'depository'],
+    ['card', 'credit'],
+    ['wallet', 'depository'],
+  ]);
 
-  test('an exact opposite pair within a few days is a transfer; anything else is not', () => {
-    const pairs = connectorTransfers([
+  test('an exact opposite pair within a few days, out of a cash account, is a transfer; anything else is not', () => {
+    const pairs = connectorTransfers(
+      [
       row('pay', 'chk', '2026-09-02', 2000),
       row('thanks', 'card', '2026-09-03', -2000),
       // Same account: not a move between two.
@@ -921,13 +946,37 @@ describe('transfers between two SimpleFIN accounts', () => {
       // Typed by hand: never paired.
       row('i', 'chk', '2026-09-16', 40),
       row('j', 'wallet', '2026-09-16', -40, { source: 'manual' }),
-    ]);
+      // A purchase on a card and an unrelated deposit of the same amount:
+      // money leaving a card is never one side.
+      row('dinner', 'card', '2026-09-20', 120),
+      row('zelle', 'chk', '2026-09-22', -120),
+      ],
+      types
+    );
     expect([...pairs].sort()).toEqual(['pay', 'thanks']);
   });
 
   test('each side pairs once, with the nearest', () => {
-    const pairs = connectorTransfers([row('out', 'chk', '2026-09-10', 100), row('far', 'sav', '2026-09-13', -100), row('near', 'card', '2026-09-11', -100)]);
+    const pairs = connectorTransfers([row('out', 'chk', '2026-09-10', 100), row('far', 'sav', '2026-09-13', -100), row('near', 'card', '2026-09-11', -100)], types);
     expect([...pairs].sort()).toEqual(['near', 'out']);
+  });
+
+  test('on the Activity tab, an unrelated charge and deposit both still count', async () => {
+    await trackOn(
+      [
+        fakeAccount({ id: 'CHK', name: 'Checking', balance: '1000.00', 'balance-date': ago(1), transactions: [txn('dep', 3, '120.00', 'ZELLE FROM ALEX'), txn('pay', 6, '-500.00', 'PAYMENT TO VISA')] }),
+        fakeAccount({ id: 'CARD', name: 'Visa', balance: '-500.00', 'balance-date': ago(1), transactions: [txn('dinner', 5, '-120.00', 'RESTAURANT'), txn('thanks', 5, '500.00', 'PAYMENT THANK YOU')] }),
+      ],
+      [
+        ['CHK', 'depository'],
+        ['CARD', 'credit'],
+      ]
+    );
+    const { readManualTxnsForDisplay } = await import('@/lib/manual-txns');
+    const { countsInTotals } = await import('@/lib/spending');
+    const { txns } = await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '2000-01-01' });
+    const counted = Object.fromEntries(txns.map((t) => [t.name, countsInTotals(t, 'USD')]));
+    expect(counted).toEqual({ 'ZELLE FROM ALEX': true, RESTAURANT: true, 'PAYMENT TO VISA': false, 'PAYMENT THANK YOU': false });
   });
 });
 

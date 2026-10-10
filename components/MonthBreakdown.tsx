@@ -719,6 +719,14 @@ export default function MonthBreakdown({
                                 Excluded from budgets and reports
                               </div>
                             )}
+                            {/* A pair Nya worked out between two SimpleFIN
+                                accounts (lib/manual-txns.ts): said, so a
+                                wrong one is seen and given a category. */}
+                            {t.source && isConnectorKind(t.source) && t.transaction_code === "transfer" && !t.category && (
+                              <div className="excluded-tag">
+                                Transfer between your accounts, worked out from the amounts: give it a category to count it
+                              </div>
+                            )}
                             {t.excluded === null && (
                               <div className="excluded-tag">
                                 Couldn&apos;t read whether you excluded this

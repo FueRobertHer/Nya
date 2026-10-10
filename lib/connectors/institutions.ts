@@ -114,22 +114,34 @@ const asOfOf = (a: ConnectorAccount) => a.balance_at ?? a.fetched_at;
  *  own, case and spacing aside. */
 const fingerprint = (institution: string, name: string) => `${institution.trim().replace(/\s+/g, ' ').toLowerCase()}\n${name.trim().replace(/\s+/g, ' ').toLowerCase()}`;
 
+/** Another connection's account that an offered one is, or may be. */
+export type Elsewhere = { account: ConnectorAccount; host: string | null; certain: boolean };
+
 /**
  * The account another connection already tracks that an offered one is, or
- * null: the same connector id on the same host, or the same bank and account
- * name anywhere. Tracking it twice would count it twice, so it is refused
- * (lib/connectors/manage.ts trackAccounts) and shown as tracked elsewhere.
+ * null. For certain when it has the same connector id on the same host:
+ * tracking it again would count it twice, so it is refused
+ * (lib/connectors/manage.ts trackAccounts). Only likely when, on another
+ * host, it has the same bank and account name and the same balance as that
+ * account last reported (`offer.balance`, known only in the answer to
+ * connecting): said, never refused, since two accounts can share all three
+ * (two people's "Checking" at one bank, on one server, are two accounts, and
+ * are never matched by name at all).
  */
 export function trackedElsewhere(
-  offer: { remote_id: string; name: string; institution: string },
+  offer: { remote_id: string; name: string; institution: string; balance?: number },
   host: string,
   others: readonly { account: ConnectorAccount; host: string | null }[]
-): { account: ConnectorAccount; host: string | null } | null {
+): Elsewhere | null {
+  const same = others.find(({ account, host: there }) => there === host && account.remote_id === offer.remote_id);
+  if (same) return { ...same, certain: true };
+  if (offer.balance === undefined) return null;
   const print = fingerprint(offer.institution, offer.name);
-  return (
-    others.find(({ account, host: there }) => (account.remote_id === offer.remote_id && there === host) || fingerprint(account.institution_name, account.name) === print) ??
-    null
+  const likely = others.find(
+    ({ account, host: there }) =>
+      there !== host && account.reported_balance !== null && account.reported_balance === offer.balance && fingerprint(account.institution_name, account.name) === print
   );
+  return likely ? { ...likely, certain: false } : null;
 }
 
 /** Whether the bank's own balance is too old to count as current. */

@@ -9,11 +9,12 @@ import { isManualId, MANUAL_TYPES, type ManualType } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
 
 // Choosing which of a SimpleFIN connection's accounts to track, and what kind
-// each is (lib/connectors/manage.ts), in one request: `stop` lets accounts go
-// first (kept as manual accounts unless `keep` is false), then `retype`
-// changes what kind tracked ones are, then `sign` records how to read a
-// card's or a loan's balance (`as_reported`, or `owed_positive` when the
-// server reports what is owed as positive), then `track` adds accounts the
+// each is (lib/connectors/manage.ts), in one request: `retype` changes what
+// kind tracked ones are, then `sign` records how to read a card's or a loan's
+// balance (`as_reported`, or `owed_positive` when the server reports what is
+// owed as positive), then `stop` lets accounts go (kept as manual accounts
+// unless `keep` is false; keeping one whose sign still waits is refused, so
+// its answer comes in `sign` first), then `track` adds accounts the
 // connection offers and fetches their recent transactions. Every account
 // named must be this connection's.
 
@@ -62,9 +63,9 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'That account is not one this connection tracks' }, { status: 400 });
     }
 
-    const released = stop && stop.account_ids.length > 0 ? await releaseAccounts(ctx, stop.account_ids, stop.keep) : { kept: [], removed: [] };
     const retyped = retype.length > 0 ? await retypeAccounts(ctx, retype) : 0;
     const signed = sign.length > 0 ? await confirmSigns(ctx, sign) : 0;
+    const released = stop && stop.account_ids.length > 0 ? await releaseAccounts(ctx, stop.account_ids, stop.keep) : { kept: [], removed: [], nothing_to_keep: [] };
     const fetched = track.length > 0 ? await trackAccounts(ctx, body.connection_id, track) : null;
 
     const [conn, now, requests] = await Promise.all([connectionsStore.get(ctx, body.connection_id), connectorAccountsStore.getAll(ctx), requestsLeft(ctx)]);
@@ -73,6 +74,7 @@ export async function PUT(req: Request) {
       connection: conn ? connectionView(body.connection_id, conn, all, await othersOf(ctx, body.connection_id, all)) : null,
       kept: released.kept.length,
       removed: released.removed.length,
+      nothing_to_keep: released.nothing_to_keep,
       retyped,
       signed,
       tracked: track.length,

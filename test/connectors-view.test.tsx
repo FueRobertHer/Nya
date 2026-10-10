@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectButtonsView, SIMPLEFIN_OPTION } from '@/components/ConnectButtons';
-import { ChooseView, ConnectIntro, ConnectorCardView, guessKind, KINDS, reportedWords, SignView } from '@/components/Connectors';
+import { backIn, ChooseView, ConnectIntro, ConnectorCardView, guessKind, KINDS, nothingToKeep, reportedWords, SignView } from '@/components/Connectors';
+import MonthBreakdown from '@/components/MonthBreakdown';
+import type { Txn } from '@/lib/transactions';
 import { ConnectionHealthView } from '@/components/ConnectionHealth';
 import { connectorHealth } from '@/lib/connectors/health';
 import type { ConnectionView } from '@/lib/connectors/view';
@@ -92,7 +94,8 @@ describe('choosing accounts', () => {
           { remote_id: 'A', name: 'Checking', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 1500.25, balance_at: null, elsewhere: null },
           { remote_id: 'B', name: 'Visa', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: -432.1, balance_at: null, elsewhere: null },
           { remote_id: 'C', name: 'Miles', institution: 'Airline', currency: null, currency_text: 'https://example.com/miles.json', elsewhere: null },
-          { remote_id: 'D', name: 'Savings', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 20, balance_at: null, elsewhere: 'bridge.other' },
+          { remote_id: 'D', name: 'Savings', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 20, balance_at: null, elsewhere: { host: 'bridge.other', certain: true } },
+          { remote_id: 'E', name: 'Joint', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 70, balance_at: null, elsewhere: { host: 'redbark.example', certain: false } },
         ]}
         choices={{ A: 'depository', B: 'credit' }}
         keep={true}
@@ -111,6 +114,9 @@ describe('choosing accounts', () => {
     // One tracked through the other connection can't be chosen again.
     expect(html).toContain('Tracked through your other connection (bridge.other): not tracked twice');
     expect(html).toMatch(/<select disabled="" aria-label="Track Savings">/);
+    // One that only looks like it (another server) is said, and left to the person.
+    expect(html).toContain('Looks like the account your other connection (redbark.example) tracks: the same bank, name and balance.');
+    expect(html).toMatch(/<select aria-label="Track Joint">/);
     expect(html).toContain('In a currency Nya doesn’t know (https://example.com/miles.json): can’t be tracked');
     expect(html).toMatch(/<select disabled="" aria-label="Track Miles">/);
   });
@@ -255,5 +261,72 @@ describe('in connection health', () => {
     for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (', '{inst.manual && !inst.connector && manageMode && (']) {
       expect(dashboard).toContain(gate);
     }
+  });
+});
+
+describe('words for what happened', () => {
+  test('when the day’s requests come back, and what keeping left out', () => {
+    expect([backIn({ resets_in_seconds: 5 * 3600 - 10 }), backIn({ resets_in_seconds: 60 }), backIn(null), backIn({ resets_in_seconds: 0 })]).toEqual([
+      ' in about 5 hours',
+      ' in about 1 hour',
+      '',
+      '',
+    ]);
+    expect(nothingToKeep(['New savings'])).toBe(' Removed New savings: no balance had come for it yet, so there was nothing to keep.');
+    expect(nothingToKeep(['A', 'B'])).toBe(' Removed A and B: no balance had come for them yet, so there was nothing to keep.');
+    expect(nothingToKeep([])).toBe('');
+  });
+});
+
+describe('SimpleFIN rows on the Activity tab', () => {
+  const month = new Date().toISOString().slice(0, 7);
+  const row = (over: Partial<Txn>): Txn =>
+    ({
+      transaction_id: 'manual-txn:1',
+      date: `${month}-01`,
+      name: 'X',
+      amount: 25,
+      pending: false,
+      account_name: 'Checking',
+      institution_name: 'My Bank',
+      category: null,
+      iso_currency_code: 'USD',
+      vendor_key: '',
+      logo_url: null,
+      category_icon_url: null,
+      subcategory: null,
+      category_confidence: null,
+      transaction_code: null,
+      payment_channel: null,
+      datetime: null,
+      website: null,
+      check_number: null,
+      account_owner: null,
+      city: null,
+      region: null,
+      counterparty: null,
+      payment_processor: null,
+      payment_reference: null,
+      source: 'simplefin',
+      account_id: 'manual_chk',
+      ...over,
+    }) as Txn;
+
+  test('a pair worked out as a transfer says so on its row; the uncategorized rows are counted under the totals', () => {
+    const html = renderToStaticMarkup(
+      <MonthBreakdown
+        txns={[
+          row({ transaction_id: 'manual-txn:1', name: 'PAYMENT TO VISA', amount: 300, transaction_code: 'transfer' }),
+          row({ transaction_id: 'manual-txn:2', name: 'PAYMENT THANK YOU', amount: -300, transaction_code: 'transfer', account_id: 'manual_card', account_name: 'Visa' }),
+          row({ transaction_id: 'manual-txn:3', name: 'COFFEE', amount: 4 }),
+        ]}
+        notes={[]}
+        loading={false}
+        onRecategorize={noop}
+        onRename={noop}
+      />
+    );
+    expect(html.match(/Transfer between your accounts, worked out from the amounts: give it a category to count it/g)?.length).toBe(2);
+    expect(html).toContain('1 transaction from SimpleFIN has no category, so it counts as spending or income.');
   });
 });

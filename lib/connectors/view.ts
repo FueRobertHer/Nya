@@ -40,10 +40,12 @@ export type OfferView = {
   /** As SimpleFIN reports it: positive held, negative owed. */
   balance?: number;
   balance_at?: string | null;
-  /** The host of another connection that tracks this account already (or
-   *  the connector's name, when that connection is gone): it can't be tracked
-   *  here too. Null when none does. */
-  elsewhere: string | null;
+  /** Another connection that tracks this account (`certain`: the same id on
+   *  the same host, so it can't be tracked here too) or likely does (on
+   *  another host, the same bank, name and balance: said, and left to the
+   *  person), by the host it reaches (or the connector's name, when that
+   *  connection is gone). Null when none does. */
+  elsewhere: { host: string; certain: boolean } | null;
 };
 
 export type FetchView = {
@@ -100,9 +102,9 @@ export function accountView(a: ConnectorAccount): AccountView {
 export type Others = readonly { account: ConnectorAccount; host: string | null }[];
 
 /** Where an offer is tracked already, for OfferView.elsewhere. */
-function elsewhereOf(offer: { remote_id: string; name: string; institution: string }, conn: ConnectorConnection, others: Others): string | null {
+function elsewhereOf(offer: { remote_id: string; name: string; institution: string; balance?: number }, conn: ConnectorConnection, others: Others): OfferView['elsewhere'] {
   const there = trackedElsewhere(offer, conn.host, others);
-  return there ? (there.host ?? connectorOf(conn.connector).label) : null;
+  return there ? { host: there.host ?? connectorOf(conn.connector).label, certain: there.certain } : null;
 }
 
 /** One connection as the screens show it. `others`: the accounts other
@@ -165,6 +167,6 @@ export function offersIn(answer: RemoteAnswer, tracked: ReadonlySet<string>, con
       currency_text: a.currency_text,
       balance: a.balance,
       balance_at: a.balance_at,
-      elsewhere: conn ? elsewhereOf({ remote_id: a.remote_id, name: a.name, institution: a.institution.name }, conn, others) : null,
+      elsewhere: conn ? elsewhereOf({ remote_id: a.remote_id, name: a.name, institution: a.institution.name, balance: a.balance }, conn, others) : null,
     }));
 }
