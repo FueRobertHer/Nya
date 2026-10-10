@@ -78,6 +78,29 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
   return out;
 }
 
+/** A gap in a few words, beside its institution in the report's list of
+ *  where the data comes from (the sentence above says the rest). */
+export function gapShort(g: Gap, day: DayFormat): string {
+  switch (g.kind) {
+    case 'missing':
+      return 'Its transactions couldn’t be loaded';
+    case 'stale':
+      return g.since ? `Hasn’t synced since ${day(g.since)}` : 'When it last synced isn’t known';
+    case 'importing':
+      return 'Still importing older transactions';
+    case 'begins_late':
+      return `Its transactions in Nya begin on ${day(g.first)}`;
+    case 'refused':
+      return 'Plaid doesn’t provide its bank or card transactions';
+    case 'no_consent':
+      return 'You didn’t allow its bank or card transactions';
+    case 'removed':
+      return `Removed on or after ${day(g.last_seen)}`;
+    case 'unreadable':
+      return g.note;
+  }
+}
+
 /** What a connection that has stopped needs to be brought up to date: said
  *  once, after the gaps, when any connection's gap is one a sync can close. */
 export const SYNC_REMEDY =
