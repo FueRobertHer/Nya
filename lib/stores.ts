@@ -24,9 +24,11 @@ import './connection-records';
 import './fire-plan';
 import './holdings-history';
 import './import/store';
+import './lifecycle';
 import './manual-txns';
 import './planned-store';
 import './rate-limit';
+import './timeline-notes';
 import './txn-annotations';
 
 import { storesDeclaredSoFar, type Store } from './repo';

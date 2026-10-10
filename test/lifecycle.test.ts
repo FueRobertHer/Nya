@@ -1,0 +1,490 @@
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, unscopedDataKeys } from './fake-redis';
+
+// The account lifecycle (#50): the store, the model, and the math applied on
+// read. Real AES-256-GCM, so a round-trip bug looks like what it is.
+process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+
+const ctx = TEST_CTX;
+const OTHER = { container: '1c7e6b63-4d2e-4f3a-9bac-2d3e4f5a6b7c' } as { container: any };
+
+const fake = new FakeRedis({ deserialize: true });
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
+mock.module('@/lib/storage', () => storageMock(fake));
+
+const { encrypt } = await import('@/lib/crypto');
+const {
+  lifecycleStore,
+  isLifecycleEntry,
+  isAccountLifecycle,
+  effectiveLifecycle,
+  getEffectiveLifecycle,
+  markEnded,
+  markStillOpen,
+  reopenAccount,
+  recordAssumedClosures,
+  liftAssumedClosures,
+  removeUnreadable,
+  endedNow,
+  endedNowIds,
+  countsOn,
+  lastEndDay,
+  answersFrom,
+  lifecycleForClient,
+  autoNoteText,
+  EMPTY_VIEW,
+} = await import('@/lib/lifecycle');
+const { getHistory, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates, endBreaks } = await import('@/lib/history');
+const { UnreadableEntriesError } = await import('@/lib/repo');
+const { timelineNotesStore, autoNoteId } = await import('@/lib/timeline-notes');
+type Link = { to: string; linked_at: string; evidence: Record<string, unknown> };
+
+const ABOUT = { type: 'depository', label: { name: 'Ally Savings', institution: 'Ally', mask: '1234' }, item_id: 'item_ally' };
+const CARD = { type: 'credit', label: { name: 'Chase Freedom', institution: 'Chase', mask: '9999' }, item_id: 'item_chase' };
+const NOW = Date.parse('2026-06-15T12:00:00.000Z');
+
+/** A recorded day: its total and the per-account map recorded beside it. */
+async function recordDay(date: string, balances: Record<string, number>, types: Record<string, string>) {
+  const total = Object.entries(balances).reduce((n, [id, b]) => n + (types[id] === 'credit' ? -b : b), 0);
+  await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(String(total)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+}
+
+const byDate = (points: { date: string; value: number }[]) => Object.fromEntries(points.map((p) => [p.date, p.value]));
+
+/** Every field of the real layer, as stored: the bytes a closure must never touch. */
+async function realLayer() {
+  return {
+    totals: { ...((await fake.hgetall<Record<string, string>>(ctxKey('history:net-worth'))) ?? {}) },
+    accounts: { ...((await fake.hgetall<Record<string, string>>(ctxKey('history:accounts'))) ?? {}) },
+    partial: { ...((await fake.hgetall<Record<string, string>>(ctxKey('history:accounts:partial'))) ?? {}) },
+  };
+}
+
+const TYPES = { sav: 'depository', chk: 'depository', card: 'credit' };
+
+async function seedThreeDays() {
+  await recordDay('2026-03-10', { sav: 1000, chk: 500, card: 200 }, TYPES);
+  await recordDay('2026-03-11', { sav: 1000, chk: 500, card: 200 }, TYPES);
+  await recordDay('2026-03-12', { sav: 1000, chk: 500, card: 200 }, TYPES);
+}
+
+beforeEach(() => fake.reset());
+
+describe('the stored shape', () => {
+  const good = { lifecycle: { state: 'closed', on: '2026-03-12' }, type: 'depository', label: ABOUT.label, item_id: 'item_ally', set_at: '2026-03-12T10:00:00.000Z' };
+
+  test('each state carries exactly its own fields', () => {
+    expect(isAccountLifecycle({ state: 'active' })).toBe(true);
+    expect(isAccountLifecycle({ state: 'closed', on: '2026-03-12', note: 'Moved to Chase' })).toBe(true);
+    expect(isAccountLifecycle({ state: 'left', on: '2026-03-12' })).toBe(true);
+    expect(isAccountLifecycle({ state: 'untracked', from: '2026-03-12' })).toBe(true);
+    // The wrong date field for the state, or none, or a day that isn't one.
+    expect(isAccountLifecycle({ state: 'untracked', on: '2026-03-12' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed', from: '2026-03-12' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed', on: '2026-02-30' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed', on: '1969-12-31' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'active', on: '2026-03-12' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'untracked', from: '2026-03-12', note: 'x' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'transferred', on: '2026-03-12' })).toBe(false);
+    // A note is one trimmed line of at most 200 characters.
+    expect(isAccountLifecycle({ state: 'closed', on: '2026-03-12', note: ' padded' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed', on: '2026-03-12', note: 'two\nlines' })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed', on: '2026-03-12', note: 'x'.repeat(201) })).toBe(false);
+    expect(isAccountLifecycle({ state: 'closed', on: '2026-03-12', note: '' })).toBe(false);
+  });
+
+  test('closed: a field this release does not know makes the entry unrecognised', () => {
+    expect(isLifecycleEntry(good)).toBe(true);
+    expect(isLifecycleEntry({ ...good, later: true })).toBe(false);
+    expect(isLifecycleEntry({ ...good, label: { ...good.label, extra: 1 } })).toBe(false);
+    // assumed only on a closure; answered only on active.
+    expect(isLifecycleEntry({ ...good, assumed: true })).toBe(true);
+    expect(isLifecycleEntry({ ...good, lifecycle: { state: 'left', on: '2026-03-12' }, assumed: true })).toBe(false);
+    expect(isLifecycleEntry({ ...good, answered: { kind: 'zero', since: '2026-02-01' } })).toBe(false);
+    expect(isLifecycleEntry({ ...good, lifecycle: { state: 'active' }, answered: { kind: 'zero', since: '2026-02-01' } })).toBe(true);
+    expect(isLifecycleEntry({ ...good, lifecycle: { state: 'active' }, answered: { kind: 'later', since: '2026-02-01' } })).toBe(false);
+    expect(isLifecycleEntry({ ...good, type: null })).toBe(true);
+    expect(isLifecycleEntry({ ...good, type: 'Credit Card!' })).toBe(false);
+    expect(isLifecycleEntry({ ...good, item_id: 'has space' })).toBe(false);
+  });
+});
+
+describe('the store', () => {
+  test('never saved reads as empty, and round-trips', async () => {
+    expect((await getEffectiveLifecycle(ctx, new Map())).ended.size).toBe(0);
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12', note: 'Moved to Chase' }, ABOUT, NOW);
+    const entry = await lifecycleStore.get(ctx, 'sav');
+    expect(entry).toEqual({ lifecycle: { state: 'closed', on: '2026-03-12', note: 'Moved to Chase' }, ...ABOUT, set_at: new Date(NOW).toISOString() });
+  });
+
+  test('is encrypted at rest: neither the name nor the date is in the stored bytes', async () => {
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    const raw = JSON.stringify(await fake.hgetall(ctxKey('account-lifecycle')));
+    expect(raw).not.toContain('Ally');
+    expect(raw).not.toContain('2026-03-12');
+  });
+
+  test('an unreadable entry fails the read loudly, never read as "not closed"', async () => {
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    await fake.hset(ctxKey('account-lifecycle'), { chk: 'not-ciphertext-at-all-but-long-enough-to-try' });
+    const err = await getEffectiveLifecycle(ctx, new Map()).catch((e) => e);
+    expect(err).toBeInstanceOf(UnreadableEntriesError);
+    expect(err.unreadable).toEqual(['chk']);
+  });
+
+  test('an entry a later release wrote is unrecognised, and is never offered for removal', async () => {
+    await fake.hset(ctxKey('account-lifecycle'), {
+      sav: await encrypt(JSON.stringify({ lifecycle: { state: 'transferred', on: '2026-03-12' }, type: 'depository', label: ABOUT.label, item_id: null, set_at: '2026-03-12T00:00:00Z' })),
+      chk: 'damaged-bytes-damaged-bytes-damaged-bytes',
+    });
+    const err = await getEffectiveLifecycle(ctx, new Map()).catch((e) => e);
+    expect(err.unrecognised).toEqual(['sav']);
+    // Only the damaged one goes, and only through the confirmed repair.
+    const { removed, unrecognised } = await removeUnreadable(ctx);
+    expect(removed).toEqual(['chk']);
+    expect(unrecognised).toEqual(['sav']);
+    expect(await lifecycleStore.has(ctx, 'chk')).toBe(false);
+    expect(await lifecycleStore.has(ctx, 'sav')).toBe(true);
+  });
+
+  test('a Redis failure is an error, never "nothing closed"', async () => {
+    fake.failNext('hgetall');
+    await expect(getEffectiveLifecycle(ctx, new Map())).rejects.toThrow(/armed failure/);
+  });
+
+  test('links that could not be read fail the read when something has an end', async () => {
+    expect(await getEffectiveLifecycle(ctx, null)).toBe(EMPTY_VIEW); // nothing stored: links don't matter
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    await expect(getEffectiveLifecycle(ctx, null)).rejects.toThrow(/links/);
+  });
+
+  test('one container never sees another’s closures', async () => {
+    await markEnded(OTHER, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    expect((await getEffectiveLifecycle(ctx, new Map())).ended.size).toBe(0);
+    expect((await getEffectiveLifecycle(OTHER, new Map())).ended.has('sav')).toBe(true);
+  });
+});
+
+describe('when an end counts', () => {
+  test('every day before the end counts, the end day and after do not', () => {
+    const closed = { state: 'closed' as const, on: '2026-03-12' };
+    expect(countsOn(closed, '2026-03-11')).toBe(true);
+    expect(countsOn(closed, '2026-03-12')).toBe(false);
+    expect(countsOn(closed, '2027-01-01')).toBe(false);
+    expect(countsOn({ state: 'active' }, '2030-01-01')).toBe(true);
+    expect(countsOn({ state: 'untracked', from: '2026-03-12' }, '2026-03-11')).toBe(true);
+  });
+
+  test('the live total leaves an account out as soon as its end is set, a day ahead of UTC included', () => {
+    // 23:00 UTC on the 14th is already the 15th east of Greenwich.
+    const late = Date.parse('2026-06-14T23:00:00.000Z');
+    expect(lastEndDay(late)).toBe('2026-06-15');
+    expect(endedNow({ state: 'closed', on: '2026-06-15' }, late)).toBe(true);
+    expect(endedNow({ state: 'closed', on: '2026-06-16' }, late)).toBe(false);
+    expect(endedNow({ state: 'active' }, late)).toBe(false);
+  });
+});
+
+describe('links: an end survives a re-link', () => {
+  const link = (to: string, old_type?: string): Link => ({ to, linked_at: '2026-04-01T00:00:00Z', evidence: old_type ? { old_type } : {} });
+
+  test('an end set on the earlier id carries to the account it was linked to', () => {
+    const entries = new Map([['old_sav', { lifecycle: { state: 'untracked' as const, from: '2026-03-12' }, ...ABOUT, set_at: '2026-03-12T00:00:00Z' }]]);
+    const view = effectiveLifecycle(entries, new Map([['old_sav', link('new_sav')]]));
+    expect([...view.ended.keys()].sort()).toEqual(['new_sav', 'old_sav']);
+    expect(endedNowIds(view, NOW)).toEqual(new Set(['new_sav', 'old_sav']));
+    expect(lifecycleForClient(view).map((c) => c.account_id)).toEqual(['new_sav']);
+  });
+
+  test('an end set on the current id reaches history recorded under the earlier one, each id with its own kind', () => {
+    const entries = new Map([['new_card', { lifecycle: { state: 'closed' as const, on: '2026-03-12' }, ...CARD, set_at: '2026-03-12T00:00:00Z' }]]);
+    const view = effectiveLifecycle(entries, new Map([['old_card', link('new_card', 'credit')]]));
+    expect(view.ended.get('old_card')).toEqual({ type: 'credit', from: '2026-03-12' });
+    expect(view.ended.get('new_card')).toEqual({ type: 'credit', from: '2026-03-12' });
+  });
+
+  test('the current id’s own entry wins over an earlier id’s, then the newest', () => {
+    const closed = { lifecycle: { state: 'closed' as const, on: '2026-01-01' }, ...ABOUT, set_at: '2026-05-01T00:00:00Z' };
+    const untracked = { lifecycle: { state: 'untracked' as const, from: '2026-02-01' }, ...ABOUT, set_at: '2026-01-01T00:00:00Z' };
+    const links = new Map([['old', link('new')]]);
+    // The current id's, though older.
+    type E = Parameters<typeof effectiveLifecycle>[0] extends ReadonlyMap<string, infer V> ? V : never;
+    let view = effectiveLifecycle(new Map<string, E>([['old', closed], ['new', untracked]]), links);
+    expect(view.ended.get('old')?.from).toBe('2026-02-01');
+    // Two earlier ids: the newest.
+    const chain = new Map([['a', link('b')], ['b', link('c')]]);
+    view = effectiveLifecycle(new Map<string, E>([['a', closed], ['b', untracked]]), chain);
+    expect(view.ended.get('c')?.from).toBe('2026-01-01');
+  });
+
+  test('a paused link (the earlier id is live again) is not given to it: the caller passes only links that apply', () => {
+    const entries = new Map([['old', { lifecycle: { state: 'closed' as const, on: '2026-03-12' }, ...ABOUT, set_at: '2026-03-12T00:00:00Z' }]]);
+    const view = effectiveLifecycle(entries, new Map());
+    expect([...view.ended.keys()]).toEqual(['old']);
+  });
+});
+
+describe('the math, applied on read', () => {
+  async function view() {
+    return getEffectiveLifecycle(ctx, new Map());
+  }
+
+  test('every day before the end is unchanged; from it on the account does not count', async () => {
+    await seedThreeDays();
+    const before = byDate(await getHistory(ctx));
+    expect(before).toEqual({ '2026-03-10': 1300, '2026-03-11': 1300, '2026-03-12': 1300 });
+
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
+    const after = byDate(await getHistory(ctx, undefined, (await view()).ended));
+    expect(after).toEqual({ '2026-03-10': 1300, '2026-03-11': 300, '2026-03-12': 300 });
+  });
+
+  test('marking an account closed never writes to the real history layer (byte-identical)', async () => {
+    await seedThreeDays();
+    await recordSnapshot(ctx, 1300, { sav: 1000, chk: 500, card: 200 });
+    const before = await realLayer();
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
+    await getHistory(ctx, undefined, (await view()).ended);
+    await markEnded(ctx, 'sav', { state: 'left', on: '2026-03-10', note: 'Divided' }, ABOUT, NOW);
+    await reopenAccount(ctx, 'sav', new Map(), NOW);
+    expect(await realLayer()).toEqual(before);
+  });
+
+  test('a closed card raises no false "net worth improved": only from its end, never before', async () => {
+    await seedThreeDays();
+    await markEnded(ctx, 'card', { state: 'closed', on: '2026-03-12' }, CARD, NOW);
+    const points = byDate(await getHistory(ctx, undefined, (await view()).ended));
+    // The days it was owed still owe it; only from its end does it stop
+    // counting (a debt that ended raises the total from that day, explained
+    // by its note on the timeline, never silently and never before).
+    expect(points['2026-03-10']).toBe(1300);
+    expect(points['2026-03-11']).toBe(1300);
+    expect(points['2026-03-12']).toBe(1500);
+  });
+
+  test('closed, left and untracked are the same to the math', async () => {
+    await seedThreeDays();
+    const results: Record<string, number>[] = [];
+    for (const lifecycle of [
+      { state: 'closed' as const, on: '2026-03-11' },
+      { state: 'left' as const, on: '2026-03-11' },
+      { state: 'untracked' as const, from: '2026-03-11' },
+    ]) {
+      await markEnded(ctx, 'sav', lifecycle, ABOUT, NOW);
+      results.push(byDate(await getHistory(ctx, undefined, (await view()).ended)));
+    }
+    expect(results[1]).toEqual(results[0]);
+    expect(results[2]).toEqual(results[0]);
+  });
+
+  test('an end date further in the past recomputes the later points, on read only', async () => {
+    await seedThreeDays();
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    expect(byDate(await getHistory(ctx, undefined, (await view()).ended))['2026-03-11']).toBe(1300);
+    const stored = await realLayer();
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-10' }, ABOUT, NOW);
+    expect(byDate(await getHistory(ctx, undefined, (await view()).ended))).toEqual({ '2026-03-10': 300, '2026-03-11': 300, '2026-03-12': 300 });
+    expect(await realLayer()).toEqual(stored);
+  });
+
+  test('reopening restores every point exactly', async () => {
+    await seedThreeDays();
+    const before = await getHistory(ctx);
+    await markEnded(ctx, 'sav', { state: 'untracked', from: '2026-03-11' }, ABOUT, NOW);
+    expect(await getHistory(ctx, undefined, (await view()).ended)).not.toEqual(before);
+    await reopenAccount(ctx, 'sav', new Map(), NOW);
+    expect(await getHistory(ctx, undefined, (await view()).ended)).toEqual(before);
+    expect(await lifecycleStore.count(ctx)).toBe(0);
+  });
+
+  test('reopening clears every id the account has had, so an earlier id’s end can’t keep it closed', async () => {
+    await markEnded(ctx, 'old_sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
+    await markEnded(ctx, 'new_sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    const links = new Map([['old_sav', { to: 'new_sav', linked_at: '2026-04-01T00:00:00Z', evidence: {} }]]);
+    expect((await reopenAccount(ctx, 'new_sav', links, NOW)).sort()).toEqual(['new_sav', 'old_sav']);
+    expect((await getEffectiveLifecycle(ctx, links)).ended.size).toBe(0);
+  });
+
+  test('a re-link carries the state into the chart: the earlier id’s history stops counting too', async () => {
+    // The account was "old_sav" until a reconnect gave it "new_sav".
+    await recordDay('2026-03-10', { old_sav: 1000, chk: 500 }, TYPES);
+    await recordDay('2026-03-11', { old_sav: 1000, chk: 500 }, TYPES);
+    await recordDay('2026-03-12', { new_sav: 1000, chk: 500 }, TYPES);
+    await markEnded(ctx, 'new_sav', { state: 'untracked', from: '2026-03-11' }, ABOUT, NOW);
+    const links = new Map([['old_sav', { to: 'new_sav', linked_at: '2026-03-12T00:00:00Z', evidence: { old_type: 'depository' } }]]);
+    const points = byDate(await getHistory(ctx, undefined, (await getEffectiveLifecycle(ctx, links)).ended));
+    expect(points).toEqual({ '2026-03-10': 1500, '2026-03-11': 500, '2026-03-12': 500 });
+  });
+
+  test('a hidden account that also ended is subtracted once', async () => {
+    await seedThreeDays();
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
+    const hidden = new Map([['sav', { type: 'depository', hidden_at: '2026-01-01' }]]);
+    expect(byDate(await getHistory(ctx, hidden, (await view()).ended))).toEqual({ '2026-03-10': 300, '2026-03-11': 300, '2026-03-12': 300 });
+  });
+
+  test('the estimated layer is subtracted from the end on too, walked and flat alike', async () => {
+    const dates = ['2026-02-01', '2026-02-02', '2026-02-03'];
+    await replaceEstimated(ctx, dates.map((date) => ({ date, value: 5000 })));
+    await replaceEstimatedAccounts(ctx, dates.map((date) => ({ date, balances: { sav: 1000, chk: 500 } })));
+    await replaceEstimatedFlat(ctx, dates.map((date) => ({ date, balances: { brokerage: 3500 } })));
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-02-02' }, ABOUT, NOW);
+    await markEnded(ctx, 'brokerage', { state: 'left', on: '2026-02-03' }, { ...ABOUT, type: 'investment' }, NOW);
+    const points = await getHistory(ctx, undefined, (await view()).ended);
+    expect(byDate(points)).toEqual({ '2026-02-01': 5000, '2026-02-02': 4000, '2026-02-03': 500 });
+    expect(points.every((p) => p.estimated)).toBe(true);
+  });
+
+  test('an account of unknown kind with a balance on a day after its end can’t be signed: that day is left out, never guessed', async () => {
+    await seedThreeDays();
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, { ...ABOUT, type: null }, NOW);
+    const points = byDate(await getHistory(ctx, undefined, (await view()).ended));
+    expect(points['2026-03-11']).toBe(1300);
+    expect(points['2026-03-12']).toBeUndefined();
+  });
+
+  test('an account absent from the days after its end subtracts nothing there', async () => {
+    await recordDay('2026-03-10', { sav: 1000, chk: 500 }, TYPES);
+    await recordDay('2026-03-11', { chk: 500 }, TYPES); // the bank stopped returning it
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
+    expect(byDate(await getHistory(ctx, undefined, (await view()).ended))).toEqual({ '2026-03-10': 1500, '2026-03-11': 500 });
+  });
+});
+
+describe('the cliff is kept, never smoothed', () => {
+  test('a stretch with nothing recorded across an end steps on the end day instead of drawing a line', () => {
+    const points = [
+      { date: '2026-03-01', value: 1000 },
+      { date: '2026-03-02', value: 999, estimated: true },
+      { date: '2026-03-03', value: 998, estimated: true },
+      { date: '2026-03-04', value: 997, estimated: true },
+      { date: '2026-03-05', value: 600 },
+    ];
+    const line = bridgeInteriorEstimates(points);
+    expect(line.map((p) => p.value)).toEqual([1000, 900, 800, 700, 600]);
+    const stepped = bridgeInteriorEstimates(points, ['2026-03-03']);
+    expect(stepped.map((p) => p.value)).toEqual([1000, 1000, 600, 600, 600]);
+    expect(stepped.slice(1, 4).every((p) => p.estimated)).toBe(true);
+    // A break outside the hole changes nothing.
+    expect(bridgeInteriorEstimates(points, ['2026-03-01', '2026-04-01']).map((p) => p.value)).toEqual([1000, 900, 800, 700, 600]);
+  });
+
+  test('getHistory breaks the bridge on each end day', async () => {
+    await recordDay('2026-03-01', { sav: 1000, chk: 500 }, TYPES);
+    await replaceEstimated(ctx, ['2026-03-02', '2026-03-03', '2026-03-04'].map((date) => ({ date, value: 1500 })));
+    await replaceEstimatedAccounts(ctx, ['2026-03-02', '2026-03-03', '2026-03-04'].map((date) => ({ date, balances: { sav: 1000, chk: 500 } })));
+    await replaceEstimatedFlat(ctx, ['2026-03-02', '2026-03-03', '2026-03-04'].map((date) => ({ date, balances: {} })));
+    await recordDay('2026-03-05', { chk: 500 }, TYPES);
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-03' }, ABOUT, NOW);
+    const view = await getEffectiveLifecycle(ctx, new Map());
+    expect(endBreaks(view.ended)).toEqual(['2026-03-03']);
+    expect((await getHistory(ctx, undefined, view.ended)).map((p) => p.value)).toEqual([1500, 1500, 500, 500, 500]);
+  });
+});
+
+describe('answers the guard reads', () => {
+  test('ends, still-open answers per connection, and assumed closures by every id', () => {
+    const at = '2026-03-12T00:00:00Z';
+    const entries = new Map([
+      ['a', { lifecycle: { state: 'closed' as const, on: '2026-03-12' }, ...ABOUT, set_at: at, assumed: true as const }],
+      ['b', { lifecycle: { state: 'active' as const }, ...ABOUT, set_at: at, answered: { kind: 'missing' as const, since: '2026-03-12' } }],
+      ['c', { lifecycle: { state: 'active' as const }, ...ABOUT, set_at: at, answered: { kind: 'zero' as const, since: '2026-02-01' } }],
+      ['d', { lifecycle: { state: 'left' as const, on: '2026-03-01' }, ...ABOUT, set_at: at }],
+    ]);
+    const answers = answersFrom(effectiveLifecycle(entries, new Map([['a0', { to: 'a', linked_at: at, evidence: {} }]])));
+    expect([...answers.ended].sort()).toEqual(['a', 'a0', 'd']);
+    expect(answers.stillOpen).toEqual(new Map([['item_ally', new Set(['b'])]]));
+    expect(answers.assumed).toEqual(new Map([['a', 'a'], ['a0', 'a']]));
+  });
+});
+
+describe('assumed closures', () => {
+  test('are written only where there is no answer, and say they are assumed', async () => {
+    await markStillOpen(ctx, 'b', { kind: 'missing', since: '2026-03-12' }, ABOUT, NOW);
+    const answered = await recordAssumedClosures(ctx, [
+      { account_id: 'a', on: '2026-03-12', about: ABOUT },
+      { account_id: 'b', on: '2026-03-12', about: ABOUT },
+    ], NOW);
+    expect(answered).toEqual(new Set(['a', 'b']));
+    expect((await lifecycleStore.get(ctx, 'a'))?.assumed).toBe(true);
+    // The person's answer stands.
+    expect((await lifecycleStore.get(ctx, 'b'))?.lifecycle).toEqual({ state: 'active' });
+    expect((await timelineNotesStore.get(ctx, autoNoteId('a')))?.text).toBe('Ally Savings ••1234 assumed closed: it stopped appearing at Ally');
+  });
+
+  test('one that can’t be recorded is left out, so it stays held', async () => {
+    fake.failNext('eval', 1);
+    expect(await recordAssumedClosures(ctx, [{ account_id: 'a', on: '2026-03-12', about: ABOUT }], NOW)).toEqual(new Set());
+    expect(await lifecycleStore.has(ctx, 'a')).toBe(false);
+  });
+
+  test('are lifted when the account comes back, a confirmed closure is not', async () => {
+    await recordAssumedClosures(ctx, [{ account_id: 'a', on: '2026-03-12', about: ABOUT }], NOW);
+    await markEnded(ctx, 'c', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    expect(await liftAssumedClosures(ctx, ['a', 'c'], NOW)).toEqual(['a']);
+    expect(await lifecycleStore.has(ctx, 'a')).toBe(false);
+    expect(await lifecycleStore.has(ctx, 'c')).toBe(true);
+    expect(await timelineNotesStore.has(ctx, autoNoteId('a'))).toBe(false);
+  });
+
+  test('a confirmed answer replaces the assumption', async () => {
+    await recordAssumedClosures(ctx, [{ account_id: 'a', on: '2026-03-12', about: ABOUT }], NOW);
+    await markEnded(ctx, 'a', { state: 'closed', on: '2026-03-10', note: 'Moved to Chase' }, ABOUT, NOW);
+    const entry = await lifecycleStore.get(ctx, 'a');
+    expect(entry?.assumed).toBeUndefined();
+    const note = await timelineNotesStore.get(ctx, autoNoteId('a'));
+    expect(note).toMatchObject({ date: '2026-03-10', text: 'Ally Savings ••1234 closed: Moved to Chase', kind: 'auto', account_id: 'a' });
+  });
+});
+
+describe('auto notes', () => {
+  test('follow the account: written on its end day, moved with it, gone when it reopens', async () => {
+    await markEnded(ctx, 'sav', { state: 'left', on: '2026-03-12', note: 'Sold' }, ABOUT, NOW);
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-03-12', text: 'Ally Savings ••1234 no longer yours: Sold' });
+    await markEnded(ctx, 'sav', { state: 'untracked', from: '2026-04-01' }, ABOUT, NOW);
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-04-01', text: 'Ally Savings ••1234 no longer tracked' });
+    expect(await timelineNotesStore.count(ctx)).toBe(1);
+    await reopenAccount(ctx, 'sav', new Map(), NOW);
+    expect(await timelineNotesStore.count(ctx)).toBe(0);
+  });
+
+  test('the words for each state', () => {
+    const label = { name: 'Vanguard Brokerage', institution: 'Vanguard', mask: null };
+    expect(autoNoteText({ lifecycle: { state: 'closed', on: '2026-01-01' }, label })).toBe('Vanguard Brokerage closed');
+    expect(autoNoteText({ lifecycle: { state: 'left', on: '2026-01-01', note: 'Transferred to Fidelity' }, label })).toBe('Vanguard Brokerage no longer yours: Transferred to Fidelity');
+    expect(autoNoteText({ lifecycle: { state: 'untracked', from: '2026-01-01' }, label })).toBe('Vanguard Brokerage no longer tracked');
+    expect(autoNoteText({ lifecycle: { state: 'active' }, label })).toBeNull();
+  });
+
+  test('an end is saved even when its note can’t be', async () => {
+    // The note's compare-and-set is the second eval.
+    fake.failNext('eval', 1);
+    await expect(markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW)).rejects.toThrow(/armed failure/);
+    // The first eval (the end itself) failing fails the save; a note failing does not.
+    const original = timelineNotesStore.update;
+    (timelineNotesStore as any).update = async () => {
+      throw new Error('note store down');
+    };
+    try {
+      await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    } finally {
+      (timelineNotesStore as any).update = original;
+    }
+    expect((await lifecycleStore.get(ctx, 'sav'))?.lifecycle).toEqual({ state: 'closed', on: '2026-03-12' });
+  });
+});
+
+describe('for the app', () => {
+  test('one per ended account, under its current id; answers that it is open are not listed', async () => {
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    await markStillOpen(ctx, 'chk', { kind: 'zero', since: '2026-02-01' }, ABOUT, NOW);
+    await recordAssumedClosures(ctx, [{ account_id: 'card', on: '2026-03-01', about: CARD }], NOW);
+    const list = lifecycleForClient(await getEffectiveLifecycle(ctx, new Map()));
+    expect(list.map((l) => [l.account_id, l.lifecycle.state, l.assumed ?? false])).toEqual([
+      ['sav', 'closed', false],
+      ['card', 'closed', true],
+    ]);
+  });
+});
