@@ -1051,6 +1051,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   // Each row filed as the app files it: the person's own choice, else the
   // carried one, else Plaid's, by the categories as stored, grown in memory by
   // any the rows carry that they lack (with provisional ids, shown as null).
+  // The manual accounts' rows are filed by the same set (their words grow it
+  // too), for the transactions CSV, which lists them beside the bank's: so a
+  // category is named alike everywhere in the download, before the app has
+  // stored the categories too (a budget's name, say, as it was saved).
   const factsOf = (t: StoredTxn): CategoryFacts => {
     const own = data.overrides.get(t.transaction_id) ?? carried.get(contentKey(t.account_id, t));
     return {
@@ -1060,9 +1064,15 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       pfc_detailed: t.personal_finance_category?.detailed ?? null,
     };
   };
+  const manualRows = manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]);
   let provisional = 0;
   const filing = indexTaxonomy(
-    growTaxonomy(data.taxonomy, observedKeys(data.stores.flatMap((s) => Object.values(s.txns).map(factsOf))), () => `new:${++provisional}`, { limit: Infinity }).taxonomy
+    growTaxonomy(
+      data.taxonomy,
+      observedKeys([...data.stores.flatMap((s) => Object.values(s.txns).map(factsOf)), ...manualRows.map(manualFacts)]),
+      () => `new:${++provisional}`,
+      { limit: Infinity }
+    ).taxonomy
   );
   const filed = (t: StoredTxn) => filedAs(filing, factsOf(t));
   const transactions: ExportTransaction[] = data.stores
@@ -1178,6 +1188,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     if (Object.hasOwn(doc, key)) throw new Error(`Two parts of the download are both called ${key}`);
     doc[key] = value;
   }
+  manualFilings.set(doc, (row) => filedAs(filing, manualFacts(row)));
   return doc;
 }
 
@@ -1440,22 +1451,39 @@ function filedAs(ix: CategoryIndex, facts: CategoryFacts): NyaCategory {
   return { nya_category: said ? category.name : null, nya_category_id: isProvisionalId(category.id) ? null : category.id, nya_group: groupOf(ix, category).name };
 }
 
+/** What files a manual row: its own words (lib/categories.ts resolveCategory). */
+const manualFacts = (r: ManualTxn): CategoryFacts => ({ category: r.category, source: r.source });
+
+/** The rows of the manual accounts' books as read for the file, for filing:
+ *  any a book holds that reads as one, the CSV's writer refusing the rest. */
+function manualRowsOf(entries: unknown): ManualTxn[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    const book = (entry as { value?: unknown } | null)?.value;
+    return isManualTxnBook(book) ? book.rows : [];
+  });
+}
+
+/** For each document buildUserExport makes, how it files a manual row: by
+ *  the same set as the bank's rows (see there). */
+const manualFilings = new WeakMap<UserExport, (row: ManualTxn) => NyaCategory>();
+
 /**
  * The manual rows' categories, as the app files them (lib/categories.ts
- * resolveCategory): by their own words, against the categories in the file,
- * grown in memory by any words no category has yet (provisional, so their
- * id is empty), as the bank's rows are. Without categories in the file (none
- * stored yet, or ones that can't be read, which `problems` names), against
- * the seed the app would make.
+ * resolveCategory), by their own words: as buildUserExport filed the bank's,
+ * for a document it made. For any other, against the categories in it, grown
+ * in memory by any words no category has yet (provisional, so their id is
+ * empty), or, without them, the seed the app would make.
  */
 function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): (row: ManualTxn) => NyaCategory {
+  const made = manualFilings.get(doc);
+  if (made) return made;
   const stored = doc[taxonomyStore.name];
   let n = 0;
   const newId = () => `new:${++n}`;
-  const facts = (r: ManualTxn): CategoryFacts => ({ category: r.category, source: r.source });
   const base = isTaxonomy(stored) ? stored : seedTaxonomy([], newId);
-  const ix = indexTaxonomy(growTaxonomy(base, observedKeys(rows.map(facts)), newId, { limit: Infinity }).taxonomy);
-  return (r) => filedAs(ix, facts(r));
+  const ix = indexTaxonomy(growTaxonomy(base, observedKeys(rows.map(manualFacts)), newId, { limit: Infinity }).taxonomy);
+  return (r) => filedAs(ix, manualFacts(r));
 }
 
 /** Every row of the manual accounts' books in the file, once each: a book
