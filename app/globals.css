@@ -3470,3 +3470,28 @@ button.import-choice {
 .txn-text {
   overflow-wrap: anywhere;
 }
+
+/* --- the rest of the download's promise: an account's OFX statement and a
+   passphrase, on the download card (components/DownloadOptions.tsx), and the
+   page that opens a protected download (app/open-download,
+   components/OpenProtectedDownload.tsx) --- */
+
+.download-card .field select {
+  width: 100%;
+}
+
+.download-protect {
+  margin: 12px 0 4px;
+}
+
+.download-protect .field {
+  margin-top: 10px;
+}
+
+.download-card code {
+  font-size: 12px;
+}
+
+.open-download > button {
+  margin-top: 4px;
+}

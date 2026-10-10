@@ -2305,8 +2305,16 @@ export default function Dashboard({
 
                 {/* Download my data, with the rest of the account upkeep
                     behind Manage accounts; after the accounts, so it doesn't
-                    push them down. It asks for a fresh sign-in itself. */}
-                {manageMode && <DownloadMyData clerk={clerk} />}
+                    push them down. It asks for a fresh sign-in itself. The
+                    accounts are what an OFX statement can be of. */}
+                {manageMode && (
+                  <DownloadMyData
+                    clerk={clerk}
+                    accounts={institutions.flatMap((i) =>
+                      i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
+                    )}
+                  />
+                )}
 
                 {/* API tokens for the read-only API and the MCP server, with
                     the rest of the account upkeep (components/ApiTokens.tsx). */}

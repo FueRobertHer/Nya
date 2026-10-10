@@ -1,17 +1,17 @@
 import type { ReactNode } from 'react';
 import { TrustLinks } from './TrustLinks';
 
-// The frame of the public pages (app/security, app/privacy, app/developers):
-// the logo back into the app, a title, and the links between the pages.
-// Server-rendered and readable without signing in (proxy.ts), so nothing in it
-// reads stored data.
+// The frame of the public pages (app/security, app/privacy, app/developers,
+// app/open-download): the logo back into the app, a title, and the links
+// between the pages. Server-rendered and readable without signing in
+// (proxy.ts), so nothing in it reads stored data.
 export function InfoPage({
   page,
   title,
   intro,
   children,
 }: {
-  page: 'security' | 'privacy' | 'developers';
+  page: 'security' | 'privacy' | 'developers' | 'open-download';
   title: string;
   intro: string;
   children: ReactNode;
@@ -26,7 +26,7 @@ export function InfoPage({
       <h1>{title}</h1>
       <p className="sub">{intro}</p>
       {children}
-      <TrustLinks current={page === 'developers' ? undefined : page} home />
+      <TrustLinks current={page === 'security' || page === 'privacy' ? page : undefined} home />
     </main>
   );
 }
