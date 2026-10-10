@@ -88,10 +88,12 @@ export type Txn = {
   category_kind?: CategoryKind;
   // What a bank's row is filed by, until it is (never sent): whether
   // `category` is the person's choice (chosen for it, or carried across a
-  // re-link), and Plaid's own values.
+  // re-link), and Plaid's own values; on any row, the category a rule files
+  // it under (lib/rules.ts), by id.
   category_set?: boolean;
   pfc_primary?: string | null;
   pfc_detailed?: string | null;
+  rule_category?: string;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
   // Plaid's code for a currency with no ISO one (a cryptocurrency); absent on
   // a payload cached before it was sent.
@@ -163,6 +165,7 @@ export type OlderTxn = Pick<
   | 'category_set'
   | 'pfc_primary'
   | 'pfc_detailed'
+  | 'rule_category'
   | 'subcategory'
   | 'iso_currency_code'
   | 'unofficial_currency_code'

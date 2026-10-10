@@ -30,6 +30,7 @@ import './manual-txns';
 import './planned-store';
 import './rate-limit';
 import './report/store';
+import './rules';
 import './tags';
 import './txn-annotations';
 

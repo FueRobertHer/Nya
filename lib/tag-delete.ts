@@ -1,7 +1,7 @@
 // lib/tag-delete.ts
 //
-// Deleting a tag (lib/tags.ts, DELETING): it comes off every transaction, by
-// a sequence that can't leave half a state.
+// Deleting a tag (lib/tags.ts, DELETING): it comes off every transaction and
+// out of every rule, by a sequence that can't leave half a state.
 //
 //   1. One compare-and-set on the tags: the tag leaves the list and its id is
 //      noted under `deleting`. From this moment nothing shows it: every read
@@ -9,7 +9,9 @@
 //      or answer has it, whatever happens next.
 //   2. The sweep, each record in its own compare-and-set: the id comes off
 //      what the person said about each transaction and what was carried from
-//      earlier accounts (lib/txn-annotations.ts sweepAnnotationTags).
+//      earlier accounts (lib/txn-annotations.ts sweepAnnotationTags), and out
+//      of every rule (lib/rules.ts sweepRuleTags; a rule left adding nothing
+//      else does nothing, and says so).
 //   3. One compare-and-set on the tags: the note under `deleting` goes.
 //
 // A sweep that stops part way (a request cut off, storage failing) leaves the
@@ -23,11 +25,12 @@
 import type { Ctx } from './containers';
 import { changeTagSet, emptyTagSet, markDeleted, readTagSet, sweptAway, type TagSet } from './tags';
 import { sweepAnnotationTags } from './txn-annotations';
+import { sweepRuleTags } from './rules';
 
 /** Deletes a tag (see the header) and returns the tags as they are after, and
- *  how many transactions' records it came off. TagError (404) for a tag
- *  that doesn't exist. */
-export async function deleteTag(ctx: Ctx, id: unknown): Promise<{ set: TagSet; transactions: number }> {
+ *  how many transactions' records and rules it came off. TagError (404) for
+ *  a tag that doesn't exist. */
+export async function deleteTag(ctx: Ctx, id: unknown): Promise<{ set: TagSet; transactions: number; rules: number }> {
   const set = await changeTagSet(ctx, (s) => markDeleted(s, id));
   return finishDeleting(ctx, set);
 }
@@ -35,11 +38,12 @@ export async function deleteTag(ctx: Ctx, id: unknown): Promise<{ set: TagSet; t
 /** Sweeps every id noted under `deleting`, then drops the note: the end of
  *  every deletion begun, this one's or one cut off earlier. Nothing to do
  *  when none is noted. */
-export async function finishDeleting(ctx: Ctx, known?: TagSet | null): Promise<{ set: TagSet; transactions: number }> {
+export async function finishDeleting(ctx: Ctx, known?: TagSet | null): Promise<{ set: TagSet; transactions: number; rules: number }> {
   const set = known === undefined ? await readTagSet(ctx) : known;
   const ids = set?.deleting ?? [];
-  if (!set || ids.length === 0) return { set: set ?? emptyTagSet(), transactions: 0 };
+  if (!set || ids.length === 0) return { set: set ?? emptyTagSet(), transactions: 0, rules: 0 };
   const transactions = await sweepAnnotationTags(ctx, ids);
+  const rules = await sweepRuleTags(ctx, ids);
   const after = await changeTagSet(ctx, (s) => sweptAway(s, ids));
-  return { set: after, transactions };
+  return { set: after, transactions, rules };
 }

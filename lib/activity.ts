@@ -51,10 +51,12 @@ import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
-import { fileTransactions } from './category-store';
-import type { Taxonomy } from './categories';
-import { tagsForDisplay, type TagSet } from './tags';
+import { filingSet, fileRows } from './category-store';
+import { indexTaxonomy, type Taxonomy } from './categories';
+import { liveTagIds, tagsForDisplay, type TagSet } from './tags';
 import { applyLayers } from './txn-layers';
+import { compileRules, rulesForDisplay, type RuleSubject } from './rules';
+import { readLinks, resolveId } from './link-core';
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -333,7 +335,7 @@ export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
   hidden: Set<string>,
-  opts: { since?: string; grow?: boolean } = {}
+  opts: { since?: string; grow?: boolean; subjects?: Map<string, RuleSubject> } = {}
 ): Promise<{
   transactions: Txn[];
   notes: string[];
@@ -352,10 +354,11 @@ export async function finishActivity(
   // The manual rows back to the earlier of the two: the history's first day,
   // and the transactions' own (a report's period can start before it).
   const readFrom = cutoff < since ? cutoff : since;
-  const [manual, annotations, tagRead] = await Promise.all([
+  const [manual, annotations, tagRead, ruleRead] = await Promise.all([
     readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
     readAnnotations(ctx),
     tagsForDisplay(ctx),
+    rulesForDisplay(ctx),
   ]);
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
@@ -385,15 +388,25 @@ export async function finishActivity(
         account_ref: t.account_id,
       })),
   ];
-  // What the person said about each row, and what was carried across a
-  // re-link, over the bank's data (lib/txn-layers.ts).
-  applyLayers([...transactions, ...candidates], { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set });
-  const filed = await fileTransactions(ctx, [...transactions, ...candidates], { grow: !!opts.grow });
+  // The categories first, which the rules read; then the rules, what was
+  // carried across a re-link and what the person said about each row, over
+  // the bank's data (lib/txn-layers.ts); then every row filed.
+  const rows = [...transactions, ...candidates];
+  const filed = await filingSet(ctx, rows, { grow: !!opts.grow });
+  const ix = indexTaxonomy(filed.taxonomy);
+  // Links only for a rule on an account, which follows them; read for display,
+  // so one that can't be read is passed over (the rule matches the id it names).
+  const onAccount = ruleRead.set?.rules.some((r) => r.enabled && r.conditions.some((c) => c.field === 'account'));
+  const links = onAccount ? await readLinks(ctx).then((r) => r.links, () => new Map()) : null;
+  const account = links?.size ? (id: string) => resolveId(id, links) : undefined;
+  const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
+  applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects });
+  fileRows(ix, rows);
   // The institutions whose rows aren't all here (the banks' part: a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
-    notes: [...plaid.notes, ...manual.notes, ...(tagRead.note ? [tagRead.note] : []), ...filed.notes],
+    notes: [...plaid.notes, ...manual.notes, ...(tagRead.note ? [tagRead.note] : []), ...(ruleRead.note ? [ruleRead.note] : []), ...filed.notes],
     incomplete: plaid.incomplete ?? [],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
