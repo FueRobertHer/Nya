@@ -301,5 +301,10 @@ describe('a bank Plaid gives no transactions for, or that never synced', () => {
     // Never synced, its history reaching the period: covered, nothing missing.
     expect(built({ coverage: 'missing', never_synced: true, accounts: covered }, p).gaps).toEqual([]);
     expect(built({ coverage: 'missing', never_synced: true, accounts: [] }, p).gaps.map((g) => g.kind)).toEqual(['missing']);
+    // Synced, with no rows stored, and seen too late for its history to
+    // reach the period ("can go back only to"): covered by the files, nothing.
+    const seen = daysAgo(100);
+    expect(built({ first_seen: seen, accounts: [] }, period(daysAgo(1200), daysAgo(1100))).gaps.map((g) => g.kind)).toEqual(['begins_late']);
+    expect(built({ first_seen: seen, accounts: [{ name: 'Checking', covers: [{ from: daysAgo(1300), to: daysAgo(1000) }] }] }, period(daysAgo(1200), daysAgo(1100))).gaps).toEqual([]);
   });
 });

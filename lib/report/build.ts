@@ -544,7 +544,7 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
         ...(late.imported.length > 0 ? { imported: late.imported } : {}),
       });
     }
-  } else gaps.push(...beyondReach);
+  } else if (!filesCoverAll(s, null, period)) gaps.push(...beyondReach);
   return gaps;
 }
 
