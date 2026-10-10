@@ -143,7 +143,7 @@ const bookOf = async (account_id: string) => (await manualTxnStore.get(ctx, acco
 async function arriving(connection_id: string): Promise<string> {
   const from = (await connectionsStore.get(ctx, connection_id))!.history!.from;
   const day = new Date(`${from}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-  return `SimpleFIN is still bringing in this account’s older transactions, a few months each night, so the statement has none before ${day} yet. Download it again once they are all in.`;
+  return `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${day}. Download it again once they are all in.`;
 }
 /** Its older transactions all in. */
 const allIn = (connection_id: string) => connectionsStore.update(ctx, connection_id, (c) => (c ? { ...c, history: { ...c.history!, complete: true } } : c));
@@ -184,6 +184,33 @@ describe('an account SimpleFIN keeps up to date, as an OFX statement', () => {
     expect([...savings.types.values()]).toEqual(['XFER']);
     // A loan has no statement in OFX, SimpleFIN's or not.
     expect(await statement(await idOf('Home Loan'))).toMatchObject({ status: 400, refused: expect.stringContaining('A loan has no statement') });
+  });
+
+  test('older transactions still arriving: the connection’s day, which another account tracked later starts again, is said as what may be missing, never as none before it', async () => {
+    const connection_id = await trackAll();
+    const checking = await idOf('Checking');
+    // Another account tracked since: the connection starts again from days
+    // ago, while Checking's rows go back further.
+    await connectionsStore.update(ctx, connection_id, (c) => (c ? { ...c, history: { ...c.history!, from: dayOf(NOW - 3 * DAY), complete: false } } : c));
+    const s = written(await statement(checking));
+    expect(s.records.some((r) => r.date < dayOf(NOW - 3 * DAY))).toBe(true);
+    expect(s.file.notes).toEqual([await arriving(connection_id)]);
+    expect(s.file.notes[0]).toContain('may be missing some from before');
+    expect(s.file.incomplete).toEqual([]);
+  });
+
+  test('the record of its connection can’t be read: said, as the Accounts tab says it, its rows still listed, no balance, and the file incomplete', async () => {
+    const connection_id = await trackAll();
+    const checking = await idOf('Checking');
+    await fake.hset(ctxKey('connector-connections'), { [connection_id]: 'damaged' });
+    const s = written(await statement(checking));
+    expect(s.records).toHaveLength(5);
+    expect(s.statements[0].ledger).toBeNull();
+    expect(s.file.notes).toEqual([
+      'What Nya keeps about the SimpleFIN connection this account comes through could not be read, so whether its older transactions are still arriving isn’t known, and the statement may be missing some. The JSON download lists it under problems. Nothing was changed: what could not be read is still stored as it was.',
+      'The statement has no balance: Nya holds My Bank’s balances while what it keeps about the bank’s SimpleFIN connection can’t be read, as the Accounts tab does.',
+    ]);
+    expect(s.file.incomplete).toEqual(['connector-connections']);
   });
 
   test('its balance: the one SimpleFIN last gave, as of the bank’s own day for it, where the person is', async () => {
