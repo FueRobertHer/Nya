@@ -27,7 +27,7 @@ import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'pl
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
-import { redis, kc, type StoredItem } from './storage';
+import { redis, kc, getItems, type StoredItem } from './storage';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
 import {
@@ -45,6 +45,7 @@ import {
 } from './item-products';
 import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
+import { pruneOrphanAnnotations } from './txn-annotations';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -582,6 +583,49 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
 }
 
 /**
+ * Every transaction id the Items stored now hold, or null when the Items or
+ * a store couldn't be read or a store is behind (rows shown from a store too
+ * large to save, or whose last save failed, aren't in it), so that nothing is
+ * pruned on a partial answer: for the prunes of what was said about
+ * transactions no Item holds any more (lib/overrides.ts pruneOrphanOverrides,
+ * lib/txn-annotations.ts pruneOrphanAnnotations). The Items are read when it
+ * is called, never passed in: a prune reads its records first and this after,
+ * so an Item linked meanwhile, and every row it stored before a record was
+ * set on it, are among those read. A list read earlier (when a forget or a
+ * disconnect started) would take that Item's records for orphans.
+ */
+export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null> {
+  const known = new Set<string>();
+  try {
+    for (const { item_id } of await getItems(ctx)) {
+      if (await storeIsBehind(ctx, item_id)) return null;
+      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
+    }
+  } catch {
+    return null;
+  }
+  return known;
+}
+
+/**
+ * After a sync saved an Item's store without rows the bank removed: what the
+ * person said about those transactions (an exclusion) can never be shown
+ * again, so it goes, by the rules every such prune keeps (nothing while a
+ * store can't be read or is behind, nor a record this release doesn't
+ * recognise; lib/txn-annotations.ts pruneOrphanAnnotations). Only those
+ * transactions' records, and the stores are read only when one has one.
+ * Never fails the sync: a record left is pruned by the next disconnect or
+ * forget, and is never shown meanwhile, its transaction being gone.
+ */
+async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
+  try {
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+}
+
+/**
  * An Item's stored transactions, read without syncing (no Plaid call), for
  * the paths that must not reach Plaid: a disconnect (the Item is already
  * removed there) and the Accounts tab. Throws when the store can't be read.
@@ -860,6 +904,9 @@ async function syncItem(ctx: Ctx,
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
     // page's deltas onto an already-mutated set.
     const state: ItemState = JSON.parse(JSON.stringify(stored));
+    // The rows the bank removed that this store held, or that an earlier page
+    // of this sync added.
+    const removed = new Set<string>();
     let cursor: string | undefined = state.cursor || undefined;
     let hasMore = true;
     let pages = 0;
@@ -886,7 +933,9 @@ async function syncItem(ctx: Ctx,
           state.txns[t.transaction_id] = toStored(t, state.accounts, item.institution_name);
         }
         for (const r of res.data.removed) {
-          if (r.transaction_id) delete state.txns[r.transaction_id];
+          if (!r.transaction_id || !state.txns[r.transaction_id]) continue;
+          delete state.txns[r.transaction_id];
+          removed.add(r.transaction_id);
         }
         hasMore = res.data.has_more;
         cursor = res.data.next_cursor;
@@ -955,6 +1004,9 @@ async function syncItem(ctx: Ctx,
     if (hasMore) state.importing = true;
     else delete state.importing;
     const write = await writeState(ctx, item.item_id, state);
+    // Saved without them: what was said about them goes too. Not when the
+    // write was refused or failed, which leaves them stored.
+    if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed);
 
     // Too large to persist. `state` is still complete (nothing was trimmed), so
     // return it: accurate figures this request plus a note that they won't

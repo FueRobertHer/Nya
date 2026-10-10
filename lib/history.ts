@@ -22,6 +22,7 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt, MalformedCiphertextError, DecryptFailedError } from './crypto';
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
+import { openStored } from './repo';
 
 const HISTORY_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth');
 const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
@@ -701,6 +702,14 @@ export async function readMeasuredBalances(
 /** One day of a stored series, as the download of my data gives it. */
 export type StoredPoint = { date: string; value: number; estimated: boolean };
 
+/** The days a series has stored that can't be used, by why, each in date
+ *  order, as the storage seam reports entries (lib/repo.ts getAllReport):
+ *  `unreadable`, their stored bytes are damaged; `unrecognised`, stored intact
+ *  in a form this code does not know (a total that isn't a number, a map
+ *  that isn't one of balances, or one holding a balance that isn't a
+ *  number). */
+export type UnusableDays = { unreadable: string[]; unrecognised: string[] };
+
 /**
  * Every stored balance, for the download of my data (lib/user-export.ts): the
  * net-worth totals and each account's own series, recorded and estimated
@@ -718,44 +727,93 @@ export type StoredPoint = { date: string; value: number; estimated: boolean };
  * are balances of the day backfill ran, copied onto past days, not a history
  * of those accounts (see ACCOUNTS_EST_FLAT_BY_DATE).
  *
- * Strict where the chart is lenient: a layer that can't be read, or any
- * value in it that can't be decrypted, isn't a number or isn't a map of
- * balances, throws, where the chart would drop the point. An estimated total
- * on a day that also has a recorded one is superseded and not read.
+ * A day that can't be used is NAMED, never dropped quietly and never a reason
+ * to stop: `problems` lists it, by the storage seam's rules (lib/repo.ts
+ * openStored), for the series it is missing from. So is a day whose map reads
+ * but holds a balance that isn't a finite number (a later version's shape,
+ * say): its numbers are used, as the chart uses them, and the day is named
+ * `unrecognised`, since an account's balance on it is left out. It is not
+ * read around either: a day whose recorded total or map can't be used gets
+ * no estimate in its place, as the chart gives it none. A partial measurement
+ * that can't be used, on a day with no recorded map, does fall back to the
+ * estimate, marked as one, as the chart does. Anything that says nothing
+ * about the data is thrown as it is: storage out of reach, a key this
+ * deployment can't load, a failed decrypt under k0 (which a replaced
+ * PLAID_ENCRYPTION_KEY would look exactly like). An estimate on a day that
+ * also has a recorded value is superseded and not read, so it can never be
+ * named.
  */
-export async function readHistoryForExport(ctx: Ctx): Promise<{ totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> }> {
+export async function readHistoryForExport(
+  ctx: Ctx
+): Promise<{ totals: StoredPoint[]; accounts: Map<string, StoredPoint[]>; problems: { totals: UnusableDays; accounts: UnusableDays } }> {
   const [real, est, realAcc, partialAcc, estAcc, extAcc] = await Promise.all(
     [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx)].map(
-      async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {}
+      async (key) => (await redis().hgetall<Record<string, unknown>>(key)) ?? {}
     )
   );
+  const totalsNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
+  const accountsNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
 
-  const total = async (blob: string): Promise<number> => {
-    const text = await decrypt(String(blob));
-    // Number('') is 0: an empty value is damage, not a zero net worth.
-    const value = text.trim() === '' ? NaN : Number(text);
-    if (!Number.isFinite(value)) throw new Error('A stored net-worth total is not a number');
-    return value;
+  /** A stored total, or null when it can't be used, named. */
+  const total = async (date: string, blob: unknown): Promise<number | null> => {
+    const opened = await openStored(blob);
+    if (!opened.ok) {
+      totalsNamed[opened.flaw].add(date);
+      return null;
+    }
+    // Number('') is 0: an empty value is no zero net worth.
+    const value = opened.text.trim() === '' ? NaN : Number(opened.text);
+    if (Number.isFinite(value)) return value;
+    totalsNamed.unrecognised.add(date);
+    return null;
   };
-  const totals = await Promise.all([
-    ...Object.entries(real).map(async ([date, blob]): Promise<StoredPoint> => ({ date, value: await total(blob), estimated: false })),
-    ...Object.entries(est)
-      .filter(([date]) => !Object.hasOwn(real, date))
-      .map(async ([date, blob]): Promise<StoredPoint> => ({ date, value: await total(blob), estimated: true })),
-  ]);
+  const totals = (
+    await Promise.all([
+      ...Object.entries(real).map(async ([date, blob]) => ({ date, value: await total(date, blob), estimated: false })),
+      ...Object.entries(est)
+        .filter(([date]) => !Object.hasOwn(real, date))
+        .map(async ([date, blob]) => ({ date, value: await total(date, blob), estimated: true })),
+    ])
+  ).filter((p): p is StoredPoint => p.value !== null);
 
-  const maps = async (layer: Record<string, string>) =>
-    new Map(
-      await Promise.all(
-        Object.entries(layer).map(async ([date, blob]) => {
-          const map = JSON.parse(await decrypt(String(blob))) as unknown;
-          if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error('A stored balance map has an unexpected shape');
-          return [date, map as Record<string, unknown>] as const;
-        })
-      )
-    );
-  const [realMaps, partialMaps, estMaps, extMaps] = await Promise.all([realAcc, partialAcc, estAcc, extAcc].map(maps));
-  // A value that isn't a finite number is no balance, as getAccountHistory reads it.
+  /** A stored map of balances, or null when it can't be used, named. */
+  const open = async (date: string, blob: unknown): Promise<Record<string, unknown> | null> => {
+    const opened = await openStored(blob);
+    if (!opened.ok) {
+      accountsNamed[opened.flaw].add(date);
+      return null;
+    }
+    let map: unknown;
+    try {
+      map = JSON.parse(opened.text);
+    } catch {
+      map = null;
+    }
+    if (!map || typeof map !== 'object' || Array.isArray(map)) {
+      accountsNamed.unrecognised.add(date);
+      return null;
+    }
+    // A balance that isn't a finite number is one this code doesn't know (no
+    // writer stores one): the day is named, and the rest of the map is used.
+    if (Object.values(map).some((v) => typeof v !== 'number' || !Number.isFinite(v))) accountsNamed.unrecognised.add(date);
+    return map as Record<string, unknown>;
+  };
+  /** A layer's maps that can be used, for the days given. */
+  const maps = async (layer: Record<string, unknown>, dates: string[]) => {
+    const read = await Promise.all(dates.map(async (date) => [date, await open(date, layer[date])] as const));
+    return new Map(read.filter((e): e is readonly [string, Record<string, unknown>] => e[1] !== null));
+  };
+  // The estimate layers are read only for days with no recorded map: where one
+  // is stored, readable or not, they are superseded (below).
+  const unrecorded = (layer: Record<string, unknown>) => Object.keys(layer).filter((date) => !Object.hasOwn(realAcc, date));
+  const [realMaps, partialMaps, estMaps, extMaps] = await Promise.all([
+    maps(realAcc, Object.keys(realAcc)),
+    maps(partialAcc, Object.keys(partialAcc)),
+    maps(estAcc, unrecorded(estAcc)),
+    maps(extAcc, unrecorded(extAcc)),
+  ]);
+  // A value that isn't a finite number is no balance, as getAccountHistory
+  // reads it; its day is named (open, above).
   const num = (map: Record<string, unknown> | undefined, id: string): number | null => {
     const v = map && Object.hasOwn(map, id) ? map[id] : undefined;
     return typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -770,9 +828,10 @@ export async function readHistoryForExport(ctx: Ctx): Promise<{ totals: StoredPo
       let point: StoredPoint | null = null;
       const measured = num(partial, id);
       if (measured !== null) point = { date, value: measured, estimated: false };
-      else if (recorded) {
+      else if (Object.hasOwn(realAcc, date)) {
         // A recorded map that doesn't name the account says it wasn't there
-        // that day: no estimate stands in for it.
+        // that day: no estimate stands in for it. Nor for a recorded map that
+        // can't be read, which is named instead.
         const value = num(recorded, id);
         point = value === null ? null : { date, value, estimated: false };
       } else {
@@ -787,7 +846,11 @@ export async function readHistoryForExport(ctx: Ctx): Promise<{ totals: StoredPo
   }
   const byDate = (a: StoredPoint, b: StoredPoint) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   for (const series of accounts.values()) series.sort(byDate);
-  return { totals: totals.sort(byDate), accounts };
+  const sorted = (named: { unreadable: Set<string>; unrecognised: Set<string> }): UnusableDays => ({
+    unreadable: [...named.unreadable].sort(),
+    unrecognised: [...named.unrecognised].sort(),
+  });
+  return { totals: totals.sort(byDate), accounts, problems: { totals: sorted(totalsNamed), accounts: sorted(accountsNamed) } };
 }
 
 // The backfill flag makes /api/backfill idempotent; linking a new institution

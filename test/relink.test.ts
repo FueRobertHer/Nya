@@ -447,6 +447,48 @@ describe('forgetting an earlier account', () => {
     expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
   });
 
+  // A disconnect whose cleanup failed leaves behind what was said about its
+  // transactions; a forget finishes it, for exclusions as for categories.
+  test('prunes what was said about transactions no stored Item holds, as it prunes their categories', async () => {
+    await setup();
+    const { setExcluded } = await import('@/lib/txn-annotations');
+    await overrides.setOverride(ctx, 't_left', 'treats');
+    await setExcluded(ctx, 't_left', true);
+    expect((await forget('acct_old')).status).toBe(200);
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't_left')).toBeNull();
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_left')).toBeNull();
+  });
+
+  // Linking a bank takes no lock. One linked while a forget runs, with a row
+  // excluded and recategorized meanwhile, keeps both: the prunes at the end
+  // read the Items then, never the list read when the forget started.
+  test('a bank linked while it runs keeps what was said about its transactions', async () => {
+    await setup();
+    const hdel = fake.hdel.bind(fake);
+    let linked = false;
+    fake.hdel = (async (key: string, ...fields: string[]) => {
+      // Just before the directory entry goes: the last step before the prunes.
+      if (!linked && key === ctxKey('accounts:directory') && fields.includes('acct_old')) {
+        linked = true;
+        await addItem('item_late', 'acct_late', [row('t_late', 'acct_late')]);
+        await route('transactions', 'GET');
+        expect((await excludeRow('t_late', true)).status).toBe(200);
+        expect((await route('recategorize', 'POST', { transaction_id: 't_late', category: 'treats' })).status).toBe(200);
+      }
+      return hdel(key, ...fields);
+    }) as typeof fake.hdel;
+    try {
+      expect((await forget('acct_old')).status).toBe(200);
+    } finally {
+      fake.hdel = hdel;
+    }
+    expect(linked).toBe(true);
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_late')).not.toBeNull();
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't_late')).not.toBeNull();
+    expect(await excludedOf('t_late')).toBe(true);
+    expect(await categoryOf('t_late')).toBe('treats');
+  });
+
   // The bank stopped returning a card, but the institution is still
   // connected: its transactions are still stored there.
   test('not an account of an institution that is still connected', async () => {
@@ -1080,6 +1122,8 @@ describe('overrides on rows not yet stored', () => {
   test('a category set while a prune runs is kept', async () => {
     await addItem('item_a', 'acct_a', [row('a1', 'acct_a')], Date.now() - DAY);
     await route('transactions', 'GET');
+    // With none, there is nothing to check, and no store is read.
+    await overrides.setOverride(ctx, 'a1', 'coffee');
     const get = fake.get.bind(fake);
     let once = true;
     fake.get = (async (key: string) => {
@@ -1090,11 +1134,38 @@ describe('overrides on rows not yet stored', () => {
       return get(key);
     }) as typeof fake.get;
     try {
-      await overrides.pruneOrphanOverrides(ctx, ['item_a']);
+      await overrides.pruneOrphanOverrides(ctx);
     } finally {
       fake.get = get;
     }
+    expect(once).toBe(false);
     expect(await fake.hget(ctxKey('txn-category-overrides'), 'just_now')).not.toBeNull();
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 'a1')).not.toBeNull();
+  });
+
+  // Linking takes no lock: the Items are read after the categories, so a
+  // bank linked meanwhile, and a row of it categorized, are among them.
+  test('a bank linked while a prune runs keeps its categories', async () => {
+    await addItem('item_a', 'acct_a', [row('a1', 'acct_a')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    const hkeys = fake.hkeys.bind(fake);
+    let once = true;
+    fake.hkeys = (async (key: string) => {
+      if (once && key === ctxKey('txn-category-overrides')) {
+        once = false;
+        await addItem('item_b', 'acct_b', [row('b1', 'acct_b')]);
+        await route('transactions', 'GET');
+        await overrides.setOverride(ctx, 'b1', 'treats');
+      }
+      return hkeys(key);
+    }) as typeof fake.hkeys;
+    try {
+      await overrides.pruneOrphanOverrides(ctx);
+    } finally {
+      fake.hkeys = hkeys;
+    }
+    expect(once).toBe(false);
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 'b1')).not.toBeNull();
   });
 });
 

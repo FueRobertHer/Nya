@@ -6,7 +6,7 @@ mock.module('@clerk/nextjs', () => ({
   useReverification: (fetcher: unknown) => fetcher,
 }));
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { DownloadMyDataView, requestFile, formatBytes, formatsFor, localFilename, CUT_OFF } = await import('@/components/DownloadMyData');
+const { DownloadMyDataView, requestFile, formatBytes, formatsFor, localFilename, incompleteOf, CUT_OFF } = await import('@/components/DownloadMyData');
 const { DOWNLOADS_PER_WINDOW } = await import('@/lib/download-limit');
 const { localDate } = await import('@/lib/local-date');
 
@@ -29,7 +29,8 @@ describe('download my data, on screen', () => {
     // The limit the server applies, not a number written out separately.
     expect(html).toContain(`Up to ${DOWNLOADS_PER_WINDOW} downloads an hour.`);
     for (const f of formatsFor(true)) expect(html).toContain(f.label);
-    // The transactions CSV is bank and card transactions; investments are in the JSON.
+    // The transactions CSV is every transaction, manual ones too; investments are in the JSON.
+    expect(html).toContain('Every stored transaction, from your banks and entered by hand or imported, one per row');
     expect(html).toContain('Investment transactions are in the JSON file only.');
   });
 
@@ -68,12 +69,23 @@ describe('download my data, on screen', () => {
   });
 
   test('done: what was saved, and any caveat that came with it', () => {
-    const html = view({ phase: { kind: 'done', filename: 'nya-data-2026-10-06.json', bytes: 1_572_864, notes: ['Nya could not save the newest transactions from Chase.'] } });
+    const html = view({ phase: { kind: 'done', filename: 'nya-data-2026-10-06.json', bytes: 1_572_864, notes: ['Nya could not save the newest transactions from Chase.'], incomplete: [] } });
     expect(html).toContain('Saved nya-data-2026-10-06.json (1.5 MB).');
     expect(html).toContain('Nya could not save the newest transactions from Chase.');
+    // A whole file is never called incomplete.
+    expect(html).not.toContain('incomplete');
     // Two caveats with the same words are both shown (they are keyed by place, not text).
-    const twice = view({ phase: { kind: 'done', filename: 'f', bytes: 1, notes: ['same', 'same'] } });
+    const twice = view({ phase: { kind: 'done', filename: 'f', bytes: 1, notes: ['same', 'same'], incomplete: [] } });
     expect(twice.match(/>same</g)).toHaveLength(2);
+  });
+
+  test('done, but missing something: says plainly the file is incomplete, above what is missing', () => {
+    const missing = 'Not all of your holdings records could be read, so this file is missing 1 entry whose stored data is damaged.';
+    const html = view({ phase: { kind: 'done', filename: 'nya-data-2026-10-06.json', bytes: 2048, notes: [missing], incomplete: ['holdings:history'] } });
+    expect(html).toContain('Saved nya-data-2026-10-06.json (2 KB).');
+    expect(html).toContain('This file is incomplete: some of what Nya keeps for you could not be read');
+    expect(html.indexOf('This file is incomplete')).toBeLessThan(html.indexOf(missing));
+    expect(html).toContain('Nothing was changed.');
   });
 
   test('the file is named with the viewer’s own date', () => {
@@ -133,9 +145,16 @@ describe('the request, read to its end before anything is saved', () => {
     phases.length = 0;
     answer(file(WHOLE, SIZE, { 'x-nya-export-notes': encodeURIComponent(JSON.stringify(['a caveat'])) }));
     const out = await requestFile('json', null, track);
-    expect(out).toMatchObject({ ok: true, filename: `nya-data-${localDate()}.json`, notes: ['a caveat'] });
+    expect(out).toMatchObject({ ok: true, filename: `nya-data-${localDate()}.json`, notes: ['a caveat'], incomplete: [] });
     expect(await (out as { blob: Blob }).blob.text()).toBe('{"format":"nya-export"}');
     expect(phases).toEqual(['preparing', 'receiving', 'receiving']);
+  });
+
+  test('a file missing something is saved, with the parts the server said it is missing them from', async () => {
+    answer(file(WHOLE, SIZE, { 'x-nya-export-incomplete': 'account_history, holdings:history', 'x-nya-export-notes': encodeURIComponent(JSON.stringify(['what is missing'])) }));
+    expect(await requestFile('json', null, () => {})).toMatchObject({ ok: true, notes: ['what is missing'], incomplete: ['account_history', 'holdings:history'] });
+    expect(incompleteOf(null)).toEqual([]);
+    expect(incompleteOf(' , ')).toEqual([]);
   });
 
   test('a body that ends early without an error saves nothing', async () => {

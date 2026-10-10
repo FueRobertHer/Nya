@@ -18,16 +18,26 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Format | File | What it holds |
 | --- | --- | --- |
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
-| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction stored from your banks, one per row. Those on manual accounts, entered by hand or imported, are in the JSON file. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, and those on manual accounts, entered by hand or imported. |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
 
 **Five downloads an hour**, per account. A sixth is refused with how long to wait. The number is `DOWNLOADS_PER_WINDOW` in `lib/download-limit.ts`, which both the limit and the card's text read.
 
-**All or nothing.** Every store is read before the first byte is sent. If any part can't be read (a value that won't decrypt, a database error), nothing is downloaded and the error says which part, rather than handing over a file that looks complete and isn't. One kind of entry is named in the file instead: a record of when shared accounts were shown that can't be read is marked as such where it belongs, in [`sharing`](#sharing), never left out or shown as empty. The other person's record of what they share being shown to you is theirs to clear, so a damaged one would otherwise stop your download with nothing you could do about it.
+**Nothing missing without a word.** Every store is read before the first byte is sent, and what can't be read is named, not quietly left out (with the two exceptions below). What happens when something can't be read depends on why:
+
+- **The deployment can't read it** (the database out of reach, an encryption key missing or unavailable): nothing is downloaded, and the error says which part, as when anything else goes wrong. Try again later.
+- **An entry is damaged, or saved in a form this version of Nya doesn't know** (by a later version, say): the download goes ahead with everything else, and the file names what it is missing under [`problems`](#problems), by part and id, and says so in words under `notes`. The response says so too (**When the file is incomplete**, below), and the card says plainly that the file is incomplete, with what is missing. One damaged record would otherwise stop the download for good, with nothing in the app to clear it. That holds for every store on the [storage seam](#stores-built-on-the-storage-seam), for your balance history (`net_worth_history`, `account_history`), your manual accounts (`manual_accounts`), your budgets and goals (each then `null`), and for the records in [`sharing`](#sharing), each marked where it belongs.
+- **An entry of an older store the rest of the file is read against is damaged**: nothing is downloaded, and the error says which part, because left out, such an entry would read as something else elsewhere in the file. Your linked institutions and accounts (an account's balances and transactions with no account to belong to), transactions and investment transactions (the categories, names and exclusions you set on a row pointing at nothing), categories and merchant names (a transaction without the one you set on it), links (one account read as two) and hidden accounts (a hidden account shown as not hidden). These stores join the rest as they move onto the storage seam.
+
+The two exceptions are older readers that pass over, without a word, what they can't parse, as the app itself does, so the file holds what the app shows: sharing's (a connection whose record doesn't parse is left out, a share that doesn't parse reads as sharing nothing, and an account shared at a level this version doesn't know is left out of what you share), and the accounts each bank last reported (a record in the shape used before they were kept per bank, which the app no longer reads, and an account in one without an id or a type). Neither is named under `problems` yet.
+
+Nothing is removed or changed either way: what can't be read stays stored as it was, and the download only reports it. Without `MASTER_KEY` ([deployment.md](deployment.md#3-environment-variables)), a damaged value can't be told from a replaced `PLAID_ENCRYPTION_KEY`, which would make every value fail alike, so it stops the download as the deployment's problem rather than being reported as damage.
 
 **A whole file or none.** Before sending anything, the route writes the file out once only to count its bytes, keeping none of them, then streams it, and says how many bytes to expect twice: `Content-Length`, and `X-Nya-Export-Bytes`, the same number, which is the one the page checks (a proxy that compresses the response changes or drops `Content-Length`, and leaves this one alone). The page counts what arrives and saves the file only when that count is there and matches; otherwise it saves nothing and says the download was cut off, to try again. So a connection that drops part way, or a response ended early by the platform or a proxy, never leaves a short file that looks whole. The route may run for up to 300 seconds, for a large file over a slow connection.
+
+**When the file is incomplete.** The response carries `X-Nya-Export-Incomplete`: the parts of the JSON file this file is made from that are missing something, by their keys, separated by commas (`manual_accounts, holdings:history`), and `X-Nya-Export-Notes`, the notes that say what is missing in words (a URL-encoded JSON list, as the caveats travel). Both are there for a CSV too, which has nowhere inside to say it, but only for the parts it is made from: a transactions CSV is never called incomplete for a holdings record it doesn't hold. A CSV's notes say what that CSV lacks (for a manual account that can't be read, the name on its rows) and point to the JSON download for the list. Neither header is sent with a whole file. The card shows the notes, after a line saying the file is incomplete.
 
 **How big.** About 1.7 KB of JSON per transaction, and about 0.6 KB in the transactions CSV; history adds little. An account with 60,000 transactions and ten years of daily balances for 20 accounts comes to about 106 MB of JSON, 34 MB of transactions CSV and 7 MB of balance history CSV.
 
@@ -63,11 +73,12 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | Field | What it is |
 | --- | --- |
 | `format` | Always `"nya-export"`. |
-| `version` | `1`. It goes up when a field is removed or changes meaning; an added field leaves it alone. |
+| `version` | `2`. It goes up when a field is removed or changes meaning; an added field leaves it alone. Version 2 is the file that names what it couldn't read under `problems` instead of not being made at all: since then a part can be short, and `budgets`, `goals` and a value store's field can be `null`, because something couldn't be read, which only `problems` tells apart. A reader written for version 1, which was whole or not made, could take such a file as whole. |
 | `exported_at` | When the file was made. |
 | `documentation` | A link to this page. |
 | `not_included` | What the file leaves out, and why ([above](#what-is-not-in-it)). |
-| `notes` | Caveats about this download, if any: for example that the newest transactions from an institution could not be saved, so they may be missing. Usually empty. |
+| `notes` | Caveats about this download, if any: for example that the newest transactions from an institution could not be saved, so they may be missing, or that part of the file is missing what couldn't be read (one note for each such part). Usually empty. |
+| `problems` | What is stored but couldn't be read into the file ([below](#problems)). Usually empty. |
 | `institutions` | Your linked connections. |
 | `accounts` | Every account the file mentions anywhere, apart from the manual accounts you have now. |
 | `manual_accounts` | Accounts you track by hand. |
@@ -85,6 +96,25 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
 | *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+
+### `problems`
+
+Empty when the file has everything. Otherwise one entry for each part of the file that is missing something, and each reason, in the order the parts come:
+
+```json
+{ "section": "holdings:history", "problem": "unreadable", "ids": ["4f6c0d2e-...", "9a1b..."] }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `section` | The part of the file: its field, such as `manual_accounts`, `account_history` or `holdings:history`. |
+| `problem` | `unreadable`: the stored data is damaged, so nothing in it can be read, by this version of Nya or any other. `unrecognised`: it looks intact, but was saved in a form this version of Nya doesn't know (a later version may have written it); it is kept as it is, and a version that knows it reads it. In `sharing`, also `unavailable` and `record_id_unreadable` ([below](#sharing)). |
+| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `goals`, `allocation-settings`, `fire-plan`, `planned-items`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
+| `count` | How many are missing, in place of `ids`, for a part whose ids are kept out of the file: `api_tokens`, since a token's id is part of the token. |
+
+A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
+
+Nothing in `problems` was removed: it is all still stored as it was. Nya doesn't offer to clear damaged records from here. What removing one would do differs from store to store (an exclusion record gone puts a transaction back in your totals; a record of an email gone may send the email again; an import's record gone loses its undo), so a repair belongs where the record is used, as holdings history's is ([architecture.md](architecture.md#holdings-history)) and sharing's is (the Sharing drawer).
 
 ### `institutions[]`
 
@@ -114,13 +144,13 @@ Every account the file mentions anywhere, apart from the manual accounts you hav
 | `persistent_account_id` | Plaid's id for the account across reconnects, where the bank offers one. |
 | `first_seen`, `last_seen` | The first and last day Nya knew the account. |
 | `hidden`, `hidden_at` | Whether you hid it, and when. Hiding one id of an account you linked hides every id it has had. |
-| `latest_balance` | `{ balance, date }`: its newest recorded balance (never an estimate) and the UTC day it was recorded, or `null`. |
+| `latest_balance` | `{ balance, date }`: its newest recorded balance (never an estimate) and the UTC day it was recorded, or `null`. A recorded day that can't be read is passed over ([`problems`](#problems)), so the date says which day it is. |
 
 An account known only by its id has `null` for everything Nya never learned about it.
 
 ### `manual_accounts[]`
 
-`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency; the app shows them in US dollars.
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency; the app shows them in US dollars. A manual account that can't be read is named under [`problems`](#problems) instead.
 
 ### `hidden_accounts[]`
 
@@ -132,7 +162,7 @@ What you hid, as stored: `account_id`, `type` (kept so a hidden account can be t
 { "includes_hidden_accounts": true, "points": [{ "date": "2026-01-01", "total": 1000, "kind": "recorded" }] }
 ```
 
-One point per day. `kind` is `recorded` for a total Nya measured that day, or `estimated` for one reconstructed from your transactions for a day before it started recording (or a day it couldn't record). Where a day has both, the recorded total is given and the estimate, superseded, is not.
+One point per day. `kind` is `recorded` for a total Nya measured that day, or `estimated` for one reconstructed from your transactions for a day before it started recording (or a day it couldn't record). Where a day has both, the recorded total is given and the estimate, superseded, is not. A day whose total can't be read is named under [`problems`](#problems), and has no point.
 
 **Totals include hidden accounts.** Hiding takes an account out of what the app shows, not out of what was recorded, so unhiding brings it back exactly. On a recorded day, the total the app charts is this total minus each hidden account's balance that day from `account_history` (plus it, for a hidden credit card or loan, whose balance was subtracted). On an estimated day the app also takes out a balance the estimate held flat, which is not in this file; it leaves out a day where it can't tell what a hidden account held; and it draws a straight line between two recorded days in place of the estimates between them. So the chart can differ from these totals on estimated days. (Forgetting a hidden earlier account takes it out of the stored totals for good, so a forgotten account is in neither.)
 
@@ -142,7 +172,7 @@ One point per day. `kind` is `recorded` for a total Nya measured that day, or `e
 { "account_id": "...", "points": [{ "date": "2026-01-01", "balance": 1500, "kind": "recorded" }] }
 ```
 
-Each account's own balance by day, one point per day, by the same rules the app's account chart uses: a balance measured on a day one of your banks failed (so no total was recorded) counts as recorded, and comes before the recorded map for that day; then the recorded map; then the estimate (the newer of the two estimate layers first). A day whose recorded map doesn't name the account has no point: it wasn't there that day. Accounts you linked across a reconnect keep their own ids here; the app joins them using `account_links.links`.
+Each account's own balance by day, one point per day, by the same rules the app's account chart uses: a balance measured on a day one of your banks failed (so no total was recorded) counts as recorded, and comes before the recorded map for that day; then the recorded map; then the estimate (the newer of the two estimate layers first). A day whose recorded map doesn't name the account has no point: it wasn't there that day. Accounts you linked across a reconnect keep their own ids here; the app joins them using `account_links.links`. A day whose balances can't all be read is named under [`problems`](#problems).
 
 ### `transactions[]`
 
@@ -218,11 +248,11 @@ Every stored investment transaction, newest first, with every field Plaid sent (
 
 ### `budgets[]` and `goals[]`
 
-Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`).
+Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`). Each is stored as one value: saved but unreadable, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems) (`{ "section": "budgets", "problem": "unreadable" }`), and the rest of the file is still in it. Never saved is an empty list.
 
 ### `api_tokens[]`
 
-The tokens you made for the read-only API and the MCP server (see `/developers` in the app), oldest first: `label` (the name you gave it), `created_at`, and `last_used_at` (when it last read your data, to within a minute, or `null` if never). Never the token, the hash Nya keeps of its secret, or its id; revoked tokens are gone, and so are their entries. Read as strictly as every other part: a token whose record can't be read stops the download, naming API tokens, until you remove it on the API tokens card.
+The tokens you made for the read-only API and the MCP server (see `/developers` in the app), oldest first: `label` (the name you gave it), `created_at`, and `last_used_at` (when it last read your data, to within a minute, or `null` if never). Never the token, the hash Nya keeps of its secret, or its id; revoked tokens are gone, and so are their entries. A token whose record can't be read is left out and counted under [`problems`](#problems), never named by its id (`{ "section": "api_tokens", "problem": "unreadable", "count": 1 }`), and the rest of the file is still in it. The API tokens card lists it too, and can remove a damaged one.
 
 ### `sharing`
 
@@ -234,13 +264,13 @@ The tokens you made for the read-only API and the MCP server (see `/developers` 
 | `blocked[]` | `name`: people you blocked, by what you called them. |
 | `unmatched[]` | Records of yours that no connection in the file is matched to: `shown_to_them`, or `null` with `problem`. Either a connection's that has ended, until the nightly pass deletes it (a removal deletes its records at once; one that stopped part way leaves them to that pass), or the record of a connection whose record id can't be read, which that connection says (`record_id_unreadable`): which record is its can't be known then, so it is here rather than called ended. |
 
-Each record is a list, oldest first, of the quarter hours (UTC) in which something was shown: `at` (the quarter hour's start), `times` (how many times it was shown in it) and `read` (what was shown: each account's id, at the widest level shown in that quarter hour). It holds what was counted, and only since `record_since`: an empty list means nothing was recorded, not that nothing was looked at. A record that can't be read is `null`, with `shown_to_them_problem`, `shown_to_me_problem` or `problem` saying why: `unreadable` (damaged), `unrecognised` (saved by a version of Nya this one doesn't know), `unavailable` (their container couldn't be reached: being deleted or restored), or `record_id_unreadable` (the connection's record id is damaged, so its records can't be found by it; yours, if there is one, is among `unmatched`). A record holds the last 90 days at most: a showing drops older quarter hours from its record, and so does the nightly pass. What is still stored is in the file, all of it.
+Each record is a list, oldest first, of the quarter hours (UTC) in which something was shown: `at` (the quarter hour's start), `times` (how many times it was shown in it) and `read` (what was shown: each account's id, at the widest level shown in that quarter hour). It holds what was counted, and only since `record_since`: an empty list means nothing was recorded, not that nothing was looked at. A record that can't be read is `null`, with `shown_to_them_problem`, `shown_to_me_problem` or `problem` saying why: `unreadable` (damaged), `unrecognised` (saved by a version of Nya this one doesn't know), `unavailable` (their container couldn't be reached: being deleted or restored), or `record_id_unreadable` (the connection's record id is damaged, so its records can't be found by it; yours, if there is one, is among `unmatched`). A record holds the last 90 days at most: a showing drops older quarter hours from its record, and so does the nightly pass. What is still stored is in the file, all of it. Each kind of record sharing can't give is also named once under [`problems`](#problems) (`{ "section": "sharing", "problem": "unreadable" }`), so the response can say the file is incomplete.
 
 No id is in it. A connection's id is made from the two people's sign-in ids, so it stays in the app, and the records are kept under a random id each connection gets, which says nothing either; each record is beside the connection it belongs to.
 
 ### Stores built on the storage seam
 
-Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. They are read as strictly as everything else: if any entry can't be read, nothing is downloaded and the error names the store. They are in the JSON file only.
+Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. An entry that is damaged, or saved in a form this version doesn't know, is left out and named under [`problems`](#problems) (a store holding one value is then `null`), and everything else is in the file; storage that can't be reached stops the download, naming the store. They are in the JSON file only, but for `manual-transactions`, whose transactions are in the transactions CSV too.
 
 #### `allocation-settings`
 
@@ -373,7 +403,7 @@ Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or impor
 | `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, `to`, the one it became, and `account_id`, the account whose balance it was (absent on one noted before that was kept). Absent otherwise. |
 | `created_at`, `updated_at` | When it was entered, and last changed in the app. An import that replaces it with its file's version, and the undo of that, leave `updated_at` as it was: neither is your change. |
 
-Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
+Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`. Each row is also a row of the [transactions CSV](#nya-transactions-datecsv).
 
 #### `planned-items`
 
@@ -396,7 +426,7 @@ The categories you marked as mattering for your taxes on the report page ([featu
 
 #### `transaction-annotations`
 
-What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports, `false` when you put it back) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction no longer exists (the bank removed it) is kept until you change it; those of an institution you disconnect go with it, after the ones you excluded are kept in `carried-annotations`.
+What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports, `false` when you put it back) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction the bank removed goes once a sync saves the removal, as do those of an institution you disconnect, after the ones you excluded are kept in `carried-annotations`; none goes while a store of transactions can't be read, and one saved by a version of Nya this one doesn't know is kept for it.
 
 #### `carried-annotations`
 
@@ -410,9 +440,11 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 ### `nya-transactions-<date>.csv`
 
-One row per transaction stored from your banks, newest first, with the [transaction fields](#transactions) flattened (transactions on manual accounts, entered by hand or imported, are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
+One row per transaction, newest first: every one stored from your banks, with the [transaction fields](#transactions) flattened, and every one on a manual account, entered by hand or imported ([`manual-transactions`](#manual-transactions)), in the same columns. Columns, in order:
 
-`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`.
+`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`, `source`, `note`.
+
+`source` says where a row came from: `plaid` for a bank's; for one on a manual account, `manual` (entered in the app), or `import:ofx`, `import:csv` or `import:qif` (imported from a file). A manual account's row has its own `name` (who was paid, or who paid you), `amount`, `iso_currency_code` (its currency), `category` (its own, so `your_category` is empty) and `note`, the `transaction_code` its file gave (`atm`) where it gave one, and its account's `account_name`, `institution_name`, `account_id` and `account_hidden`, as in `manual_accounts`; the columns only a bank fills are empty, and so is `item_id`, since a manual account has no connection. On the same day, rows with a time come first. A manual account that can't be read leaves its rows' account names empty, and a book of rows that can't be read leaves those rows out; either way the response says the file is incomplete ([above](#getting-a-copy)).
 
 `amount` keeps Plaid's sign (positive is money out). To total your spending, leave out rows where `superseded_by_posted` is `true`.
 
@@ -430,7 +462,7 @@ Oldest day first; on each day the net-worth row comes before the accounts. Colum
 | `kind` | `recorded` or `estimated`. |
 | `account_hidden` | The account is hidden (empty on `net_worth` rows). |
 
-`net_worth` rows include hidden accounts, as [stored](#net_worth_history). Don't add `account` rows to `net_worth` rows: the total already counts them.
+`net_worth` rows include hidden accounts, as [stored](#net_worth_history). Don't add `account` rows to `net_worth` rows: the total already counts them. A manual account that can't be read keeps its `account` rows, under its id, with its name empty; when it is hidden, `account_type` and `account_hidden` are still filled in, from `hidden_accounts`. The response says the file is incomplete ([above](#getting-a-copy)).
 
 ## Every stored key, and where it goes
 
@@ -477,6 +509,6 @@ Deleting your account deletes your data now, and the nightly backups expire it l
 
 ## Adding a store
 
-A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it strictly, unless an entry of `SECTIONS` exports it itself and names it in `covers` (as `sharing` does `sharing-access-log`, to put each record beside its connection). Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that.
+A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it with the seam's reports (`getAllReport`, `getReport`), so an entry it can't read is named under `problems` rather than stopping the download, unless an entry of `SECTIONS` exports it itself and names it in `covers` (as `sharing` does `sharing-access-log`, to put each record beside its connection). Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that.
 
-The older stores are read by hand. One that stands alone (nothing else needs to read it to build the file) is an entry in `SECTIONS`: its key in the file, its name for errors, a strict reader (one that throws on anything it can't read) that returns the store already in its exported shape, and, if it names accounts, which ids it names, so `accounts` lists them. Its key goes in `STORED_KEYS`. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.
+The older stores are read by hand. One that stands alone (nothing else needs to read it to build the file) is an entry in `SECTIONS`: its key in the file, its name for errors, a reader that returns the store already in its exported shape and throws on anything that says nothing about the data (storage, keys), and either throws on an entry it can't read or names it (`problems`, by the seam's rules: `openStored` in `lib/repo.ts`), and, if it names accounts, which ids it names, so `accounts` lists them. Its key goes in `STORED_KEYS`. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.
