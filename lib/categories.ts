@@ -357,6 +357,18 @@ export function resolveCategory(ix: CategoryIndex, f: CategoryFacts): Filed {
   return { category: uncategorizedOf(ix), said: !!text || !!f.pfc_primary || !!f.pfc_detailed };
 }
 
+/** The id of the category a row is filed under, against the set loaded on
+ *  the page: its own once the server filed it (category_id, following a merge
+ *  to where it went), else the category its words file into, else the
+ *  uncategorized one, which is also where a row filed under a category the
+ *  page doesn't know is counted. For totals by category on the page, so a row
+ *  is never left out of one. */
+export function filedId(ix: CategoryIndex, t: { category: string | null; category_id?: string }): string {
+  if (t.category_id) return categoryById(ix, t.category_id)?.id ?? ix.taxonomy.uncategorized;
+  const text = t.category ? textKey(t.category) : '';
+  return (text ? categoryForKey(ix, TEXT, text)?.id : undefined) ?? ix.taxonomy.uncategorized;
+}
+
 /** The keys transactions carry that a set must have to file them: each row's
  *  text, and Plaid's primary value. Detailed values are only ever mapped by
  *  hand, so a row's falls through to its primary. */

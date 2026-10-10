@@ -18,6 +18,9 @@ import { isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
+import { spendingByCategory } from '@/lib/totals';
+import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
+import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 
 /**
  * A connection Plaid says will end on a date (lib/connection-state.ts,
@@ -118,7 +121,8 @@ type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' | 'w
 
 export default function Insights({
   txns,
-  budgets,
+  budgets = EMPTY_BUDGETS,
+  taxonomy = null,
   accounts,
   idleCash = NO_IDLE_CASH,
   reconnectSoon = NO_RECONNECTS,
@@ -129,7 +133,10 @@ export default function Insights({
   stopped = NO_STOPPED,
 }: {
   txns: Txn[] | null;
-  budgets: Record<string, number>;
+  /** By category and group id (lib/budget-set.ts), against your categories
+   *  (components/categories-state.ts): no alert until both have loaded. */
+  budgets?: Budgets;
+  taxonomy?: Taxonomy | null;
   accounts: InsightAccount[];
   idleCash?: IdleCashAccount[];
   reconnectSoon?: ReconnectSoon[];
@@ -166,30 +173,32 @@ export default function Insights({
     // every number from that bank goes stale.
     for (const a of reconnectAlerts(reconnectSoon, now)) out.push({ key: a.key, text: a.text, tone: 'warn' });
 
-    // Over / approaching budget (worst offenders first, max 2).
-    if (txns) {
-      const spendByCat: Record<string, number> = {};
-      for (const t of txns) {
-        if (t.date.slice(0, 7) !== thisMonthKey || t.amount <= 0 || !countsInTotals(t, displayCurrency)) continue;
-        const cat = t.category ?? 'other';
-        spendByCat[cat] = (spendByCat[cat] ?? 0) + t.amount;
-      }
-      const flagged = Object.entries(budgets)
-        .map(([cat, budget]) => ({ cat, budget, spent: spendByCat[cat] ?? 0 }))
-        .filter(({ spent, budget }) => spent / budget >= 0.9)
+    // Over / approaching budget (worst offenders first, max 2): each
+    // category's, and each group's limit (lib/budget-set.ts), as the Budgets
+    // tab meters them, by name as the category or group is named.
+    if (txns && taxonomy) {
+      const ix = indexTaxonomy(taxonomy);
+      const spendByCat = spendingByCategory(txns, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
+      const meters = budgetMeters(ix, placeBudgets(budgets, ix), new Map(Object.entries(spendByCat)));
+      const candidates = [
+        ...meters.groups.filter((m) => m.limit !== null && (m.own !== null || m.categories.filter((c) => c.budget !== null).length > 1)).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
+        ...meters.groups.flatMap((m) => m.categories.filter((c) => c.budget !== null).map((c) => ({ key: `category-${c.category.id}`, name: c.category.name, budget: c.budget!, spent: c.spent }))),
+      ];
+      const flagged = candidates
+        .filter(({ spent, budget }) => budget > 0 && spent / budget >= 0.9)
         .sort((a, b) => b.spent / b.budget - a.spent / a.budget)
         .slice(0, 2);
-      for (const { cat, budget, spent } of flagged) {
+      for (const { key, name, budget, spent } of flagged) {
         out.push(
           spent >= budget
             ? {
-                key: `budget-${cat}`,
-                text: `Over your ${cat} budget — ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,
+                key: `budget-${key}`,
+                text: `Over your ${name} budget: ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,
                 tone: 'down',
               }
             : {
-                key: `budget-${cat}`,
-                text: `Approaching your ${cat} budget (${Math.round((spent / budget) * 100)}%)`,
+                key: `budget-${key}`,
+                text: `Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`,
                 tone: 'neutral',
               }
         );
@@ -366,7 +375,7 @@ export default function Insights({
         ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
         : [],
     };
-  }, [txns, budgets, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped]);
+  }, [txns, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped]);
 
   if (insights.length === 0) return null;
 

@@ -32,13 +32,20 @@ export const bucketOf = (t: Pick<TotalsRow, 'category' | 'category_id'>): string
 /**
  * Spending per category over the rows whose date `inRange` takes, as the
  * Budgets tab shows it: outflows (positive amounts, Plaid's sign) that count in
- * totals kept in `currency`, by category id (bucketOf). Unrounded, as summed.
+ * totals kept in `currency`, by category id (bucketOf, or `bucket`: the page
+ * files a row by the categories it loaded, lib/categories.ts filedId).
+ * Unrounded, as summed.
  */
-export function spendingByCategory(rows: readonly TotalsRow[], inRange: (date: string) => boolean, currency: string | null): Record<string, number> {
+export function spendingByCategory(
+  rows: readonly TotalsRow[],
+  inRange: (date: string) => boolean,
+  currency: string | null,
+  bucket: (t: TotalsRow) => string = bucketOf
+): Record<string, number> {
   const out: Record<string, number> = {};
   for (const t of rows) {
     if (!inRange(t.date) || t.amount <= 0 || !countsInTotals(t, currency)) continue;
-    const cat = bucketOf(t);
+    const cat = bucket(t);
     out[cat] = (out[cat] ?? 0) + t.amount;
   }
   return out;

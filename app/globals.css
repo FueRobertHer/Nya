@@ -3470,3 +3470,144 @@ button.import-choice {
 .txn-text {
   overflow-wrap: anywhere;
 }
+
+/* --- categories and groups (#38): the Activity tab's top spending by group
+   (components/CategoryRollup.tsx), the Budgets tab's group meters
+   (components/BudgetsCard.tsx) and the Categories screen under Manage
+   (components/CategoryManager.tsx). Names are shown as the person typed
+   them (lib/categories.ts displayName), never re-cased by CSS. --- */
+
+.rollup-group + .rollup-group {
+  margin-top: 4px;
+}
+
+button.rollup-toggle {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+  border-radius: 6px;
+}
+
+.cat-name.rollup-name {
+  text-transform: none;
+}
+
+.rollup-caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.rollup-child {
+  padding: 3px 0 3px 14px;
+}
+
+.rollup-child .cat-name {
+  color: var(--muted);
+}
+
+.cat-bar.rollup-child-bar {
+  opacity: 0.55;
+}
+
+.budget-label {
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.budget-group .budget-label {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.budget-reconcile {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.budget-children {
+  margin: 10px 0 0 14px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.budget-child {
+  margin-top: 12px;
+}
+
+.budget-child .budget-label,
+.budget-own .budget-label {
+  font-weight: 400;
+}
+
+.budget-note {
+  margin: 0 0 8px;
+}
+
+button.budget-own:disabled,
+.budget-child button.budget-summary:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+button.cat-manage-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-bottom: 6px;
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+}
+
+.cat-manage-kind {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cat-manage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+button.cat-manage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding: 10px 2px;
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+button.cat-manage-row.archived {
+  color: var(--muted);
+}
+
+.cat-manage-tag {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
