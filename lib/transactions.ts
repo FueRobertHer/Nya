@@ -45,6 +45,7 @@ import {
 } from './item-products';
 import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
+import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations } from './txn-annotations';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -71,7 +72,26 @@ export type Txn = {
   // account's type isn't known; absent on a row built before it was sent.
   account_type?: string | null;
   institution_name: string;
+  // The category the row carries, as words: the one the person chose for it,
+  // else carried across a re-link, else Plaid's primary in words, or a manual
+  // or imported row's own. What the spending rules read (lib/spending.ts
+  // categoryKey), and the key that files it into one of the person's
+  // categories (lib/categories.ts); what to show is category_name.
   category: string | null;
+  // Filed into the person's categories (lib/category-store.ts fileRows), on
+  // every row an answer sends: the category's id (provisional, with a ":", for
+  // one not stored yet), the name to show (null when the row says nothing of
+  // its category, which shows none and counts under the uncategorized one),
+  // and the kind it counts as. Absent on a row not yet filed.
+  category_id?: string;
+  category_name?: string | null;
+  category_kind?: CategoryKind;
+  // What a bank's row is filed by, until it is (never sent): whether
+  // `category` is the person's choice (chosen for it, or carried across a
+  // re-link), and Plaid's own values.
+  category_set?: boolean;
+  pfc_primary?: string | null;
+  pfc_detailed?: string | null;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
   // Plaid's code for a currency with no ISO one (a cryptocurrency); absent on
   // a payload cached before it was sent.
@@ -118,6 +138,12 @@ export type OlderTxn = Pick<
   | 'account_type'
   | 'institution_name'
   | 'category'
+  | 'category_id'
+  | 'category_name'
+  | 'category_kind'
+  | 'category_set'
+  | 'pfc_primary'
+  | 'pfc_detailed'
   | 'subcategory'
   | 'iso_currency_code'
   | 'unofficial_currency_code'
@@ -1036,6 +1062,20 @@ async function syncItem(ctx: Ctx,
   return { state: null, note: `${item.institution_name}: could not fetch transactions` };
 }
 
+/** A bank row's category, and what files it into the person's categories
+ *  (lib/categories.ts resolveCategory): a category carried across a re-link
+ *  is the person's choice and wins over Plaid's, as before; Plaid's own
+ *  values go beside it. */
+function categoryFacts(t: StoredTxn, carried: Map<string, string> | undefined): Pick<Txn, 'category' | 'category_set' | 'pfc_primary' | 'pfc_detailed'> {
+  const carriedCategory = carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined;
+  return {
+    category: carriedCategory ?? t.category,
+    ...(carriedCategory !== undefined ? { category_set: true } : {}),
+    pfc_primary: t.personal_finance_category?.primary ?? null,
+    pfc_detailed: t.personal_finance_category?.detailed ?? null,
+  };
+}
+
 /** What the display rows of one Item are built with, besides its state. */
 type DisplayInputs = {
   hiddenAccountIds?: Set<string>;
@@ -1051,22 +1091,27 @@ type DisplayInputs = {
    *  (the read-only API). The Activity tab's rows go without, as before: on
    *  them it marks a manual row. */
   withAccountIds?: boolean;
+  /** The first day of rows to keep (YYYY-MM-DD), in place of the trailing
+   *  LOOKBACK window: for a report on an earlier period (lib/report/read.ts).
+   *  The store keeps every row, so nothing else changes. */
+  since?: string;
 };
 
 /**
  * An Item's rows as the Activity tab shows a transaction: inside the trailing
- * LOOKBACK window, a pending row its posted row replaced left out, and the
- * hidden accounts' rows too (`hiddenAccountIds`, filtered here: the display
- * row has no account_id afterwards). Account names are re-resolved from the
- * merged map (an account can arrive on a later page than a transaction
- * referencing it). The one projection, for a sync (syncItemTransactions) and
- * for a read without one (storedItemTransactions), so both show a row alike.
+ * LOOKBACK window (or from `since`), a pending row its posted row replaced
+ * left out, and the hidden accounts' rows too (`hiddenAccountIds`, filtered
+ * here: the display row has no account_id afterwards). Account names are
+ * re-resolved from the merged map (an account can arrive on a later page than
+ * a transaction referencing it). The one projection, for a sync
+ * (syncItemTransactions) and for a read without one (storedItemTransactions),
+ * so both show a row alike.
  */
 async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn[]> {
   const { hiddenAccountIds } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
-  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const cutoff = inputs.since ?? daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
   // `name` is merchant_name || raw name, which recurring detection and search
   // depend on; StoredTxn keeps both parts.
@@ -1086,7 +1131,7 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
-      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      ...categoryFacts(t, carried),
       iso_currency_code: t.iso_currency_code,
       unofficial_currency_code: t.unofficial_currency_code ?? null,
       vendor_key: vendorKey(t),
@@ -1118,6 +1163,9 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
  * the year's. lib/activity.ts keeps those detection can use.
  */
 async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<OlderTxn[]> {
+  // A reader that sets its own first day (a report) reads every row from it
+  // in displayRows, and needs none before it.
+  if (inputs.since !== undefined) return [];
   const { hiddenAccountIds } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
@@ -1133,7 +1181,7 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
       account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
-      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      ...categoryFacts(t, carried),
       subcategory: humanizeSubcategory(t.personal_finance_category),
       iso_currency_code: t.iso_currency_code,
       unofficial_currency_code: t.unofficial_currency_code ?? null,
@@ -1165,7 +1213,7 @@ export async function syncItemTransactions(ctx: Ctx,
   hiddenAccountIds?: Set<string>,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
-  opts: { withAccountIds?: boolean } = {}
+  opts: { withAccountIds?: boolean; since?: string } = {}
 ): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
@@ -1173,7 +1221,7 @@ export async function syncItemTransactions(ctx: Ctx,
   // incomplete. Why it has none goes back beside the rows: the views that
   // count spending say so, and a refused bank account leaves spending unknown.
   if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
-  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds };
+  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds, since: opts.since };
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
 }
@@ -1208,30 +1256,78 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
  * (storedNoTransactions), which a sync would answer the same way, without a
  * note (`noTransactions`). Storage failing is a store that can't be read
  * here, as it is for a sync.
+ *
+ * `first_date` is the oldest day among the rows the store holds, the hidden
+ * accounts' and the replaced pending ones left out, whatever the window: how
+ * far back this institution's history in Nya reaches, as far as its rows
+ * show, so a report on an earlier period can say when it doesn't reach back
+ * that far (lib/report/build.ts). Null with no rows.
+ *
+ * `never_synced` marks a `missing` that is known to hold nothing: the store
+ * was read and no transactions were ever stored in it. Never on a store that
+ * couldn't be read, which may hold rows from any day.
  */
 export async function storedItemTransactions(
   ctx: Ctx,
   item: StoredItem,
   inputs: DisplayInputs = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; synced_at: string | null; noTransactions?: NoTransactionsReason }> {
+): Promise<{
+  txns: Txn[];
+  older: OlderTxn[];
+  note: string | null;
+  coverage: TxnCoverage;
+  synced_at: string | null;
+  first_date: string | null;
+  noTransactions?: NoTransactionsReason;
+  never_synced?: true;
+}> {
   let state: ItemState;
   try {
     state = await readState(ctx, item.item_id);
   } catch (err) {
     if (!(err instanceof StateUnreadableError)) throw err;
     console.error(err.message, err.kind);
-    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null };
+    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null };
   }
   if (state.cursor === '' && Object.keys(state.txns).length === 0) {
     const noTransactions = await storedNoTransactions(ctx, item, state);
-    if (noTransactions) return { txns: [], older: [], note: null, coverage: 'complete', synced_at: null, noTransactions };
-    return { txns: [], older: [], note: `${item.institution_name}: no transactions stored yet; open the app to load them`, coverage: 'missing', synced_at: null };
+    if (noTransactions) return { txns: [], older: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions };
+    return {
+      txns: [],
+      older: [],
+      note: `${item.institution_name}: no transactions stored yet; open the app to load them`,
+      coverage: 'missing',
+      synced_at: null,
+      first_date: null,
+      never_synced: true,
+    };
   }
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
+  const first_date = firstStoredDate(state, inputs.hiddenAccountIds);
   if (state.importing) {
-    return { txns, older, note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`, coverage: 'importing', synced_at: state.synced_at };
+    return {
+      txns,
+      older,
+      note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`,
+      coverage: 'importing',
+      synced_at: state.synced_at,
+      first_date,
+    };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date };
+}
+
+/** The oldest day among an Item's stored rows that would be shown in some
+ *  window: not a pending row its posted row replaced, nor a hidden account's.
+ *  Null with none. */
+function firstStoredDate(state: ItemState, hiddenAccountIds?: Set<string>): string | null {
+  const superseded = supersededPendingIds(state.txns);
+  let first: string | null = null;
+  for (const t of Object.values(state.txns)) {
+    if (superseded.has(t.transaction_id) || hiddenAccountIds?.has(t.account_id)) continue;
+    if (first === null || t.date < first) first = t.date;
+  }
+  return first;
 }
 
 /**

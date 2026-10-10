@@ -26,6 +26,21 @@
 // transaction you excluded still shows in the list, marked; only the totals
 // leave it out.
 //
+// A ROW'S CATEGORY decides it by its kind, once filed into the person's
+// categories (lib/categories.ts: category_kind, its group's kind). A category
+// in a transfer group is a transfer; seeded, those are exactly the categories
+// the rule below called transfers (transfer in, transfer out, loan payments,
+// and any written as words starting with "transfer"), so no total moved when
+// categories arrived, and moving a category into a group of another kind is
+// how a person changes how it counts. A row not filed (one built before
+// categories had kinds) is judged by its category words, as before. The finer
+// rules (recurring detection's everyday categories, the Plan's loan payments
+// and refunds) read those words, the key the row carries (categoryKey):
+// Plaid's category for a row nobody recategorized, else the words of the
+// category chosen, never its name, so renaming or regrouping a category never
+// moves them. A loan payment is a transfer here, but a bill to recurring
+// detection, whatever group holds it.
+//
 // A ROW'S CURRENCY is Plaid's ISO code, or its unofficial one (a
 // cryptocurrency), or a manual row's own. A row with neither is taken to be
 // in the totals' currency, and is shown in it: Plaid gives every transaction
@@ -38,11 +53,16 @@
 // own.
 
 import { dominantCurrency } from './format';
+import type { CategoryKind } from './categories';
 
 /** What these rules read of a transaction (the Activity tab's Txn). */
 export type Countable = {
   transaction_code: string | null;
+  /** The category words the row carries: its key for the rules (categoryKey). */
   category: string | null;
+  /** The kind of the category it is filed under (lib/categories.ts), once
+   *  filed: what decides a transfer. Absent on a row not filed. */
+  category_kind?: CategoryKind | null;
   iso_currency_code: string | null;
   /** Plaid's code for a currency without an ISO one (a cryptocurrency). */
   unofficial_currency_code?: string | null;
@@ -57,18 +77,33 @@ export type Countable = {
 // is a fee, which is spent.
 const MOVEMENT_CODES = new Set(['transfer', 'atm']);
 
+/** The words Plaid's loan payments are written as: a transfer to totals, a
+ *  bill to recurring detection. */
+export const LOAN_PAYMENTS = 'loan payments';
+
+/** The key the finer category rules read: the category words the row carries
+ *  (see A ROW'S CATEGORY), never a name. */
+export function categoryKey(t: Pick<Countable, 'category'>): string | null {
+  return t.category;
+}
+
 /** Money moved rather than spent or earned: between your own accounts, or out
  *  as cash. Loan payments are not in it: for recurring bills a mortgage
  *  payment is a classic bill. */
-export function isMoneyMovement(t: Pick<Countable, 'transaction_code' | 'category'>): boolean {
+export function isMoneyMovement(t: Pick<Countable, 'transaction_code' | 'category' | 'category_kind'>): boolean {
   if (t.transaction_code && MOVEMENT_CODES.has(t.transaction_code)) return true;
-  return !!t.category && t.category.startsWith('transfer');
+  const key = categoryKey(t);
+  if (t.category_kind) return t.category_kind === 'transfer' && key !== LOAN_PAYMENTS;
+  return !!key && key.startsWith('transfer');
 }
 
 /** The Activity tab's rule: money moved, or a loan payment (paying a card off
- *  would otherwise count its purchases twice). */
-export function isTransfer(t: Pick<Countable, 'transaction_code' | 'category'>): boolean {
-  return isMoneyMovement(t) || t.category === 'loan payments';
+ *  would otherwise count its purchases twice): a category in a transfer
+ *  group, once filed. */
+export function isTransfer(t: Pick<Countable, 'transaction_code' | 'category' | 'category_kind'>): boolean {
+  if (t.transaction_code && MOVEMENT_CODES.has(t.transaction_code)) return true;
+  if (t.category_kind) return t.category_kind === 'transfer';
+  return isMoneyMovement(t) || categoryKey(t) === LOAN_PAYMENTS;
 }
 
 /** You excluded it from budgets and reports. When whether you did could not be

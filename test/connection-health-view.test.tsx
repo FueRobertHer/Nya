@@ -309,9 +309,12 @@ describe("the Budgets tab's month says so too", () => {
     const { default: BudgetsTab } = await import('@/components/BudgetsTab');
     const props = { txns: [], goals: [], accounts: [], loading: false, onSave: async () => true, onSaveGoals: async () => true };
     const missing = [{ institution_name: 'Chase', coverage: 'missing' as const }];
-    const withBudget = text(renderToStaticMarkup(<BudgetsTab {...props} budgets={{ groceries: 400 }} incomplete={missing} />));
+    const { categoriesFor } = await import('./category-fixture');
+    const some = categoriesFor({ groceries: 400 });
+    const none = categoriesFor();
+    const withBudget = text(renderToStaticMarkup(<BudgetsTab {...props} taxonomy={some.taxonomy} budgets={some.budgets} incomplete={missing} />));
     expect(withBudget).toContain("Doesn't include Chase: its transactions couldn't be loaded, so this month may be incomplete.");
-    expect(text(renderToStaticMarkup(<BudgetsTab {...props} budgets={{}} incomplete={missing} />))).not.toContain("Doesn't include Chase");
-    expect(text(renderToStaticMarkup(<BudgetsTab {...props} budgets={{ groceries: 400 }} />))).not.toContain('may be incomplete');
+    expect(text(renderToStaticMarkup(<BudgetsTab {...props} taxonomy={none.taxonomy} budgets={none.budgets} incomplete={missing} />))).not.toContain("Doesn't include Chase");
+    expect(text(renderToStaticMarkup(<BudgetsTab {...props} taxonomy={some.taxonomy} budgets={some.budgets} />))).not.toContain('may be incomplete');
   });
 });

@@ -9,6 +9,7 @@ import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import MonthFlowChart from '@/components/MonthFlowChart';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
+import { categoriesFor } from './category-fixture';
 
 // Which transactions count in budgets and reports (lib/spending.ts), and that
 // every total leaving transfers out leaves an excluded transaction out too,
@@ -97,8 +98,9 @@ describe('the rule', () => {
     expect(countsInTotals(fee, 'USD')).toBe(true);
     // The Activity tab's totals and the budgets count it.
     expect(text(activity([fee]))).toContain('Out $12.00');
-    const budgets = text(renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [fee], budgets: { 'bank fees': 20 } })));
-    expect(budgets).toContain('bank fees $12.00 of $20.00');
+    const budgets = text(renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [fee], ...categoriesFor({ 'bank fees': 20 }) })));
+    // Rolled up to its group, as the tab opens.
+    expect(budgets).toContain('Services and fees $12.00 of $20.00');
     // A fee charged every month is a bill worth seeing.
     const monthsAgo = (n: number) => localDate(new Date(new Date().getFullYear(), new Date().getMonth() - n, 3));
     expect(detectRecurring([0, 1, 2].map((n) => ({ ...fee, transaction_id: `fee-${n}`, date: monthsAgo(n) }))).map((b) => b.name)).toEqual(['Monthly maintenance fee']);
@@ -137,7 +139,7 @@ describe('the rule', () => {
 
 const activity = (txns: Txn[], extra: Record<string, unknown> = {}) =>
   renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, ...extra }));
-const BUDGET_PROPS = { budgets: {}, onSave: async () => true, goals: [], onSaveGoals: async () => true, accounts: [], loading: false };
+const BUDGET_PROPS = { ...categoriesFor(), onSave: async () => true, goals: [], onSaveGoals: async () => true, accounts: [], loading: false };
 
 describe('every total leaves an excluded transaction out, and still lists it', () => {
   test('the Activity tab’s money in, out and net, top categories, places and channels', () => {
@@ -181,7 +183,7 @@ describe('every total leaves an excluded transaction out, and still lists it', (
       renderToStaticMarkup(
         createElement(BudgetsTab, {
           txns: MONTH,
-          budgets: { 'food and drink': 100, 'general merchandise': 50 },
+          ...categoriesFor({ 'food and drink': 100, 'general merchandise': 50 }),
           onSave: async () => true,
           goals: [],
           onSaveGoals: async () => true,
@@ -190,21 +192,22 @@ describe('every total leaves an excluded transaction out, and still lists it', (
         })
       )
     );
-    expect(t).toContain('food and drink $30.00 of $100.00');
-    expect(t).toContain('general merchandise $0.00 of $50.00');
-    expect(t).not.toContain('over');
+    // Each in a group of its own, rolled up as the tab opens.
+    expect(t).toContain('Food $30.00 of $100.00');
+    expect(t).toContain('Shopping $0.00 of $50.00');
+    expect(t).not.toContain('· over');
   });
 
   test('the Home insights: budget alerts and the biggest purchase', () => {
     const t = text(
-      renderToStaticMarkup(createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink' }], budgets: { 'food and drink': 100 }, accounts: [] }))
+      renderToStaticMarkup(createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink' }], ...categoriesFor({ 'food and drink': 100 }), accounts: [] }))
     );
     expect(t).not.toContain('food and drink budget');
     expect(t).toContain('Biggest purchase this month: Corner shop, $30.00');
     // Without the exclusion the same two would be over budget.
     const all = text(
       renderToStaticMarkup(
-        createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], budgets: { 'food and drink': 100 }, accounts: [] })
+        createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], ...categoriesFor({ 'food and drink': 100 }), accounts: [] })
       )
     );
     expect(all).toContain('Over your food and drink budget');
@@ -255,7 +258,8 @@ describe('the Activity tab', () => {
   test('a manual row says where it came from, beside its account and category', () => {
     const manual = txn({ transaction_id: 'manual-txn:1', name: 'Farmers market', institution_name: 'Cash', account_name: 'Wallet', source: 'manual', vendor_key: '', account_id: 'manual_w' });
     const t = text(renderToStaticMarkup(createElement(MonthBreakdown, { txns: [manual], notes: [], loading: false, onRecategorize: () => {}, onRename: () => {} })));
-    expect(t).toContain('Cash · Wallet · food and drink · entered by hand');
+    // Its category's name as the list shows names (lib/categories.ts displayName).
+    expect(t).toContain('Cash · Wallet · Food and drink · entered by hand');
   });
 });
 
@@ -316,9 +320,9 @@ describe('no total adds up amounts in two currencies', () => {
     // Detected once for the dashboard, and handed down (components/Dashboard.tsx).
     const txns = [COUNTED, RAMEN, ...bills];
     const t = text(
-      renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns, series: detectRecurring(txns), budgets: { 'food and drink': 600 } }))
+      renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns, series: detectRecurring(txns), ...categoriesFor({ 'food and drink': 600 }) }))
     );
-    expect(t).toContain('food and drink $30.00 of $600.00');
+    expect(t).toContain('Food $30.00 of $600.00');
     expect(t).toContain("1 transaction in JPY isn't in these budgets, which are in USD.");
     expect(t).toContain('~$15.00/mo');
     expect(t).toContain('€30.00');
@@ -326,7 +330,7 @@ describe('no total adds up amounts in two currencies', () => {
   });
 
   test('the Home insights: no budget alert, pace or biggest purchase from another currency, and a word on what was left out', () => {
-    const t = text(renderToStaticMarkup(createElement(Insights, { txns: [COUNTED, RAMEN], budgets: { 'food and drink': 600 }, accounts: [] })));
+    const t = text(renderToStaticMarkup(createElement(Insights, { txns: [COUNTED, RAMEN], ...categoriesFor({ 'food and drink': 600 }), accounts: [] })));
     expect(t).not.toContain('food and drink budget');
     expect(t).toContain('Biggest purchase this month: Corner shop, $30.00');
     expect(t).not.toContain('Ramen');
@@ -334,7 +338,7 @@ describe('no total adds up amounts in two currencies', () => {
     // Said only beside a figure it is missing from.
     const lowOnly = text(
       renderToStaticMarkup(
-        createElement(Insights, { txns: [{ ...RAMEN, amount: -3200, category: 'income' }], budgets: {}, accounts: [{ name: 'Checking', type: 'depository', balance: 50, currency: 'USD' }] })
+        createElement(Insights, { txns: [{ ...RAMEN, amount: -3200, category: 'income' }], accounts: [{ name: 'Checking', type: 'depository', balance: 50, currency: 'USD' }] })
       )
     );
     expect(lowOnly).toContain('Low balance');
@@ -391,8 +395,8 @@ describe('beside the notes on incomplete months', () => {
   });
 
   test('the budgets', () => {
-    const t = text(renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [COUNTED, RAMEN, CASH], budgets: { 'food and drink': 600 }, incomplete })));
-    expect(t).toContain('food and drink $50.00 of $600.00');
+    const t = text(renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [COUNTED, RAMEN, CASH], ...categoriesFor({ 'food and drink': 600 }), incomplete })));
+    expect(t).toContain('Food $50.00 of $600.00');
     expect(t).toContain("1 transaction in JPY isn't in these budgets, which are in USD.");
     expect(t).toContain("Doesn't include Chase");
   });

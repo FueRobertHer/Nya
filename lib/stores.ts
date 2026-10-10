@@ -20,6 +20,8 @@
 import './access-log';
 import './allocation-settings';
 import './api-token-store';
+import './budget-store';
+import './category-store';
 import './connection-records';
 import './fire-plan';
 import './holdings-history';
@@ -27,6 +29,7 @@ import './import/store';
 import './manual-txns';
 import './planned-store';
 import './rate-limit';
+import './report/store';
 import './txn-annotations';
 
 import { storesDeclaredSoFar, type Store } from './repo';

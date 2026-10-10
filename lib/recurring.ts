@@ -61,7 +61,10 @@
 //     charges at the same amount, or two at exactly the same amount, to the
 //     cent, with nothing else from the merchant in the window, at a merchant
 //     that isn't a restaurant, a shop for food or a way of getting about
-//     (EVERYDAY): two visits a year apart to a restaurant are not a bill. A
+//     (EVERYDAY, read from the category words the row carries: Plaid's for a
+//     row nobody recategorized, else those of the category chosen, never its
+//     name, so renaming or regrouping a category changes nothing here): two
+//     visits a year apart to a restaurant are not a bill. A
 //     renewal whose price moves each time (a six-month car policy, a domain)
 //     is found from three charges at similar amounts, but only in a category
 //     known to bill (not food, transport or general shopping: SHOPPING);
@@ -139,6 +142,7 @@
 // viewer's own day (lib/local-date.ts), passed in by callers.
 
 import { currencyOf, isExcluded, isMoneyMovement } from './spending';
+import type { CategoryKind } from './categories';
 import { localDate } from './local-date';
 import { toMinorUnits } from './manual-txn-input';
 
@@ -149,7 +153,12 @@ export type RecurringRow = {
   name: string;
   amount: number;
   institution_name: string;
+  /** The category words the row carries, never a name (lib/spending.ts
+   *  categoryKey): what the everyday and shopping categories below read. */
   category: string | null;
+  /** The kind of the person's category it is filed under, once filed: a
+   *  transfer is never a bill or income (lib/spending.ts isMoneyMovement). */
+  category_kind?: CategoryKind | null;
   /** Plaid's detail for the category, humanized ("credit card payment"). */
   subcategory?: string | null;
   transaction_code: string | null;
