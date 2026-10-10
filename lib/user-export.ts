@@ -103,6 +103,8 @@ import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
+import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedBook, type ImportedTxn } from './history-import/store';
+import { supersede, type BankRow } from './history-import/match';
 
 export const EXPORT_FORMAT = 'nya-export';
 /** 2 since a part that can't be read is named under `problems` instead of
@@ -797,6 +799,13 @@ const PART_WORDS: Record<string, PartWords> = {
     many: 'accounts',
     missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the transactions of ${counts}.`,
   },
+  // One entry per linked account rows were imported into: its book (#52).
+  'imported-transactions': {
+    noun: 'transactions imported into linked accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}.`,
+  },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
   api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
@@ -1316,16 +1325,102 @@ function manualTransactionsIn(doc: UserExport): ManualTxn[] {
 }
 
 /**
+ * The rows imported into linked accounts from files (#52, the
+ * `imported-transactions` part of the file) that count as transactions of
+ * their accounts: not those kept as the bank's own duplicates, nor those a
+ * bank row in the file now supersedes (lib/history-import/match.ts), which
+ * are in the JSON file only, so no transaction is in transactions.csv twice.
+ * Each with the id its account is known by now, following the file's links.
+ */
+function importedTransactionsIn(doc: UserExport): { row: ImportedTxn; account_id: string }[] {
+  const entries = doc[importedTxnStore.name] ?? [];
+  if (!Array.isArray(entries)) throw new Error('The imported transactions in the file have an unexpected shape');
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const held = new Map<string, ImportedTxn[]>();
+  for (const entry of entries) {
+    const book = (entry as { value?: unknown } | null)?.value;
+    if (!isImportedBook(book)) throw new Error('A linked account’s imported transactions have an unexpected shape');
+    for (const row of book.rows) {
+      const current = resolveId(row.account_id, links);
+      held.set(current, [...(held.get(current) ?? []), row]);
+    }
+  }
+  if (held.size === 0) return [];
+  const banks = new Map<string, BankRow[]>();
+  for (const t of doc.transactions) {
+    const current = resolveId(t.account_id, links);
+    if (!held.has(current)) continue;
+    const list = banks.get(current) ?? [];
+    list.push({
+      transaction_id: t.transaction_id,
+      account_id: current,
+      date: t.date,
+      amount: t.amount,
+      currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
+      name: t.name,
+      merchant_name: t.merchant_name,
+      pending: t.pending,
+    });
+    banks.set(current, list);
+  }
+  // The imports in the order they were made: earlier ones are matched first.
+  const imports = (Array.isArray(doc[historyImportStore.name]) ? (doc[historyImportStore.name] as { id?: unknown; value?: unknown }[]) : [])
+    .filter((e) => typeof e?.id === 'string' && isHistoryImportEntry(e.value))
+    .map((e) => ({ id: e.id as string, at: (e.value as { imported_at: string }).imported_at }))
+    .sort((a, b) => byCodePoint(a.at, b.at) || byCodePoint(a.id, b.id))
+    .map((e) => e.id);
+  const out: { row: ImportedTxn; account_id: string }[] = [];
+  for (const [account_id, rows] of held) {
+    const superseded = supersede(rows, banks.get(account_id) ?? [], imports);
+    for (const row of rows) if (!row.same_as && !superseded.has(row.id)) out.push({ row, account_id });
+  }
+  return out;
+}
+
+/**
+ * A transaction imported into a linked account, in the same columns as a
+ * bank's: its own payee, category (and yours over it, as for a bank's row),
+ * amount and currency, its account as `accounts` names it now, where it came
+ * from (`source`) and its note. What only a bank sends is empty.
+ */
+function importedTransactionRow(row: ImportedTxn, account_id: string, account: ExportAccount | undefined, yours: string | null, hidden: boolean): CsvValue[] {
+  const cells: Record<TransactionColumn, CsvValue> = {
+    ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
+    date: row.date,
+    account_name: account?.name ?? null,
+    institution_name: account?.institution_name ?? null,
+    name: row.name,
+    amount: row.amount,
+    iso_currency_code: row.currency,
+    category: row.category,
+    your_category: yours,
+    pending: false,
+    superseded_by_posted: false,
+    account_hidden: hidden,
+    transaction_code: row.transaction_code ?? null,
+    transaction_id: row.id,
+    account_id,
+    item_id: account?.item_id ?? null,
+    source: row.source,
+    note: row.note,
+  };
+  return TRANSACTION_COLUMNS.map((c) => cells[c]);
+}
+
+/**
  * transactions.csv: one row per transaction, newest first: every one stored
- * from the banks, and every one on a manual account (manualTransactionRow).
- * In the order the bank's rows are listed in the file (then by the event
- * time, which a manual row doesn't have, then the id), so two downloads of
- * the same data are the same file.
+ * from the banks, every one on a manual account (manualTransactionRow), and
+ * every one imported into a linked account that counts
+ * (importedTransactionRow). In the order the bank's rows are listed in the
+ * file (then by the event time, which the others don't have, then the id),
+ * so two downloads of the same data are the same file.
  */
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   const accounts = new Map(doc.manual_accounts.map((m) => [m.account_id, m]));
+  const linked = new Map(doc.accounts.map((a) => [a.account_id, a]));
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
     ...manualTransactionsIn(doc).map((r) => ({
@@ -1333,6 +1428,12 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
       time: '',
       id: r.id,
       cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id)),
+    })),
+    ...importedTransactionsIn(doc).map(({ row, account_id }) => ({
+      date: row.date,
+      time: '',
+      id: row.id,
+      cells: () => importedTransactionRow(row, account_id, linked.get(account_id), yours.get(row.id) ?? null, hidden.has(account_id) || hidden.has(row.account_id)),
     })),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
@@ -1406,8 +1507,9 @@ export type ExportFile = { filename: string; contentType: string; pieces: () => 
  * every part.
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
-  // The books of the manual accounts, and the names of the accounts they are on.
-  'transactions-csv': ['manual-transactions', 'manual_accounts'],
+  // The books of the manual accounts, and the names of the accounts they are
+  // on; and the books of the rows imported into linked accounts.
+  'transactions-csv': ['manual-transactions', 'manual_accounts', 'imported-transactions'],
   // The days, and the names of the manual accounts the rows are for.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
 };

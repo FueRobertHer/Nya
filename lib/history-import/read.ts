@@ -29,7 +29,8 @@
 import type { Ctx } from '../containers';
 import { getItems, type StoredItem } from '../storage';
 import { rememberedAccountsReport } from '../last-known';
-import { resolveId, sameAccountIds, type Link } from '../link-core';
+import { effectiveLinks, getLinks, resolveId, sameAccountIds, type Link } from '../link-core';
+import { liveAccountIds } from '../links';
 import { readStoredItem, vendorKey, StateUnreadableError, LOOKBACK_DAYS, type OlderTxn, type StoredTxn, type Txn } from '../transactions';
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
 import { supersede, type BankRow } from './match';
@@ -344,4 +345,23 @@ export async function readAccountContext(ctx: Ctx, account: LinkedAccount, links
     order: importOrder(summaries),
     summaries: summaries.entries,
   };
+}
+
+/**
+ * For sharing at the transactions level (lib/sharing.ts): each of these live
+ * accounts' imported rows that count, dated `since` or later, read as a read
+ * made on someone else's behalf (changing nothing), and the accounts whose
+ * imported rows can't be read, which the share says of them rather than
+ * showing them short. Strict about the links, as every read there is.
+ */
+export async function importedForShare(ctx: Ctx, accountIds: ReadonlySet<string>, since: string): Promise<{ rows: Map<string, ImportedTxn[]>; unreadable: Set<string> }> {
+  const rows = new Map<string, ImportedTxn[]>();
+  if (accountIds.size === 0) return { rows, unreadable: new Set() };
+  const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+  const read = await readImported(ctx, { links: effectiveLinks(links, live), only: accountIds });
+  for (const a of read.accounts) {
+    const { counted } = countedRows(a.held, a.banks, read.order);
+    rows.set(a.account.account_id, counted.filter((r) => r.date >= since));
+  }
+  return { rows, unreadable: read.flawed };
 }

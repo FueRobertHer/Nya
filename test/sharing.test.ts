@@ -356,6 +356,46 @@ describe('sharing accounts on a connection', () => {
     expect(from.accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ id: 'manual_house', label: 'Manual House', level: 'balance', balance: 300000, currency: 'USD', debt: false });
   });
 
+  test('with transactions: rows imported into the account from files count too, where the bank has nothing like them (#52)', async () => {
+    const { importedTxnStore } = await import('@/lib/history-import/store');
+    const at = new Date().toISOString();
+    const imported = (id: string, days: number, amount: number, over: Record<string, unknown> = {}) => ({
+      id: `imported-txn:${id}0000-0000`,
+      account_id: 'acct_joint',
+      date: daysAgo(days),
+      amount,
+      currency: 'USD',
+      name: 'OLD SHOP',
+      category: null,
+      note: null,
+      source: 'import:csv',
+      source_id: id,
+      import_id: 'history-import:a1b2c3d4',
+      created_at: at,
+      ...over,
+    });
+    await importedTxnStore.set(TEST_CTX, 'acct_joint', {
+      version: 1,
+      rows: [
+        imported('a1', 5, 30),
+        // The bank's own 12, three days ago, supersedes this one.
+        imported('a2', 3, 12),
+        // Older than the 30 days shared.
+        imported('a3', 40, 9),
+        // Kept as the bank's duplicate: never counted.
+        imported('a4', 6, 7, { same_as: 'some bank row' }),
+      ],
+    });
+    await share({ acct_joint: 'transactions' });
+    const [from] = await sharedWithPartner();
+    const joint = from.accounts.find((a: any) => a.id === 'acct_joint');
+    expect(joint.transactions.map((t: any) => t.amount).sort((a: number, b: number) => a - b)).toEqual([12, 30]);
+    // A book that can't be read: the account says its transactions can't be, never a short list.
+    await fake.hset(ctxKey('imported-transactions'), { acct_joint: 'damaged' });
+    const [again] = await quietly(() => sharedWithPartner()).then((r) => r.result);
+    expect(again.accounts.find((a: any) => a.id === 'acct_joint')).toMatchObject({ transactions_unreadable: true });
+  });
+
   test('each connection gets its own choice', async () => {
     const other = await connect('user_owner', 'user_third');
     await share({ acct_joint: 'balance' });

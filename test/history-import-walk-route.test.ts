@@ -36,6 +36,7 @@ const { readDrawState } = await import('@/lib/history-import/extend');
 const backfill = await import('@/app/api/backfill/route');
 const routes = await import('@/app/api/history-import/route');
 const netWorth = await import('@/app/api/net-worth/route');
+const { readBalanceHistory } = await import('@/lib/api-read');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -241,6 +242,22 @@ describe('the estimated history after an import', () => {
     const nw = await (await netWorth.GET(new Request('http://localhost/api/net-worth'))).json();
     expect(nw.backfill_stale).toBe(false);
     expect(nw.imported_history).toMatchObject({ until: daysAgo(60), from: daysAgo(401), accounts: ['acc_chk'], gaps: [{ account_id: 'acc_chk' }] });
+  });
+
+  test('the API says which estimated points are walked back through imported rows, for net worth and for the account', async () => {
+    await runBackfill();
+    const { body } = await importReviewed('acc_chk', ofx([{ fitid: 'A', days: 100, amount: -30, name: 'OLD SHOP' }], { start: 400, end: 55 }));
+    const drawn = { from: daysAgo(401), until: daysAgo(60) };
+    const all = (await readBalanceHistory(ctx, { includeEstimated: true, interval: 'day' }))!;
+    expect(all.from_imports).toEqual(drawn);
+    expect(all.points[0]).toMatchObject({ date: daysAgo(401), estimated: true });
+    expect((await readBalanceHistory(ctx, { accountId: 'acc_chk', includeEstimated: true }))!.from_imports).toEqual(drawn);
+    // The card isn't walked through any: its history stops where the bank's does.
+    expect((await readBalanceHistory(ctx, { accountId: 'acc_card', includeEstimated: true }))!.from_imports).toBeNull();
+    // Recorded points only, none of them is.
+    expect((await readBalanceHistory(ctx, {}))!.from_imports).toBeNull();
+    await undo('acc_chk', body.import_id);
+    expect((await readBalanceHistory(ctx, { includeEstimated: true }))!.from_imports).toBeNull();
   });
 
   test('a card walks with its own sign: what was charged before is owed less further back', async () => {
