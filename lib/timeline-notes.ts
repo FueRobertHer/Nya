@@ -15,9 +15,11 @@
 //     note rather than adding a second, and reopening the account takes it
 //     away. The person changes these by changing the account, never directly.
 //     Also one per window an account was missing from its bank's answer and
-//     assumed closed before it came back (lib/lifecycle.ts), under the
-//     account's id and the window's first day: it says why the chart leaves
-//     those days out, and stays, since the days stay short.
+//     assumed closed before it came back (lib/lifecycle.ts), under a random
+//     id the window keeps (`missed[].note`), since a field name is plaintext
+//     and a day is content the seam keeps out of it (lib/repo.ts): it says
+//     why the chart leaves those days out, and stays, since the days stay
+//     short.
 //   - "user": what the person wrote, under a random id. They add, edit and
 //     remove these as they like.
 //
@@ -99,9 +101,19 @@ export const timelineNotesStore: MapStore<TimelineNote> = defineMapStore<Timelin
  *  allows in a field name, so a change to its lifecycle finds it again. */
 export const autoNoteId = (account_id: string) => `lifecycle.${account_id}`;
 
-/** The id of the note on a window an account was missing (lib/lifecycle.ts
- *  liftAssumedClosures): one per window, by its first day. */
-export const missedNoteId = (account_id: string, from: string) => `missed.${account_id}.${from}`;
+/** A new id for the note on a window an account was missing (lib/lifecycle.ts
+ *  liftAssumedClosures): random, and kept on the window, which is how the
+ *  note is found again. */
+export const newMissedNoteId = () => `missed.${crypto.randomUUID()}`;
+
+/** An id newMissedNoteId makes. */
+export const isMissedNoteId = (v: unknown): v is string => typeof v === 'string' && /^missed\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
+
+/** The id a window's note had before windows kept their notes' ids: the
+ *  account's id and the window's first day, a day in a plaintext field name,
+ *  which the seam forbids. Only to find such a note and move it
+ *  (lib/lifecycle.ts adoptMissedNotes). */
+export const legacyMissedNoteId = (account_id: string, from: string) => `missed.${account_id}.${from}`;
 
 /** A note refused for what it asks, with a message for the person: 400. */
 export class NoteRefusedError extends Error {
@@ -128,9 +140,32 @@ export async function writeAutoNote(ctx: Ctx, account_id: string, date: string, 
   await writeNoteUnder(ctx, autoNoteId(account_id), account_id, date, text, now);
 }
 
-/** Writes the note on a window an account was missing, as writeAutoNote. */
-export async function writeMissedNote(ctx: Ctx, account_id: string, from: string, text: string, now: number = Date.now()): Promise<void> {
-  await writeNoteUnder(ctx, missedNoteId(account_id, from), account_id, from, text, now);
+/** Writes the note on a window an account was missing, under the id the
+ *  window keeps, as writeAutoNote. */
+export async function writeMissedNote(ctx: Ctx, id: string, account_id: string, from: string, text: string, now: number = Date.now()): Promise<void> {
+  await writeNoteUnder(ctx, id, account_id, from, text, now);
+}
+
+/**
+ * Moves the note on a missing window from the id it had before windows kept
+ * their notes' ids (legacyMissedNoteId) to the window's own, as it was
+ * written; with none there to move, writes it afresh. The new one is written
+ * before the old one goes, so a failure between them leaves the note under
+ * both ids, never under neither. Each a compare-and-set.
+ */
+export async function moveMissedNote(ctx: Ctx, from_id: string, to_id: string, account_id: string, date: string, text: string, now: number = Date.now()): Promise<void> {
+  const old = await timelineNotesStore.get(ctx, from_id);
+  if (!old || old.kind !== 'auto' || old.account_id !== account_id) {
+    await writeNoteUnder(ctx, to_id, account_id, date, text, now);
+    return;
+  }
+  await timelineNotesStore.update(ctx, to_id, (current) => current ?? old);
+  await timelineNotesStore.update(ctx, from_id, (current) => (current && current.kind === 'auto' && current.account_id === account_id ? null : current));
+}
+
+/** Removes the note on a missing window, when it is Nya's about the account. */
+export async function removeMissedNote(ctx: Ctx, id: string, account_id: string): Promise<void> {
+  await timelineNotesStore.update(ctx, id, (current) => (current && current.kind === 'auto' && current.account_id === account_id ? null : current));
 }
 
 async function writeNoteUnder(ctx: Ctx, id: string, account_id: string, date: string, text: string, now: number): Promise<void> {

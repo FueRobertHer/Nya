@@ -400,7 +400,8 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       subtype: null,
       mask: entry.label.mask,
       balance: b?.value ?? null,
-      currency: null,
+      // As its end recorded it, where the write knew it.
+      currency: entry.currency ?? null,
       credit_limit: null,
       is_debt: isOwedType(type),
       hidden: hidden.has(root),

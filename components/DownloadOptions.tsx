@@ -11,9 +11,29 @@
 // file (app/open-download), or with the age app.
 
 import { OPEN_DOWNLOAD_PATH, PASSPHRASE_MIN, ofxKindOf, passphraseLength } from '@/lib/download-options';
+import { endText, type EndedAccount } from './AccountLifecycle';
 
-/** An account as the card offers it, from what the dashboard shows. */
-export type DownloadAccount = { account_id: string; name: string; institution_name: string; type: string; mask: string | null };
+/** An account as the card offers it, from what the dashboard shows. `ended`:
+ *  when it ended (#50), as the Accounts tab says it ("Closed Sep 1"). */
+export type DownloadAccount = { account_id: string; name: string; institution_name: string; type: string; mask: string | null; ended?: string };
+
+/**
+ * The accounts the card offers: the live ones, and those that ended, which
+ * the live list no longer holds (lib/lifecycle.ts applyLifecycle) though a
+ * statement of one, a card closed or a joint account divided, is what moving
+ * to another app needs most. Each once, an ended one labelled with its end;
+ * its statement says the rest (lib/ofx-export.ts endedNote).
+ */
+export function downloadAccounts(live: readonly DownloadAccount[], ended: readonly EndedAccount[]): DownloadAccount[] {
+  const endOf = new Map(ended.map((e) => [e.account_id, endText(e.lifecycle)]));
+  const out = live.map((a) => (endOf.has(a.account_id) ? { ...a, ended: endOf.get(a.account_id) } : a));
+  const listed = new Set(out.map((a) => a.account_id));
+  for (const e of ended) {
+    if (listed.has(e.account_id) || !e.type) continue;
+    out.push({ account_id: e.account_id, name: e.label.name || 'Account', institution_name: e.label.institution, type: e.type, mask: e.label.mask, ended: endOf.get(e.account_id) });
+  }
+  return out;
+}
 
 /** The accounts an OFX statement can be made of (bank accounts and cards),
  *  by institution, then name. */
@@ -23,8 +43,8 @@ export function ofxAccounts(accounts: readonly DownloadAccount[]): DownloadAccou
     .sort((a, b) => a.institution_name.localeCompare(b.institution_name) || a.name.localeCompare(b.name) || (a.account_id < b.account_id ? -1 : 1));
 }
 
-/** "Chase · Checking ••1111". */
-export const accountLabel = (a: DownloadAccount) => `${a.institution_name} · ${a.name}${a.mask ? ` ••${a.mask}` : ''}`;
+/** "Chase · Checking ••1111", and "· Closed Sep 1" for one that ended. */
+export const accountLabel = (a: DownloadAccount) => `${a.institution_name} · ${a.name}${a.mask ? ` ••${a.mask}` : ''}${a.ended ? ` · ${a.ended}` : ''}`;
 
 /**
  * For a passphrase field: nothing offers to save it as this site's password,
@@ -87,8 +107,9 @@ export function OfxAccountPicker({
         <p className="empty-note">There’s no bank account or card to make a statement of.</p>
       )}
       <p className="panel-note">
-        Bank accounts and cards only. A loan has no statement in the OFX money apps read, and an investment account’s
-        needs its holdings and trades, which Nya doesn’t write, so neither is offered: their history is in the JSON file.
+        Bank accounts and cards only, those that ended too, with every transaction Nya stored. A loan has no statement in
+        the OFX money apps read, and an investment account’s needs its holdings and trades, which Nya doesn’t write, so
+        neither is offered: their history is in the JSON file.
       </p>
     </div>
   );

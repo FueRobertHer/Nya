@@ -34,11 +34,15 @@ const {
   autoNoteText,
   shortDays,
   EMPTY_VIEW,
+  adoptMissedNotes,
+  hasUnkeyedWindows,
+  readLifecycleEntries,
+  MAX_MISSED,
 } = await import('@/lib/lifecycle');
 const { getHistory, getHistoryWithBreaks, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates, endBreaks } = await import('@/lib/history');
 const { UnreadableEntriesError } = await import('@/lib/repo');
 const { recordDirectory, forgetEarlierAccount, ForgetRefused } = await import('@/lib/links');
-const { timelineNotesStore, autoNoteId, missedNoteId, writeMissedNote, addUserNote } = await import('@/lib/timeline-notes');
+const { timelineNotesStore, autoNoteId, newMissedNoteId, isMissedNoteId, legacyMissedNoteId, writeMissedNote, addUserNote } = await import('@/lib/timeline-notes');
 type Link = { to: string; linked_at: string; evidence: Record<string, unknown> };
 
 const ABOUT = { type: 'depository', label: { name: 'Ally Savings', institution: 'Ally', mask: '1234' }, item_id: 'item_ally' };
@@ -110,6 +114,21 @@ describe('the stored shape', () => {
     expect(isLifecycleEntry({ ...good, type: null })).toBe(true);
     expect(isLifecycleEntry({ ...good, type: 'Credit Card!' })).toBe(false);
     expect(isLifecycleEntry({ ...good, item_id: 'has space' })).toBe(false);
+    // Its currency where the write knew it: an ISO code, or Plaid's unofficial one.
+    expect(isLifecycleEntry({ ...good, currency: 'CAD' })).toBe(true);
+    expect(isLifecycleEntry({ ...good, currency: 'DOGE' })).toBe(true);
+    expect(isLifecycleEntry({ ...good, currency: 'not a currency' })).toBe(false);
+    expect(isLifecycleEntry({ ...good, currency: null })).toBe(false);
+  });
+
+  test('a write keeps the currency it is told, else the one the entry had; one that isn’t a currency is left out', async () => {
+    await markStillOpen(ctx, 'sav', { kind: 'zero', since: '2026-02-01' }, { ...ABOUT, currency: 'CAD' }, NOW);
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    expect((await lifecycleStore.get(ctx, 'sav'))?.currency).toBe('CAD');
+    await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-12' }, { ...ABOUT, currency: 'USD' }, NOW);
+    expect((await lifecycleStore.get(ctx, 'sav'))?.currency).toBe('USD');
+    await markEnded(ctx, 'chk', { state: 'closed', on: '2026-03-12' }, { ...ABOUT, currency: '<b>' }, NOW);
+    expect((await lifecycleStore.get(ctx, 'chk'))?.currency).toBeUndefined();
   });
 });
 
@@ -380,7 +399,8 @@ describe('forgetting an account that ended', () => {
     await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-11' }, ABOUT, NOW);
     const before = await getHistory(ctx);
     expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).not.toBeNull();
-    await writeMissedNote(ctx, 'sav', '2026-02-01', 'Ally Savings was missing on Feb 1', NOW);
+    const missedNote = newMissedNoteId();
+    await writeMissedNote(ctx, missedNote, 'sav', '2026-02-01', 'Ally Savings was missing on Feb 1', NOW);
     const mine = await addUserNote(ctx, { date: '2026-03-11', text: 'Moved the savings', account_id: 'sav' }, NOW);
     await forgetEarlierAccount(ctx, 'sav');
     expect(await getHistory(ctx)).toEqual(before);
@@ -388,7 +408,7 @@ describe('forgetting an account that ended', () => {
     // person's own note stays: its words are theirs.
     expect(await lifecycleStore.get(ctx, 'sav')).toBeNull();
     expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toBeNull();
-    expect(await timelineNotesStore.get(ctx, missedNoteId('sav', '2026-02-01'))).toBeNull();
+    expect(await timelineNotesStore.get(ctx, missedNote)).toBeNull();
     expect(await timelineNotesStore.get(ctx, mine.id)).not.toBeNull();
   });
 });
@@ -544,7 +564,13 @@ describe('assumed closures', () => {
     expect(entry).toMatchObject({ lifecycle: { state: 'active' }, missed: [{ from: '2026-03-12', to: '2026-03-17' }] });
     expect(entry?.assumed).toBeUndefined();
     expect(await timelineNotesStore.has(ctx, autoNoteId('sav'))).toBe(false);
-    expect(await timelineNotesStore.get(ctx, missedNoteId('sav', '2026-03-12'))).toMatchObject({
+    // Its note is under a random id the window keeps: never the account's id
+    // and a day in a field name.
+    const noteId = entry!.missed![0].note!;
+    expect(isMissedNoteId(noteId)).toBe(true);
+    expect(noteId).not.toContain('sav');
+    expect(noteId).not.toContain('2026');
+    expect(await timelineNotesStore.get(ctx, noteId)).toMatchObject({
       date: '2026-03-12',
       kind: 'auto',
       account_id: 'sav',
@@ -561,7 +587,51 @@ describe('assumed closures', () => {
     const later = await getEffectiveLifecycle(ctx, new Map());
     expect([...shortDays(later, new Map())].sort()).toEqual(['2026-03-12', '2026-03-13', '2026-03-14', '2026-03-15']);
     await reopenAccount(ctx, 'sav', new Map(), NOW);
-    expect((await lifecycleStore.get(ctx, 'sav'))?.missed).toEqual([{ from: '2026-03-12', to: '2026-03-17' }]);
+    expect((await lifecycleStore.get(ctx, 'sav'))?.missed).toEqual([{ from: '2026-03-12', to: '2026-03-17', note: noteId }]);
+  });
+
+  test('a window recorded before windows kept their notes’ ids is given one, and its note moved there, once', async () => {
+    // As this branch first wrote them: the window without an id, its note
+    // under the account's id and the window's first day.
+    const at = new Date(NOW).toISOString();
+    await lifecycleStore.set(ctx, 'sav', { lifecycle: { state: 'active' }, ...ABOUT, set_at: at, missed: [{ from: '2026-03-12', to: '2026-03-17' }, { from: '2026-04-02', to: '2026-04-03' }] });
+    const old = { date: '2026-03-12', text: 'Ally Savings ••1234 was missing at Ally from Mar 12 to Mar 17, so the totals saved then, short of it, are left out', kind: 'auto' as const, account_id: 'sav', created_at: at };
+    await timelineNotesStore.set(ctx, legacyMissedNoteId('sav', '2026-03-12'), old);
+    expect(await adoptMissedNotes(ctx, await readLifecycleEntries(ctx), NOW)).toBe(2);
+    const [first, second] = (await lifecycleStore.get(ctx, 'sav'))!.missed!;
+    expect([isMissedNoteId(first.note), isMissedNoteId(second.note)]).toEqual([true, true]);
+    // Moved as it was written; the old id is gone.
+    expect(await timelineNotesStore.get(ctx, first.note!)).toEqual(old);
+    expect(await timelineNotesStore.has(ctx, legacyMissedNoteId('sav', '2026-03-12'))).toBe(false);
+    // The window whose note was never written gets one.
+    expect(await timelineNotesStore.get(ctx, second.note!)).toMatchObject({ date: '2026-04-02', kind: 'auto', account_id: 'sav', text: 'Ally Savings ••1234 was missing at Ally from Apr 2 to Apr 3, so the totals saved then, short of it, are left out' });
+    // Once each has its id, nothing to do.
+    const entries = await readLifecycleEntries(ctx);
+    expect(hasUnkeyedWindows(entries)).toBe(false);
+    expect(await adoptMissedNotes(ctx, entries, NOW)).toBe(0);
+    // No field name holds a day.
+    expect(Object.keys((await fake.hgetall<Record<string, string>>(ctxKey('timeline-notes'))) ?? {}).filter((id) => /\d{4}-\d{2}-\d{2}/.test(id))).toEqual([]);
+    // A window id of another shape is not one this release wrote.
+    expect(isLifecycleEntry({ lifecycle: { state: 'active' }, ...ABOUT, set_at: at, missed: [{ from: '2026-03-12', to: '2026-03-17', note: 'missed.sav.2026-03-12' }] })).toBe(false);
+  });
+
+  test('a window past the most kept goes, and so does its note, which would say days are left out that no longer are', async () => {
+    const at = new Date(NOW).toISOString();
+    const windows = Array.from({ length: MAX_MISSED }, (_, i) => {
+      const day = `2025-${String(1 + Math.floor(i / 2)).padStart(2, '0')}-${i % 2 === 0 ? '05' : '20'}`;
+      return { from: day, to: day, note: newMissedNoteId() };
+    });
+    await lifecycleStore.set(ctx, 'sav', { lifecycle: { state: 'active' }, ...ABOUT, set_at: at, missed: windows });
+    for (const w of windows) await writeMissedNote(ctx, w.note, 'sav', w.from, 'A missing day', NOW);
+    await recordAssumedClosures(ctx, [{ account_id: 'sav', on: '2026-03-12', about: ABOUT }], NOW);
+    await liftAssumedClosures(ctx, ['sav'], Date.parse('2026-03-18T12:00:00Z'));
+    const kept = (await lifecycleStore.get(ctx, 'sav'))!.missed!;
+    expect(kept).toHaveLength(MAX_MISSED);
+    expect(kept[0]).toEqual(windows[1]);
+    expect(kept.at(-1)).toMatchObject({ from: '2026-03-12', to: '2026-03-17' });
+    expect(await timelineNotesStore.has(ctx, windows[0].note)).toBe(false);
+    expect(await timelineNotesStore.has(ctx, windows[1].note)).toBe(true);
+    expect(await timelineNotesStore.has(ctx, kept.at(-1)!.note!)).toBe(true);
   });
 
   test('a confirmed answer replaces the assumption', async () => {

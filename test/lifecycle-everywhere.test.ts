@@ -26,6 +26,7 @@ const { linkAccounts } = await import('@/lib/links');
 const api = await import('@/lib/api-read');
 const { StoredDataUnreadableError } = await import('@/lib/repo');
 const { collectUserData, buildUserExport, exportFile, BALANCE_COLUMNS } = await import('@/lib/user-export');
+const { ofxFile } = await import('@/lib/ofx-export');
 const { readStorageUsage } = await import('@/lib/blob-sizes');
 
 const CARD = { type: 'credit', label: { name: 'Card', institution: 'Chase', mask: '2222' }, item_id: 'item_chase' };
@@ -175,6 +176,30 @@ describe('the data download', () => {
     // Oldest day first still, the notes after the day's balances.
     const dates = rows.map((r) => r[0]);
     expect(dates).toEqual([...dates].sort());
+  });
+
+  test('an account that ended still has its statement, which says when it ended, what of it is dated from then, and its balance’s day', async () => {
+    await markEnded(ctx, 'acc_card', { state: 'closed', on: daysAgo(8) }, CARD);
+    await markEnded(ctx, 'manual_wallet', { state: 'left', on: daysAgo(1) }, WALLET);
+    const data = await collectUserData({ ctx, userId: null });
+    const doc = buildUserExport(data, new Date());
+    const day = (d: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T00:00:00Z`));
+    const card = ofxFile(data, doc, 'acc_card', new Date());
+    if (!('file' in card)) throw new Error(card.refused);
+    // Its two transactions, on the end day and after, are still in it.
+    expect([...card.file.pieces()].join('')).toContain('<FITID>t_card');
+    const balanceDay = doc.accounts.find((a) => a.account_id === 'acc_card')!.latest_balance!.date;
+    expect(card.file.notes[0]).toBe(
+      `This account was closed in Nya on ${day(daysAgo(8))}: the statement still lists every transaction Nya stored for it, 2 of them dated from then, which Nya leaves out of every total, and its balance is the newest Nya recorded, from ${day(balanceDay)}.`
+    );
+    const wallet = ofxFile(data, doc, 'manual_wallet', new Date());
+    if (!('file' in wallet)) throw new Error(wallet.refused);
+    expect(wallet.file.notes[0]).toStartWith(`This account is no longer yours in Nya from ${day(daysAgo(1))}: the statement still lists every transaction Nya stored for it, 1 of them dated from then`);
+    expect(wallet.file.notes[0]).toContain(', and its balance is the one last set, on ');
+    // An open account's says nothing of the kind.
+    const checking = ofxFile(data, doc, 'acc_chk', new Date());
+    if (!('file' in checking)) throw new Error(checking.refused);
+    expect(checking.file.notes.join(' ')).not.toContain('in Nya on');
   });
 
   test('a closure that can’t be read is named among the problems, and the CSV says it is incomplete', async () => {

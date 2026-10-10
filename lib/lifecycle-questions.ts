@@ -78,7 +78,12 @@
 // then, it is asked about again ("Chase Freedom ••9902, closed Mar 13, shows
 // $450.00 owed. Still closed?"), so a card used again, or a fee that lands,
 // never moves out of net worth unseen (askAboutReportedEnds). An untracked
-// account is expected to move, and stays quiet.
+// account is expected to move, and stays quiet. Its transactions are read at
+// most once a day (`seen.checked`, lib/lifecycle.ts recordReportedCheck): an
+// account its bank returns at zero for good, as many closed ones are, would
+// otherwise cost a read of its institution's whole store on every live load.
+// A transaction is noticed the day after it lands, at worst; a balance that
+// moves, at once.
 
 import type { Ctx } from './containers';
 import { sameAccountIds, type Link } from './link-core';
@@ -90,6 +95,8 @@ import { clearCaches } from './cache';
 import { addDays } from './manual-txn-input';
 import {
   recordAssumedClosures,
+  recordReportedCheck,
+  seenOf,
   lifecycleOf,
   holdsStillOpen,
   endedNow,
@@ -176,13 +183,20 @@ export async function assumeClosed(
 ): Promise<Set<string>> {
   if (missing.length === 0) return new Set();
   const ids = missing.map((m) => m.account_id);
-  const [entries, measured] = await Promise.all([directoryEntries(ctx, ids), lastMeasured(ctx, ids, links)]);
+  const [entries, measured, currencies] = await Promise.all([
+    directoryEntries(ctx, ids),
+    lastMeasured(ctx, ids, links),
+    // Its currency, from its institution's record, which keeps a held account
+    // until it is answered (lib/last-known.ts): a convenience, so one that
+    // can't be read is none.
+    bankCurrencies(ctx, ids).catch(() => new Map<string, string>()),
+  ]);
   const answered = await recordAssumedClosures(
     ctx,
     missing.map(({ account_id, missing_since }) => {
       const last = measured?.get(account_id)?.date ?? null;
       const firstMissing = Number.isFinite(Date.parse(missing_since)) ? utcDay(Date.parse(missing_since)) : utcDay(now);
-      return { account_id, on: last ? addDays(last, 1) : firstMissing, about: aboutFromDirectory(entries[account_id], item_id) };
+      return { account_id, on: last ? addDays(last, 1) : firstMissing, about: { ...aboutFromDirectory(entries[account_id], item_id), currency: currencies.get(account_id) ?? null } };
     }),
     now
   );
@@ -384,39 +398,60 @@ export async function askAboutReportedEnds(
   now: number = Date.now()
 ): Promise<void> {
   if (view.ended.size === 0) return;
-  const candidates: { inst: ReportingInstitution; a: any; ended: { state: 'closed' | 'left'; on: string; note?: string }; seen: { balance: number | null; through: string } }[] = [];
+  const today = utcDay(now);
+  const candidates: {
+    inst: ReportingInstitution;
+    a: any;
+    stored: string;
+    ended: { state: 'closed' | 'left'; on: string; note?: string };
+    seen: NonNullable<ReturnType<typeof seenOf>>;
+  }[] = [];
   for (const inst of institutions) {
     if (inst.error || inst.manual) continue;
     for (const a of inst.accounts) {
       if (!a || a.stale || a.held || hidden.has(a.account_id)) continue;
-      const entry = lifecycleOf(view, a.account_id);
-      const l = entry?.lifecycle;
-      if (!entry || !l || (l.state !== 'closed' && l.state !== 'left') || !endedNow(l, now)) continue;
-      const seen = entry.seen ?? { balance: l.state === 'closed' ? 0 : null, through: addDays(l.on, -1) };
-      candidates.push({ inst, a, ended: { state: l.state, on: l.on, ...(l.note ? { note: l.note } : {}) }, seen });
+      const root = view.rootOf.get(a.account_id);
+      const held = root ? view.accounts.get(root) : undefined;
+      const l = held?.entry.lifecycle;
+      const seen = held ? seenOf(held.entry) : null;
+      if (!held || !l || !seen || (l.state !== 'closed' && l.state !== 'left') || !endedNow(l, now)) continue;
+      candidates.push({ inst, a, stored: held.stored, ended: { state: l.state, on: l.on, ...(l.note ? { note: l.note } : {}) }, seen });
     }
   }
   if (candidates.length === 0) return;
   try {
-    // Transactions after what was seen, read once per institution; one whose
-    // store can't be read says nothing about them.
+    // Transactions after what was seen, read once per institution, and only
+    // for an account not read today (see ENDED, STILL REPORTED); a store
+    // that can't be read says nothing about them, and is read again next
+    // time.
     const rows = new Map<string, { account_id: string; date: string }[] | null>();
-    for (const item_id of new Set(candidates.map((c) => c.inst.item_id))) {
+    for (const item_id of new Set(candidates.filter((c) => c.seen.checked !== today).map((c) => c.inst.item_id))) {
       try {
         rows.set(item_id, (await readStoredTxns(ctx, item_id)).map((t) => ({ account_id: t.account_id, date: t.date })));
       } catch {
         rows.set(item_id, null);
       }
     }
-    for (const { inst, a, ended, seen } of candidates) {
-      const ids = new Set(sameAccountIds(a.account_id, links as Map<string, Link>));
-      const after = (rows.get(inst.item_id) ?? [])
-        .filter((t) => ids.has(t.account_id) && t.date > seen.through && t.date >= ended.on)
-        .map((t) => t.date)
-        .sort();
+    for (const { inst, a, stored, ended, seen } of candidates) {
+      let newest: string | null;
+      if (seen.checked === today) newest = seen.txn ?? null;
+      else {
+        const read = rows.get(inst.item_id) ?? null;
+        const ids = new Set(sameAccountIds(a.account_id, links as Map<string, Link>));
+        const after = (read ?? [])
+          .filter((t) => ids.has(t.account_id) && t.date > seen.through && t.date >= ended.on)
+          .map((t) => t.date)
+          .sort();
+        newest = after.length > 0 ? after[after.length - 1] : null;
+        if (read) {
+          await recordReportedCheck(ctx, stored, { on: ended.on, balance: seen.balance, through: seen.through }, today, newest).catch((err) =>
+            console.error('Account lifecycle: when an ended account’s transactions were read could not be saved', err instanceof Error ? err.name : typeof err)
+          );
+        }
+      }
       const moved = typeof a.balance === 'number' && seen.balance !== null && Math.abs(a.balance - seen.balance) >= 0.005;
-      if (!moved && after.length === 0) continue;
-      const question: AccountQuestion = { kind: 'reported', end: ended.on, since: after.length > 0 ? after[after.length - 1] : null, ended };
+      if (!moved && newest === null) continue;
+      const question: AccountQuestion = { kind: 'reported', end: ended.on, since: newest, ended };
       inst.ended_reported = [...(inst.ended_reported ?? []), { ...a, question }];
     }
   } catch (err) {

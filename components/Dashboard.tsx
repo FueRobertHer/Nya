@@ -11,6 +11,7 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
 import { instantDay } from '@/lib/local-date';
@@ -2504,12 +2505,17 @@ export default function Dashboard({
                 {/* Download my data, with the rest of the account upkeep
                     behind Manage accounts; after the accounts, so it doesn't
                     push them down. It asks for a fresh sign-in itself. The
-                    accounts are what an OFX statement can be of. */}
+                    accounts are what an OFX statement can be of: the live
+                    ones, and those that ended, which the live list no longer
+                    holds, labelled with their end. */}
                 {manageMode && (
                   <DownloadMyData
                     clerk={clerk}
-                    accounts={institutions.flatMap((i) =>
-                      i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
+                    accounts={downloadAccounts(
+                      institutions.flatMap((i) =>
+                        i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
+                      ),
+                      ended
                     )}
                   />
                 )}

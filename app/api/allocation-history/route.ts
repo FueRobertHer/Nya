@@ -8,7 +8,8 @@ import { readMeasuredBalances } from '@/lib/history';
 import { allocationSettingsStore } from '@/lib/allocation-settings';
 import { getEffectiveLifecycle, endDays, endOf } from '@/lib/lifecycle';
 import { isInvestmentType } from '@/lib/balance';
-import { isManualId } from '@/lib/manual';
+import { isManualId, MANUAL_CURRENCY } from '@/lib/manual';
+import { bankCurrencies } from '@/lib/sharing';
 import { commonCurrency, KNOWN_ALWAYS, seriesBuilder, type SeriesAccount } from '@/lib/allocation/series';
 import { loggable } from '@/lib/log-safe';
 
@@ -241,13 +242,25 @@ export async function POST(req: Request) {
       listed.set(placed.account, { ...a, account_id: placed.account, ...(end !== undefined ? { ended: end } : {}) });
     }
     // An investment account that ended, which the Plan no longer lists, up
-    // to its end (see the header).
+    // to its end (see the header), in its own currency, so its cash is priced
+    // as it was while it was listed: as its end recorded it, else as its
+    // institution last reported it (lib/sharing.ts bankCurrencies, a display
+    // convenience, so one that can't be read is none), a manual account's in
+    // US dollars as it is kept (lib/manual.ts).
+    const added: { account: string; end: string; currency: string | null; ids: string[] }[] = [];
     for (const [root, { entry }] of lifecycle.accounts) {
       const end = endOf(entry.lifecycle);
       if (end === null || !(isInvestmentType(entry.type ?? '') || (entry.type === null && head.accounts.has(root)))) continue;
       const placed = place(root);
-      if (!placed || listed.has(placed.account)) continue;
-      listed.set(placed.account, { account_id: placed.account, currency: null, manual: isManualId(placed.account), shown: false, ended: end });
+      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account)) continue;
+      const manual = isManualId(placed.account);
+      added.push({ account: placed.account, end, currency: entry.currency ?? (manual ? MANUAL_CURRENCY : null), ids: [...new Set([root, placed.account])] });
+    }
+    const unpriced = added.filter((a) => a.currency === null).flatMap((a) => a.ids);
+    const reported = unpriced.length > 0 ? await bankCurrencies(ctx, unpriced).catch(() => new Map<string, string>()) : new Map<string, string>();
+    for (const a of added) {
+      const currency = a.currency ?? a.ids.map((id) => reported.get(id)).find((c) => c !== undefined) ?? null;
+      listed.set(a.account, { account_id: a.account, currency, manual: isManualId(a.account), shown: false, ended: a.end });
     }
     // When the directory first knew each account, the earliest of its ids.
     // One whose entry can't be read is taken to have been there all along:

@@ -86,6 +86,13 @@
 // manual account's transactions, or whether a transaction was excluded, that
 // couldn't be read are said in a note and in the parts the file is short of
 // (`incomplete`), never left out quietly.
+//
+// AN ACCOUNT THAT ENDED (#50, lib/lifecycle.ts) is a statement like any other:
+// every transaction Nya stored, its later ones too (the money moved, and an
+// app reconciling the account needs them), and the newest balance. A note
+// says when it ended in Nya, how many of its transactions are dated from
+// then (which Nya counts in nothing), and the day the balance is from, which
+// for a closure Nya noticed by the account's absence is from before it.
 
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
@@ -96,7 +103,7 @@ import { manualTxnStore } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
+import { missingIds, manualTransactionsIn, type ExportFile, type ExportLifecycle, type UserData, type UserExport } from './user-export';
 
 // ---- Text ----
 
@@ -440,6 +447,35 @@ function* gathered(pieces: readonly string[]): Generator<string> {
   if (buffer) yield buffer;
 }
 
+/** "Sep 1, 2026": a calendar day as a note says it, never moved by a time
+ *  zone. */
+const noteDay = (day: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`));
+
+/**
+ * What the statement of an account that ended says (see AN ACCOUNT THAT
+ * ENDED): when it ended in Nya, that the statement still lists every
+ * transaction Nya stored for it, with how many are dated from then, and the
+ * day of the balance it gives, when it gives one (`ledger`). Pure.
+ */
+export function endedNote(lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'assumed'>, rows: readonly Pick<OfxRow, 'date'>[], ledger: { as_of: string; manual: boolean } | null): string {
+  const when = noteDay(lifecycle.date);
+  const what =
+    lifecycle.state === 'closed'
+      ? lifecycle.assumed
+        ? `Nya assumed this account closed on ${when}, when its bank stopped returning it`
+        : `This account was closed in Nya on ${when}`
+      : lifecycle.state === 'left'
+        ? `This account is no longer yours in Nya from ${when}`
+        : `This account isn’t tracked in Nya from ${when}`;
+  const after = rows.filter((r) => r.date >= lifecycle.date).length;
+  const listed =
+    after > 0
+      ? `the statement still lists every transaction Nya stored for it, ${after.toLocaleString('en-US')} of them dated from then, which Nya leaves out of every total`
+      : 'the statement lists every transaction Nya stored for it, none dated from then';
+  const balance = ledger ? `, and its balance is ${ledger.manual ? 'the one last set, on' : 'the newest Nya recorded, from'} ${noteDay(ledger.as_of)}` : '';
+  return `${what}: ${listed}${balance}.`;
+}
+
 /** Where the person is, and what the route read for the balance's day. */
 export type OfxOptions = {
   /** The time zone the person's device sent (lib/access-log.ts timeZoneOf),
@@ -596,6 +632,13 @@ export function ofxFile(
     notes.push(
       `${plural(pending, 'pending transaction is', 'pending transactions are')} left out: the bank gives a transaction a new id when it posts, so an app that imported ${pending === 1 ? 'it' : 'them'} now would count ${pending === 1 ? 'it' : 'them'} twice. Download again once ${pending === 1 ? 'it has' : 'they have'} posted.`
     );
+  }
+
+  // An account that ended: said first, as what the rest is read by.
+  const ended = linked ? linked.lifecycle : manual!.lifecycle;
+  if (ended) {
+    const ledger = statementsOf({ ...account, rows }).statements.find((s) => s.ledger !== null)?.ledger ?? null;
+    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, manual: !!manual } : null));
   }
 
   const written = ofxDocument({ ...account, rows }, now);

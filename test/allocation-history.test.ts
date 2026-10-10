@@ -219,6 +219,28 @@ describe('allocation over time', () => {
     }
   });
 
+  test('an account in another currency that ended keeps its currency on the days before, its cash beside its positions too: as its end recorded it, or as its institution reported it', async () => {
+    const cad = { iso_currency_code: 'CAD' };
+    await record('2026-09-30T13:00:00Z', ['a', 'c'], [hold('a', 'vti', 600), hold('c', 'xeqt', 400, cad)]);
+    // c holds 100 of cash beside its fund, in Canadian dollars.
+    await measured('2026-09-30', { a: 600, c: 500 });
+    const before = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: [acct('a'), acct('c', 'CAD')] })).body;
+    expect(before.days[0]).toMatchObject({ total: 600, otherCurrencies: { CAD: 500 } });
+    const { markEnded, lifecycleStore } = await import('@/lib/lifecycle');
+    const C = { type: 'investment', label: { name: 'C', institution: 'Broker', mask: null }, item_id: 'item_b' };
+    // As the route records it, with its currency; then the Plan lists it no more.
+    await markEnded(ctx, 'c', { state: 'closed', on: '2026-10-01' }, { ...C, currency: 'CAD' });
+    expect((await lifecycleStore.get(ctx, 'c'))?.currency).toBe('CAD');
+    const after = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: [acct('a')] })).body;
+    expect(after.days[0]).toMatchObject({ total: 600, otherCurrencies: { CAD: 500 } });
+    // An end that recorded none: as its institution last reported it.
+    await lifecycleStore.update(ctx, 'c', (e) => (e ? { ...e, currency: undefined } : e));
+    expect((await lifecycleStore.get(ctx, 'c'))?.currency).toBeUndefined();
+    await rememberAccounts(ctx, [{ item_id: 'item_b', error: null, accounts: [{ account_id: 'c', name: 'C', type: 'investment', subtype: 'tfsa', currency: 'CAD' }] }]);
+    const reported = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: [acct('a')] })).body;
+    expect(reported.days[0]).toMatchObject({ total: 600, otherCurrencies: { CAD: 500 } });
+  });
+
   test('an end that can’t be read is a 409, never a series counting it', async () => {
     await threeDays();
     await fake.hset(ctxKey('account-lifecycle'), { b: 'damaged-bytes-damaged-bytes-damaged' });

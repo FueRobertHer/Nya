@@ -408,6 +408,62 @@ export function questionText(
   };
 }
 
+/** What a debt its bank still reports owes, as words, or null when it owes
+ *  nothing (or isn't a debt): "Still closed" keeps that out of net worth. */
+export function owedWords(row: Pick<QuestionRow, 'balance' | 'currency' | 'type'>): string | null {
+  if (typeof row.balance !== 'number' || !row.type) return null;
+  const c = signedContribution(row.type, row.balance);
+  return c <= -0.005 ? formatMoney(Math.abs(c), row.currency ?? null) : null;
+}
+
+/**
+ * A question about an end its bank doesn't agree with, and its answers. On a
+ * debt it says is owed, "Still closed" (or "Still not mine") keeps what it
+ * owes out of net worth, so it waits for the same tick the sheet asks for
+ * (endEffect), with the amount named: a debt that stops counting must never
+ * look like money gained by a tap.
+ */
+function ReportedQuestion({
+  a,
+  ended,
+  ask,
+  detail,
+  busy,
+  onConfirmEnd,
+  onReopen,
+}: {
+  a: QuestionRow;
+  ended: NonNullable<AccountQuestion['ended']>;
+  ask: string;
+  detail: string;
+  busy: boolean;
+  onConfirmEnd?: (account_id: string, ended: NonNullable<AccountQuestion['ended']>, balance: number | null) => void;
+  onReopen?: (account_id: string) => void;
+}) {
+  const owed = owedWords(a);
+  const [owedOk, setOwedOk] = useState(false);
+  return (
+    <li className="lifecycle-question">
+      <p className="lifecycle-ask">{ask}</p>
+      <p className="panel-note">{detail}</p>
+      {owed && (
+        <label className="lifecycle-confirm">
+          <input type="checkbox" checked={owedOk} onChange={(e) => setOwedOk(e.target.checked)} disabled={busy} />
+          <span>Stop counting the {owed} it owes</span>
+        </label>
+      )}
+      <div className="card-actions">
+        <button className="secondary" onClick={() => onConfirmEnd?.(a.account_id, ended, a.balance)} disabled={busy || !onConfirmEnd || (!!owed && !owedOk)}>
+          {ended.state === 'left' ? 'Still not mine' : 'Still closed'}
+        </button>
+        <button className="secondary" onClick={() => onReopen?.(a.account_id)} disabled={busy || !onReopen}>
+          Reopen
+        </button>
+      </div>
+    </li>
+  );
+}
+
 /** The questions on one institution's accounts, each with its answers. */
 export function AccountQuestions({
   accounts,
@@ -437,20 +493,7 @@ export function AccountQuestions({
         const { ask, detail } = questionText(a.question, who, institution, a);
         const ended = a.question.kind === 'reported' ? a.question.ended : undefined;
         if (ended) {
-          return (
-            <li key={a.account_id} className="lifecycle-question">
-              <p className="lifecycle-ask">{ask}</p>
-              <p className="panel-note">{detail}</p>
-              <div className="card-actions">
-                <button className="secondary" onClick={() => onConfirmEnd?.(a.account_id, ended, a.balance)} disabled={busy || !onConfirmEnd}>
-                  {ended.state === 'left' ? 'Still not mine' : 'Still closed'}
-                </button>
-                <button className="secondary" onClick={() => onReopen?.(a.account_id)} disabled={busy || !onReopen}>
-                  Reopen
-                </button>
-              </div>
-            </li>
-          );
+          return <ReportedQuestion key={a.account_id} a={a} ended={ended} ask={ask} detail={detail} busy={busy} onConfirmEnd={onConfirmEnd} onReopen={onReopen} />;
         }
         const target = (state: EndState): LifecycleTarget => ({
           account_id: a.account_id,

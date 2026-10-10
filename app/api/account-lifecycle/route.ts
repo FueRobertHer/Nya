@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { getItems } from '@/lib/storage';
-import { getManualAccount, isManualId } from '@/lib/manual';
+import { getManualAccount, isManualId, MANUAL_CURRENCY } from '@/lib/manual';
 import { findRememberedAccount, rememberedIdsForItem } from '@/lib/last-known';
 import { directoryEntries, effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock, ForgetRefused, type Link } from '@/lib/links';
 import { clearCaches, readCache, CacheKey } from '@/lib/cache';
@@ -141,24 +141,31 @@ function parseChange(body: unknown, now: number = Date.now()): Change | string {
 }
 
 /** What an entry needs to know about the account (its kind, its name, its
- *  connection), from wherever Nya has it: a manual account's own record; the
- *  entry it has already; the dashboard's cached payload; its institution's
- *  remembered accounts; the account directory, which outlives a disconnect.
- *  Null for an account none of them knows. */
+ *  connection, and its currency where known), from wherever Nya has it: a
+ *  manual account's own record; the entry it has already; the dashboard's
+ *  cached payload; its institution's remembered accounts; the account
+ *  directory, which outlives a disconnect (and keeps no currency). Null for
+ *  an account none of them knows. */
 async function aboutAccount(ctx: Ctx, account_id: string): Promise<AccountAbout | null> {
   if (isManualId(account_id)) {
     const m = await getManualAccount(ctx, account_id);
-    if (m) return { type: m.type, label: { name: m.name, institution: m.institution_name, mask: null }, item_id: null };
+    // A manual account's balance is kept in US dollars (lib/manual.ts).
+    if (m) return { type: m.type, label: { name: m.name, institution: m.institution_name, mask: null }, item_id: null, currency: MANUAL_CURRENCY };
   }
   const existing = await lifecycleStore.get(ctx, account_id);
-  if (existing) return { type: existing.type, label: existing.label, item_id: existing.item_id };
+  if (existing) return { type: existing.type, label: existing.label, item_id: existing.item_id, currency: existing.currency };
   if (isManualId(account_id)) return null;
 
   const cached = await readCache<{ institutions?: any[] }>(ctx, CacheKey.NetWorth);
   for (const inst of cached?.institutions ?? []) {
     const a = inst?.accounts?.find((x: any) => x?.account_id === account_id);
     if (a && typeof a.type === 'string' && !inst.manual) {
-      return { type: a.type, label: { name: String(a.name ?? ''), institution: String(inst.institution_name ?? ''), mask: a.mask ?? null }, item_id: inst.item_id };
+      return {
+        type: a.type,
+        label: { name: String(a.name ?? ''), institution: String(inst.institution_name ?? ''), mask: a.mask ?? null },
+        item_id: inst.item_id,
+        currency: typeof a.currency === 'string' ? a.currency : null,
+      };
     }
   }
   const items = await getItems(ctx);
@@ -169,6 +176,7 @@ async function aboutAccount(ctx: Ctx, account_id: string): Promise<AccountAbout 
       type: remembered.account.type,
       label: { name: remembered.account.name, institution: item?.institution_name ?? '', mask: remembered.account.mask },
       item_id: remembered.item_id,
+      currency: remembered.account.currency,
     };
   }
   const known = (await directoryEntries(ctx, [account_id]))[account_id];

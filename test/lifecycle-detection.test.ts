@@ -32,7 +32,7 @@ const netWorthRoute = await import('@/app/api/net-worth/route');
 const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
 const { snapshotData } = await import('@/lib/snapshot-job');
 const { lifecycleStore, markStillOpen, markEnded } = await import('@/lib/lifecycle');
-const { timelineNotesStore, autoNoteId, missedNoteId } = await import('@/lib/timeline-notes');
+const { timelineNotesStore, autoNoteId, isMissedNoteId } = await import('@/lib/timeline-notes');
 const { zeroRun, ZERO_DAYS } = await import('@/lib/lifecycle-questions');
 const { readMeasuredBalances } = await import('@/lib/history');
 
@@ -210,14 +210,18 @@ describe('an account missing from a healthy answer', () => {
     plaid.accounts = [CHK];
     await load('2026-03-13');
     await load('2026-03-16', 13);
-    expect((await lifecycleStore.get(ctx, 'sav'))?.assumed).toBe(true);
+    // Assumed, with its currency from the record its institution kept of it
+    // while it was held, so a reader listing it later can price it.
+    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ assumed: true, currency: 'USD' });
 
     plaid.accounts = [SAV, CHK];
     const { body } = await load('2026-03-20');
     // Open again, with the days saved without it kept as a missing window.
-    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ lifecycle: { state: 'active' }, missed: [{ from: '2026-03-13', to: '2026-03-19' }] });
+    const lifted = await lifecycleStore.get(ctx, 'sav');
+    expect(lifted).toMatchObject({ lifecycle: { state: 'active' }, currency: 'USD', missed: [{ from: '2026-03-13', to: '2026-03-19' }] });
     expect(await timelineNotesStore.has(ctx, autoNoteId('sav'))).toBe(false);
-    expect(await timelineNotesStore.get(ctx, missedNoteId('sav', '2026-03-13'))).toMatchObject({
+    expect(isMissedNoteId(lifted!.missed![0].note)).toBe(true);
+    expect(await timelineNotesStore.get(ctx, lifted!.missed![0].note!)).toMatchObject({
       text: 'Savings ••4821 was missing at Ally from Mar 13 to Mar 19, so the totals saved then, short of it, are left out',
     });
     expect(body.lifecycle).toEqual([]);
@@ -229,6 +233,27 @@ describe('an account missing from a healthy answer', () => {
       ['2026-03-12', 10_500],
       ['2026-03-20', 10_500],
     ]);
+  });
+
+  test('a window from before windows kept their notes’ ids gets one on the next load, its note moved there', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    const at = '2026-03-20T12:00:00.000Z';
+    await lifecycleStore.set(ctx, 'sav', {
+      lifecycle: { state: 'active' },
+      type: 'depository',
+      label: { name: 'Savings', institution: 'Ally', mask: '4821' },
+      item_id: 'item_ally',
+      set_at: at,
+      missed: [{ from: '2026-03-13', to: '2026-03-19' }],
+    });
+    const old = { date: '2026-03-13', text: 'Savings ••4821 was missing at Ally from Mar 13 to Mar 19, so the totals saved then, short of it, are left out', kind: 'auto' as const, account_id: 'sav', created_at: at };
+    await timelineNotesStore.set(ctx, 'missed.sav.2026-03-13', old);
+    await load('2026-03-21');
+    const note = (await lifecycleStore.get(ctx, 'sav'))!.missed![0].note!;
+    expect(isMissedNoteId(note)).toBe(true);
+    expect(await timelineNotesStore.get(ctx, note)).toEqual(old);
+    expect(await timelineNotesStore.has(ctx, 'missed.sav.2026-03-13')).toBe(false);
   });
 
   test('a confirmed closure stays closed when the account is still reported', async () => {
@@ -364,6 +389,27 @@ describe('an account that ended and that its bank still returns', () => {
     await load('2026-03-12');
     await post({ account_id: 'card', state: 'closed', on: '2026-03-12', balance: 310 });
     expect((await load('2026-03-13')).body.institutions[0].ended_reported).toBeUndefined();
+  });
+
+  test('its transactions are read at most once a day: one that lands after the day’s read is asked about the next day', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    await post({ account_id: 'sav', state: 'left', on: '2026-03-13' });
+    await storedTxns([]);
+    expect((await load('2026-03-21')).body.institutions[0].ended_reported).toBeUndefined();
+    expect((await lifecycleStore.get(ctx, 'sav'))?.seen).toEqual({ balance: null, through: '2026-03-12', checked: '2026-03-21' });
+    // One lands the same day: not read again until the next.
+    await storedTxns([{ account_id: 'sav', date: '2026-03-21' }]);
+    expect((await load('2026-03-21', 18)).body.institutions[0].ended_reported).toBeUndefined();
+    const asked = (await load('2026-03-22')).body.institutions[0].ended_reported;
+    expect(asked).toEqual([expect.objectContaining({ account_id: 'sav', question: expect.objectContaining({ kind: 'reported', since: '2026-03-21' }) })]);
+    expect((await lifecycleStore.get(ctx, 'sav'))?.seen).toEqual({ balance: null, through: '2026-03-12', checked: '2026-03-22', txn: '2026-03-21' });
+    // Asked again that day from what the read found, without reading again.
+    await storedTxns([]);
+    expect((await load('2026-03-22', 20)).body.institutions[0].ended_reported).toHaveLength(1);
+    // The person's answer drops the check: read again at once.
+    await post({ account_id: 'sav', state: 'left', on: '2026-03-13', balance: 10_000 });
+    expect((await lifecycleStore.get(ctx, 'sav'))?.seen).toEqual({ balance: 10_000, through: '2026-03-22' });
   });
 
   test('a transaction after its end asks about a left account; an untracked one is expected to move, and never is', async () => {

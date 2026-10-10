@@ -63,6 +63,17 @@ describe('the questions', () => {
     const html = renderToStaticMarkup(<AccountQuestions accounts={[row]} institution="Chase" busy={false} onOpen={noop} onStillOpen={noop} onConfirmEnd={noop} onReopen={noop} />);
     expect(buttons(html)).toEqual(['Still closed', 'Reopen']);
     expect(text(html)).toContain('Chase still reports it, and from its end it counts in nothing, so this isn’t in your net worth.');
+    // A debt still owed stays out of net worth only once the person ticks the
+    // same box the sheet asks for, with the amount named.
+    expect(text(html)).toContain('Stop counting the $450.00 it owes');
+    expect(html).toMatch(/<input type="checkbox"/);
+    expect(html).toMatch(/<button class="secondary" disabled="">Still closed<\/button>/);
+    // Owing nothing, or an account that holds money: one tap, as the sheet.
+    for (const shown of [{ ...row, balance: 0 }, { ...row, type: 'depository', balance: 200 }]) {
+      const plain = renderToStaticMarkup(<AccountQuestions accounts={[shown]} institution="Chase" busy={false} onOpen={noop} onStillOpen={noop} onConfirmEnd={noop} onReopen={noop} />);
+      expect(plain).not.toContain('type="checkbox"');
+      expect(plain).toMatch(/<button class="secondary">Still closed<\/button>/);
+    }
     // Left, with a transaction since.
     const left = { kind: 'reported' as const, end: '2024-03-13', since: '2024-03-20', ended: { state: 'left' as const, on: '2024-03-13' } };
     expect(questionText(left, 'Joint', 'Ally').ask).toBe('Joint, no longer yours since Mar 13, 2024, has a transaction from Mar 20, 2024. Still not yours?');

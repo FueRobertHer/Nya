@@ -41,7 +41,16 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { rememberedIdsForItem, rememberedIdsByItem } from './last-known';
 import { getLinks, resolveId, effectiveLinks, type Link } from './link-core';
-import { readLifecycleEntries, effectiveLifecycle, answersFrom, liftAssumedClosures, type LifecycleAnswers, type LifecycleView } from './lifecycle';
+import {
+  readLifecycleEntries,
+  effectiveLifecycle,
+  answersFrom,
+  liftAssumedClosures,
+  adoptMissedNotes,
+  hasUnkeyedWindows,
+  type LifecycleAnswers,
+  type LifecycleView,
+} from './lifecycle';
 import { assumeClosed } from './lifecycle-questions';
 import { clearCaches } from './cache';
 
@@ -497,6 +506,15 @@ export async function applyVanished(ctx: Ctx,
       if (res.unconfirmed.length > 0 || res.accepted.length > 0 || lifted.length > 0) out[inst.item_id] = res;
     })
   );
+
+  // A missing window recorded before windows kept their notes' ids gets one,
+  // its note moved there (lib/lifecycle.ts adoptMissedNotes). Nothing to do,
+  // and nothing read, once each has one. Best effort, as notes are.
+  if (inputs.lifecycle && hasUnkeyedWindows(inputs.lifecycle.entries)) {
+    await adoptMissedNotes(ctx, inputs.lifecycle.entries, now).catch((err) =>
+      console.error('vanished: notes on missing windows could not be given their own ids', err instanceof Error ? err.name : typeof err)
+    );
+  }
 
   return out;
 }

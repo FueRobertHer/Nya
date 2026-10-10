@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   ofxDocument,
   statementsOf,
+  endedNote,
   ofxAmount,
   ofxAccountId,
   ofxDate,
@@ -546,6 +547,23 @@ describe('which accounts have a statement', () => {
     expect(ofxRefusal('loan')).toStartWith('A loan has no statement in the version of OFX money apps read');
     expect(ofxRefusal('investment')).toStartWith('An investment account’s OFX statement lists holdings, trades and securities');
     for (const type of ['loan', 'investment', 'other', null]) expect(ofxRefusal(type)).toContain('JSON download');
+  });
+
+  test('one that ended says when, what of it is dated from then, and its balance’s day, in words for each way it ended', () => {
+    const rows = [row({ date: '2026-08-30' }), row({ date: '2026-09-01' }), row({ date: '2026-09-07' })];
+    expect(endedNote({ state: 'closed', date: '2026-09-01', assumed: false }, rows, { as_of: '2026-10-08', manual: false })).toBe(
+      'This account was closed in Nya on Sep 1, 2026: the statement still lists every transaction Nya stored for it, 2 of them dated from then, which Nya leaves out of every total, and its balance is the newest Nya recorded, from Oct 8, 2026.'
+    );
+    expect(endedNote({ state: 'closed', date: '2026-09-01', assumed: true }, rows.slice(0, 1), { as_of: '2026-08-31', manual: false })).toBe(
+      'Nya assumed this account closed on Sep 1, 2026, when its bank stopped returning it: the statement lists every transaction Nya stored for it, none dated from then, and its balance is the newest Nya recorded, from Aug 31, 2026.'
+    );
+    expect(endedNote({ state: 'left', date: '2026-09-01', assumed: false }, rows, { as_of: '2026-09-15', manual: true })).toContain(
+      'This account is no longer yours in Nya from Sep 1, 2026: the statement still lists every transaction Nya stored for it, 2 of them dated from then, which Nya leaves out of every total, and its balance is the one last set, on Sep 15, 2026.'
+    );
+    // With no balance in the statement, nothing is said of one (its own note says why).
+    expect(endedNote({ state: 'untracked', date: '2026-09-02', assumed: false }, rows, null)).toBe(
+      'This account isn’t tracked in Nya from Sep 2, 2026: the statement still lists every transaction Nya stored for it, 1 of them dated from then, which Nya leaves out of every total.'
+    );
   });
 
   test('its file is named for the account and the day', () => {

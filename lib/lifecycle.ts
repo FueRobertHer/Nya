@@ -41,7 +41,9 @@
 // (`missed`, liftAssumedClosures). The totals recorded on those days are
 // short of it, a measurement known to be wrong that the real layer keeps as
 // it was written, so the chart leaves those days out on read (shortDays) and
-// a note on the timeline says why.
+// a note on the timeline says why, under a random id the window keeps (a
+// day can't be part of a field name, lib/repo.ts; adoptMissedNotes moves a
+// note written before windows kept one).
 //
 // KEYED TO SURVIVE A RE-LINK. An entry is stored under the id the account had
 // when it was set, and read through account links (lib/links.ts) the way
@@ -53,8 +55,10 @@
 //
 // EACH ENTRY CARRIES what reading it needs when nothing live can say: the
 // account's type (to sign its balance when it is taken out of a past total,
-// as lib/hidden.ts keeps one) and how to name it (a closed account soon
-// vanishes from every live list). A map store on the storage seam
+// as lib/hidden.ts keeps one), how to name it (a closed account soon
+// vanishes from every live list), and its currency where the write knew it
+// (to price it where it is listed after its bank stops returning it:
+// allocation over time, the API). A map store on the storage seam
 // (lib/repo.ts), keyed by account id (a provider's own id, or a manual
 // account's random one), exportable: it is the person's own account of
 // their accounts.
@@ -72,7 +76,17 @@ import type { Ctx } from './containers';
 import { isCalendarDay, addDays } from './manual-txn-input';
 import { resolveId, sameAccountIds, getLinks, effectiveLinks, type Link } from './link-core';
 import { liveAccountIds } from './links';
-import { writeAutoNote, removeAutoNote, writeMissedNote, removeAccountNotes } from './timeline-notes';
+import {
+  writeAutoNote,
+  removeAutoNote,
+  writeMissedNote,
+  removeAccountNotes,
+  newMissedNoteId,
+  isMissedNoteId,
+  legacyMissedNoteId,
+  moveMissedNote,
+  removeMissedNote,
+} from './timeline-notes';
 import { readHistoryPoints, type EndedAccounts } from './history';
 
 export type { EndedAccounts } from './history';
@@ -106,6 +120,10 @@ export type LifecycleEntry = {
   label: AccountLabel;
   /** Its Plaid connection; null for a manual account. */
   item_id: string | null;
+  /** Its balance's currency, where the write knew it (an ISO code, or
+   *  Plaid's unofficial one): what a reader listing it once its bank no
+   *  longer does prices it in. Kept through later writes that don't know it. */
+  currency?: string;
   /** When this was saved (an ISO time). */
   set_at: string;
   /** Only with `closed`: Nya recorded it because nobody answered the question
@@ -126,12 +144,17 @@ export type LifecycleEntry = {
    *  or last confirmed (null when that wasn't known), and the UTC day. A bank
    *  still returning it with another balance, or with a transaction after
    *  that day, raises the question again (lib/lifecycle-questions.ts
-   *  askAboutReportedEnds). */
-  seen?: { balance: number | null; through: string };
+   *  askAboutReportedEnds). `checked`: the UTC day its transactions were
+   *  last read for that, at most once a day, with the newest found after
+   *  `through` then (`txn`); a write by the person drops both. */
+  seen?: { balance: number | null; through: string; checked?: string; txn?: string };
 };
 
-/** Days an account was missing from its bank's answer, first and last. */
-export type MissedWindow = { from: string; to: string };
+/** Days an account was missing from its bank's answer, first and last, and
+ *  the id its note on the timeline is kept under (a random one,
+ *  lib/timeline-notes.ts newMissedNoteId; absent on a window recorded before
+ *  windows kept it, until adoptMissedNotes gives it one). */
+export type MissedWindow = { from: string; to: string; note?: string };
 
 /** The longest note on a closure, in characters. */
 export const LIFECYCLE_NOTE_MAX = 200;
@@ -151,6 +174,9 @@ const LABEL_MAX = 200;
 const TYPE = /^[a-z][a-z0-9_ -]{0,39}$/;
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
+/** A currency as Plaid gives one: ISO 4217's three letters, or an
+ *  unofficial code (a cryptocurrency's). */
+const CURRENCY = /^[A-Za-z0-9]{2,12}$/;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const onlyKeys = (v: Record<string, unknown>, keys: readonly string[]) => Object.keys(v).every((k) => keys.includes(k));
@@ -196,7 +222,8 @@ function isLabel(v: unknown): v is AccountLabel {
 /** The stored shape, closed: a field this release doesn't know makes the
  *  entry unrecognised (see the header). */
 export function isLifecycleEntry(v: unknown): v is LifecycleEntry {
-  if (!isRecord(v) || !onlyKeys(v, ['lifecycle', 'type', 'label', 'item_id', 'set_at', 'assumed', 'answered', 'missed', 'seen'])) return false;
+  if (!isRecord(v) || !onlyKeys(v, ['lifecycle', 'type', 'label', 'item_id', 'currency', 'set_at', 'assumed', 'answered', 'missed', 'seen'])) return false;
+  if (v.currency !== undefined && !(typeof v.currency === 'string' && CURRENCY.test(v.currency))) return false;
   if (!isAccountLifecycle(v.lifecycle)) return false;
   if (!(v.type === null || (typeof v.type === 'string' && TYPE.test(v.type)))) return false;
   if (!isLabel(v.label)) return false;
@@ -211,14 +238,16 @@ export function isLifecycleEntry(v: unknown): v is LifecycleEntry {
   if (v.missed !== undefined) {
     if (!Array.isArray(v.missed) || v.missed.length === 0 || v.missed.length > MAX_MISSED) return false;
     for (const w of v.missed) {
-      if (!isRecord(w) || !onlyKeys(w, ['from', 'to']) || !isEndDay(w.from) || !isEndDay(w.to) || w.from > w.to) return false;
+      if (!isRecord(w) || !onlyKeys(w, ['from', 'to', 'note']) || !isEndDay(w.from) || !isEndDay(w.to) || w.from > w.to) return false;
+      if (w.note !== undefined && !isMissedNoteId(w.note)) return false;
     }
   }
   if (v.seen !== undefined) {
     const s = v.seen;
-    if (!(v.lifecycle.state === 'closed' || v.lifecycle.state === 'left') || !isRecord(s) || !onlyKeys(s, ['balance', 'through'])) return false;
+    if (!(v.lifecycle.state === 'closed' || v.lifecycle.state === 'left') || !isRecord(s) || !onlyKeys(s, ['balance', 'through', 'checked', 'txn'])) return false;
     if (!(s.balance === null || (typeof s.balance === 'number' && Number.isFinite(s.balance) && Math.abs(s.balance) <= BALANCE_MAX))) return false;
     if (!isEndDay(s.through)) return false;
+    if ((s.checked !== undefined && !isEndDay(s.checked)) || (s.txn !== undefined && !isEndDay(s.txn))) return false;
   }
   return true;
 }
@@ -351,6 +380,38 @@ export function endedNowIds(view: LifecycleView, now: number = Date.now()): Set<
  *  for a reader that drops what is dated on or after it (transactions). */
 export function endDays(view: LifecycleView): Map<string, string> {
   return new Map([...view.ended].map(([id, { from }]) => [id, from]));
+}
+
+/** What a closed or left account showed, as the question about one its bank
+ *  still returns reads it (lib/lifecycle-questions.ts askAboutReportedEnds):
+ *  as recorded, or, with nothing recorded, a closed account's zero (a left
+ *  one's not known) through the day before its end. Null for any other. */
+export function seenOf(entry: LifecycleEntry): NonNullable<LifecycleEntry['seen']> | null {
+  const l = entry.lifecycle;
+  if (l.state !== 'closed' && l.state !== 'left') return null;
+  return entry.seen ?? { balance: l.state === 'closed' ? 0 : null, through: addDays(l.on, -1) };
+}
+
+/**
+ * Records that an ended account's transactions were read for that question:
+ * the day (`checked`) and the newest found after what was seen (`txn`), so
+ * they are read at most once a day. Only while the entry still says what was
+ * read against (the same end, the same balance and day seen): a change the
+ * person made meanwhile is never written over. One with nothing recorded
+ * gets what it read as (seenOf). A compare-and-set.
+ */
+export async function recordReportedCheck(
+  ctx: Ctx,
+  id: string,
+  read: { on: string; balance: number | null; through: string },
+  checked: string,
+  txn: string | null
+): Promise<void> {
+  await lifecycleStore.update(ctx, id, (current) => {
+    const s = current ? seenOf(current) : null;
+    if (!current || !s || endOf(current.lifecycle) !== read.on || s.balance !== read.balance || s.through !== read.through) return current;
+    return { ...current, seen: { balance: s.balance, through: s.through, checked, ...(txn ? { txn } : {}) } };
+  });
 }
 
 /** What the vanished-account guard (lib/vanished.ts) needs of the answers. */
@@ -534,18 +595,21 @@ export function autoNoteText(entry: Pick<LifecycleEntry, 'lifecycle' | 'label' |
 
 // ---- Writing ----
 
-/** What an entry needs to know about its account, besides its lifecycle. */
-export type AccountAbout = { type: string | null; label: AccountLabel; item_id: string | null };
+/** What an entry needs to know about its account, besides its lifecycle:
+ *  `currency` where the writer knows it. */
+export type AccountAbout = { type: string | null; label: AccountLabel; item_id: string | null; currency?: string | null };
 
 /** Cleans what a write was told about an account into the stored shape:
- *  long names cut, an unknown kind as null. */
-export function cleanAbout(about: AccountAbout): AccountAbout {
+ *  long names cut, an unknown kind as null, a currency that isn't one left
+ *  out. */
+export function cleanAbout(about: AccountAbout): Pick<LifecycleEntry, 'type' | 'label' | 'item_id' | 'currency'> {
   const text = (s: string, max: number) => s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
   const mask = about.label.mask === null ? null : text(about.label.mask, 20) || null;
   return {
     type: about.type !== null && TYPE.test(about.type) ? about.type : null,
     label: { name: text(about.label.name, LABEL_MAX), institution: text(about.label.institution, LABEL_MAX), mask },
     item_id: about.item_id !== null && ID.test(about.item_id) ? about.item_id : null,
+    ...(typeof about.currency === 'string' && CURRENCY.test(about.currency) ? { currency: about.currency } : {}),
   };
 }
 
@@ -571,8 +635,15 @@ async function dropOtherNotes(ctx: Ctx, account_id: string, links: ReadonlyMap<s
 }
 
 /** What every write carries over from the entry it replaces: the windows the
- *  account was missing (see the header). */
-const kept = (current: LifecycleEntry | null): Pick<LifecycleEntry, 'missed'> => (current?.missed?.length ? { missed: current.missed } : {});
+ *  account was missing (see the header), and its currency when the write
+ *  (`base`) wasn't told one. */
+const kept = (current: LifecycleEntry | null, base?: Pick<LifecycleEntry, 'currency'>): Pick<LifecycleEntry, 'missed' | 'currency'> => ({
+  ...(current?.missed?.length ? { missed: current.missed } : {}),
+  ...(!base?.currency && current?.currency ? { currency: current.currency } : {}),
+});
+
+/** An entry's currency, as a spread: none when it has none. */
+const currencyOf = (e: Pick<LifecycleEntry, 'currency'> | null | undefined): Pick<LifecycleEntry, 'currency'> => (e?.currency ? { currency: e.currency } : {});
 
 /** "Mar 13": a UTC day, as the notes Nya writes say one (they are read in
  *  any time zone, and a history day is a UTC day). */
@@ -609,8 +680,10 @@ export async function markEnded(
   let entry = base;
   await lifecycleStore.update(ctx, account_id, (current) => {
     const keepsSeen = lifecycle.state === 'closed' || lifecycle.state === 'left';
-    const seenNow = seen && isRecordedBalance(seen.balance) ? { balance: seen.balance, through: utcDay(now) } : current?.seen;
-    entry = { ...base, ...kept(current), ...(keepsSeen && seenNow ? { seen: seenNow } : {}) };
+    // What was seen, never the last check of it: an end changed may change
+    // which transactions come after it, so they are read again.
+    const seenNow = seen && isRecordedBalance(seen.balance) ? { balance: seen.balance, through: utcDay(now) } : current?.seen ? { balance: current.seen.balance, through: current.seen.through } : undefined;
+    entry = { ...base, ...kept(current, base), ...(keepsSeen && seenNow ? { seen: seenNow } : {}) };
     return entry;
   });
   await noteFor(ctx, account_id, entry, now);
@@ -636,7 +709,7 @@ export async function markStillOpen(
   const base: LifecycleEntry = { lifecycle: { state: 'active' }, ...cleanAbout(about), set_at: new Date(now).toISOString(), answered };
   let entry = base;
   await lifecycleStore.update(ctx, account_id, (current) => {
-    entry = { ...base, ...kept(current) };
+    entry = { ...base, ...kept(current, base) };
     return entry;
   });
   await noteFor(ctx, account_id, null, now);
@@ -648,7 +721,7 @@ export async function markStillOpen(
  *  keeps (`missed`): null when that is nothing. */
 function withoutEnd(current: LifecycleEntry | null, now: number): LifecycleEntry | null {
   if (!current?.missed?.length) return null;
-  return { lifecycle: { state: 'active' }, type: current.type, label: current.label, item_id: current.item_id, set_at: new Date(now).toISOString(), missed: current.missed };
+  return { lifecycle: { state: 'active' }, type: current.type, label: current.label, item_id: current.item_id, ...currencyOf(current), set_at: new Date(now).toISOString(), missed: current.missed };
 }
 
 /**
@@ -697,7 +770,7 @@ export async function reopenMissing(
   const end = endOf(entry.lifecycle);
   const before = end ? addDays(end, -1) : utcDay(now);
   const since = isEndDay(before) ? before : (end ?? utcDay(now));
-  return markStillOpen(ctx, account_id, { kind: 'missing', since }, { type: entry.type, label: entry.label, item_id: entry.item_id }, now, links);
+  return markStillOpen(ctx, account_id, { kind: 'missing', since }, { type: entry.type, label: entry.label, item_id: entry.item_id, currency: entry.currency }, now, links);
 }
 
 /** One account the guard is about to assume closed. */
@@ -735,7 +808,7 @@ export async function recordAssumedClosures(ctx: Ctx, inputs: AssumeInput[], now
           return current;
         }
         outcome = 'assumed';
-        assumed = { ...base, ...kept(current) };
+        assumed = { ...base, ...kept(current, base) };
         return assumed;
       });
     } catch (err) {
@@ -765,18 +838,24 @@ export async function liftAssumedClosures(ctx: Ctx, storedIds: Iterable<string>,
     let lift = false;
     let window: MissedWindow | null = null;
     let label: AccountLabel | null = null;
+    let dropped: MissedWindow[] = [];
+    // Chosen once, so a retried compare-and-set keeps the same.
+    const note = newMissedNoteId();
     try {
       await lifecycleStore.update(ctx, id, (current) => {
         lift = !!current?.assumed;
+        dropped = [];
         if (!current || !lift) return current;
         const from = endOf(current.lifecycle)!;
         const to = addDays(utcDay(now), -1);
         // Back the day it was assumed gone from: no day was saved short.
-        window = from <= to ? { from, to } : null;
+        window = from <= to ? { from, to, note } : null;
         label = current.label;
-        const missed = [...(current.missed ?? []), ...(window ? [window] : [])].slice(-MAX_MISSED);
+        const all = [...(current.missed ?? []), ...(window ? [window] : [])];
+        dropped = all.slice(0, Math.max(0, all.length - MAX_MISSED));
+        const missed = all.slice(-MAX_MISSED);
         if (missed.length === 0) return null;
-        return { lifecycle: { state: 'active' }, type: current.type, label: current.label, item_id: current.item_id, set_at: new Date(now).toISOString(), missed };
+        return { lifecycle: { state: 'active' }, type: current.type, label: current.label, item_id: current.item_id, ...currencyOf(current), set_at: new Date(now).toISOString(), missed };
       });
     } catch (err) {
       console.error('Account lifecycle: an assumed closure could not be lifted', err instanceof Error ? err.name : typeof err);
@@ -787,12 +866,67 @@ export async function liftAssumedClosures(ctx: Ctx, storedIds: Iterable<string>,
     await noteFor(ctx, id, null, now);
     const w = window as MissedWindow | null;
     if (w && label) {
-      await writeMissedNote(ctx, id, w.from, missedNoteText(label, w), now).catch((err) =>
+      await writeMissedNote(ctx, note, id, w.from, missedNoteText(label, w), now).catch((err) =>
         console.error('Account lifecycle: the note on a missing window could not be saved', err instanceof Error ? err.name : typeof err)
+      );
+    }
+    // A window no longer kept leaves no days out, so its note, which says
+    // they are, goes with it.
+    for (const old of dropped) {
+      await removeMissedNote(ctx, old.note ?? legacyMissedNoteId(id, old.from), id).catch((err) =>
+        console.error('Account lifecycle: the note on a missing window no longer kept could not be removed', err instanceof Error ? err.name : typeof err)
       );
     }
   }
   return lifted;
+}
+
+/** Whether any entry has a missing window without its note's id. */
+export function hasUnkeyedWindows(entries: ReadonlyMap<string, LifecycleEntry>): boolean {
+  for (const entry of entries.values()) if (entry.missed?.some((w) => !w.note)) return true;
+  return false;
+}
+
+/**
+ * Gives each missing window recorded before windows kept their notes' ids a
+ * random one, and moves its note there from the id it was written under,
+ * which named the account and the window's first day (a day in a plaintext
+ * field name, which the seam forbids); a window whose note isn't there gets
+ * one written. The id is recorded on the window first, in one
+ * compare-and-set, then the note is moved (moveMissedNote): a failure after
+ * the first step leaves the old note where it was, still shown and still
+ * removed with the account (removeAccountNotes finds notes by account).
+ * Once each window has its id this reads and writes nothing
+ * (hasUnkeyedWindows), so it runs where the windows are made, beside the
+ * vanished-account guard (lib/vanished.ts). Returns the windows given ids.
+ */
+export async function adoptMissedNotes(ctx: Ctx, entries: ReadonlyMap<string, LifecycleEntry>, now: number = Date.now()): Promise<number> {
+  let adopted = 0;
+  for (const [id, entry] of entries) {
+    if (!entry.missed?.some((w) => !w.note)) continue;
+    // Chosen once per window, so a retried compare-and-set records the same.
+    const chosen = new Map<string, string>();
+    let given: { window: MissedWindow; label: AccountLabel }[] = [];
+    await lifecycleStore.update(ctx, id, (current) => {
+      given = [];
+      if (!current?.missed?.some((w) => !w.note)) return current;
+      const missed = current.missed.map((w) => {
+        if (w.note) return w;
+        const key = `${w.from}|${w.to}`;
+        const note = chosen.get(key) ?? newMissedNoteId();
+        chosen.set(key, note);
+        const keyed = { ...w, note };
+        given.push({ window: keyed, label: current.label });
+        return keyed;
+      });
+      return { ...current, missed };
+    });
+    for (const { window, label } of given) {
+      await moveMissedNote(ctx, legacyMissedNoteId(id, window.from), window.note!, id, window.from, missedNoteText(label, window), now);
+      adopted++;
+    }
+  }
+  return adopted;
 }
 
 /**

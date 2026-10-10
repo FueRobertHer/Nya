@@ -115,7 +115,8 @@ describe('account lifecycle: what it does', () => {
     const { status, body } = await lifecycle({ account_id: MANUAL.account_id, state: 'closed', on: '2026-03-12', note: '  Spent  it  ' });
     expect(status).toBe(200);
     expect(body).toEqual({ account_id: MANUAL.account_id, lifecycle: { state: 'closed', on: '2026-03-12', note: 'Spent it' } });
-    expect(await lifecycleStore.get(ctx, MANUAL.account_id)).toMatchObject({ type: 'depository', label: { name: 'Cash jar', institution: 'Home', mask: null }, item_id: null });
+    // A manual account's balance is kept in US dollars, and its end says so.
+    expect(await lifecycleStore.get(ctx, MANUAL.account_id)).toMatchObject({ type: 'depository', label: { name: 'Cash jar', institution: 'Home', mask: null }, item_id: null, currency: 'USD' });
     expect((await timelineNotesStore.get(ctx, autoNoteId(MANUAL.account_id)))?.text).toBe('Cash jar closed: Spent it');
     // The cached payload leaves the account in: it goes.
     expect(await fake.get(ctxKey('cache:net-worth'))).toBeNull();
@@ -128,7 +129,8 @@ describe('account lifecycle: what it does', () => {
     ]);
     const { body } = await lifecycle({ account_id: 'sav', state: 'untracked', from: '2026-03-12' });
     expect(body).toEqual({ account_id: 'sav', lifecycle: { state: 'untracked', from: '2026-03-12' } });
-    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ type: 'depository', label: { name: 'Savings', institution: 'Ally', mask: '1111' }, item_id: 'item_ally' });
+    // With its currency, as its institution reported it.
+    expect(await lifecycleStore.get(ctx, 'sav')).toMatchObject({ type: 'depository', label: { name: 'Savings', institution: 'Ally', mask: '1111' }, item_id: 'item_ally', currency: 'USD' });
   });
 
   test('ending the last open account of a connection asks to remove the connection; not before', async () => {
@@ -156,6 +158,8 @@ describe('account lifecycle: what it does', () => {
     const { status } = await lifecycle({ account_id: 'old', state: 'closed', on: '2026-03-12' });
     expect(status).toBe(200);
     expect(await lifecycleStore.get(ctx, 'old')).toMatchObject({ type: 'credit', label: { name: 'Freedom', institution: 'Chase' } });
+    // The directory keeps no currency: none is made up.
+    expect((await lifecycleStore.get(ctx, 'old'))?.currency).toBeUndefined();
   });
 
   test('reopening clears every id the account has had, and its note', async () => {
