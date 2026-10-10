@@ -42,6 +42,7 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { setExcluded, txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { getOverrides } = await import('@/lib/overrides');
 const { setBudgets } = await import('@/lib/budgets');
+const { readTaxonomy } = await import('@/lib/category-store');
 const { setAccountHidden } = await import('@/lib/hidden');
 const { recordDirectory, forgetEarlierAccount } = await import('@/lib/links');
 const { disconnectItem } = await import('@/lib/disconnect-item');
@@ -234,7 +235,20 @@ describe('spending, budgets and the Plan', () => {
     await setBudgets(ctx, { groceries: 200 });
     const month = daysAgo(50).slice(0, 7);
     expect((await readBudgets(ctx, { month })).budgets).toEqual([expect.objectContaining({ category: 'groceries', budget: 200, spent: 60 })]);
-    expect((await readSpending(ctx, window)).categories.find((c) => c.category === 'groceries')).toEqual({ category: 'groceries', spent: 60, transactions: 1 });
+    // Filed into the person's own category, by its id and group, once the app
+    // has stored their categories (its own load grows them).
+    await transactions.GET(new Request('http://localhost/api/transactions'));
+    const taxonomy = (await readTaxonomy(ctx))!;
+    const groceries = taxonomy.categories.find((c) => c.provider_keys.some((k) => k.provider === 'text' && k.key === 'groceries'))!;
+    const group = taxonomy.groups.find((g) => g.id === groceries.group)!;
+    expect((await readSpending(ctx, window)).categories.find((c) => c.category_id === groceries.id)).toEqual({
+      category: groceries.name,
+      category_id: groceries.id,
+      group: group.name,
+      group_id: group.id,
+      spent: 60,
+      transactions: 1,
+    });
 
     // Excluded, it counts nowhere, and is said to be left out.
     await setExcluded(ctx, shop.transaction_id, true);
