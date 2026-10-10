@@ -41,6 +41,7 @@ import {
 import { countedRows, liveLinkedAccounts, readAccountContext, type AccountContext, type LinkedAccount } from '@/lib/history-import/read';
 import { drawImportedHistory, importedRowsChanged, readDrawState } from '@/lib/history-import/extend';
 import { importedTxnStore, isHistoryImportId, type Covers } from '@/lib/history-import/store';
+import { connectorAccountsStore } from '@/lib/connectors/store';
 import { readHistoryMeta, type HistoryMeta } from '@/lib/history-import/request';
 
 // Importing years of history into a LINKED account (#52; lib/history-import/,
@@ -141,9 +142,10 @@ const overReadLimit = (ctx: Ctx) => limited(() => takeImportRead(ctx), `Past imp
  * can't be read would leave an earlier id's imports out of the matching.
  */
 async function linkedAccount(ctx: Ctx, account_id: unknown): Promise<{ account: LinkedAccount; links: Map<string, Link> } | NextResponse> {
-  if (typeof account_id !== 'string' || account_id.length > 100 || !/^[A-Za-z0-9_.:-]+$/.test(account_id) || isManualId(account_id)) {
+  if (typeof account_id !== 'string' || account_id.length > 100 || !/^[A-Za-z0-9_.:-]+$/.test(account_id)) {
     return bad('Choose one of your linked accounts');
   }
+  if (isManualId(account_id)) return bad(await notLinked(ctx, account_id));
   const { accounts } = await liveLinkedAccounts(ctx);
   const account = accounts.get(account_id);
   if (!account) return NextResponse.json({ error: 'That account isn’t linked now. Reload to see your accounts.' }, { status: 404 });
@@ -152,6 +154,23 @@ async function linkedAccount(ctx: Ctx, account_id: unknown): Promise<{ account: 
     return NextResponse.json({ error: 'A saved account link can’t be read, so this account’s earlier imports can’t be found. Remove it on the Accounts tab first.' }, { status: 409 });
   }
   return { account, links: effectiveLinks(links, live) };
+}
+
+/** Why a manual account's id isn't one to import history into, in words:
+ *  one SimpleFIN keeps up to date brings its own history, matched by
+ *  SimpleFIN's own ids, which a file's rows can't be matched against here;
+ *  a manual account imports a file through its own Import. Whether it is
+ *  SimpleFIN's is read leniently: unknown, the words cover both. */
+async function notLinked(ctx: Ctx, account_id: string): Promise<string> {
+  const fed = await connectorAccountsStore.get(ctx, account_id).then(
+    (a) => a !== null,
+    () => null
+  );
+  if (fed === true) {
+    return 'This account is kept up to date through SimpleFIN, which brings its older transactions itself, up to two years: importing history from a file isn’t offered for it.';
+  }
+  if (fed === false) return 'This is a manual account: import a file into it with Import on its row.';
+  return 'Importing history from a file is for accounts linked through Plaid: a manual account imports a file with Import on its row.';
 }
 
 /** The account's context, or the response when its bank's rows can't be read. */
