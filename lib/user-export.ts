@@ -1621,15 +1621,28 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
  * time, which a manual row doesn't have, then the id), so two downloads of
  * the same data are the same file.
  */
+/** The accounts the books' rows are on (the manual accounts' own, and those
+ *  SimpleFIN brought), as `manual_accounts` or `accounts` describes each. */
+function bookAccountsIn(doc: UserExport): Map<string, { name: string | null; institution_name: string | null; type: string | null }> {
+  return new Map<string, { name: string | null; institution_name: string | null; type: string | null }>([
+    ...doc.accounts.filter((a) => a.provider !== 'plaid').map((a) => [a.account_id, a] as const),
+    ...doc.manual_accounts.map((m) => [m.account_id, m] as const),
+  ]);
+}
+
+/** Each book account's type, as the file says it: what a pair of SimpleFIN
+ *  rows between two of them is worked out by (lib/manual-txns.ts
+ *  knownPairs), in the transactions CSV and an OFX statement alike. */
+export function bookAccountTypes(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
+}
+
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
   // own: each is named as `manual_accounts` or `accounts` names its account.
-  const accounts = new Map<string, { name: string | null; institution_name: string | null; type: string | null }>([
-    ...doc.accounts.filter((a) => a.provider !== 'plaid').map((a) => [a.account_id, a] as const),
-    ...doc.manual_accounts.map((m) => [m.account_id, m] as const),
-  ]);
-  const typeOf = new Map([...accounts].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
+  const accounts = bookAccountsIn(doc);
+  const typeOf = bookAccountTypes(doc);
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   // A pair of SimpleFIN rows between two of the person's accounts (a card's
   // payment, a loan's, a move between them) is worked out each time the rows

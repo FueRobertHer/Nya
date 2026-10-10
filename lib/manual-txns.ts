@@ -503,14 +503,23 @@ export function connectorTransfers(rows: readonly ManualTxn[], typeOf: ReadonlyM
 }
 
 /**
- * The stored rows, each side of a pair (connectorTransfers) with the pair's
- * words in place of the category it has none of, as the app shows it: for
- * the download's transactions.csv (lib/user-export.ts), which lists the
- * stored rows and files them as the app does. Only rows on an account
- * `typeOf` knows take part, as the app shows no other. Pure.
+ * The pairs among stored rows, as the app works them out over the rows it
+ * shows (connectorTransfers): only rows on an account `typeOf` knows take
+ * part, as the app shows no other. For the download (lib/user-export.ts
+ * transactions.csv, lib/ofx-export.ts), which lists the stored rows. Pure.
+ */
+export function knownPairs(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): Map<string, PairKind> {
+  return connectorTransfers(rows.filter((r) => typeOf.has(r.account_id)), typeOf);
+}
+
+/**
+ * The stored rows, each side of a pair (knownPairs) with the pair's words in
+ * place of the category it has none of, as the app shows it: for the
+ * download's transactions.csv (lib/user-export.ts), which lists the stored
+ * rows and files them as the app does. Pure.
  */
 export function withPairWords(rows: readonly ManualTxn[], typeOf: ReadonlyMap<string, string>): ManualTxn[] {
-  const pairs = connectorTransfers(rows.filter((r) => typeOf.has(r.account_id)), typeOf);
+  const pairs = knownPairs(rows, typeOf);
   return rows.map((r) => {
     const kind = pairs.get(r.id);
     return kind ? { ...r, category: PAIRED[kind](r.amount).category } : r;

@@ -16,6 +16,7 @@ import {
 } from '@/lib/user-export';
 import { ACCOUNT_ID, DOWNLOAD_FORMATS, isDownloadFormat, passphraseProblem, type DownloadFormat } from '@/lib/download-options';
 import { ofxFile } from '@/lib/ofx-export';
+import { isConnectorKind } from '@/lib/connectors/types';
 import { snapshotTakenAt } from '@/lib/history';
 import { timeZoneOf } from '@/lib/access-log';
 import { protectFile } from '@/lib/protected-download';
@@ -34,8 +35,9 @@ import { background } from '@/lib/background';
 // not be something a page can make a browser fetch.
 //
 // OFX is one account's statement (lib/ofx-export.ts): a bank account or a
-// card of the person's own, found in what was read for the download; any
-// other id is a 404, and a loan or an investment account a 400 saying why.
+// card of the person's own (linked, kept up to date through SimpleFIN, or
+// manual), found in what was read for the download; any other id is a 404,
+// and a loan or an investment account a 400 saying why.
 // Both come after the download is counted, since everything was read to
 // know: the card only offers the person's own bank accounts and cards. The
 // device's time zone (an IANA name, such as "America/New_York") makes the
@@ -195,8 +197,9 @@ export async function POST(req: Request) {
 
   // A linked account's statement says the day its balance is as of where
   // the person is: from the moment its snapshot was taken, where Nya kept
-  // that (never an error: without it, the day is the UTC day).
-  const latest = body.format === 'ofx' ? doc.accounts.find((a) => a.account_id === body.account_id)?.latest_balance : null;
+  // that (never an error: without it, the day is the UTC day). One SimpleFIN
+  // keeps up to date has the bank's own day for it instead.
+  const latest = body.format === 'ofx' ? doc.accounts.find((a) => a.account_id === body.account_id && !isConnectorKind(a.provider))?.latest_balance : null;
   const balanceTakenAt = latest && body.time_zone ? await snapshotTakenAt(ctx, latest.date) : null;
 
   // The first pass: the size, with nothing kept (see the header). A writer
