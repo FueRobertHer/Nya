@@ -440,7 +440,7 @@ The categories you marked as mattering for your taxes on the report page ([featu
 | Field | Meaning |
 | --- | --- |
 | `v` | The shape's version: 1. |
-| `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. A category stays marked when no transaction is in it. |
+| `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. Each is a category's words, one of its `text` keys in [`categories`](#categories), which a rename never changes and a merge moves to the category it went into, so the mark follows the category. A category stays marked when no transaction is in it, and so do words no category has any more. |
 
 #### `transaction-annotations`
 

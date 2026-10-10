@@ -17,8 +17,10 @@
 import { countsInTotals, isTransfer, isExcluded, leftOutByCurrency, leftOutText, type Countable, type LeftOut } from './spending';
 import { expectedDates, perMonth, type RecurringSeries } from './recurring';
 
-/** What these totals read of a transaction. */
-export type TotalsRow = Countable & { date: string; amount: number; category: string | null; category_id?: string };
+/** What these totals read of a transaction: its category's words, and,
+ *  filed into the person's categories (lib/category-store.ts fileRows), the
+ *  category's id and name. */
+export type TotalsRow = Countable & { date: string; amount: number; category: string | null; category_id?: string; category_name?: string | null };
 
 /** A row's category words, or "other" for none: what a row not filed into
  *  the person's categories is totalled under, as the Budgets tab filed it
@@ -28,6 +30,25 @@ export const categoryOf = (t: Pick<TotalsRow, 'category'>): string => t.category
 /** What a row is totalled under: the id of the category it is filed under
  *  (lib/category-store.ts fileRows), or, on a row not filed, its words. */
 export const bucketOf = (t: Pick<TotalsRow, 'category' | 'category_id'>): string => t.category_id ?? categoryOf(t);
+
+/** A bucket's sums, and what to call it when nothing names it (a total's
+ *  `describe`): the first name a row in it was filed under (one that says
+ *  nothing of its category has none), else the first row's words, or
+ *  "other". Never an id. */
+type BucketSum = { amount: number; transactions: number; named: string | null; words: string };
+
+function addTo(sums: Map<string, BucketSum>, t: TotalsRow, amount: number): void {
+  const bucket = bucketOf(t);
+  const s = sums.get(bucket) ?? { amount: 0, transactions: 0, named: null, words: categoryOf(t) };
+  s.amount += amount;
+  s.transactions++;
+  if (s.named === null && t.category_name) s.named = t.category_name;
+  sums.set(bucket, s);
+}
+
+/** A bucket's name: as `describe` says, else as its rows do (BucketSum). */
+const nameOf = (bucket: string, s: BucketSum, describe?: (bucket: string) => { category: string }): string =>
+  describe ? describe(bucket).category : (s.named ?? s.words);
 
 /**
  * Spending per category over the rows whose date `inRange` takes, as the
@@ -74,20 +95,23 @@ export type CategoryTotal = { category: string; amount: number; transactions: nu
  * most first, then by name. `out` is summarize's `categories`, by another
  * name; `in` is what a report adds to it (lib/report/build.ts).
  */
-export function categoryTotals(rows: readonly TotalsRow[], inRange: (date: string) => boolean, currency: string | null): { in: CategoryTotal[]; out: CategoryTotal[] } {
-  const into = new Map<string, { amount: number; transactions: number }>();
-  const outOf = new Map<string, { amount: number; transactions: number }>();
+export function categoryTotals(
+  rows: readonly TotalsRow[],
+  inRange: (date: string) => boolean,
+  currency: string | null,
+  describe?: (bucket: string) => { category: string }
+): { in: CategoryTotal[]; out: CategoryTotal[] } {
+  // By the category each row is filed under (bucketOf), as summarize and the
+  // Activity tab total them, named by `describe`, else by the rows' own name.
+  const into = new Map<string, BucketSum>();
+  const outOf = new Map<string, BucketSum>();
   for (const t of rows) {
     if (!inRange(t.date) || t.amount === 0 || !countsInTotals(t, currency)) continue;
-    const side = t.amount < 0 ? into : outOf;
-    const c = side.get(categoryOf(t)) ?? { amount: 0, transactions: 0 };
-    c.amount += Math.abs(t.amount);
-    c.transactions++;
-    side.set(categoryOf(t), c);
+    addTo(t.amount < 0 ? into : outOf, t, Math.abs(t.amount));
   }
-  const listed = (m: Map<string, { amount: number; transactions: number }>): CategoryTotal[] =>
+  const listed = (m: Map<string, BucketSum>): CategoryTotal[] =>
     [...m]
-      .map(([category, c]) => ({ category, amount: tidy(c.amount), transactions: c.transactions }))
+      .map(([bucket, s]) => ({ category: nameOf(bucket, s, describe), amount: tidy(s.amount), transactions: s.transactions }))
       .sort((a, b) => b.amount - a.amount || (a.category < b.category ? -1 : 1));
   return { in: listed(into), out: listed(outOf) };
 }

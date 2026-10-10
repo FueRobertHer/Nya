@@ -61,6 +61,16 @@
 // NO TAX ADVICE. The person marks the categories that matter to them
 // (lib/report/settings.ts) and gets them as a group, with their transactions
 // listed; nothing here decides, suggests or says how any category is taxed.
+//
+// CATEGORIES are the person's own (lib/categories.ts), as the rows were filed
+// by them (lib/activity.ts): each total is a category's, by its id, named as
+// it is named now, as the Activity tab and the API's /spending total them. A
+// mark is stored as a category's words (one of its text keys, which a rename
+// never changes), and found among the categories by them each time: a
+// renamed category is still marked, under its new name, and one merged into
+// another takes its marks there, its rows with them. Words no category has
+// now stay marked, matched by a row's own words, as before categories had
+// ids, and so does everything when the rows come without categories.
 
 import type { Txn, TxnCoverage } from '../transactions';
 import type { HealthState } from '../connection-state';
@@ -69,6 +79,7 @@ import { noSpending, type NoSpending } from '../no-transactions';
 import { isInvestmentType } from '../balance';
 import { currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '../spending';
 import { categoryOf, categoryTotals, summarize, type CategoryTotal } from '../totals';
+import { categoryById, categoryForKey, choiceText, indexTaxonomy, textKey, TEXT, type Taxonomy } from '../categories';
 import { categoryKey } from './settings';
 import { addDays, dayIn, periodMonths, type Period } from './period';
 
@@ -155,10 +166,15 @@ export type ReportInput = {
   /** Whether the person's own categories, names for merchants and exclusions
    *  carried across a re-link were all read (lib/activity.ts own_read). */
   ownRead: { categories: boolean; names: boolean; exclusions: boolean };
-  /** The categories marked as mattering for taxes; null when none were ever
-   *  saved, or they couldn't be read (markedUnreadable). */
+  /** The categories marked as mattering for taxes, as stored (each one's
+   *  words); null when none were ever saved, or they couldn't be read
+   *  (markedUnreadable). */
   marked: readonly string[] | null;
   markedUnreadable: boolean;
+  /** The person's categories the rows were filed by (lib/activity.ts
+   *  finishActivity), which name each total and find each mark (see
+   *  CATEGORIES). Absent, the rows' own words do. */
+  taxonomy?: Taxonomy | null;
   /** Some account is hidden, and left out. */
   hidden: boolean;
   /** How each connection is doing couldn't be read. */
@@ -222,8 +238,14 @@ export type ReportMonth = {
   uncertain: boolean;
 };
 
+/** A category as the report offers it for marking: its name now, and the
+ *  words a mark of it is stored as (`key`: its first text key, choiceText). */
+export type ReportCategory = { key: string; name: string };
+
 export type ReportMarked = {
-  categories: { category: string; money_in: number; money_out: number; transactions: number }[];
+  /** Each category marked, once, in the order marked: its name now, the
+   *  words a mark of it is stored as, and its totals. */
+  categories: { category: string; key: string; money_in: number; money_out: number; transactions: number }[];
   money_in: number;
   money_out: number;
 };
@@ -293,9 +315,9 @@ export type Report = {
   /** The currencies the period's transactions are in, most first, the
    *  report's own first among equals. */
   currencies: { currency: string; transactions: number }[];
-  /** Every category in the period and every one marked, as the app files a
-   *  category (lib/report/settings.ts categoryKey), for marking. */
-  categories: string[];
+  /** Every category in the period and every one marked, once each, by name,
+   *  for marking. */
+  categories: ReportCategory[];
   totals: ReportTotals;
   money_in: CategoryTotal[];
   money_out: CategoryTotal[];
@@ -343,6 +365,11 @@ const GAP_ORDER: GapKind[] = [
   'own_exclusions',
   'unreadable',
 ];
+
+/** A category as a mark finds it (see CATEGORIES): which it is (its id, or
+ *  `words:` and the words, for words no category has), the words a mark of
+ *  it is stored as, and its name now. */
+type Mark = { id: string; key: string; name: string };
 
 const minDay = (a: string, b: string) => (a < b ? a : b);
 /** A name compared as the app groups one (lib/manual.ts normalizeInstitutionName). */
@@ -434,8 +461,12 @@ export function buildReport(input: ReportInput): Report {
     .map(([c, transactions]) => ({ currency: c, transactions }))
     .sort((a, b) => b.transactions - a.transactions || (a.currency === currency ? -1 : b.currency === currency ? 1 : a.currency < b.currency ? -1 : 1));
 
+  // Each category's totals by the category the row is filed under, named as
+  // it is named now (see CATEGORIES).
+  const ix = input.taxonomy ? indexTaxonomy(input.taxonomy) : null;
+  const named = ix ? (bucket: string) => ({ category: categoryById(ix, bucket)?.name ?? bucket }) : undefined;
   const summary = summarize(rows, inPeriod, currency);
-  const byCategory = categoryTotals(rows, inPeriod, currency);
+  const byCategory = categoryTotals(rows, inPeriod, currency, named);
 
   // The read's notes: an institution whose transactions aren't all here
   // (missing, importing) has one of its own ("Chase: ..."), already said by
@@ -518,33 +549,52 @@ export function buildReport(input: ReportInput): Report {
     };
   });
 
-  // The marked categories: their totals, and their transactions listed.
-  // Matched as the app files a category, so "home  office" is in "home office".
-  const keyOf = (t: Txn) => categoryKey(categoryOf(t));
+  // The marked categories: their totals, and their transactions listed. A
+  // mark's words find the category that has them as a key now (a renamed or
+  // merged one too); words none has match rows by their own words, as the
+  // app files a category, so "home  office" is in "home office".
+  const byWords = (words: string): Mark => {
+    const c = ix ? categoryForKey(ix, TEXT, textKey(words)) : null;
+    if (c) return { id: c.id, key: choiceText(c), name: c.name };
+    const key = categoryKey(words);
+    return { id: `words:${key}`, key, name: key };
+  };
+  // A row's: the category it is filed under, else the one its words find.
+  const markOf = (t: Txn): Mark => {
+    const c = ix && t.category_id ? categoryById(ix, t.category_id) : null;
+    return c ? { id: c.id, key: choiceText(c), name: c.name } : byWords(categoryOf(t));
+  };
   const markedList = input.markedUnreadable ? [] : [...new Set((input.marked ?? []).map(categoryKey).filter(Boolean))];
-  const markedSet = new Set(markedList);
+  // Each category marked once, however many of its words were (two merged).
+  const marks = new Map<string, Mark>();
+  for (const words of markedList) {
+    const m = byWords(words);
+    if (!marks.has(m.id)) marks.set(m.id, m);
+  }
   let marked: ReportMarked | null = null;
   let appendix: ReportAppendix | null = null;
-  if (markedList.length > 0) {
+  if (marks.size > 0) {
     const listed = rows
-      .filter((t) => markedSet.has(keyOf(t)))
+      .filter((t) => marks.has(markOf(t).id))
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.name.localeCompare(b.name) || (a.transaction_id < b.transaction_id ? -1 : 1)));
     // Each marked category's totals, and the group's, summed as every other
-    // total is, over its rows filed by key.
-    const byKey = categoryTotals(
-      listed.map((t) => ({ ...t, category: keyOf(t) })),
+    // total is, over its rows filed by mark.
+    const byMark = categoryTotals(
+      listed.map((t) => ({ ...t, category_id: markOf(t).id })),
       inPeriod,
-      currency
+      currency,
+      (bucket) => ({ category: bucket })
     );
-    const inOf = new Map(byKey.in.map((c) => [c.category, c]));
-    const outOf = new Map(byKey.out.map((c) => [c.category, c]));
+    const inOf = new Map(byMark.in.map((c) => [c.category, c]));
+    const outOf = new Map(byMark.out.map((c) => [c.category, c]));
     const group = summarize(listed, inPeriod, currency);
     marked = {
-      categories: markedList.map((category) => ({
-        category,
-        money_in: inOf.get(category)?.amount ?? 0,
-        money_out: outOf.get(category)?.amount ?? 0,
-        transactions: (inOf.get(category)?.transactions ?? 0) + (outOf.get(category)?.transactions ?? 0),
+      categories: [...marks.values()].map((m) => ({
+        category: m.name,
+        key: m.key,
+        money_in: inOf.get(m.id)?.amount ?? 0,
+        money_out: outOf.get(m.id)?.amount ?? 0,
+        transactions: (inOf.get(m.id)?.transactions ?? 0) + (outOf.get(m.id)?.transactions ?? 0),
       })),
       money_in: group.money_in,
       money_out: group.money_out,
@@ -554,7 +604,7 @@ export function buildReport(input: ReportInput): Report {
       rows: listed.slice(0, limit).map((t) => ({
         date: t.date,
         name: t.name,
-        category: keyOf(t),
+        category: markOf(t).name,
         amount: t.amount,
         currency: currencyOf(t) ?? currency,
         account: t.account_name,
@@ -599,7 +649,9 @@ export function buildReport(input: ReportInput): Report {
     data_as_of: bringing.length === 0 ? input.generatedAt : known ? oldest : null,
     currency,
     currencies,
-    categories: [...new Set([...rows.map(keyOf), ...markedList])].sort((a, b) => a.localeCompare(b)),
+    categories: [...new Map([...rows.map(markOf), ...marks.values()].map((m) => [m.id, { key: m.key, name: m.name }])).values()].sort(
+      (a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key)
+    ),
     totals: {
       money_in: summary.money_in,
       money_out: summary.money_out,
@@ -630,7 +682,7 @@ export function buildReport(input: ReportInput): Report {
       settling: period.today < addDays(period.through, POST_DAYS),
       hidden: input.hidden,
       health_unread: input.healthUnread,
-      marked: input.markedUnreadable ? 'unreadable' : markedList.length > 0 ? 'set' : 'none',
+      marked: input.markedUnreadable ? 'unreadable' : marks.size > 0 ? 'set' : 'none',
       scope: {
         investment:
           input.sources.some((s) => s.holds.investment || s.no_transactions === 'investment_accounts') || input.manual.some((m) => isInvestmentType(m.type)),

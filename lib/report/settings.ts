@@ -5,7 +5,12 @@
 //
 //   marked   the categories the person marked as mattering to them for
 //            taxes, shown as a group of their own in every report, with an
-//            appendix listing their transactions (lib/report/build.ts).
+//            appendix listing their transactions (lib/report/build.ts). Each
+//            is a category's words: one of its text keys (lib/categories.ts),
+//            which a rename never changes and a merge moves to the category
+//            it went into, so a mark follows its category; the page saves
+//            each category's own (choiceText). Words no category has any more
+//            stay marked, matched by a row's own words.
 //
 // Only what the person chose. Nya never picks a category for this, suggests
 // one, or says how any category is taxed: that is tax advice, and wrong often
