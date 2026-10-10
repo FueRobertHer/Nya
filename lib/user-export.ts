@@ -1300,7 +1300,7 @@ function manualTransactionRow(row: ManualTxn, account: ExportManualAccount | und
 /** Every row of the manual accounts' books in the file, once each: a book
  *  restored from a backup could repeat one, which counts once, the copy
  *  saved last, as the app shows it (lib/manual-txns.ts). */
-function manualTransactionsIn(doc: UserExport): ManualTxn[] {
+export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
   const entries = doc[manualTxnStore.name] ?? [];
   if (!Array.isArray(entries)) throw new Error('The manual transactions in the file have an unexpected shape');
   const byId = new Map<string, ManualTxn>();
@@ -1397,7 +1397,16 @@ export function* balancesCsv(doc: UserExport): Generator<string> {
  * the parts of the JSON file it is made from that are missing something
  * (problems), by key, empty when it is whole.
  */
-export type ExportFile = { filename: string; contentType: string; pieces: () => Iterable<string>; notes: string[]; incomplete: string[] };
+export type ExportFile = {
+  filename: string;
+  contentType: string;
+  pieces: () => Iterable<string>;
+  notes: string[];
+  incomplete: string[];
+  /** How a piece becomes bytes: UTF-8, unless the format says otherwise (an
+   *  OFX statement is Windows-1252, lib/ofx-export.ts). */
+  encode?: (piece: string) => Uint8Array;
+};
 
 /**
  * The parts of the JSON file each CSV is made from, of those that can be
@@ -1445,7 +1454,8 @@ export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
 /** The file as UTF-8 bytes, a chunk at a time: what the route streams. */
 export function* fileChunks(file: ExportFile): Generator<Uint8Array> {
   const encoder = new TextEncoder();
-  for (const piece of file.pieces()) yield encoder.encode(piece);
+  const encode = file.encode ?? ((piece: string) => encoder.encode(piece));
+  for (const piece of file.pieces()) yield encode(piece);
 }
 
 /**
