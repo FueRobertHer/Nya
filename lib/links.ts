@@ -148,6 +148,68 @@ export async function readKnownAccounts(ctx: Ctx): Promise<{ known: Map<string, 
   return { known, unreadable };
 }
 
+/** A connection that is no longer stored, as the directory remembers it: the
+ *  directory outlives a disconnect, which deletes the connection's
+ *  transactions (lib/disconnect-item.ts). */
+export type RemovedConnection = {
+  item_id: string;
+  institution_name: string;
+  institution_id: string | null;
+  /** The first and last UTC days any of its accounts was seen (first_seen,
+   *  last_seen): the span it was connected for, as far as Nya saw. */
+  first_seen: string;
+  last_seen: string;
+  account_ids: string[];
+};
+
+/**
+ * The connections the directory remembers that aren't among `liveItemIds`
+ * (the Items stored now), one per Item, oldest first: for a report, which must
+ * say when a connection that was there during its period has been removed,
+ * taking its transactions with it (lib/report/read.ts). LENIENT, for that
+ * display only, which nothing writes, deletes or records on: an entry that
+ * can't be read, or that lacks its days, is counted in `unreadable` instead.
+ * Throws only when the directory can't be read at all.
+ */
+export async function removedConnections(
+  ctx: Ctx,
+  liveItemIds: ReadonlySet<string>
+): Promise<{ removed: RemovedConnection[]; unreadable: number }> {
+  const { entries, unreadable } = await readDirectory(ctx);
+  let unusable = unreadable.size;
+  const day = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const byItem = new Map<string, RemovedConnection>();
+  for (const [id, e] of Object.entries(entries)) {
+    if (!e || typeof e !== 'object' || typeof e.item_id !== 'string' || !day(e.first_seen) || !day(e.last_seen)) {
+      unusable++;
+      continue;
+    }
+    if (liveItemIds.has(e.item_id) || isManualId(id)) continue;
+    const name = typeof e.institution_name === 'string' && e.institution_name.trim() ? e.institution_name.trim() : 'A removed connection';
+    const seen = byItem.get(e.item_id);
+    if (!seen) {
+      byItem.set(e.item_id, {
+        item_id: e.item_id,
+        institution_name: name,
+        institution_id: typeof e.institution_id === 'string' ? e.institution_id : null,
+        first_seen: e.first_seen,
+        last_seen: e.last_seen,
+        account_ids: [id],
+      });
+      continue;
+    }
+    if (e.first_seen < seen.first_seen) seen.first_seen = e.first_seen;
+    // The name it was last seen under.
+    if (e.last_seen > seen.last_seen) Object.assign(seen, { last_seen: e.last_seen, institution_name: name });
+    seen.institution_id ??= typeof e.institution_id === 'string' ? e.institution_id : null;
+    seen.account_ids.push(id);
+  }
+  const removed = [...byItem.values()]
+    .map((r) => ({ ...r, account_ids: r.account_ids.sort() }))
+    .sort((a, b) => (a.first_seen < b.first_seen ? -1 : a.first_seen > b.first_seen ? 1 : a.item_id < b.item_id ? -1 : 1));
+  return { removed, unreadable: unusable };
+}
+
 /** Every offer the user declined (dismissPair, dismissAll): "<old>><new>" or
  *  "<old>>*" -> when. For the download of my data; strict, unlike
  *  getDismissed. */

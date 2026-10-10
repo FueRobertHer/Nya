@@ -174,8 +174,10 @@ export type ApiMissing = {
  *  false). */
 type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
 
-/** The connection facts for each Item, from the records health keeps. */
-async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => ApiConnection; note: string | null }> {
+/** The connection facts for each Item, from the records health keeps. Also
+ *  what a report says of each connection (lib/report/read.ts), so the two
+ *  read them alike. */
+export async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => ApiConnection; note: string | null }> {
   const [health, notices] = await Promise.all([
     readHealthForDisplay(ctx),
     // A display read that nothing writes, deletes or records on: what can't be

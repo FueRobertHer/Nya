@@ -64,12 +64,16 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
 
 /** One institution's part in an assembly: how much of it is here, and, read
  *  from storage, as of when (null when not known, or synced just now), and
- *  why it brings in no transactions, when it doesn't (lib/item-products.ts). */
+ *  why it brings in no transactions, when it doesn't (lib/item-products.ts).
+ *  Read from storage, also the oldest day of its stored rows (`first_date`,
+ *  lib/transactions.ts storedItemTransactions); null when synced, or with
+ *  none. */
 export type BankSource = {
   item_id: string;
   institution_name: string;
   coverage: TxnCoverage;
   synced_at: string | null;
+  first_date: string | null;
   no_transactions: NoTransactionsReason | null;
 };
 
@@ -110,6 +114,9 @@ export function newestFirst(a: Txn, b: Txn): number {
  * `includeHidden` keeps the hidden accounts' rows (the API's include_hidden);
  * `hidden` is every id of every hidden account either way. `withAccountIds`
  * puts each bank row's account_id on it (lib/transactions.ts displayRows).
+ * `since` reads the rows from that day on instead of the last LOOKBACK_DAYS:
+ * a report on an earlier period (lib/report/read.ts), the same rows by the
+ * same rules, further back.
  *
  * The hidden set is read first and strictly: rows from hidden accounts are
  * filtered out inside each Item's read (the only place account_id still
@@ -118,7 +125,7 @@ export function newestFirst(a: Txn, b: Txn): number {
  */
 export async function assembleBankRows(
   ctx: Ctx,
-  opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean }
+  opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean; since?: string }
 ): Promise<{ payload: PlaidPayload; hidden: Set<string>; cacheable: boolean; sources: BankSource[] }> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
@@ -131,13 +138,14 @@ export async function assembleBankRows(
     carriedIn: carried.then((c) => c.categories),
     carriedExclusionsIn: carried.then((c) => c.excluded),
     withAccountIds: opts.withAccountIds,
+    since: opts.since,
   };
   const at = new Date().toISOString();
   const [results, overrides, renames, carry] = await Promise.all([
     Promise.all(
       items.map(async (item) =>
         opts.sync
-          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null }
+          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null, first_date: null }
           : storedItemTransactions(ctx, item, inputs)
       )
     ),
@@ -179,6 +187,7 @@ export async function assembleBankRows(
       institution_name: item.institution_name,
       coverage: results[i].coverage,
       synced_at: results[i].synced_at,
+      first_date: results[i].first_date,
       no_transactions: results[i].noTransactions ?? null,
     })),
   };
@@ -197,13 +206,17 @@ export async function assembleBankRows(
  * (already on the row). A row whose record couldn't be read is marked as not
  * known (`excluded: null`): it counts, and the Activity tab says a total may
  * include one the person excluded.
+ *
+ * `since` is the first day of manual rows to read, as assembleBankRows's: by
+ * default the same trailing window as the banks' rows.
  */
 export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
-  hidden: Set<string>
+  hidden: Set<string>,
+  opts: { since?: string } = {}
 ): Promise<{ transactions: Txn[]; notes: string[]; incomplete: NonNullable<PlaidPayload['incomplete']> }> {
-  const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff }), readExclusions(ctx)]);
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.

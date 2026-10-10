@@ -41,6 +41,36 @@ export function spendingByCategory(rows: readonly TotalsRow[], inRange: (date: s
  *  (a cryptocurrency's eight places) would lose. */
 export const tidy = (n: number): number => Math.round(n * 1e8) / 1e8 || 0;
 
+/** What one category adds to money in or to money out, as a positive sum, and
+ *  how many rows it sums. */
+export type CategoryTotal = { category: string; amount: number; transactions: number };
+
+/**
+ * Money in and money out per category over the rows whose date `inRange`
+ * takes, kept in `currency`, by the rule every total follows (countsInTotals):
+ * money in is the inflows (negative amounts, Plaid's sign), a refund among
+ * them, filed under its own row's category; money out is the outflows. Each
+ * most first, then by name. `out` is summarize's `categories`, by another
+ * name; `in` is what a report adds to it (lib/report/build.ts).
+ */
+export function categoryTotals(rows: readonly TotalsRow[], inRange: (date: string) => boolean, currency: string | null): { in: CategoryTotal[]; out: CategoryTotal[] } {
+  const into = new Map<string, { amount: number; transactions: number }>();
+  const outOf = new Map<string, { amount: number; transactions: number }>();
+  for (const t of rows) {
+    if (!inRange(t.date) || t.amount === 0 || !countsInTotals(t, currency)) continue;
+    const side = t.amount < 0 ? into : outOf;
+    const c = side.get(categoryOf(t)) ?? { amount: 0, transactions: 0 };
+    c.amount += Math.abs(t.amount);
+    c.transactions++;
+    side.set(categoryOf(t), c);
+  }
+  const listed = (m: Map<string, { amount: number; transactions: number }>): CategoryTotal[] =>
+    [...m]
+      .map(([category, c]) => ({ category, amount: tidy(c.amount), transactions: c.transactions }))
+      .sort((a, b) => b.amount - a.amount || (a.category < b.category ? -1 : 1));
+  return { in: listed(into), out: listed(outOf) };
+}
+
 export type Summary = {
   /** The currency every total here is in; null when no row says one. */
   currency: string | null;

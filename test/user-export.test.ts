@@ -784,6 +784,7 @@ describe('stores built on the storage seam', () => {
       'import-settings',
       'imports',
       'manual-transactions',
+      'report-settings',
       'transaction-annotations',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
