@@ -182,6 +182,27 @@ describe('allocation over time', () => {
     expect(body.accounts.map((a: any) => a.account_id)).toEqual(['a']);
   });
 
+  test('an account that ended counts before its end and not from it on, and is never missing after it, even when a list from before asks for it', async () => {
+    await threeDays();
+    const { markEnded } = await import('@/lib/lifecycle');
+    await markEnded(ctx, 'b', { state: 'left', on: '2026-10-01' }, { type: 'investment', label: { name: 'B', institution: 'Broker', mask: null }, item_id: 'item_b' });
+    const { body } = await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB });
+    expect(body.days.map((d: any) => [d.date, d.total, d.missing])).toEqual([
+      ['2026-09-30', 1000, []],
+      ['2026-10-01', 610, []],
+      ['2026-10-03', 620, []],
+    ]);
+    expect(body.accounts.find((a: any) => a.account_id === 'b')).toMatchObject({ state: 'gone', last: '2026-09-30' });
+  });
+
+  test('an end that can’t be read is a 409, never a series counting it', async () => {
+    await threeDays();
+    await fake.hset(ctxKey('account-lifecycle'), { b: 'damaged-bytes-damaged-bytes-damaged' });
+    const { status, body } = await quiet(() => ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB }));
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ unreadable: true, unreadable_ids: ['b'] });
+  });
+
   test('nothing recorded is an empty series, with no first day', async () => {
     const { status, body } = await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB });
     expect(status).toBe(200);

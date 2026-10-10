@@ -1039,6 +1039,10 @@ async function syncItem(ctx: Ctx,
 /** What the display rows of one Item are built with, besides its state. */
 type DisplayInputs = {
   hiddenAccountIds?: Set<string>;
+  /** Accounts that ended (lib/lifecycle.ts), by every id, to the day each
+   *  stops counting: their rows dated on or after it are left out, as a
+   *  hidden account's are, and filtered here for the same reason. */
+  endedFrom?: ReadonlyMap<string, string>;
   /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
    *  Applied here because this is the last place account_id exists; a
    *  category set on the row itself still wins, in /api/transactions. */
@@ -1053,6 +1057,12 @@ type DisplayInputs = {
   withAccountIds?: boolean;
 };
 
+/** Whether a row is dated on or after its account's end (lib/lifecycle.ts). */
+const afterEnd = (endedFrom: ReadonlyMap<string, string> | undefined, t: { account_id: string; date: string }) => {
+  const end = endedFrom?.get(t.account_id);
+  return end !== undefined && t.date >= end;
+};
+
 /**
  * An Item's rows as the Activity tab shows a transaction: inside the trailing
  * LOOKBACK window, a pending row its posted row replaced left out, and the
@@ -1063,7 +1073,7 @@ type DisplayInputs = {
  * for a read without one (storedItemTransactions), so both show a row alike.
  */
 async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn[]> {
-  const { hiddenAccountIds } = inputs;
+  const { hiddenAccountIds, endedFrom } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
@@ -1075,7 +1085,8 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       (t) =>
         t.date >= cutoff &&
         !superseded.has(t.transaction_id) &&
-        !hiddenAccountIds?.has(t.account_id)
+        !hiddenAccountIds?.has(t.account_id) &&
+        !afterEnd(endedFrom, t)
     )
     .map((t) => ({
       transaction_id: t.transaction_id,
@@ -1118,13 +1129,13 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
  * the year's. lib/activity.ts keeps those detection can use.
  */
 async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<OlderTxn[]> {
-  const { hiddenAccountIds } = inputs;
+  const { hiddenAccountIds, endedFrom } = inputs;
   const carried = await inputs.carriedIn;
   const carriedExclusions = await inputs.carriedExclusionsIn;
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const since = daysAgoIso(RECURRING_LOOKBACK_DAYS);
   return Object.values(state.txns)
-    .filter((t) => t.date < cutoff && t.date >= since && !t.pending && !hiddenAccountIds?.has(t.account_id))
+    .filter((t) => t.date < cutoff && t.date >= since && !t.pending && !hiddenAccountIds?.has(t.account_id) && !afterEnd(endedFrom, t))
     .map((t) => ({
       transaction_id: t.transaction_id,
       date: t.date,
@@ -1165,7 +1176,7 @@ export async function syncItemTransactions(ctx: Ctx,
   hiddenAccountIds?: Set<string>,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
-  opts: { withAccountIds?: boolean } = {}
+  opts: { withAccountIds?: boolean; endedFrom?: ReadonlyMap<string, string> } = {}
 ): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
@@ -1173,7 +1184,7 @@ export async function syncItemTransactions(ctx: Ctx,
   // incomplete. Why it has none goes back beside the rows: the views that
   // count spending say so, and a refused bank account leaves spending unknown.
   if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
-  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds };
+  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds, endedFrom: opts.endedFrom };
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
 }

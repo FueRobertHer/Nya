@@ -41,6 +41,7 @@ import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, type Link } from './links';
+import { getEffectiveLifecycle, endDays } from './lifecycle';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
 
@@ -142,7 +143,10 @@ export function newestFirst(a: Txn, b: Txn): number {
  * The hidden set is read first and strictly: rows from hidden accounts are
  * filtered out inside each Item's read (the only place account_id still
  * exists), so they're never shipped, and a read failure throws rather than
- * surfacing transactions the person hid.
+ * surfacing transactions the person hid. So is when each account ended
+ * (lib/lifecycle.ts), through the same links: an ended account's rows from
+ * its end day on are left out the same way, from the list, budgets and
+ * spending, and one that can't be read throws rather than count them.
  */
 export async function assembleBankRows(
   ctx: Ctx,
@@ -150,6 +154,7 @@ export async function assembleBankRows(
 ): Promise<{ payload: PlaidPayload; hidden: Set<string>; cacheable: boolean; sources: BankSource[] }> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
+  const endedFrom = endDays(await getEffectiveLifecycle(ctx, links));
   const hiddenIds = new Set(hidden.keys());
   const leftOut = opts.includeHidden ? new Set<string>() : hiddenIds;
   // Read alongside the Items: each one waits for it only once it has its rows.
@@ -159,6 +164,7 @@ export async function assembleBankRows(
     carriedIn: carried.then((c) => c.categories),
     carriedExclusionsIn: carried.then((c) => c.excluded),
     withAccountIds: opts.withAccountIds,
+    endedFrom,
   };
   const at = new Date().toISOString();
   const [results, overrides, renames, carry] = await Promise.all([
@@ -240,6 +246,11 @@ export async function assembleBankRows(
  * `history` is the rows before the year that recurring detection can use
  * (see BEFORE THE YEAR): the banks', as kept, and the manual accounts',
  * chosen once the exclusions are on them.
+ *
+ * A manual account that ended (lib/lifecycle.ts) has its rows from its end
+ * day on left out, as the banks' part leaves out a linked one's. Read
+ * strictly here, on every request: a manual account is never linked, so no
+ * links are needed, and the cached banks' part says nothing of it.
  */
 export async function finishActivity(
   ctx: Ctx,
@@ -249,7 +260,13 @@ export async function finishActivity(
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   // The manual rows back to `since`, for the history.
-  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff: since }), readExclusions(ctx)]);
+  const [read, exclusions, lifecycle] = await Promise.all([
+    readManualTxnsForDisplay(ctx, { hidden, cutoff: since }),
+    readExclusions(ctx),
+    getEffectiveLifecycle(ctx, new Map()),
+  ]);
+  const ended = endDays(lifecycle);
+  const manual = { ...read, txns: read.txns.filter((t) => !(t.account_id && ended.has(t.account_id) && t.date >= ended.get(t.account_id)!)) };
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
   const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);

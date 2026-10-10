@@ -59,7 +59,8 @@
 import { defineMapStore, type MapStore } from './repo';
 import type { Ctx } from './containers';
 import { isCalendarDay, addDays } from './manual-txn-input';
-import { resolveId, sameAccountIds, type Link } from './link-core';
+import { resolveId, sameAccountIds, getLinks, effectiveLinks, type Link } from './link-core';
+import { liveAccountIds } from './links';
 import { writeAutoNote, removeAutoNote } from './timeline-notes';
 import type { EndedAccounts } from './history';
 
@@ -351,6 +352,20 @@ export async function getEffectiveLifecycle(ctx: Ctx, links: ReadonlyMap<string,
   if (entries.size === 0) return EMPTY_VIEW;
   if (links === null) throw new Error('Account links could not be read, so which of their ids are closed can’t be told');
   return effectiveLifecycle(entries, links);
+}
+
+/**
+ * The view for a reader with no links in hand (sharing, allocation over time):
+ * the entries, and only when there are some, the links that apply, read as
+ * the hidden set reads them (lib/links.ts getEffectiveHidden): live ids that
+ * can't be read pause no link, which can only end more, never count more.
+ * `readOnly` changes nothing while reading (someone else's read). Strict.
+ */
+export async function readLifecycleView(ctx: Ctx, opts: { readOnly?: boolean } = {}): Promise<LifecycleView> {
+  const entries = await readLifecycleEntries(ctx);
+  if (entries.size === 0) return EMPTY_VIEW;
+  const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: opts.readOnly }).catch(() => new Set<string>())]);
+  return effectiveLifecycle(entries, effectiveLinks(links, live));
 }
 
 // ---- Words ----

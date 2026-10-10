@@ -93,12 +93,19 @@
 //
 // Hiding an account pauses its sharing: the share stays, and is honoured again
 // if the account is unhidden.
+//
+// An account that ENDED (lib/lifecycle.ts: closed, left, no longer tracked)
+// shows as such to the other person from its day: still listed, with when,
+// no balance, and at the transactions level only the rows from before it.
+// Even once nothing live lists it (a bank stops returning a closed account),
+// so a closure reads as one rather than as the account vanishing.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
+import { readLifecycleView, lifecycleOf, endedNow, endOf, accountWords } from './lifecycle';
 import { getManualAccounts } from './manual';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
@@ -968,6 +975,10 @@ export type SharedAccount = {
    *  account's can't be read (its book is damaged, or saved by a version this
    *  one doesn't know), so none are shown, never an empty list in their place. */
   transactions_unreadable?: true;
+  /** It ended (lib/lifecycle.ts): closed, left (no longer theirs) or no
+   *  longer tracked, from `on`. No balance is shown then, and only the
+   *  transactions from before it. */
+  ended?: { state: 'closed' | 'left' | 'untracked'; on: string };
 };
 /** What someone is shown of one person's share: the projection
  *  (projectShare). */
@@ -1055,8 +1066,22 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
   if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
-  // Re-checked against what they can share now: hidden or gone since is out.
+  // Re-checked against what they can share now: hidden or gone since is out,
+  // except an account that ended, which shows as ended (see the header),
+  // named as it was when it ended, unless it is hidden.
   const still = new Map((await shareableAccounts(theirs, { readOnly: true })).map((a) => [a.id, a.label]));
+  const lifecycle = await readLifecycleView(theirs, { readOnly: true });
+  const ended = new Map<string, { state: 'closed' | 'left' | 'untracked'; on: string }>();
+  if (lifecycle.accounts.size > 0) {
+    const { hidden } = await getEffectiveHidden(theirs, { readOnly: true });
+    for (const id of Object.keys(share.accounts)) {
+      const entry = lifecycleOf(lifecycle, id);
+      const l = entry?.lifecycle;
+      if (!entry || !l || l.state === 'active' || !endedNow(l, now) || hidden.has(id)) continue;
+      ended.set(id, { state: l.state, on: endOf(l)! });
+      if (!still.has(id)) still.set(id, `${entry.label.institution} ${accountWords(entry.label)}`.trim());
+    }
+  }
   const granted = Object.entries(share.accounts).filter(([id]) => still.has(id));
   if (granted.length === 0) return null;
 
@@ -1104,6 +1129,26 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
     const m = manual.get(id);
     let balance: number | null = null;
     let as_of: string | null = null;
+    const end = ended.get(id);
+    if (end) {
+      // Ended: no balance, and only the rows from before its end.
+      accounts.push({
+        id,
+        label: still.get(id)!,
+        level,
+        balance: null,
+        currency: null,
+        as_of: null,
+        debt: DEBT_TYPES.has((m ? m.type : (types[id] ?? lifecycleOf(lifecycle, id)?.type)) ?? ''),
+        ended: end,
+        ...(level === 'transactions'
+          ? unreadableBooks.has(id)
+            ? { transactions_unreadable: true as const }
+            : { transactions: (txns.get(id) ?? []).filter((t) => t.date < end.on).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) }
+          : {}),
+      });
+      continue;
+    }
     if (level === 'exists') {
       // That it's there, and nothing about how much.
     } else if (m) {

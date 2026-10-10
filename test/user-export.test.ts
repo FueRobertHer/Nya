@@ -330,6 +330,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       hidden_at: null,
       // The newest RECORDED balance, with its day (a partial measurement counts).
       latest_balance: { balance: 1700, date: '2026-01-04' },
+      lifecycle: null,
     });
     expect(byId.acc_card).toMatchObject({ type: 'credit', credit_limit: 5000, hidden: true, hidden_at: '2026-03-01T00:00:00.000Z', latest_balance: { balance: 500, date: '2026-01-03' } });
     expect(byId.acc_brk).toMatchObject({ item_id: 'item_b', institution_name: 'Fidelity', connected: true, name: 'Brokerage', mask: '9999', type: 'investment', latest_balance: null });
@@ -342,7 +343,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     // Manual accounts are listed apart, once.
     expect(byId.manual_house).toBeUndefined();
     expect(doc.manual_accounts).toEqual([
-      { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null },
+      { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null, lifecycle: null },
     ]);
     expect(doc.hidden_accounts).toEqual([{ account_id: 'acc_card', type: 'credit', hidden_at: '2026-03-01T00:00:00.000Z' }]);
   });
@@ -1457,7 +1458,7 @@ describe('writing it out', () => {
       ['2026-01-03', '1050', 'recorded'],
     ]);
     const card = rows.find((r) => r[1] === 'account' && r[2] === 'acc_card' && r[0] === '2026-01-01')!;
-    expect(card).toEqual(['2026-01-01', 'account', 'acc_card', 'Sapphire', 'Chase', 'credit', '500', 'USD', 'recorded', 'true']);
+    expect(card).toEqual(['2026-01-01', 'account', 'acc_card', 'Sapphire', 'Chase', 'credit', '500', 'USD', 'recorded', 'true', '', '', '']);
     // Oldest day first, and on each day the total before the accounts.
     const dates = rows.map((r) => r[0]);
     expect(dates).toEqual([...dates].sort());
@@ -1485,7 +1486,7 @@ describe('writing it out', () => {
     const [header, ...rows] = parseCsv([...balances.pieces()].join(''));
     const house = rows.filter((r) => r[2] === 'manual_house').map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
     expect(house).toEqual([
-      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true' },
+      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true', account_state: '', account_state_date: '', note: '' },
     ]);
     const suffix = 'The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.';
     const said = `Not all of your manual accounts could be read: 1 account whose stored data is damaged. Their rows in this file are under their account ids, with no account name. ${suffix}`;

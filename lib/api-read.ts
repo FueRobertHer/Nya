@@ -44,6 +44,13 @@
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
 //
+// ACCOUNTS THAT ENDED (closed, left, or no longer tracked: lib/lifecycle.ts)
+// are listed with when (`lifecycle`, a field version 1 gained), and count in
+// nothing from that day on, as in the app: net worth now leaves them out, its
+// history subtracts them from their end day, and their transactions from it
+// are left out (lib/activity.ts). Read strictly: one that can't be read is a
+// 409, never an account counted that the person closed.
+//
 // READ ONLY. Nothing here writes: each read that could tidy as it goes is
 // asked not to (readOnly).
 //
@@ -55,6 +62,7 @@ import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, sameAccountIds, type Link } from './links';
+import { getEffectiveLifecycle, lifecycleOf, endOf, lastEndDay, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
@@ -157,7 +165,34 @@ export type ApiAccount = {
   as_of_time: string | null;
   /** Null for a manual account. */
   connection: ApiConnection | null;
+  /** When it ended, as the person said (or Nya assumed, `assumed`, when
+   *  nobody answered about an account its bank stopped returning), or null
+   *  while it is open. From `date` on it counts in no total. Version 1 may
+   *  add states. */
+  lifecycle: ApiLifecycle | null;
 };
+
+export type ApiLifecycle = {
+  /** closed, left (no longer yours: sold, transferred, divided), or
+   *  untracked (no longer followed). */
+  state: 'closed' | 'left' | 'untracked';
+  /** The day it stopped counting, YYYY-MM-DD. */
+  date: string;
+  /** What the person wrote about it, or null. */
+  note: string | null;
+  /** Nya assumed it closed: nobody answered whether it had, after its bank
+   *  stopped returning it. */
+  assumed: boolean;
+};
+
+/** An account's end, for the API, or null while it is open. */
+function apiLifecycle(view: LifecycleView, id: string): ApiLifecycle | null {
+  const entry = lifecycleOf(view, id);
+  const l = entry?.lifecycle;
+  const date = l ? endOf(l) : null;
+  if (!entry || !l || l.state === 'active' || date === null) return null;
+  return { state: l.state, date, note: (l.state === 'closed' || l.state === 'left') && l.note ? l.note : null, assumed: entry.assumed === true };
+}
 
 /** An account, or a connection's accounts, that an answer couldn't include
  *  (see AccountsRead). */
@@ -181,7 +216,7 @@ export type ApiMissing = {
 /** The accounts, and what couldn't be included, named (`missing`): never a
  *  shorter list passed off as whole (an answer built on it says complete:
  *  false). */
-type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
+type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link>; lifecycle: LifecycleView };
 
 /** The connection facts for each Item, from the records health keeps. */
 async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string) => ApiConnection; note: string | null }> {
@@ -228,6 +263,8 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   const { hidden } = effective;
   const links = effective.links ?? new Map<string, Link>();
   const unreadable = new Set(remembered.unreadable);
+  // Strict, through the same links: an end that can't be read throws.
+  const lifecycle = await getEffectiveLifecycle(ctx, effective.links);
 
   // Each stored Item's accounts, as its last good load recorded them.
   const linked: { item: StoredItem; account: RememberedAccount }[] = [];
@@ -279,6 +316,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       as_of: b?.date ?? null,
       as_of_time: b?.layer === 'recorded' ? (takenAt.get(b.date) ?? null) : null,
       connection: facts.of(item.item_id),
+      lifecycle: apiLifecycle(lifecycle, account.account_id),
     };
   });
 
@@ -319,12 +357,13 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection: null,
+        lifecycle: apiLifecycle(lifecycle, a.account_id),
       });
     }
   }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
-  return { accounts, missing, notes, hidden, links };
+  return { accounts, missing, notes, hidden, links, lifecycle };
 }
 
 export type ApiAccounts = {
@@ -374,9 +413,14 @@ type NetWorthRead = { read: AccountsRead; history: HistoryPoint[] };
 
 async function netWorthRead(ctx: Ctx, includeHidden: boolean): Promise<NetWorthRead> {
   const read = await accountsRead(ctx, includeHidden);
-  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden);
+  // Accounts that ended are subtracted from their end day either way: they
+  // are no longer the person's to count, hidden or not.
+  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden, read.lifecycle.ended);
   return { read, history };
 }
+
+/** Whether an account counts in net worth now: not once it has ended. */
+const countsNow = (a: ApiAccount) => a.lifecycle === null || a.lifecycle.date > lastEndDay();
 
 /** The currency net worth is labelled with, and whether the accounts mix
  *  several (the recorded totals add them unconverted, as the chart does). */
@@ -388,11 +432,12 @@ function netWorthCurrency(accounts: readonly ApiAccount[]): { currency: string |
 }
 
 function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
-  const { currency: main, mixed } = netWorthCurrency(read.accounts);
+  const counted = read.accounts.filter(countsNow);
+  const { currency: main, mixed } = netWorthCurrency(counted);
   const totals = new Map<string | null, { currency: string | null; net_worth: number; assets: number; debts: number; accounts: number }>();
   let without = 0;
   const days: string[] = [];
-  for (const a of read.accounts) {
+  for (const a of counted) {
     if (a.balance === null) {
       without++;
       continue;
@@ -485,7 +530,7 @@ function seriesOf(points: readonly HistoryPoint[], q: HistoryQuery, head: { acco
 
 /** Net worth's history from a read already made. */
 function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery): ApiHistory {
-  const { currency, mixed } = netWorthCurrency(nw.read.accounts);
+  const { currency, mixed } = netWorthCurrency(nw.read.accounts.filter(countsNow));
   return seriesOf(nw.history, q, { account_id: null, currency, mixed }, []);
 }
 
