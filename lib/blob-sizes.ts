@@ -1,9 +1,20 @@
 // lib/blob-sizes.ts
 //
-// How much the stored transaction and investment blobs take (#58): the
-// transaction store (lib/transactions.ts, "txns:<item_id>") and the investment
-// store (lib/invstore.ts, "invtxns:<item_id>"), in stored characters, which are
-// bytes here (base64 travels as ASCII; lib/blob.ts).
+// How much a container stores where it can grow large (#58), in stored
+// characters, which are bytes here (base64 travels as ASCII; lib/blob.ts):
+//   - the transaction and investment blobs, per Item: the transaction store
+//     (lib/transactions.ts, "txns:<item_id>") and the investment store
+//     (lib/invstore.ts, "invtxns:<item_id>");
+//   - every store on the storage seam that holds something (lib/stores.ts),
+//     by the seam's own measure (StoreSize in lib/repo.ts): the books of
+//     transactions on manual accounts, the records of file imports, holdings
+//     history, what was said about transactions, and the rest. Each with its
+//     largest value, the one nearest the ceiling: a write is held to it one
+//     request at a time, so one manual account's book, one month of holdings,
+//     or one import's records, never the store whole.
+// NOT the older stores kept as hashes (balance history, manual accounts,
+// categories, renames, links, the account directory) nor the caches: neither
+// total here is the container's whole size.
 //
 // Measured when asked, not recorded as blobs are written: a recorded size drifts
 // from the blob it describes (a disconnect racing a sync, a failed record, the
@@ -17,14 +28,17 @@
 // cost the same. An Item blocked at the ceiling also carries the size its last
 // write was refused at (the marker in lib/transactions.ts).
 //
-// This is the number a storage quota would read. Nothing enforces a quota yet;
-// when one comes, the refusal path it needs (tell the user, change nothing) is
-// the one the size ceiling already takes. Measured for one container: the walk
-// covers only its keys (kc()).
+// A storage quota would read these numbers, and the older stores' too, which
+// this does not measure yet. Nothing enforces a quota; when one comes, the
+// refusal path it needs (tell the user, change nothing) is the one the size
+// ceiling already takes. Measured for one container: the walk covers only its
+// keys (kc()), and each store measures its own key in it.
 
 import { redis, kc, getItems } from './storage';
 import type { Ctx } from './containers';
 import { maxBlobChars } from './blob';
+import { declaredStores } from './stores';
+import type { MapStore, Store, ValueStore } from './repo';
 
 export type BlobKind = 'txns' | 'invtxns';
 export type ItemSizes = {
@@ -39,7 +53,24 @@ export type ItemSizes = {
    *  was raised: the marker clears on the Item's next sync. */
   blocked?: boolean;
 };
-export type StorageUsage = { total_chars: number; items: ItemSizes[] };
+/** One store on the seam, as measured (MapStore.size, ValueStore.size). */
+export type StoreUsage = {
+  /** Its name: the key family it is stored under. */
+  store: string;
+  /** What it holds, as declared. */
+  what: string;
+  /** Entries stored, readable or not: 1 for a value store. */
+  entries: number;
+  /** Characters stored, ids and values together. */
+  chars: number;
+  /** Its largest value, the one nearest the ceiling: its id (null for a
+   *  value store's one value) and characters. */
+  largest_id: string | null;
+  largest_chars: number;
+};
+/** `total_chars` is the Items' blobs' total, `stores_chars` the seam
+ *  stores': neither is the container's whole size (see the header). */
+export type StorageUsage = { total_chars: number; items: ItemSizes[]; stores_chars: number; stores: StoreUsage[] };
 
 const PAGE = 200;
 
@@ -113,5 +144,22 @@ export async function readStorageUsage(ctx: Ctx): Promise<StorageUsage> {
 
   const sum = (e: ItemSizes) => (e.txns ?? 0) + (e.invtxns ?? 0);
   const items = [...byItem.values()].sort((a, b) => sum(b) - sum(a) || (a.item_id < b.item_id ? -1 : 1));
-  return { total_chars: total, items };
+  const stores = await readStoreSizes(ctx);
+  return { total_chars: total, items, stores_chars: stores.reduce((n, s) => n + s.chars, 0), stores };
+}
+
+const measurable = (s: Store): s is ValueStore<unknown> | MapStore<unknown> => s.kind === 'value' || s.kind === 'map';
+
+/** Every store on the seam that holds something, largest first, one request
+ *  each. Counter stores are left out: a count is the service's bookkeeping,
+ *  a few characters that never grow. */
+async function readStoreSizes(ctx: Ctx): Promise<StoreUsage[]> {
+  const measured = await Promise.all(declaredStores().filter(measurable).map(async (s) => ({ s, size: await s.size(ctx) })));
+  return measured
+    .flatMap(({ s, size }): StoreUsage[] =>
+      size.largest
+        ? [{ store: s.name, what: s.what, entries: size.entries, chars: size.chars, largest_id: size.largest.id, largest_chars: size.largest.chars }]
+        : []
+    )
+    .sort((a, b) => b.chars - a.chars || (a.store < b.store ? -1 : 1));
 }

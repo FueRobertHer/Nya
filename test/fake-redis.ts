@@ -606,6 +606,27 @@ export class FakeRedis {
       }
       return 1;
     }
+    // How much a map store holds (MapStore.size): HKEYS, then HSTRLEN of
+    // each, in bytes as Redis counts them (the raw ones, where planted), the
+    // lowest field name winning a tie for the largest.
+    if (name === '-- nya:repo-size') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const h = this.hashes.get(keys[0]);
+      if (!h || h.size === 0) return [0, 0, '', 0];
+      let chars = 0;
+      let largest = '';
+      let most = -1;
+      for (const [field, value] of h) {
+        const raw = this.rawFields.get(keys[0])?.get(field);
+        const n = raw && raw.text === value ? raw.bytes.length : Buffer.byteLength(value, 'utf8');
+        chars += Buffer.byteLength(field, 'utf8') + n;
+        if (n > most || (n === most && field < largest)) {
+          largest = field;
+          most = n;
+        }
+      }
+      return [h.size, chars, `v${largest}`, most];
+    }
     // A counter store's: GET or INCR, and the expiry, as one step. Like
     // Redis, INCR refuses a value that is not an integer, and a hash at the
     // key is WRONGTYPE.

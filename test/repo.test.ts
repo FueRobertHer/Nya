@@ -305,6 +305,22 @@ function contract(b: Backend) {
       expect(await list.get(A)).toEqual([NOTE]);
     });
 
+    test('its size: nothing stored is nothing; else the characters stored, measured in one request without reading the value', async () => {
+      expect(await list.size(A)).toEqual({ entries: 0, chars: 0, largest: null });
+      await list.set(A, [NOTE, RENT]);
+      const stored = (await b.raw.get(listKey()))!;
+      const sent = await sentBy(async () => {
+        expect(await list.size(A)).toEqual({ entries: 1, chars: stored.length, largest: { id: null, chars: stored.length } });
+      });
+      expect(sent).toEqual(['strlen']);
+      // Readable or not, it is what is stored.
+      await b.raw.set(listKey(), 'damaged-and-still-stored');
+      expect(await list.size(A)).toEqual({ entries: 1, chars: 24, largest: { id: null, chars: 24 } });
+      expect(await list.size(B)).toEqual({ entries: 0, chars: 0, largest: null });
+      b.failNext('strlen');
+      await notBlamed(() => list.size(A));
+    });
+
     test("two containers never see each other's value", async () => {
       await list.set(A, [NOTE]);
       expect(await list.get(B)).toBeNull();
@@ -596,6 +612,7 @@ function contract(b: Backend) {
         ['hexists', () => notes.has(A, 'n1')],
         ['hset', () => notes.set(A, 'n3', NOTE)],
         ['hdel', () => notes.remove(A, 'n1')],
+        ['eval', () => notes.size(A)],
       ] as const) {
         b.failNext(command);
         await notBlamed(run);
@@ -604,6 +621,35 @@ function contract(b: Backend) {
         ['n1', NOTE],
         ['n2', RENT],
       ]);
+    });
+
+    test('its size: every entry counted, readable or not, ids and values together, and the largest, in one request', async () => {
+      expect(await notes.size(A)).toEqual({ entries: 0, chars: 0, largest: null });
+      await notes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', { text: 'a much longer note than the other one', amount: 1 }],
+        ['n3', RENT],
+      ]);
+      await b.raw.hset(notesKey(), 'n4', 'damaged');
+      const stored = await b.raw.hgetall(notesKey());
+      const chars = Object.entries(stored).reduce((n, [id, v]) => n + id.length + String(v).length, 0);
+      const sent = await sentBy(async () => {
+        expect(await notes.size(A)).toEqual({ entries: 4, chars, largest: { id: 'n2', chars: String(stored.n2).length } });
+      });
+      expect(sent).toEqual(['eval']);
+      // Bytes as stored: damaged bytes that aren't text count what they hold.
+      await notes.remove(A, 'n1', 'n2', 'n3', 'n4');
+      await b.raw.hsetBytes(notesKey(), 'n9', new Uint8Array([0xff, 0xfe, 0x41]));
+      expect(await notes.size(A)).toEqual({ entries: 1, chars: 5, largest: { id: 'n9', chars: 3 } });
+      // A tie goes to the lowest id, whatever order the hash gives them in.
+      await notes.remove(A, 'n9');
+      await b.raw.hset(notesKey(), 'n8', 'same');
+      await b.raw.hset(notesKey(), 'n7', 'same');
+      expect(await notes.size(A)).toEqual({ entries: 2, chars: 12, largest: { id: 'n7', chars: 4 } });
+      // An id that reads as a number is still an id.
+      await b.raw.hset(notesKey(), '12345', 'longest value');
+      expect((await notes.size(A)).largest).toEqual({ id: '12345', chars: 13 });
+      expect(await notes.size(B)).toEqual({ entries: 0, chars: 0, largest: null });
     });
 
     test("two containers never see each other's entries", async () => {
@@ -1490,6 +1536,7 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
       () => notes.has(A, 'n1'),
       () => notes.set(A, 'n1', NOTE),
       () => notes.remove(A, 'n1'),
+      () => notes.size(A),
     ]) {
       await expect(op()).rejects.toThrow('WRONGTYPE');
     }
@@ -1498,6 +1545,7 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
     await send('HSET', [listKey(), 'f', 'a hash where the string should be']);
     await expect(list.get(A)).rejects.toThrow('WRONGTYPE');
     await expect(list.getReport(A)).rejects.toThrow('WRONGTYPE');
+    await expect(list.size(A)).rejects.toThrow('WRONGTYPE');
     await expect(list.set(A, [NOTE])).rejects.toThrow('WRONGTYPE');
     expect(await send('HGET', [listKey(), 'f'])).toBe('a hash where the string should be');
   });

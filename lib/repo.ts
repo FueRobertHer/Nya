@@ -259,6 +259,9 @@ export type ValueStore<T> = Declared & {
   set(ctx: Ctx, value: T): Promise<void>;
   /** Deletes the value, readable or not. */
   remove(ctx: Ctx): Promise<void>;
+  /** How much it stores (StoreSize), readable or not, without reading the
+   *  value. One request. */
+  size(ctx: Ctx): Promise<StoreSize>;
 };
 
 export type MapStore<T> = Declared & {
@@ -317,6 +320,25 @@ export type MapStore<T> = Declared & {
   count(ctx: Ctx): Promise<number>;
   /** Whether there is an entry under the id, readable or not. */
   has(ctx: Ctx, id: string): Promise<boolean>;
+  /** How much it stores (StoreSize), readable or not, without reading any
+   *  value. One request (MAP_SIZE). */
+  size(ctx: Ctx): Promise<StoreSize>;
+};
+
+/**
+ * How much a value or map store holds in a container, measured, never read:
+ * what storage usage reports (lib/blob-sizes.ts). Characters are bytes here:
+ * every value is ASCII ciphertext (lib/blob.ts), as is every id.
+ */
+export type StoreSize = {
+  /** Entries stored, readable or not: 0 or 1 for a value store. */
+  entries: number;
+  /** Characters stored, ids and values together. */
+  chars: number;
+  /** The largest value: its id (null for a value store's one value) and its
+   *  characters; null when nothing is stored. Each write is held to the
+   *  request ceiling on its own (lib/blob.ts), so this is the one nearest it. */
+  largest: { id: string | null; chars: number } | null;
 };
 
 /** A counter store's window as it stands. */
@@ -408,6 +430,28 @@ export const READ_ENTRY_HASHED = `-- nya:repo-read-entry-hashed
 local v = redis.call('HGET', KEYS[1], ARGV[1])
 if not v then return {'', ''} end
 return {'v' .. v, 'v' .. redis.sha1hex(v)}`;
+
+/**
+ * How much a map store's hash holds, in one step, without reading a value:
+ * its number of fields, the bytes of every field name and value together, and
+ * the largest value's field (prefixed "v", so nothing parses it) and bytes,
+ * the lowest field name among equals, so the answer doesn't depend on the
+ * order HKEYS gives. Bytes as Redis stores them, so a damaged value counts
+ * what it holds. A string at the key is Redis's WRONGTYPE.
+ */
+export const MAP_SIZE = `-- nya:repo-size
+local fields = redis.call('HKEYS', KEYS[1])
+if #fields == 0 then return {0, 0, '', 0} end
+local chars, largest, most = 0, '', -1
+for i = 1, #fields do
+  local n = redis.call('HSTRLEN', KEYS[1], fields[i])
+  chars = chars + #fields[i] + n
+  if n > most or (n == most and fields[i] < largest) then
+    largest = fields[i]
+    most = n
+  end
+end
+return {#fields, chars, 'v' .. largest, most}`;
 
 /** The error a counter store's take answers for a stored count that is not
  *  one, so it can be told from storage failing. */
@@ -673,6 +717,12 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     async remove(ctx) {
       await redis().del(key(ctx));
     },
+    async size(ctx) {
+      // STRLEN: 0 where there is nothing, and WRONGTYPE for a hash.
+      const chars = Number(await redis().strlen(key(ctx)));
+      if (!Number.isSafeInteger(chars) || chars < 0) throw new Error(`repo: unexpected answer measuring ${name}`);
+      return chars === 0 ? { entries: 0, chars: 0, largest: null } : { entries: 1, chars, largest: { id: null, chars } };
+    },
   });
 }
 
@@ -846,6 +896,15 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     },
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
+    },
+    async size(ctx) {
+      const answer = await redis().eval(MAP_SIZE, [key(ctx)], []);
+      if (!Array.isArray(answer) || answer.length !== 4 || typeof answer[2] !== 'string') {
+        throw new Error(`repo: unexpected answer measuring ${name}`);
+      }
+      const [entries, chars, most] = [Number(answer[0]), Number(answer[1]), Number(answer[3])];
+      if (![entries, chars, most].every((n) => Number.isSafeInteger(n) && n >= 0)) throw new Error(`repo: unexpected answer measuring ${name}`);
+      return { entries, chars, largest: entries === 0 ? null : { id: answer[2].slice(1), chars: most } };
     },
     async replaceUnreadable(ctx, id, value) {
       checkId(what, id);

@@ -3,6 +3,9 @@ import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContaine
 
 const ctx = TEST_CTX;
 
+// The stores on the seam encrypt what they hold (for the tests that measure them).
+process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+
 const fake = new FakeRedis({ deserialize: true });
 // Nothing may be written outside a container (#53).
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
@@ -13,6 +16,10 @@ const { registryKey } = await import('@/lib/containers');
 const { forgetEpochs, deploymentContainer } = await import('@/lib/sessions');
 const { saveItem } = await import('@/lib/storage');
 const route = await import('@/app/api/storage-usage/route');
+const { manualTxnStore } = await import('@/lib/manual-txns');
+const { txnAnnotationStore } = await import('@/lib/txn-annotations');
+const { firePlanStore } = await import('@/lib/fire-plan');
+const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 
 const A = crypto.randomUUID();
 const saved = { ...process.env };
@@ -39,6 +46,8 @@ describe('stored blob sizes, measured', () => {
         { item_id: 'item_b', orphaned: false, txns: 400 },
         { item_id: 'item_a', orphaned: false, txns: 120, invtxns: 50 },
       ],
+      stores_chars: 0,
+      stores: [],
     });
   });
 
@@ -82,7 +91,7 @@ describe('stored blob sizes, measured', () => {
     const strlen = fake.strlen.bind(fake);
     fake.strlen = (async (key: string) => (key === ctxKey('txns:item_b') ? 0 : strlen(key))) as typeof fake.strlen;
     try {
-      expect(await readStorageUsage(ctx)).toEqual({ total_chars: 10, items: [{ item_id: 'item_a', orphaned: false, txns: 10 }] });
+      expect(await readStorageUsage(ctx)).toEqual({ total_chars: 10, items: [{ item_id: 'item_a', orphaned: false, txns: 10 }], stores_chars: 0, stores: [] });
     } finally {
       fake.strlen = strlen;
     }
@@ -121,7 +130,75 @@ describe('stored blob sizes, measured', () => {
 
   test('nothing stored is an empty report', async () => {
     await link('item_a');
-    expect(await readStorageUsage(ctx)).toEqual({ total_chars: 0, items: [] });
+    expect(await readStorageUsage(ctx)).toEqual({ total_chars: 0, items: [], stores_chars: 0, stores: [] });
+  });
+});
+
+describe('the stores on the storage seam, measured', () => {
+  const at = '2026-09-30T10:00:00.000Z';
+  const row = (n: number) => ({
+    id: `manual-txn:00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+    account_id: 'manual_a',
+    date: '2026-09-01',
+    amount: n,
+    currency: 'USD',
+    name: `Payee ${n}`,
+    category: null,
+    note: null,
+    source: 'manual',
+    source_id: null,
+    created_at: at,
+    updated_at: at,
+  });
+  /** What a store holds, counted from the stored bytes themselves. */
+  const storedChars = (name: string) => [...(fake.hashes.get(ctxKey(name)) ?? new Map())].reduce((n, [id, v]) => n + id.length + v.length, 0);
+
+  test('every one that holds something, largest first, with its largest value, the one nearest the ceiling', async () => {
+    // Two books of manual transactions, one much larger.
+    await manualTxnStore.set(ctx, 'manual_a', { version: 1, rows: Array.from({ length: 200 }, (_, i) => row(i + 1)) } as any);
+    await manualTxnStore.set(ctx, 'manual_b', { version: 1, rows: [{ ...row(1), account_id: 'manual_b' }] } as any);
+    await txnAnnotationStore.set(ctx, 't1', { excluded: true, updated_at: at });
+    // A record that can't be read takes room all the same.
+    await fake.hset(ctxKey('transaction-annotations'), { t2: 'damaged-but-stored' });
+    await firePlanStore.set(ctx, DEFAULT_PLAN);
+    // A counter is bookkeeping, never listed.
+    await fake.set(ctxKey('download-count'), '3');
+    // Another container's stores are its own.
+    await manualTxnStore.set({ container: A } as any, 'manual_z', { version: 1, rows: [{ ...row(9), account_id: 'manual_z' }] } as any);
+
+    const usage = await readStorageUsage(ctx);
+    const plan = (fake.strings.get(ctxKey('fire-plan')) ?? '').length;
+    const books = fake.hashes.get(ctxKey('manual-transactions'))!;
+    expect(usage.stores).toEqual(
+      [
+        {
+          store: 'manual-transactions',
+          what: 'manual transactions',
+          entries: 2,
+          chars: storedChars('manual-transactions'),
+          largest_id: 'manual_a',
+          largest_chars: books.get('manual_a')!.length,
+        },
+        {
+          store: 'transaction-annotations',
+          what: 'transaction exclusions',
+          entries: 2,
+          chars: storedChars('transaction-annotations'),
+          largest_id: 't1',
+          largest_chars: fake.hashes.get(ctxKey('transaction-annotations'))!.get('t1')!.length,
+        },
+        { store: 'fire-plan', what: 'plan assumptions', entries: 1, chars: plan, largest_id: null, largest_chars: plan },
+      ].sort((x, y) => y.chars - x.chars)
+    );
+    expect(usage.stores_chars).toBe(usage.stores.reduce((n, s) => n + s.chars, 0));
+    // The Items' blobs are counted apart, as before.
+    expect(usage.total_chars).toBe(0);
+  });
+
+  test('a store that can’t be measured fails the report, never reads as empty', async () => {
+    await txnAnnotationStore.set(ctx, 't1', { excluded: true, updated_at: at });
+    fake.failNext('eval');
+    await expect(readStorageUsage(ctx)).rejects.toThrow('armed failure');
   });
 });
 
@@ -135,7 +212,14 @@ describe('/api/storage-usage', () => {
       ceiling_chars: expect.any(Number),
       total_chars: 100,
       items: [{ item_id: 'item_a', orphaned: false, txns: 100 }],
+      stores_chars: 0,
+      stores: [],
     });
+    // With the stores on the seam beside them.
+    await txnAnnotationStore.set(ctx, 't1', { excluded: true, updated_at: '2026-09-30T10:00:00.000Z' });
+    const body = await (await route.GET()).json();
+    expect(body.stores).toEqual([{ store: 'transaction-annotations', what: 'transaction exclusions', entries: 1, chars: expect.any(Number), largest_id: 't1', largest_chars: expect.any(Number) }]);
+    expect(body.stores_chars).toBe(body.stores[0].chars);
   });
 
   test('with no usable container, refuses with the reason (503)', async () => {
