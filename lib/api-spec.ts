@@ -42,7 +42,8 @@ export type Arg = { description: string } & (
   | { kind: 'choice'; values: readonly string[] }
   /** Account ids: a comma-separated list in a query, a list (or one) in JSON. */
   | { kind: 'ids'; max: number }
-  | { kind: 'id' }
+  /** One id: an account's, unless `named` says what of ("a category id"). */
+  | { kind: 'id'; named?: string }
   | { kind: 'currency' }
   | { kind: 'cursor' }
 );
@@ -87,7 +88,7 @@ export function describeKind(arg: Arg): string {
     case 'ids':
       return `up to ${arg.max} account ids`;
     case 'id':
-      return 'an account id';
+      return arg.named ?? 'an account id';
     case 'currency':
       return 'a currency code, like USD';
     case 'cursor':
@@ -269,7 +270,12 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
       to: { kind: 'day', description: `${TXN_TO.description} Defaults to today (UTC).` },
       account_id: { kind: 'ids', max: 50, description: 'Only these accounts (ids from accounts).' },
       q: { kind: 'text', max: 100, description: 'Text to find, in any case, in the name, the merchant behind it, the category or the note.' },
-      category: { kind: 'text', max: 60, description: 'Only this category, as categories lists it ("other" for none).' },
+      category: { kind: 'text', max: 60, description: 'Only this category, by its name as categories lists it, in any case ("other", the uncategorized category, for none).' },
+      category_id: {
+        kind: 'id',
+        named: 'a category id',
+        description: 'Only this category, by its id (ids from categories), whatever it is named now; one merged into it since is the same category.',
+      },
       min_amount: { kind: 'amount', description: 'The smallest amount, inclusive, in Plaid’s sign: positive is money out.' },
       max_amount: { kind: 'amount', description: 'The largest amount, inclusive, in Plaid’s sign: positive is money out.' },
       include_hidden: INCLUDE_HIDDEN,
@@ -277,15 +283,15 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
       cursor: { kind: 'cursor', description: 'next_cursor from the page before, with the same other arguments.' },
     },
   },
-  { name: 'categories', summary: 'The categories in use, on transactions or with a budget.', args: { include_hidden: INCLUDE_HIDDEN } },
+  { name: 'categories', summary: 'The categories in use, on transactions or with a budget, each with its id and group, and every group with its categories.', args: { include_hidden: INCLUDE_HIDDEN } },
   {
     name: 'budgets',
-    summary: 'Monthly budgets, with the month’s spending against each.',
+    summary: 'Monthly budgets, per category and per group, with the month’s spending against each.',
     args: { month: { kind: 'month', description: 'The month, YYYY-MM. Defaults to this month (UTC).' }, include_hidden: INCLUDE_HIDDEN },
   },
   {
     name: 'spending',
-    summary: 'Money in and out, and spending by category, for a month or any range, in one currency.',
+    summary: 'Money in and out, and spending by category and by group, for a month or any range, in one currency.',
     args: {
       month: { kind: 'month', description: 'A month, YYYY-MM, instead of from and to. Defaults to this month (UTC).' },
       from: TXN_FROM,
@@ -390,7 +396,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'search_transactions',
     'transactions',
     'Search transactions',
-    `Transactions, newest first, filtered by text, dates, category, amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it.`,
+    `Transactions, newest first, filtered by text, dates, category (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it.`,
     'Ask for fewer at a time with limit, and page with cursor.',
     { limit: MCP_DEFAULT_PAGE_SIZE },
     {
@@ -406,14 +412,14 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'spending_by_category',
     'spending',
     'Spending by category',
-    'Money in, money out and spending by category for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.',
+    'Money in, money out and spending by category and by category group for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.',
     NARROW_HIDDEN
   ),
   fromOperation(
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it.',
+    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds.',
     NARROW_HIDDEN
   ),
   fromOperation(
@@ -427,7 +433,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'list_categories',
     'categories',
     'Categories',
-    'The categories in use, with how many transactions each has, and whether it has a budget or is a transfer category (never counted as spending).',
+    'The person’s categories in use, with how many transactions each has, whether it has a budget or is a transfer category (never counted as spending), its id and its group; and every group, in the person’s order, with every category in it.',
     NARROW_HIDDEN
   ),
   fromOperation(

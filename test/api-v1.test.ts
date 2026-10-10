@@ -385,6 +385,72 @@ describe('categories, budgets and spending', () => {
   });
 });
 
+describe('the person’s categories (#38), once the app has stored them', () => {
+  /** The app's first read of the budgets: the categories stored, budgets moved onto ids. */
+  const stored = async () => {
+    const { loadBudgets } = await import('@/lib/budget-store');
+    const { ensureTaxonomy } = await import('@/lib/category-store');
+    await loadBudgets(ctx);
+    // As the app's first load of the transactions grows it, by every category they carry.
+    return ensureTaxonomy(ctx, { observed: [{ provider: 'text', key: 'housing' }, { provider: 'text', key: 'entertainment' }] });
+  };
+  const ids = (body: any) => body.transactions.map((t: any) => t.id).sort();
+
+  test('every answer carries the stored ids and groups; a rename shows in each at once; nothing is written', async () => {
+    const t = await stored();
+    const food = t.categories.find((c) => c.name === 'food and drink')!;
+    const foodGroup = t.groups.find((g) => g.id === food.group)!;
+    const { changeTaxonomy } = await import('@/lib/category-store');
+    const { renameCategory } = await import('@/lib/categories');
+    await changeTaxonomy(ctx, (cur) => renameCategory(cur, food.id, 'Eating'));
+    const before = { categories: fake.strings.get(ctxKey('categories')), budgets: fake.strings.get(ctxKey('budget-set')) };
+
+    const coffee = (await call('transactions')).body.transactions.find((x: any) => x.id === 't_coffee');
+    expect(coffee).toMatchObject({ category: 'Eating', category_id: food.id, group_id: foodGroup.id, group: 'Food' });
+    // By id, whatever it is named; by name, as named now.
+    const byId = (await call('transactions', `category_id=${food.id}`)).body;
+    expect(ids(byId)).toEqual(ids((await call('transactions', 'category=EATING')).body));
+    expect(ids(byId)).toContain('t_coffee');
+    expect((await call('transactions', 'category=food and drink')).body.transactions).toEqual([]);
+
+    const categories = (await call('categories')).body;
+    expect(categories.categories.find((c: any) => c.id === food.id)).toMatchObject({ name: 'Eating', group: 'Food', group_id: foodGroup.id, kind: 'expense', archived: false, budgeted: true, transfer: false });
+    expect(categories.categories.find((c: any) => c.name === 'loan payments')).toMatchObject({ kind: 'transfer', transfer: true });
+    expect(categories.groups[0]).toMatchObject({ name: 'Income', kind: 'income' });
+    expect(categories.groups.find((g: any) => g.id === foodGroup.id).categories).toContainEqual({ id: food.id, name: 'Eating', archived: false });
+
+    const budgets = (await call('budgets')).body;
+    expect(budgets.budgets.find((b: any) => b.category_id === food.id)).toMatchObject({ category: 'Eating', group: 'Food', budget: 100 });
+    const spending = (await call('spending', `from=${daysAgo(9)}&to=${daysAgo(0)}`)).body;
+    expect(spending.categories.find((c: any) => c.category_id === food.id)).toMatchObject({ category: 'Eating', group_id: foodGroup.id, group: 'Food' });
+    expect(spending.groups.find((g: any) => g.id === foodGroup.id)).toMatchObject({ name: 'Food', kind: 'expense' });
+
+    expect({ categories: fake.strings.get(ctxKey('categories')), budgets: fake.strings.get(ctxKey('budget-set')) }).toEqual(before);
+  });
+
+  test('a group’s budget, and the reconcile rule said in the answer', async () => {
+    const t = await stored();
+    const { saveBudgets } = await import('@/lib/budget-store');
+    const housing = t.categories.find((c) => c.name === 'housing')!;
+    const rent = t.categories.find((c) => c.name === 'rent and utilities')!;
+    const { changeTaxonomy } = await import('@/lib/category-store');
+    const { moveCategory } = await import('@/lib/categories');
+    const moved = await changeTaxonomy(ctx, (cur) => moveCategory(cur, housing.id, rent.group));
+    await saveBudgets(ctx, { categories: { [housing.id]: { amount: 1500 } }, groups: { [rent.group]: { amount: 1300 } } }, moved);
+    const body = (await call('budgets')).body;
+    const group = body.groups.find((g: any) => g.id === rent.group);
+    // Housing holds two categories, one budgeted: its own 1300 caps the 1500 asked below it.
+    expect(group).toMatchObject({ name: 'Housing', budget: 1300, own: 1300, categories_budget: 1500, reconcile: { binds: 'group', group: 1300, categories: 1500 } });
+    expect(body.total.budget).toBe(1300);
+  });
+
+  test('a category id no category has is a 404; one that isn’t an id, a 400', async () => {
+    await stored();
+    expect((await call('transactions', 'category_id=nope')).res.status).toBe(404);
+    expect((await call('transactions', 'category_id=not%20an%20id')).res.status).toBe(400);
+  });
+});
+
 describe('connections that bring in no transactions (lib/item-products.ts)', () => {
   const INVESTMENTS = { item_id: 'item_fidelity', name: 'Fidelity', accounts: [{ account_id: 'acc_401k', type: 'investment' }] };
   const REFUSED = { item_id: 'item_cu', name: 'CreditUnion', accounts: [{ account_id: 'acc_cu', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } };

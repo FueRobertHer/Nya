@@ -8,6 +8,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
 - [Net-worth history](#net-worth-history)
   - [Holdings history](#holdings-history)
 - [Import pipeline](#import-pipeline)
+- [Categories](#categories)
 - [Containers](#containers)
 - [On-device snapshot and offline use](#on-device-snapshot-and-offline-use)
 - [Security headers and the public pages](#security-headers-and-the-public-pages)
@@ -149,6 +150,26 @@ Plugging in:
 Limits: a file of 3 MB and 10,000 transactions, sized for Vercel's 4.5 MB limit on a function's request body with the form around it (the route refuses a declared or actual body over 3 MB and 64 KB before reading it as a form); the account book's own ceiling (`MAX_TXN_BLOB_CHARS`); 1,000 characters a field; 32 levels of nesting in an OFX file, so a hostile one can't exhaust the stack; and 200 columns in a CSV file and 50 statements or accounts in an OFX or QIF file, refused before anything is built from them, so no answer (a question's column names and first rows are cut short too, and a preview lists at most 200 problems and 200 conflicts) comes near Vercel's 4.5 MB limit on a response, and the sheet never builds a list that would freeze a phone.
 
 An import never writes the history layer (`lib/history.ts`). It adds transactions; a statement's balance is set only when the person ticks the offer, and only from a statement dated today or yesterday, as the account's **Update** form sets one; the estimated history holds manual accounts flat.
+
+## Categories
+
+A transaction's category is one of the person's own (#38): a set of categories, each with a random id, in groups, kept in one value store (`categories`, `lib/category-store.ts`; its shape is in [data-export.md](data-export.md#categories)). The pure part, safe in the browser, is `lib/categories.ts`.
+
+**Resolution.** One function, `resolveCategory`, files any transaction from what is known about it (`CategoryFacts`: the words on the row, whether the person chose them, and Plaid's primary and detailed personal finance category). Most specific first:
+
+1. **The person's own**: a category chosen for the transaction (`txn-category-overrides`), or for the one it continues across a re-link (`txn-category-carry`), or written on a row they entered or imported (`manual-transactions`). It is matched by its words, a `text` key.
+2. **Rules** (#36) go here: below a choice made on one transaction, above what the bank says.
+3. **The provider's**: Plaid's detailed category, then its primary one, each a `plaid` key. Seeded, only primaries are mapped, so a detailed one falls through to its primary until a category is given it.
+4. **The words the row carries**, for a bank row stored before Plaid's values were kept.
+5. **Uncategorized**: the category the set names (`other` when seeded), for a row that says nothing.
+
+A key is on exactly one category, so the answer never depends on the order of the list. The name always comes from the category, and the result says whether the row said anything at all (the API's `category` is `null` when it didn't, as before). The kind of the category's group (`expense`, `income`, `transfer`) is what decides a transfer in `lib/spending.ts`; the finer rules (recurring detection's everyday categories, the Plan's loan payments, cash and refunds) read the words the row carries (`categoryKey`), never a name.
+
+**Where it runs.** `finishActivity` (`lib/activity.ts`) files every row the Activity tab, the read-only API and recurring detection see, after the cache: the cache keeps each bank row's facts, not a filing, so a rename or a merge shows on the next read without dropping it. Each row keeps its words in `category` (what the release before reads, and what the finer rules key on) and gains `category_id`, `category_name` (`null` when the row said nothing) and `category_kind`. The data download files its transactions by the same function (`lib/user-export.ts`).
+
+**Text keys are how older stores point here.** Overrides, carried categories and manual and imported rows store a category as words, as they always have, and each set of words is a `text` key of one category. A rename changes no key, so it renames everywhere at once; a merge moves the merged category's keys to the one it went into, so everything that pointed at it points there, with nothing rewritten. Choosing a category stores its first `text` key, which the release before reads as before. Budgets are kept by id (`budget-set`, `lib/budget-store.ts`), with the old name-keyed `budgets` rewritten as a copy on each save; `lib/budget-set.ts` has the rule a group's budget is reconciled with its categories' by. The migration and what a rollback sees are in [operations.md](operations.md#category-ids-the-migration-and-rolling-back).
+
+**Seeding and growing.** The app's first read makes the set from the default groups, Plaid's primaries and every category already written on the person's data; afterwards, a key no category has (Plaid starts using a new category, a file brings its own) is given one, to the category with the same words or a new one where its kind belongs (`growTaxonomy`). Both are a compare-and-set on the stored set (the value store's `update`), so two reads at once agree on the ids. The read-only API and the download never write: they grow a copy in memory, with provisional ids (`new:` and a random id) that are shown as `null`. A set that can't be read is never seeded over: the edits refuse, and the Activity tab shows each transaction under the category it came with, with a note.
 
 ## Containers
 

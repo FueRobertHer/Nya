@@ -704,8 +704,11 @@ export type TransactionQuery = {
    *  category and the note. */
   text?: string;
   /** A category's name as listed (categories), in any case: "other" for
-   *  none, while the uncategorized category is named Other. */
+   *  none, while the uncategorized category is named so. */
   category?: string;
+  /** A category's id (categories): rows filed under it, or under one merged
+   *  into it. An id no category has is a 404 (NotFound). */
+  categoryId?: string;
   /** On the signed amount, Plaid's sign: inclusive. */
   minAmount?: number;
   maxAmount?: number;
@@ -730,10 +733,13 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const text = q.text?.toLowerCase();
   const category = q.category?.toLowerCase();
   const describe = describer(activity.ix);
+  const wanted = q.categoryId === undefined ? undefined : categoryById(activity.ix, q.categoryId);
+  if (wanted === null || (wanted && isProvisionalId(wanted.id))) throw new NotFound('No category has that id: list them with categories.');
   const matching = activity.rows
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
     .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
+    .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
     .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
     .map((t) => toApiTransaction(t, activity.hidden, activity.ix))

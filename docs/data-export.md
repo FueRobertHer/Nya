@@ -80,11 +80,12 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `investment_transactions` | Every stored investment transaction. |
 | `investment_history_coverage` | Which days the stored investment transactions are known to be complete for. |
 | `account_links` | Accounts you linked across a reconnect, offers you declined, and categories carried across. |
-| `budgets` | Your monthly budgets. |
+| `budgets` | Your monthly budgets on categories. |
+| `group_budgets` | Your monthly budgets on category groups. |
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items` and `transaction-annotations`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `institutions[]`
 
@@ -181,11 +182,14 @@ And what Nya adds, your own edits beside the bank's, never over them:
 | `vendor_key` | The merchant's key for renames: `mid:<merchant id>`, or `nm:<institution>::<name>` without one. |
 | `your_category` | A category you set on this transaction, or `null`. |
 | `your_category_from_earlier_account` | A category you set on the same transaction under an earlier account you linked to this one, or `null`. |
+| `nya_category` | The name of the category it is filed under now (one of your [`categories`](#categories)), or `null` when nothing says what it is (it is then filed under the uncategorized one). |
+| `nya_category_id` | That category's id, or `null` until the app has stored your categories. |
+| `nya_group` | Its group's name. |
 | `your_merchant_name` | Your name for this merchant, or `null`. |
 | `superseded_by_posted` | A pending transaction its posted one replaced. The app hides these so nothing counts twice. |
 | `account_hidden` | Its account is hidden. |
 
-The app shows `your_category`, else `your_category_from_earlier_account`, else `category`; and `your_merchant_name`, else `merchant_name`, else `name`.
+The app files a transaction by `your_category`, else `your_category_from_earlier_account`, else Plaid's category, and shows the name that category has now, `nya_category`; and it shows `your_merchant_name`, else `merchant_name`, else `name`.
 
 ### `category_overrides[]` and `merchant_renames[]`
 
@@ -218,7 +222,7 @@ Every stored investment transaction, newest first, with every field Plaid sent (
 
 ### `budgets[]` and `goals[]`
 
-Budgets: `category`, `monthly_amount`. Goals: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`).
+Budgets, on a category each: `category` (its name now), `monthly_amount`, `category_id` (`null` until the app has stored your categories) and `group` (its group's name). Group budgets (`group_budgets`), on a group as a whole: `group`, `monthly_amount` and `group_id`. A budget on a category or group since deleted has only its id, with the names `null`. How a group's budget and its categories' combine is in [features.md](features.md#budgets-on-categories-and-groups). They are kept by id in the `budget-set` store; the `budgets` key holds a copy of the category budgets by name, for the release before this one ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)). Goals: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`).
 
 ### `api_tokens[]`
 
@@ -255,6 +259,20 @@ What you set under Allocation on the Plan tab ([features.md](features.md#allocat
 | `target` | Your target allocation, a `split`, or `null`. |
 
 A `split` is percents by asset class, each above 0 with at most one decimal, adding up to 100: `us-stocks`, `intl-stocks`, `stocks` (stocks of any region), `bonds`, `cash`, `real-estate`, `crypto` and `other`. A class it doesn't name holds none: `{ "us-stocks": 60, "bonds": 40 }`.
+
+#### `categories`
+
+Your categories and their groups ([features.md](features.md#categories-and-groups), `lib/categories.ts`), or `null` until the app has first stored them. Every transaction is filed under one of these, by the rule in [architecture.md](architecture.md#categories).
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `groups[]` | `id` (random), `name`, `kind` (how its categories count: `expense`, `income` or `transfer`, which no total counts) and `order` (lowest first). |
+| `categories[]` | `id` (random), `name`, `group` (its group's `id`), `icon` (absent for none), `archived` (absent unless `true`: hidden from the lists to choose from), and `provider_keys[]`, what files a transaction under it: each a `provider` and a `key`. `plaid` keys are Plaid's personal finance categories (`FOOD_AND_DRINK`, or a detailed one); `text` keys are a category as words, lower case, the way a category is stored on what was saved before categories had ids and still is: one you chose for a transaction, one carried across a re-link, one on a transaction you entered or imported, and the name a budget was saved under (`food and drink`). A key is on one category only. |
+| `uncategorized` | The `id` of the category a transaction that says nothing about its category is filed under. |
+| `merged` | Each category merged into another, by `id`, and the `id` it went into, so a budget saved on it meanwhile still finds it. Absent until a merge. |
+
+A category you choose for a transaction is stored by its first `text` key, which a rename doesn't change, so the release before this one reads it ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)).
 
 #### `connection-notices`
 
@@ -403,7 +421,7 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 One row per transaction stored from your banks, newest first, with the [transaction fields](#transactions) flattened (transactions on manual accounts, entered by hand or imported, are in the JSON file, under [`manual-transactions`](#manual-transactions)). Columns, in order:
 
-`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`.
+`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`, `nya_category`, `nya_category_id`, `nya_group`.
 
 `amount` keeps Plaid's sign (positive is money out). To total your spending, leave out rows where `superseded_by_posted` is `true`.
 
@@ -443,10 +461,10 @@ Each key a person's container can hold, and what the download does with it. The 
 | `txn-vendor-renames` | `merchant_renames`, and `transactions[].your_merchant_name` |
 | `txn-category-carry` | `account_links.carried_categories`, and `transactions[].your_category_from_earlier_account` |
 | `account-links`, `account-links:dismissed` | `account_links.links`, `account_links.declined_suggestions` |
-| `budgets`, `goals` | `budgets`, `goals` |
+| `budgets`, `goals` | `budgets` (a copy of your category budgets by name, for the release before; the budgets themselves are in `budget-set`), `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `api-tokens`, whose hashes are credential material (each token's name and dates are in [`api_tokens`](#api_tokens) instead), `api-requests` and `download-count`, the counters behind each API token's requests a minute and the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries`, each import's entry without its records, which `imports` holds whole, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing), and `budget-set`, your budgets by category and group id, is in [`budgets` and `group_budgets`](#budgets-and-goals). The others are left out: `api-tokens`, whose hashes are credential material (each token's name and dates are in [`api_tokens`](#api_tokens) instead), `api-requests` and `download-count`, the counters behind each API token's requests a minute and the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries`, each import's entry without its records, which `imports` holds whole, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only. Your records of when what you share was shown are in your container (`sharing-access-log`, a store on the seam); the other person's record of when what they share was shown to you is in theirs, and read from there, as they see it.
 
