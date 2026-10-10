@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NextRequest } from 'next/server';
-import { ReportView, reportDay, reportTime, reportHeading } from '@/components/ReportView';
-import { MarkCategoriesView, formFrom, reportQuery } from '@/components/ReportsPage';
+import { ReportView, reportDay, reportTime, reportHeading, footerCss } from '@/components/ReportView';
+import { MarkCategoriesView, formFrom, reportQuery, csvQuery } from '@/components/ReportsPage';
 import ReportsEntry from '@/components/ReportsEntry';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
 import { resolvePeriod, type Period, type ReportRequest } from '@/lib/report/period';
@@ -63,10 +63,12 @@ const source = (over: Partial<SourceFacts> = {}): SourceFacts => ({
   coverage: 'complete',
   synced_at: '2026-10-10T13:00:00.000Z',
   first_date: '2023-01-01',
+  first_seen: null,
   no_transactions: null,
   last_ok_at: '2026-10-10T13:00:00.000Z',
   problem: null,
   records_unreadable: false,
+  holds: { investment: false, loans: false },
   ...over,
 });
 const ROWS: Txn[] = [
@@ -83,9 +85,15 @@ const input = (over: Partial<ReportInput> = {}): ReportInput => ({
   currency: null,
   sources: [source(), source({ item_id: 'item_citi', institution_name: 'Citi', synced_at: '2025-09-12T15:00:00.000Z', problem: { state: 'needs_reauth', since: '2025-09-13T13:00:00.000Z' } })],
   notes: [],
-  manual: [{ account_id: 'manual_wallet', name: 'Wallet', institution: 'Cash', updated_at: '2026-09-30T18:00:00.000Z' }],
-  removed: [{ institution_name: 'Wells Fargo', institution_id: null, first_seen: '2024-01-10', last_seen: '2025-06-30' }],
+  manual: [{ account_id: 'manual_wallet', name: 'Wallet', institution: 'Cash', type: 'depository', updated_at: '2026-09-30T18:00:00.000Z' }],
+  removed: [
+    { institution_name: 'Wells Fargo', institution_id: null, first_seen: '2024-01-10', last_seen: '2025-06-30', accounts: [{ account_id: 'acc_wf', name: 'Way2Save', mask: '4321', type: 'depository' }] },
+  ],
   removedUnreadable: 0,
+  manualUnread: [],
+  liveAccounts: [],
+  links: new Map(),
+  ownRead: { categories: true, names: true, exclusions: true },
   marked: ['medical'],
   markedUnreadable: false,
   hidden: false,
@@ -117,15 +125,15 @@ describe('the printed report', () => {
     // The gaps, in plain words, before any figure.
     expect(first.text).toContain('This report may be incomplete:');
     expect(first.text).toContain('Citi hasn’t synced since Sep 12, 2025, so this report may be missing some of its transactions.');
-    expect(first.text).toContain('Wells Fargo was removed on or after Jun 30, 2025');
+    expect(first.text).toContain('Wells Fargo (Way2Save ••4321) was removed on or after Jun 30, 2025');
     expect(first.text.indexOf('This report may be incomplete')).toBeLessThan(first.text.indexOf('Money in'));
     // Every institution, its state, its last sync and its gaps; the manual
     // accounts with their last update; the removed connection.
     expect(first.text).toContain('Citi Needs reconnecting since Sep 13, 2025');
     expect(first.text).toContain('Hasn’t synced since Sep 12, 2025');
     expect(first.text).toContain('Chase No problem recorded');
-    expect(first.text).toContain('Cash: Wallet Sep 30, 2026');
-    expect(first.text).toContain('Wells Fargo: seen from Jan 10, 2024 to Jun 30, 2025.');
+    expect(first.text).toContain('Cash: Wallet None in this period Sep 30, 2026');
+    expect(first.text).toContain('Wells Fargo: seen from Jan 10, 2024 to Jun 30, 2025; not connected again: Way2Save ••4321.');
     // And the bottom line, marked as possibly incomplete in words.
     expect(first.text).toContain('Money in $4,000.00 Money out $1,567.50 Net $2,432.50');
     expect(first.text).toContain('These figures may be incomplete.');
@@ -205,6 +213,45 @@ describe('the printed report', () => {
   });
 });
 
+describe('review: the page says what it can’t show', () => {
+  test('marked categories that couldn’t be read are said on the first page, never silently missing', () => {
+    const [first, ...rest] = parts(html({ marked: null, markedUnreadable: true }));
+    expect(first.text).toContain('The categories you marked for taxes couldn’t be read, so their group and their transactions are left out of this report.');
+    expect(rest.some((p) => p.text.includes('Categories you marked'))).toBe(false);
+  });
+
+  test('when a connection couldn’t be loaded, the page claims no as-of time, and says so', () => {
+    const [first] = parts(html({ sources: [source({ coverage: 'missing', synced_at: null })], notes: ['Chase: stored transactions could not be read'] }));
+    expect(first.text).toContain('When some of its data is from isn’t known: see the connections below.');
+    expect(first.text).not.toContain('Data as of');
+  });
+
+  test('what the report covers is on the first page when an account holds investments', () => {
+    const [first] = parts(html({ sources: [source({ holds: { investment: true, loans: false } })] }));
+    expect(first.text).toContain('Activity inside investment accounts, such as trades, dividends and interest, isn’t in it.');
+  });
+
+  test('a zero amount is never written as minus zero', () => {
+    const appendix = parts(html({ rows: [row('Zero fee', '2025-02-02', 0, { category: 'medical' })] })).at(-1)!;
+    expect(appendix.text).toContain('Zero fee medical Chase: Checking (from the bank) $0.00');
+    expect(appendix.text).not.toContain('-$0.00');
+  });
+
+  test('every printed page carries the report and its period, beside its number', () => {
+    const s = html();
+    expect(s).toContain('<style>@media print { @page { @bottom-left { content: "Nya · 2025 tax year summary · Jan 1, 2025 to Dec 31, 2025"; } } }</style>');
+    const range = buildReport(input({ period: period({ kind: 'range', start: '2025-02-01', end: '2025-03-31' }) }));
+    expect(footerCss(range)).toContain('content: "Nya · Report for Feb 1, 2025 to Mar 31, 2025"');
+    expect(printRule('@bottom-right')).toContain('content: "Page " counter(page) " of " counter(pages)');
+  });
+
+  test('the CSV link asks for the report on screen, whatever the form says since', () => {
+    const r = buildReport(input({ period: period({ kind: 'range', start: '2025-02-01', end: '2025-03-31' }) }));
+    expect(csvQuery(r)).toBe('kind=range&start=2025-02-01&end=2025-03-31&currency=USD&tz=America%2FNew_York&format=csv');
+    expect(csvQuery(buildReport(input()))).toBe('kind=year&year=2025&currency=USD&tz=America%2FNew_York&format=csv');
+  });
+});
+
 /** The rules of a selector inside `@media print` in app/globals.css. */
 function printRule(selector: string): string {
   const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -229,7 +276,7 @@ describe('the print styles', () => {
     const root = printRule(':root');
     for (const d of ['--text: #000', '--bg: #fff', '--card: #fff', '--warn: #000']) expect(root).toContain(d);
     // No fixed paper size: A4 or Letter, as the print window says.
-    expect(printRule('@page')).not.toContain('size');
+    expect(printRule('@page')).not.toMatch(/(^|;)\s*size\s*:/);
   });
 });
 

@@ -34,8 +34,8 @@
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
-import { getOverrides, getCarried, carriedCategories } from './overrides';
-import { getRenames } from './renames';
+import { readOverridesReport, getCarriedReport, carriedCategories } from './overrides';
+import { readRenamesReport } from './renames';
 import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type OlderTxn, type Txn, type TxnCoverage } from './transactions';
 import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
@@ -113,13 +113,22 @@ export type BankSource = {
  * accounts couldn't be read: a paused link must not carry, and without the
  * live set a paused link looks active. Best effort throughout: a failure
  * shows Plaid's categories and counts the rows, never an error; `ok` false
- * says the exclusions couldn't be read, so that answer isn't cached.
+ * says the exclusions couldn't be read, so that answer isn't cached. `read`
+ * says, for a report, whether the carried categories and exclusions were all
+ * read (the links and live accounts too); the app goes on without them.
  */
 async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boolean) {
-  if (!links || links.size === 0 || !liveOk) return { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  if (!links || !liveOk) return { ...nothing, read: { categories: false, exclusions: false } };
+  if (links.size === 0) return { ...nothing, read: { categories: true, exclusions: true } };
   const earlier = [...links.keys()];
-  const [categories, annotations] = await Promise.all([getCarried(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
-  return { categories: carriedCategories(categories, links), excluded: carriedExclusions(annotations.carried, links), ok: annotations.ok };
+  const [categories, annotations] = await Promise.all([getCarriedReport(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
+  return {
+    categories: carriedCategories(categories.carried, links),
+    excluded: carriedExclusions(annotations.carried, links),
+    ok: annotations.ok,
+    read: { categories: categories.ok, exclusions: annotations.ok },
+  };
 }
 
 /** Newest first. Within a day the posting `date` is equal, so fall back to the
@@ -146,6 +155,12 @@ export function newestFirst(a: Txn, b: Txn): number {
  * a report on an earlier period (lib/report/read.ts), the same rows by the
  * same rules, further back.
  *
+ * `own_read` says whether the person's own changes were all read: their
+ * categories (set on a transaction, or carried across a re-link), their names
+ * for merchants, and their exclusions carried across a re-link. Each is a
+ * convenience the app goes on without when it can't be read, showing the
+ * bank's; a report says so (lib/report/build.ts).
+ *
  * The hidden set is read first and strictly: rows from hidden accounts are
  * filtered out inside each Item's read (the only place account_id still
  * exists), so they're never shipped, and a read failure throws rather than
@@ -154,7 +169,13 @@ export function newestFirst(a: Txn, b: Txn): number {
 export async function assembleBankRows(
   ctx: Ctx,
   opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean; since?: string }
-): Promise<{ payload: PlaidPayload; hidden: Set<string>; cacheable: boolean; sources: BankSource[] }> {
+): Promise<{
+  payload: PlaidPayload;
+  hidden: Set<string>;
+  cacheable: boolean;
+  sources: BankSource[];
+  own_read: { categories: boolean; names: boolean; exclusions: boolean };
+}> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
   const hiddenIds = new Set(hidden.keys());
@@ -177,8 +198,8 @@ export async function assembleBankRows(
           : storedItemTransactions(ctx, item, inputs)
       )
     ),
-    getOverrides(ctx),
-    getRenames(ctx),
+    readOverridesReport(ctx),
+    readRenamesReport(ctx),
     carried,
   ]);
 
@@ -188,9 +209,9 @@ export async function assembleBankRows(
   const transactions = results.flatMap((r) => r.txns);
   const older = results.flatMap((r) => r.older);
   for (const t of [...transactions, ...older]) {
-    const manual = overrides[t.transaction_id];
+    const manual = overrides.overrides[t.transaction_id];
     if (manual) t.category = manual;
-    const renamed = renames[t.vendor_key];
+    const renamed = renames.renames[t.vendor_key];
     if (renamed) t.name = renamed;
   }
   const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
@@ -229,6 +250,7 @@ export async function assembleBankRows(
       first_date: results[i].first_date,
       no_transactions: results[i].noTransactions ?? null,
     })),
+    own_read: { categories: overrides.ok && carry.read.categories, names: renames.ok, exclusions: carry.read.exclusions },
   };
 }
 
@@ -261,7 +283,15 @@ export async function finishActivity(
   plaid: PlaidPayload,
   hidden: Set<string>,
   opts: { since?: string } = {}
-): Promise<{ transactions: Txn[]; notes: string[]; incomplete: NonNullable<PlaidPayload['incomplete']>; history: OlderTxn[] }> {
+): Promise<{
+  transactions: Txn[];
+  notes: string[];
+  incomplete: NonNullable<PlaidPayload['incomplete']>;
+  history: OlderTxn[];
+  /** The manual accounts whose rows couldn't be read (lib/manual-txns.ts
+   *  readManualTxnsForDisplay), or 'all'. */
+  manual_unread: string[] | 'all';
+}> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   // The manual rows back to the earlier of the two: the history's first day,
@@ -310,5 +340,6 @@ export async function finishActivity(
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),
+    manual_unread: manual.unread,
   };
 }

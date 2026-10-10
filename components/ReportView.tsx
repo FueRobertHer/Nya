@@ -22,6 +22,7 @@ import type { Report, ReportMonth } from '@/lib/report/build';
 import {
   appendixStatus,
   gapShort,
+  MANUAL_NOTE,
   MARKED_NOTE,
   NO_TRANSACTIONS_WORDS,
   sourceName,
@@ -58,6 +59,20 @@ export function reportHeading(report: Pick<Report, 'period'>): string {
   return period.kind === 'year' ? `${period.start.slice(0, 4)} tax year summary` : `Report for ${reportDay(period.start)} to ${reportDay(period.end)}`;
 }
 
+/**
+ * The printed footer's words, on every page beside its number (app/globals.css,
+ * "Reports"): the report and its period, so a page separated from the rest
+ * still says what it belongs to. A margin box takes only text written in CSS,
+ * so it comes as a style of its own, as a CSS string: no quote, backslash or
+ * angle bracket from the words can end it, or the element.
+ */
+export function footerCss(report: Pick<Report, 'period'>): string {
+  const { period } = report;
+  const words = period.kind === 'year' ? `Nya · ${reportHeading(report)} · ${reportDay(period.start)} to ${reportDay(period.through)}` : `Nya · ${reportHeading(report)}`;
+  const css = words.replace(/[\\"]/g, '\\$&').replace(/[<>\n\r]/g, (c) => `\\${c.charCodeAt(0).toString(16)} `);
+  return `@media print { @page { @bottom-left { content: "${css}"; } } }`;
+}
+
 export function ReportView({ report }: { report: Report }) {
   const { period, totals } = report;
   const tz = period.time_zone;
@@ -69,6 +84,7 @@ export function ReportView({ report }: { report: Report }) {
 
   return (
     <article className="report" aria-label={reportHeading(report)}>
+      <style dangerouslySetInnerHTML={{ __html: footerCss(report) }} />
       <section className="report-page report-first">
         <header className="report-head">
           <div className="report-kicker">Nya</div>
@@ -166,6 +182,7 @@ export function ReportView({ report }: { report: Report }) {
                   <thead>
                     <tr>
                       <th>Account</th>
+                      <th>Transactions in this period</th>
                       <th>Balance last updated</th>
                     </tr>
                   </thead>
@@ -175,13 +192,14 @@ export function ReportView({ report }: { report: Report }) {
                         <td>
                           {m.institution}: {m.name}
                         </td>
+                        <td>{m.transactions === null ? 'Couldn’t be read' : m.transactions === 0 ? 'None in this period' : m.transactions}</td>
                         <td>{m.updated_at ? reportTime(m.updated_at, tz) : 'Not recorded'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <p className="report-note">Transactions on a manual account are the ones you entered or imported: Nya can’t tell whether any are missing.</p>
+              <p className="report-note">{MANUAL_NOTE}</p>
             </>
           )}
           {report.removed.length > 0 && (
@@ -191,7 +209,7 @@ export function ReportView({ report }: { report: Report }) {
                 {report.removed.map((r, i) => (
                   <li key={i}>
                     {r.institution}: seen from {reportDay(r.first_seen)} to {reportDay(r.last_seen)}
-                    {r.connected_again ? ', and connected again since' : ''}.
+                    {r.connected_again ? ', and every account of it connected again since' : `; not connected again: ${r.not_back.join(', ')}`}.
                   </li>
                 ))}
               </ul>
@@ -298,9 +316,7 @@ export function ReportView({ report }: { report: Report }) {
         <section className="report-page" aria-label="Appendix">
           <h2>Appendix: transactions in the categories you marked</h2>
           <p className="report-note">
-            Oldest first, in each one’s own currency. Money out is shown as a minus.
-            {report.appendix.excluded > 0 &&
-              ` ${report.appendix.excluded} transaction${report.appendix.excluded === 1 ? '' : 's'} you excluded from budgets and reports ${report.appendix.excluded === 1 ? 'is' : 'are'} left out.`}
+            Oldest first, in each one’s own currency. Money out is shown as a minus. A transaction the totals don’t count says why.
           </p>
           {report.appendix.total > report.appendix.rows.length && (
             <p className="report-flag">
@@ -334,7 +350,7 @@ export function ReportView({ report }: { report: Report }) {
                         <td>
                           {r.institution}: {r.account} ({sourceName(r.source)})
                         </td>
-                        <td className="num">{formatMoney(-r.amount, r.currency)}</td>
+                        <td className="num">{formatMoney(-r.amount || 0, r.currency)}</td>
                         <td>{[status, r.note].filter(Boolean).join('. ')}</td>
                       </tr>
                     );

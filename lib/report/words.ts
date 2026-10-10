@@ -26,11 +26,18 @@ export function reportTitle(report: Pick<Report, 'period'>, day: DayFormat): str
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** The gaps not tied to an institution, in fixed words. */
+const LOOSE: Readonly<Record<'removed_unknown' | 'own_categories' | 'own_exclusions', string>> = {
+  removed_unknown: 'Whether a connection was removed couldn’t be read, so this report may be missing its transactions.',
+  own_categories: 'Your own categories couldn’t be read, so these totals use the bank’s.',
+  own_exclusions: 'The exclusions you carried across a reconnected account couldn’t be read, so these totals may count transactions you excluded.',
+};
+
 /**
  * Each gap as a sentence, in the order given. Gaps of one kind without a day
  * of their own are said together, as the app's month notes say them; a stale
- * connection, a late start and a removal each have their own day, and their
- * own sentence.
+ * connection, a late start, a missing account and a removal each have their
+ * own day, and their own sentence.
  */
 export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
   const out: string[] = [];
@@ -64,11 +71,25 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
             : `When ${g.institution} last synced isn’t known, so this report may be missing some of its transactions.`
         );
         break;
+      case 'partial':
+        out.push(`An account at ${g.institution} stopped appearing on ${day(g.since)}: if it is still open, its later transactions aren’t here.`);
+        break;
       case 'begins_late':
         out.push(`${g.institution}’s transactions in Nya begin on ${day(g.first)}: if its accounts were open before then, this report is missing their earlier transactions.`);
         break;
-      case 'removed':
-        out.push(`${g.institution} was removed on or after ${day(g.last_seen)}, and the transactions it brought in went with it, so this report may be missing some of them.`);
+      case 'removed': {
+        const which = joinNames(g.accounts);
+        out.push(
+          g.partly_back
+            ? `${g.institution} was removed on or after ${day(g.last_seen)} and connected again, but not ${which}: the transactions ${g.accounts.length === 1 ? 'it' : 'they'} brought in went with the old connection, so this report may be missing some of them.`
+            : `${g.institution}${which ? ` (${which})` : ''} was removed on or after ${day(g.last_seen)}, and the transactions it brought in went with it, so this report may be missing some of them.`
+        );
+        break;
+      }
+      case 'removed_unknown':
+      case 'own_categories':
+      case 'own_exclusions':
+        out.push(LOOSE[g.kind]);
         break;
       case 'unreadable':
         out.push(`${g.note.replace(/[.\s]+$/, '')}.`);
@@ -86,6 +107,8 @@ export function gapShort(g: Gap, day: DayFormat): string {
       return 'Its transactions couldn’t be loaded';
     case 'stale':
       return g.since ? `Hasn’t synced since ${day(g.since)}` : 'When it last synced isn’t known';
+    case 'partial':
+      return `An account stopped appearing on ${day(g.since)}`;
     case 'importing':
       return 'Still importing older transactions';
     case 'begins_late':
@@ -96,6 +119,10 @@ export function gapShort(g: Gap, day: DayFormat): string {
       return 'You didn’t allow its bank or card transactions';
     case 'removed':
       return `Removed on or after ${day(g.last_seen)}`;
+    case 'removed_unknown':
+    case 'own_categories':
+    case 'own_exclusions':
+      return LOOSE[g.kind];
     case 'unreadable':
       return g.note;
   }
@@ -129,17 +156,37 @@ export function statusLines(report: Report, day: DayFormat): string[] {
   return [...problemLines(report, day), ...caveatLines(report, day)];
 }
 
+/** What the report covers, when some account holds what it doesn't: activity
+ *  inside investment accounts (trades, dividends, interest) and inside loans
+ *  never comes in as transactions. Null when no account does. */
+export function scopeLine(scope: Report['caveats']['scope']): string | null {
+  if (!scope.investment && !scope.loans) return null;
+  const inside = scope.investment && scope.loans ? 'investment and loan accounts' : scope.investment ? 'investment accounts' : 'loan accounts';
+  const such = scope.investment ? 'trades, dividends and interest' : 'interest charged';
+  return `This report covers bank and card transactions and the ones you entered or imported. Activity inside ${inside}, such as ${such}, isn’t in it.`;
+}
+
+/** The marked categories couldn't be read: their group is left out. */
+export const MARKED_UNREAD =
+  'The categories you marked for taxes couldn’t be read, so their group and their transactions are left out of this report.';
+
+/** What a manual account's transactions are. */
+export const MANUAL_NOTE = 'Transactions on a manual account are the ones you entered or imported: Nya can’t tell whether any are missing.';
+
 /** What is true of the period whatever the data: a year still running, days
- *  still settling, accounts left out, and what couldn't be read about the
- *  connections. */
+ *  still settling, what the report covers, accounts left out, and what
+ *  couldn't be read about the connections or the person's own choices. */
 export function caveatLines(report: Report, day: DayFormat): string[] {
   const { caveats, period } = report;
   const out: string[] = [];
   if (caveats.not_over) out.push(`${period.start.slice(0, 4)} isn’t over: this report covers ${day(period.start)} to ${day(period.through)}.`);
   if (caveats.settling) out.push('Banks can take a few days to post a transaction, so the last days of this period may still change.');
+  const scope = scopeLine(caveats.scope);
+  if (scope) out.push(scope);
   if (caveats.hidden) out.push('Accounts you hid are left out, as everywhere in Nya.');
+  if (caveats.marked === 'unreadable') out.push(MARKED_UNREAD);
+  if (caveats.names_unread) out.push('Your names for merchants couldn’t be read, so the bank’s are shown.');
   if (caveats.health_unread) out.push('How each bank connection is doing couldn’t be read, so what is said of each may be missing something.');
-  if (caveats.removed_unread) out.push('Whether a connection was removed during this period couldn’t all be read.');
   return out;
 }
 
@@ -170,8 +217,14 @@ export function sourceName(source: string): string {
 
 /** The words for how an appendix row stands in the totals, or null when it
  *  counts as any other. */
-export function appendixStatus(row: { not_counted: 'transfer' | 'currency' | null; pending: boolean; exclusion_unknown: boolean; currency: string | null }): string | null {
+export function appendixStatus(row: {
+  not_counted: 'excluded' | 'transfer' | 'currency' | null;
+  pending: boolean;
+  exclusion_unknown: boolean;
+  currency: string | null;
+}): string | null {
   const parts: string[] = [];
+  if (row.not_counted === 'excluded') parts.push('Not counted: you excluded it');
   if (row.not_counted === 'transfer') parts.push('Not counted: a transfer or loan payment');
   if (row.not_counted === 'currency') parts.push(`Not counted: in ${row.currency}`);
   if (row.pending) parts.push('Pending');
@@ -192,10 +245,11 @@ export const STATE_WORDS: Readonly<Record<HealthState, string>> = {
   partial: 'Missing accounts',
 };
 
-/** Why a connection brings in no transactions (lib/item-products.ts). */
+/** A connection that brings in no transactions, in its row: what kind it
+ *  is, and what that leaves out (lib/item-products.ts). */
 export const NO_TRANSACTIONS_WORDS: Readonly<Record<NoTransactionsReason, string>> = {
-  investment_accounts: 'Investment accounts only, so it brings in no transactions',
-  no_cash_accounts: 'No bank account or card, so it brings in no transactions',
+  investment_accounts: 'Investment accounts: their activity isn’t in this report',
+  no_cash_accounts: 'No bank account or card: its accounts’ activity isn’t in this report',
   refused: 'Plaid doesn’t provide transactions for its bank or card accounts',
   no_consent: 'You didn’t allow Nya to see transactions from its bank or card accounts',
 };

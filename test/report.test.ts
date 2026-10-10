@@ -13,12 +13,27 @@ import {
   periodMonths,
   dayIn,
   isTimeZone,
+  canonicalTimeZone,
   MAX_RANGE_DAYS,
   type Period,
   type ReportRequest,
 } from '@/lib/report/period';
-import { buildReport, POST_DAYS, APPENDIX_LIMIT, type ReportInput, type SourceFacts, type Gap } from '@/lib/report/build';
-import { gapSentences, statusHeadline, statusLines, caveatLines, totalsNote, STATE_WORDS, SYNC_REMEDY, appendixStatus, sourceName, reportTitle } from '@/lib/report/words';
+import { buildReport, POST_DAYS, APPENDIX_LIMIT, type ReportInput, type SourceFacts, type Gap, type RemovedFacts, type LiveAccountFacts } from '@/lib/report/build';
+import {
+  gapSentences,
+  statusHeadline,
+  statusLines,
+  caveatLines,
+  totalsNote,
+  STATE_WORDS,
+  SYNC_REMEDY,
+  appendixStatus,
+  sourceName,
+  reportTitle,
+  MARKED_UNREAD,
+  scopeLine,
+  NO_TRANSACTIONS_WORDS,
+} from '@/lib/report/words';
 import { reportCsv, reportFilename, REPORT_CSV_COLUMNS } from '@/lib/report/csv';
 import { parseReportSettings, isReportSettings, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { parseCsv } from './csv-parse';
@@ -82,10 +97,12 @@ const chase = (over: Partial<SourceFacts> = {}): SourceFacts => ({
   coverage: 'complete',
   synced_at: '2026-10-10T13:00:00.000Z',
   first_date: '2023-04-01',
+  first_seen: null,
   no_transactions: null,
   last_ok_at: '2026-10-10T13:00:00.000Z',
   problem: null,
   records_unreadable: false,
+  holds: { investment: false, loans: false },
   ...over,
 });
 
@@ -99,6 +116,10 @@ const input = (over: Partial<ReportInput> = {}): ReportInput => ({
   manual: [],
   removed: [],
   removedUnreadable: 0,
+  manualUnread: [],
+  liveAccounts: [],
+  links: new Map(),
+  ownRead: { categories: true, names: true, exclusions: true },
   marked: null,
   markedUnreadable: false,
   hidden: false,
@@ -433,39 +454,77 @@ describe('gaps: what the period may be missing, and the months each touches', ()
     expect(r.data_as_of).toBe('2026-10-10T13:00:00.000Z');
   });
 
-  test('removed: a connection whose history may have reached the period, unless the institution was connected again', () => {
+  test('removed: a connection whose history may have reached the period, unless every one of its accounts is back', () => {
+    const card = { account_id: 'acc_card_old', name: 'Double Cash', mask: '1234', type: 'credit' };
     const removed = [
       // Removed mid-year.
-      { institution_name: 'Citi', institution_id: 'ins_5', first_seen: '2024-01-10', last_seen: '2025-06-30' },
+      { institution_name: 'Citi', institution_id: 'ins_5', first_seen: '2024-01-10', last_seen: '2025-06-30', accounts: [card] },
       // Removed before the year began: never in it.
-      { institution_name: 'Old Bank', institution_id: 'ins_9', first_seen: '2020-01-01', last_seen: '2024-12-30' },
+      { institution_name: 'Old Bank', institution_id: 'ins_9', first_seen: '2020-01-01', last_seen: '2024-12-30', accounts: [card] },
       // Linked long after, its history couldn't reach back.
-      { institution_name: 'New Bank', institution_id: 'ins_7', first_seen: '2028-06-01', last_seen: '2028-07-01' },
-      // Removed, and Chase connected again since (the same institution).
-      { institution_name: 'Chase', institution_id: 'ins_3', first_seen: '2022-01-01', last_seen: '2025-02-01' },
+      { institution_name: 'New Bank', institution_id: 'ins_7', first_seen: '2028-06-01', last_seen: '2028-07-01', accounts: [card] },
       // Linked after the year, its history reaching back into it: may be missing.
-      { institution_name: 'Ally', institution_id: null, first_seen: '2026-03-01', last_seen: '2026-08-01' },
+      { institution_name: 'Ally', institution_id: null, first_seen: '2026-03-01', last_seen: '2026-08-01', accounts: [{ ...card, account_id: 'acc_ally', name: 'Savings', mask: '7777', type: 'depository' }] },
     ];
     const r = buildReport(input({ removed }));
     expect(r.removed).toEqual([
-      { institution: 'Citi', first_seen: '2024-01-10', last_seen: '2025-06-30', connected_again: false },
-      { institution: 'Chase', first_seen: '2022-01-01', last_seen: '2025-02-01', connected_again: true },
-      { institution: 'Ally', first_seen: '2026-03-01', last_seen: '2026-08-01', connected_again: false },
+      { institution: 'Citi', first_seen: '2024-01-10', last_seen: '2025-06-30', connected_again: false, not_back: ['Double Cash ••1234'] },
+      { institution: 'Ally', first_seen: '2026-03-01', last_seen: '2026-08-01', connected_again: false, not_back: ['Savings ••7777'] },
     ]);
     expect(r.gaps.map((g) => g.institution)).toEqual(['Ally', 'Citi']);
     expect(sentencesOf(r.gaps.filter((g) => g.institution === 'Citi'))).toEqual([
-      'Citi was removed on or after 2025-06-30, and the transactions it brought in went with it, so this report may be missing some of them.',
+      'Citi (Double Cash ••1234) was removed on or after 2025-06-30, and the transactions it brought in went with it, so this report may be missing some of them.',
     ]);
     // Citi's months run to its removal; Ally's (removed after the year) are all.
     expect(r.months.find((m) => m.month === '2025-06')!.gaps).toEqual(['Ally', 'Citi']);
     expect(r.months.find((m) => m.month === '2025-07')!.gaps).toEqual(['Ally']);
-    // Connected again by name, when the ids aren't known.
-    const byName = buildReport(input({ removed: [{ institution_name: ' chase ', institution_id: null, first_seen: '2024-01-01', last_seen: '2025-05-01' }] }));
-    expect(byName.removed[0].connected_again).toBe(true);
-    expect(byName.gaps).toEqual([]);
-    // A directory that couldn't be read is said.
-    expect(caveatLines(buildReport(input({ removed: null })), iso)).toContain('Whether a connection was removed during this period couldn’t all be read.');
-    expect(buildReport(input({ removedUnreadable: 2 })).caveats.removed_unread).toBe(true);
+  });
+
+  test('a removed account is back only when linked to one connected now, or matched at its institution by last four digits and type', () => {
+    type Account = RemovedFacts['accounts'][number];
+    const personal: Account = { account_id: 'acc_personal_card', name: 'Sapphire', mask: '1234', type: 'credit' };
+    const checking: Account = { account_id: 'acc_personal_chk', name: 'Checking', mask: '5678', type: 'depository' };
+    const gone = (accounts: Account[], over: Partial<RemovedFacts> = {}): RemovedFacts[] => [
+      { institution_name: 'Chase', institution_id: 'ins_3', first_seen: '2022-01-10', last_seen: '2026-03-01', accounts, ...over },
+    ];
+    const live = (over: Partial<LiveAccountFacts> = {}): LiveAccountFacts => ({ account_id: 'acc_biz_chk', institution_id: 'ins_3', institution_name: 'Chase', mask: '9999', type: 'depository', ...over });
+    // Two logins at one bank: the business one is still connected; the
+    // personal one, removed, is not back for it.
+    const twoLogins = buildReport(input({ rows: MARCH, removed: gone([personal]), liveAccounts: [live()] }));
+    expect(twoLogins.removed).toEqual([{ institution: 'Chase', first_seen: '2022-01-10', last_seen: '2026-03-01', connected_again: false, not_back: ['Sapphire ••1234'] }]);
+    expect(twoLogins.gaps.map((g) => g.kind)).toEqual(['removed']);
+    expect(statusHeadline(twoLogins)).toBe('This report may be incomplete:');
+    // Linked by the person to the account connected now (through an earlier link too).
+    const linked = buildReport(input({ removed: gone([personal]), liveAccounts: [live({ account_id: 'acc_new_card', mask: null })], links: new Map([['acc_personal_card', 'acc_mid'], ['acc_mid', 'acc_new_card']]) }));
+    expect(linked.removed[0]).toMatchObject({ connected_again: true, not_back: [] });
+    expect(linked.gaps).toEqual([]);
+    // A link to an account that isn't connected now brings nothing back.
+    expect(buildReport(input({ removed: gone([personal]), links: new Map([['acc_personal_card', 'acc_elsewhere']]) })).gaps.map((g) => g.kind)).toEqual(['removed']);
+    // Matched by last four digits and type at the same institution, by id or, without ids, by name.
+    expect(buildReport(input({ removed: gone([personal]), liveAccounts: [live({ account_id: 'acc_new_card', mask: '1234', type: 'credit' })] })).gaps).toEqual([]);
+    expect(
+      buildReport(input({ removed: gone([personal], { institution_id: null }), liveAccounts: [live({ account_id: 'acc_new_card', institution_id: null, institution_name: ' chase ', mask: '1234', type: 'credit' })] })).gaps
+    ).toEqual([]);
+    // The same digits at another institution, or of another type, are another account.
+    expect(buildReport(input({ removed: gone([personal]), liveAccounts: [live({ institution_id: 'ins_9', institution_name: 'Citi', mask: '1234', type: 'credit' })] })).gaps.length).toBe(1);
+    expect(buildReport(input({ removed: gone([personal]), liveAccounts: [live({ mask: '1234', type: 'depository' })] })).gaps.length).toBe(1);
+    // An account with no digits recorded can only come back by a link.
+    expect(buildReport(input({ removed: gone([{ ...personal, mask: null }]), liveAccounts: [live({ mask: null, type: 'credit' })] })).gaps.length).toBe(1);
+    // The same login added back with fewer accounts: the one not back is named.
+    const fewer = buildReport(input({ removed: gone([personal, checking]), liveAccounts: [live({ account_id: 'acc_new_chk', mask: '5678' })] }));
+    expect(fewer.removed[0]).toMatchObject({ connected_again: false, not_back: ['Sapphire ••1234'] });
+    expect(sentencesOf(fewer.gaps)).toEqual([
+      'Chase was removed on or after 2026-03-01 and connected again, but not Sapphire ••1234: the transactions it brought in went with the old connection, so this report may be missing some of them.',
+    ]);
+  });
+
+  test('a directory that couldn’t all be read is a gap: the headline, the figures and every month say it', () => {
+    for (const r of [buildReport(input({ rows: MARCH, removed: null })), buildReport(input({ rows: MARCH, removedUnreadable: 2 }))]) {
+      expect(r.gaps).toEqual([{ kind: 'removed_unknown', item_id: null, institution: null }]);
+      expect(statusHeadline(r)).toBe('This report may be incomplete:');
+      expect(sentencesOf(r.gaps)).toEqual(['Whether a connection was removed couldn’t be read, so this report may be missing its transactions.']);
+      expect(r.months.every((m) => m.uncertain)).toBe(true);
+    }
   });
 
   test('unreadable: whatever else the read couldn’t read, in its own words, touching every month', () => {
@@ -500,13 +559,153 @@ describe('gaps: what the period may be missing, and the months each touches', ()
           chase({ item_id: 'i5', institution_name: 'Acme', no_transactions: 'refused' }),
           chase({ item_id: 'i6', institution_name: 'Fid', no_transactions: 'no_consent' }),
         ],
-        removed: [{ institution_name: 'Gone', institution_id: null, first_seen: '2024-01-01', last_seen: '2025-04-01' }],
+        removed: [{ institution_name: 'Gone', institution_id: null, first_seen: '2024-01-01', last_seen: '2025-04-01', accounts: [{ account_id: 'acc_g', name: 'Card', mask: '1', type: 'credit' }] }],
+        removedUnreadable: 1,
+        ownRead: { categories: false, names: true, exclusions: false },
         notes: ['Manual accounts: transactions entered for them couldn’t be read'],
       })
     );
-    expect(r.gaps.map((g) => g.kind)).toEqual(['missing', 'removed', 'refused', 'no_consent', 'stale', 'importing', 'begins_late', 'unreadable']);
+    expect(r.gaps.map((g) => g.kind)).toEqual([
+      'missing',
+      'removed',
+      'removed_unknown',
+      'refused',
+      'no_consent',
+      'stale',
+      'importing',
+      'begins_late',
+      'own_categories',
+      'own_exclusions',
+      'unreadable',
+    ]);
     expect(statusHeadline(r)).toBe('This report may be incomplete:');
-    expect(statusLines(r, iso).length).toBe(9);
+    // Each gap a sentence (the stale one's day included), and the remedy.
+    expect(statusLines(r, iso).length).toBe(12);
+  });
+});
+
+describe('review: what the first page claims', () => {
+  test('data as of: not known when a connection that should bring transactions couldn’t be loaded or doesn’t say; now only with no such connection', () => {
+    const everyMissing = buildReport(input({ rows: [], sources: [chase({ coverage: 'missing', synced_at: null, first_date: null })], notes: ['Chase: stored transactions could not be read'] }));
+    expect(everyMissing.data_as_of).toBeNull();
+    const oneMissing = buildReport(input({ sources: [chase(), chase({ item_id: 'i2', institution_name: 'Citi', coverage: 'missing', synced_at: null })] }));
+    expect(oneMissing.data_as_of).toBeNull();
+    expect(buildReport(input({ sources: [] })).data_as_of).toBe(new Date(NOW).toISOString());
+    // Investment accounts bring no transactions by design: the rows here were read as the report was made.
+    expect(buildReport(input({ sources: [chase({ no_transactions: 'investment_accounts', synced_at: null, first_date: null })] })).data_as_of).toBe(new Date(NOW).toISOString());
+    // Every connection current: the oldest of their times.
+    expect(buildReport(input({ sources: [chase(), chase({ item_id: 'i2', institution_name: 'Citi', synced_at: '2026-10-09T12:00:00.000Z' })] })).data_as_of).toBe('2026-10-09T12:00:00.000Z');
+  });
+
+  test('partial: an account that stopped appearing is a gap, from the day it did', () => {
+    const r = buildReport(input({ rows: MARCH, sources: [chase({ problem: { state: 'partial', since: '2025-03-01T13:00:00.000Z' } })] }));
+    expect(r.gaps).toEqual([{ kind: 'partial', item_id: 'item_chase', institution: 'Chase', since: '2025-03-01' }]);
+    expect(statusHeadline(r)).toBe('This report may be incomplete:');
+    expect(sentencesOf(r.gaps)).toEqual(['An account at Chase stopped appearing on 2025-03-01: if it is still open, its later transactions aren’t here.']);
+    // February's last days can post into March: it is touched too, January isn't.
+    expect(r.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2025-02', '2025-03', '2025-04', '2025-05', '2025-06', '2025-07', '2025-08', '2025-09', '2025-10', '2025-11', '2025-12']);
+    // Gone after the year's transactions were all in: nothing of it is missing.
+    expect(buildReport(input({ sources: [chase({ problem: { state: 'partial', since: '2026-02-01T13:00:00.000Z' } })] })).gaps).toEqual([]);
+  });
+
+  test('a month is short when a stale connection last synced less than POST_DAYS after it ended', () => {
+    const dec1 = buildReport(input({ sources: [chase({ synced_at: '2025-12-01T20:00:00.000Z' })] }));
+    expect(dec1.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2025-11', '2025-12']);
+    const dec5 = buildReport(input({ sources: [chase({ synced_at: '2025-12-05T20:00:00.000Z' })] }));
+    expect(dec5.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2025-12']);
+  });
+
+  test('missing: a connection whose history can’t reach the period is no gap; one that can is, from where it can', () => {
+    const p2023 = period({ kind: 'year', year: 2023 });
+    const neverSynced = (first_seen: string) => chase({ coverage: 'missing', synced_at: null, first_date: null, first_seen });
+    const late = buildReport(input({ period: p2023, sources: [neverSynced('2026-09-01')] }));
+    expect(late.gaps).toEqual([]);
+    expect(late.data_as_of).toBe(new Date(NOW).toISOString());
+    const reaching = buildReport(input({ period: p2023, sources: [neverSynced('2025-06-01')] }));
+    expect(reaching.gaps).toEqual([{ kind: 'missing', item_id: 'item_chase', institution: 'Chase', reach: '2023-06-02' }]);
+    expect(reaching.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2023-06', '2023-07', '2023-08', '2023-09', '2023-10', '2023-11', '2023-12']);
+    // Not known when it was first seen: every month.
+    expect(buildReport(input({ period: p2023, sources: [chase({ coverage: 'missing', first_seen: null })] })).months.every((m) => m.uncertain)).toBe(true);
+  });
+
+  test('the person’s own categories or carried exclusions that couldn’t be read are gaps; their names for merchants a caveat', () => {
+    const cats = buildReport(input({ rows: MARCH, ownRead: { categories: false, names: true, exclusions: true } }));
+    expect(cats.gaps).toEqual([{ kind: 'own_categories', item_id: null, institution: null }]);
+    expect(sentencesOf(cats.gaps)).toEqual(['Your own categories couldn’t be read, so these totals use the bank’s.']);
+    expect(statusHeadline(cats)).toBe('This report may be incomplete:');
+    const excl = buildReport(input({ rows: MARCH, ownRead: { categories: true, names: true, exclusions: false } }));
+    expect(sentencesOf(excl.gaps)).toEqual(['The exclusions you carried across a reconnected account couldn’t be read, so these totals may count transactions you excluded.']);
+    const names = buildReport(input({ rows: MARCH, ownRead: { categories: true, names: false, exclusions: true } }));
+    expect(names.gaps).toEqual([]);
+    expect(caveatLines(names, iso)).toContain('Your names for merchants couldn’t be read, so the bank’s are shown.');
+  });
+
+  test('marked categories that couldn’t be read are said, on the page and in the CSV', () => {
+    const r = buildReport(input({ rows: MARCH, marked: null, markedUnreadable: true }));
+    expect(statusLines(r, iso)).toContain(MARKED_UNREAD);
+    expect(MARKED_UNREAD).toBe('The categories you marked for taxes couldn’t be read, so their group and their transactions are left out of this report.');
+    expect(parseCsv(reportCsv(r)).find((x) => x[0] === 'caveat' && x[1] === MARKED_UNREAD)).toBeDefined();
+  });
+
+  test('what the report covers, whenever an account holds investments or a loan', () => {
+    const plain = buildReport(input({ rows: MARCH }));
+    expect(plain.caveats.scope).toEqual({ investment: false, loans: false });
+    expect(caveatLines(plain, iso).some((l) => l.startsWith('This report covers'))).toBe(false);
+    const inv = buildReport(input({ rows: MARCH, sources: [chase({ holds: { investment: true, loans: false } })] }));
+    expect(caveatLines(inv, iso)).toContain(
+      'This report covers bank and card transactions and the ones you entered or imported. Activity inside investment accounts, such as trades, dividends and interest, isn’t in it.'
+    );
+    const loans = buildReport(input({ rows: MARCH, sources: [chase({ holds: { investment: false, loans: true } })] }));
+    expect(scopeLine(loans.caveats.scope)).toBe(
+      'This report covers bank and card transactions and the ones you entered or imported. Activity inside loan accounts, such as interest charged, isn’t in it.'
+    );
+    expect(scopeLine({ investment: true, loans: true })).toContain('Activity inside investment and loan accounts, such as trades, dividends and interest, isn’t in it.');
+    // An investment-only connection, or a manual investment account, says it too.
+    expect(buildReport(input({ sources: [chase({ no_transactions: 'investment_accounts' })] })).caveats.scope.investment).toBe(true);
+    expect(buildReport(input({ manual: [{ account_id: 'm1', name: '401(k)', institution: 'Work', type: 'investment', updated_at: null }] })).caveats.scope.investment).toBe(true);
+    expect(NO_TRANSACTIONS_WORDS.investment_accounts).toBe('Investment accounts: their activity isn’t in this report');
+  });
+
+  test('marked categories are matched as the app files a category, and listed for marking once', () => {
+    const rows = [row('h1', '2025-04-01', 500, { category: 'home  office' }), row('h2', '2025-04-02', 20, { category: 'Home Office' }), row('x', '2025-04-03', 7)];
+    const r = buildReport(input({ rows, marked: ['home office'] }));
+    expect(r.marked!.categories).toEqual([{ category: 'home office', money_in: 0, money_out: 520, transactions: 2 }]);
+    expect(r.marked!.money_out).toBe(520);
+    expect(r.appendix!.rows.map((x) => [x.name, x.category])).toEqual([
+      ['h1', 'home office'],
+      ['h2', 'home office'],
+    ]);
+    expect(r.categories).toEqual(['general merchandise', 'home office']);
+  });
+
+  test('on a tie, the currencies list the report’s own first', () => {
+    const rows = [row('u', '2025-04-02', 5), row('e', '2025-04-03', 6, { iso_currency_code: 'EUR' })];
+    const r = buildReport(input({ rows }));
+    expect(r.currencies[0].currency).toBe(r.currency!);
+  });
+
+  test('each manual account’s transactions in the period, and never "none" for one that couldn’t be read', () => {
+    const manual = [
+      { account_id: 'manual_wallet', name: 'Wallet', institution: 'Cash', type: 'depository', updated_at: null },
+      { account_id: 'manual_cu', name: 'Share draft', institution: 'Credit Union', type: 'depository', updated_at: null },
+      { account_id: 'manual_safe', name: 'Safe', institution: 'Home', type: 'depository', updated_at: null },
+    ];
+    const r = buildReport(input({ rows: MARCH, manual, manualUnread: ['manual_safe'] }));
+    expect(r.manual.map((m) => [m.name, m.transactions])).toEqual([
+      ['Wallet', 1],
+      ['Share draft', 1],
+      ['Safe', null],
+    ]);
+    expect(buildReport(input({ rows: MARCH, manual, manualUnread: 'all' })).manual.every((m) => m.transactions === null)).toBe(true);
+    expect(buildReport(input({ rows: [], manual })).manual.every((m) => m.transactions === 0)).toBe(true);
+  });
+
+  test('a time zone is said by its own name, however it was written', () => {
+    const q = readReportParams(new URLSearchParams('year=2025&tz=america/new_york'));
+    expect('error' in q ? q.error : q.timeZone).toBe('America/New_York');
+    expect(canonicalTimeZone('UTC')).toBe('UTC');
+    expect(canonicalTimeZone('Not/AZone')).toBeNull();
+    expect(dayIn('2026-01-01T02:30:00.000Z', 'america/new_york')).toBe('2025-12-31');
   });
 });
 
@@ -546,13 +745,17 @@ describe('the categories marked for taxes', () => {
     expect(r.caveats.marked).toBe('set');
   });
 
-  test('their transactions listed, oldest first, with where each came from and why any isn’t counted; what the person excluded left out and counted', () => {
+  test('their transactions listed, oldest first, with where each came from and why any isn’t counted, what the person excluded among them', () => {
     const rows = [...MARCH, row('xray', '2025-03-21', 300, { category: 'medical', excluded: true })];
     const r = medical({ rows });
     const a = r.appendix!;
-    expect(a.rows.map((x) => x.name)).toEqual(['doctor', 'card-payment', 'unknown', 'paris', 'manual-txn:cash', 'manual-txn:ofx']);
-    expect(a).toMatchObject({ total: 6, limit: APPENDIX_LIMIT, excluded: 1 });
+    expect(a.rows.map((x) => x.name)).toEqual(['doctor', 'card-payment', 'unknown', 'paris', 'manual-txn:cash', 'manual-txn:ofx', 'xray']);
+    expect(a).toMatchObject({ total: 7, limit: APPENDIX_LIMIT, excluded: 1 });
     const by = (name: string) => a.rows.find((x) => x.name === name)!;
+    expect(by('xray')).toMatchObject({ not_counted: 'excluded', amount: 300 });
+    expect(appendixStatus(by('xray'))).toBe('Not counted: you excluded it');
+    // Listed, never counted: the group's totals leave it out.
+    expect(r.marked!.categories[0]).toMatchObject({ category: 'medical', money_out: 290.1, transactions: 4 });
     expect(by('card-payment')).toMatchObject({ not_counted: 'transfer', source: 'plaid' });
     expect(by('paris')).toMatchObject({ not_counted: 'currency', currency: 'EUR' });
     expect(by('unknown')).toMatchObject({ not_counted: null, exclusion_unknown: true });

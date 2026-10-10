@@ -31,28 +31,38 @@ export type ReportRequest = { kind: 'year'; year: number } | { kind: 'range'; st
  */
 export type Period = { kind: ReportKind; start: string; end: string; through: string; today: string; time_zone: string };
 
-/** An IANA time zone this runtime knows ("America/New_York", "UTC"). */
-export function isTimeZone(v: unknown): v is string {
-  if (typeof v !== 'string' || v.length === 0 || v.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-]*(?:\/[A-Za-z0-9_+\-]+){0,2}$/.test(v)) return false;
+/** The name of an IANA time zone this runtime knows, as it names it
+ *  ("America/New_York" for "america/new_york"), or null for anything else. A
+ *  report says the canonical name, and keeps one formatter per zone. */
+export function canonicalTimeZone(v: unknown): string | null {
+  if (typeof v !== 'string' || v.length === 0 || v.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-]*(?:\/[A-Za-z0-9_+\-]+){0,2}$/.test(v)) return null;
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: v });
-    return true;
+    return new Intl.DateTimeFormat('en-US', { timeZone: v }).resolvedOptions().timeZone;
   } catch {
-    return false;
+    return null;
   }
 }
 
+/** An IANA time zone this runtime knows, in any spelling it takes. */
+export function isTimeZone(v: unknown): v is string {
+  return canonicalTimeZone(v) !== null;
+}
+
+/** One formatter per zone, by its canonical name only: a zone spelled
+ *  another way adds none. */
 const formats = new Map<string, Intl.DateTimeFormat>();
 
 /** The calendar day (YYYY-MM-DD) an instant falls on in `timeZone`, or null
- *  for something that isn't an instant. */
+ *  for something that isn't an instant, or a zone this runtime doesn't know. */
 export function dayIn(at: string | number | Date, timeZone: string): string | null {
   const d = at instanceof Date ? at : new Date(at);
   if (Number.isNaN(d.getTime())) return null;
   let f = formats.get(timeZone);
   if (!f) {
-    f = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-    formats.set(timeZone, f);
+    const zone = canonicalTimeZone(timeZone);
+    if (!zone) return null;
+    f = formats.get(zone) ?? new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    formats.set(zone, f);
   }
   const parts = f.formatToParts(d);
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
@@ -92,8 +102,8 @@ export function readReportParams(params: URLSearchParams): ReportParams | { erro
   }
   const kind = params.get('kind') ?? 'year';
   if (kind !== 'year' && kind !== 'range') return { error: 'kind must be "year" or "range".' };
-  const tz = params.get('tz') ?? 'UTC';
-  if (!isTimeZone(tz)) return { error: 'tz must be a time zone, like America/New_York.' };
+  const tz = canonicalTimeZone(params.get('tz') ?? 'UTC');
+  if (!tz) return { error: 'tz must be a time zone, like America/New_York.' };
   const currency = params.get('currency');
   if (currency !== null && !CURRENCY.test(currency)) return { error: 'currency must be a currency code, like USD.' };
   const format = params.get('format') ?? 'json';

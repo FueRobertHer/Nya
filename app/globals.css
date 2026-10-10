@@ -3522,11 +3522,18 @@ button.import-choice {
   margin: 0 0 12px;
 }
 
-/* The two dates side by side, and the button under them. */
+/* The two dates side by side, and the button under them; each date may
+   shrink below its own width, so both fit on a 320 px phone. */
 .report-dates {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0 10px;
+}
+
+.report-dates input {
+  min-width: 0;
+  padding-left: 8px;
+  padding-right: 6px;
 }
 
 .report-dates > button {
@@ -3610,7 +3617,9 @@ button.import-choice {
 
 .report-bottom-line {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Columns that may shrink below their figures, so a 320 px phone never
+     scrolls sideways; the figures shrink with the screen instead. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px 12px;
   margin-bottom: 16px;
 }
@@ -3620,7 +3629,7 @@ button.import-choice {
 }
 
 .report-figure {
-  font-size: 17px;
+  font-size: clamp(14px, 4.4vw, 17px);
   font-weight: 600;
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
@@ -3704,9 +3713,25 @@ button.import-choice {
 }
 
 @media print {
-  /* The paper's own size, A4 or Letter, whichever the print window has. */
+  /* The paper's own size, A4 or Letter, whichever the print window has, with
+     a footer on every page: the report and its period on the left (a style
+     the report writes, components/ReportView.tsx footerCss), the page's
+     number on the right. */
   @page {
-    margin: 16mm 14mm;
+    margin: 12mm 12mm 16mm;
+
+    @bottom-left {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 8pt;
+      color: #333;
+    }
+
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 8pt;
+      color: #333;
+    }
   }
 
   :root {
@@ -3773,8 +3798,49 @@ button.import-choice {
   .report-status {
     border: 1.5pt solid #000;
     border-radius: 0;
-    padding: 8pt 10pt;
+    padding: 6pt 8pt;
+    margin: 8pt 0;
+    font-size: 9pt;
+    line-height: 1.35;
     break-inside: avoid;
+  }
+
+  .report-status li + li {
+    margin-top: 2pt;
+  }
+
+  /* The first page holds everything a reader needs before any figure: kept
+     tight, so it stays one page with half a dozen connections. */
+  .report-meta,
+  .report-note {
+    font-size: 8.5pt;
+    margin-top: 3pt;
+  }
+
+  .report-bottom-line {
+    gap: 2pt 10pt;
+    margin-bottom: 8pt;
+  }
+
+  .report-figure {
+    font-size: 12pt;
+  }
+
+  .report .report-first h2 {
+    margin: 6pt 0 4pt;
+  }
+
+  .report .report-first h3 {
+    margin: 6pt 0 2pt;
+  }
+
+  .report .report-first table {
+    font-size: 8.5pt;
+  }
+
+  .report .report-first th,
+  .report .report-first td {
+    padding: 2pt 3pt;
   }
 
   .report-bottom-line {

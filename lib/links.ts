@@ -148,6 +148,15 @@ export async function readKnownAccounts(ctx: Ctx): Promise<{ known: Map<string, 
   return { known, unreadable };
 }
 
+/** One account as the directory remembers it, for a report. */
+export type DirectoryAccount = {
+  account_id: string;
+  name: string | null;
+  /** The last four digits, as the institution shows them. */
+  mask: string | null;
+  type: string | null;
+};
+
 /** A connection that is no longer stored, as the directory remembers it: the
  *  directory outlives a disconnect, which deletes the connection's
  *  transactions (lib/disconnect-item.ts). */
@@ -159,55 +168,61 @@ export type RemovedConnection = {
    *  last_seen): the span it was connected for, as far as Nya saw. */
   first_seen: string;
   last_seen: string;
-  account_ids: string[];
+  accounts: DirectoryAccount[];
 };
 
+/** An account of a connection stored now, as the directory remembers it. */
+export type LiveSeenAccount = DirectoryAccount & { item_id: string; institution_id: string | null; institution_name: string; first_seen: string };
+
 /**
- * The connections the directory remembers that aren't among `liveItemIds`
- * (the Items stored now), one per Item, oldest first: for a report, which must
- * say when a connection that was there during its period has been removed,
- * taking its transactions with it (lib/report/read.ts). LENIENT, for that
- * display only, which nothing writes, deletes or records on: an entry that
- * can't be read, or that lacks its days, is counted in `unreadable` instead.
- * Throws only when the directory can't be read at all.
+ * What a report needs from the directory, read once: the connections it
+ * remembers that aren't among `liveItemIds` (the Items stored now), one per
+ * Item, oldest first, with their accounts, so a report can say when one that
+ * was there during its period was removed, taking its transactions with it,
+ * and whether each of its accounts is back; and the stored connections'
+ * accounts (`live`), with the day each was first seen (lib/report/read.ts).
+ * LENIENT, for that display only, which nothing writes, deletes or records
+ * on: an entry that can't be read, or that lacks its days, is counted in
+ * `unreadable` instead. Throws only when the directory can't be read at all.
  */
 export async function removedConnections(
   ctx: Ctx,
   liveItemIds: ReadonlySet<string>
-): Promise<{ removed: RemovedConnection[]; unreadable: number }> {
+): Promise<{ removed: RemovedConnection[]; live: LiveSeenAccount[]; unreadable: number }> {
   const { entries, unreadable } = await readDirectory(ctx);
   let unusable = unreadable.size;
   const day = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
   const byItem = new Map<string, RemovedConnection>();
+  const live: LiveSeenAccount[] = [];
   for (const [id, e] of Object.entries(entries)) {
     if (!e || typeof e !== 'object' || typeof e.item_id !== 'string' || !day(e.first_seen) || !day(e.last_seen)) {
       unusable++;
       continue;
     }
-    if (liveItemIds.has(e.item_id) || isManualId(id)) continue;
-    const name = typeof e.institution_name === 'string' && e.institution_name.trim() ? e.institution_name.trim() : 'A removed connection';
+    if (isManualId(id)) continue;
+    const name = text(e.institution_name) ?? 'A removed connection';
+    const institution_id = text(e.institution_id);
+    const account: DirectoryAccount = { account_id: id, name: text(e.name) ?? text(e.official_name), mask: text(e.mask), type: text(e.type) };
+    if (liveItemIds.has(e.item_id)) {
+      live.push({ ...account, item_id: e.item_id, institution_id, institution_name: name, first_seen: e.first_seen });
+      continue;
+    }
     const seen = byItem.get(e.item_id);
     if (!seen) {
-      byItem.set(e.item_id, {
-        item_id: e.item_id,
-        institution_name: name,
-        institution_id: typeof e.institution_id === 'string' ? e.institution_id : null,
-        first_seen: e.first_seen,
-        last_seen: e.last_seen,
-        account_ids: [id],
-      });
+      byItem.set(e.item_id, { item_id: e.item_id, institution_name: name, institution_id, first_seen: e.first_seen, last_seen: e.last_seen, accounts: [account] });
       continue;
     }
     if (e.first_seen < seen.first_seen) seen.first_seen = e.first_seen;
     // The name it was last seen under.
     if (e.last_seen > seen.last_seen) Object.assign(seen, { last_seen: e.last_seen, institution_name: name });
-    seen.institution_id ??= typeof e.institution_id === 'string' ? e.institution_id : null;
-    seen.account_ids.push(id);
+    seen.institution_id ??= institution_id;
+    seen.accounts.push(account);
   }
   const removed = [...byItem.values()]
-    .map((r) => ({ ...r, account_ids: r.account_ids.sort() }))
+    .map((r) => ({ ...r, accounts: r.accounts.sort((a, b) => (a.account_id < b.account_id ? -1 : 1)) }))
     .sort((a, b) => (a.first_seen < b.first_seen ? -1 : a.first_seen > b.first_seen ? 1 : a.item_id < b.item_id ? -1 : 1));
-  return { removed, unreadable: unusable };
+  return { removed, live: live.sort((a, b) => (a.account_id < b.account_id ? -1 : 1)), unreadable: unusable };
 }
 
 /** Every offer the user declined (dismissPair, dismissAll): "<old>><new>" or

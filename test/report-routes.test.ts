@@ -45,7 +45,7 @@ const { syncsStore, noticesStore } = await import('@/lib/connection-records');
 const { readSpending } = await import('@/lib/api-read');
 const { readReport } = await import('@/lib/report/read');
 const { resolvePeriod } = await import('@/lib/report/period');
-const { gapSentences } = await import('@/lib/report/words');
+const { gapSentences, statusHeadline } = await import('@/lib/report/words');
 const { reportSettingsStore } = await import('@/lib/report/store');
 const { StoredDataUnreadableError, UnreadableValueError } = await import('@/lib/repo');
 const { declaredStore } = await import('@/lib/stores');
@@ -211,9 +211,10 @@ describe('a report from stored data', () => {
     ]);
     expect(r.appendix!.rows[1].note).toBe('co-pay');
     // Manual accounts with their last update, every institution listed.
+    // Each with its transactions in the period; never "none" for one whose rows couldn't be read.
     expect(r.manual).toEqual([
-      { account_id: 'manual_wallet', name: 'Wallet', institution: 'Cash', updated_at: '2026-09-30T18:00:00.000Z' },
-      { account_id: 'manual_safe', name: 'Safe', institution: 'Home', updated_at: '2026-01-02T18:00:00.000Z' },
+      { account_id: 'manual_wallet', name: 'Wallet', institution: 'Cash', type: 'depository', updated_at: '2026-09-30T18:00:00.000Z', transactions: 2 },
+      { account_id: 'manual_safe', name: 'Safe', institution: 'Home', type: 'depository', updated_at: '2026-01-02T18:00:00.000Z', transactions: null },
     ]);
     expect(r.institutions.map((i) => i.institution_name)).toEqual(['Acme CU', 'Ally', 'Amex', 'Chase', 'Citi', 'Vanguard']);
     expect(r.institutions.find((i) => i.institution_name === 'Citi')).toMatchObject({
@@ -238,7 +239,7 @@ describe('a report from stored data', () => {
       ['unreadable', null],
     ]);
     expect(gapSentences(r.gaps, (d) => d)).toEqual([
-      'Wells Fargo was removed on or after 2025-06-30, and the transactions it brought in went with it, so this report may be missing some of them.',
+      'Wells Fargo (Checking ••9) was removed on or after 2025-06-30, and the transactions it brought in went with it, so this report may be missing some of them.',
       'Doesn’t include the bank or card accounts at Acme CU: Plaid doesn’t provide their transactions, so this report may be incomplete.',
       'Citi hasn’t synced since 2025-09-12, so this report may be missing some of its transactions.',
       'Ally is still importing older transactions, so this report may be incomplete.',
@@ -247,7 +248,7 @@ describe('a report from stored data', () => {
     ]);
     // Vanguard holds investments only: listed, never a gap.
     expect(r.institutions.find((i) => i.institution_name === 'Vanguard')!.no_transactions).toBe('investment_accounts');
-    expect(r.removed).toEqual([{ institution: 'Wells Fargo', first_seen: '2024-01-10', last_seen: '2025-06-30', connected_again: false }]);
+    expect(r.removed).toEqual([{ institution: 'Wells Fargo', first_seen: '2024-01-10', last_seen: '2025-06-30', connected_again: false, not_back: ['Checking ••9'] }]);
     // Each month names what it may be missing.
     expect(r.months.find((m) => m.month === '2025-01')!.gaps).toEqual(['Acme CU', 'Ally', 'Amex', 'Wells Fargo']);
     expect(r.months.find((m) => m.month === '2025-12')!.gaps).toEqual(['Acme CU', 'Ally', 'Citi']);
@@ -309,6 +310,109 @@ describe('a report from stored data', () => {
     expect(r.totals.transactions).toBe(0);
     // Every connection's history begins after it.
     expect(r.gaps.filter((g) => g.kind === 'begins_late').map((g) => g.institution)).toEqual(['Amex', 'Chase', 'Citi']);
+  });
+});
+
+describe('review: a report from stored data never claims more than it has', () => {
+  /** A Chase login with history from 2023, and what its last load remembered. */
+  async function chaseLogin(item_id: string, accounts: { account_id: string; mask: string; type: string; name?: string }[]) {
+    await saveItem(ctx, { item_id, institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(`t-${item_id}`) });
+    await fake.set(ctxKey(`txns:${item_id}`), await store([on('2023-05-01', `${item_id}-0`, accounts[0].account_id, 9), on('2025-02-02', `${item_id}-1`, accounts[0].account_id, 50)]));
+    const meta = accounts.map((a) => ({ name: a.name ?? 'Account', official_name: null, subtype: null, limit: null, currency: 'USD', ...a }));
+    await fake.hset(ctxKey('accounts:meta'), { [item_id]: await encrypt(JSON.stringify(meta)) });
+  }
+  /** An account of a connection removed in March 2026, as the directory keeps it. */
+  const removedEntry = (account: { name: string; mask: string; type: string }) =>
+    encrypt(JSON.stringify({ provider: 'plaid', item_id: 'item_personal', institution_id: 'ins_3', institution_name: 'Chase', official_name: null, subtype: null, persistent_account_id: null, first_seen: '2022-01-10', last_seen: '2026-03-01', ...account }));
+  const snapshot = () => JSON.stringify({ s: [...fake.strings].sort(), h: [...fake.hashes].map(([k, v]) => [k, [...v].sort()]).sort() });
+
+  test('making a report writes nothing', async () => {
+    await seedYear();
+    const before = snapshot();
+    await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(snapshot()).toBe(before);
+  });
+
+  test('two logins at one bank: the one removed is a gap, though the other is still connected', async () => {
+    await chaseLogin('item_biz', [{ account_id: 'acc_biz', mask: '9999', type: 'depository' }]);
+    await fake.hset(ctxKey('accounts:directory'), { acc_personal_card: await removedEntry({ name: 'Sapphire', mask: '1234', type: 'credit' }) });
+    const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(r.removed).toEqual([{ institution: 'Chase', first_seen: '2022-01-10', last_seen: '2026-03-01', connected_again: false, not_back: ['Sapphire ••1234'] }]);
+    expect(r.gaps.map((g) => g.kind)).toEqual(['removed']);
+    expect(statusHeadline(r)).toBe('This report may be incomplete:');
+  });
+
+  test('a removed account is back when the person linked it to one connected now, or the same card was connected again', async () => {
+    await chaseLogin('item_new', [{ account_id: 'acc_new_card', mask: '1234', type: 'credit' }]);
+    await fake.hset(ctxKey('accounts:directory'), { acc_personal_card: await removedEntry({ name: 'Sapphire', mask: '1234', type: 'credit' }) });
+    // Matched: the same last four digits and type at the same bank.
+    const matched = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(matched.removed[0]).toMatchObject({ connected_again: true, not_back: [] });
+    expect(matched.gaps).toEqual([]);
+    // Linked by the person, whatever the digits say.
+    await fake.hset(ctxKey('accounts:directory'), { acc_personal_card: await removedEntry({ name: 'Sapphire', mask: '0000', type: 'credit' }) });
+    expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps.map((g) => g.kind)).toEqual(['removed']);
+    await fake.hset(ctxKey('account-links'), { acc_personal_card: await encrypt(JSON.stringify({ to: 'acc_new_card', linked_at: '2026-03-02T00:00:00.000Z', evidence: {} })) });
+    expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps).toEqual([]);
+  });
+
+  test('a directory entry that can’t be read makes the report say it may be missing a removed connection’s transactions', async () => {
+    await chaseLogin('item_a', [{ account_id: 'acc_a', mask: '1111', type: 'depository' }]);
+    await fake.hset(ctxKey('accounts:directory'), { acc_gone: 'damaged-not-ciphertext' });
+    const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(r.gaps.map((g) => g.kind)).toEqual(['removed_unknown']);
+    expect(statusHeadline(r)).toBe('This report may be incomplete:');
+  });
+
+  test('a manual account with nothing in the period says none, and one older than the recurring history’s two years keeps its rows', async () => {
+    await saveManualAccount(ctx, { account_id: 'manual_cu', name: 'Credit union checking', institution_name: 'Local CU', type: 'depository', subtype: 'checking', balance: 4000, updated_at: '2026-09-30T18:00:00.000Z' });
+    await saveManualAccount(ctx, { account_id: 'manual_w', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: '2026-09-30T18:00:00.000Z' });
+    const now = new Date(NOW).toISOString();
+    await manualTxnStore.set(ctx, 'manual_w', {
+      version: 1,
+      rows: [{ id: 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', account_id: 'manual_w', date: '2023-06-01', amount: 25, currency: 'USD', name: 'old', category: 'medical', note: null, source: 'manual', source_id: null, created_at: now, updated_at: now }],
+    });
+    const p2023 = resolvePeriod({ kind: 'year', year: 2023 }, NY, NOW);
+    if ('error' in p2023) throw new Error(p2023.error);
+    const r = await quiet(() => readReport(ctx, p2023, { now: NOW }));
+    expect(r.totals.money_out).toBe(25);
+    expect(r.manual.map((m) => [m.name, m.transactions])).toEqual([
+      ['Wallet', 1],
+      ['Credit union checking', 0],
+    ]);
+  });
+
+  test('the person’s own categories that can’t be read are a gap, and their names for merchants a caveat; the rows read as the app reads them', async () => {
+    await chaseLogin('item_a', [{ account_id: 'acc_a', mask: '1111', type: 'depository' }]);
+    await fake.hset(ctxKey('txn-category-overrides'), { 'item_a-1': 'damaged-not-ciphertext' });
+    await fake.hset(ctxKey('txn-vendor-renames'), { 'mid:x': 'damaged-not-ciphertext' });
+    const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(r.gaps.map((g) => g.kind)).toEqual(['own_categories']);
+    expect(r.caveats.names_unread).toBe(true);
+    // The bank's category, as the Activity tab shows it then.
+    expect(r.money_out).toEqual([{ category: 'general merchandise', amount: 50, transactions: 1 }]);
+  });
+
+  test('an account that stopped appearing, and a bank connection holding investments, are said', async () => {
+    await chaseLogin('item_a', [
+      { account_id: 'acc_a', mask: '1111', type: 'depository' },
+      { account_id: 'acc_brk', mask: '2222', type: 'investment' },
+    ]);
+    await noticesStore.set(ctx, 'item_a', { episode: 'e1', since: '2025-08-01T13:00:00.000Z', state: 'partial', notified_at: null, reminded_at: null });
+    const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(r.gaps).toEqual([{ kind: 'partial', item_id: 'item_a', institution: 'Chase', since: '2025-08-01' }]);
+    expect(r.caveats.scope).toEqual({ investment: true, loans: false });
+  });
+
+  test('a connection never synced is missing only from periods its history could reach', async () => {
+    await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt('n') });
+    await fake.hset(ctxKey('accounts:directory'), {
+      acc_n: await encrypt(JSON.stringify({ provider: 'plaid', item_id: 'item_new', institution_id: null, institution_name: 'NewBank', name: 'Checking', official_name: null, mask: '3', type: 'depository', subtype: null, persistent_account_id: null, first_seen: '2026-09-01', last_seen: '2026-10-09' })),
+    });
+    const p2023 = resolvePeriod({ kind: 'year', year: 2023 }, NY, NOW);
+    if ('error' in p2023) throw new Error(p2023.error);
+    expect((await quiet(() => readReport(ctx, p2023, { now: NOW }))).gaps).toEqual([]);
+    expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps.map((g) => g.kind)).toEqual(['missing']);
   });
 });
 

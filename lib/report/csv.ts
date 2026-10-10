@@ -12,11 +12,13 @@
 // its status and gaps, the totals, each category's money in or out, each
 // month, the marked categories, each institution and manual account), `name`
 // which one, then the amounts (positive sums, in `currency`), how many
-// transactions they count, and a note. Days are written YYYY-MM-DD.
+// transactions they count, and a note. Days are written YYYY-MM-DD, on the
+// calendar of the report's time zone; times (when the report was made, when
+// each connection last synced) are ISO 8601 in UTC, as the file says.
 
 import { csvRow, UTF8_BOM, type CsvValue } from '../csv';
 import type { Report } from './build';
-import { caveatLines, NO_TRANSACTIONS_WORDS, problemLines, reportTitle, STATE_WORDS, statusHeadline, totalsNote } from './words';
+import { caveatLines, gapShort, MANUAL_NOTE, NO_TRANSACTIONS_WORDS, problemLines, reportTitle, STATE_WORDS, statusHeadline, totalsNote } from './words';
 
 export const REPORT_CSV_COLUMNS = ['section', 'name', 'money_in', 'money_out', 'net', 'transactions', 'currency', 'note'] as const;
 
@@ -36,7 +38,15 @@ export function reportCsv(report: Report): string {
 
   const { period } = report;
   line('report', reportTitle(report, iso), null, null, null, null, `From ${period.start} to ${period.through}`);
-  line('time_zone', period.time_zone, null, null, null, null, 'Transaction dates are the bank’s own days; times and today are read in this time zone.');
+  line(
+    'time_zone',
+    period.time_zone,
+    null,
+    null,
+    null,
+    null,
+    'Today and the days a time falls on are read in this time zone; a transaction’s date is its bank’s own day. Times in this file are ISO 8601 in UTC.'
+  );
   line('generated_at', report.generated_at);
   line(
     'data_as_of',
@@ -74,14 +84,34 @@ export function reportCsv(report: Report): string {
           i.problem ? `${STATE_WORDS[i.problem.state] ?? i.problem.state} since ${i.problem.since}` : null,
           i.synced_at ? `transactions last brought in ${i.synced_at}` : 'when its transactions were last brought in isn’t known',
           i.first_date ? `transactions in Nya from ${i.first_date}` : null,
+          ...report.gaps.filter((g) => g.item_id === i.item_id).map((g) => gapShort(g, iso)),
         ];
     line('institution', i.institution_name, null, null, null, null, parts.filter(Boolean).join('; '));
   }
   for (const m of report.manual) {
-    line('manual_account', `${m.institution}: ${m.name}`, null, null, null, null, m.updated_at ? `Balance last updated ${m.updated_at}` : 'When its balance was last updated isn’t recorded');
+    line(
+      'manual_account',
+      `${m.institution}: ${m.name}`,
+      null,
+      null,
+      null,
+      m.transactions,
+      [m.transactions === null ? 'Its transactions couldn’t be read' : null, m.updated_at ? `Balance last updated ${m.updated_at}` : 'When its balance was last updated isn’t recorded']
+        .filter(Boolean)
+        .join('; ')
+    );
   }
+  if (report.manual.length > 0) line('caveat', MANUAL_NOTE);
   for (const r of report.removed) {
-    line('removed_connection', r.institution, null, null, null, null, `Seen from ${r.first_seen} to ${r.last_seen}${r.connected_again ? ', and connected again since' : ''}`);
+    line(
+      'removed_connection',
+      r.institution,
+      null,
+      null,
+      null,
+      null,
+      `Seen from ${r.first_seen} to ${r.last_seen}${r.connected_again ? ', and every account of it connected again since' : r.not_back.length > 0 ? `; not connected again: ${r.not_back.join(', ')}` : ''}`
+    );
   }
   return UTF8_BOM + csvRow(REPORT_CSV_COLUMNS) + rows.map(csvRow).join('');
 }

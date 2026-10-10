@@ -63,6 +63,14 @@ export function reportQuery(form: ReportForm, tz?: string, format?: 'csv'): stri
 
 const requestOf = (f: ReportForm): ReportRequest => (f.kind === 'year' ? { kind: 'year', year: f.year } : { kind: 'range', start: f.start, end: f.end });
 
+/** The CSV of the report on screen, from its own period, currency and time
+ *  zone: never from a form changed since it was made. */
+export function csvQuery(report: Pick<Report, 'period' | 'currency'>): string {
+  const { period } = report;
+  const form: ReportForm = { kind: period.kind, year: Number(period.start.slice(0, 4)), start: period.start, end: period.end, currency: report.currency };
+  return reportQuery(form, period.time_zone, 'csv');
+}
+
 export default function ReportsPage() {
   const [form, setForm] = useState<ReportForm | null>(null);
   const [zone, setZone] = useState('UTC');
@@ -97,7 +105,10 @@ export default function ReportsPage() {
         setForm((cur) => (cur ? { ...cur, currency: (body.report as Report).currency } : cur));
       }
     } catch {
-      if (n === latest.current) setError('The report couldn’t be made. Check your connection and try again.');
+      if (n !== latest.current) return;
+      // Never the last report under the new period's controls.
+      setReport(null);
+      setError('The report couldn’t be made. Check your connection and try again.');
     } finally {
       if (n === latest.current) setLoading(false);
     }
@@ -197,7 +208,7 @@ export default function ReportsPage() {
               Print or save as PDF
             </button>
             {report && !loading ? (
-              <a className="report-link-button" href={`/api/reports?${reportQuery(form, zone, 'csv')}`} download>
+              <a className="report-link-button" href={`/api/reports?${csvQuery(report)}`} download>
                 Download as CSV
               </a>
             ) : (
