@@ -95,7 +95,9 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
  *  why it brings in no transactions, when it doesn't (lib/item-products.ts).
  *  Read from storage, also the oldest day of its stored rows (`first_date`,
  *  lib/transactions.ts storedItemTransactions); null when synced, or with
- *  none. */
+ *  none. And whether it is `missing` because nothing was ever stored for it
+ *  (`never_synced`), not because what is stored couldn't be read; false when
+ *  synced. */
 export type BankSource = {
   item_id: string;
   institution_name: string;
@@ -103,6 +105,7 @@ export type BankSource = {
   synced_at: string | null;
   first_date: string | null;
   no_transactions: NoTransactionsReason | null;
+  never_synced: boolean;
 };
 
 /**
@@ -115,12 +118,16 @@ export type BankSource = {
  * shows Plaid's categories and counts the rows, never an error; `ok` false
  * says the exclusions couldn't be read, so that answer isn't cached. `read`
  * says, for a report, whether the carried categories and exclusions were all
- * read (the links and live accounts too); the app goes on without them.
+ * read (the links too, and the live accounts when there are links to follow);
+ * the app goes on without them.
  */
 async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boolean) {
   const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  // No links, read as none: nothing could be carried, so nothing is missing,
+  // whatever the live accounts' read said (a damaged record of a connection
+  // long gone must not put a gap on every report).
+  if (links && links.size === 0) return { ...nothing, read: { categories: true, exclusions: true } };
   if (!links || !liveOk) return { ...nothing, read: { categories: false, exclusions: false } };
-  if (links.size === 0) return { ...nothing, read: { categories: true, exclusions: true } };
   const earlier = [...links.keys()];
   const [categories, annotations] = await Promise.all([getCarriedReport(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
   return {
@@ -194,7 +201,7 @@ export async function assembleBankRows(
     Promise.all(
       items.map(async (item) =>
         opts.sync
-          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null, first_date: null }
+          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null, first_date: null, never_synced: false }
           : storedItemTransactions(ctx, item, inputs)
       )
     ),
@@ -249,6 +256,7 @@ export async function assembleBankRows(
       synced_at: results[i].synced_at,
       first_date: results[i].first_date,
       no_transactions: results[i].noTransactions ?? null,
+      never_synced: results[i].never_synced === true,
     })),
     own_read: { categories: overrides.ok && carry.read.categories, names: renames.ok, exclusions: carry.read.exclusions },
   };

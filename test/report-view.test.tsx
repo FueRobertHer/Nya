@@ -64,6 +64,7 @@ const source = (over: Partial<SourceFacts> = {}): SourceFacts => ({
   synced_at: '2026-10-10T13:00:00.000Z',
   first_date: '2023-01-01',
   first_seen: null,
+  never_synced: false,
   no_transactions: null,
   last_ok_at: '2026-10-10T13:00:00.000Z',
   problem: null,

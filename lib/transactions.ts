@@ -1170,6 +1170,10 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
  * far back this institution's history in Nya reaches, as far as its rows
  * show, so a report on an earlier period can say when it doesn't reach back
  * that far (lib/report/build.ts). Null with no rows.
+ *
+ * `never_synced` marks a `missing` that is known to hold nothing: the store
+ * was read and no transactions were ever stored in it. Never on a store that
+ * couldn't be read, which may hold rows from any day.
  */
 export async function storedItemTransactions(
   ctx: Ctx,
@@ -1183,6 +1187,7 @@ export async function storedItemTransactions(
   synced_at: string | null;
   first_date: string | null;
   noTransactions?: NoTransactionsReason;
+  never_synced?: true;
 }> {
   let state: ItemState;
   try {
@@ -1202,6 +1207,7 @@ export async function storedItemTransactions(
       coverage: 'missing',
       synced_at: null,
       first_date: null,
+      never_synced: true,
     };
   }
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);

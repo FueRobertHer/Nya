@@ -21,9 +21,11 @@
 // a gap (Gap), named with its institution and, where it has one, its day on
 // the person's calendar, and each month it touches says so:
 //   - missing: an institution's stored transactions couldn't be read, or none
-//     are stored yet; not when the history it can bring (at most
-//     TRANSACTIONS_DAYS_REQUESTED days before it was first seen) can't reach
-//     the period;
+//     are stored yet. One never synced isn't missing from a period the
+//     history it can bring (at most TRANSACTIONS_DAYS_REQUESTED days before
+//     it was first seen) can't reach; one whose store can't be read always
+//     is, from every day, since it may have been linked before it was first
+//     seen (before balance history or the account directory began);
 //   - stale: it last synced before the period's transactions can all be in:
 //     POST_DAYS after its last day (banks post late), or today, whichever is
 //     first. Or when it last synced isn't known;
@@ -32,7 +34,9 @@
 //     later transactions aren't here;
 //   - importing: its older transactions are still arriving;
 //   - begins_late: its oldest stored transaction is after the period starts,
-//     so if its accounts were open before then, the rest isn't here;
+//     so if its accounts were open before then, the rest isn't here. With
+//     none stored, the same from the earliest day its history can reach,
+//     when that is after the period starts;
 //   - refused, no_consent: a bank account or card there whose transactions
 //     Plaid doesn't provide, or the person didn't allow;
 //   - removed: a connection removed since, whose transactions went with it
@@ -89,6 +93,10 @@ export type SourceFacts = {
   /** The first UTC day any of its accounts was seen (the account
    *  directory), or null when not known. */
   first_seen: string | null;
+  /** `missing` because its store was read and holds nothing yet, not
+   *  because it couldn't be read (lib/transactions.ts
+   *  storedItemTransactions). */
+  never_synced: boolean;
   no_transactions: NoTransactionsReason | null;
   /** When the connection last answered without an error. */
   last_ok_at: string | null;
@@ -165,7 +173,9 @@ export type Gap =
   | { kind: 'stale'; item_id: string; institution: string; since: string | null }
   | { kind: 'partial'; item_id: string; institution: string; since: string }
   | { kind: 'importing'; item_id: string; institution: string }
-  | { kind: 'begins_late'; item_id: string; institution: string; first: string }
+  /** `first`: its oldest stored transaction ('stored'), or, with none
+   *  stored, the earliest day its history can reach ('reach'). */
+  | { kind: 'begins_late'; item_id: string; institution: string; first: string; from: 'stored' | 'reach' }
   | { kind: 'refused'; item_id: string; institution: string }
   | { kind: 'no_consent'; item_id: string; institution: string }
   | { kind: 'removed'; item_id: null; institution: string; last_seen: string; accounts: string[]; partly_back: boolean }
@@ -249,7 +259,7 @@ export type ReportAppendix = {
   excluded: number;
 };
 
-export type ReportInstitution = Omit<SourceFacts, 'institution_id' | 'first_seen'> & {
+export type ReportInstitution = Omit<SourceFacts, 'institution_id' | 'first_seen' | 'never_synced'> & {
   /** The read's note about it, if any ("stored transactions could not be
    *  read"). */
   note: string | null;
@@ -349,10 +359,18 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   if (s.no_transactions === 'refused' || s.no_transactions === 'no_consent') return [{ kind: s.no_transactions, ...at }];
   // Investment accounts only, or no bank account or card: nothing to bring in.
   if (s.no_transactions) return [];
+  // A store that can't be read may hold rows from any day: its first sighting
+  // can be later than its link, so its reach says nothing.
+  if (s.coverage === 'missing' && !s.never_synced) return [{ kind: 'missing', ...at, reach: null }];
+  // With nothing stored to say how far back its history goes, how far it can:
+  // the days before that will never come, so if its accounts were open then,
+  // they are missing, as with a late start.
+  const reach = reachOf(s.first_seen);
+  const beyondReach: Gap[] = s.first_date === null && reach !== null && reach > period.start ? [{ kind: 'begins_late', ...at, first: reach, from: 'reach' }] : [];
   if (s.coverage === 'missing') {
-    // A connection whose history can't reach the period leaves nothing of it out.
-    const reach = reachOf(s.first_seen);
-    return reach !== null && reach > period.through ? [] : [{ kind: 'missing', ...at, reach }];
+    // Never synced: missing from the days its history can reach, if any are
+    // in the period.
+    return reach !== null && reach > period.through ? beyondReach : [{ kind: 'missing', ...at, reach }, ...beyondReach];
   }
   const gaps: Gap[] = [];
   const allIn = minDay(addDays(period.through, POST_DAYS), period.today);
@@ -364,7 +382,8 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   if (gone !== null && gone < allIn) gaps.push({ kind: 'partial', ...at, since: gone });
   // Still importing: its oldest rows are still on their way, which says it.
   if (s.coverage === 'importing') gaps.push({ kind: 'importing', ...at });
-  else if (s.first_date !== null && s.first_date > period.start) gaps.push({ kind: 'begins_late', ...at, first: s.first_date });
+  else if (s.first_date !== null && s.first_date > period.start) gaps.push({ kind: 'begins_late', ...at, first: s.first_date, from: 'stored' });
+  else gaps.push(...beyondReach);
   return gaps;
 }
 
@@ -558,7 +577,7 @@ export function buildReport(input: ReportInput): Report {
   const bringing = input.sources.filter((s) => {
     if (s.no_transactions !== null) return false;
     const reach = reachOf(s.first_seen);
-    return !(s.coverage === 'missing' && reach !== null && reach > period.through);
+    return !(s.coverage === 'missing' && s.never_synced && reach !== null && reach > period.through);
   });
   const known = bringing.every((s) => s.coverage !== 'missing' && s.synced_at !== null);
   const oldest = bringing.map((s) => s.synced_at!).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
@@ -599,7 +618,7 @@ export function buildReport(input: ReportInput): Report {
     marked,
     appendix,
     institutions: input.sources
-      .map(({ institution_id: _id, first_seen: _seen, ...s }) => ({ ...s, note: noteOf.get(s.item_id) ?? null }))
+      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, ...s }) => ({ ...s, note: noteOf.get(s.item_id) ?? null }))
       .sort((a, b) => a.institution_name.localeCompare(b.institution_name)),
     manual: input.manual
       .map((m) => ({ ...m, transactions: manualRead(m.account_id) ? (manualCounts.get(m.account_id) ?? 0) : null }))

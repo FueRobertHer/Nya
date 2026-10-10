@@ -75,7 +75,9 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         out.push(`An account at ${g.institution} stopped appearing on ${day(g.since)}: if it is still open, its later transactions aren’t here.`);
         break;
       case 'begins_late':
-        out.push(`${g.institution}’s transactions in Nya begin on ${day(g.first)}: if its accounts were open before then, this report is missing their earlier transactions.`);
+        out.push(
+          `${g.institution}’s transactions in Nya ${g.from === 'stored' ? 'begin on' : 'can go back only to'} ${day(g.first)}: if its accounts were open before then, this report is missing their earlier transactions.`
+        );
         break;
       case 'removed': {
         const which = joinNames(g.accounts);
@@ -112,7 +114,7 @@ export function gapShort(g: Gap, day: DayFormat): string {
     case 'importing':
       return 'Still importing older transactions';
     case 'begins_late':
-      return `Its transactions in Nya begin on ${day(g.first)}`;
+      return `Its transactions in Nya ${g.from === 'stored' ? 'begin on' : 'can go back only to'} ${day(g.first)}`;
     case 'refused':
       return 'Plaid doesn’t provide its bank or card transactions';
     case 'no_consent':

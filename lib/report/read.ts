@@ -127,6 +127,7 @@ export async function readReport(
       synced_at: s.synced_at,
       first_date: s.first_date,
       first_seen: firstSeen.get(s.item_id) ?? null,
+      never_synced: s.never_synced,
       no_transactions: s.no_transactions,
       last_ok_at: f.last_ok_at,
       problem: f.problem,

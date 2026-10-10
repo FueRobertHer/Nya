@@ -33,6 +33,7 @@ import {
   MARKED_UNREAD,
   scopeLine,
   NO_TRANSACTIONS_WORDS,
+  gapShort,
 } from '@/lib/report/words';
 import { reportCsv, reportFilename, REPORT_CSV_COLUMNS } from '@/lib/report/csv';
 import { parseReportSettings, isReportSettings, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
@@ -98,6 +99,7 @@ const chase = (over: Partial<SourceFacts> = {}): SourceFacts => ({
   synced_at: '2026-10-10T13:00:00.000Z',
   first_date: '2023-04-01',
   first_seen: null,
+  never_synced: false,
   no_transactions: null,
   last_ok_at: '2026-10-10T13:00:00.000Z',
   problem: null,
@@ -410,7 +412,7 @@ describe('gaps: what the period may be missing, and the months each touches', ()
 
   test('begins late: history in Nya starting after the period does, said with a condition, never as fact', () => {
     const r = buildReport(input({ sources: [chase({ first_date: '2025-03-03' })] }));
-    expect(r.gaps).toEqual([{ kind: 'begins_late', item_id: 'item_chase', institution: 'Chase', first: '2025-03-03' }]);
+    expect(r.gaps).toEqual([{ kind: 'begins_late', item_id: 'item_chase', institution: 'Chase', first: '2025-03-03', from: 'stored' }]);
     expect(sentencesOf(r.gaps)).toEqual([
       'Chase’s transactions in Nya begin on 2025-03-03: if its accounts were open before then, this report is missing their earlier transactions.',
     ]);
@@ -615,17 +617,26 @@ describe('review: what the first page claims', () => {
     expect(dec5.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2025-12']);
   });
 
-  test('missing: a connection whose history can’t reach the period is no gap; one that can is, from where it can', () => {
+  test('missing: a connection never synced is missing only from the days its history can reach; the days before can’t come, and are said as a late start', () => {
     const p2023 = period({ kind: 'year', year: 2023 });
-    const neverSynced = (first_seen: string) => chase({ coverage: 'missing', synced_at: null, first_date: null, first_seen });
+    const neverSynced = (first_seen: string | null) => chase({ coverage: 'missing', synced_at: null, first_date: null, first_seen, never_synced: true });
+    // Its history can't reach 2023: nothing there to load, and nothing of 2023 can come.
     const late = buildReport(input({ period: p2023, sources: [neverSynced('2026-09-01')] }));
-    expect(late.gaps).toEqual([]);
+    expect(late.gaps).toEqual([{ kind: 'begins_late', item_id: 'item_chase', institution: 'Chase', first: '2024-09-01', from: 'reach' }]);
     expect(late.data_as_of).toBe(new Date(NOW).toISOString());
+    // Reaching into 2023: missing from June 2 on, and short before it.
     const reaching = buildReport(input({ period: p2023, sources: [neverSynced('2025-06-01')] }));
-    expect(reaching.gaps).toEqual([{ kind: 'missing', item_id: 'item_chase', institution: 'Chase', reach: '2023-06-02' }]);
-    expect(reaching.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2023-06', '2023-07', '2023-08', '2023-09', '2023-10', '2023-11', '2023-12']);
+    expect(reaching.gaps).toEqual([
+      { kind: 'missing', item_id: 'item_chase', institution: 'Chase', reach: '2023-06-02' },
+      { kind: 'begins_late', item_id: 'item_chase', institution: 'Chase', first: '2023-06-02', from: 'reach' },
+    ]);
+    expect(reaching.months.every((m) => m.uncertain && m.gaps.join() === 'Chase')).toBe(true);
+    // Reaching the whole period: missing from all of it, and nothing more.
+    expect(buildReport(input({ sources: [neverSynced('2026-09-01')] })).gaps).toEqual([{ kind: 'missing', item_id: 'item_chase', institution: 'Chase', reach: '2024-09-01' }]);
     // Not known when it was first seen: every month.
-    expect(buildReport(input({ period: p2023, sources: [chase({ coverage: 'missing', first_seen: null })] })).months.every((m) => m.uncertain)).toBe(true);
+    const unknown = buildReport(input({ period: p2023, sources: [neverSynced(null)] }));
+    expect(unknown.gaps).toEqual([{ kind: 'missing', item_id: 'item_chase', institution: 'Chase', reach: null }]);
+    expect(unknown.months.every((m) => m.uncertain)).toBe(true);
   });
 
   test('the person’s own categories or carried exclusions that couldn’t be read are gaps; their names for merchants a caveat', () => {
@@ -706,6 +717,48 @@ describe('review: what the first page claims', () => {
     expect(canonicalTimeZone('UTC')).toBe('UTC');
     expect(canonicalTimeZone('Not/AZone')).toBeNull();
     expect(dayIn('2026-01-01T02:30:00.000Z', 'america/new_york')).toBe('2025-12-31');
+  });
+});
+
+describe('verification: how far back a connection’s history can go', () => {
+  const p2015 = period({ kind: 'year', year: 2015 });
+
+  test('synced with nothing stored, its history reaching only after the period starts: said as a late start from that day, never a complete empty period', () => {
+    // Linked in 2026: its history can go back to 2024-03-02 at most.
+    const linked2026 = chase({ first_date: null, first_seen: '2026-03-02' });
+    const r = buildReport(input({ period: p2015, sources: [linked2026] }));
+    expect(r.gaps).toEqual([{ kind: 'begins_late', item_id: 'item_chase', institution: 'Chase', first: '2024-03-02', from: 'reach' }]);
+    expect(r.empty).toBe(true);
+    expect(statusHeadline(r)).toBe('There are no transactions in this period, and some may be missing:');
+    expect(sentencesOf(r.gaps)).toEqual([
+      'Chase’s transactions in Nya can go back only to 2024-03-02: if its accounts were open before then, this report is missing their earlier transactions.',
+    ]);
+    expect(gapShort(r.gaps[0], iso)).toBe('Its transactions in Nya can go back only to 2024-03-02');
+    expect(r.months.every((m) => m.uncertain && m.gaps.join() === 'Chase')).toBe(true);
+    // Reaching into the period: the months before that day.
+    const p2024 = period({ kind: 'year', year: 2024 });
+    const into = buildReport(input({ period: p2024, sources: [chase({ first_date: null, first_seen: '2026-06-01' })] }));
+    expect(into.gaps).toEqual([{ kind: 'begins_late', item_id: 'item_chase', institution: 'Chase', first: '2024-06-01', from: 'reach' }]);
+    expect(into.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2024-01', '2024-02', '2024-03', '2024-04', '2024-05']);
+    // Reaching the whole period: it had nothing in it, and nothing is missing.
+    expect(buildReport(input({ sources: [linked2026] })).gaps).toEqual([]);
+    // Still importing says it instead.
+    expect(buildReport(input({ period: p2015, sources: [chase({ coverage: 'importing', first_date: null, first_seen: '2026-03-02' })] })).gaps.map((g) => g.kind)).toEqual(['importing']);
+  });
+
+  test('a store that can’t be read is missing from every day, however late its connection was first seen', () => {
+    // First seen in 2026, but it may have been linked long before: what it
+    // holds can't be bounded by that.
+    const unreadable = chase({ coverage: 'missing', synced_at: null, first_date: null, first_seen: '2026-09-01' });
+    const r = buildReport(input({ period: p2015, sources: [unreadable], notes: ['Chase: stored transactions could not be read'] }));
+    expect(r.gaps).toEqual([{ kind: 'missing', item_id: 'item_chase', institution: 'Chase', reach: null }]);
+    expect(r.months.every((m) => m.uncertain)).toBe(true);
+    expect(r.data_as_of).toBeNull();
+    expect(statusHeadline(r)).toBe('There are no transactions in this period, and some may be missing:');
+    // The same, known never synced: its history can't reach 2015.
+    const never = buildReport(input({ period: p2015, sources: [{ ...unreadable, never_synced: true }] }));
+    expect(never.gaps.map((g) => g.kind)).toEqual(['begins_late']);
+    expect(never.data_as_of).toBe(new Date(NOW).toISOString());
   });
 });
 

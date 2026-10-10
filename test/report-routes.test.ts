@@ -104,6 +104,9 @@ const store = (txns: ReturnType<typeof txn>[], over: Record<string, unknown> = {
     ...over,
   });
 const on = (date: string, id: string, account: string, amount: number, over: Record<string, unknown> = {}) => txn(id, account, 0, amount, { date, ...over });
+/** A connected account, as the directory keeps it, first seen on `first_seen`. */
+const seenFrom = (item_id: string, institution_name: string, first_seen: string) =>
+  encrypt(JSON.stringify({ provider: 'plaid', item_id, institution_id: null, institution_name, name: 'Checking', official_name: null, mask: '3', type: 'depository', subtype: null, persistent_account_id: null, first_seen, last_seen: '2026-10-09' }));
 
 /**
  * A year with every kind of gap, from stored data: Chase is fine; Citi
@@ -404,15 +407,64 @@ describe('review: a report from stored data never claims more than it has', () =
     expect(r.caveats.scope).toEqual({ investment: true, loans: false });
   });
 
-  test('a connection never synced is missing only from periods its history could reach', async () => {
+  test('a connection never synced is missing only from periods its history could reach; before that, it can go back only so far', async () => {
     await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt('n') });
-    await fake.hset(ctxKey('accounts:directory'), {
-      acc_n: await encrypt(JSON.stringify({ provider: 'plaid', item_id: 'item_new', institution_id: null, institution_name: 'NewBank', name: 'Checking', official_name: null, mask: '3', type: 'depository', subtype: null, persistent_account_id: null, first_seen: '2026-09-01', last_seen: '2026-10-09' })),
-    });
+    await fake.hset(ctxKey('accounts:directory'), { acc_n: await seenFrom('item_new', 'NewBank', '2026-09-01') });
     const p2023 = resolvePeriod({ kind: 'year', year: 2023 }, NY, NOW);
     if ('error' in p2023) throw new Error(p2023.error);
-    expect((await quiet(() => readReport(ctx, p2023, { now: NOW }))).gaps).toEqual([]);
+    expect((await quiet(() => readReport(ctx, p2023, { now: NOW }))).gaps).toEqual([{ kind: 'begins_late', item_id: 'item_new', institution: 'NewBank', first: '2024-09-01', from: 'reach' }]);
     expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps.map((g) => g.kind)).toEqual(['missing']);
+  });
+});
+
+describe('verification: a report from stored data says what may be missing, and only that', () => {
+  test('with no account links, nothing could be carried across a re-link, so a remembered-accounts record that can’t be read is no gap', async () => {
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t-a') });
+    await fake.set(ctxKey('txns:item_a'), await store([on('2023-05-01', 'a-0', 'acc_chk', 9), on('2025-02-02', 'a-1', 'acc_chk', 50)]));
+    // Of a connection no longer stored, as a disconnect can leave behind.
+    await fake.hset(ctxKey('accounts:meta'), { item_gone: 'damaged-not-ciphertext' });
+    const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(r.gaps).toEqual([]);
+    expect(statusHeadline(r)).toBe('Nothing is known to be missing from this period.');
+    expect(r.money_out).toEqual([{ category: 'general merchandise', amount: 50, transactions: 1 }]);
+
+    // With a link, what it carries can't be told from a paused one without
+    // the live accounts: both are said, as before.
+    await fake.hset(ctxKey('account-links'), { acc_old: await encrypt(JSON.stringify({ to: 'acc_chk', linked_at: '2025-01-02T00:00:00.000Z', evidence: {} })) });
+    const linked = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
+    expect(linked.gaps.map((g) => g.kind)).toEqual(['own_categories', 'own_exclusions']);
+  });
+
+  const p2015 = () => {
+    const p = resolvePeriod({ kind: 'year', year: 2015 }, NY, NOW);
+    if ('error' in p) throw new Error(p.error);
+    return p;
+  };
+
+  test('a connection synced with nothing stored, linked in 2026: a 2015 report says how far back its history can go, never only that the period is empty', async () => {
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t-a') });
+    await fake.set(ctxKey('txns:item_a'), await store([]));
+    await fake.hset(ctxKey('accounts:directory'), { acc_chk: await seenFrom('item_a', 'Chase', '2026-03-02') });
+    const r = await quiet(() => readReport(ctx, p2015(), { now: NOW }));
+    expect(r.gaps).toEqual([{ kind: 'begins_late', item_id: 'item_a', institution: 'Chase', first: '2024-03-02', from: 'reach' }]);
+    expect(statusHeadline(r)).toBe('There are no transactions in this period, and some may be missing:');
+    expect(gapSentences(r.gaps, (d) => d)).toEqual([
+      'Chase’s transactions in Nya can go back only to 2024-03-02: if its accounts were open before then, this report is missing their earlier transactions.',
+    ]);
+    // 2025 is within its reach: nothing in it, and nothing missing.
+    expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps).toEqual([]);
+  });
+
+  test('a store that can’t be read stays missing from a period before its connection was first seen', async () => {
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t-a') });
+    await fake.set(ctxKey('txns:item_a'), 'damaged-not-a-blob');
+    // First seen in 2026 (balance history began then), though it may hold far older rows.
+    await fake.hset(ctxKey('accounts:directory'), { acc_chk: await seenFrom('item_a', 'Chase', '2026-09-01') });
+    const r = await quiet(() => readReport(ctx, p2015(), { now: NOW }));
+    expect(r.gaps).toEqual([{ kind: 'missing', item_id: 'item_a', institution: 'Chase', reach: null }]);
+    expect(r.months.every((m) => m.uncertain)).toBe(true);
+    expect(r.data_as_of).toBeNull();
+    expect(r.institutions[0].note).toBe('Chase: stored transactions could not be read');
   });
 });
 
