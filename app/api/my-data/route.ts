@@ -10,19 +10,48 @@ import {
   fileByteLength,
   fileChunks,
   ExportReadError,
-  EXPORT_FORMATS,
   type ExportFile,
-  type ExportFormat,
+  type UserData,
   type UserExport,
 } from '@/lib/user-export';
+import { ACCOUNT_ID, DOWNLOAD_FORMATS, isDownloadFormat, passphraseProblem, type DownloadFormat } from '@/lib/download-options';
+import { ofxFile } from '@/lib/ofx-export';
+import { snapshotTakenAt } from '@/lib/history';
+import { timeZoneOf } from '@/lib/access-log';
+import { protectFile } from '@/lib/protected-download';
+import { sendAccessNotice } from '@/lib/download-notice';
+import { background } from '@/lib/background';
 
 // Download my data (lib/user-export.ts): everything Nya stores about the
 // person signed in, decrypted, as one file streamed to the browser. It is
 // never written anywhere as plaintext on the way.
 //
-// POST { format: "json" | "transactions-csv" | "balances-csv", password? }.
+// POST { format: "json" | "transactions-csv" | "balances-csv" | "ofx",
+//        account_id? and time_zone? (with "ofx", and only then),
+//        passphrase?, password? }.
 // POST, not GET: the request carries a password in the shared-password mode,
-// and a download link must not be something a page can make a browser fetch.
+// and a passphrase when the file is to be protected, and a download link must
+// not be something a page can make a browser fetch.
+//
+// OFX is one account's statement (lib/ofx-export.ts): a bank account or a
+// card of the person's own, found in what was read for the download; any
+// other id is a 404, and a loan or an investment account a 400 saying why.
+// Both come after the download is counted, since everything was read to
+// know: the card only offers the person's own bank accounts and cards. The
+// device's time zone (an IANA name, such as "America/New_York") makes the
+// balance's day the person's own; one this server doesn't know, or none,
+// leaves it the UTC day.
+//
+// A PASSPHRASE protects the file, any format, in the age format
+// (lib/protected-download.ts), encrypted as it streams. It is used for that
+// alone: never stored, never logged, never in an answer or an email. It is
+// checked (at least PASSPHRASE_MIN characters) with the rest of the request,
+// before the limit or the sign-in, so a short one costs nothing.
+//
+// THE OWNER IS EMAILED each time a file goes out (lib/download-notice.ts):
+// when, which format, protected or not, and what to do if it wasn't them.
+// Started as the file starts and never waited for (lib/background.ts): the
+// download never waits on the email, nor fails because it failed.
 //
 // Behind a FRESH SIGN-IN (lib/fresh-sign-in.ts, which making an API token
 // shares), on top of the session the proxy already checked:
@@ -64,18 +93,37 @@ import {
 // export and the nightly backup.
 export const maxDuration = 300;
 
-type Body = { format: ExportFormat; password: string | null };
+type Body = { format: DownloadFormat; account_id: string | null; time_zone: string | null; passphrase: string | null; password: string | null };
 
+/** The request, or what is wrong with it. A message never repeats the
+ *  password or the passphrase it was sent. */
 function parseBody(raw: unknown): Body | string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Send { format }.';
-  const { format, password } = raw as Record<string, unknown>;
-  if (typeof format !== 'string' || !(EXPORT_FORMATS as readonly string[]).includes(format)) {
-    return `format must be one of: ${EXPORT_FORMATS.join(', ')}.`;
-  }
+  const { format, password, account_id, time_zone, passphrase } = raw as Record<string, unknown>;
+  if (!isDownloadFormat(format)) return `format must be one of: ${DOWNLOAD_FORMATS.join(', ')}.`;
   if (password !== undefined && password !== null && (typeof password !== 'string' || password.length > PASSWORD_MAX)) {
     return 'password must be text.';
   }
-  return { format: format as ExportFormat, password: typeof password === 'string' ? password : null };
+  if (format === 'ofx') {
+    if (typeof account_id !== 'string' || !ACCOUNT_ID.test(account_id)) return 'Send the account_id of the account to download as OFX.';
+  } else if (account_id !== undefined && account_id !== null) {
+    return 'account_id goes only with format "ofx".';
+  }
+  if (time_zone !== undefined && time_zone !== null) {
+    if (format !== 'ofx') return 'time_zone goes only with format "ofx".';
+    if (typeof time_zone !== 'string') return 'time_zone must be a time zone, such as "America/New_York".';
+  }
+  if (passphrase !== undefined && passphrase !== null) {
+    const problem = passphraseProblem(passphrase);
+    if (problem) return problem;
+  }
+  return {
+    format,
+    account_id: format === 'ofx' ? (account_id as string) : null,
+    time_zone: format === 'ofx' ? timeZoneOf(time_zone) : null,
+    passphrase: typeof passphrase === 'string' ? passphrase : null,
+    password: typeof password === 'string' ? password : null,
+  };
 }
 
 function tooMany(retryAfterSeconds: number): NextResponse {
@@ -130,9 +178,12 @@ export async function POST(req: Request) {
     return limitUnreadable();
   }
 
+  const now = new Date();
+  let data: UserData;
   let doc: UserExport;
   try {
-    doc = buildUserExport(await collectUserData({ ctx, userId: signedIn.userId }), new Date());
+    data = await collectUserData({ ctx, userId: signedIn.userId });
+    doc = buildUserExport(data, now);
   } catch (err) {
     if (err instanceof ExportReadError) {
       const cause = err.cause instanceof Error ? err.cause.name : typeof err.cause;
@@ -142,6 +193,12 @@ export async function POST(req: Request) {
     return notPrepared(err);
   }
 
+  // A linked account's statement says the day its balance is as of where
+  // the person is: from the moment its snapshot was taken, where Nya kept
+  // that (never an error: without it, the day is the UTC day).
+  const latest = body.format === 'ofx' ? doc.accounts.find((a) => a.account_id === body.account_id)?.latest_balance : null;
+  const balanceTakenAt = latest && body.time_zone ? await snapshotTakenAt(ctx, latest.date) : null;
+
   // The first pass: the size, with nothing kept (see the header). A writer
   // that meets a stored value of a shape it doesn't expect throws here, before
   // anything is sent, and gets the same answer as a document that couldn't be
@@ -149,20 +206,44 @@ export async function POST(req: Request) {
   let file: ExportFile;
   let bytes: number;
   try {
-    file = exportFile(doc, body.format);
+    if (body.format === 'ofx') {
+      const made = ofxFile(data, doc, body.account_id!, now, { timeZone: body.time_zone, balanceTakenAt });
+      if ('refused' in made) return NextResponse.json({ error: made.refused }, { status: made.status });
+      file = made.file;
+    } else {
+      file = exportFile(doc, body.format);
+    }
     bytes = fileByteLength(file);
   } catch (err) {
     return notPrepared(err);
   }
 
-  // Tell the owner a download happened, here, once that email is built: Nya
-  // can send email now (lib/mail.ts, #51). When, and which format; never
-  // anything from the file itself. An incomplete one names its parts by key,
-  // for whoever runs Nya to look at: a store's name, never an id or a value.
-  console.log(`Data download: ${body.format}${file.incomplete.length > 0 ? `, incomplete: ${file.incomplete.join(', ')}` : ''}`);
+  // With a passphrase, the same bytes encrypted as they go: the size of the
+  // encrypted file is known from the plaintext's, so it still goes ahead of
+  // the body. The slow key derivation runs once, here, before the first byte.
+  let sent: { filename: string; contentType: string; bytes: number; chunks: Generator<Uint8Array> };
+  try {
+    if (body.passphrase !== null) {
+      const plain = file;
+      const protectedFile = await protectFile({ filename: plain.filename, chunks: () => fileChunks(plain) }, bytes, body.passphrase);
+      sent = { filename: protectedFile.filename, contentType: protectedFile.contentType, bytes: protectedFile.bytes, chunks: protectedFile.chunks() };
+    } else {
+      sent = { filename: file.filename, contentType: file.contentType, bytes, chunks: fileChunks(file) };
+    }
+  } catch (err) {
+    return notPrepared(err);
+  }
+
+  // The owner hears of it (see the header), and nothing waits for that.
+  background(sendAccessNotice(ctx, { kind: 'download', format: body.format, protected: body.passphrase !== null }, now));
+  // An incomplete file names its parts by key, for whoever runs Nya to look
+  // at: a store's name, never an id or a value.
+  console.log(
+    `Data download: ${body.format}${body.passphrase !== null ? ', protected' : ''}${file.incomplete.length > 0 ? `, incomplete: ${file.incomplete.join(', ')}` : ''}`
+  );
 
   // The second pass: the same bytes, streamed.
-  const chunks = fileChunks(file);
+  const chunks = sent.chunks;
   const stream = new ReadableStream<Uint8Array>({
     // Pulled: the next chunk is written only when the browser has taken the
     // last, so a slow connection never makes the whole file sit in memory.
@@ -177,17 +258,19 @@ export async function POST(req: Request) {
   });
 
   const headers: Record<string, string> = {
-    'Content-Type': file.contentType,
-    'Content-Disposition': `attachment; filename="${file.filename}"`,
-    'Content-Length': String(bytes),
-    'X-Nya-Export-Bytes': String(bytes),
+    'Content-Type': sent.contentType,
+    'Content-Disposition': `attachment; filename="${sent.filename}"`,
+    'Content-Length': String(sent.bytes),
+    'X-Nya-Export-Bytes': String(sent.bytes),
     // Financial data: no intermediary or browser cache may keep a copy.
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
   };
-  // The JSON carries its caveats inside; a CSV has nowhere to, so they also
-  // travel as headers for the page to show: in words, and, when the file is
-  // missing something, which parts (exportFile says which a CSV is made of).
+  // The JSON carries its caveats inside; a CSV or an OFX statement has
+  // nowhere to, and a protected file can't be read until it is opened, so
+  // they also travel as headers for the page to show: in words, and, when the
+  // file is missing something, which parts (exportFile says which a CSV is
+  // made of, ofxFile which an OFX statement is).
   if (file.notes.length > 0) headers['X-Nya-Export-Notes'] = encodeURIComponent(JSON.stringify(file.notes));
   if (file.incomplete.length > 0) headers['X-Nya-Export-Incomplete'] = file.incomplete.join(', ');
   return new Response(stream, { headers });

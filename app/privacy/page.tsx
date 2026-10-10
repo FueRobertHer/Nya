@@ -20,8 +20,9 @@ export const metadata: Metadata = {
 // built yet. Reads no stored data: what it says of backups comes from
 // backupRetention() (lib/backup.ts, environment only), the rule the deletion
 // receipt dates by, so the two never disagree, and whether it names an email
-// provider from sendsEmail() (lib/notice-recipients.ts): mail set up, and
-// someone it may write to, which is whether this copy sends email at all.
+// provider, or says a download is emailed, from sendsEmail()
+// (lib/notice-recipients.ts): mail set up, and someone it may write to, which
+// is whether this copy sends email at all.
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
@@ -40,7 +41,14 @@ function deletedInBackups(backups: BackupRetention): string {
   return `Nightly backups taken before a deletion keep a copy until they are deleted, within ${backupDaysAtMost(backups)} days while the nightly backup keeps running; if it stops, nothing is deleted until it runs again.`;
 }
 
-const commitments = (backups: BackupRetention): Commitment[] => [
+/** What the owner hears of a download (lib/download-notice.ts), as this copy
+ *  is set up. */
+const downloadEmail = (mail: boolean) =>
+  mail
+    ? 'Each download is emailed to you: when it happened and which format, never what is in it.'
+    : 'This copy of Nya sends no email, so a download isn’t emailed to you.';
+
+const commitments = (backups: BackupRetention, mail: boolean): Commitment[] => [
   {
     promise: 'We never sell or share your financial data.',
     today:
@@ -49,10 +57,10 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, or CSV files of your transactions and of your balance history. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`,
+    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}`,
     next: {
       label: 'Not built yet',
-      text: 'OFX files for other money apps, a passphrase to protect the file, a way to bring a download into another copy of Nya, and an email each time a download happens.',
+      text: 'A way to bring a download into another copy of Nya.',
     },
   },
   {
@@ -124,7 +132,7 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. Sees your email address and each email, which names the bank and what to do, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded or an API token is made. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
         ],
       ] as [string, string][])
     : []),
@@ -199,7 +207,7 @@ export default function PrivacyPage() {
       </section>
 
       <h2>Our commitments</h2>
-      {commitments(backups).map((c) => (
+      {commitments(backups, mail).map((c) => (
         <section className="card info-section" key={c.promise}>
           <h3>{c.promise}</h3>
           <dl className="info-status">
@@ -255,17 +263,24 @@ export default function PrivacyPage() {
       <InfoSection title="Download your data">
         <p>
           On the Accounts tab, tap Manage, then Download my data at the bottom. Choose everything, as one JSON file, or
-          your transactions or your balance history, each as a CSV file for a spreadsheet. The values come decrypted.
+          your transactions or your balance history, each as a CSV file for a spreadsheet, or one bank account’s or
+          card’s transactions as an OFX file, which other money apps import. The values come decrypted.
         </p>
         <p>
           A fresh sign-in comes first: with Clerk accounts, one from the last ten minutes, or Clerk asks you to confirm
           it is you; with the shared password, the password again. Each account can download {DOWNLOADS_PER_WINDOW} times
-          an hour.
+          an hour. {downloadEmail(mail)}
         </p>
         <p>
-          The file itself is not encrypted, so keep it somewhere safe. It leaves out the tokens that reach your banks,
-          which are credentials rather than your data, your API tokens themselves (each one’s name and dates are in), your
-          sign-in, and other people’s data; the JSON file lists what it leaves out.
+          Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe. Protected,
+          it is saved encrypted in the age format: open it on the <a href="/open-download">Open a protected download</a>{' '}
+          page, in your browser, without signing in and without the file leaving your device, or with the age app. Nya
+          never keeps the passphrase, so a lost one can’t be recovered.
+        </p>
+        <p>
+          The file leaves out the tokens that reach your banks, which are credentials rather than your data, your API
+          tokens themselves (each one’s name and dates are in), your sign-in, and other people’s data; the JSON file lists
+          what it leaves out.
         </p>
       </InfoSection>
 

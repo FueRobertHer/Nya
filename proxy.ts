@@ -37,13 +37,15 @@ export const config = {
 
 // Pages anyone may open, signed in or not: the password login, the pages that
 // say how Nya protects data and who can read it (app/security, app/privacy),
-// which people read before deciding to sign up, and the developer page
+// which people read before deciding to sign up, the developer page
 // (app/developers), which documents the API for whoever writes a program
-// against it. Exact paths.
+// against it, and the page that opens a protected download in the browser
+// (app/open-download), which must work after the account it came from is
+// gone. Exact paths.
 // None of them reads stored data or has a server action of its own (Clerk's,
 // on every page, only clears a cache cookie); a page that does must never be
 // listed here.
-const PUBLIC_PAGES: ReadonlySet<string> = new Set(['/login', '/security', '/privacy', '/developers']);
+const PUBLIC_PAGES: ReadonlySet<string> = new Set(['/login', '/security', '/privacy', '/developers', '/open-download']);
 
 // Request headers a nonce could be read from (by Next.js, and by Clerk for its
 // script tags). Only this proxy sets them: whatever a request brings is dropped.

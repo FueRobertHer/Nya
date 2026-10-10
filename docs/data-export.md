@@ -1,12 +1,14 @@
 # Downloading your data
 
-Everything Nya stores about you can be downloaded, decrypted, in open formats: one JSON file with all of it, or CSV files of your transactions and your balance history for a spreadsheet. This page says how to get it, what is in it field by field, and what is left out and why. The code is `lib/user-export.ts`, the route `app/api/my-data/route.ts`, and the card `components/DownloadMyData.tsx`.
+Everything Nya stores about you can be downloaded, decrypted, in open formats: one JSON file with all of it, CSV files of your transactions and your balance history for a spreadsheet, or one bank account's or card's transactions as an OFX statement for another money app. Any of them can be protected with a passphrase. This page says how to get it, what is in it field by field, what is left out and why, and how to open a protected file. The code is `lib/user-export.ts` (with `lib/ofx-export.ts` for OFX and `lib/protected-download.ts` for the passphrase), the route `app/api/my-data/route.ts`, and the card `components/DownloadMyData.tsx`.
 
 - [Getting a copy](#getting-a-copy)
 - [What is not in it](#what-is-not-in-it)
 - [Conventions](#conventions)
 - [The JSON file](#the-json-file)
 - [The CSV files](#the-csv-files)
+- [One account as OFX](#one-account-as-ofx)
+- [Protecting the file with a passphrase](#protecting-the-file-with-a-passphrase)
 - [Every stored key, and where it goes](#every-stored-key-and-where-it-goes)
 - [How it differs from the operator backup](#how-it-differs-from-the-operator-backup)
 - [Adding a store](#adding-a-store)
@@ -20,10 +22,15 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
 | Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, and those on manual accounts, entered by hand or imported. |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
+| Bank or card statement (OFX) | `nya-<institution>-<account>-<date>.ofx` | One bank account's or card's posted transactions, for another money app, or to import into Nya again ([below](#one-account-as-ofx)). |
+
+Any of them can be **protected with a passphrase**: it is then saved encrypted, with `.age` at the end of its name ([below](#protecting-the-file-with-a-passphrase)).
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
 
-**Five downloads an hour**, per account. A sixth is refused with how long to wait. The number is `DOWNLOADS_PER_WINDOW` in `lib/download-limit.ts`, which both the limit and the card's text read.
+**Five downloads an hour**, per account, whatever the format, protected or not. A sixth is refused with how long to wait. The number is `DOWNLOADS_PER_WINDOW` in `lib/download-limit.ts`, which both the limit and the card's text read.
+
+**An email each time.** With email set up ([deployment.md](deployment.md#email-notices)), each download emails the owner (with Clerk, the account's verified address; with the shared password, `NOTIFY_EMAIL`): when it happened, in UTC, which format, whether a passphrase protects it, and what to do if it wasn't them (sign out every session, and change the password). Never a balance, an amount, an account number, the name of an account or a bank, or anything from the file: a download nobody asked for means someone else has signed in, and the email says only that. The download never waits for the email and never fails because of it: the email is started as the file is, and one that can't be sent is logged with the email service's status alone, never the address or the text. Each download's email has an idempotency key of its own, so the one retry (after a rate limit, no answer, or an error of the email service's own) is delivered once. Making an API token sends the same kind of email (`lib/download-notice.ts`). Without email set up, nothing is sent.
 
 **Nothing missing without a word.** Every store is read before the first byte is sent, and what can't be read is named, not quietly left out (with the two exceptions below). What happens when something can't be read depends on why:
 
@@ -37,13 +44,13 @@ Nothing is removed or changed either way: what can't be read stays stored as it 
 
 **A whole file or none.** Before sending anything, the route writes the file out once only to count its bytes, keeping none of them, then streams it, and says how many bytes to expect twice: `Content-Length`, and `X-Nya-Export-Bytes`, the same number, which is the one the page checks (a proxy that compresses the response changes or drops `Content-Length`, and leaves this one alone). The page counts what arrives and saves the file only when that count is there and matches; otherwise it saves nothing and says the download was cut off, to try again. So a connection that drops part way, or a response ended early by the platform or a proxy, never leaves a short file that looks whole. The route may run for up to 300 seconds, for a large file over a slow connection.
 
-**When the file is incomplete.** The response carries `X-Nya-Export-Incomplete`: the parts of the JSON file this file is made from that are missing something, by their keys, separated by commas (`manual_accounts, holdings:history`), and `X-Nya-Export-Notes`, the notes that say what is missing in words (a URL-encoded JSON list, as the caveats travel). Both are there for a CSV too, which has nowhere inside to say it, but only for the parts it is made from: a transactions CSV is never called incomplete for a holdings record it doesn't hold. A CSV's notes say what that CSV lacks (for a manual account that can't be read, the name on its rows) and point to the JSON download for the list. Neither header is sent with a whole file. The card shows the notes, after a line saying the file is incomplete.
+**When the file is incomplete.** The response carries `X-Nya-Export-Incomplete`: the parts of the JSON file this file is made from that are missing something, by their keys, separated by commas (`manual_accounts, holdings:history`), and `X-Nya-Export-Notes`, the notes that say what is missing in words (a URL-encoded JSON list, as the caveats travel). Both are there for a CSV and an OFX statement too, which have nowhere inside to say it, and for a protected file, which can't be read until it is opened, but only for the parts the file is made from: a transactions CSV is never called incomplete for a holdings record it doesn't hold. A CSV's notes say what that CSV lacks (for a manual account that can't be read, the name on its rows) and point to the JSON download for the list. Neither header is sent with a whole file. The card shows the notes, after a line saying the file is incomplete.
 
 **How big.** About 1.7 KB of JSON per transaction, and about 0.6 KB in the transactions CSV; history adds little. An account with 60,000 transactions and ten years of daily balances for 20 accounts comes to about 106 MB of JSON, 34 MB of transactions CSV and 7 MB of balance history CSV.
 
-**Never written down.** The stores are read and decrypted in memory, and the file's text is written out a piece at a time as it streams to your browser, never held whole on the server. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. The download itself is not encrypted, so keep the file somewhere safe.
+**Never written down.** The stores are read and decrypted in memory, and the file's text is written out a piece at a time as it streams to your browser (encrypted as it goes, when a passphrase protects it), never held whole on the server. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe.
 
-**Not built yet.** Protecting the file with a passphrase of your own (today it is plain JSON or CSV), an OFX file for the money apps that import those, and an email telling you a download happened (#51): Nya can send email now (the notices about bank connections, `lib/mail.ts`), but a download doesn't send one yet, and the route marks where it would.
+**Not built yet.** Bringing a download into another copy of Nya, or into a new account: restoring from this file is planned (#43). Until then, an OFX statement imports into a manual account ([features.md](features.md#importing-files)).
 
 ## What is not in it
 
@@ -482,6 +489,79 @@ Oldest day first; on each day the net-worth row comes before the accounts. Colum
 
 `net_worth` rows include hidden accounts, as [stored](#net_worth_history). Don't add `account` rows to `net_worth` rows: the total already counts them. A manual account that can't be read keeps its `account` rows, under its id, with its name empty; when it is hidden, `account_type` and `account_hidden` are still filled in, from `hidden_accounts`. The response says the file is incomplete ([above](#getting-a-copy)).
 
+## One account as OFX
+
+`nya-<institution>-<account>-<date>.ofx`: one bank account's or credit card's transactions as an OFX statement (`lib/ofx-export.ts`), the format most banks let you download, for another money app or to import into Nya again. Choose the account under the format: the card lists your bank accounts and cards, linked and manual, hidden ones too.
+
+**Which OFX, and why.** OFX 1.0.2 in SGML, written as banks write it: the headers, then one tag a line, values without end tags, lines ending CRLF, in Windows-1252 (`ENCODING:USASCII`, `CHARSET:1252`). It is what most banks' downloads are (Quicken's QFX is the same with a tag of its own), so it is what money apps' importers are built and tested against; an app that reads OFX 2 (XML) reads it too, while some readers read only 1.x.
+
+| App | What to expect |
+| --- | --- |
+| GnuCash | Imports it (File, Import, Import OFX/QFX), and asks once which of its accounts the file's account is. |
+| Actual Budget | Imports it into an account, and uses each transaction's FITID to leave out what it already has. |
+| YNAB | Its file import takes OFX and QFX files. |
+| Quicken | Imports these files only from banks it works with, which it tells by an id their files carry, so it may refuse this one. |
+| Monarch | Its import takes CSV files: use the transactions CSV. |
+| Nya | Imports it into a manual account, as any bank's file ([below](#bringing-it-back-into-nya)). |
+
+**Which accounts.** A bank account (`depository`) is a bank statement, with `ACCTTYPE` `SAVINGS` for a savings account, `MONEYMRKT` for a money market account and `CHECKING` for every other kind of bank account. A credit card is a card statement. A loan has no statement in OFX 1.0.2, and an investment account's statement lists holdings, trades and the securities they are in, which Nya doesn't write, so neither is offered as OFX rather than passed off as a bank account: their history is in the JSON file, and the route refuses them with a 400 that says so.
+
+**What is in it.**
+
+| | |
+| --- | --- |
+| Transactions | The account's posted transactions, oldest first: from the bank, or on a manual account entered by hand or imported. Pending ones are left out, and the notes say how many: a bank gives a transaction a new id when it posts, so an app that imported it pending would count it twice. |
+| `FITID` | The transaction's own id: Plaid's transaction id, or a manual transaction's `manual-txn:...` id. It doesn't change from one download to the next (until a bank is removed and added back: see `ACCTID`), so importing the same file twice, into Nya or any app that honours FITIDs, adds nothing. |
+| `TRNAMT` | OFX's sign, the account holder's: positive is money in, on a card as on a bank account. Nya keeps Plaid's (positive is money out), so each amount is negated. Written with the currency's decimals (two for dollars, none for yen), or more where the amount has them: never rounded. |
+| `TRNTYPE` | `CREDIT` or `DEBIT` by that sign, unless the bank said more, through Plaid's transaction code: `ATM`, `FEE` (a bank charge), `XFER` (a transfer), `CHECK` (with `CHECKNUM`, where there is a check number), `INT`, `DIRECTDEBIT` or `REPEATPMT`. Never a guess from a category. |
+| `DTPOSTED`, `DTUSER` | The day it posted, and the day it happened where Plaid says and it differs, as the bank's days, written at 10:59 with no time zone (`20260905105900`). OFX reads a time without a zone as GMT, and 10:59 GMT is the same day everywhere from UTC-10 to UTC+13, so an app that turns it into its own time zone still shows the bank's day, from Hawaii to New Zealand, Tonga and Samoa. Only at UTC-11 (American Samoa, Niue) or past UTC+13 (Kiribati's Line Islands, the Chatham Islands in summer) can such an app show the day before or after; an app that reads the date as written shows it everywhere. |
+| `NAME` | The payee as the app shows it: your name for the merchant, else Plaid's, else the bank's own words. OFX allows 32 characters; a longer name is cut there, and given whole in the memo. |
+| `MEMO` | Up to 255 characters, in order: "Excluded from budgets and reports in Nya" for a transaction you excluded, the whole name if it was cut, the bank's own words where they aren't the name, and your note. An excluded transaction is still listed, marked: the money did move, and a statement without it wouldn't add up to the balance. |
+| Currencies | One statement per currency the account's transactions are in, for the same account: its own currency first, then the others. OFX has one currency per statement, and a rate to convert at isn't Nya's to invent, so nothing is converted. |
+| `LEDGERBAL` | The latest balance Nya knows, with the day it is as of (`DTASOF`), as a day where you are: the card sends your device's time zone, and without one the day is UTC's. For a linked account, its newest recorded balance, never an estimate, on the day Nya recorded it; Nya keeps balance history by UTC day, so it is that UTC day where Nya didn't keep the time, or measured the balance on a day only some banks answered. For a manual account, its balance as you last set it, on the day you set it. A card's is negative while money is owed, as OFX writes it. It is in the statement of its own currency only; with none known, there is none, and the notes say why. OFX asks every statement for one, so an app that insists may refuse such a file. |
+| `ACCTID` | An id Nya makes for the account, since it never has the full account number: `NYA-`, 12 characters derived from the id Nya first knew the account by, and its last digits where the bank gave them (`NYA-3F9A1C2B7D4E-1111`). When a bank is removed and added back and you link the new account to the old one ([features.md](features.md#removing-an-institution-and-adding-it-back)), the file keeps the old account's id, so an app files it with the same account. The bank gives every transaction a new id then, though, so their FITIDs change: an app that matches transactions by FITID may add again what a file from before gave it. Import from the day after your last import, or let the app's own duplicate check catch them. |
+| `BANKID` | `NYA`, in a bank statement. It is not a routing number, which Nya doesn't know, but OFX requires one there, and a strict reader refuses a bank statement without it. A card statement has none. |
+
+**Characters.** A character Windows-1252 lacks is written as its plain letter where it has one (an accent it lacks dropped, `ł` as `l`), and as `?` otherwise, such as letters of non-Latin scripts; the notes count the transactions that touched. The JSON and CSV files have every character. Control characters become spaces, and `&`, `<` and `>` are escaped.
+
+**Not in it.** Categories: OFX has no field for them (the CSV and JSON files have them). Investment transactions, and loans' and investment accounts' balances: in the JSON file.
+
+**When something couldn't be read.** A manual account whose transactions can't be read gives a statement without them, and whether a transaction was excluded, if its record can't be read, isn't marked either way; each is said in the notes, and the response calls the file incomplete (`manual-transactions`, `transaction-annotations`, or `carried-annotations` for exclusions carried from an earlier account), as for the CSV files.
+
+### Bringing it back into Nya
+
+Import it into a manual account ([features.md](features.md#importing-files)): every transaction comes back with its date, amount, sign and currency, and its FITID as the source id, so importing the same file again, or another download that overlaps it, adds nothing. The memo becomes the note; a name longer than 32 characters comes back cut, with the whole name in the note; categories don't come back, except what the bank's code said (an ATM withdrawal, a fee, a transfer), which Nya reads from any bank's file. Imported into the manual account it was made from, a transaction is recognized only by its date, amount, currency and name, so one whose name OFX had to cut or change would be added a second time: import it into another account. The test suite holds this round trip, through Nya's own OFX parser, for every row.
+
+## Protecting the file with a passphrase
+
+Tick **Protect the file with a passphrase** on the card and type one twice, of at least 12 characters: four or more words you'll remember that don't belong together, with spaces between them, make one that is strong and easy to type. The file, whatever its format, is then saved encrypted, with `.age` at the end of its name: `nya-data-2026-10-10.json.age`.
+
+**Nya never keeps the passphrase.** It goes to the server with the request, over HTTPS, is used once to lock the file's key, and is never stored, logged, sent anywhere else, or put in the email. A lost passphrase can't be recovered, by you or by whoever runs Nya, and the file can't be opened without it: download it again with a new one.
+
+### Opening it
+
+- **In your browser**, on Nya's **Open a protected download** page (`/open-download` on your Nya, linked from the card): choose the file, type the passphrase, and the opened file is saved. The page opens it on your device and never uploads it, and needs no sign-in, so a file still opens after the account it came from is deleted. Unlocking takes a few seconds, on purpose, and about 256 MB of memory. The page reads the file a few megabytes at a time, and hands what it has opened to the browser a few megabytes at a time rather than holding it all itself, but an older phone may still stop the page, or say it can't spare the memory: open a large file on a computer.
+- **With the age app**, without Nya at all: `age -d -o nya-data-2026-10-10.json nya-data-2026-10-10.json.age` asks for the passphrase and writes the opened file. age runs on macOS (`brew install age`), Linux (`apt install age` on Debian and Ubuntu) and Windows (`winget install --id FiloSottile.age`), and other implementations of the format open it too. The test suite opens Nya's files with the age command where it is installed, and opens the age command's own files with Nya's page code.
+
+### The format
+
+A protected download is an [age](https://age-encryption.org/v1) file, version 1, locked with a passphrase: an existing, documented format with free tools on every platform, built only from standard primitives (scrypt, HKDF-SHA256, HMAC-SHA256 and ChaCha20-Poly1305). `lib/age/age.ts` writes and reads it. The server derives the key with Node's own scrypt (`lib/protected-download.ts`), and the browser page with `lib/age/scrypt.ts`; ChaCha20-Poly1305 is `lib/age/chacha20poly1305.ts`, since Web Crypto has none. The test suite holds them to their RFCs' test vectors and to the age project's own. Byte by byte:
+
+1. A text header, each line ending in a line feed:
+
+   ```
+   age-encryption.org/v1
+   -> scrypt <salt> 18
+   <the sealed file key>
+   --- <the MAC>
+   ```
+
+   Base64 is the standard alphabet without padding. The salt is 16 random bytes (22 characters). 18 is the work factor: scrypt's N is 2^18, with r = 8 and p = 1, about a second of a computer's time and 256 MB of memory for each guess at a passphrase, which is age's own setting. The file key is 16 random bytes, sealed with ChaCha20-Poly1305 under a nonce of 12 zero bytes and the key scrypt(passphrase, salt = `age-encryption.org/v1/scrypt` followed by the 16 salt bytes): 32 bytes (43 characters). The MAC is HMAC-SHA256 of the header up to and including `---`, keyed with HKDF-SHA256 of the file key, with no salt and the info `header`: 32 bytes (43 characters). A protected download's header is always 150 bytes.
+2. A nonce: 16 random bytes.
+3. The file's bytes, in chunks of 64 KiB (65,536 bytes; the last may be shorter, and is empty only when the whole file is), each sealed with ChaCha20-Poly1305 under the payload key, HKDF-SHA256 of the file key, salted with the nonce, with the info `payload`. Each chunk's 12-byte nonce is its number, counting from 0, as 11 bytes big-endian, then a byte that is 1 for the last chunk and 0 for every other. Each sealed chunk is the chunk and its 16-byte tag.
+
+So a protected file is 150 + 16 + the file's size + 16 for each chunk, which is how its size is announced before the first byte, and the download is still streamed: each chunk is sealed as the file is written out. A chunk changed, cut short, swapped with another, moved, or taken from another file fails its tag, and a file that ends without its last chunk, or goes on after it, fails too, so a file opens whole or not at all: the page saves nothing until every chunk has opened.
+
 ## Every stored key, and where it goes
 
 Each key a person's container can hold, and what the download does with it. The same list is `STORED_KEYS` in `lib/user-export.ts`, and a test fails if the code builds a container key that isn't on it, so a new store can't go missing from downloads unnoticed.
@@ -518,9 +598,9 @@ There are two exports, and they are kept apart on purpose (#55): one that did bo
 | For | You, to keep or take elsewhere | Whoever runs Nya, to recover from losing the database |
 | Covers | One person | The whole environment, every person |
 | Values | Decrypted, in documented fields | Encrypted, byte for byte as stored, and unreadable without the keys; dates, account and transaction ids, bank names and the merchant names you renamed are in plain text ([operations.md](operations.md#taking-a-backup-by-hand)) |
-| Formats | JSON, CSV | NDJSON of raw database keys, with a checksum |
+| Formats | JSON, CSV, OFX, any of them protected with your passphrase if you choose | NDJSON of raw database keys, with a checksum |
 | Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records) |
-| Restores | Not yet: restoring from this file is planned (#43). Files from your bank can be imported, into a manual account ([features.md](features.md#importing-files)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
+| Restores | Not yet: restoring from this file is planned (#43). An OFX statement from it, or a file from your bank, can be imported into a manual account ([features.md](features.md#importing-files)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
 | Gets it | You, after a fresh sign-in, 5 an hour | The operator, with `OPS_SECRET`, or the nightly cron |
 
 Deleting your account deletes your data now, and the nightly backups expire it later; the receipt at the end gives the date ([authentication.md](authentication.md#deleting-an-account)). A file you downloaded is yours, and deleting your account doesn't reach it.

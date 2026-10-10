@@ -213,6 +213,14 @@ describe('the security page', () => {
     expect(page).not.toMatch(/when you looked/);
   });
 
+  test('how a download is protected: the fresh sign-in, the limit, and a passphrase in the age format', () => {
+    const page = security();
+    expect(page).toContain(`A download of your data needs a fresh sign-in, as making an API token does, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`);
+    expect(page).toContain('It is then encrypted as it is sent, in the age format (age-encryption.org)');
+    expect(page).toContain('so a file that was changed, cut short or put back together in another order doesn’t open.');
+    expect(page).toContain('The passphrase is sent to Nya with the request, used for that, and never stored or logged. Nobody can recover a lost one.');
+  });
+
   test('deletion, sessions and the login limit, with the figures the code uses', () => {
     const page = security();
     expect(page).toContain('Delete my account');
@@ -356,14 +364,38 @@ describe('the privacy page', () => {
   test('describes the download and the deletion receipt as they are', () => {
     const page = privacy();
     expect(page).toContain(
-      `True today Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, or CSV files of your transactions and of your balance history. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
+      `True today Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
     );
     expect(page).toContain('On the Accounts tab, tap Manage, then Download my data at the bottom.');
     expect(page).toContain(`Each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`);
-    expect(page).toContain('The file itself is not encrypted, so keep it somewhere safe.');
+    expect(page).toContain('Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe.');
+    expect(page).toContain('Nya never keeps the passphrase, so a lost one can’t be recovered.');
+    expect(privacyHtml()).toContain('href="/open-download"');
     expect(page).toContain('then gives you a receipt of what was deleted, what expires when, and what stays and why.');
     expect(page).toContain('It ends with a receipt, to copy or save');
     expect(page).not.toContain('Until then there is no way to download');
+  });
+
+  // Built now: OFX, the passphrase and the email. Bringing a download into
+  // another copy of Nya is still to come, and says so.
+  test('lists as not built yet only what isn’t: bringing a download into another copy of Nya', () => {
+    const html = privacyHtml();
+    const card = text(html.slice(html.indexOf('You can download everything stored about you'), html.indexOf('You can delete everything')));
+    expect(card).toContain('Not built yet A way to bring a download into another copy of Nya.');
+    expect(card).not.toMatch(/OFX files for other money apps, a passphrase|an email each time a download happens\./);
+  });
+
+  test('says a download is emailed only where this copy sends email', () => {
+    mailIs(true);
+    expect(privacy()).toContain('Each download is emailed to you: when it happened and which format, never what is in it.');
+    expect(privacy()).toContain('And one each time your data is downloaded or an API token is made.');
+    expect(security()).toContain('Each download is emailed to you, so one you didn’t make shows.');
+    expect(security()).toContain('and each time your data is downloaded or an API token is made: which bank needs you and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number.');
+    mailIs(false);
+    for (const page of [privacy(), security()]) {
+      expect(page).toContain('This copy of Nya sends no email, so a download isn’t emailed to you.');
+      expect(page).not.toContain('Each download is emailed to you');
+    }
   });
 
   test('describes sharing as it is: the preview, ends, and both records of when it was shown, for as long as the connection lasts', () => {
