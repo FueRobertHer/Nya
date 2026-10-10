@@ -29,6 +29,7 @@ const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { readReport } = await import('@/lib/report/read');
+const { buildReport } = await import('@/lib/report/build');
 const { resolvePeriod } = await import('@/lib/report/period');
 const { gapSentences } = await import('@/lib/report/words');
 const { reportCsv } = await import('@/lib/report/csv');
@@ -239,5 +240,66 @@ describe('where the data comes from, counting imported files', () => {
     await importInto('acc_chk', [{ date: daysAgo(401), name: 'OLDER SHOP', amount: -13 }], { from: daysAgo(540), to: daysAgo(118) }, { whole: true }, bad);
     r = await report(m.start, m.end);
     expect(r.gaps.filter((g) => g.item_id === 'item_chase')).toEqual([]);
+  });
+});
+
+describe('a bank Plaid gives no transactions for, or that never synced', () => {
+  const period = (start: string, end: string) => {
+    const p = resolvePeriod({ kind: 'range', start, end }, 'UTC', NOW);
+    if ('error' in p) throw new Error(p.error);
+    return p;
+  };
+  const source = (over: Record<string, unknown>) => ({
+    item_id: 'item_acme',
+    institution_name: 'Acme CU',
+    institution_id: null,
+    coverage: 'complete' as const,
+    synced_at: new Date(NOW).toISOString(),
+    first_date: null,
+    first_seen: null,
+    never_synced: false,
+    no_transactions: null,
+    last_ok_at: null,
+    problem: null,
+    records_unreadable: false,
+    holds: { investment: false, loans: false },
+    ...over,
+  });
+  const built = (s: Record<string, unknown>, p: ReturnType<typeof period>) =>
+    buildReport({
+      period: p,
+      generatedAt: new Date(NOW).toISOString(),
+      rows: [],
+      currency: null,
+      sources: [source(s) as any],
+      notes: [],
+      manual: [],
+      removed: [],
+      removedUnreadable: 0,
+      manualUnread: [],
+      liveAccounts: [],
+      links: new Map(),
+      ownRead: { categories: true, names: true, exclusions: true },
+      marked: null,
+      markedUnreadable: false,
+      hidden: false,
+      healthUnread: false,
+    });
+
+  test('is short of nothing in a period files imported into every one of its accounts cover; otherwise it is said as before', () => {
+    const p = period(daysAgo(300), daysAgo(200));
+    const covered = [{ name: 'Checking', covers: [{ from: daysAgo(400), to: daysAgo(100) }] }];
+    expect(built({ no_transactions: 'refused', accounts: covered }, p).gaps).toEqual([]);
+    expect(built({ no_transactions: 'no_consent', accounts: covered }, p).gaps).toEqual([]);
+    // A second account the files don't cover: still said.
+    const partly = [...covered, { name: 'Savings', covers: [] }];
+    expect(built({ no_transactions: 'refused', accounts: partly }, p).gaps.map((g) => g.kind)).toEqual(['refused']);
+    // Files ending before the period does: still said.
+    expect(built({ no_transactions: 'refused', accounts: [{ name: 'Checking', covers: [{ from: daysAgo(400), to: daysAgo(250) }] }] }, p).gaps.map((g) => g.kind)).toEqual([
+      'refused',
+    ]);
+    // Never synced, its history reaching the period: covered, nothing missing.
+    expect(built({ coverage: 'missing', never_synced: true, accounts: covered }, p).gaps).toEqual([]);
+    expect(built({ coverage: 'missing', never_synced: true, accounts: [] }, p).gaps.map((g) => g.kind)).toEqual(['missing']);
   });
 });

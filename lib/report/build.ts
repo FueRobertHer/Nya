@@ -81,8 +81,11 @@
 // (its oldest stored transaction on) or by a file imported into it that
 // holds every transaction of its own period. So a period the files cover for
 // every account has no gap, and one they cover for some accounts names
-// those, and how far back each reaches, beside the day the rest begin. Where
-// the data comes from says how far back each account's files reach.
+// those, and how far back each reaches, beside the day the rest begin. A
+// bank whose transactions Plaid doesn't provide, or the person didn't allow,
+// or that never synced, is short of nothing in a period the files cover for
+// every account either. Where the data comes from says how far back each
+// account's files reach.
 //
 // NO TAX ADVICE. The person marks the categories that matter to them
 // (lib/report/settings.ts) and gets them as a group, with their transactions
@@ -476,6 +479,17 @@ function startsFor(s: SourceFacts, bank: string, period: Period): { first: strin
   return { first, files: first < bank, imported: starts.filter((a) => a.from < first) };
 }
 
+/** Whether every one of an institution's bank accounts and cards (none
+ *  known: no) is covered for the whole period, by the bank's own days from
+ *  `bank` on, if any, and by the files imported into it (see IMPORTED). */
+function filesCoverAll(s: SourceFacts, bank: string | null, period: Period): boolean {
+  const accounts = s.accounts ?? [];
+  if (accounts.length === 0 || !accounts.some((a) => a.covers.length > 0)) return false;
+  return accounts.every((a) =>
+    joinedRanges([...(bank ? [{ from: bank, to: period.today }] : []), ...a.covers]).some((r) => r.from <= period.start && period.through <= r.to)
+  );
+}
+
 /** Each account whose files reach back before the institution's oldest
  *  stored transaction (or all with files, when none is stored), with the
  *  first day they cover. */
@@ -489,7 +503,7 @@ function importedBefore(accounts: SourceFacts['accounts'], first: string | null)
 /** The gaps one linked institution leaves in the period. */
 function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   const at = { item_id: s.item_id, institution: s.institution_name };
-  if (s.no_transactions === 'refused' || s.no_transactions === 'no_consent') return [{ kind: s.no_transactions, ...at }];
+  if (s.no_transactions === 'refused' || s.no_transactions === 'no_consent') return filesCoverAll(s, null, period) ? [] : [{ kind: s.no_transactions, ...at }];
   // Investment accounts only, or no bank account or card: nothing to bring in.
   if (s.no_transactions) return [];
   // A store that can't be read may hold rows from any day: its first sighting
@@ -502,7 +516,8 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   const beyondReach: Gap[] = s.first_date === null && reach !== null && reach > period.start ? [{ kind: 'begins_late', ...at, first: reach, from: 'reach' }] : [];
   if (s.coverage === 'missing') {
     // Never synced: missing from the days its history can reach, if any are
-    // in the period.
+    // in the period, unless files cover them all.
+    if (filesCoverAll(s, null, period)) return [];
     return reach !== null && reach > period.through ? beyondReach : [{ kind: 'missing', ...at, reach }, ...beyondReach];
   }
   const gaps: Gap[] = [];
