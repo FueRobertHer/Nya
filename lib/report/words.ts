@@ -76,7 +76,7 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         break;
       case 'begins_late':
         out.push(
-          `${g.institution}’s transactions in Nya ${g.from === 'stored' ? 'begin on' : 'can go back only to'} ${day(g.first)}: if its accounts were open before then, this report is missing their earlier transactions.`
+          `${g.institution}’s transactions in Nya ${beginWords(g, day)}: if its ${g.imported ? 'other ' : ''}accounts were open before then, this report is missing their earlier transactions.`
         );
         break;
       case 'removed': {
@@ -108,6 +108,15 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
   return out;
 }
 
+/** Where an institution's transactions begin, in words: on the day its own
+ *  begin, or with those imported from its files (lib/report/build.ts
+ *  IMPORTED), and how far back the accounts whose files reach further go. */
+function beginWords(g: Extract<Gap, { kind: 'begins_late' }>, day: DayFormat): string {
+  const begin = g.from === 'reach' ? 'can go back only to' : g.files ? 'begin, with those imported from its files, on' : 'begin on';
+  const further = g.imported ? ` (${g.imported.map((a) => `${a.account}’s on ${day(a.from)}`).join(', ')}, imported from its files)` : '';
+  return `${begin} ${day(g.first)}${further}`;
+}
+
 /** A gap in a few words, beside its institution in the report's list of
  *  where the data comes from (the sentence above says the rest). */
 export function gapShort(g: Gap, day: DayFormat): string {
@@ -121,7 +130,7 @@ export function gapShort(g: Gap, day: DayFormat): string {
     case 'importing':
       return 'Still importing older transactions';
     case 'begins_late':
-      return `Its transactions in Nya ${g.from === 'stored' ? 'begin on' : 'can go back only to'} ${day(g.first)}`;
+      return `Its transactions in Nya ${beginWords(g, day)}`;
     case 'refused':
       return 'Plaid doesn’t provide its bank or card transactions';
     case 'no_consent':

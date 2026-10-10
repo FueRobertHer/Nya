@@ -36,7 +36,8 @@
 //   - begins_late: its oldest stored transaction is after the period starts,
 //     so if its accounts were open before then, the rest isn't here. With
 //     none stored, the same from the earliest day its history can reach,
-//     when that is after the period starts;
+//     when that is after the period starts. Counting the days the files
+//     imported into its accounts cover (see IMPORTED);
 //   - refused, no_consent: a bank account or card there whose transactions
 //     Plaid doesn't provide, or the person didn't allow;
 //   - removed: a connection removed since, whose transactions went with it
@@ -70,6 +71,18 @@
 // the period starts before what has come), begins_late once that history is
 // all in. A card waiting for the person's answer about its sign holds its
 // balance in the app, never its transactions: said beside it, not a gap.
+//
+// IMPORTED. Transactions imported into a linked account from its bank's
+// files (#52, lib/history-import/) are its rows, in the period as the
+// Activity tab counts them, from the period's first day on. Where they
+// reach, the bank's own don't need to: an institution's transactions begin,
+// for a period, on the latest day from which each of its bank accounts and
+// cards is covered through the period's last day, by the bank's own days
+// (its oldest stored transaction on) or by a file imported into it that
+// holds every transaction of its own period. So a period the files cover for
+// every account has no gap, and one they cover for some accounts names
+// those, and how far back each reaches, beside the day the rest begin. Where
+// the data comes from says how far back each account's files reach.
 //
 // NO TAX ADVICE. The person marks the categories that matter to them
 // (lib/report/settings.ts) and gets them as a group, with their transactions
@@ -138,6 +151,9 @@ export type SourceFacts = {
   holds: { investment: boolean; loans: boolean };
   /** Set for a bank a SimpleFIN connection reaches. */
   connector?: ConnectorSourceFacts;
+  /** Its bank accounts and cards (not hidden), each with the days the files
+   *  imported into it cover (see IMPORTED); absent when not known. */
+  accounts?: { name: string; covers: { from: string; to: string }[] }[];
 };
 
 /** Accounts a SimpleFIN connection kept up to date, let go on one day and
@@ -223,8 +239,19 @@ export type Gap =
    *  what has come: the days before it are what may be missing. */
   | { kind: 'importing'; item_id: string; institution: string; before?: string }
   /** `first`: its oldest stored transaction ('stored'), or, with none
-   *  stored, the earliest day its history can reach ('reach'). */
-  | { kind: 'begins_late'; item_id: string; institution: string; first: string; from: 'stored' | 'reach' }
+   *  stored, the earliest day its history can reach ('reach'). Counting
+   *  files imported into its accounts (see IMPORTED): `files` when every
+   *  account reaches back to `first` through them, before the bank's own
+   *  begin, and `imported` the accounts whose files reach further back. */
+  | {
+      kind: 'begins_late';
+      item_id: string;
+      institution: string;
+      first: string;
+      from: 'stored' | 'reach';
+      files?: true;
+      imported?: { account: string; from: string }[];
+    }
   | { kind: 'refused'; item_id: string; institution: string }
   | { kind: 'no_consent'; item_id: string; institution: string }
   | { kind: 'removed'; item_id: null; institution: string; last_seen: string; accounts: string[]; partly_back: boolean }
@@ -316,10 +343,13 @@ export type ReportAppendix = {
   excluded: number;
 };
 
-export type ReportInstitution = Omit<SourceFacts, 'institution_id' | 'first_seen' | 'never_synced'> & {
+export type ReportInstitution = Omit<SourceFacts, 'institution_id' | 'first_seen' | 'never_synced' | 'accounts'> & {
   /** The read's note about it, if any ("stored transactions could not be
    *  read"). */
   note: string | null;
+  /** Its accounts whose imported files reach back before its oldest stored
+   *  transaction, each with the first day they cover (see IMPORTED). */
+  imported: { account: string; from: string }[];
 };
 
 export type ReportManualAccount = ManualFacts & {
@@ -416,6 +446,46 @@ const nameKey = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
  *  isn't known. */
 const reachOf = (firstSeen: string | null) => (firstSeen ? addDays(firstSeen, -TRANSACTIONS_DAYS_REQUESTED) : null);
 
+/** Days as ranges, joined where they overlap or touch. */
+function joinedRanges(ranges: readonly { from: string; to: string }[]): { from: string; to: string }[] {
+  const out: { from: string; to: string }[] = [];
+  for (const r of [...ranges].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))) {
+    const last = out[out.length - 1];
+    if (last && r.from <= addDays(last.to, 1)) {
+      if (r.to > last.to) last.to = r.to;
+    } else out.push({ ...r });
+  }
+  return out;
+}
+
+/** Where an institution's transactions begin for the period, counting the
+ *  days files imported into its accounts cover (see IMPORTED): the latest day
+ *  from which each account is covered through the period's last day (the
+ *  bank's own first day for one the files don't help), and the accounts
+ *  that reach further back. Null when every account covers the whole
+ *  period. `bank` is its oldest stored transaction. */
+function startsFor(s: SourceFacts, bank: string, period: Period): { first: string; files: boolean; imported: { account: string; from: string }[] } | null {
+  const accounts = s.accounts ?? [];
+  if (!accounts.some((a) => a.covers.length > 0)) return bank > period.start ? { first: bank, files: false, imported: [] } : null;
+  const starts = accounts.map((a) => {
+    const run = joinedRanges([{ from: bank, to: period.today }, ...a.covers]).find((r) => r.from <= period.through && period.through <= r.to);
+    return { account: a.name, from: run && run.from < bank ? run.from : bank };
+  });
+  const first = starts.reduce((latest, a) => (a.from > latest ? a.from : latest), starts[0].from);
+  if (first <= period.start) return null;
+  return { first, files: first < bank, imported: starts.filter((a) => a.from < first) };
+}
+
+/** Each account whose files reach back before the institution's oldest
+ *  stored transaction (or all with files, when none is stored), with the
+ *  first day they cover. */
+function importedBefore(accounts: SourceFacts['accounts'], first: string | null): { account: string; from: string }[] {
+  return (accounts ?? []).flatMap((a) => {
+    const from = a.covers.reduce<string | null>((min, c) => (min === null || c.from < min ? c.from : min), null);
+    return from !== null && (first === null || from < first) ? [{ account: a.name, from }] : [];
+  });
+}
+
 /** The gaps one linked institution leaves in the period. */
 function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   const at = { item_id: s.item_id, institution: s.institution_name };
@@ -447,8 +517,19 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   // A SimpleFIN bank's history comes a window a night, back from today, so
   // only the days before what has come are short.
   if (s.coverage === 'importing') gaps.push({ kind: 'importing', ...at, ...(s.connector && s.first_date ? { before: s.first_date } : {}) });
-  else if (s.first_date !== null && s.first_date > period.start) gaps.push({ kind: 'begins_late', ...at, first: s.first_date, from: 'stored' });
-  else gaps.push(...beyondReach);
+  else if (s.first_date !== null) {
+    const late = startsFor(s, s.first_date, period);
+    if (late) {
+      gaps.push({
+        kind: 'begins_late',
+        ...at,
+        first: late.first,
+        from: 'stored',
+        ...(late.files ? { files: true as const } : {}),
+        ...(late.imported.length > 0 ? { imported: late.imported } : {}),
+      });
+    }
+  } else gaps.push(...beyondReach);
   return gaps;
 }
 
@@ -716,7 +797,11 @@ export function buildReport(input: ReportInput): Report {
     marked,
     appendix,
     institutions: input.sources
-      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, ...s }) => ({ ...s, note: noteOf.get(s.item_id) ?? null }))
+      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, accounts, ...s }) => ({
+        ...s,
+        note: noteOf.get(s.item_id) ?? null,
+        imported: importedBefore(accounts, s.first_date),
+      }))
       .sort((a, b) => a.institution_name.localeCompare(b.institution_name)),
     manual: input.manual
       .map((m) => ({ ...m, transactions: manualRead(m.account_id) ? (manualCounts.get(m.account_id) ?? 0) : null }))

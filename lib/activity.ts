@@ -266,7 +266,7 @@ export async function assembleBankRows(
       done.forEach((r, i) => {
         if (r.stored !== undefined) bankStates.set(items[i].item_id, r.stored);
       });
-      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates });
+      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates, since: opts.since });
     }),
   ]);
 

@@ -24,7 +24,11 @@
 //     their transactions, or kept as manual accounts, unless tracked again;
 //   - the categories the person marked (lib/report/store.ts), found among
 //     their categories as the rows were filed by them (finishActivity, which
-//     files without writing: the report never grows the stored categories).
+//     files without writing: the report never grows the stored categories);
+//   - the days the files imported into each linked account cover (#52,
+//     lib/history-import/read.ts importedCoverage), with each connection's
+//     bank accounts and cards, so where those files reach, the bank's own
+//     transactions needn't (lib/report/build.ts IMPORTED).
 //
 // READ ONLY, and for display: nothing here writes, deletes or records anything
 // on what it reads (readOnly). Every read that can't be made is said on the
@@ -54,6 +58,7 @@ import { connectorBadge } from '../connectors/health';
 import { endedAccountsStore, type EndedAccount } from '../connectors/store';
 import { connectorOf } from '../connectors/registry';
 import type { TxnCoverage } from '../transactions';
+import { importedCoverage } from '../history-import/read';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
@@ -104,6 +109,12 @@ export async function readReport(
   ]);
   const hidden = bank.hidden;
   const live = new Set(items.map((i) => i.item_id));
+  // LENIENT, for this display only: an import whose summary can't be read
+  // covers nothing here, so a report says no less than without it.
+  const covered = await importedCoverage(ctx, links).catch((err: unknown) => {
+    console.error('Report: what imported files cover could not be read', err instanceof Error ? err.name : typeof err);
+    return new Map<string, { from: string; to: string }[]>();
+  });
   // LENIENT, for this display only: a directory that can't be read is said on
   // the report (a gap), never read as no removals.
   const directory = await removedConnections(ctx, live).catch((err: unknown) => {
@@ -151,6 +162,11 @@ export async function readReport(
       problem: f.problem,
       records_unreadable: f.records_unreadable === true,
       holds: holds.get(s.item_id) ?? { investment: false, loans: false },
+      // Its bank accounts and cards, as it last reported them, not hidden,
+      // with what files imported into each cover.
+      accounts: (remembered.byItem[s.item_id] ?? [])
+        .filter((a) => (a.type === 'depository' || a.type === 'credit') && !hidden.has(a.account_id))
+        .map((a) => ({ name: a.name, covers: covered.get(a.account_id) ?? [] })),
     };
   });
 

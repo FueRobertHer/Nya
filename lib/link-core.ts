@@ -59,7 +59,7 @@ export function effectiveLinks(links: Map<string, Link>, liveIds: Set<string>): 
 /** The id an account is known by now, following links. Stops at any repeat,
  *  so a cycle anywhere in a chain ends instead of looping, and follows chains
  *  of any realistic length. */
-export function resolveId(id: string, links: Map<string, Link>): string {
+export function resolveId(id: string, links: ReadonlyMap<string, Pick<Link, 'to'>>): string {
   const seen = new Set([id]);
   let current = id;
   for (let i = 0; i < 50; i++) {

@@ -319,7 +319,9 @@ export function toDisplay(row: ImportedTxn, account: LinkedAccount, withAccountI
  * Activity tab shows transactions (lib/activity.ts): the last LOOKBACK_DAYS
  * of them (`txns`), and those before, back to RECURRING_LOOKBACK_DAYS, for
  * recurring detection (`older`), with a note for each account whose imported
- * rows can't be shown. `withAccountIds` puts each row's account on it, as the
+ * rows can't be shown. `since` reads every one from that day on as `txns`
+ * instead, and none before, as the bank's part reads its rows for a report
+ * on an earlier period (lib/transactions.ts DisplayInputs). `withAccountIds` puts each row's account on it, as the
  * read-only API wants. `represents` names, for each bank row standing for
  * imported rows (one that superseded them, or that they are duplicates of),
  * those rows, earlier imports first: what the person said about them carries
@@ -333,11 +335,12 @@ export async function importedForActivity(
     leftOut: ReadonlySet<string>;
     withAccountIds?: boolean;
     bankStates?: ReadonlyMap<string, Record<string, StoredTxn> | null>;
+    since?: string;
   }
 ): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]> }> {
   const read = await readImported(ctx, { items: opts.items, links: opts.links, leftOut: opts.leftOut, bankStates: opts.bankStates });
-  const cutoff = daysAgo(LOOKBACK_DAYS);
-  const since = daysAgo(RECURRING_LOOKBACK_DAYS);
+  const cutoff = opts.since ?? daysAgo(LOOKBACK_DAYS);
+  const since = opts.since ?? daysAgo(RECURRING_LOOKBACK_DAYS);
   const txns: Txn[] = [];
   const older: OlderTxn[] = [];
   const represents = new Map<string, string[]>();
@@ -373,6 +376,27 @@ export async function importedForActivity(
     }
   }
   return { txns, older, notes: read.notes, represents };
+}
+
+/**
+ * For a report on a period (lib/report/read.ts): the days the files imported
+ * into each account cover, by the id the account is known by now (following
+ * `links`), each import counted only where it holds every transaction of its
+ * period: none of its lines went unread, or the person said those lines
+ * aren't transactions (`whole`), as the estimated history counts one
+ * (lib/history-import/extend.ts). LENIENT, for display: an import whose
+ * summary can't be read covers nothing here, so a report says no less than
+ * it would without it.
+ */
+export async function importedCoverage(ctx: Ctx, links: ReadonlyMap<string, Pick<Link, 'to'>>): Promise<Map<string, { from: string; to: string }[]>> {
+  const summaries = await historyImportSummaryStore.getAllReport(ctx);
+  const out = new Map<string, { from: string; to: string }[]>();
+  for (const s of summaries.entries.values()) {
+    if (s.counts.unreadable > 0 && !s.covers.whole) continue;
+    const id = resolveId(s.account_id, links);
+    out.set(id, [...(out.get(id) ?? []), { from: s.covers.from, to: s.covers.to }]);
+  }
+  return out;
 }
 
 /**
