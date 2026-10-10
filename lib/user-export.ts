@@ -1665,9 +1665,16 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
  * transaction is in transactions.csv twice. Each with the id its account is
  * known by now, following the file's links. And, by the bank row's id, the
  * category you set on an imported row a bank row now stands for (`carried`),
- * which that row shows as yours, as the app does.
+ * which that row shows as yours, as the app does; and each imported row a
+ * bank row stands for, with that bank row's id (`stands`). `pending` false
+ * counts a row whose only look-alike at the bank is pending, as a statement
+ * of posted rows does (lib/ofx-export.ts); by default it stands in for it, as
+ * the app shows them.
  */
-function importedTransactionsIn(doc: UserExport): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string> } {
+export function importedTransactionsIn(
+  doc: UserExport,
+  opts: { pending?: boolean } = {}
+): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string>; stands: Map<string, string> } {
   const entries = doc[importedTxnStore.name] ?? [];
   if (!Array.isArray(entries)) throw new Error('The imported transactions in the file have an unexpected shape');
   const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
@@ -1681,7 +1688,8 @@ function importedTransactionsIn(doc: UserExport): { rows: { row: ImportedTxn; ac
     }
   }
   const carried = new Map<string, string>();
-  if (held.size === 0) return { rows: [], carried };
+  const stands = new Map<string, string>();
+  if (held.size === 0) return { rows: [], carried, stands };
   // The bank's rows of those accounts, and where each connection's begin.
   const banks = new Map<string, BankRow[]>();
   const firstPosted = new Map<string, string>();
@@ -1714,14 +1722,15 @@ function importedTransactionsIn(doc: UserExport): { rows: { row: ImportedTxn; ac
   const out: { row: ImportedTxn; account_id: string }[] = [];
   for (const [account_id, rows] of held) {
     const item = itemOf.get(account_id) ?? null;
-    const settled = settle(rows, banks.get(account_id) ?? [], order, { bankFrom: item ? (firstPosted.get(item) ?? null) : null, covers, pending: true });
+    const settled = settle(rows, banks.get(account_id) ?? [], order, { bankFrom: item ? (firstPosted.get(item) ?? null) : null, covers, pending: opts.pending ?? true });
     for (const row of settled.counted) out.push({ row, account_id });
     for (const [rowId, bankId] of standsFor(settled)) {
+      stands.set(rowId, bankId);
       const category = yours.get(rowId);
       if (category && !carried.has(bankId)) carried.set(bankId, category);
     }
   }
-  return { rows: out, carried };
+  return { rows: out, carried, stands };
 }
 
 /**

@@ -52,6 +52,8 @@ const { callTool } = await import('@/lib/mcp');
 const { trailingFlows } = await import('@/lib/fire/inputs');
 const { readStorageUsage } = await import('@/lib/blob-sizes');
 const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
+const { ofxFile } = await import('@/lib/ofx-export');
+const { parseOfx, ofxRecords } = await import('@/lib/import/ofx');
 const { importedTxnStore, historyImportStore, historyImportSummaryStore } = await import('@/lib/history-import/store');
 const routes = await import('@/app/api/history-import/route');
 const transactions = await import('@/app/api/transactions/route');
@@ -338,6 +340,33 @@ describe('the download of my data', () => {
     await storeBank([...BANK.filter((t) => t.transaction_id !== 'b_rent'), mid]);
     const after = csvRows(await download());
     expect(after.filter((r) => r.amount === '1850').map((r) => [r.name, r.source])).toEqual([['Online Transfer to Landlord', 'import:ofx']]);
+  });
+});
+
+describe('the checking account’s OFX statement', () => {
+  test('holds the imported transactions that count, with Nya’s own ids, beside the bank’s, each once, and says so', async () => {
+    await importStatement();
+    // Excluded on the imported row the bank later sends: the bank's is excluded too.
+    const shop = await importedRow('CORNER SHOP');
+    await setExcluded(ctx, shop.transaction_id, true);
+    await storeBank([...BANK, bankTxn('b_mid', 'acc_chk', 49, 60, { name: 'CORNER SHOP #12' })]);
+    const data = await collectUserData({ ctx, userId: null });
+    const made = ofxFile(data, buildUserExport(data, new Date()), 'acc_chk', new Date());
+    if (!('file' in made)) throw new Error(made.refused);
+    const parsed = parseOfx([...made.file.pieces()].join(''));
+    expect(parsed.error).toBeNull();
+    const records = parsed.statements.flatMap((st) => ofxRecords(st).records);
+    const fitids = records.map((r) => r.source_id ?? '');
+    // The bank's rows, the rent once (the bank's: the file's is its duplicate),
+    // the corner shop once (the bank's), and the imported rows that count:
+    // every one older than the bank's, the renewals before the year among them.
+    expect(fitids.filter((id) => id.startsWith('imported-txn:')).length).toBe(4);
+    expect(records.filter((r) => Math.abs(r.amount) === 1850).map((r) => r.source_id)).toEqual(['b_rent']);
+    expect(records.filter((r) => Math.abs(r.amount) === 60).map((r) => r.source_id)).toEqual(['b_mid']);
+    expect(records.filter((r) => r.source_id?.startsWith('imported-txn:')).map((r) => r.description).sort()).toEqual(['DOMAIN RENEWAL', 'DOMAIN RENEWAL', 'OLD DEPOSIT', 'OLD STORE']);
+    // The bank's corner shop stands for the one the person excluded: excluded too.
+    expect(records.find((r) => r.source_id === 'b_mid')!.note).toContain('Excluded from budgets and reports in Nya');
+    expect(made.file.notes.some((n) => n.startsWith('4 transactions you imported from your bank’s files are in it'))).toBe(true);
   });
 });
 

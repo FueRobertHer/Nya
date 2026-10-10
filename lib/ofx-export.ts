@@ -19,8 +19,18 @@
 //   - FITID is the transaction's own id: Plaid's transaction id, or a manual
 //     row's "manual-txn:..." id (a row SimpleFIN brought is one too: an
 //     account SimpleFIN keeps up to date has its rows in a book, as a manual
-//     account has). It never changes, so importing the same file twice, into
-//     Nya's import or any app that honours FITIDs, adds nothing.
+//     account has), or an "imported-txn:..." id. It never changes, so
+//     importing the same file twice, into Nya's import or any app that
+//     honours FITIDs, adds nothing.
+//   - A linked account's statement holds the transactions imported into it
+//     from its bank's files (#52) that count as its own, as the CSV and JSON
+//     files have them: not one standing for a transaction already there, nor
+//     one the bank's own now stands for, so none is in it twice; counted as
+//     posted rows are, so one whose only look-alike at the bank is pending is
+//     in it (the pending one isn't). A bank row standing for one you excluded
+//     is excluded too, as the app reads it. Where the bank later sends the
+//     same transaction, a later statement lists the bank's in its place, with
+//     the bank's id, which a note says.
 //   - Pending transactions are left out, and a note says how many: the bank
 //     gives a transaction a new id when it posts, so an app holding the
 //     pending one would count it twice.
@@ -112,7 +122,8 @@ import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { bookAccountTypes, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
+import { bookAccountTypes, importedTransactionsIn, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
+import { importedTxnStore } from './history-import/store';
 import { connectorAccountsStore } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
@@ -620,6 +631,11 @@ export function ofxFile(
     };
   } else if (linked) {
     rows = [];
+    // The transactions imported into it from its bank's files that count as
+    // its own, as posted rows count (see the header), and the bank's rows
+    // standing for those excluded.
+    const imported = importedTransactionsIn(doc, { pending: false });
+    const excludedByImport = new Set([...imported.stands].flatMap(([rowId, bankId]) => (own.get(rowId) === true ? [bankId] : [])));
     for (const t of doc.transactions) {
       if (t.account_id !== account_id) continue;
       if (t.pending) {
@@ -638,8 +654,33 @@ export function ofxFile(
         note: null,
         check_number: t.check_number ?? null,
         transaction_code: t.transaction_code ?? null,
-        excluded: own.get(t.transaction_id) ?? carried.has(contentKey(t.account_id, t)),
+        excluded: own.get(t.transaction_id) ?? (carried.has(contentKey(t.account_id, t)) || excludedByImport.has(t.transaction_id)),
       });
+    }
+    const fromFiles = imported.rows.filter((r) => r.account_id === account_id);
+    for (const { row } of fromFiles) {
+      rows.push({
+        id: row.id,
+        date: row.date,
+        user_date: null,
+        amount: row.amount,
+        currency: row.currency,
+        name: row.name,
+        description: null,
+        note: row.note,
+        check_number: null,
+        transaction_code: row.transaction_code ?? null,
+        excluded: own.get(row.id) ?? false,
+      });
+    }
+    if (fromFiles.length > 0) {
+      notes.push(
+        `${plural(fromFiles.length, 'transaction you imported from your bank’s files is', 'transactions you imported from your bank’s files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
+      );
+    }
+    if (missingIds(doc.problems, importedTxnStore.name).some((id) => resolveId(id, links) === account_id)) {
+      notes.push(`The transactions imported into this account from your bank’s files could not be read, so the statement has none of them. The JSON download lists them under problems. ${UNCHANGED}`);
+      incomplete.add(importedTxnStore.name);
     }
     if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
       notes.push(
