@@ -1,13 +1,22 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { dataCtx } from '@/lib/data-ctx';
 import { setOverride } from '@/lib/overrides';
 import { clearTransactionsCache } from '@/lib/cache';
 import { editManualTxn, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
 import { isManualId } from '@/lib/manual';
 import { storeFailure } from '@/lib/store-failure';
+import { choiceForId } from '@/lib/category-store';
+import { CategoryError } from '@/lib/categories';
 
 // Store a manual category for one transaction. The transactions route
 // applies these overrides on top of Plaid's auto-categorization.
+//
+// The category is one of the person's (lib/categories.ts), chosen by id
+// (`category_id`), and stored as that category's words (its first text key,
+// choiceText), as overrides have always been stored: so a rename or a merge
+// later changes nothing here, and the release before categories had ids, rolled
+// back to, still reads it. A page from that release still sends the words
+// themselves (`category`), stored as before.
 //
 // A manual row (lib/manual-txns.ts) has no bank's category under it to
 // override: its category is the person's own, so it is changed on the row
@@ -20,9 +29,18 @@ import { storeFailure } from '@/lib/store-failure';
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
-    const { transaction_id, category, account_id } = await req.json();
+    const { transaction_id, category_id, account_id, category: words } = await req.json();
+    let category: unknown = words;
     if (typeof transaction_id !== 'string' || !transaction_id || transaction_id.length > 100) {
       return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
+    }
+    if (category_id !== undefined) {
+      try {
+        category = await choiceForId(ctx, category_id);
+      } catch (err) {
+        if (err instanceof CategoryError) return NextResponse.json({ error: err.message }, { status: err.status });
+        throw err;
+      }
     }
     if (typeof category !== 'string' || !category.trim() || category.length > 60) {
       return NextResponse.json({ error: 'Invalid category' }, { status: 400 });
@@ -46,9 +64,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(err);
-    return NextResponse.json({ error: 'Failed to recategorize' }, { status: 500 });
+    // The seam's answers (lib/store-failure.ts): categories or overrides that
+    // can't be read are 409 and flagged, a change that kept losing its
+    // compare-and-set its own 409, no usable container 503.
+    return storeFailure(err, 'Failed to recategorize');
   }
 }

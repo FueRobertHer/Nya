@@ -13,22 +13,35 @@ import { resolveId, type Link } from './link-core';
 const OVERRIDES_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-overrides');
 
 export async function getOverrides(ctx: Ctx): Promise<Record<string, string>> {
+  return (await readOverridesReport(ctx)).overrides;
+}
+
+/**
+ * The overrides getOverrides gives, and whether they were all read (`ok`):
+ * false when the hash couldn't be read or an override couldn't be decrypted,
+ * both of which getOverrides passes over. For a report, which says when the
+ * person's own categories are missing from it (lib/report/read.ts); the app
+ * goes on as it always has.
+ */
+export async function readOverridesReport(ctx: Ctx): Promise<{ overrides: Record<string, string>; ok: boolean }> {
   try {
     const map = await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx));
-    if (!map) return {};
+    if (!map) return { overrides: {}, ok: true };
     const out: Record<string, string> = {};
+    let ok = true;
     await Promise.all(
       Object.entries(map).map(async ([id, blob]) => {
         try {
           out[id] = await decrypt(blob);
         } catch {
           // undecryptable override (rotated key) -- drop it
+          ok = false;
         }
       })
     );
-    return out;
+    return { overrides: out, ok };
   } catch {
-    return {};
+    return { overrides: {}, ok: false };
   }
 }
 
@@ -134,7 +147,7 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
 
   // Merged with anything already recorded for the account (the same id seen
   // under an earlier Item): a key recorded both ways becomes ambiguous.
-  const existing = await readCarried(ctx, [...byAccount.keys()]);
+  const existing = (await readCarried(ctx, [...byAccount.keys()])).carried;
   const writes: Record<string, string> = {};
   let n = 0;
   for (const [account_id, rows] of byAccount) {
@@ -161,17 +174,36 @@ async function parseRows(blob: string): Promise<CarriedRows | null> {
   }
 }
 
-/** Some accounts' records, read strictly (throws on a failed read). */
-async function readCarried(ctx: Ctx, account_ids: string[]): Promise<Carried> {
+/** Some accounts' records, read strictly (throws on a failed read); a record
+ *  that can't be parsed is skipped, and said in `ok`. */
+async function readCarried(ctx: Ctx, account_ids: string[]): Promise<{ carried: Carried; ok: boolean }> {
   const out: Carried = new Map();
+  let ok = true;
   const blobs = await Promise.all(account_ids.map((id) => redis().hget<string>(CARRY_HASH(ctx), id)));
   await Promise.all(
     account_ids.map(async (id, i) => {
       const rows = blobs[i] ? await parseRows(blobs[i]!) : null;
       if (rows) out.set(id, rows);
+      else if (blobs[i]) ok = false;
     })
   );
-  return out;
+  return { carried: out, ok };
+}
+
+/**
+ * The records of the given earlier accounts, as getCarried reads them, and
+ * whether they were all read (`ok`): false when the read failed or a record
+ * couldn't be parsed. For a report (lib/report/read.ts), which says so; the
+ * app shows Plaid's categories, as it always has.
+ */
+export async function getCarriedReport(ctx: Ctx, account_ids: string[]): Promise<{ carried: Carried; ok: boolean }> {
+  if (account_ids.length === 0) return { carried: new Map(), ok: true };
+  try {
+    return await readCarried(ctx, account_ids);
+  } catch (err) {
+    console.warn('overrides: could not read carried categories', err instanceof Error ? err.message : err);
+    return { carried: new Map(), ok: false };
+  }
 }
 
 /**
@@ -181,7 +213,7 @@ async function readCarried(ctx: Ctx, account_ids: string[]): Promise<Carried> {
  */
 export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carried> {
   try {
-    if (account_ids) return account_ids.length === 0 ? new Map() : await readCarried(ctx, account_ids);
+    if (account_ids) return account_ids.length === 0 ? new Map() : (await readCarried(ctx, account_ids)).carried;
     const raw = (await redis().hgetall<Record<string, string>>(CARRY_HASH(ctx))) ?? {};
     const out: Carried = new Map();
     await Promise.all(

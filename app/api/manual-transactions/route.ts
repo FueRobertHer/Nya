@@ -23,6 +23,8 @@ import {
 } from '@/lib/manual-txns';
 import { forgetAnnotations } from '@/lib/txn-annotations';
 import { storeFailure } from '@/lib/store-failure';
+import { choiceForId, fileForAnswer } from '@/lib/category-store';
+import { CategoryError } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { loggable } from '@/lib/log-safe';
 
@@ -58,6 +60,12 @@ import { loggable } from '@/lib/log-safe';
 // the client reloads net worth, which records it in the real history layer
 // like any typed balance. Once the balance moved, the answer says so whatever
 // fails after. Editing or deleting a row never changes the balance.
+//
+// A CATEGORY is chosen from the person's categories (lib/categories.ts) by id
+// (`category_id`, null for none), and kept on the row as that category's words
+// (choiceText), which the release before categories had ids reads too; a page
+// from that release still sends the words themselves (`category`). The row in
+// each answer is filed as the Activity tab files it.
 
 /** Far more than any one transaction's fields need. */
 const MAX_BODY_CHARS = 8 * 1024;
@@ -99,10 +107,24 @@ function readUpdateBalance(v: unknown): { from: number; to: number } | null | 'i
   return { from, to };
 }
 
-/** The row as the Activity tab shows it, on the account it is on now. */
+/** The row as the Activity tab shows it, on the account it is on now, filed
+ *  into the person's categories. */
 async function shown(ctx: Ctx, row: ManualTxn, account: ManualAccount) {
   const on = row.account_id === account.account_id ? account : await getManualAccount(ctx, row.account_id).catch(() => null);
-  return on ? manualRowForDisplay(on, row) : manualRowForDisplay(account, { ...row, account_id: account.account_id });
+  return fileForAnswer(ctx, on ? manualRowForDisplay(on, row) : manualRowForDisplay(account, { ...row, account_id: account.account_id }));
+}
+
+/** A category chosen by id, as the words the row keeps, in place of any
+ *  sent as words; the response refusing it, or null. */
+async function chosenCategory(ctx: Ctx, body: Record<string, unknown>): Promise<NextResponse | null> {
+  if (body.category_id === undefined) return null;
+  try {
+    body.category = body.category_id === null ? null : await choiceForId(ctx, body.category_id);
+    return null;
+  } catch (err) {
+    if (err instanceof CategoryError) return NextResponse.json({ error: err.message }, { status: err.status });
+    throw err;
+  }
 }
 
 /** Why a balance update can't be made as asked, before anything is moved. */
@@ -168,6 +190,8 @@ export async function POST(req: Request) {
     if (body instanceof NextResponse) return body;
     if (body.id !== undefined && !isManualTxnId(body.id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
     const id = (body.id as string | undefined) ?? newManualTxnId();
+    const refused = await chosenCategory(ctx, body);
+    if (refused) return refused;
     const read = readTxnFields(body, { partial: false, today: today() });
     if ('error' in read) return NextResponse.json({ error: read.error }, { status: 400 });
     const fields = { date: read.fields.date!, amount: read.fields.amount!, currency: read.fields.currency!, name: read.fields.name!, category: read.fields.category ?? null, note: read.fields.note ?? null };
@@ -309,6 +333,8 @@ export async function PATCH(req: Request) {
     if (body instanceof NextResponse) return body;
     if (!isManualTxnId(body.id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
     if (body.account_id !== undefined && !isAccountId(body.account_id)) return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
+    const refused = await chosenCategory(ctx, body);
+    if (refused) return refused;
     const read = readTxnFields(body, { partial: true, today: today() });
     if ('error' in read) return NextResponse.json({ error: read.error }, { status: 400 });
     const changes: ManualTxnChanges = { ...read.fields };
@@ -332,7 +358,7 @@ export async function PATCH(req: Request) {
     }
     const on = target ?? (await getManualAccount(ctx, saved.account_id));
     if (!on) return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
-    return NextResponse.json({ transaction: manualRowForDisplay(on, saved) });
+    return NextResponse.json({ transaction: await fileForAnswer(ctx, manualRowForDisplay(on, saved)) });
   } catch (err) {
     if (err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     return storeFailure(err, 'Failed to save the transaction');

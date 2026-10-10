@@ -72,7 +72,7 @@
 // what is stale or missing named.
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '@/lib/spending';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
 import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
@@ -124,7 +124,9 @@ const SPENDING_CATEGORIES = new Set([
 
 /** How one transaction counts for planning (see the top of this file). */
 export function planFlow(t: Txn): PlanFlow {
-  const category = t.category ?? null;
+  // The category words the row carries, never its name (lib/spending.ts
+  // categoryKey): renaming a category moves nothing here.
+  const category = categoryKey(t);
   // Plaid's own detail: a recategorized row keeps it (only the category is
   // replaced), so it still says what the row really was.
   const sub = (t.subcategory ?? '').toLowerCase();
@@ -141,7 +143,10 @@ export function planFlow(t: Txn): PlanFlow {
     if (!t.transaction_code && category === 'transfer out' && sub === 'withdrawal') return 'cash';
   }
   if (isTransfer(t)) return 'transfer';
-  if (category === 'income') return 'income';
+  // Income by the kind of the person's category once filed (a category in an
+  // income group, lib/categories.ts), as transfers are; seeded, that is the
+  // "income" category alone, as before.
+  if (t.category_kind ? t.category_kind === 'income' : category === 'income') return 'income';
   if (t.amount > 0) return 'spending';
   // Money in: back on something bought only in a spending category. Anything
   // else (no category, "other") stays income, as it always was.
