@@ -21,6 +21,7 @@ import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
+import type { CategoryKind } from "@/lib/categories";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -37,7 +38,13 @@ export type Txn = {
   // As in lib/transactions.ts: the account's type, for the cash forecast.
   account_type?: string | null;
   institution_name: string;
+  // As in lib/transactions.ts: the category words the rules read, and, once
+  // filed into the person's categories, the category's id, the name to show
+  // (null for a row that says nothing) and the kind it counts as.
   category: string | null;
+  category_id?: string;
+  category_name?: string | null;
+  category_kind?: CategoryKind;
   iso_currency_code: string | null;
   unofficial_currency_code?: string | null;
   vendor_key: string;

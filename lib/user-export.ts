@@ -70,7 +70,6 @@ import { readInvStore, type InvStoreState } from './invstore';
 import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried } from './overrides';
 import { readRenamesStrict } from './renames';
 import { readHistoryForExport, type StoredPoint } from './history';
-import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
@@ -78,6 +77,10 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { taxonomyForReading } from './category-store';
+import { budgetSetStore, budgetsForReading } from './budget-store';
+import { placeBudgets } from './budget-set';
+import { groupOf, growTaxonomy, indexTaxonomy, isProvisionalId, observedKeys, resolveCategory, type CategoryFacts, type Taxonomy } from './categories';
 
 export const EXPORT_FORMAT = 'nya-export';
 export const EXPORT_VERSION = 1;
@@ -204,15 +207,44 @@ function section<T>(s: {
   return s as ExportSection;
 }
 
+/** The budgets by name, as the app has them now (lib/budget-store.ts): each
+ *  category's with its id and group, each group's with its id. A budget on a
+ *  category or group since deleted is kept, by its id alone. Ids are null for
+ *  a category the app hasn't stored yet. */
+async function exportBudgets(ctx: Ctx) {
+  const { budgets, taxonomy } = await budgetsForReading(ctx, (await taxonomyForReading(ctx)).taxonomy);
+  const ix = indexTaxonomy(taxonomy);
+  const placed = placeBudgets(budgets, ix);
+  const shown = (id: string) => (isProvisionalId(id) ? null : id);
+  const gone = (kind: 'category' | 'group') => placed.orphans.filter((o) => o.kind === kind);
+  return {
+    categories: [
+      ...[...placed.categories].map(([id, monthly_amount]) => {
+        const c = ix.byId.get(id)!;
+        return { category: c.name as string | null, monthly_amount, category_id: shown(id), group: groupOf(ix, c).name as string | null };
+      }),
+      ...gone('category').map((o) => ({ category: null, monthly_amount: o.amount, category_id: o.id, group: null })),
+    ].sort((a, b) => byText(a.category, b.category) || byText(a.category_id, b.category_id)),
+    groups: [
+      ...[...placed.groups].map(([id, monthly_amount]) => ({ group: ix.groupById.get(id)!.name as string | null, monthly_amount, group_id: shown(id) })),
+      ...gone('group').map((o) => ({ group: null, monthly_amount: o.amount, group_id: o.id })),
+    ].sort((a, b) => byText(a.group, b.group) || byText(a.group_id, b.group_id)),
+  };
+}
+
 export const SECTIONS: readonly ExportSection[] = [
   section({
     key: 'budgets',
     what: 'budgets',
-    // Monthly, per spending category.
-    read: async ({ ctx }) =>
-      Object.entries(await getBudgets(ctx))
-        .map(([category, monthly_amount]) => ({ category, monthly_amount }))
-        .sort((a, b) => a.category.localeCompare(b.category)),
+    // Monthly, per category, by its name now (exportBudgets).
+    read: async ({ ctx }) => (await exportBudgets(ctx)).categories,
+    covers: [budgetSetStore.name],
+  }),
+  section({
+    key: 'group_budgets',
+    what: 'budgets',
+    // Monthly, per category group: a cap on everything in it.
+    read: async ({ ctx }) => (await exportBudgets(ctx)).groups,
   }),
   section({
     key: 'goals',
@@ -302,6 +334,10 @@ export type UserData = {
   declined: DeclinedOffer[];
   carried: Carried;
   history: { totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> };
+  /** The person's categories (lib/category-store.ts), as stored or, before
+   *  the app has stored them, as it would seed them: what each transaction is
+   *  filed under. */
+  taxonomy: Taxonomy;
   /** SECTIONS and the seam's (declaredSections), read, in order. */
   sections: (readonly [string, unknown])[];
 };
@@ -344,7 +380,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     });
 
   const items = await read('linked institutions', () => readItems(ctx));
-  const [remembered, directory, manual, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, sections] =
+  const [remembered, directory, manual, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, taxonomy, sections] =
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
@@ -378,6 +414,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       read('account links', () => readDeclined(ctx)),
       read('categories', () => readCarriedStrict(ctx)),
       read('balance history', () => readHistoryForExport(ctx)),
+      read('categories', async () => (await taxonomyForReading(ctx)).taxonomy),
       Promise.all(allSections().map(async (s) => [s.key, await read(s.what, () => s.read(src))] as const)),
     ]);
   return {
@@ -396,6 +433,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     declined,
     carried,
     history,
+    taxonomy,
     sections,
   };
 }
@@ -447,6 +485,13 @@ export type ExportTransaction = StoredTxn & {
   vendor_key: string;
   your_category: string | null;
   your_category_from_earlier_account: string | null;
+  /** The person's category it is filed under now, as the app files it
+   *  (lib/categories.ts), its id (null for one the app hasn't stored yet),
+   *  and its group's name. The name is null for a row that says nothing of
+   *  its category. */
+  nya_category: string | null;
+  nya_category_id: string | null;
+  nya_group: string;
   your_merchant_name: string | null;
   superseded_by_posted: boolean;
   account_hidden: boolean;
@@ -694,6 +739,26 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   // Categories carried across a re-link, by the key of the row they apply to,
   // following the links that apply now (as /api/transactions does).
   const carried = carriedCategories(data.carried, effective);
+  // Each row filed as the app files it: the person's own choice, else the
+  // carried one, else Plaid's, by the categories as stored, grown in memory by
+  // any the rows carry that they lack (with provisional ids, shown as null).
+  const factsOf = (t: StoredTxn): CategoryFacts => {
+    const own = data.overrides.get(t.transaction_id) ?? carried.get(contentKey(t.account_id, t));
+    return {
+      category: own ?? t.category,
+      category_set: own !== undefined,
+      pfc_primary: t.personal_finance_category?.primary ?? null,
+      pfc_detailed: t.personal_finance_category?.detailed ?? null,
+    };
+  };
+  let provisional = 0;
+  const filing = indexTaxonomy(
+    growTaxonomy(data.taxonomy, observedKeys(data.stores.flatMap((s) => Object.values(s.txns).map(factsOf))), () => `new:${++provisional}`, { limit: Infinity }).taxonomy
+  );
+  const filed = (t: StoredTxn) => {
+    const { category, said } = resolveCategory(filing, factsOf(t));
+    return { nya_category: said ? category.name : null, nya_category_id: isProvisionalId(category.id) ? null : category.id, nya_group: groupOf(filing, category).name };
+  };
   const transactions: ExportTransaction[] = data.stores
     .flatMap((s) => {
       const superseded = supersededPendingIds(s.txns);
@@ -704,6 +769,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
           vendor_key: vendorKey(t),
           your_category: data.overrides.get(t.transaction_id) ?? null,
           your_category_from_earlier_account: carried.get(contentKey(t.account_id, t)) ?? null,
+          ...filed(t),
           your_merchant_name: data.renames.get(vendorKey(t)) ?? null,
           superseded_by_posted: superseded.has(t.transaction_id),
           account_hidden: hidden.has(t.account_id),
@@ -950,6 +1016,9 @@ export const TRANSACTION_COLUMNS = [
   'vendor_key',
   'logo_url',
   'category_icon_url',
+  'nya_category',
+  'nya_category_id',
+  'nya_group',
 ] as const;
 
 function transactionRow(t: ExportTransaction): CsvValue[] {
@@ -1004,6 +1073,9 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     vendor_key: t.vendor_key,
     logo_url: t.logo_url,
     category_icon_url: t.personal_finance_category_icon_url,
+    nya_category: t.nya_category,
+    nya_category_id: t.nya_category_id,
+    nya_group: t.nya_group,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }

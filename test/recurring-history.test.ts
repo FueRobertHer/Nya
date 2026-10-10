@@ -104,6 +104,11 @@ describe('the history before the loaded year', () => {
       account_type: 'depository',
       institution_name: 'Big Bank',
       category: null,
+      // Filed into the person's categories: a row that says nothing is under
+      // the uncategorized one, and counts as spending.
+      category_id: body.categories.uncategorized,
+      category_name: null,
+      category_kind: 'expense',
       subcategory: null,
       iso_currency_code: 'USD',
       unofficial_currency_code: null,

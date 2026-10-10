@@ -47,6 +47,7 @@ const {
   READ_ENTRY_HASHED,
   UPDATE_ENTRY,
   UPDATE_ENTRIES,
+  UPDATE_VALUE,
   COUNTER_READ,
   COUNTER_TAKE,
 } = await import('@/lib/repo');
@@ -298,6 +299,126 @@ function contract(b: Backend) {
       await b.raw.set(listKey(B), 'unreadable');
       await list.set(A, [RENT]);
       expect(await list.get(A)).toEqual([RENT]);
+    });
+  });
+
+  describe("a value store's update", () => {
+    const add = (cur: Note[] | null): Note[] => [...(cur ?? []), { text: 'count', amount: (cur?.length ?? 0) + 1 }];
+
+    test('creates, changes and deletes the value, returning what it wrote', async () => {
+      expect(await list.update(A, (cur) => (cur === null ? [NOTE] : null))).toEqual([NOTE]);
+      expect(await list.update(A, (cur) => [...cur!, RENT])).toEqual([NOTE, RENT]);
+      expect(await list.get(A)).toEqual([NOTE, RENT]);
+      expect(await list.update(A, () => null)).toBeNull();
+      expect(await b.raw.type(listKey())).toBe('none');
+      // Nothing there and nothing to write: only the read is sent.
+      expect(await sentBy(() => list.update(A, () => null))).toEqual(['eval']);
+    });
+
+    test('a value that would not read back is refused, and nothing is written', async () => {
+      await list.set(A, [NOTE]);
+      await expect(list.update(A, () => [{ text: 'x', amount: NaN }])).rejects.toThrow('Refusing to save test notes');
+      expect(await list.get(A)).toEqual([NOTE]);
+    });
+
+    test('a save landing between its read and its write is never lost: fn runs again on it', async () => {
+      await list.set(A, [NOTE]);
+      const seen: Note[][] = [];
+      const written = await list.update(A, async (cur) => {
+        seen.push(cur!);
+        if (seen.length === 1) await list.set(A, [RENT]); // someone else's save, mid-update
+        return [...cur!, NOTE];
+      });
+      expect(seen).toEqual([[NOTE], [RENT]]);
+      expect(written).toEqual([RENT, NOTE]);
+      expect(await list.get(A)).toEqual([RENT, NOTE]);
+    });
+
+    test('concurrent updates all land, where get then set would lose some', async () => {
+      await Promise.all(Array.from({ length: 4 }, () => list.update(A, add)));
+      expect((await list.get(A))!.map((n) => n.amount).sort()).toEqual([1, 2, 3, 4]);
+    });
+
+    test('it gives up when the value keeps changing, and leaves the other saves standing', async () => {
+      await list.set(A, [NOTE]);
+      let runs = 0;
+      const err = await list
+        .update(A, async () => {
+          runs++;
+          await list.set(A, [{ text: 'theirs', amount: runs }]);
+          return [{ text: 'mine', amount: 0 }];
+        })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(UpdateConflictError);
+      expect(err.status).toBe(409);
+      expect(runs).toBe(5);
+      expect(await list.get(A)).toEqual([{ text: 'theirs', amount: 5 }]);
+    });
+
+    test('its write carries a hash of what it read, never the old value itself', async () => {
+      const long = Array.from({ length: 40 }, (_, i) => ({ text: `a long note ${i} `.repeat(20), amount: i }));
+      await bigList.set(A, long);
+      const old = (await b.raw.get(ctxKey('seam-contract-big-list')))!;
+      const scripts: unknown[][] = [];
+      const inner = client as Record<string, unknown>;
+      client = new Proxy(inner, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (prop === 'eval') return (...args: unknown[]) => (scripts.push(args), (value as (...a: unknown[]) => unknown)(...args));
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      try {
+        await bigList.update(A, (cur) => [...cur!, NOTE]);
+      } finally {
+        client = inner;
+      }
+      const write = scripts.find(([script]) => script === UPDATE_VALUE)!;
+      expect(JSON.stringify(write)).not.toContain(old);
+      expect((write[2] as string[])[0]).toBe(new Bun.CryptoHasher('sha1').update(old).digest('hex'));
+      expect(await bigList.get(A)).toEqual([...long, NOTE]);
+    });
+
+    for (const [how, flaw, make] of FLAWED) {
+      test(`${how}: thrown as ${flaw}, before fn runs, and nothing is written`, async () => {
+        const stored = await make();
+        await b.raw.set(listKey(), stored);
+        let ran = false;
+        const err = await list
+          .update(A, () => {
+            ran = true;
+            return [NOTE];
+          })
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(UnreadableValueError);
+        expect(err.unrecognised).toBe(flaw === 'unrecognised');
+        expect(ran).toBe(false);
+        expect(await b.raw.get(listKey())).toBe(stored);
+      });
+    }
+
+    test('text that reads as nothing is never saved: fn sees null, and its value replaces it', async () => {
+      for (const nothing of ['', 'null', '""']) {
+        await b.raw.set(listKey(), nothing);
+        expect(await list.update(A, (cur) => (cur === null ? [NOTE] : [RENT]))).toEqual([NOTE]);
+        expect(await list.get(A)).toEqual([NOTE]);
+      }
+    });
+
+    test('a storage failure is an error, and nothing changes', async () => {
+      await list.set(A, [NOTE]);
+      b.failNext('eval'); // the read
+      await notBlamed(() => list.update(A, add));
+      expect(await list.get(A)).toEqual([NOTE]);
+    });
+
+    test("two containers never see each other's value", async () => {
+      await list.set(A, [NOTE]);
+      expect(await list.update(B, (cur) => (cur === null ? [RENT] : [...cur, RENT]))).toEqual([RENT]);
+      expect(await list.get(A)).toEqual([NOTE]);
+      // One container's unreadable value stops nothing in another.
+      await b.raw.set(listKey(B), 'unreadable');
+      expect(await list.update(A, (cur) => [...cur!, RENT])).toEqual([NOTE, RENT]);
     });
   });
 

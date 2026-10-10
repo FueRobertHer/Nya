@@ -283,6 +283,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       'investment_history_coverage',
       'account_links',
       'budgets',
+      'group_budgets',
       'goals',
       'api_tokens',
       'sharing',
@@ -375,6 +376,11 @@ describe('everything stored, decrypted, and nothing else', () => {
       your_merchant_name: 'BB Coffee',
       superseded_by_posted: false,
       account_hidden: false,
+      // Filed as the app files it: my own category wins. Its id is null until
+      // the app stores my categories (it never has here).
+      nya_category: 'Treats',
+      nya_category_id: null,
+      nya_group: 'Other',
     });
     // Plaid's category and merchant are kept as they came.
     expect(coffee.category).toBe('food and drink');
@@ -385,7 +391,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     // A hidden account's rows are there, marked.
     expect(doc.transactions.find((t) => t.transaction_id === 't_card')).toMatchObject({ account_hidden: true });
     // A category set before a re-link, carried to the linked account's row.
-    expect(doc.transactions.find((t) => t.transaction_id === 't_bakery')).toMatchObject({ your_category: null, your_category_from_earlier_account: 'Bread' });
+    expect(doc.transactions.find((t) => t.transaction_id === 't_bakery')).toMatchObject({ your_category: null, your_category_from_earlier_account: 'Bread', nya_category: 'Bread' });
     // Every override and rename, including one whose transaction is gone.
     expect(doc.category_overrides).toEqual([
       { transaction_id: 't_coffee', category: 'Treats' },
@@ -434,10 +440,14 @@ describe('everything stored, decrypted, and nothing else', () => {
 
   test('budgets and goals', async () => {
     const doc = await download();
+    // Each by the category it is on now, named as the app names it: a name a
+    // budget was saved under that Plaid's categories have ("Travel") is that
+    // category, any other its own. Ids are null until the app stores them.
     expect(doc.budgets).toEqual([
-      { category: 'Food', monthly_amount: 400 },
-      { category: 'Travel', monthly_amount: 150 },
+      { category: 'Food', monthly_amount: 400, category_id: null, group: 'Other' },
+      { category: 'travel', monthly_amount: 150, category_id: null, group: 'Travel and entertainment' },
     ]);
+    expect(doc.group_budgets).toEqual([]);
     expect(doc.goals).toEqual([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' }]);
   });
 
@@ -774,6 +784,7 @@ describe('stores built on the storage seam', () => {
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
       'allocation-settings',
       'carried-annotations',
+      'categories',
       'connection-notices',
       'connection-syncs',
       'connection-warnings',

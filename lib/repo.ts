@@ -48,7 +48,9 @@
 // device), change it with MapStore.update(), a compare-and-set that retries; for
 // a change that must land on several entries together or not at all (moving
 // something from one entry to another), MapStore.updateMany(). A value store
-// is for data one person edits at a time.
+// is for data one person edits at a time; where the app also changes it on its
+// own (the categories, grown from what transactions say while the person may
+// be renaming one), ValueStore.update() is the same compare-and-set for it.
 //
 // DECLARING ONE, in a module under lib/:
 //
@@ -263,6 +265,13 @@ export type ValueStore<T> = Declared & {
   /** Replaces the value, unless the one there now cannot be read: then refuses,
    *  leaving it exactly as it is. Last write wins (see the header). */
   set(ctx: Ctx, value: T): Promise<void>;
+  /** Changes the value safely when something else may change it too, as
+   *  MapStore.update changes an entry: reads it (strictly), computes the new
+   *  value with `fn` (null deletes it), and writes only if it is still what
+   *  was read, else waits a moment and runs `fn` again on what is there now, a
+   *  few times before UpdateConflictError. `fn` may run more than once: it
+   *  should only compute. Returns what was written. */
+  update(ctx: Ctx, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null>;
   /** Deletes the value, readable or not. */
   remove(ctx: Ctx): Promise<void>;
 };
@@ -416,6 +425,29 @@ return 1`;
 
 /** The most entries one updateMany changes together. */
 export const MANY_AT_ONCE = 16;
+
+/**
+ * Reads a value store's key exactly, as READ_ENTRIES reads a field: "v" and
+ * its stored text, or "" where there is none, so the client parses nothing
+ * and ValueStore.update hashes the text it read. A hash at the key is Redis's
+ * WRONGTYPE.
+ */
+export const READ_VALUE = `-- nya:repo-read-value
+local v = redis.call('GET', KEYS[1])
+if not v then return '' end
+return 'v' .. v`;
+
+/**
+ * Writes a value store's key (or deletes it, given "") only if it still holds
+ * what was read, compared by SHA-1 as UPDATE_ENTRY compares a field, "" for
+ * "had none". Every write encrypts with a fresh IV, so any save in between
+ * differs.
+ */
+export const UPDATE_VALUE = `-- nya:repo-update-value
+local cur = redis.call('GET', KEYS[1])
+if (cur and redis.sha1hex(cur) or '') ~= ARGV[1] then return 0 end
+if ARGV[2] == '' then redis.call('DEL', KEYS[1]) else redis.call('SET', KEYS[1], ARGV[2]) end
+return 1`;
 
 /**
  * Reads one field as READ_ENTRIES does, with Redis's own SHA-1 of the bytes it
@@ -679,6 +711,34 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
   };
 
+  const update = async (ctx: Ctx, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null> => {
+    for (let attempt = 1; ; attempt++) {
+      const answer = await redis().eval(READ_VALUE, [key(ctx)], []);
+      if (typeof answer !== 'string') throw new Error(`repo: unexpected answer reading ${name}`);
+      // Exactly the text stored, which is what the write compares against.
+      const stored = answer === '' ? null : answer.slice(1);
+      let current: T | null = null;
+      // Text that reads as nothing, as get() reads it (the client parses "null"
+      // and '""' to nothing there), is never saved: replacing it loses nothing.
+      if (stored !== null && stored !== '' && stored !== 'null' && stored !== '""') {
+        const d = await decode(codec, stored);
+        if (!d.ok) throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
+        current = d.value;
+      }
+      const next = await fn(current);
+      if (next === null && stored === null) return null; // nothing there, nothing to write
+      let written = ''; // deletes it
+      if (next !== null) {
+        written = await encode(codec, serialize(codec, next));
+        checkSize(name, what, ctx, SHA1_HEX + written.length);
+      }
+      const seen = stored === null ? '' : sha1(stored);
+      if (Number(await redis().eval(UPDATE_VALUE, [key(ctx)], [seen, written])) === 1) return next;
+      if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
+      await pause(attempt);
+    }
+  };
+
   return declare<ValueStore<T>>({
     kind: 'value',
     name,
@@ -693,6 +753,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
       checkSize(name, what, ctx, encoded.length);
       await redis().set(key(ctx), encoded);
     },
+    update,
     async remove(ctx) {
       await redis().del(key(ctx));
     },

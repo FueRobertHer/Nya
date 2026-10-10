@@ -18,22 +18,27 @@ import { countsInTotals, isTransfer, isExcluded, leftOutByCurrency, leftOutText,
 import { expectedDates, perMonth, type RecurringSeries } from './recurring';
 
 /** What these totals read of a transaction. */
-export type TotalsRow = Countable & { date: string; amount: number; category: string | null };
+export type TotalsRow = Countable & { date: string; amount: number; category: string | null; category_id?: string };
 
-/** The category a row is totalled under: its own, or "other" for none, as the
- *  Budgets tab files it. */
+/** A row's category words, or "other" for none: what a row not filed into
+ *  the person's categories is totalled under, as the Budgets tab filed it
+ *  before categories had ids. */
 export const categoryOf = (t: Pick<TotalsRow, 'category'>): string => t.category ?? 'other';
+
+/** What a row is totalled under: the id of the category it is filed under
+ *  (lib/category-store.ts fileRows), or, on a row not filed, its words. */
+export const bucketOf = (t: Pick<TotalsRow, 'category' | 'category_id'>): string => t.category_id ?? categoryOf(t);
 
 /**
  * Spending per category over the rows whose date `inRange` takes, as the
  * Budgets tab shows it: outflows (positive amounts, Plaid's sign) that count in
- * totals kept in `currency`. Unrounded, as summed.
+ * totals kept in `currency`, by category id (bucketOf). Unrounded, as summed.
  */
 export function spendingByCategory(rows: readonly TotalsRow[], inRange: (date: string) => boolean, currency: string | null): Record<string, number> {
   const out: Record<string, number> = {};
   for (const t of rows) {
     if (!inRange(t.date) || t.amount <= 0 || !countsInTotals(t, currency)) continue;
-    const cat = categoryOf(t);
+    const cat = bucketOf(t);
     out[cat] = (out[cat] ?? 0) + t.amount;
   }
   return out;
@@ -44,6 +49,13 @@ export function spendingByCategory(rows: readonly TotalsRow[], inRange: (date: s
  *  (a cryptocurrency's eight places) would lose. */
 export const tidy = (n: number): number => Math.round(n * 1e8) / 1e8 || 0;
 
+/** A category in a Summary. */
+export type SummaryCategory = { category: string; spent: number; transactions: number } & Partial<Described>;
+
+/** What a total says of the category behind a bucket (bucketOf): its name, its
+ *  id and its group's, as the API shows them. */
+export type Described = { category: string; category_id: string | null; group_id: string | null; group: string | null };
+
 export type Summary = {
   /** The currency every total here is in; null when no row says one. */
   currency: string | null;
@@ -53,8 +65,10 @@ export type Summary = {
   money_out: number;
   /** money_in less money_out. */
   net: number;
-  /** Money out by category, most first, with how many rows each sums. */
-  categories: { category: string; spent: number; transactions: number }[];
+  /** Money out by category, most first, with how many rows each sums: the
+   *  category's name, and, filed into the person's categories, its id and
+   *  group's (null for one not stored yet). */
+  categories: SummaryCategory[];
   /** Rows in the range, and of them: counted in these totals; left out as
    *  transfers, cash withdrawals or loan payments; left out because the person
    *  excluded them; counted although whether the person excluded them could
@@ -72,9 +86,15 @@ export type Summary = {
 /**
  * The totals over the rows whose date `inRange` takes, kept in `currency`: what
  * the Activity tab sums for a month (money in, out and net, and spending by
- * category), for any range.
+ * category), for any range. Categories are by bucket (bucketOf), each said by
+ * `describe` (by default, the bucket itself as its name).
  */
-export function summarize(rows: readonly TotalsRow[], inRange: (date: string) => boolean, currency: string | null): Summary {
+export function summarize(
+  rows: readonly TotalsRow[],
+  inRange: (date: string) => boolean,
+  currency: string | null,
+  describe?: (bucket: string) => Described
+): Summary {
   let moneyIn = 0;
   let moneyOut = 0;
   let counted = 0;
@@ -97,10 +117,10 @@ export function summarize(rows: readonly TotalsRow[], inRange: (date: string) =>
       moneyIn += -t.amount;
     } else if (t.amount > 0) {
       moneyOut += t.amount;
-      const c = byCategory.get(categoryOf(t)) ?? { spent: 0, transactions: 0 };
+      const c = byCategory.get(bucketOf(t)) ?? { spent: 0, transactions: 0 };
       c.spent += t.amount;
       c.transactions++;
-      byCategory.set(categoryOf(t), c);
+      byCategory.set(bucketOf(t), c);
     }
   }
   const leftOut = leftOutByCurrency(ranged, currency);
@@ -110,7 +130,7 @@ export function summarize(rows: readonly TotalsRow[], inRange: (date: string) =>
     money_out: tidy(moneyOut),
     net: tidy(moneyIn - moneyOut),
     categories: [...byCategory]
-      .map(([category, c]) => ({ category, spent: tidy(c.spent), transactions: c.transactions }))
+      .map(([bucket, c]) => ({ ...(describe ? describe(bucket) : { category: bucket }), spent: tidy(c.spent), transactions: c.transactions }))
       .sort((a, b) => b.spent - a.spent || (a.category < b.category ? -1 : 1)),
     transactions,
     counted,

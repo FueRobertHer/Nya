@@ -338,7 +338,17 @@ describe('categories, budgets and spending', () => {
     // Every row here is in the last nine days, so this month's are those on or after its first.
     const inMonth = (d: number) => daysAgo(d) >= `${month}-01`;
     const food = (inMonth(2) ? 5.5 : 0) + (inMonth(1) ? 12 + 25 : 0);
-    expect(byCat['food and drink']).toEqual({ category: 'food and drink', budget: 100, spent: food, remaining: 100 - food, spent_share: Math.round((food / 100) * 1000) / 1000 });
+    // Ids are null until the app has stored the categories (it never has here).
+    expect(byCat['food and drink']).toEqual({
+      category: 'food and drink',
+      budget: 100,
+      spent: food,
+      remaining: 100 - food,
+      spent_share: Math.round((food / 100) * 1000) / 1000,
+      category_id: null,
+      group_id: null,
+      group: 'Food',
+    });
     expect(byCat.housing.spent).toBe(inMonth(3) ? 1200 : 0);
     // The EUR charge is named, not added.
     expect(byCat.travel.spent).toBe(0);
@@ -352,11 +362,20 @@ describe('categories, budgets and spending', () => {
     expect(body.money_in).toBe(3000);
     expect(body.money_out).toBe(5.5 + 1200 + 35 + 80 + 12 + 25);
     expect(body.net).toBe(3000 - (5.5 + 1200 + 35 + 80 + 12 + 25));
+    // Ids are null until the app has stored the categories (it never has here).
+    const none = { category_id: null, group_id: null };
     expect(body.categories).toEqual([
-      { category: 'housing', spent: 1200, transactions: 1 },
-      { category: 'general merchandise', spent: 80, transactions: 1 },
-      { category: 'food and drink', spent: 42.5, transactions: 3 },
-      { category: 'bank fees', spent: 35, transactions: 1 },
+      { category: 'housing', ...none, group: 'Other', spent: 1200, transactions: 1 },
+      { category: 'general merchandise', ...none, group: 'Shopping', spent: 80, transactions: 1 },
+      { category: 'food and drink', ...none, group: 'Food', spent: 42.5, transactions: 3 },
+      { category: 'bank fees', ...none, group: 'Services and fees', spent: 35, transactions: 1 },
+    ]);
+    // The same rolled up to groups.
+    expect(body.groups).toEqual([
+      { id: null, name: 'Other', kind: 'expense', spent: 1200, transactions: 1 },
+      { id: null, name: 'Shopping', kind: 'expense', spent: 80, transactions: 1 },
+      { id: null, name: 'Food', kind: 'expense', spent: 42.5, transactions: 3 },
+      { id: null, name: 'Services and fees', kind: 'expense', spent: 35, transactions: 1 },
     ]);
     expect(body).toMatchObject({ excluded: 1, transfers: 3, exclusion_unknown: 0, left_out: [{ currency: 'EUR', count: 1 }] });
     expect(body.left_out_text).toBe("1 transaction in EUR isn't in these totals, which are in USD.");
