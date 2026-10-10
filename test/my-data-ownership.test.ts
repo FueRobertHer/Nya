@@ -37,6 +37,7 @@ const { parseOfx, ofxRecords } = await import('@/lib/import/ofx');
 const { PASSPHRASE_MIN, passphraseProblem } = await import('@/lib/download-options');
 const route = await import('@/app/api/my-data/route');
 const imports = await import('@/app/api/import/route');
+const tokens = await import('@/app/api/api-tokens/route');
 type ManualTxn = import('@/lib/manual-txns').ManualTxn;
 
 const ctx = TEST_CTX;
@@ -675,6 +676,31 @@ describe('an email each time', () => {
     } finally {
       [console.log, console.error, console.warn] = saved;
     }
+  });
+
+  test('making an API token sends one too: when, and how to revoke it, never the token or its name', async () => {
+    const sent = mailOn();
+    const { result, said } = await quietly(async () => {
+      const r = await tokens.POST(
+        new Request('http://x/api/api-tokens', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': IP },
+          body: JSON.stringify({ label: 'Home Assistant 4321', password: PASSWORD }),
+        })
+      );
+      return { status: r.status, body: await r.json() };
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.token).toStartWith('nya_');
+    expect(sent).toHaveLength(1);
+    const [mail] = sent;
+    expect(mail.to).toEqual(['owner@example.com']);
+    expect(mail.subject).toBe('An API token was made for your Nya data');
+    expect(mail.text).toMatch(/^An API token that can read your Nya data was made on \w+day, \w+ \d{1,2}, \d{4}, at \d{2}:\d{2} UTC\.\n\n/);
+    expect(mail.text).toContain('revoke it under API tokens');
+    expect(mail.key).toMatch(/^nya-api-token-[0-9a-f-]{36}$/);
+    for (const secret of [result.body.token, 'Home Assistant', '4321']) expect(`${mail.subject}\n${mail.text}`).not.toContain(secret);
+    expect(said).toEqual(['API token made', 'API token notice: emailed.']);
   });
 
   test('with Clerk, a lookup that fails is logged, and the download goes ahead', async () => {
