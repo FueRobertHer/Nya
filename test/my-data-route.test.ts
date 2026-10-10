@@ -151,6 +151,64 @@ describe('with the shared password', () => {
     expect(said).toEqual(['Data download stopped: transactions could not be read (StateUnreadableError)']);
   });
 
+  test('something stored that can’t be read: the file anyway, with headers that say it is incomplete, and a log naming the parts, never an id', async () => {
+    await fake.hset(ctxKey('manual:accounts'), { manual_broken: 'garbage-ciphertext' });
+    await fake.hset(ctxKey('connection-notices'), { item_secret: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const { result: res, said } = await quietly(() => post({ format: 'json', password: 'hunter2' }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="nya-data-/);
+    // Plainly: which parts of the file are missing something, and in words.
+    expect(res.headers.get('x-nya-export-incomplete')).toBe('manual_accounts, connection-notices');
+    const notes = JSON.parse(decodeURIComponent(res.headers.get('x-nya-export-notes')!));
+    expect(notes).toHaveLength(2);
+    expect(notes[0]).toStartWith('Not all of your manual accounts could be read');
+    expect(notes[1]).toStartWith('Not all of your connection notices could be read');
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(res.headers.get('x-nya-export-bytes')).toBe(String(body.byteLength));
+    const doc = JSON.parse(new TextDecoder().decode(body));
+    // Everything else is in it.
+    expect(doc.manual_accounts.map((m: { name: string }) => m.name)).toEqual(['Piggy bank']);
+    expect(doc.budgets).toEqual([{ category: 'Food', monthly_amount: 400 }]);
+    expect(doc.problems).toEqual([
+      { section: 'manual_accounts', problem: 'unreadable', ids: ['manual_broken'] },
+      { section: 'connection-notices', problem: 'unreadable', ids: ['item_secret'] },
+    ]);
+    // The log names the parts by key, for whoever runs Nya: never an id.
+    expect(said).toEqual(['Data download: json, incomplete: manual_accounts, connection-notices']);
+    // The balances CSV is made from the manual accounts' names, not from the notices.
+    const csv = (await quietly(() => post({ format: 'balances-csv', password: 'hunter2' }))).result;
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get('x-nya-export-incomplete')).toBe('manual_accounts');
+    const csvNotes = JSON.parse(decodeURIComponent(csv.headers.get('x-nya-export-notes')!));
+    expect(csvNotes).toEqual([notes[0]]);
+    await csv.text();
+  });
+
+  test('a whole file says nothing of being incomplete', async () => {
+    const { result: res } = await quietly(() => post({ format: 'json', password: 'hunter2' }));
+    expect(res.headers.get('x-nya-export-incomplete')).toBeNull();
+    expect(res.headers.get('x-nya-export-notes')).toBeNull();
+    expect(JSON.parse(await res.text()).problems).toEqual([]);
+  });
+
+  test('storage out of reach still fails the download: a 500 naming the store, and nothing sent', async () => {
+    const real = fake.hgetall.bind(fake);
+    (fake as any).hgetall = async (key: string) => {
+      if (key === ctxKey('manual:accounts')) throw new Error('FakeRedis: out of reach');
+      return real(key);
+    };
+    try {
+      const { result: res, said } = await quietly(() => post({ format: 'json', password: 'hunter2' }));
+      expect(res.status).toBe(500);
+      expect(res.headers.get('content-disposition')).toBeNull();
+      expect(res.headers.get('x-nya-export-bytes')).toBeNull();
+      expect((await res.json()).error).toStartWith('Your manual accounts could not be read, so nothing was downloaded');
+      expect(said).toEqual(['Data download stopped: manual accounts could not be read (Error)']);
+    } finally {
+      (fake as any).hgetall = real;
+    }
+  });
+
   test('a stored value of a shape the file can’t be written from: the route’s own 500, nothing sent, a log naming only the error’s class', async () => {
     await fake.hset(ctxKey('plaid:items'), {
       item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt('t') }),

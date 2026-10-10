@@ -22,7 +22,7 @@ More than one person can use a deployment: sign in with Clerk and each account g
 
 When a bank connection breaks, Nya sends one email (and one reminder a week later if it is still broken) naming the bank and what to do, never an amount, once email is set up (see [docs/deployment.md](docs/deployment.md#email-notices)).
 
-Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
+Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). When a record in your balance history, your manual accounts or one of the newer stores can't be read, the file holds everything else and says what it is missing. Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
 
 Two pages anyone can open without signing in, `/security` and `/privacy`, say in plain language how the data is protected, who can read what (whoever runs the deployment included), how long things are kept, and how to delete it. Every response carries security headers, and every page a Content-Security-Policy; see [Security headers](docs/deployment.md#security-headers-and-the-content-security-policy).
 

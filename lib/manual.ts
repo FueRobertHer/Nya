@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
-import { READ_ENTRIES, UPDATE_ENTRY } from './repo';
+import { READ_ENTRIES, UPDATE_ENTRY, openStored } from './repo';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
@@ -127,6 +127,41 @@ export async function getManualAccount(ctx: Ctx, account_id: string): Promise<Ma
   } catch (err) {
     throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
   }
+}
+
+/**
+ * Every manual account that can be read, and the ids of those that can't, for
+ * the download of my data (lib/user-export.ts), which names what it can't read
+ * rather than stopping. By the storage seam's rules (lib/repo.ts openStored),
+ * as its stores report entries: `unreadable`, an account whose stored bytes
+ * are damaged; `unrecognised`, one stored intact in a form this code does not
+ * know (not JSON, not an account's shape). Anything that says nothing about
+ * the data still throws: storage out of reach, a key this deployment can't
+ * load, a failed decrypt under k0. Never for a figure that is recorded or
+ * written on, which must use getManualAccounts (see the file header). The
+ * accounts in name order, the ids in id order.
+ */
+export async function readManualAccountsForExport(ctx: Ctx): Promise<{ accounts: ManualAccount[]; unreadable: string[]; unrecognised: string[] }> {
+  // Deliberately uncaught: a Redis error is never "no accounts".
+  const map = (await redis().hgetall<Record<string, unknown>>(ACCOUNTS_HASH(ctx))) ?? {};
+  const accounts: ManualAccount[] = [];
+  const unreadable: string[] = [];
+  const unrecognised: string[] = [];
+  await Promise.all(
+    Object.entries(map).map(async ([id, blob]) => {
+      const opened = await openStored(blob);
+      if (!opened.ok) {
+        (opened.flaw === 'unreadable' ? unreadable : unrecognised).push(id);
+        return;
+      }
+      try {
+        accounts.push(parseStoredAccount(id, opened.text));
+      } catch {
+        unrecognised.push(id); // intact, but not JSON or not an account's shape
+      }
+    })
+  );
+  return { accounts: accounts.sort((a, b) => a.name.localeCompare(b.name)), unreadable: unreadable.sort(), unrecognised: unrecognised.sort() };
 }
 
 /** Creates or replaces one account. Single-field HSET, so concurrent writes to

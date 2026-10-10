@@ -12,15 +12,30 @@
 //
 // THE RULES:
 //
-// 1. EVERY STORE, OR NOTHING. Every store is read, strictly, before the first
-//    byte is sent. One that can't be read fails the download with its name
-//    (ExportReadError), never a file with a gap in it that looks complete: a
-//    partial download presented as whole is a lie about what Nya holds. One
-//    exception, named in the file: a record of showings that can't be read
-//    (in sharing, read with the seam's getAllReport) is marked as such where
-//    it belongs, never left out quietly or read as empty. The other person's
-//    record of showings to me is theirs to clear, so a damaged one would
-//    otherwise stop my download with nothing I could do about it.
+// 1. NOTHING MISSING WITHOUT A WORD. Every store is read before the first byte
+//    is sent, never a file with a gap in it that looks complete: a partial
+//    download presented as whole is a lie about what Nya holds. Two kinds of
+//    failure, kept apart as the storage seam keeps them (lib/repo.ts, READS):
+//      - one that says nothing about the data (storage out of reach, a key
+//        this deployment can't load, a failed decrypt under k0) fails the
+//        download with the store's name (ExportReadError), as ever;
+//      - an entry that is damaged, or saved in a form this version doesn't
+//        know, never does. Everything else is in the file, and `problems`
+//        names what is missing, by part and id, a note says it in words, and
+//        the route's headers say the file is incomplete. One damaged record
+//        would otherwise stop the download for good, with nothing in the app
+//        to clear it (stores on the seam, balance history and manual
+//        accounts), or nothing the person could do about it at all (the
+//        other person's record of showings to me, in sharing, which marks
+//        each where it belongs).
+//    Nothing is removed here: what can't be read stays stored exactly as it
+//    was, and only reported. The older stores the file cross-references
+//    (institutions, accounts, transactions and investment transactions,
+//    categories, merchant names, links, hidden accounts, budgets, goals) are
+//    still read whole: an entry of theirs left out would read as its absence
+//    elsewhere in the file (a transaction without the category set on it, a
+//    hidden account shown as not hidden), so one that can't be read still
+//    stops the download, naming the store.
 // 2. ONLY THIS PERSON'S. Everything is read through their container's Ctx,
 //    and sharing as their own side of each connection (lib/sharing.ts
 //    mySharing): never another person's data. The one thing read from
@@ -55,7 +70,7 @@ import {
   type DirectoryEntry,
   type Link,
 } from './links';
-import { getManualAccounts, isManualId, type ManualAccount } from './manual';
+import { readManualAccountsForExport, isManualId, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -74,7 +89,7 @@ import { getBudgets } from './budgets';
 import { getGoals } from './goals';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
-import { declaredStores } from './stores';
+import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 
@@ -90,11 +105,13 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export type ExportSource = { ctx: Ctx; userId: string | null };
 
 /**
- * A store that could not be read: the download stops before anything is
- * sent. `what` names it for the person, and the message is theirs to read: it
- * holds nothing stored but, at most, an institution's name, which is theirs.
- * `store` is the kind of store alone ("transactions"), for the server's log,
- * which must not say which bank someone uses.
+ * A store that could not be read for a reason that says nothing about its
+ * data (storage, keys), or an older store read whole with an entry it can't
+ * read (rule 1): the download stops before anything is sent. `what` names it
+ * for the person, and the message is theirs to read: it holds nothing stored
+ * but, at most, an institution's name, which is theirs. `store` is the kind
+ * of store alone ("transactions"), for the server's log, which must not say
+ * which bank someone uses.
  */
 export class ExportReadError extends Error {
   constructor(
@@ -162,14 +179,50 @@ export function storedKeyListed(key: string): boolean {
   return STORED_KEYS.some(([k]) => key === k || (k.endsWith(':') && key.startsWith(k)));
 }
 
+// ---- What a part of the file is missing ----
+
+/** Why something stored is not in the file (docs/data-export.md, "problems"):
+ *  `unreadable`, its stored bytes are damaged; `unrecognised`, intact as far
+ *  as this version can tell, but saved in a form it doesn't know (a later
+ *  version's, say), and kept as it is. Sharing has two more of its own
+ *  (lib/share-rules.ts RecordProblem): `unavailable` and
+ *  `record_id_unreadable`. */
+export type ProblemKind = 'unreadable' | 'unrecognised' | 'unavailable' | 'record_id_unreadable';
+
+/** One part of the file, missing what it says, for one reason. */
+export type ExportProblem = {
+  /** The part: its key in the JSON file. */
+  section: string;
+  problem: ProblemKind;
+  /** What is missing, by the id it is stored under, in id order: an entry's
+   *  id for a store on the seam, a UTC day for the balance histories, an
+   *  account's id for manual accounts. Absent for a part that is one value
+   *  (then null in the file) and for sharing, which names no ids and marks
+   *  each record it can't give where it belongs. */
+  ids?: string[];
+};
+
+/** A list of ids that can't be used, by why, as problems of one part. */
+function idProblems(section: string, named: { unreadable: string[]; unrecognised: string[] }): ExportProblem[] {
+  return [
+    ...(named.unreadable.length > 0 ? [{ section, problem: 'unreadable' as const, ids: named.unreadable }] : []),
+    ...(named.unrecognised.length > 0 ? [{ section, problem: 'unrecognised' as const, ids: named.unrecognised }] : []),
+  ];
+}
+
 // ---- Stores with nothing to say about the others ----
+
+/** A part of the file as read: what goes under its key, and what it is
+ *  missing (ExportProblem), for `problems`. */
+export type SectionRead = { value: unknown; problems: ExportProblem[] };
 
 /**
  * A store that stands alone: one small function from the person to what goes
  * in the file under its key, already in the shape it is exported in. A new
  * store of that kind adds an entry here and a section to docs/data-export.md.
- * Its reader must be strict (throw on anything it can't read), like every
- * reader here.
+ * Its reader throws on anything that says nothing about the data, like every
+ * reader here, and either throws on an entry it can't read (an older store,
+ * read whole) or names it among its problems (rule 1).
  *
  * These are the stores that predate the storage seam (lib/repo.ts). A store
  * built on the seam needs no entry: declared exportable, it is a section of
@@ -182,7 +235,7 @@ export type ExportSection = {
   key: string;
   /** What it is, for "Your ___ could not be read". */
   what: string;
-  read: (src: ExportSource) => Promise<unknown>;
+  read: (src: ExportSource) => Promise<SectionRead>;
   /** The account ids what it read names, so that `accounts` lists each one
    *  (a goal can still point at an account since forgotten). */
   mentions?: (value: unknown) => Iterable<unknown>;
@@ -192,15 +245,26 @@ export type ExportSection = {
   covers?: readonly string[];
 };
 
-/** An entry of SECTIONS, typed by what it reads. */
+/** An entry of SECTIONS, typed by what it reads: `problems` says what the
+ *  value it read is missing, for one that marks that inside itself. */
 function section<T>(s: {
   key: string;
   what: string;
   read: (src: ExportSource) => Promise<T>;
+  problems?: (value: T) => ExportProblem[];
   mentions?: (value: T) => Iterable<unknown>;
   covers?: readonly string[];
 }): ExportSection {
-  return s as ExportSection;
+  return {
+    key: s.key,
+    what: s.what,
+    read: async (src) => {
+      const value = await s.read(src);
+      return { value, problems: s.problems?.(value) ?? [] };
+    },
+    ...(s.mentions ? { mentions: s.mentions as (value: unknown) => Iterable<unknown> } : {}),
+    ...(s.covers ? { covers: s.covers } : {}),
+  };
 }
 
 export const SECTIONS: readonly ExportSection[] = [
@@ -226,6 +290,19 @@ export const SECTIONS: readonly ExportSection[] = [
     // With the shared password there is nobody to share with: null, unless
     // records of showings are still stored here.
     read: async ({ ctx, userId }) => mySharing(userId, ctx),
+    // A record it can't give is marked where it belongs (the connection's
+    // `shown_to_them_problem` and `shown_to_me_problem`, or `problem` in
+    // `unmatched`), and named once for each reason here, so the file's
+    // problems and its headers say sharing is incomplete too.
+    problems: (sharing) => {
+      const kinds = new Set<ProblemKind>();
+      for (const c of sharing?.connections ?? []) {
+        if (c.shown_to_them_problem) kinds.add(c.shown_to_them_problem);
+        if (c.shown_to_me_problem) kinds.add(c.shown_to_me_problem);
+      }
+      for (const e of sharing?.unmatched ?? []) if (e.shown_to_them === null) kinds.add(e.problem);
+      return [...kinds].sort().map((problem) => ({ section: 'sharing', problem }));
+    },
     // My own accounts: what I share, and what my records say was shown of
     // them. Not shown_to_me: those are theirs.
     mentions: (sharing) => [
@@ -242,12 +319,14 @@ const readIds = (shown: Showing[] | null) => (shown ?? []).flatMap((s) => Object
 /**
  * The sections the storage seam's catalogue adds (lib/stores.ts): one for each
  * store declared with exportable: true, under its own name, after SECTIONS, in
- * name order, except a store an entry of SECTIONS exports itself (covers).
- * Read strictly, like every reader here: an unreadable or unrecognised entry
- * fails the download, naming the store. A value store's section is its value
- * (null if never saved); a map store's is its entries as { id, value }, in id
- * order. Declaring a store exportable is the whole decision: nothing else has
- * to remember to add it.
+ * name order, except a store an entry of SECTIONS exports itself (covers). A
+ * value store's section is its value (null if never saved, or if it can't be
+ * used); a map store's is its entries as { id, value }, in id order, each one
+ * that can be used. Read with the seam's reports (getReport, getAllReport):
+ * an entry that is damaged or not recognised is named among the problems,
+ * never a reason to stop (rule 1), and a deployment problem stops the download
+ * as every reader's does. Declaring a store exportable is the whole decision:
+ * nothing else has to remember to add it.
  */
 export function declaredSections(): ExportSection[] {
   const covered = new Set(SECTIONS.flatMap((s) => s.covers ?? []));
@@ -258,9 +337,14 @@ export function declaredSections(): ExportSection[] {
   );
 }
 
-async function readDeclared(store: ValueStore<unknown> | MapStore<unknown>, ctx: Ctx): Promise<unknown> {
-  if (store.kind === 'value') return store.get(ctx);
-  return [...(await store.getAll(ctx))].map(([id, value]) => ({ id, value }));
+async function readDeclared(store: ValueStore<unknown> | MapStore<unknown>, ctx: Ctx): Promise<SectionRead> {
+  if (store.kind === 'value') {
+    const report = await store.getReport(ctx);
+    const problem = report.unreadable ? 'unreadable' : report.unrecognised ? 'unrecognised' : null;
+    return { value: report.value, problems: problem ? [{ section: store.name, problem }] : [] };
+  }
+  const report = await store.getAllReport(ctx);
+  return { value: [...report.entries].map(([id, value]) => ({ id, value })), problems: idProblems(store.name, report) };
 }
 
 /** SECTIONS, then the seam's. */
@@ -291,7 +375,16 @@ export type UserData = {
   history: { totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> };
   /** SECTIONS and the seam's (declaredSections), read, in order. */
   sections: (readonly [string, unknown])[];
+  /** What was stored but couldn't be read into the file (rule 1), in the
+   *  file's order: the manual accounts, the balance histories, then the
+   *  sections'. */
+  problems: ExportProblem[];
 };
+
+/** The ids of what a part of the file is missing, whatever the reason. */
+export function missingIds(problems: readonly ExportProblem[], section: string): string[] {
+  return problems.flatMap((p) => (p.section === section ? (p.ids ?? []) : []));
+}
 
 /** A linked institution's record, without its access token: that never
  *  leaves the record (notIncluded). */
@@ -319,9 +412,11 @@ async function readDeclined(ctx: Ctx): Promise<DeclinedOffer[]> {
 }
 
 /**
- * Reads everything one person has, strictly, every store at once. Throws
- * ExportReadError naming the first store that couldn't be read; nothing is
- * returned in part.
+ * Reads everything one person has, every store at once. Throws ExportReadError
+ * naming the first store that couldn't be read for a reason that says nothing
+ * about its data, or an older store read whole that holds an entry it can't
+ * read; nothing is returned in part. Every other entry that can't be read is
+ * named in `problems` (rule 1).
  */
 export async function collectUserData(src: ExportSource): Promise<UserData> {
   const { ctx } = src;
@@ -335,7 +430,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
-      read('manual accounts', () => getManualAccounts(ctx)),
+      read('manual accounts', () => readManualAccountsForExport(ctx)),
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
@@ -372,7 +467,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     items,
     remembered,
     directory,
-    manual,
+    manual: manual.accounts,
     hidden,
     stores,
     investments,
@@ -382,8 +477,14 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     live,
     declined,
     carried,
-    history,
-    sections,
+    history: { totals: history.totals, accounts: history.accounts },
+    sections: sections.map(([key, r]) => [key, r.value] as const),
+    problems: [
+      ...idProblems('manual_accounts', manual),
+      ...idProblems('net_worth_history', history.problems.totals),
+      ...idProblems('account_history', history.problems.accounts),
+      ...sections.flatMap(([, r]) => r.problems),
+    ],
   };
 }
 
@@ -457,7 +558,12 @@ export type UserExport = {
   exported_at: string;
   documentation: string;
   not_included: string[];
+  /** Caveats about this download, in words: a store behind what the app
+   *  showed, and a note for each part that is missing something (problems). */
   notes: string[];
+  /** What is stored but couldn't be read into the file (rule 1): empty when
+   *  the file has everything. */
+  problems: ExportProblem[];
   institutions: ExportInstitution[];
   accounts: ExportAccount[];
   manual_accounts: ExportManualAccount[];
@@ -549,7 +655,8 @@ function mentionedAccountIds(data: UserData): Set<string> {
  * How many accounts the person had, as they would count them, for the receipt
  * an account deletion ends with (lib/account-deletion.ts):
  *   - `accounts`: the accounts of the banks still connected, and the manual
- *     accounts;
+ *     accounts, those that couldn't be read included (they are still stored,
+ *     and deleted with the rest);
  *   - `earlier`: the accounts of banks they disconnected, kept for their
  *     history, apart from those.
  * An account linked across a reconnect (lib/links.ts) is one account, under
@@ -576,7 +683,7 @@ export function countAccounts(data: UserData): { accounts: number; earlier: numb
     if (!connected.has(entry.item_id)) add(earlier, id);
   }
   for (const id of current) earlier.delete(id);
-  return { accounts: current.size + data.manual.length, earlier: earlier.size };
+  return { accounts: current.size + data.manual.length + missingIds(data.problems, 'manual_accounts').length, earlier: earlier.size };
 }
 
 /** The newest recorded balance in a series (never an estimate), with its day. */
@@ -588,6 +695,56 @@ function latestRecorded(points: StoredPoint[] | undefined): { balance: number; d
   return null;
 }
 
+/** How a core part of the file that can be missing something says so in
+ *  words: what it holds, what it counts, and the sentence. A store on the
+ *  seam is named by its declaration (`what`) and counts entries. */
+type PartWords = { noun: string; one: string; many: string; missing: (noun: string, counts: string) => string };
+const missingFrom = (noun: string, counts: string) => `Not all of your ${noun} could be read, so this file is missing ${counts}.`;
+const PART_WORDS: Record<string, PartWords> = {
+  manual_accounts: {
+    noun: 'manual accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `${missingFrom(noun, counts)} Any balance history they have is still in account_history, under their ids.`,
+  },
+  net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
+  account_history: {
+    noun: 'account balance history',
+    one: 'day',
+    many: 'days',
+    // A day's maps hold every account's balance, and another layer may still
+    // have some of them that day.
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file may be missing balances on ${counts}.`,
+  },
+};
+
+/**
+ * One note in words for each part of the file that is missing something, in
+ * the order the parts come: what it is missing, why, and that nothing was
+ * changed. From the problems alone, so a file made from only some parts (a
+ * CSV, exportFile) says the same of those.
+ */
+export function problemNotes(problems: readonly ExportProblem[]): string[] {
+  const unchanged = 'Nothing was changed: what could not be read is still stored as it was.';
+  return [...new Set(problems.map((p) => p.section))].map((section) => {
+    const mine = problems.filter((p) => p.section === section);
+    if (section === 'sharing') {
+      return 'Some records of when shared accounts were shown could not be read or reached, so they are not in this file: each one is marked where it belongs, under sharing, with why.';
+    }
+    const words = PART_WORDS[section] ?? { noun: declaredStore(section)?.what ?? section, one: 'entry', many: 'entries', missing: missingFrom };
+    const why = (p: ExportProblem) => (p.problem === 'unrecognised' ? 'saved in a form this version of Nya does not know' : 'whose stored data is damaged');
+    if (mine.every((p) => p.ids === undefined)) {
+      // A part that is one value, null in the file.
+      return `Your ${words.noun} could not be read (${mine[0].problem === 'unrecognised' ? 'they were saved in a form this version of Nya does not know' : 'the stored data is damaged'}), so this file does not have them. ${unchanged}`;
+    }
+    const counts = mine.map((p) => {
+      const n = p.ids?.length ?? 0;
+      return `${n} ${n === 1 ? words.one : words.many} ${why(p)}`;
+    });
+    return `${words.missing(words.noun, counts.join(' and '))} The JSON file lists them under problems. ${unchanged}`;
+  });
+}
+
 /**
  * The document, from what was read. Pure. Every account any part of the file
  * mentions is in `accounts` (or `manual_accounts`); what is known about each
@@ -597,7 +754,10 @@ function latestRecorded(points: StoredPoint[] | undefined): { balance: number; d
  */
 export function buildUserExport(data: UserData, now: Date): UserExport {
   const items = new Map(data.items.map((i) => [i.item_id, i]));
-  const manualIds = new Set(data.manual.map((m) => m.account_id));
+  // A manual account that couldn't be read is still one (problems names it):
+  // never listed in `accounts` as one since removed.
+  const unreadableManual = missingIds(data.problems, 'manual_accounts');
+  const manualIds = new Set([...data.manual.map((m) => m.account_id), ...unreadableManual]);
   const effective = effectiveLinks(data.links, data.live);
   // Hiding one id of an account hides every id it has had, as the app reads it.
   const hidden = expandHidden(data.hidden, effective);
@@ -668,8 +828,9 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     };
   });
 
-  // Each account's series, in the order the accounts are listed.
-  const order = [...accounts.map((a) => a.account_id), ...manual_accounts.map((m) => m.account_id)];
+  // Each account's series, in the order the accounts are listed; then those
+  // of manual accounts that couldn't be read, whose balances still read.
+  const order = [...accounts.map((a) => a.account_id), ...manual_accounts.map((m) => m.account_id), ...unreadableManual];
   const account_history = order
     .filter((id) => (data.history.accounts.get(id)?.length ?? 0) > 0)
     .map((id) => ({
@@ -746,7 +907,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     exported_at: now.toISOString(),
     documentation: EXPORT_DOCUMENTATION,
     not_included: notIncluded(data.people),
-    notes: [...notes],
+    // Each part that is missing something says so in words too, after the
+    // caveats (problemNotes).
+    notes: [...notes, ...problemNotes(data.problems)],
+    problems: data.problems,
     institutions: data.items
       .map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' }))
       .sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
@@ -1045,11 +1209,36 @@ export function* balancesCsv(doc: UserExport): Generator<string> {
   for (const row of rows) yield csvRow(row.cells);
 }
 
-/** One download: its name, its type, and its text a piece at a time. */
-export type ExportFile = { filename: string; contentType: string; pieces: () => Iterable<string> };
+/**
+ * One download: its name, its type, its text a piece at a time, and what the
+ * person should know about it, which the route sends as headers (a CSV has
+ * nowhere inside to say it): `notes`, its caveats in words, and `incomplete`,
+ * the parts of the JSON file it is made from that are missing something
+ * (problems), by key, empty when it is whole.
+ */
+export type ExportFile = { filename: string; contentType: string; pieces: () => Iterable<string>; notes: string[]; incomplete: string[] };
+
+/**
+ * The parts of the JSON file each CSV is made from, of those that can be
+ * missing something (problems): what any other part is missing leaves the CSV
+ * whole, so its download never says otherwise. The JSON file is made from
+ * every part.
+ */
+export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
+  'transactions-csv': [],
+  // The days, and the names of the manual accounts the rows are for.
+  'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
+};
 
 export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
   const day = doc.exported_at.slice(0, 10);
+  // What this file is missing, and its notes: the caveats, then a note for
+  // each part it is made from that is missing something (problemNotes, which
+  // the document's own notes end with, for every part).
+  const problems = format === 'json' ? doc.problems : doc.problems.filter((p) => CSV_SOURCES[format].includes(p.section));
+  const everyPart = new Set(problemNotes(doc.problems));
+  const notes = [...doc.notes.filter((n) => !everyPart.has(n)), ...problemNotes(problems)];
+  const about = { notes, incomplete: [...new Set(problems.map((p) => p.section))] };
   switch (format) {
     case 'json':
       return {
@@ -1062,11 +1251,12 @@ export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
               yield '\n';
             })()
           ),
+        ...about,
       };
     case 'transactions-csv':
-      return { filename: `nya-transactions-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(transactionsCsv(doc)) };
+      return { filename: `nya-transactions-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(transactionsCsv(doc)), ...about };
     case 'balances-csv':
-      return { filename: `nya-balances-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(balancesCsv(doc)) };
+      return { filename: `nya-balances-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(balancesCsv(doc)), ...about };
   }
 }
 

@@ -83,7 +83,11 @@
 //   ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR REMOVAL, and only once the
 // person confirms. MapStore.getAllReport names both kinds instead of throwing,
 // so a route can show what it read, offer to remove the unreadable ids, and
-// report the unrecognised ones as a problem to fix. MapStore.replaceUnreadable
+// report the unrecognised ones as a problem to fix; ValueStore.getReport says
+// the same of a value store's one value. A store kept outside the seam whose
+// reader reports what it can't use the same way tells the kinds apart with
+// openStored, so every report draws the line where the seam does.
+// MapStore.replaceUnreadable
 // is that removal with a value put in its place, in one step: it writes only
 // over an entry whose bytes are damaged and still the bytes it read, so it can
 // never replace one that reads, or one that is unrecognised.
@@ -244,6 +248,12 @@ export type ValueStore<T> = Declared & {
   readonly kind: 'value';
   /** Strict. The value, or null if none was ever saved. */
   get(ctx: Ctx): Promise<T | null>;
+  /** Strict about deployment problems, but says why the value cannot be used
+   *  instead of throwing, as MapStore.getAllReport does for entries: the value,
+   *  or null, with `unreadable` (its bytes are damaged, so it may be offered
+   *  for removal once the person confirms) or `unrecognised` (intact, never
+   *  offered) when that is why. Both false and null: never saved. */
+  getReport(ctx: Ctx): Promise<{ value: T | null; unreadable: boolean; unrecognised: boolean }>;
   /** Replaces the value, unless the one there now cannot be read: then refuses,
    *  leaving it exactly as it is. Last write wins (see the header). */
   set(ctx: Ctx, value: T): Promise<void>;
@@ -515,25 +525,29 @@ function storeKey(ctx: Ctx, name: string): string {
 
 type Codec<T> = Pick<StoreOptions<T>, 'what' | 'isValid' | 'upgrade' | 'compress'>;
 
-/** A stored value read back, or why it cannot be used by its own doing (see
- *  READS above). */
-type Decoded<T> = { ok: true; value: T } | { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown };
+/** Why a stored value cannot be used by its own doing (see READS above). */
+type Flaw = { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown };
+/** A stored value read back, or why it cannot be used. */
+type Decoded<T> = { ok: true; value: T } | Flaw;
+/** A stored value's text, decrypted (and decompressed), or why it cannot be had. */
+export type Opened = { ok: true; text: string } | Flaw;
+
+const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown): Flaw => ({ ok: false, flaw, cause });
 
 /**
- * Reads a stored value back. Throws only what says nothing about the value: a
- * deployment that cannot read it (MasterKeyError for no master key or one that
- * does not open the data key, UnknownKeyError for a key the key store lacks, a
- * failed decrypt under k0, decompression failing, storage unreachable) or a
- * throwing upgrade (a bug). Damaged bytes are not ciphertext, or ciphertext
- * that fails to authenticate under a data key, whose id commits to its key.
- * Under k0 the same failure could as well be a replaced PLAID_ENCRYPTION_KEY,
- * and no other value can settle which (values written under a new k0 decrypt
- * beside old ones that cannot), so it is always thrown.
+ * A stored value's text, compressed or not. Throws only what says nothing
+ * about the value: a deployment that cannot read it (MasterKeyError for no
+ * master key or one that does not open the data key, UnknownKeyError for a
+ * key the key store lacks, a failed decrypt under k0, decompression failing,
+ * storage unreachable). Damaged bytes are not ciphertext, or ciphertext that
+ * fails to authenticate under a data key, whose id commits to its key. Under
+ * k0 the same failure could as well be a replaced PLAID_ENCRYPTION_KEY, and no
+ * other value can settle which (values written under a new k0 decrypt beside
+ * old ones that cannot), so it is always thrown.
  */
-async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
-  const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown): Decoded<T> => ({ ok: false, flaw, cause });
+async function openText(stored: unknown): Promise<Opened> {
   // The client JSON-parses what it can on the way out, so anything but
-  // non-empty text was never written by the seam.
+  // non-empty text was never written by the seam, nor by a store before it.
   if (typeof stored !== 'string' || stored === '') return flawed('unreadable', new Error('stored value is not encrypted text'));
   // What a later version may write (a version tag or flag this code does not
   // know, or a value bound to a context, which this code never passes) is
@@ -546,17 +560,36 @@ async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
     if (err instanceof MalformedCiphertextError) return flawed('unreadable', err);
     throw err;
   }
-  let text: string;
   try {
-    text = await decryptJsonText(stored); // compressed or not
+    return { ok: true, text: await decryptJsonText(stored) }; // compressed or not
   } catch (err) {
     if (err instanceof MalformedCiphertextError) return flawed('unreadable', err); // not base64, or too short
     if (err instanceof DecryptFailedError && err.keyId !== 'k0') return flawed('unreadable', err);
     throw err;
   }
+}
+
+/**
+ * Opens a value that a store kept outside the seam holds (balance history,
+ * manual accounts), for a reader that reports what it cannot use as
+ * getAllReport does instead of throwing: its text, or why it cannot be had,
+ * by exactly the rules every read here follows (see READS above), so a
+ * deployment problem is thrown as it is and never reported as damage. Text it
+ * has is the reader's to understand: text it does not (not JSON, not the
+ * shape it keeps) is unrecognised, as here. Reads nothing from storage.
+ */
+export function openStored(stored: unknown): Promise<Opened> {
+  return openText(stored);
+}
+
+/** Reads a stored value back, as openText does, then parses and checks it.
+ *  Also throws an upgrade that throws (a bug, never the data's doing). */
+async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
+  const opened = await openText(stored);
+  if (!opened.ok) return opened;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(opened.text);
   } catch (err) {
     return flawed('unrecognised', err);
   }
@@ -600,14 +633,20 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
   const { what } = codec;
   const key = (ctx: Ctx) => storeKey(ctx, name);
 
-  const read = async (ctx: Ctx): Promise<T | null> => {
+  /** The value decoded, or null when none was ever saved. */
+  const readDecoded = async (ctx: Ctx): Promise<Decoded<T> | null> => {
     // Uncaught: a failure to reach storage is never "never saved".
     const stored = await redis().get<unknown>(key(ctx));
     // Text that reads as nothing (empty, or the JSON literal null, which the
     // client parses) is never saved, as in lib/stored-json.ts. The seam writes
     // neither, and replacing one loses nothing.
     if (stored === null || stored === undefined || stored === '') return null;
-    const d = await decode(codec, stored);
+    return decode(codec, stored);
+  };
+
+  const read = async (ctx: Ctx): Promise<T | null> => {
+    const d = await readDecoded(ctx);
+    if (d === null) return null;
     if (d.ok) return d.value;
     throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
   };
@@ -618,6 +657,12 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     what,
     exportable: opts.exportable,
     get: read,
+    async getReport(ctx) {
+      const d = await readDecoded(ctx);
+      if (d === null) return { value: null, unreadable: false, unrecognised: false };
+      if (d.ok) return { value: d.value, unreadable: false, unrecognised: false };
+      return { value: null, unreadable: d.flaw === 'unreadable', unrecognised: d.flaw === 'unrecognised' };
+    },
     async set(ctx, value) {
       const json = serialize(codec, value);
       await read(ctx); // throws, so nothing is written, if what is there cannot be read

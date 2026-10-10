@@ -48,7 +48,9 @@ const {
   UPDATE_ENTRIES,
   COUNTER_READ,
   COUNTER_TAKE,
+  openStored,
 } = await import('@/lib/repo');
+const { encodeJsonText } = await import('@/lib/blob');
 const { declaredStores, declaredStore } = await import('@/lib/stores');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
 const { listedKind } = await import('@/lib/key-families');
@@ -227,15 +229,32 @@ function contract(b: Backend) {
         expect(err).toBeInstanceOf(UnreadableValueError);
         expect(err).toBeInstanceOf(StoredDataUnreadableError); // routes answer it as they do today
         expect(err.unrecognised).toBe(flaw === 'unrecognised'); // intact: never offered for removal
+        // The report says the same without throwing: no value, and why.
+        expect(await list.getReport(A)).toEqual({ value: null, unreadable: flaw === 'unreadable', unrecognised: flaw === 'unrecognised' });
         await expect(list.set(A, [NOTE])).rejects.toBeInstanceOf(UnreadableValueError);
         expect(await b.raw.get(listKey())).toBe(stored);
       });
     }
 
+    test('the report: never saved, or the value, in one read; a value it can use is never called a problem', async () => {
+      expect(await list.getReport(A)).toEqual({ value: null, unreadable: false, unrecognised: false });
+      await list.set(A, []);
+      expect(await list.getReport(A)).toEqual({ value: [], unreadable: false, unrecognised: false });
+      await list.set(A, [NOTE, RENT]);
+      const sent = await sentBy(async () => {
+        expect(await list.getReport(A)).toEqual({ value: [NOTE, RENT], unreadable: false, unrecognised: false });
+      });
+      expect(sent).toEqual(['get']);
+      // A compressed value reads the same.
+      await bigList.set(A, [RENT]);
+      expect(await bigList.getReport(A)).toEqual({ value: [RENT], unreadable: false, unrecognised: false });
+    });
+
     test('text that reads as nothing (empty, or the JSON literal null) is never saved, and a save replaces it', async () => {
       for (const nothing of ['', 'null', '""']) {
         await b.raw.set(listKey(), nothing);
         expect(await list.get(A)).toBeNull();
+        expect(await list.getReport(A)).toEqual({ value: null, unreadable: false, unrecognised: false });
         await list.set(A, [NOTE]);
         expect(await list.get(A)).toEqual([NOTE]);
       }
@@ -275,6 +294,8 @@ function contract(b: Backend) {
       await list.set(A, [NOTE]);
       b.failNext('get');
       await notBlamed(() => list.get(A));
+      b.failNext('get');
+      await notBlamed(() => list.getReport(A));
       b.failNext('get'); // the check before the write
       await expect(list.set(A, [])).rejects.toThrow(/armed failure/);
       b.failNext('set');
@@ -500,6 +521,7 @@ function contract(b: Backend) {
         ['n1', NOTE],
         ['n2', RENT],
       ]);
+      await bigList.set(A, [NOTE]);
       const working = globalThis.DecompressionStream;
       globalThis.DecompressionStream = class {
         constructor() {
@@ -507,7 +529,14 @@ function contract(b: Backend) {
         }
       } as never;
       try {
-        for (const read of [() => bigNotes.getAll(A), () => bigNotes.getAllReport(A), () => bigNotes.getAllLenient(A), () => bigNotes.get(A, 'n1')]) {
+        for (const read of [
+          () => bigNotes.getAll(A),
+          () => bigNotes.getAllReport(A),
+          () => bigNotes.getAllLenient(A),
+          () => bigNotes.get(A, 'n1'),
+          () => bigList.get(A),
+          () => bigList.getReport(A),
+        ]) {
           expect((await notBlamed(read)).message).toBe('decompression is unavailable');
         }
       } finally {
@@ -1025,6 +1054,7 @@ function contract(b: Backend) {
           () => notes.getMany(A, ['n1', 'n2']),
           () => notes.update(A, 'n1', () => RENT),
           () => list.get(A),
+          () => list.getReport(A),
           () => list.set(A, []),
         ]) {
           expect(await notBlamed(read)).toBeInstanceOf(MasterKeyError);
@@ -1054,6 +1084,7 @@ function contract(b: Backend) {
         () => notes.get(A, 'n2'),
         () => notes.update(A, 'n2', () => RENT),
         () => list.get(A),
+        () => list.getReport(A),
       ]) {
         expect(await notBlamed(read)).toBeInstanceOf(UnknownKeyError);
       }
@@ -1077,6 +1108,7 @@ function contract(b: Backend) {
         () => notes.getMany(A, ['n1', 'n3']),
         () => notes.update(A, 'n1', () => NOTE),
         () => list.get(A),
+        () => list.getReport(A),
       ]) {
         expect(await notBlamed(read)).toBeInstanceOf(DecryptFailedError);
       }
@@ -1094,6 +1126,8 @@ function contract(b: Backend) {
       expect(await b.raw.hget(notesKey(), 'n2')).toStartWith('v2.k1-');
       expect((await notes.getAllReport(A)).unreadable).toEqual(['n2']);
       expect((await notes.get(A, 'n2').catch((e) => e)).unreadable).toEqual(['n2']);
+      await b.raw.set(listKey(), tampered(await encrypt(JSON.stringify([RENT]))));
+      expect(await list.getReport(A)).toEqual({ value: null, unreadable: true, unrecognised: false });
     });
   });
 
@@ -1268,6 +1302,38 @@ describe('the seam, on the test double', () => {
     sent: () => fakeSent,
   });
 
+  // A store kept outside the seam (balance history, manual accounts) reports
+  // what it can't read by these same rules, so the line between damage, a
+  // later version's format and the deployment's own problem is drawn once.
+  test('openStored tells what a value outside the seam is by the seam’s own rules, reading nothing', async () => {
+    const sent = fakeSent.length;
+    for (const [how, flaw, make] of FLAWED) {
+      const opened = await openStored(await make());
+      // Not JSON, or the wrong shape, is text it has: whether the reader
+      // understands it is the reader's to say.
+      if (how === 'not JSON once decrypted') expect(opened).toEqual({ ok: true, text: 'not json' });
+      else if (how === 'the wrong shape once decrypted') expect(opened).toEqual({ ok: true, text: '{"not":"the shape"}' });
+      else expect([how, opened.ok ? 'ok' : opened.flaw]).toEqual([how, flaw]);
+    }
+    // As the client hands values back: a number or an object it parsed, or nothing.
+    for (const parsed of [12345, { text: 'plain' }, null, '']) {
+      expect(await openStored(parsed)).toMatchObject({ ok: false, flaw: 'unreadable' });
+    }
+    expect(await openStored(await encrypt('1000.5'))).toEqual({ ok: true, text: '1000.5' });
+    expect(await openStored(await encodeJsonText('{"a":1}'))).toEqual({ ok: true, text: '{"a":1}' }); // compressed
+    // Under k0 a failed decrypt is the deployment's, as for every read here.
+    expect(await openStored(await underAnotherK0('1000')).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(await openStored(tampered(await encrypt('1000'))).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(fakeSent.length).toBe(sent);
+    // Under a data key, only damage.
+    process.env.MASTER_KEY = MASTER;
+    forgetActiveKey();
+    const sealed = await encrypt('1000');
+    expect(sealed).toStartWith('v2.k1-');
+    expect(await openStored(tampered(sealed))).toMatchObject({ ok: false, flaw: 'unreadable' });
+    expect(await openStored(sealed)).toEqual({ ok: true, text: '1000' });
+  });
+
   test('a data key that cannot be loaded is a problem with the deployment: thrown as it is, even by the lenient read', async () => {
     // As in test/stored-json.test.ts: values under a data key whose id is not
     // cached, so reading one must fetch the key, and the key store cannot be
@@ -1304,6 +1370,7 @@ describe('the seam, on the test double', () => {
       () => notes.get(A, 'n2'),
       () => notes.getMany(A, ['n1', 'n2']),
       () => list.get(A),
+      () => list.getReport(A),
     ]) {
       const err = await read().catch((e) => e);
       expect(err).toBeInstanceOf(Error);
@@ -1430,6 +1497,7 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
 
     await send('HSET', [listKey(), 'f', 'a hash where the string should be']);
     await expect(list.get(A)).rejects.toThrow('WRONGTYPE');
+    await expect(list.getReport(A)).rejects.toThrow('WRONGTYPE');
     await expect(list.set(A, [NOTE])).rejects.toThrow('WRONGTYPE');
     expect(await send('HGET', [listKey(), 'f'])).toBe('a hash where the string should be');
   });
@@ -1443,6 +1511,7 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
     client = upstashOn(lost);
     for (const read of [
       () => list.get(A),
+      () => list.getReport(A),
       () => notes.getAll(A),
       () => notes.getAllLenient(A),
       () => notes.getAllReport(A),
