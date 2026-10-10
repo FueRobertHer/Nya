@@ -153,7 +153,7 @@ describe('the note under the net-worth chart', () => {
     const t = text(html);
     expect(t).toContain('the estimate reaches back through transactions you imported for Chase Checking');
     expect(t).toContain('Not drawn: Chase Checking’s import from');
-    expect(t).not.toMatch(/[–—]/);
+    expect(t).not.toMatch(/[\u2013\u2014]/);
   });
 });
 
