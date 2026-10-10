@@ -484,6 +484,18 @@ describe('auto notes', () => {
     expect(await timelineNotesStore.count(ctx)).toBe(0);
   });
 
+  test('one per account: a change on its current id takes the note an earlier id had', async () => {
+    const links = new Map<string, Link>([['old_sav', { to: 'sav', linked_at: '2026-04-01T00:00:00Z', evidence: {} }]]);
+    await markEnded(ctx, 'old_sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    await markEnded(ctx, 'sav', { state: 'left', on: '2026-03-20' }, ABOUT, NOW, links);
+    expect((await timelineNotesStore.getAll(ctx)).size).toBe(1);
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-03-20' });
+    // Answered Still open on it: no note is left to mark a change that isn't.
+    await markEnded(ctx, 'old_sav', { state: 'closed', on: '2026-03-12' }, ABOUT, NOW);
+    await markStillOpen(ctx, 'sav', { kind: 'missing', since: '2026-03-11' }, ABOUT, NOW, links);
+    expect(await timelineNotesStore.count(ctx)).toBe(0);
+  });
+
   test('the words for each state', () => {
     const label = { name: 'Vanguard Brokerage', institution: 'Vanguard', mask: null };
     expect(autoNoteText({ lifecycle: { state: 'closed', on: '2026-01-01' }, label })).toBe('Vanguard Brokerage closed');

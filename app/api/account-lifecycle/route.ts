@@ -218,12 +218,15 @@ export async function POST(req: Request) {
         await clearCaches(ctx);
         return NextResponse.json({ account_id: change.account_id, lifecycle: { state: 'active' }, reopened: gone.length > 0 });
       }
+      // The links, for the one note an account keeps: read leniently, since a
+      // note is best effort and the change itself doesn't need them.
+      const links = await activeLinks(ctx).catch(() => new Map<string, never>());
       if (change.kind === 'still-open') {
-        const entry = await markStillOpen(ctx, change.account_id, change.answered, about!, now);
+        const entry = await markStillOpen(ctx, change.account_id, change.answered, about!, now, links);
         await clearCaches(ctx);
         return NextResponse.json({ account_id: change.account_id, lifecycle: entry.lifecycle });
       }
-      const entry = await markEnded(ctx, change.account_id, change.lifecycle, about!, now);
+      const entry = await markEnded(ctx, change.account_id, change.lifecycle, about!, now, links);
       await clearCaches(ctx);
       const remove = await lastOpenEnded(ctx, entry.item_id, now);
       return NextResponse.json({ account_id: change.account_id, lifecycle: entry.lifecycle, ...(remove ? { remove_connection: remove } : {}) });

@@ -464,17 +464,33 @@ async function noteFor(ctx: Ctx, account_id: string, entry: LifecycleEntry | nul
   }
 }
 
+/** The auto notes of an account's other ids (through the links that apply)
+ *  go: its current entry wins over theirs, so the chart marks the one change
+ *  that entry says, never a stale one beside it. Best effort, as notes are. */
+async function dropOtherNotes(ctx: Ctx, account_id: string, links: ReadonlyMap<string, Link>, now: number): Promise<void> {
+  for (const id of sameAccountIds(account_id, links as Map<string, Link>)) if (id !== account_id) await noteFor(ctx, id, null, now);
+}
+
 /**
  * Sets an account's end, as the person said: closed or left on a day (with a
  * note), or untracked from one. Replaces whatever was there for that id (an
  * assumed closure becomes theirs), in one compare-and-set, and writes its
- * note on the timeline. Validation of the day against today is the route's
+ * note on the timeline, the only one for the account (`links`, the links
+ * that apply). Validation of the day against today is the route's
  * (lastEndDay).
  */
-export async function markEnded(ctx: Ctx, account_id: string, lifecycle: EndedLifecycle, about: AccountAbout, now: number = Date.now()): Promise<LifecycleEntry> {
+export async function markEnded(
+  ctx: Ctx,
+  account_id: string,
+  lifecycle: EndedLifecycle,
+  about: AccountAbout,
+  now: number = Date.now(),
+  links: ReadonlyMap<string, Link> = new Map()
+): Promise<LifecycleEntry> {
   const entry: LifecycleEntry = { lifecycle, ...cleanAbout(about), set_at: new Date(now).toISOString() };
   await lifecycleStore.update(ctx, account_id, () => entry);
   await noteFor(ctx, account_id, entry, now);
+  await dropOtherNotes(ctx, account_id, links, now);
   return entry;
 }
 
@@ -489,11 +505,13 @@ export async function markStillOpen(
   account_id: string,
   answered: { kind: QuestionKind; since: string },
   about: AccountAbout,
-  now: number = Date.now()
+  now: number = Date.now(),
+  links: ReadonlyMap<string, Link> = new Map()
 ): Promise<LifecycleEntry> {
   const entry: LifecycleEntry = { lifecycle: { state: 'active' }, ...cleanAbout(about), set_at: new Date(now).toISOString(), answered };
   await lifecycleStore.update(ctx, account_id, () => entry);
   await noteFor(ctx, account_id, null, now);
+  await dropOtherNotes(ctx, account_id, links, now);
   return entry;
 }
 
