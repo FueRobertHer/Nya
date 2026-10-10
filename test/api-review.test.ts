@@ -215,17 +215,31 @@ describe('a damaged record elsewhere', () => {
     });
   });
 
-  test('of a manual account sealed under another PLAID_ENCRYPTION_KEY: the deployment’s problem, never a short answer', async () => {
-    // What every value under k0 looks like once the key is replaced: no
-    // answer that leaves the account out could be told from a whole one.
+  // What a value under k0 looks like once PLAID_ENCRYPTION_KEY is replaced
+  // (k0 doesn't commit to its key, so this can't be told from damage, and
+  // nothing may offer to remove it). The answer still says it is short,
+  // naming the account with a reason of its own, as for any other short
+  // answer: one such account never takes the API down, holdings included,
+  // which no manual account has any part in.
+  test('of a manual account sealed under another PLAID_ENCRYPTION_KEY: named as unavailable, never as damaged, and the rest answered', async () => {
+    const whole = (await call('net-worth')).body;
     const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode('{}')));
     await fake.hset(ctxKey('manual:accounts'), { manual_wallet: Buffer.concat([iv, sealed]).toString('base64') });
     await quietly(async () => {
-      const { res, body } = await call('accounts');
-      expect(res.status).toBe(500);
-      expect(body.error.code).toBe('internal');
+      const { res, body: accounts } = await call('accounts');
+      expect(res.status).toBe(200);
+      expect(accounts.accounts.map((a: any) => a.id)).toContain('manual_house');
+      expect(accounts.accounts.map((a: any) => a.id)).not.toContain('manual_wallet');
+      expect(accounts.missing_accounts).toContainEqual({ institution: null, account_id: 'manual_wallet', reason: 'unavailable' });
+      expect(accounts.complete).toBe(false);
+      const worth = (await call('net-worth')).body;
+      expect(worth.totals[0].net_worth).toBe(whole.totals[0].net_worth - 40);
+      expect(worth.complete).toBe(false);
+      expect((await call('balance-history')).res.status).toBe(200);
+      expect((await call('holdings')).res.status).toBe(200);
+      expect((await tool('get_net_worth')).content[0].text).toContain('1 manual account couldn’t be read');
     });
   });
 

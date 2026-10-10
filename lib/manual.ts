@@ -19,8 +19,8 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt } from './crypto';
-import { READ_ENTRIES, UPDATE_ENTRY, openStored } from './repo';
+import { encrypt, decrypt, DecryptFailedError, UnknownKeyError } from './crypto';
+import { READ_ENTRIES, UPDATE_ENTRY, openStored, type Opened } from './repo';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
@@ -121,31 +121,56 @@ export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   return accounts.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Every manual account that can be read, and the ids of those that can't,
+ *  by why (getManualAccountsReport). */
+export type ManualAccountsReport = {
+  accounts: ManualAccount[];
+  /** Damaged: the stored bytes aren't ciphertext, or fail to authenticate
+   *  under a data key. */
+  unreadable: string[];
+  /** Stored intact, in a form this code does not know: not JSON, not an
+   *  account's shape, a later version's format. */
+  unrecognised: string[];
+  /** Sealed under a key this deployment can't use: a failed decrypt under k0,
+   *  which a replaced PLAID_ENCRYPTION_KEY looks exactly like, or a data key
+   *  the key store lacks. The deployment's problem, never the account's, so
+   *  never called damage and never offered for removal. */
+  unavailable: string[];
+};
+
 /**
  * Every manual account that can be read, and the ids of those that can't, for
  * a reader that names what it can't show rather than stopping: the read-only
  * API's accounts and net worth (lib/api-read.ts) and the download of my data
- * (lib/user-export.ts). Never for a figure that is recorded or written on,
- * which must use getManualAccounts (see the file header). By the storage
- * seam's rules (lib/repo.ts openStored), as its stores report entries:
- * `unreadable`, an account whose stored bytes are damaged (not ciphertext, or
- * ciphertext that fails to authenticate under a data key); `unrecognised`,
- * one stored intact in a form this code does not know (not JSON, not an
- * account's shape, a later version's format). Anything that says nothing
- * about the data throws as it is: storage out of reach, a key this deployment
- * can't load, and a failed decrypt under k0, which a replaced
- * PLAID_ENCRYPTION_KEY would look exactly like. The accounts in name order,
- * the ids in id order.
+ * (lib/user-export.ts), which stops on `unavailable` (the deployment's
+ * problem, which a file must never be shaped around). Never for a figure that
+ * is recorded or written on, which must use getManualAccounts (see the file
+ * header). By the storage seam's rules (lib/repo.ts openStored), as its stores
+ * report entries, with the one addition of `unavailable` (see the type). What
+ * says nothing about any one account throws as it is: storage out of reach,
+ * a master key that can't open the data keys. The accounts in name order, the
+ * ids in id order.
  */
-export async function getManualAccountsReport(ctx: Ctx): Promise<{ accounts: ManualAccount[]; unreadable: string[]; unrecognised: string[] }> {
+export async function getManualAccountsReport(ctx: Ctx): Promise<ManualAccountsReport> {
   // Deliberately uncaught: a Redis error is never "no accounts".
   const map = (await redis().hgetall<Record<string, unknown>>(ACCOUNTS_HASH(ctx))) ?? {};
   const accounts: ManualAccount[] = [];
   const unreadable: string[] = [];
   const unrecognised: string[] = [];
+  const unavailable: string[] = [];
   await Promise.all(
     Object.entries(map).map(async ([id, blob]) => {
-      const opened = await openStored(blob);
+      let opened: Opened;
+      try {
+        opened = await openStored(blob);
+      } catch (err) {
+        // The seam throws these rather than call them damage (see the type).
+        if ((err instanceof DecryptFailedError && err.keyId === 'k0') || err instanceof UnknownKeyError) {
+          unavailable.push(id);
+          return;
+        }
+        throw err;
+      }
       if (!opened.ok) {
         (opened.flaw === 'unreadable' ? unreadable : unrecognised).push(id);
         return;
@@ -157,7 +182,22 @@ export async function getManualAccountsReport(ctx: Ctx): Promise<{ accounts: Man
       }
     })
   );
-  return { accounts: accounts.sort((a, b) => a.name.localeCompare(b.name)), unreadable: unreadable.sort(), unrecognised: unrecognised.sort() };
+  return {
+    accounts: accounts.sort((a, b) => a.name.localeCompare(b.name)),
+    unreadable: unreadable.sort(),
+    unrecognised: unrecognised.sort(),
+    unavailable: unavailable.sort(),
+  };
+}
+
+/** Manual accounts this deployment can't decrypt (ManualAccountsReport
+ *  `unavailable`), for a reader that must stop on them, as the download does:
+ *  a file without them would look complete, and they aren't damaged. */
+export class ManualAccountsUnavailableError extends Error {
+  constructor(readonly ids: string[]) {
+    super(`${ids.length === 1 ? 'A manual account is' : `${ids.length} manual accounts are`} sealed under a key this deployment can't use`);
+    this.name = 'ManualAccountsUnavailableError';
+  }
 }
 
 /** Whether a manual account by this id is stored, without reading it. */

@@ -690,9 +690,11 @@ export async function forgetEarlierAccount(
   await redis().hdel(directoryKey(ctx), id);
   // Categories of its transactions that nothing can show any more (a failed
   // disconnect-time cleanup would otherwise leave them for good), and what
-  // was said about them, the same way.
-  await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
-  await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx, items.map((i) => i.item_id))).catch(() => 0);
+  // was said about them, the same way. Each checked against the Items stored
+  // when it runs, never the list read when the forget started: a bank linked
+  // meanwhile (linking takes no lock) has rows, and records on them, too.
+  await pruneOrphanOverrides(ctx).catch(() => 0);
+  await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx)).catch(() => 0);
   return { ...result, holdingsDamaged: holdings.damaged };
 }
 

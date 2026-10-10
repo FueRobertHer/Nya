@@ -91,14 +91,14 @@
 //   ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR REMOVAL, and only once the
 // person confirms. MapStore.getAllReport names both kinds instead of throwing,
 // so a route can show what it read, offer to remove the unreadable ids, and
-// report the unrecognised ones as a problem to fix; ValueStore.getReport says
-// the same of a value store's one value. A store kept outside the seam whose
-// reader reports what it can't use the same way tells the kinds apart with
-// openStored, so every report draws the line where the seam does.
-// MapStore.replaceUnreadable
+// report the unrecognised ones as a problem to fix. MapStore.replaceUnreadable
 // is that removal with a value put in its place, in one step: it writes only
 // over an entry whose bytes are damaged and still the bytes it read, so it can
 // never replace one that reads, or one that is unrecognised.
+// ValueStore.getReport says of a value store's one value what getAllReport
+// says of entries. A store kept outside the seam whose reader reports what it
+// can't use the same way tells the kinds apart with openStored (or
+// openStoredJson), so every report draws the line where the seam does.
 //   MapStore.getAllLenient is the one lenient read: it leaves out what it cannot
 // use (a deployment problem still throws). It is only for conveniences that
 // nothing writes, deletes or records on; say so where it is called.
@@ -639,7 +639,7 @@ type Codec<T> = Pick<StoreOptions<T>, 'what' | 'isValid' | 'upgrade' | 'compress
 /** Why a stored value cannot be used by its own doing (see READS above). */
 type Flaw = { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown };
 /** A stored value read back, or why it cannot be used. */
-type Decoded<T> = { ok: true; value: T } | Flaw;
+export type Decoded<T> = { ok: true; value: T } | Flaw;
 /** A stored value's text, decrypted (and decompressed), or why it cannot be had. */
 export type Opened = { ok: true; text: string } | Flaw;
 
@@ -691,6 +691,17 @@ async function openText(stored: unknown): Promise<Opened> {
  */
 export function openStored(stored: unknown): Promise<Opened> {
   return openText(stored);
+}
+
+/**
+ * openStored, then parsed and checked as a store's own reads check a value
+ * (decode), for a value kept outside the seam whose shape is one check
+ * (budgets and goals, read for the download of my data): text that is not
+ * JSON, or JSON `isValid` rejects, is unrecognised. Reads nothing from
+ * storage.
+ */
+export function openStoredJson<T>(stored: unknown, isValid: (v: unknown) => v is T): Promise<Decoded<T>> {
+  return decode({ what: 'a stored value', isValid }, stored);
 }
 
 /** Reads a stored value back, as openText does, then parses and checks it.

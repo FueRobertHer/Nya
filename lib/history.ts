@@ -706,7 +706,8 @@ export type StoredPoint = { date: string; value: number; estimated: boolean };
  *  order, as the storage seam reports entries (lib/repo.ts getAllReport):
  *  `unreadable`, their stored bytes are damaged; `unrecognised`, stored intact
  *  in a form this code does not know (a total that isn't a number, a map
- *  that isn't one of balances). */
+ *  that isn't one of balances, or one holding a balance that isn't a
+ *  number). */
 export type UnusableDays = { unreadable: string[]; unrecognised: string[] };
 
 /**
@@ -728,13 +729,19 @@ export type UnusableDays = { unreadable: string[]; unrecognised: string[] };
  *
  * A day that can't be used is NAMED, never dropped quietly and never a reason
  * to stop: `problems` lists it, by the storage seam's rules (lib/repo.ts
- * openStored), for the series it is missing from. It is not read around
- * either: a day whose recorded total or map can't be used gets no estimate in
- * its place, as the chart gives it none. Anything that says nothing about the
- * data is thrown as it is: storage out of reach, a key this deployment can't
- * load, a failed decrypt under k0 (which a replaced PLAID_ENCRYPTION_KEY
- * would look exactly like). An estimate on a day that also has a recorded
- * value is superseded and not read, so it can never be named.
+ * openStored), for the series it is missing from. So is a day whose map reads
+ * but holds a balance that isn't a finite number (a later version's shape,
+ * say): its numbers are used, as the chart uses them, and the day is named
+ * `unrecognised`, since an account's balance on it is left out. It is not
+ * read around either: a day whose recorded total or map can't be used gets
+ * no estimate in its place, as the chart gives it none. A partial measurement
+ * that can't be used, on a day with no recorded map, does fall back to the
+ * estimate, marked as one, as the chart does. Anything that says nothing
+ * about the data is thrown as it is: storage out of reach, a key this
+ * deployment can't load, a failed decrypt under k0 (which a replaced
+ * PLAID_ENCRYPTION_KEY would look exactly like). An estimate on a day that
+ * also has a recorded value is superseded and not read, so it can never be
+ * named.
  */
 export async function readHistoryForExport(
   ctx: Ctx
@@ -782,9 +789,14 @@ export async function readHistoryForExport(
     } catch {
       map = null;
     }
-    if (map && typeof map === 'object' && !Array.isArray(map)) return map as Record<string, unknown>;
-    accountsNamed.unrecognised.add(date);
-    return null;
+    if (!map || typeof map !== 'object' || Array.isArray(map)) {
+      accountsNamed.unrecognised.add(date);
+      return null;
+    }
+    // A balance that isn't a finite number is one this code doesn't know (no
+    // writer stores one): the day is named, and the rest of the map is used.
+    if (Object.values(map).some((v) => typeof v !== 'number' || !Number.isFinite(v))) accountsNamed.unrecognised.add(date);
+    return map as Record<string, unknown>;
   };
   /** A layer's maps that can be used, for the days given. */
   const maps = async (layer: Record<string, unknown>, dates: string[]) => {
@@ -800,7 +812,8 @@ export async function readHistoryForExport(
     maps(estAcc, unrecorded(estAcc)),
     maps(extAcc, unrecorded(extAcc)),
   ]);
-  // A value that isn't a finite number is no balance, as getAccountHistory reads it.
+  // A value that isn't a finite number is no balance, as getAccountHistory
+  // reads it; its day is named (open, above).
   const num = (map: Record<string, unknown> | undefined, id: string): number | null => {
     const v = map && Object.hasOwn(map, id) ? map[id] : undefined;
     return typeof v === 'number' && Number.isFinite(v) ? v : null;

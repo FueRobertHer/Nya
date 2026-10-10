@@ -24,18 +24,27 @@
 //        names what is missing, by part and id, a note says it in words, and
 //        the route's headers say the file is incomplete. One damaged record
 //        would otherwise stop the download for good, with nothing in the app
-//        to clear it (stores on the seam, balance history and manual
-//        accounts), or nothing the person could do about it at all (the
-//        other person's record of showings to me, in sharing, which marks
-//        each where it belongs).
+//        to clear it (stores on the seam, balance history, manual accounts,
+//        budgets and goals), or nothing the person could do about it at all
+//        (the other person's record of showings to me, in sharing, which
+//        marks each where it belongs).
 //    Nothing is removed here: what can't be read stays stored exactly as it
-//    was, and only reported. The older stores the file cross-references
-//    (institutions, accounts, transactions and investment transactions,
-//    categories, merchant names, links, hidden accounts, budgets, goals) are
-//    still read whole: an entry of theirs left out would read as its absence
-//    elsewhere in the file (a transaction without the category set on it, a
-//    hidden account shown as not hidden), so one that can't be read still
-//    stops the download, naming the store.
+//    was, and only reported. Budgets and goals, one value each that no other
+//    part is read against, are null and named, as a value store on the seam
+//    is. The older stores the rest of the file is read against are still
+//    read whole, since an entry of theirs left out would read as something
+//    else elsewhere in the file: institutions and accounts (an account's
+//    balances and transactions with no account to belong to), transactions
+//    and investment transactions (the categories, names and exclusions set
+//    on a row pointing at nothing), categories and merchant names (a
+//    transaction shown without the one set on it), links (one account read
+//    as two) and hidden accounts (a hidden account shown as not hidden). One
+//    of theirs that can't be read still stops the download, naming the
+//    store. Two older readers still pass over what they can't parse without
+//    a word, as the app does, and docs/data-export.md says so: sharing's (a
+//    connection or a share whose record doesn't parse, an account at a level
+//    this version doesn't know) and the remembered accounts' (a record in
+//    the old shape, an account without an id or a type).
 // 2. ONLY THIS PERSON'S. Everything is read through their container's Ctx,
 //    and sharing as their own side of each connection (lib/sharing.ts
 //    mySharing): never another person's data. The one thing read from
@@ -70,7 +79,7 @@ import {
   type DirectoryEntry,
   type Link,
 } from './links';
-import { getManualAccountsReport, isManualId, type ManualAccount } from './manual';
+import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -85,8 +94,8 @@ import { readInvStore, type InvStoreState } from './invstore';
 import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried } from './overrides';
 import { readRenamesStrict } from './renames';
 import { readHistoryForExport, type StoredPoint } from './history';
-import { getBudgets } from './budgets';
-import { getGoals } from './goals';
+import { getBudgetsReport } from './budgets';
+import { getGoalsReport } from './goals';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
 import { apiTokenStore } from './api-token-store';
@@ -96,7 +105,11 @@ import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
 
 export const EXPORT_FORMAT = 'nya-export';
-export const EXPORT_VERSION = 1;
+/** 2 since a part that can't be read is named under `problems` instead of
+ *  stopping the download (rule 1): a part can be short, and budgets, goals
+ *  and a value store's field null, for a reason only `problems` tells apart,
+ *  where version 1 was whole or not made at all (docs/data-export.md). */
+export const EXPORT_VERSION = 2;
 export const EXPORT_DOCUMENTATION = 'https://github.com/FueRobertHer/Nya/blob/main/docs/data-export.md';
 
 export const EXPORT_FORMATS = ['json', 'transactions-csv', 'balances-csv'] as const;
@@ -277,23 +290,42 @@ function section<T>(s: {
   };
 }
 
+/** One value's problem, if it has one, for a part that is null without it. */
+const valueProblems = (section: string, problem: ProblemKind | null): ExportProblem[] => (problem ? [{ section, problem }] : []);
+
 export const SECTIONS: readonly ExportSection[] = [
-  section({
+  // Budgets and goals are one value each, which no other part of the file is
+  // read against: saved but unusable, each is null and named among the
+  // problems (rule 1), as a value store on the seam is. A goal names an
+  // account, which `accounts` lists; with the goals null, nothing names it.
+  {
     key: 'budgets',
     what: 'budgets',
     // Monthly, per spending category.
-    read: async ({ ctx }) =>
-      Object.entries(await getBudgets(ctx))
-        .map(([category, monthly_amount]) => ({ category, monthly_amount }))
-        .sort((a, b) => a.category.localeCompare(b.category)),
-  }),
-  section({
+    read: async ({ ctx }) => {
+      const { budgets, problem } = await getBudgetsReport(ctx);
+      return {
+        value:
+          budgets &&
+          Object.entries(budgets)
+            .map(([category, monthly_amount]) => ({ category, monthly_amount }))
+            .sort((a, b) => a.category.localeCompare(b.category)),
+        problems: valueProblems('budgets', problem),
+      };
+    },
+  },
+  {
     key: 'goals',
     what: 'goals',
-    read: async ({ ctx }) =>
-      (await getGoals(ctx)).map((g) => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id ?? null })),
-    mentions: (goals) => goals.map((g) => g.account_id),
-  }),
+    read: async ({ ctx }) => {
+      const { goals, problem } = await getGoalsReport(ctx);
+      return {
+        value: goals && goals.map((g) => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id ?? null })),
+        problems: valueProblems('goals', problem),
+      };
+    },
+    mentions: (goals) => ((goals as { account_id: string | null }[] | null) ?? []).map((g) => g.account_id),
+  },
   {
     key: 'api_tokens',
     what: 'API tokens',
@@ -460,7 +492,14 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
-      read('manual accounts', () => getManualAccountsReport(ctx)),
+      read('manual accounts', async () => {
+        const report = await getManualAccountsReport(ctx);
+        // Sealed under a key this deployment can't use: its problem, never
+        // the accounts', so it stops the download as storage out of reach
+        // does, and is never named in a file as missing data.
+        if (report.unavailable.length > 0) throw new ManualAccountsUnavailableError(report.unavailable);
+        return report;
+      }),
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
@@ -736,6 +775,9 @@ type PartWords = {
   missing: (noun: string, counts: string) => string;
   /** Where the person finds what is missing: the JSON file, unless said. */
   listed?: string;
+  /** The sentence in a CSV made from this part (CSV_SOURCES), where what the
+   *  CSV lacks is not what the JSON file lacks: `counts` as for `missing`. */
+  inCsv?: (counts: string) => string;
 };
 const missingFrom = (noun: string, counts: string) => `Not all of your ${noun} could be read, so this file is missing ${counts}.`;
 const PART_WORDS: Record<string, PartWords> = {
@@ -744,6 +786,16 @@ const PART_WORDS: Record<string, PartWords> = {
     one: 'account',
     many: 'accounts',
     missing: (noun, counts) => `${missingFrom(noun, counts)} Any balance history they have is still in account_history, under their ids.`,
+    // A CSV's rows of such an account are all there, under its id: only its
+    // name is missing from them.
+    inCsv: (counts) => `Not all of your manual accounts could be read: ${counts}. Their rows in this file are under their account ids, with no account name.`,
+  },
+  // One entry per manual account: its book.
+  'manual-transactions': {
+    noun: 'manual transactions',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the transactions of ${counts}.`,
   },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
@@ -762,10 +814,13 @@ const PART_WORDS: Record<string, PartWords> = {
  * One note in words for each part of the file that is missing something, in
  * the order the parts come: what it is missing, why, and that nothing was
  * changed. From the problems alone, so a file made from only some parts (a
- * CSV, exportFile) says the same of those.
+ * CSV, exportFile) says the same of those, in its own words where what it
+ * lacks differs (PartWords inCsv), and pointing to the JSON download for the
+ * list.
  */
-export function problemNotes(problems: readonly ExportProblem[]): string[] {
+export function problemNotes(problems: readonly ExportProblem[], format: ExportFormat = 'json'): string[] {
   const unchanged = 'Nothing was changed: what could not be read is still stored as it was.';
+  const csv = format !== 'json';
   return [...new Set(problems.map((p) => p.section))].map((section) => {
     const mine = problems.filter((p) => p.section === section);
     if (section === 'sharing') {
@@ -777,11 +832,15 @@ export function problemNotes(problems: readonly ExportProblem[]): string[] {
       // A part that is one value, null in the file.
       return `Your ${words.noun} could not be read (${mine[0].problem === 'unrecognised' ? 'they were saved in a form this version of Nya does not know' : 'the stored data is damaged'}), so this file does not have them. ${unchanged}`;
     }
-    const counts = mine.map((p) => {
-      const n = p.ids?.length ?? p.count ?? 0;
-      return `${n} ${n === 1 ? words.one : words.many} ${why(p)}`;
-    });
-    return `${words.missing(words.noun, counts.join(' and '))} ${words.listed ?? 'The JSON file lists them under problems.'} ${unchanged}`;
+    const counts = mine
+      .map((p) => {
+        const n = p.ids?.length ?? p.count ?? 0;
+        return `${n} ${n === 1 ? words.one : words.many} ${why(p)}`;
+      })
+      .join(' and ');
+    const said = csv && words.inCsv ? words.inCsv(counts) : words.missing(words.noun, counts);
+    const listed = csv ? 'The JSON download lists them under problems.' : (words.listed ?? 'The JSON file lists them under problems.');
+    return `${said} ${listed} ${unchanged}`;
   });
 }
 
@@ -1304,6 +1363,12 @@ export function* balancesCsv(doc: UserExport): Generator<string> {
   const about = new Map<string, { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean }>();
   for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden });
   for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: null, hidden: m.hidden });
+  // A manual account that couldn't be read is in neither list (problems names
+  // it). When it is hidden, hidden_accounts still holds its type and says it
+  // is hidden, as transactions.csv reads it there too.
+  for (const h of doc.hidden_accounts) {
+    if (!about.has(h.account_id)) about.set(h.account_id, { name: null, institution: null, type: h.type, currency: null, hidden: true });
+  }
 
   type Row = { date: string; rank: number; cells: CsvValue[] };
   const rows: Row[] = doc.net_worth_history.points.map((p) => ({
@@ -1354,7 +1419,7 @@ export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
   // the document's own notes end with, for every part).
   const problems = format === 'json' ? doc.problems : doc.problems.filter((p) => CSV_SOURCES[format].includes(p.section));
   const everyPart = new Set(problemNotes(doc.problems));
-  const notes = [...doc.notes.filter((n) => !everyPart.has(n)), ...problemNotes(problems)];
+  const notes = [...doc.notes.filter((n) => !everyPart.has(n)), ...problemNotes(problems, format)];
   const about = { notes, incomplete: [...new Set(problems.map((p) => p.section))] };
   switch (format) {
     case 'json':

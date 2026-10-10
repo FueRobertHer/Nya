@@ -50,6 +50,7 @@ const {
   COUNTER_READ,
   COUNTER_TAKE,
   openStored,
+  openStoredJson,
 } = await import('@/lib/repo');
 const { encodeJsonText } = await import('@/lib/blob');
 const { declaredStores, declaredStore } = await import('@/lib/stores');
@@ -1467,6 +1468,19 @@ describe('the seam, on the test double', () => {
     expect(sealed).toStartWith('v2.k1-');
     expect(await openStored(tampered(sealed))).toMatchObject({ ok: false, flaw: 'unreadable' });
     expect(await openStored(sealed)).toEqual({ ok: true, text: '1000' });
+  });
+
+  // For a value outside the seam whose shape is one check (budgets, goals):
+  // the JSON and the shape, as a store's own read checks them.
+  test('openStoredJson adds the JSON and the shape: what it doesn’t understand is unrecognised', async () => {
+    const isList = (v: unknown): v is unknown[] => Array.isArray(v);
+    const sent = fakeSent.length;
+    expect(await openStoredJson(await encrypt('[1,2]'), isList)).toEqual({ ok: true, value: [1, 2] });
+    expect(await openStoredJson(await encrypt('{"not":"a list"}'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
+    expect(await openStoredJson(await encrypt('not json'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
+    expect(await openStoredJson('not-ciphertext-but-long-enough-to-be-tried', isList)).toMatchObject({ ok: false, flaw: 'unreadable' });
+    expect(await openStoredJson(await underAnotherK0('[]'), isList).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(fakeSent.length).toBe(sent);
   });
 
   test('a data key that cannot be loaded is a problem with the deployment: thrown as it is, even by the lenient read', async () => {

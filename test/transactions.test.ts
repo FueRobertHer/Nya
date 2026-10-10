@@ -603,4 +603,17 @@ describe('what was said about a transaction the bank removed', () => {
       fake.get = get;
     }
   });
+
+  // The removal and the row's return in one sync: the store it saves has the
+  // row, so the record is on a transaction still shown.
+  test('removed on one page and added back on a later page of the same sync: it stays', async () => {
+    await seed();
+    pages = [
+      { removed: [{ transaction_id: 't1' }], has_more: true, next_cursor: 'c-1' },
+      { added: [txn({ transaction_id: 't1', amount: 2 })] },
+    ];
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
+    expect(recordOf('t1')).toBeDefined();
+  });
 });

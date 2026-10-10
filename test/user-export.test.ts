@@ -262,7 +262,8 @@ describe('everything stored, decrypted, and nothing else', () => {
     const doc = await download();
     expect(doc).toMatchObject({ format: EXPORT_FORMAT, version: EXPORT_VERSION, exported_at: NOW.toISOString(), notes: [], problems: [] });
     expect(doc.format).toBe('nya-export');
-    expect(doc.version).toBe(1);
+    // 2: a file can be short, said under problems (lib/user-export.ts EXPORT_VERSION).
+    expect(doc.version).toBe(2);
     expect(Object.keys(doc)).toEqual([
       'format',
       'version',
@@ -719,13 +720,13 @@ describe('a store that can’t be read fails the download, by name', () => {
     ['a carried category', async () => fake.hset(ctxKey('txn-category-carry'), { acc_old: 'garbage-ciphertext' }), 'categories'],
     ['a rename', async () => fake.hset(ctxKey('txn-vendor-renames'), { 'mid:ent_bb': 'garbage-ciphertext' }), 'merchant names'],
     ['a link', async () => fake.hset(ctxKey('account-links'), { acc_old: 'garbage-ciphertext' }), 'account links'],
-    ['the budgets', () => fake.set(ctxKey('budgets'), 'garbage-ciphertext'), 'budgets'],
-    ['the goals', () => fake.set(ctxKey('goals'), 'garbage-ciphertext'), 'goals'],
     // Never damage, for the stores that report it: a day or an account sealed
     // under another PLAID_ENCRYPTION_KEY is what the deployment's own problem
     // looks like (k0 doesn't commit to its key), so it stops the download.
     ['a day of balances under another PLAID_ENCRYPTION_KEY', async () => fake.hset(ctxKey('history:net-worth'), { '2026-01-02': await underAnotherK0('1100.5') }), 'balance history'],
     ['a manual account under another PLAID_ENCRYPTION_KEY', async () => fake.hset(ctxKey('manual:accounts'), { manual_house: await underAnotherK0('{}') }), 'manual accounts'],
+    ['the budgets under another PLAID_ENCRYPTION_KEY', async () => fake.set(ctxKey('budgets'), await underAnotherK0('{}')), 'budgets'],
+    ['the goals under another PLAID_ENCRYPTION_KEY', async () => fake.set(ctxKey('goals'), await underAnotherK0('[]')), 'goals'],
   ];
   for (const [name, damage, what] of cases) {
     test(name, async () => {
@@ -739,6 +740,17 @@ describe('a store that can’t be read fails the download, by name', () => {
       expect((err as Error).message).toStartWith(`Your ${what} could not be read, so nothing was downloaded`);
     });
   }
+
+  // The API names such an account and answers the rest (unavailable); a file
+  // is never shaped around the deployment's own problem.
+  test('a manual account under a key this deployment can’t use stops it as the deployment’s problem', async () => {
+    const { ManualAccountsUnavailableError } = await import('@/lib/manual');
+    await fake.hset(ctxKey('manual:accounts'), { manual_house: await underAnotherK0('{}') });
+    const err = await collectUserData({ ctx, userId: 'user_me' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExportReadError);
+    expect((err as Error).cause).toBeInstanceOf(ManualAccountsUnavailableError);
+    expect(((err as Error).cause as InstanceType<typeof ManualAccountsUnavailableError>).ids).toEqual(['manual_house']);
+  });
 
   test('the database failing is a failure too, never an empty store', async () => {
     fake.failNext('hgetall');
@@ -810,6 +822,35 @@ describe('what can’t be read is named, and everything else is in the file', ()
     expect(doc.accounts.find((a) => a.account_id === 'acc_chk')?.latest_balance).toEqual({ balance: 1555, date: '2026-01-03' });
   });
 
+  // A map that reads, holding a balance this version doesn't know (a later
+  // one's shape, say): the numbers on it are in, and the day is named, so the
+  // file never looks whole without the rest.
+  test('a day of account balances holding one that isn’t a number is named; the numbers on it are in', async () => {
+    await fake.hset(ctxKey('history:accounts'), {
+      '2026-01-05': await enc({ acc_chk: 1650, acc_eur: { value: 50, currency: 'EUR' }, acc_text: 'seventy', acc_null: null }),
+    });
+    const doc = await download();
+    const series = Object.fromEntries(doc.account_history.map((s) => [s.account_id, s.points]));
+    expect(series.acc_chk.at(-1)).toEqual({ date: '2026-01-05', balance: 1650, kind: 'recorded' });
+    expect(Object.keys(series).filter((id) => ['acc_eur', 'acc_text', 'acc_null'].includes(id))).toEqual([]);
+    expect(doc.problems).toEqual([{ section: 'account_history', problem: 'unrecognised', ids: ['2026-01-05'] }]);
+    expect(exportFile(doc, 'json').incomplete).toEqual(['account_history']);
+    expect(exportFile(doc, 'balances-csv').incomplete).toEqual(['account_history']);
+  });
+
+  // On a day with no recorded map, a measurement that can't be read falls
+  // back to the estimate, marked as one, as the chart does. The day is named.
+  test('a partial measurement that can’t be read, on a day with no recorded map, falls back to the estimate, as the chart does', async () => {
+    await fake.hset(ctxKey('history:accounts:est'), { '2026-01-04': await enc({ acc_chk: 1650 }) });
+    await fake.hset(ctxKey('history:accounts:partial'), { '2026-01-04': DAMAGED });
+    const doc = await download();
+    const chk = doc.account_history.find((s) => s.account_id === 'acc_chk')!.points;
+    expect(chk.find((p) => p.date === '2026-01-04')).toEqual({ date: '2026-01-04', balance: 1650, kind: 'estimated' });
+    expect(doc.problems).toEqual([{ section: 'account_history', problem: 'unreadable', ids: ['2026-01-04'] }]);
+    const own = await getAccountHistory(ctx, 'acc_chk');
+    expect(chk).toEqual(own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
+  });
+
   test('with days that can’t be read, the file still agrees with what the app reads', async () => {
     await fake.hset(ctxKey('history:net-worth'), { '2026-01-02': 'garbage-ciphertext' });
     await fake.hset(ctxKey('history:accounts'), { '2026-01-02': 'garbage-ciphertext' });
@@ -848,6 +889,31 @@ describe('what can’t be read is named, and everything else is in the file', ()
     expect(countAccounts(await collectUserData({ ctx, userId: 'user_me' }))).toEqual({ accounts: 6, earlier: 0 });
   });
 
+  // One value each, which no other part of the file is read against: with
+  // nothing in the app to clear them, they must never stop the download.
+  test('budgets or goals that can’t be used are null and named, and the rest is in the file', async () => {
+    await fake.set(ctxKey('budgets'), DAMAGED);
+    await fake.set(ctxKey('goals'), await enc({ not: 'goals' }));
+    const doc = await download();
+    expect(doc['budgets']).toBeNull();
+    expect(doc['goals']).toBeNull();
+    expect(doc.problems).toEqual([
+      { section: 'budgets', problem: 'unreadable' },
+      { section: 'goals', problem: 'unrecognised' },
+    ]);
+    expect(doc.notes).toEqual([
+      `Your budgets could not be read (the stored data is damaged), so this file does not have them. ${unchanged}`,
+      `Your goals could not be read (they were saved in a form this version of Nya does not know), so this file does not have them. ${unchanged}`,
+    ]);
+    // The goal's account is still listed: it is known from the rest.
+    expect(doc.accounts.map((a) => a.account_id)).toContain('acc_chk');
+    expect(doc.transactions.length).toBeGreaterThan(0);
+    // Neither is in a CSV: only the JSON file is missing them.
+    expect(exportFile(doc, 'json').incomplete).toEqual(['budgets', 'goals']);
+    expect(exportFile(doc, 'transactions-csv').incomplete).toEqual([]);
+    expect(exportFile(doc, 'balances-csv').incomplete).toEqual([]);
+  });
+
   test('sharing names its own problems once each, beside the marks it makes where each record belongs', async () => {
     await fake.hset(ctxKey('sharing-access-log'), { [LOG_ID]: DAMAGED });
     await fake.hset(testKey('containers'), { [FRIEND.container]: JSON.stringify({ status: 'restoring', primary: false, created_at: '2026-01-01T00:00:00.000Z' }) });
@@ -883,8 +949,12 @@ describe('what can’t be read is named, and everything else is in the file', ()
     expect(notices).toStartWith('Not all of your connection notices could be read, so this file is missing 1 entry whose stored data is damaged.');
     // The JSON file has every part.
     expect(exportFile(doc, 'json')).toMatchObject({ incomplete: ['net_worth_history', 'connection-notices'], notes: doc.notes });
-    // The balances CSV is made from the history: its own note, and the caveat as ever.
-    expect(exportFile(doc, 'balances-csv')).toMatchObject({ incomplete: ['net_worth_history'], notes: [caveat, history] });
+    // The balances CSV is made from the history: its own note, pointing to the
+    // JSON download for the list, and the caveat as ever.
+    expect(exportFile(doc, 'balances-csv')).toMatchObject({
+      incomplete: ['net_worth_history'],
+      notes: [caveat, history.replace('The JSON file lists them', 'The JSON download lists them')],
+    });
     // The transactions CSV is made from neither.
     expect(exportFile(doc, 'transactions-csv')).toMatchObject({ incomplete: [], notes: [caveat] });
   });
@@ -1362,7 +1432,7 @@ describe('writing it out', () => {
     expect(rows.map((r) => r[TRANSACTION_COLUMNS.indexOf('transaction_id')])).toContain(id);
     expect(file.incomplete).toEqual(['manual-transactions']);
     expect(file.notes).toEqual([
-      'Not all of your manual transactions could be read, so this file is missing 1 entry whose stored data is damaged. The JSON file lists them under problems. Nothing was changed: what could not be read is still stored as it was.',
+      'Not all of your manual transactions could be read, so this file is missing the transactions of 1 account whose stored data is damaged. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.',
     ]);
     // The balances CSV isn't made from them.
     expect(exportFile(doc, 'balances-csv')).toMatchObject({ incomplete: [], notes: [] });
@@ -1392,6 +1462,39 @@ describe('writing it out', () => {
     const first0101 = rows.findIndex((r) => r[0] === '2026-01-01');
     expect(rows[first0101][1]).toBe('net_worth');
     expect(rows.length).toBe(totals.length + doc.account_history.reduce((n, s) => n + s.points.length, 0));
+  });
+
+  // In neither accounts nor manual_accounts, but hidden_accounts still knows
+  // its type and that it is hidden, as transactions.csv reads it. The notes
+  // say what the CSVs lack: the name, never account_history, which is the
+  // JSON file's.
+  test('both CSVs: a manual account that can’t be read keeps its rows, hidden and typed where that is known, and the notes say what is missing', async () => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const at = '2026-09-30T10:00:00.000Z';
+    await fake.hset(ctxKey('manual:accounts'), { manual_house: DAMAGED });
+    await fake.hset(ctxKey('hidden:accounts'), { manual_house: await enc({ type: 'other', hidden_at: '2026-03-01T00:00:00.000Z' }) });
+    await fake.hset(ctxKey('history:accounts'), { '2026-01-05': await enc({ manual_house: 400000 }) });
+    await manualTxnStore.set(ctx, 'manual_house', {
+      version: 1,
+      rows: [{ id: 'manual-txn:00000000-0000-4000-8000-000000000009', account_id: 'manual_house', date: '2026-01-05', amount: 12, currency: 'USD', name: 'Paint', category: null, note: null, source: 'manual', source_id: null, created_at: at, updated_at: at }],
+    });
+    const doc = await download();
+    const balances = exportFile(doc, 'balances-csv');
+    const [header, ...rows] = parseCsv([...balances.pieces()].join(''));
+    const house = rows.filter((r) => r[2] === 'manual_house').map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+    expect(house).toEqual([
+      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true' },
+    ]);
+    const suffix = 'The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.';
+    const said = `Not all of your manual accounts could be read: 1 account whose stored data is damaged. Their rows in this file are under their account ids, with no account name. ${suffix}`;
+    expect(balances).toMatchObject({ incomplete: ['manual_accounts'], notes: [said] });
+    const txns = exportFile(doc, 'transactions-csv');
+    const [txHeader, ...txRows] = parseCsv([...txns.pieces()].join(''));
+    const paint = txRows.find((r) => r[txHeader.indexOf('account_id')] === 'manual_house')!;
+    expect([paint[txHeader.indexOf('name')], paint[txHeader.indexOf('account_name')], paint[txHeader.indexOf('account_hidden')]]).toEqual(['Paint', '', 'true']);
+    expect(txns).toMatchObject({ incomplete: ['manual_accounts'], notes: [said] });
+    // The JSON file's own note names account_history, which it has.
+    expect(exportFile(doc, 'json').notes[0]).toContain('still in account_history');
   });
 });
 

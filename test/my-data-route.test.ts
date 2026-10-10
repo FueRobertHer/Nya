@@ -82,7 +82,7 @@ describe('with the shared password', () => {
     expect(res.headers.get('content-length')).toBe(String(body.byteLength));
     expect(res.headers.get('x-nya-export-bytes')).toBe(String(body.byteLength));
     const doc = JSON.parse(new TextDecoder().decode(body));
-    expect(doc).toMatchObject({ format: 'nya-export', version: 1, sharing: null, budgets: [{ category: 'Food', monthly_amount: 400 }] });
+    expect(doc).toMatchObject({ format: 'nya-export', version: 2, sharing: null, budgets: [{ category: 'Food', monthly_amount: 400 }] });
     expect(doc.manual_accounts.map((m: { name: string }) => m.name)).toEqual(['Piggy bank']);
     // The log says a download happened, and nothing of what was in it.
     expect(said).toEqual(['Data download: json']);
@@ -180,7 +180,10 @@ describe('with the shared password', () => {
     expect(csv.status).toBe(200);
     expect(csv.headers.get('x-nya-export-incomplete')).toBe('manual_accounts');
     const csvNotes = JSON.parse(decodeURIComponent(csv.headers.get('x-nya-export-notes')!));
-    expect(csvNotes).toEqual([notes[0]]);
+    // In its own words: what a CSV lacks is the account's name on its rows.
+    expect(csvNotes).toEqual([
+      'Not all of your manual accounts could be read: 1 account whose stored data is damaged. Their rows in this file are under their account ids, with no account name. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.',
+    ]);
     await csv.text();
   });
 

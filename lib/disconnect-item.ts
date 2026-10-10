@@ -6,7 +6,7 @@
 
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
-import { getItems, removeItem, type StoredItem } from './storage';
+import { removeItem, type StoredItem } from './storage';
 import { clearCaches } from './cache';
 import { clearItemTransactions, contentKey, readStoredTxns, storedTransactionIds, type StoredTxn } from './transactions';
 import { clearInvestmentStore } from './invstore';
@@ -73,14 +73,14 @@ export async function disconnectItem(
   // And any override left behind for a transaction no stored Item has any
   // more (best effort: a user's categories are theirs to be rid of too).
   try {
-    await pruneOrphanOverrides(ctx, (await getItems(ctx)).map((i) => i.item_id));
+    await pruneOrphanOverrides(ctx);
   } catch (err) {
     console.error('disconnect: could not prune old category overrides', err instanceof Error ? err.message : err);
   }
   // And what was said about them, this Item's own exclusions among them, now
   // that it is gone: the ones to carry were recorded above (best effort too).
   try {
-    await pruneOrphanAnnotations(ctx, async () => storedTransactionIds(ctx, (await getItems(ctx)).map((i) => i.item_id)));
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx));
   } catch (err) {
     console.error('disconnect: could not prune old exclusions', err instanceof Error ? err.message : err);
   }

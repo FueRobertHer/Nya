@@ -583,16 +583,21 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
 }
 
 /**
- * Every transaction id the stored Items hold, or null when a store couldn't
- * be read or is behind (rows shown from a store too large to save, or whose
- * last save failed, aren't in it), so that nothing is pruned on a partial
- * answer: for the prunes of what was said about transactions no Item holds
- * any more (lib/txn-annotations.ts pruneOrphanAnnotations).
+ * Every transaction id the Items stored now hold, or null when the Items or
+ * a store couldn't be read or a store is behind (rows shown from a store too
+ * large to save, or whose last save failed, aren't in it), so that nothing is
+ * pruned on a partial answer: for the prunes of what was said about
+ * transactions no Item holds any more (lib/overrides.ts pruneOrphanOverrides,
+ * lib/txn-annotations.ts pruneOrphanAnnotations). The Items are read when it
+ * is called, never passed in: a prune reads its records first and this after,
+ * so an Item linked meanwhile, and every row it stored before a record was
+ * set on it, are among those read. A list read earlier (when a forget or a
+ * disconnect started) would take that Item's records for orphans.
  */
-export async function storedTransactionIds(ctx: Ctx, item_ids: string[]): Promise<Set<string> | null> {
+export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null> {
   const known = new Set<string>();
   try {
-    for (const item_id of item_ids) {
+    for (const { item_id } of await getItems(ctx)) {
       if (await storeIsBehind(ctx, item_id)) return null;
       for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
     }
@@ -614,7 +619,7 @@ export async function storedTransactionIds(ctx: Ctx, item_ids: string[]): Promis
  */
 async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
   try {
-    await pruneOrphanAnnotations(ctx, async () => storedTransactionIds(ctx, (await getItems(ctx)).map((i) => i.item_id)), { among: removed });
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
   } catch (err) {
     console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
   }
