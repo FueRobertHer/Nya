@@ -206,6 +206,28 @@ describe('signs and days, as each format writes them', () => {
     expect(p.actions).toEqual(['duplicate', 'duplicate']);
   });
 
+  test('a QIF file writes money out as negative, on a bank account and a card alike: both read in Plaid’s sign and match the bank’s rows', () => {
+    for (const [type, account_id, credit] of [
+      ['Bank', 'acct_chk', 'PAYROLL'],
+      ['CCard', 'acct_card', 'PAYMENT THANK YOU'],
+    ] as const) {
+      const qif = `!Type:${type}\nD09/03/2026\nT-87.20\nPTRADER JOES #123\n^\nD09/15/2026\nT500.00\nP${credit}\n^\n`;
+      const read = readImport(qif, { options: { date_order: 'mdy' }, thisYear: 2026 });
+      if (read.status !== 'ready') throw new Error(read.status);
+      const { rows: normalized, problems } = rows(read.records);
+      expect(normalized.map((r) => r.row.amount)).toEqual([87.2, -500]);
+      const banks = [
+        bank({ transaction_id: `${type}-tj`, account_id, date: '2026-09-04', amount: 87.2, name: "TRADER JOE'S #123" }),
+        bank({ transaction_id: `${type}-in`, account_id, date: '2026-09-15', amount: -500, name: credit }),
+      ];
+      const p = planHistoryImport({ rows: normalized, problems, held: [], banks, order: [], bankFrom: '2026-01-01' });
+      expect(p.proposals.map((x) => [x.bank.transaction_id, x.days, x.confidence]).sort()).toEqual([
+        [`${type}-in`, 0, 'high'],
+        [`${type}-tj`, 1, 'high'],
+      ]);
+    }
+  });
+
   test('an OFX time late in the evening is still that day at the bank: no time zone moves it', () => {
     const ofx = `<?xml version="1.0"?><?OFX OFXHEADER="200" VERSION="220"?><OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD</CURDEF><BANKACCTFROM><BANKID>1</BANKID><ACCTID>9</ACCTID><ACCTTYPE>CHECKING</ACCTTYPE></BANKACCTFROM><BANKTRANLIST><STMTTRN><TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>20260105230000[-5:EST]</DTPOSTED><TRNAMT>-9.99</TRNAMT><FITID>Z1</FITID><NAME>LATE NIGHT</NAME></STMTTRN></BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`;
     const read = readImport(ofx, { options: {}, thisYear: 2026 });

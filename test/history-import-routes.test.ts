@@ -214,6 +214,40 @@ describe('the review', () => {
     expect(changedKeys(before, snapshot())).toEqual([ctxKey('import-requests')]);
   });
 
+  test('a CSV overlapping the bank’s window, read by its columns: proposals beside the bank’s rows, nothing merged or written until the import', async () => {
+    const csv = [
+      'Date,Description,Amount',
+      `${daysAgo(55)},Online Transfer to Landlord,-1850.00`,
+      // The bank posted the pay a day later than the bank's own export dates it.
+      `${daysAgo(46)},PAYROLL ACME CORP,2500.00`,
+      `${daysAgo(250)},OLD SHOP,-42.10`,
+    ].join('\n');
+    const options = { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } };
+    const before = snapshot();
+    const p = await post({ action: 'preview', account_id: 'acc_chk', options }, csv, 'export.csv');
+    expect(p.status).toBe(200);
+    expect(p.body.preview.format).toBe('csv');
+    expect(p.body.preview.counts).toMatchObject({ new: 1, duplicates: 2, unanswered: 0 });
+    expect(p.body.preview.proposals.map((x: any) => [x.file.name, x.file.amount, x.bank.transaction_id, x.days, x.confidence, x.choice]).sort()).toEqual([
+      ['Online Transfer to Landlord', 1850, 'b_rent', 0, 'high', 'same'],
+      ['PAYROLL ACME CORP', -2500, 'b_pay', 1, 'high', 'same'],
+    ]);
+    expect(changedKeys(before, snapshot())).toEqual([ctxKey('import-requests')]);
+    // Answered otherwise for the pay, and imported as reviewed.
+    const choices = { proposals: { each: { [p.body.preview.proposals.find((x: any) => x.bank.transaction_id === 'b_pay').index]: 'new' } } };
+    const done = await post({ action: 'import', account_id: 'acc_chk', options, choices, review: p.body.preview.review }, csv, 'export.csv');
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject({ imported: 2, duplicates: 1 });
+    const rows = await book();
+    expect(rows.map((r) => [r.name, r.amount, r.source, !!r.same_as]).sort()).toEqual([
+      ['OLD SHOP', 42.1, 'import:csv', false],
+      ['Online Transfer to Landlord', 1850, 'import:csv', true],
+      ['PAYROLL ACME CORP', -2500, 'import:csv', false],
+    ]);
+    // Its own, so counted beside the bank's, which nothing else can claim now.
+    expect((await activity()).transactions.filter((t) => t.amount === -2500).length).toBe(2);
+  });
+
   test('a period the person says the file covers widens it, and never leaves a row out', async () => {
     const wider = await preview('acc_chk', STATEMENT, { covers: { from: daysAgo(400), to: daysAgo(30) } });
     expect(wider.body.preview.covers).toEqual({ from: daysAgo(400), to: daysAgo(30), stated: true });
