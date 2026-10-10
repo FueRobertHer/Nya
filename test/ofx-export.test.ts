@@ -431,6 +431,20 @@ describe('statements', () => {
     expect(text.match(/<LEDGERBAL>/g)).toHaveLength(1);
   });
 
+  test('none in its own currency: said as transactions in another, its own statement first with none of them', () => {
+    const { statements, notes } = statementsOf(checking([row({ id: 'e1', currency: 'EUR' }), row({ id: 'e2', currency: 'EUR', date: '2026-09-02' })]));
+    expect(statements.map((s) => [s.currency, s.rows.map((r) => r.id), !!s.ledger])).toEqual([
+      ['USD', [], true],
+      ['EUR', ['e1', 'e2'], false],
+    ]);
+    expect(notes).toEqual([
+      'This account’s transactions are in EUR, not its own currency (USD), and an OFX statement has one currency, so the file has a statement for each, in this order: USD (the account’s own, with no transactions), then EUR. Nothing is converted.',
+    ]);
+    expect(statementsOf(checking([row({ id: 'e1', currency: 'EUR' }), row({ id: 'j1', currency: 'JPY' }), row({ id: 'g1', currency: 'GBP' })])).notes).toEqual([
+      'This account’s transactions are in EUR, GBP and JPY, not its own currency (USD), and an OFX statement has one currency, so the file has a statement for each, in this order: USD (the account’s own, with no transactions), then EUR, then GBP, then JPY. Nothing is converted.',
+    ]);
+  });
+
   test('with no currency of its own, the one most of its transactions are in', () => {
     const { statements } = statementsOf(checking([row({ id: 'a', currency: 'EUR' }), row({ id: 'b', currency: 'EUR' }), row({ id: 'c', currency: 'USD' })], { currency: null, balance: null }));
     expect(statements.map((s) => s.currency)).toEqual(['EUR', 'USD']);

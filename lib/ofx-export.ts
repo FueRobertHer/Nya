@@ -110,8 +110,9 @@
 // manual account's transactions, or whether a transaction was excluded, that
 // couldn't be read are said in a note and in the parts the file is short of
 // (`incomplete`), never left out quietly. So are an account SimpleFIN keeps
-// up to date whose older transactions are still arriving, a few months a
-// night (in a note: nothing stored is short), and its balance while held.
+// up to date whose older transactions may still be arriving, a few months a
+// night (in a note: nothing stored is short), its balance while held, and
+// the record of its connection when that can't be read (`incomplete` too).
 
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
@@ -124,7 +125,7 @@ import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
 import { bookAccountTypes, importedTransactionsIn, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
 import { importedTxnStore } from './history-import/store';
-import { connectorAccountsStore } from './connectors/store';
+import { connectionsStore, connectorAccountsStore } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
 import { formatMoney } from './format';
@@ -309,6 +310,8 @@ export type OfxStatement = {
 };
 
 const ISO_CODE = /^[A-Z]{3}$/;
+/** "EUR", "EUR and JPY", "EUR, GBP and JPY". */
+const listed = (items: readonly string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 /** The account's id in the file (see the header). */
@@ -342,8 +345,13 @@ export function statementsOf(account: OfxAccount): { statements: OfxStatement[];
   }
   const order = [primary, ...[...groups.keys()].filter((c) => c !== primary).sort()];
   if (order.length > 1) {
+    const others = order.slice(1);
     notes.push(
-      `This account’s transactions are in more than one currency (${order.join(', ')}), and an OFX statement has one, so the file has a statement for each, in that order. Nothing is converted.`
+      groups.get(primary)!.length > 0
+        ? `This account’s transactions are in more than one currency (${order.join(', ')}), and an OFX statement has one, so the file has a statement for each, in that order. Nothing is converted.`
+        : // None of them in its own currency: said so, rather than its own
+          // listed among theirs.
+          `This account’s transactions are in ${listed(others)}, not its own currency (${primary}), and an OFX statement has one currency, so the file has a statement for each, in this order: ${primary} (the account’s own, with no transactions), then ${others.join(', then ')}. Nothing is converted.`
     );
   }
   const balance = account.balance;
@@ -593,14 +601,25 @@ export function ofxFile(
   if (fed) {
     rows = bookRows();
     const entry = data.connected.get(account_id)!;
-    // Older transactions still arriving, a few months a night
-    // (lib/connectors/sync.ts): the statement is short of them, and says so.
-    const history = data.connections.get(entry.connection_id)?.history ?? null;
-    if (!history) {
-      notes.push('SimpleFIN hasn’t brought in this account’s transactions yet, so the statement may be missing them. Download it again once they are in.');
-    } else if (!history.complete) {
+    const conn = data.connections.get(entry.connection_id);
+    // The record of the connection it comes through can't be read: how its
+    // bank is doing isn't known (the Accounts tab says so), nor whether older
+    // transactions are still arriving, and the file is short of it.
+    const unreadConnection = missingIds(doc.problems, connectionsStore.name).includes(entry.connection_id);
+    if (unreadConnection) {
       notes.push(
-        `SimpleFIN is still bringing in this account’s older transactions, a few months each night, so the statement has none before ${shownDay(history.from)} yet. Download it again once they are all in.`
+        `What Nya keeps about the SimpleFIN connection this account comes through could not be read, so whether its older transactions are still arriving isn’t known, and the statement may be missing some. The JSON download lists it under problems. ${UNCHANGED}`
+      );
+      incomplete.add(connectionsStore.name);
+    } else if (conn && !conn.history) {
+      notes.push('SimpleFIN hasn’t brought in this account’s transactions yet, so the statement may be missing them. Download it again once they are in.');
+    } else if (conn?.history && !conn.history.complete) {
+      // Older transactions still arriving, a few months a night
+      // (lib/connectors/sync.ts). The day is the connection's, which starts
+      // again when another account is tracked, so this account's statement
+      // may already go back further: it may be missing some, never "has none".
+      notes.push(
+        `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
       );
     }
     // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
@@ -615,7 +634,9 @@ export function ofxFile(
     const amount = nyaBalance(entry);
     const at = entry.balance_at ?? entry.fetched_at;
     let no_balance = 'SimpleFIN hasn’t given a balance for this account yet.';
-    if (waiting) {
+    if (unreadConnection) {
+      no_balance = `Nya holds ${entry.institution_name}’s balances while what it keeps about the bank’s SimpleFIN connection can’t be read, as the Accounts tab does.`;
+    } else if (waiting) {
       no_balance = `SimpleFIN reports this card’s balance as money held (+${formatMoney(entry.reported_balance!, entry.currency)}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
     } else if (bank?.error) {
       no_balance = `Nya holds ${entry.institution_name}’s balances while SimpleFIN’s latest answer about it isn’t whole and current (${bank.error}), as the Accounts tab does.`;
@@ -626,7 +647,7 @@ export function ofxFile(
       subtype: fed.subtype,
       mask: fed.mask,
       currency: entry.currency,
-      balance: !waiting && !bank?.error && amount !== null && at ? { amount, as_of: dayOf(at), currency: entry.currency } : null,
+      balance: !unreadConnection && !waiting && !bank?.error && amount !== null && at ? { amount, as_of: dayOf(at), currency: entry.currency } : null,
       no_balance,
     };
   } else if (linked) {
