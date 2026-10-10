@@ -18,7 +18,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Format | File | What it holds |
 | --- | --- | --- |
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
-| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, and those on manual accounts, entered by hand or imported. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, those on manual accounts, entered by hand or imported, and those imported into linked accounts from your bank's files. |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
 
 **A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
@@ -85,7 +85,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `hidden_accounts` | Accounts you hid. |
 | `net_worth_history` | Your net worth by day. |
 | `account_history` | Each account's balance by day. |
-| `transactions` | Every transaction stored from your banks. Those on manual accounts, entered by hand or imported, are in `manual-transactions`. |
+| `transactions` | Every transaction stored from your banks. Those on manual accounts, entered by hand or imported, are in `manual-transactions`, and those imported into linked accounts from files in `imported-transactions`. |
 | `category_overrides` | Every category you set on a transaction. |
 | `merchant_renames` | Every merchant you renamed. |
 | `investment_transactions` | Every stored investment transaction. |
@@ -95,7 +95,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imports`, `manual-transactions`, `planned-items` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `problems`
 
@@ -176,7 +176,7 @@ Each account's own balance by day, one point per day, by the same rules the app'
 
 ### `transactions[]`
 
-Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions on manual accounts, entered by hand or imported, are in [`manual-transactions`](#manual-transactions)):
+Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions on manual accounts, entered by hand or imported, are in [`manual-transactions`](#manual-transactions), and those imported into linked accounts from your bank's files in [`imported-transactions`](#imported-transactions)):
 
 | Field | Meaning |
 | --- | --- |
@@ -219,7 +219,7 @@ The app shows `your_category`, else `your_category_from_earlier_account`, else `
 
 ### `category_overrides[]` and `merchant_renames[]`
 
-Every category you set (`transaction_id`, `category`), including any whose transaction is no longer stored (the bank removed it), and every merchant you renamed (`vendor_key`, `name`).
+Every category you set (`transaction_id`, `category`), on a bank's transaction or on one imported into a linked account ([`imported-transactions`](#imported-transactions)), including any whose transaction is no longer stored (the bank removed it), and every merchant you renamed (`vendor_key`, `name`).
 
 ### `investment_transactions[]`
 
@@ -373,13 +373,13 @@ A field over 1,000 characters is cut to that length in `raw` (its line wasn't re
 
 #### `import-settings`
 
-How the last file imported into each manual account was read, so the next one from the same bank needs no questions: one entry per account (`id` its account id), with `version` (1), `updated_at`, and for each format imported into it:
+How the last file imported into each account was read, a manual account or a linked one, so the next one from the same bank needs no questions: one entry per account (`id` its account id), with `version` (1), `updated_at`, and for each format imported into it:
 
 - `csv`: `columns` (`date`, `description`, `amount` or `debit` and `credit`, `category`, `note` and `currency`, each the name of the column it was read from), `sign` (`negative-out` or `positive-out`: how money out was written in one amount column), `decimal`, `date_order` (`mdy` or `dmy`, or `null` when the dates didn't depend on one), `delimiter` and `currency`.
 - `ofx`: `statement`, the account the statement was for (`kind`, `bank_id`, `mask` and `type`, so a file for another account is caught), `flip`, whether amounts were read the other way round, and `currency`, the one chosen for a statement that didn't say its own (absent until then).
 - `qif`: `date_order`, `decimal`, `flip` and `currency`.
 
-Deleting the account deletes its entry.
+Deleting a manual account deletes its entry, and so does forgetting an earlier linked account.
 
 #### `manual-transactions`
 
@@ -405,6 +405,38 @@ Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or impor
 
 Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`. Each row is also a row of the [transactions CSV](#nya-transactions-datecsv).
 
+#### `imported-transactions`
+
+Transactions imported into linked accounts from your bank's files ([Importing history into a linked account](features.md#importing-history-into-a-linked-account)), all of them: those counted, those kept as a duplicate of the bank's own transaction, and those a transaction the bank sent later now stands for. One entry per account they were imported into: `id` is that account's id then (an account re-added after a reconnect has a new id, and `account_links` says which ids are the same account), and `value` holds `version` (1) and `rows`, in the order they were added:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The transaction's id: `imported-txn:` and a random id. It is its `transaction_id` in the app, and the key of what you said about it in `category_overrides` and `transaction-annotations`. |
+| `account_id` | The account it was imported into (the entry's id). |
+| `date`, `amount`, `currency`, `name` | As the file said: the day, the amount in Plaid's sign (positive is money out, whatever the file's), its currency's ISO 4217 code, and who was paid or who paid you. |
+| `category`, `note` | The file's own category, lower-cased (a CSV category column, a QIF category), and its note (a CSV note column, or an OFX or QIF memo that says more than the payee); `null` when it has none. A category you set is in `category_overrides`. |
+| `source`, `source_id`, `source_key`, `transaction_code` | As for a manual account's imported rows ([`manual-transactions`](#manual-transactions)): `import:ofx`, `import:csv` or `import:qif`; the FITID, or what a file without ids said; an OFX row's hashed summary; and Plaid's code where the file said what it was outright. |
+| `import_id` | The import it came in with ([`history-imports`](#history-imports)). |
+| `same_as` | Present when you said it is the bank's own transaction: that one, by its day, amount in thousandths and the bank's own description (lower-cased, with anything but letters and digits as a space), joined by `\|`. Such a row is never counted, and isn't in the transactions CSV: the bank's transaction is. |
+| `distinct_from` | Present when you said it is a transaction of its own though the bank had one like it: those bank transactions, written the same way. |
+| `created_at` | When it was imported. |
+
+Which counted rows a bank's transaction now stands for isn't stored: it is worked out from `transactions` each time, by the rule the review proposes by (the same amount and currency, posted, at most five days apart). Undoing an import takes its rows out; forgetting the earlier account deletes its entry. Each row that counts is also a row of the [transactions CSV](#nya-transactions-datecsv).
+
+#### `history-imports`
+
+Each file you imported into a linked account: one entry per import, `id` the import's own (`history-import:` and a random id, the `import_id` of its rows in [`imported-transactions`](#imported-transactions)), and `value`, which has the fields of a manual account's import ([`imports`](#imports)), but for `balance_update` (an import into a linked account never sets a balance), with these differences:
+
+| Field | Meaning |
+| --- | --- |
+| `account_id` | The linked account it was imported into, by its id then. |
+| `covers` | The days the file covers, which the estimated history may be drawn across: `from` and `to` (its statement's period, otherwise its first to last day, never narrower than its rows), and `stated`, `true` when you gave a longer period. |
+| `bank_from` | The day the bank's own transactions for the connection began when the file was reviewed, or `null`. |
+| `counts` | `imported` (added and counted), `duplicates` (kept as the bank's own), `present` (already imported into this account), `repeated`, `skipped` and `unreadable`. |
+| `records[]` | Every transaction the file held, in file order: `line`, `outcome` (`imported`, `duplicate`, `present`, `repeated`, `skipped` or `unreadable`), `row_id` (the row it became, the one it was found already imported as, or, for one skipped, the one whose bank id it shared), `bank` (the bank's transaction it was shown beside: its `transaction_id`, `date`, `name` and `amount`, how many `days` apart, the `confidence`, `high`, `medium` or `low`, and what you `chose`, `same` or `new`), `reason` (why it couldn't be read, or was skipped), and `raw`, the record as the file had it, always. |
+
+Undoing the import deletes its entry, and so does forgetting the earlier account. The list of past imports reads a summary of each entry kept beside it (`history-import-summaries`), which isn't in the download; nor is what the estimated history drawn from imports covers (`imported-history-walk`), whose points are in `net_worth_history` and `account_history`.
+
 #### `planned-items`
 
 What you told the cash forecast (`lib/planned.ts`, [Recurring bills and the cash forecast](features.md#recurring-bills-and-the-cash-forecast)), or `null` if you never saved any: `version` (the shape's version: 1), `items`, `dismissed` and `threshold`. The forecast itself is never stored, so it is not here.
@@ -417,7 +449,7 @@ What you told the cash forecast (`lib/planned.ts`, [Recurring bills and the cash
 
 #### `transaction-annotations`
 
-What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, or a manual one's, as in `manual-transactions`), and `value` holds `excluded` (`true` when you left it out of budgets and reports, `false` when you put it back) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction the bank removed goes once a sync saves the removal, as do those of an institution you disconnect, after the ones you excluded are kept in `carried-annotations`; none goes while a store of transactions can't be read, and one saved by a version of Nya this one doesn't know is kept for it.
+What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, a manual one's, as in `manual-transactions`, or one imported into a linked account, as in `imported-transactions`, whose entry goes with it when its import is undone), and `value` holds `excluded` (`true` when you left it out of budgets and reports, `false` when you put it back) and `updated_at`. A transaction you said nothing about has no entry. One whose transaction the bank removed goes once a sync saves the removal, as do those of an institution you disconnect, after the ones you excluded are kept in `carried-annotations`; none goes while a store of transactions can't be read, and one saved by a version of Nya this one doesn't know is kept for it.
 
 #### `carried-annotations`
 
@@ -431,11 +463,13 @@ Both follow RFC 4180: a header row, records ending in CRLF, and a field holding 
 
 ### `nya-transactions-<date>.csv`
 
-One row per transaction, newest first: every one stored from your banks, with the [transaction fields](#transactions) flattened, and every one on a manual account, entered by hand or imported ([`manual-transactions`](#manual-transactions)), in the same columns. Columns, in order:
+One row per transaction, newest first: every one stored from your banks, with the [transaction fields](#transactions) flattened, every one on a manual account, entered by hand or imported ([`manual-transactions`](#manual-transactions)), and every one imported into a linked account that counts ([`imported-transactions`](#imported-transactions)), in the same columns. Columns, in order:
 
 `date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`, `source`, `note`.
 
 `source` says where a row came from: `plaid` for a bank's; for one on a manual account, `manual` (entered in the app), or `import:ofx`, `import:csv` or `import:qif` (imported from a file). A manual account's row has its own `name` (who was paid, or who paid you), `amount`, `iso_currency_code` (its currency), `category` (its own, so `your_category` is empty) and `note`, the `transaction_code` its file gave (`atm`) where it gave one, and its account's `account_name`, `institution_name`, `account_id` and `account_hidden`, as in `manual_accounts`; the columns only a bank fills are empty, and so is `item_id`, since a manual account has no connection. On the same day, rows with a time come first. A manual account that can't be read leaves its rows' account names empty, and a book of rows that can't be read leaves those rows out; either way the response says the file is incomplete ([above](#getting-a-copy)).
+
+A row imported into a linked account is on its account as it is known now (following `account_links`), with that account's `account_name`, `institution_name`, `account_id`, `item_id` and `account_hidden`, its own `name`, `amount`, `iso_currency_code`, `category` (the file's) and `note`, `your_category` when you set one, its `source` (`import:ofx`, `import:csv` or `import:qif`) and the `transaction_code` its file gave; the columns only a bank fills are empty. Only those that count are rows: not one you said is the bank's own transaction, nor one a transaction the bank sent later now stands for, so no transaction is in the file twice.
 
 `amount` keeps Plaid's sign (positive is money out). To total your spending, leave out rows where `superseded_by_posted` is `true`.
 
@@ -478,7 +512,7 @@ Each key a person's container can hold, and what the download does with it. The 
 | `budgets`, `goals` | `budgets`, `goals` |
 | `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
 | `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
-| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `api-tokens`, whose hashes are credential material (each token's name and dates are in [`api_tokens`](#api_tokens) instead), `api-requests` and `download-count`, the counters behind each API token's requests a minute and the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries`, each import's entry without its records, which `imports` holds whole, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing). The others are left out: `api-tokens`, whose hashes are credential material (each token's name and dates are in [`api_tokens`](#api_tokens) instead), `api-requests` and `download-count`, the counters behind each API token's requests a minute and the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries` and `history-import-summaries`, each import's entry without its records, which `imports` and `history-imports` hold whole, `imported-history-walk`, what the estimated history drawn from imported transactions covers, whose points are in `net_worth_history` and `account_history`, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
 
 Sharing settings are not in your container (connections are between two people) and are read as your side only. Your records of when what you share was shown are in your container (`sharing-access-log`, a store on the seam); the other person's record of when what they share was shown to you is in theirs, and read from there, as they see it.
 
@@ -493,7 +527,7 @@ There are two exports, and they are kept apart on purpose (#55): one that did bo
 | Values | Decrypted, in documented fields | Encrypted, byte for byte as stored, and unreadable without the keys; dates, account and transaction ids, bank names and the merchant names you renamed are in plain text ([operations.md](operations.md#taking-a-backup-by-hand)) |
 | Formats | JSON, CSV | NDJSON of raw database keys, with a checksum |
 | Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records) |
-| Restores | Not yet: restoring from this file is planned (#43). Files from your bank can be imported, into a manual account ([features.md](features.md#importing-files)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
+| Restores | Not yet: restoring from this file is planned (#43). Files from your bank can be imported, into a manual account ([features.md](features.md#importing-files)) or a linked one ([features.md](features.md#importing-history-into-a-linked-account)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
 | Gets it | You, after a fresh sign-in, 5 an hour | The operator, with `OPS_SECRET`, or the nightly cron |
 
 Deleting your account deletes your data now, and the nightly backups expire it later; the receipt at the end gives the date ([authentication.md](authentication.md#deleting-an-account)). A file you downloaded is yours, and deleting your account doesn't reach it.
