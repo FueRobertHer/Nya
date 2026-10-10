@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { connectionsStore, connectorAccountsStore } from '@/lib/connectors/store';
 import { connectionView } from '@/lib/connectors/view';
+import { othersOf } from '@/lib/connectors/manage';
 import { requestsLeft, syncConnection, DAILY_REQUESTS } from '@/lib/connectors/sync';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
 
@@ -33,7 +34,8 @@ export async function POST(req: Request) {
       );
     }
     const [conn, accounts] = await Promise.all([connectionsStore.get(ctx, body.connection_id), connectorAccountsStore.getAll(ctx)]);
-    return NextResponse.json({ connection: conn ? connectionView(body.connection_id, conn, [...accounts.values()]) : null, requests });
+    const all = [...accounts.values()];
+    return NextResponse.json({ connection: conn ? connectionView(body.connection_id, conn, all, await othersOf(ctx, body.connection_id, all)) : null, requests });
   } catch (err) {
     return connectorError(err, 'Failed to refresh from SimpleFIN');
   }

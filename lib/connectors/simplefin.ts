@@ -41,9 +41,15 @@
 // positive amount owed once the person has said the account is a card or a
 // loan (the protocol has no account types).
 //
-// DATES. Times are Unix seconds. A transaction's day is the UTC day of its
-// posted time, the protocol's own date for it; its transacted_at, when given,
-// is kept in its raw record.
+// DATES. Times are Unix seconds, which name an instant, not a day in any time
+// zone. A transaction's day is the UTC day of its posted time; its
+// transacted_at, when given, is kept in its raw record. That is right for
+// SimpleFIN Bridge, which stamps a posting at noon UTC on its day, and so for
+// every bank from UTC-11 to UTC+11 behind it. A server that stamps local
+// midnight east of UTC (a day in Australia starts at 13:00 or 14:00 UTC the
+// day before) would have each of its transactions dated a day early: Nya
+// doesn't guess a server's zone from the hour of its stamps, since the same
+// hours are a real posting time in the Americas. Unverified for Redbark.
 //
 // PROBLEMS. Each message in `errors` is reported with the accounts it
 // concerns, when it names their institution (SimpleFIN's messages read
@@ -291,11 +297,18 @@ function recordOf(t: unknown, currency: string | null): RawRecord | 'pending' | 
   };
 }
 
-/** Which accounts a message concerns: those whose institution's name it
- *  contains (case aside), or null when it names none of them. */
+/** Whether `text` holds `name` as words of its own (case aside): "Ally" is
+ *  named in "Connection to Ally may need attention", never in "Rally Credit
+ *  Union". */
+export function namesWord(text: string, name: string): boolean {
+  const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, 'u').test(text.toLowerCase());
+}
+
+/** Which accounts a message concerns: those whose institution it names as
+ *  words of their own (namesWord), or null when it names none of them. */
 export function accountsNamedIn(message: string, accounts: readonly RemoteAccount[]): string[] | null {
-  const lower = message.toLowerCase();
-  const hit = accounts.filter((a) => a.institution.name.length >= 3 && a.institution.name !== 'Your bank' && lower.includes(a.institution.name.toLowerCase()));
+  const hit = accounts.filter((a) => a.institution.name.length >= 3 && a.institution.name !== 'Your bank' && namesWord(message, a.institution.name));
   return hit.length > 0 ? hit.map((a) => a.remote_id) : null;
 }
 
@@ -398,6 +411,15 @@ function saidIn(body: string, access: AccessUrl): string {
   return body.length <= 1000 ? serverText(body, access) : '';
 }
 
+/** Where the accounts are read: the Access URL's own path with /accounts
+ *  after it, set on a copy of its address, so a path that starts with "//"
+ *  stays a path on the same host and is never read as another host. */
+export function accountsUrl(access: AccessUrl): URL {
+  const url = new URL(access.base.href);
+  url.pathname = `${access.base.pathname.replace(/\/+$/, '')}/accounts`;
+  return url;
+}
+
 /**
  * GET <Access URL>/accounts for a window, or balances only. Throws
  * ConnectorFailure (never with the Access URL in it).
@@ -405,7 +427,7 @@ function saidIn(body: string, access: AccessUrl): string {
 export async function fetchAccountSet(secret: string, request: FetchRequest, opts: { timeoutMs: number }): Promise<RemoteAnswer> {
   const access = parseAccessUrl(secret);
   if (!access) throw new ConnectorFailure('credentials', 'nya', 'The access Nya keeps for SimpleFIN isn’t one it can use.');
-  const url = new URL(`${access.base.pathname.replace(/\/+$/, '')}/accounts`, access.base.origin);
+  const url = accountsUrl(access);
   if (request.balancesOnly) url.searchParams.set('balances-only', '1');
   else {
     url.searchParams.set('start-date', String(epochOfDay(request.start)));
@@ -448,6 +470,9 @@ export const SIMPLEFIN: ConnectorDef = {
   windowDays: 90,
   overlapDays: 5,
   providerDailyLimit: 24,
+  checkInput: (input) => {
+    decodeSetupToken(input);
+  },
   exchange: (input, opts) => claimSetupToken(input, opts),
   hostOf: (secret) => parseAccessUrl(secret)?.base.host ?? null,
   fetch: (secret, request, opts) => fetchAccountSet(secret, request, opts),

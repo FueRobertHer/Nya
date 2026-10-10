@@ -9,8 +9,13 @@
 //                          carries the user name and password to read the
 //                          accounts). Encrypted like every seam value, never
 //                          in the person's data download (a credential, not
-//                          data), never in a log or an error, and removed on
-//                          a disconnect.
+//                          data), never in a log or an error, removed on a
+//                          disconnect, and never in a backup (`backup: false`,
+//                          lib/export.ts): an Access URL works on its own, so
+//                          a backup must neither carry it nor bring back one
+//                          the person disconnected. After a restore each
+//                          connection asks to be connected again, and its
+//                          accounts, history and transactions carry on.
 //   connector-connections  one entry per connection: which connector, the
 //                          host it reaches, what its latest request came to
 //                          (the connector's own error text among it), when an
@@ -23,16 +28,19 @@
 //                          and a random UUID: see lib/connectors/institutions.ts
 //                          for why), with the connection and the connector's
 //                          id for it, what the person said it is (checking, a
-//                          card...), its currency, and the balance as the
-//                          connector reported it, with the day the institution
-//                          gave it. In the download.
+//                          card...) and, for a card or a loan, how to read the
+//                          sign of its balance, its currency, and the balance
+//                          as the connector reported it, with the day the
+//                          institution gave it. In the download.
 //   connector-requests     a count per container: the requests made to
 //                          connectors in the current day's window, the budget
 //                          that keeps Nya well under what a connector allows
 //                          (lib/connectors/sync.ts). Bookkeeping, not data:
-//                          not in the download.
+//                          not in the download, and not in backups (a window
+//                          restored part way would only shut requests).
 //   connector-claims       a count per container: how many tokens were
 //                          claimed this hour, a bound on the connect route.
+//                          Out of the download and backups the same way.
 //
 // The ids are random (crypto.randomUUID()), never content: a connection's id
 // is plaintext in the database, and so is an account's.
@@ -109,9 +117,19 @@ export type ConnectorConnection = {
   available: AvailableAccount[];
   /** How much history has been fetched: transactions posted from `from` to
    *  `to` (UTC days), with no gap; `complete` once the connector had nothing
-   *  older, or the backfill reached its limit. Null before the first. */
-  history: { from: string; to: string; complete: boolean; failed?: string | null } | null;
+   *  older in two whole answers in a row, or the backfill reached its limit;
+   *  `failed` when the last try at an older window got no whole answer;
+   *  `empty` how many whole answers in a row brought nothing older. Null
+   *  before the first. */
+  history: { from: string; to: string; complete: boolean; failed?: string | null; empty?: number } | null;
 };
+
+/** How to read a card's or a loan's balance, as the person said: the
+ *  protocol's way, where what is owed is negative (`as_reported`), or the
+ *  other way round, as some servers report it (`owed_positive`). Absent until
+ *  they say, which matters only while the balance is positive. */
+export type OwedSign = 'as_reported' | 'owed_positive';
+export const OWED_SIGNS: readonly OwedSign[] = ['as_reported', 'owed_positive'];
 
 export type ConnectorAccount = {
   version: 1;
@@ -124,12 +142,17 @@ export type ConnectorAccount = {
   institution_name: string;
   /** The connector's key for the institution, which groups its accounts. */
   institution_key: string;
-  /** A random id the accounts of one institution share in one connection:
-   *  its card's id on the Accounts tab. */
+  /** The id the accounts of one institution share in one connection, its
+   *  card's id on the Accounts tab: 16 hex characters of a SHA-256 of the
+   *  connection's random id and the institution's key
+   *  (lib/connectors/institutions.ts institutionRef), never content alone. */
   institution_ref: string;
   /** What the person said it is: the connector says nothing of it. */
   type: ManualType;
   subtype: string | null;
+  /** For a card or a loan, how to read its balance's sign, once the person
+   *  said (OwedSign); absent or null before. */
+  sign?: OwedSign | null;
   currency: string;
   /** The balance as the connector reported it: positive held, negative owed.
    *  Null until an answer held one. */
@@ -139,6 +162,10 @@ export type ConnectorAccount = {
   balance_at: string | null;
   /** When Nya received it. */
   fetched_at: string | null;
+  /** When the bank last synced it cleanly: the time of the balance (else of
+   *  the answer) from the latest answer that held the account with no problem
+   *  reported about it. Absent or null before one. */
+  ok_at?: string | null;
   created_at: string;
 };
 
@@ -191,7 +218,15 @@ function isAvailable(v: unknown): v is AvailableAccount {
 }
 
 function isHistory(v: unknown): boolean {
-  return v === null || (isRecord(v) && isCalendarDay(v.from) && isCalendarDay(v.to) && typeof v.complete === 'boolean' && (v.failed === undefined || isTimeOrNull(v.failed)));
+  return (
+    v === null ||
+    (isRecord(v) &&
+      isCalendarDay(v.from) &&
+      isCalendarDay(v.to) &&
+      typeof v.complete === 'boolean' &&
+      (v.failed === undefined || isTimeOrNull(v.failed)) &&
+      (v.empty === undefined || (isCount(v.empty) && (v.empty as number) <= 10)))
+  );
 }
 
 export function isConnection(v: unknown): v is ConnectorConnection {
@@ -229,10 +264,12 @@ export function isConnectorAccount(v: unknown): v is ConnectorAccount {
     (v.subtype === null || isText(v.subtype, 40)) &&
     typeof v.currency === 'string' &&
     /^[A-Z]{3}$/.test(v.currency) &&
+    (v.sign === undefined || v.sign === null || (OWED_SIGNS as readonly unknown[]).includes(v.sign)) &&
     isNumberOrNull(v.reported_balance) &&
     isNumberOrNull(v.reported_available) &&
     isTimeOrNull(v.balance_at) &&
     isTimeOrNull(v.fetched_at) &&
+    (v.ok_at === undefined || isTimeOrNull(v.ok_at)) &&
     isTime(v.created_at)
   );
 }
@@ -257,6 +294,7 @@ export const secretsStore = defineMapStore<ConnectorSecret>('connector-secrets',
   what: 'connector credentials',
   isValid: isSecret,
   exportable: false, // a credential, not the person's data
+  backup: false, // nor in backups: see the header
 });
 
 /** The requests made to connectors in the current day's window, per
@@ -267,6 +305,7 @@ export const secretsStore = defineMapStore<ConnectorSecret>('connector-secrets',
 export const requestsCount = defineCounterStore('connector-requests', {
   what: 'connector request counts',
   windowSeconds: 24 * 60 * 60,
+  backup: false,
 });
 
 /** How many tokens a container may claim an hour. */
@@ -275,6 +314,7 @@ export const CLAIMS_PER_HOUR = 10;
 export const claimsCount = defineCounterStore('connector-claims', {
   what: 'connector claim counts',
   windowSeconds: 3600,
+  backup: false,
 });
 
 /** A new connection's id. */

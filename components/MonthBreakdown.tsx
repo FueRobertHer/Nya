@@ -16,7 +16,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
-import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency } from "@/lib/spending";
+import { countsInTotals, currencyOf, isExcluded, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
@@ -459,8 +459,14 @@ export default function MonthBreakdown({
   const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
+  // SimpleFIN's rows come without categories: said while any counts.
+  const uncategorized = uncategorizedNote(uncategorizedFromConnector(monthTxns));
   const gapNotes = selected
-    ? [...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
+    ? [
+        ...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)),
+        ...missingMonthNotes(withoutTransactions),
+        ...(uncategorized ? [uncategorized] : []),
+      ]
     : [];
   // When only rows entered by hand are here, the connections that bring in
   // none are named beside the totals: where they come from, not a warning.

@@ -7,6 +7,7 @@
 //   ConnectorSheet  the drawer for every step: pasting a Setup Token (the
 //                   first time, or again when SimpleFIN no longer accepts
 //                   Nya's access), choosing accounts and what kind each is,
+//                   saying how to read a card's or a loan's positive balance,
 //                   a Refresh, and disconnecting (keeping the accounts as
 //                   manual ones, or removing them). Opened by an "ask" the
 //                   dashboard holds: from the connect buttons, the card
@@ -18,13 +19,16 @@
 //
 // Only when the person chooses it: nothing here runs, or asks SimpleFIN
 // anything, until they open it. The words say what SimpleFIN is, that the
-// person pays it (not Nya), that a Setup Token works once, and what Nya keeps.
+// person pays it (not Nya), what it doesn't bring, that a Setup Token works
+// once, and what Nya keeps. A balance SimpleFIN reports is shown with its sign
+// in words ("owed", "held"), never as what is owed before that is known.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { formatMoney } from '@/lib/format';
 import { instantDay } from '@/lib/local-date';
 import type { ConnectionView, OfferView, AccountView } from '@/lib/connectors/view';
+import type { OwedSign } from '@/lib/connectors/store';
 
 /** What the dashboard asks of the sheet. */
 export type ConnectorAsk =
@@ -32,6 +36,7 @@ export type ConnectorAsk =
   | { kind: 'token'; connection_id: string }
   | { kind: 'accounts'; connection_id: string }
   | { kind: 'refresh'; connection_id: string }
+  | { kind: 'sign'; connection_id: string }
   | { kind: 'disconnect'; connection_id: string };
 
 type Kind = 'depository' | 'credit' | 'loan' | 'investment' | 'other';
@@ -79,6 +84,15 @@ async function send(path: string, method: string, body?: unknown): Promise<{ ok:
 }
 
 const dayOf = (iso: string | null | undefined) => (iso ? (instantDay(iso) ?? iso.slice(0, 10)) : null);
+
+/** A balance as SimpleFIN reported it, its sign said in words: "-$432.10,
+ *  owed" or "+$500.00, held". Never "what you owe" before that is known. */
+export function reportedWords(balance: number, currency: string): string {
+  if (balance < 0) return `${formatMoney(balance, currency)}, owed`;
+  return `${balance > 0 ? '+' : ''}${formatMoney(balance, currency)}, held`;
+}
+
+const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 /** "Sep 12" from a YYYY-MM-DD, at local midnight. */
 const calendarDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -105,6 +119,7 @@ export function ConnectorCardView({
   // A new token is what fixes access SimpleFIN refuses, or one Nya can't use.
   const refused = !!f && (f.kind === 'refused' || f.kind === 'credentials');
   const n = conn.accounts.length;
+  const unsure = conn.accounts.filter((a) => a.needs_sign);
   return (
     <div className="card connector-card">
       <div className="inst-header">
@@ -126,6 +141,12 @@ export function ConnectorCardView({
         </p>
       ))}
       {f && f.missing.length > 0 && <p className="stale-note">Not in {conn.label}’s latest answer: {f.missing.join(', ')}.</p>}
+      {unsure.length > 0 && (
+        <p className="stale-note">
+          {conn.label} reports {names(unsure.map((a) => `${a.name} (+${formatMoney(a.reported ?? 0, a.currency)})`))} as money held. Say which way{' '}
+          {unsure.length === 1 ? 'it goes: until you do, it isn’t' : 'they go: until you do, they aren’t'} counted.
+        </p>
+      )}
       {f?.note && <p className="stale-note">{f.note}</p>}
       {conn.history && n > 0 && (
         <p className="panel-note">
@@ -144,6 +165,11 @@ export function ConnectorCardView({
         ) : (
           <button className="secondary" onClick={onRefresh} disabled={busy || requests?.left === 0}>
             {busy ? 'Refreshing…' : 'Refresh'}
+          </button>
+        )}
+        {unsure.length > 0 && (
+          <button onClick={() => onAsk({ kind: 'sign', connection_id: conn.connection_id })} disabled={busy}>
+            Answer
           </button>
         )}
         <button className="secondary" onClick={() => onAsk({ kind: 'accounts', connection_id: conn.connection_id })} disabled={busy}>
@@ -266,10 +292,10 @@ export function ChooseView({
           <p className="section-label">Tracked</p>
           {tracked.map((a) => (
             <div className="peer-row" key={a.account_id}>
-              <span>
+              <div>
                 {a.name} · {a.institution_name}
-                {a.balance !== null && <span className="type-tag">{formatMoney(a.balance, a.currency)}</span>}
-              </span>
+                {a.reported !== null && <div className="type-tag">{reportedWords(a.reported, a.currency)}</div>}
+              </div>
               <select value={choices[a.account_id] ?? a.type} disabled={busy} onChange={(e) => onChoose(a.account_id, e.target.value as Choice)} aria-label={`What ${a.name} is`}>
                 {KINDS.map((k) => (
                   <option key={k.value} value={k.value}>
@@ -304,23 +330,34 @@ export function ChooseView({
       {groups.length > 0 && (
         <section className="panel-section">
           <p className="section-label">{tracked.length > 0 ? 'Not tracked' : `What ${label} offers`}</p>
-          {guessed && <p className="panel-note">{label} doesn’t say what kind of account each is, so Nya guessed from its name and balance: check each one. A card or loan is shown as what you owe.</p>}
+          {guessed && (
+            <p className="panel-note">
+              {label} doesn’t say what kind of account each is, so Nya guessed from its name and balance: check each one. Each balance is as {label} reports it,
+              owed or held.
+            </p>
+          )}
           {groups.map(([institution, list]) => (
             <div className="institution-group" key={institution}>
               <p className="institution-name">{institution}</p>
               {list.map((o) => (
                 <div className="peer-row" key={o.remote_id}>
-                  <span>
+                  <div>
                     {o.name}
                     {o.balance !== undefined && o.currency && (
-                      <span className="type-tag">
-                        {formatMoney(o.balance, o.currency)}
+                      <div className="type-tag">
+                        {reportedWords(o.balance, o.currency)}
                         {o.balance_at ? ` on ${dayOf(o.balance_at)}` : ''}
-                      </span>
+                      </div>
                     )}
-                    {!o.currency && <span className="type-tag">In a currency Nya doesn’t know ({o.currency_text.slice(0, 40)}): can’t be tracked</span>}
-                  </span>
-                  <select value={choices[o.remote_id] ?? ''} disabled={busy || !o.currency} onChange={(e) => onChoose(o.remote_id, e.target.value as Choice)} aria-label={`Track ${o.name}`}>
+                    {!o.currency && <div className="type-tag">In a currency Nya doesn’t know ({o.currency_text.slice(0, 40)}): can’t be tracked</div>}
+                    {o.elsewhere && <div className="type-tag">Tracked through your other connection ({o.elsewhere}): not tracked twice</div>}
+                  </div>
+                  <select
+                    value={choices[o.remote_id] ?? ''}
+                    disabled={busy || !o.currency || !!o.elsewhere}
+                    onChange={(e) => onChoose(o.remote_id, e.target.value as Choice)}
+                    aria-label={`Track ${o.name}`}
+                  >
                     <option value="">Not tracked</option>
                     {KINDS.map((k) => (
                       <option key={k.value} value={k.value}>
@@ -348,8 +385,11 @@ export function ConnectIntro({ again }: { again: boolean }) {
   ) : (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        SimpleFIN Bridge connects to your bank and lets apps you choose read your accounts, balances and transactions. You pay SimpleFIN for it ($15 a year), not Nya, and it reaches banks Plaid
-        doesn’t. Redbark, for Australia and New Zealand, works the same way.
+        SimpleFIN Bridge connects to your banks and lets apps you choose read your accounts, balances and transactions. You pay SimpleFIN for it ($15 a year), not Nya, and it may
+        reach banks Plaid doesn’t. Another server that speaks its protocol works too, such as Redbark for Australia and New Zealand: a separate service, with its own price.
+      </p>
+      <p className="panel-note">
+        It brings no pending transactions, no holdings for investment accounts (only their balances) and no categories, and it updates about once a day.
       </p>
       <p className="panel-note">
         In SimpleFIN Bridge, create a Setup Token for Nya and paste it below. A token works once: Nya exchanges it for read-only access to the accounts you shared there, keeps that
@@ -363,18 +403,75 @@ type Step =
   | { kind: 'token'; connection_id: string | null }
   | { kind: 'choose'; connection_id: string; offers: OfferView[]; tracked: AccountView[]; label: string; note: string | null; guessed: boolean }
   | { kind: 'disconnect'; connection_id: string; label: string; accounts: AccountView[] }
+  | { kind: 'sign'; connection_id: string; label: string; accounts: AccountView[]; lead: string | null }
   | { kind: 'working'; text: string }
   | { kind: 'done'; text: string };
 
+/** The sign step for a connection, when an account of it needs one: what
+ *  was done just before (`lead`) said first. */
+function signStep(conn: ConnectionView | null, lead: string | null): Step | null {
+  const accounts = conn?.accounts.filter((a) => a.needs_sign) ?? [];
+  return conn && accounts.length > 0 ? { kind: 'sign', connection_id: conn.connection_id, label: conn.label, accounts, lead } : null;
+}
+
+/** The question for each card or loan SimpleFIN reports as money held. Pure. */
+export function SignView({
+  label,
+  accounts,
+  signs,
+  busy,
+  onSign,
+}: {
+  label: string;
+  accounts: AccountView[];
+  signs: Record<string, OwedSign>;
+  busy: boolean;
+  onSign: (account_id: string, sign: OwedSign) => void;
+}) {
+  return (
+    <>
+      <p className="panel-note">
+        {label}’s usual way is to report what you owe as a negative balance, so a card or loan with a positive one is either money held (a card paid past zero) or a server that
+        reports what you owe as positive. Say which, once for each: until you do, it isn’t counted.
+      </p>
+      {accounts.map((a) => {
+        const amount = formatMoney(Math.abs(a.reported ?? 0), a.currency);
+        return (
+          <fieldset className="download-formats" disabled={busy} key={a.account_id}>
+            <legend className="section-label">
+              {a.name} · {a.institution_name}: {reportedWords(a.reported ?? 0, a.currency)}
+            </legend>
+            <label className="download-format">
+              <input type="radio" name={`connector-sign-${a.account_id}`} checked={signs[a.account_id] === 'owed_positive'} onChange={() => onSign(a.account_id, 'owed_positive')} />
+              <span>
+                <span className="download-format-name">I owe {amount}</span>
+                <span className="download-format-note">{label} reports what you owe on it as positive: Nya counts it as a debt, from now on.</span>
+              </span>
+            </label>
+            <label className="download-format">
+              <input type="radio" name={`connector-sign-${a.account_id}`} checked={signs[a.account_id] === 'as_reported'} onChange={() => onSign(a.account_id, 'as_reported')} />
+              <span>
+                <span className="download-format-name">It’s money held, {amount}</span>
+                <span className="download-format-note">A credit, as on a card paid past zero: Nya counts it as yours.</span>
+              </span>
+            </label>
+          </fieldset>
+        );
+      })}
+    </>
+  );
+}
+
 /** Each offer's guessed kind, as the choices start. */
 function guesses(offers: OfferView[]): Record<string, Choice> {
-  return Object.fromEntries(offers.filter((o) => o.currency).map((o) => [o.remote_id, guessKind(o.name, o.balance)]));
+  return Object.fromEntries(offers.filter((o) => o.currency && !o.elsewhere).map((o) => [o.remote_id, guessKind(o.name, o.balance)]));
 }
 
 export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk | null; onClose: () => void; onChanged: (tracked: boolean) => void }) {
   const [step, setStep] = useState<Step | null>(null);
   const [token, setToken] = useState('');
   const [choices, setChoices] = useState<Record<string, Choice>>({});
+  const [signs, setSigns] = useState<Record<string, OwedSign>>({});
   const [keep, setKeep] = useState(true);
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
@@ -406,6 +503,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     setConfirm('');
     setKeep(true);
     setChoices({});
+    setSigns({});
     if (ask.kind === 'connect') return setStep({ kind: 'token', connection_id: null });
     if (ask.kind === 'token') return setStep({ kind: 'token', connection_id: ask.connection_id });
     let cancelled = false;
@@ -428,6 +526,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
         return setStep({ kind: 'disconnect', connection_id: ask.connection_id, label: conn?.label ?? 'SimpleFIN', accounts: conn?.accounts ?? orphan ?? [] });
       }
       if (!conn) return setStep({ kind: 'done', text: 'That connection no longer exists.' });
+      if (ask.kind === 'sign') return setStep(signStep(conn, null) ?? { kind: 'done', text: 'Nothing to answer: every balance is counted.' });
       setStep({ kind: 'choose', connection_id: conn.connection_id, offers: conn.available, tracked: conn.accounts, label: conn.label, note: null, guessed: false });
     })();
     return () => {
@@ -451,12 +550,17 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     const conn = res.data.connection as ConnectionView | null;
     const f = conn?.last_fetch;
     const listed = f && !f.ok ? `Connected, but SimpleFIN didn’t list the accounts: ${f.message} Try again with Refresh on its card.` : null;
+    // Spent requests mean no answer yet, never that the new token failed.
+    const later = res.data.skipped === 'budget' ? ' Nya has used today’s requests to SimpleFIN, so your accounts update with the next daily update.' : '';
     if (connection_id) {
       onChanged(false);
-      return setStep({ kind: 'done', text: listed ?? 'Connected again. Your accounts carry on with their history.' });
+      return setStep({ kind: 'done', text: listed ?? `Connected again. Your accounts carry on with their history.${later}` });
     }
     onChanged(false);
     const offers = res.data.offers as OfferView[];
+    if (res.data.skipped === 'budget') {
+      return setStep({ kind: 'done', text: 'Connected. Nya has used today’s requests to SimpleFIN, so choose your accounts on its card after the next daily update.' });
+    }
     if (listed || offers.length === 0) return setStep({ kind: 'done', text: listed ?? 'Connected, but SimpleFIN listed no accounts. Add some in SimpleFIN Bridge, then choose them here.' });
     setChoices(guesses(offers));
     setStep({ kind: 'choose', connection_id: res.data.connection_id, offers, tracked: [], label: conn?.label ?? 'SimpleFIN', note: null, guessed: true });
@@ -487,7 +591,26 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (retype.length) parts.push(`Changed what ${retype.length === 1 ? 'one account is' : `${retype.length} accounts are`}.`);
     if (res.data.kept) parts.push(`Kept ${res.data.kept} as manual account${res.data.kept === 1 ? '' : 's'}.`);
     if (res.data.removed) parts.push(`Removed ${res.data.removed}.`);
+    // A card or loan reported as money held is asked about at once.
+    const next = signStep(res.data.connection as ConnectionView | null, parts.join(' ') || null);
+    if (next) return setStep(next);
     setStep({ kind: 'done', text: parts.join(' ') });
+  };
+
+  const submitSigns = async (s: Extract<Step, { kind: 'sign' }>) => {
+    const sign = s.accounts.flatMap((a) => (signs[a.account_id] ? [{ account_id: a.account_id, sign: signs[a.account_id] }] : []));
+    if (sign.length === 0) return close();
+    setBusy(true);
+    setError('');
+    const res = await send('/api/connectors/accounts', 'PUT', { connection_id: s.connection_id, sign });
+    setBusy(false);
+    if (!res.ok) return setError(res.error);
+    onChanged(true);
+    const left = s.accounts.length - sign.length;
+    setStep({
+      kind: 'done',
+      text: `Saved: Nya counts ${sign.length === 1 ? 'it' : 'them'} that way from now on.${left > 0 ? ` ${left} still ${left === 1 ? 'waits' : 'wait'} for your answer.` : ''}`,
+    });
   };
 
   const submitDisconnect = async (s: Extract<Step, { kind: 'disconnect' }>) => {
@@ -513,7 +636,9 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
         ? 'Choose accounts'
         : view?.kind === 'disconnect'
           ? `Disconnect ${view.label}?`
-          : 'SimpleFIN';
+          : view?.kind === 'sign'
+            ? 'Owed or held?'
+            : 'SimpleFIN';
 
   return (
     <Sheet open={!!ask && !!step} title={title} onClose={close}>
@@ -594,6 +719,25 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             </button>
             <button className="danger" onClick={() => submitDisconnect(view)} disabled={busy || confirm.trim().toLowerCase() !== view.label.toLowerCase()}>
               {busy ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+          </div>
+        </>
+      )}
+      {view?.kind === 'sign' && (
+        <>
+          {view.lead && (
+            <p className="panel-note" style={{ marginTop: 0 }}>
+              {view.lead}
+            </p>
+          )}
+          <SignView label={view.label} accounts={view.accounts} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
+          {error && <div className="error">{error}</div>}
+          <div className="button-pair">
+            <button className="secondary" onClick={close} disabled={busy}>
+              Later
+            </button>
+            <button onClick={() => submitSigns(view)} disabled={busy || view.accounts.every((a) => !signs[a.account_id])}>
+              {busy ? 'Saving…' : 'Save'}
             </button>
           </div>
         </>

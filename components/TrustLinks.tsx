@@ -6,16 +6,16 @@
 
 /** Which banks connect: the link-token routes ask Plaid for US institutions
  *  only (app/api/create-link-token, app/api/create-update-link-token); the
- *  person's own SimpleFIN account (lib/connectors/) reaches whatever it
- *  covers, Redbark's in Australia and New Zealand among them. The manual
- *  account it offers for the rest takes US dollars only (lib/manual.ts), which
- *  matters most to exactly the people this is for. */
+ *  person's own SimpleFIN account (lib/connectors/), or another paid service
+ *  that speaks its protocol, may reach others, which nobody here has checked
+ *  bank by bank. The manual account it offers for the rest takes US dollars
+ *  only (lib/manual.ts), which matters most to exactly the people this is for. */
 export function CoverageNote() {
   return (
     <p className="panel-note coverage-note">
-      Bank connections through Plaid work for US institutions only. Your own SimpleFIN account can reach others, such
-      as Redbark’s in Australia and New Zealand. Anything else can be tracked as a manual account, with a balance you
-      enter in US dollars.
+      Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that
+      speaks its protocol (such as Redbark, in Australia and New Zealand), may reach others. Anything else can be tracked
+      as a manual account, with a balance you enter in US dollars.
     </p>
   );
 }

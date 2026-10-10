@@ -76,9 +76,27 @@ export const SCHEMA_ERA = 'containers';
  *   - the nightly backup's last outcome would describe backups of another moment
  *     (lib/backup.ts);
  *   - unused invite links last hours, and a restored one would work again
- *     (lib/sharing.ts).
+ *     (lib/sharing.ts);
+ *   - a connector's credential (SimpleFIN's Access URL) works on its own, and a
+ *     restored one would read a bank the person disconnected; the counts of
+ *     requests and claims made to connectors would shut the next window early
+ *     (lib/connectors/store.ts, stores declared `backup: false`).
  */
-export const EXCLUDED_PREFIXES = ['cache:', 'ratelimit:', 'invtxns-lock:', 'sessions:', 'snapshot:', 'move:', 'account-links:lock', 'history:forgetting:', 'backups:', 'invites:'] as const;
+export const EXCLUDED_PREFIXES = [
+  'cache:',
+  'ratelimit:',
+  'invtxns-lock:',
+  'sessions:',
+  'snapshot:',
+  'move:',
+  'account-links:lock',
+  'history:forgetting:',
+  'backups:',
+  'invites:',
+  'connector-secrets',
+  'connector-requests',
+  'connector-claims',
+] as const;
 
 /** Page size for HSCAN. history:accounts gains a field every day, and one
  *  HGETALL of years of it would be one oversized response. */

@@ -9,10 +9,12 @@
 // WHOSE SIDE. A broken link at SimpleFIN looks like a Nya problem from the
 // outside, so every state says whose side it is on:
 //   - SimpleFIN's (side 'connector'): it reported a problem with a bank, didn't
-//     answer, or answered with something Nya can't read. Its own words are
-//     shown as it sent them;
+//     answer, answered with something Nya can't read, or has only an old
+//     balance from the bank. Its own words are shown as it sent them;
 //   - the person's ('you'): SimpleFIN no longer accepts Nya's access (removed
-//     or reset at SimpleFIN, or the subscription ended), or wants payment;
+//     or reset at SimpleFIN, or the subscription ended), or wants payment, or
+//     a card or a loan reports a positive balance only they can say how to
+//     read (lib/connectors/institutions.ts SIGNS);
 //   - Nya's ('nya'): it can't read what it keeps, its daily update didn't run,
 //     or SimpleFIN refused how Nya asked. Never the person's to fix;
 //   - not known ('unknown'): the server's address isn't one Nya connects to.
@@ -29,6 +31,8 @@ const ISSUES: Readonly<Record<ConnectorIssue, { state: HealthState; action: Heal
   waiting: { state: 'outage', action: 'wait', side: 'connector' },
   reported: { state: 'needs_reauth', action: 'reconnect', side: 'connector' },
   missing: { state: 'partial', action: 'resolve', side: 'connector' },
+  sign: { state: 'partial', action: 'resolve', side: 'you' },
+  old_balance: { state: 'needs_reauth', action: 'reconnect', side: 'connector' },
   stale: { state: 'outage', action: 'wait', side: 'nya' },
   unreadable: { state: 'outage', action: 'wait', side: 'nya' },
   gone: { state: 'relink', action: 'remove', side: 'nya' },
@@ -52,6 +56,12 @@ export function connectorHealth(detail: ConnectorDetail, lastOkAt: string | null
 }
 
 const quoted = (messages: string[]) => messages.map((m) => `“${m}”`).join(' ');
+
+/** "Sep 20" for an ISO time, by its UTC day; the text as it is otherwise. */
+export function shortDay(iso: string | undefined): string {
+  const at = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(at) ? new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : (iso ?? '');
+}
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /** "A", "A and B", "A, B and C". */
@@ -74,6 +84,10 @@ export function connectorBadge(h: ConnectionHealth): string {
       return 'Needs connecting again';
     case 'missing':
       return 'Missing accounts';
+    case 'sign':
+      return 'Needs your answer';
+    case 'old_balance':
+      return `Not updating at ${h.detail.label}`;
     case 'waiting':
       return `Waiting for ${h.detail.label}`;
     case 'gone':
@@ -97,7 +111,13 @@ export function connectorHealthText(name: string, h: ConnectionHealth): string |
     case 'ok':
       return null;
     case 'waiting':
-      return `Waiting for ${by}'s first answer about ${name}.`;
+      return `Waiting for ${by}'s answer about ${name}: Nya asks at its next daily update, or when you Refresh. ${until}`;
+    case 'sign': {
+      const n = d.accounts.length;
+      return `${by} reports ${names(d.messages)} as money held. For a card or a loan that is unusual: some servers report what you owe that way. Say which it is, once: until you do, ${plural(n, 'it isn’t', 'they aren’t')} counted, and no day's total is saved.`;
+    }
+    case 'old_balance':
+      return `The latest balance ${by} has from ${name} is from ${shortDay(d.messages[0])}: its link to ${name} has stopped updating. Fix it in ${by} (often by signing in to ${name} there again), then refresh here. ${until}`;
     case 'reported':
       return `${by} reports: ${quoted(d.messages)}. This is between ${by} and ${name}: fix it in ${by} (often by signing in to ${name} there again), then refresh here. ${until}`;
     case 'missing': {

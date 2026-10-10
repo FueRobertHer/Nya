@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { getManualAccount, isManualId, moveManualBalance, MAX_BALANCE, type ManualAccount } from '@/lib/manual';
+import { getKeptAccount } from '@/lib/kept-accounts';
 import { isOwedType } from '@/lib/balance';
 import { clearNetWorthCache } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
@@ -333,7 +334,8 @@ export async function PATCH(req: Request) {
       await removeAccountTxns(ctx, target.account_id);
       return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
     }
-    const on = target ?? (await getManualAccount(ctx, saved.account_id));
+    // A SimpleFIN account's row (its category changed) answers like the rest.
+    const on = target ?? (await getKeptAccount(ctx, saved.account_id));
     if (!on) return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
     return NextResponse.json({ transaction: manualRowForDisplay(on, saved) });
   } catch (err) {

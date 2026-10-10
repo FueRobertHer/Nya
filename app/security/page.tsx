@@ -48,7 +48,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
   ],
   [
     'SimpleFIN, if you connect it',
-    'Your bank connections, which you make and pay for in your own SimpleFIN account (or another server that speaks its protocol, such as Redbark), under its own terms, and when Nya reads your accounts there. Nya reaches it only at the address in the Setup Token you paste, never at a private or internal one.',
+    'Your bank connections, which you make and pay for in your own SimpleFIN account (or another paid service that speaks its protocol, such as Redbark), under its own terms, and when Nya reads your accounts there. Nya contacts only the host in the Setup Token you paste, to claim it, and the host of the access that claim returns, to read your accounts; never a private or internal address.',
   ],
   [
     'Clerk, the sign-in service',
@@ -137,7 +137,8 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
       <p>
         A backup holds the same kinds of data as the database: the encrypted values and the plain text listed above
         {envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read without the keys
-        kept in the server’s environment.
+        kept in the server’s environment. It never holds the access a SimpleFIN account gives Nya, which works on its own:
+        restoring a backup ends that access, and you connect again with a new Setup Token.
       </p>
     </>
   );
@@ -183,7 +184,7 @@ export default function SecurityPage() {
             protects against someone who gets the database or a backup without those keys.
           </li>
           <li>
-            Bank connections through Plaid work for US institutions only; your own SimpleFIN account can reach others.
+            Bank connections through Plaid work for US institutions only; your own SimpleFIN account may reach others.
           </li>
           <li>No outside security audit has been done yet.</li>
         </ul>
@@ -322,10 +323,11 @@ export default function SecurityPage() {
           accounts take for now, and update it when you like.
         </p>
         <p>
-          Your own SimpleFIN account reaches the banks it covers, wherever they are (Redbark, which speaks the same
-          protocol, covers Australia and New Zealand): you pay SimpleFIN, connect your banks there, and paste a Setup
-          Token into Nya. Nya exchanges the token, once, for read-only access, keeps that access encrypted, never
-          writes it to a log, and asks for your accounts about once a day.
+          Your own SimpleFIN account may reach banks Plaid can’t (Redbark, a separate paid service that speaks the same
+          protocol, covers Australia and New Zealand): you pay for it, connect your banks there, and paste a Setup Token
+          into Nya. Nya exchanges the token, once, for read-only access, keeps that access encrypted, never writes it to a
+          log, and asks for your accounts about once a day. It brings no pending transactions, no holdings and no
+          categories.
         </p>
       </InfoSection>
     </InfoPage>

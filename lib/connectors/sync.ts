@@ -13,19 +13,27 @@
 // while older history is still coming, for at most BACKFILL_WINDOWS_PER_RUN
 // older windows, never taking the count past DAILY_REQUESTS - REFRESH_RESERVE,
 // so the person's Refresh always has some left. A run two hours later (the
-// snapshot's catch-up) asks again only if the last answer is older than
-// REFETCH_HOURS or failed.
+// snapshot's catch-up) skips the recent window only when the last answer is
+// under REFETCH_HOURS old and was whole for every tracked account (no
+// failure, no problem that concerns them, none missing, every balance there
+// and current: lib/connectors/institutions.ts answeredWhole), so a bank held
+// out of the day's total is always asked again.
 //
 // WINDOWS. A request asks for the transactions posted in a window of at most
-// the connector's windowDays (90 for SimpleFIN). The recent window starts
-// overlapDays (5) before the last day fetched, so a transaction that posted
-// late into a day already fetched is still caught, and never more than
-// windowDays ago. History before that arrives a window at a time going back,
-// each overlapping the one after it by overlapDays, until a window brings
-// nothing older than what is already there (the connector has no more) or
-// HISTORY_DAYS is reached. A gap (more than windowDays without an answer)
-// starts the walk back again from the recent window, so no stretch is ever
-// skipped: what was fetched already is matched, never added twice.
+// the connector's windowDays (90 for SimpleFIN). The recent window has no end
+// (it runs to now), so it starts at most windowDays - 1 days back, at 00:00
+// UTC, and spans under windowDays days; and overlapDays (5) before the last
+// day fetched, so a transaction that posted late into a day already fetched
+// is still caught. History before that arrives a window at a time going back,
+// each overlapping the one after it by overlapDays, until two whole answers in
+// a row bring nothing older than what is already there (the connector has no
+// more; one quiet window could be a quiet account) or HISTORY_DAYS is
+// reached. Only a whole answer (every tracked account in it, no problem
+// reported that concerns them) moves the walk on or ends it: anything less is
+// noted as failed and asked again the next night. A gap (more than windowDays
+// without an answer) starts the walk back again from the recent window, so no
+// stretch is ever skipped: what was fetched already is matched, never added
+// twice.
 //
 // MATCHED BY THE CONNECTOR'S ID. Each answer's transactions go through the
 // import pipeline's normalize stage (lib/import/normalize.ts: the rules a
@@ -48,6 +56,7 @@
 // (lib/connectors/http.ts), and anything else goes through loggable().
 
 import { connectionsStore, connectorAccountsStore, secretsStore, requestsCount, type AvailableAccount, type ConnectorAccount, type ConnectorConnection, type FetchRecord, type StoredProblem } from './store';
+import { answeredWhole } from './institutions';
 import { connectorOf } from './registry';
 import { ConnectorFailure, type ConnectorDef, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
 import { manualTxnStore, newManualTxnId, type ManualTxn, type ManualTxnBook } from '../manual-txns';
@@ -119,9 +128,10 @@ export async function requestsLeft(ctx: Ctx): Promise<{ left: number; resets_in_
 type History = NonNullable<ConnectorConnection['history']>;
 
 /** Where the recent window starts: overlapDays before the last day fetched,
- *  and never more than windowDays ago. */
+ *  and never more than windowDays - 1 days ago, so a window that runs to now
+ *  spans under windowDays days. */
 export function recentStart(history: History | null, today: string, def: Pick<ConnectorDef, 'windowDays' | 'overlapDays'>): string {
-  const earliest = addDays(today, -def.windowDays);
+  const earliest = addDays(today, -(def.windowDays - 1));
   if (!history) return earliest;
   const resume = addDays(history.to, -def.overlapDays);
   return resume < earliest ? earliest : resume;
@@ -310,8 +320,10 @@ function availableIn(answer: RemoteAnswer, tracked: ReadonlySet<string>): Availa
 
 /** Writes each tracked account's balance from the answer, in one
  *  compare-and-set per MANY_AT_ONCE accounts: an account stopped meanwhile is
- *  not written back. */
-async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remote: RemoteAccount }[], at: string): Promise<void> {
+ *  not written back. One the answer reported no problem about (`troubled`
+ *  lists those it did) was synced cleanly: its `ok_at` is the time of its
+ *  balance. */
+async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remote: RemoteAccount }[], at: string, troubled: ReadonlySet<string>): Promise<void> {
   for (let i = 0; i < pairs.length; i += MANY_AT_ONCE) {
     const chunk = pairs.slice(i, i + MANY_AT_ONCE);
     await connectorAccountsStore.updateMany(
@@ -330,6 +342,7 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
             reported_available: remote.available,
             balance_at: remote.balance_at,
             fetched_at: at,
+            ok_at: troubled.has(account.account_id) ? (now.ok_at ?? null) : (remote.balance_at ?? at),
           });
         }
         return writes;
@@ -338,18 +351,28 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
   }
 }
 
-/** Stores what a request for balances came to, on the connection entry. */
+/** Whether an answer, as recorded, was whole for the accounts tracked: none
+ *  missing, and no problem reported that concerns them or names no bank. */
+function wholeRecord(record: FetchRecord): boolean {
+  return record.failure === null && record.missing.length === 0 && record.problems.every((p) => p.accounts !== null && p.accounts.length === 0);
+}
+
+/** Stores what a request for balances came to, on the connection entry. Only
+ *  a whole answer moves the history on: after one that wasn't, the next
+ *  recent window starts where the last whole one ended, so a stretch an
+ *  account was missing from is fetched again. */
 async function saveFetch(ctx: Ctx, connection_id: string, record: FetchRecord, answered: { answer: RemoteAnswer; start: string | null; today: string } | null): Promise<void> {
   await connectionsStore.update(ctx, connection_id, (current) => {
     if (!current) return null;
     if (!answered) return { ...current, last_fetch: record };
     const tracked = new Set(current.tracked.map((t) => t.remote_id));
+    const moves = answered.start !== null && wholeRecord(record);
     return {
       ...current,
       last_fetch: record,
       last_answer_at: record.at,
       available: availableIn(answered.answer, tracked),
-      history: answered.start === null ? current.history : advanceHistory(current.history, answered.start, answered.today),
+      history: moves ? advanceHistory(current.history, answered.start!, answered.today) : current.history,
     };
   });
 }
@@ -373,13 +396,16 @@ async function applyAnswer(ctx: Ctx, tracked: ConnectorAccount[], answer: Remote
     now
   );
   const at = new Date(now).toISOString();
-  await writeBalances(ctx, present, at);
   const nyaIdOf = new Map(tracked.map((a) => [a.remote_id, a.account_id]));
   const problems: StoredProblem[] = answer.problems.map((p) => ({
     message: p.message,
     side: p.side,
     accounts: p.accounts === null ? null : p.accounts.flatMap((id) => (nyaIdOf.has(id) ? [nyaIdOf.get(id)!] : [])),
   }));
+  // The accounts a problem concerns: those it names, or all of them when it
+  // names no bank.
+  const troubled = new Set(problems.flatMap((p) => p.accounts ?? tracked.map((a) => a.account_id)));
+  await writeBalances(ctx, present, at, troubled);
   return {
     at,
     failure: null,
@@ -429,16 +455,28 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
       }),
       now
     );
+    done.windows++;
+    done.added += merged.added;
+    // Only a whole answer says anything about what is older: one without a
+    // tracked account, or with a problem that concerns one (or names no
+    // bank), is noted as failed, and the window is asked again next night.
+    const whole =
+      tracked.every((a) => byRemote.has(a.remote_id)) && !answer.problems.some((p) => p.accounts === null || p.accounts.some((id) => remotes.has(id)));
+    if (!whole) {
+      await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, failed: new Date(now).toISOString() } } : c));
+      break;
+    }
     const from = conn.history!.from;
     // Anything older than what was there: the connector has more.
     const older = answer.accounts.some((a) => remotes.has(a.remote_id) && a.transactions.some((t) => t.date < from));
     await connectionsStore.update(ctx, connection_id, (c) => {
       if (!c?.history) return c;
       const reached = window.start < c.history.from ? window.start : c.history.from;
-      return { ...c, history: { ...c.history, from: reached, complete: !older || reached <= limit, failed: null } };
+      // Two whole answers in a row with nothing older: there is no more. One
+      // could be a quiet stretch of an account that has more before it.
+      const empty = older ? 0 : (c.history.empty ?? 0) + 1;
+      return { ...c, history: { ...c.history, from: reached, complete: empty >= 2 || reached <= limit, failed: null, empty } };
     });
-    done.windows++;
-    done.added += merged.added;
   }
   return done;
 }
@@ -450,7 +488,11 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
  * Throws only what says nothing about the connection (storage unreachable, a
  * deployment that can't read its keys).
  */
-export async function syncConnection(ctx: Ctx, connection_id: string, opts: { purpose: SyncPurpose; now?: number; deadline?: number }): Promise<SyncResult> {
+export async function syncConnection(
+  ctx: Ctx,
+  connection_id: string,
+  opts: { purpose: SyncPurpose; now?: number; deadline?: number; /** False leaves older history to syncOlderHistory. */ backfill?: boolean }
+): Promise<SyncResult> {
   const now = opts.now ?? Date.now();
   const deadline = opts.deadline ?? Date.now() + REQUEST_TIMEOUT_MS;
   const result: SyncResult = { record: null, skipped: null, answer: null, backfilled: { windows: 0, added: 0 } };
@@ -461,7 +503,8 @@ export async function syncConnection(ctx: Ctx, connection_id: string, opts: { pu
   const today = utcDay(now);
 
   const lastAnswer = conn.last_answer_at ? Date.parse(conn.last_answer_at) : null;
-  const fresh = opts.purpose === 'daily' && conn.last_fetch !== null && conn.last_fetch.failure === null && lastAnswer !== null && now - lastAnswer < REFETCH_HOURS * HOUR;
+  // Recent and whole for every tracked account: anything less is asked again.
+  const fresh = opts.purpose === 'daily' && lastAnswer !== null && now - lastAnswer < REFETCH_HOURS * HOUR && answeredWhole(conn, tracked, now);
   let secret: string | null = null;
   let changed = false;
 
@@ -493,45 +536,82 @@ export async function syncConnection(ctx: Ctx, connection_id: string, opts: { pu
     changed = tracked.length > 0;
   }
 
-  // Older history, on the daily run only, and only once the recent window
-  // has answered (now or within REFETCH_HOURS).
-  if (opts.purpose === 'daily' && result.skipped !== 'budget' && result.skipped !== 'time' && (result.skipped === 'fresh' || result.record?.failure === null) && tracked.length > 0) {
-    if (secret === null) {
-      const kept = await secretOf(ctx, connection_id);
-      secret = kept instanceof ConnectorFailure ? null : kept;
-    }
-    if (secret !== null) {
-      result.backfilled = await backfill(ctx, connection_id, def, secret, now, deadline);
-      if (result.backfilled.added > 0) changed = true;
-    }
-  }
   // Cached payloads hold the balances and transactions from before.
   if (changed) await clearCaches(ctx);
+  if (opts.purpose === 'daily' && opts.backfill !== false) {
+    result.backfilled = await syncOlderHistory(ctx, connection_id, result, { now, deadline, secret });
+  }
   return result;
 }
 
 /**
- * The daily run for one container: every connection it has, at once, within
- * DAILY_DEADLINE_MS. Never throws: a failure is stored on its connection or
- * logged, and the snapshot it runs beside goes on (lib/snapshot-job.ts). A
- * connection whose entry can't be read is left alone (and holds its accounts
- * out of the day's total, lib/connectors/institutions.ts).
+ * Older history after a daily run's recent window (see the header), only once
+ * that window has answered (now, or within REFETCH_HOURS), within the budget's
+ * share for it. Never changes a balance or the gate.
  */
-export async function syncConnectorsDaily(ctx: Ctx, opts: { now?: number } = {}): Promise<void> {
-  const deadline = Date.now() + DAILY_DEADLINE_MS;
-  try {
-    const { entries, unreadable, unrecognised } = await connectionsStore.getAllReport(ctx);
-    if (unreadable.length + unrecognised.length > 0) {
-      console.error(`Connectors: ${unreadable.length + unrecognised.length} connection(s) in container ${ctx.container} could not be read and were not fetched.`);
-    }
-    await Promise.all(
-      [...entries.keys()].map((id) =>
-        syncConnection(ctx, id, { purpose: 'daily', now: opts.now, deadline }).catch((err) =>
-          console.error(`Connectors: the daily fetch failed for a connection in container ${ctx.container}.`, loggable(err))
-        )
-      )
-    );
-  } catch (err) {
-    console.error(`Connectors: the daily fetch could not start for container ${ctx.container}.`, loggable(err));
+export async function syncOlderHistory(
+  ctx: Ctx,
+  connection_id: string,
+  recent: SyncResult,
+  opts: { now?: number; deadline?: number; secret?: string | null } = {}
+): Promise<{ windows: number; added: number }> {
+  const none = { windows: 0, added: 0 };
+  if (recent.skipped === 'budget' || recent.skipped === 'time' || recent.skipped === 'gone') return none;
+  if (recent.skipped !== 'fresh' && recent.record?.failure !== null) return none;
+  const now = opts.now ?? Date.now();
+  const deadline = opts.deadline ?? Date.now() + REQUEST_TIMEOUT_MS;
+  const conn = await connectionsStore.get(ctx, connection_id);
+  if (!conn || (await trackedOf(ctx, connection_id)).length === 0) return none;
+  let secret = opts.secret ?? null;
+  if (secret === null) {
+    const kept = await secretOf(ctx, connection_id);
+    if (kept instanceof ConnectorFailure) return none;
+    secret = kept;
   }
+  const done = await backfill(ctx, connection_id, connectorOf(conn.connector), secret, now, deadline);
+  if (done.added > 0) await clearCaches(ctx);
+  return done;
+}
+
+/**
+ * The daily run for one container: every connection it has, at once, within
+ * DAILY_DEADLINE_MS. `recent` settles once each connection's recent window
+ * (its balances and latest transactions) is stored, which is all the day's
+ * total waits for; `done` once older history has been asked for too, which
+ * the snapshot waits for before its run ends (lib/snapshot-job.ts). Neither
+ * ever rejects: a failure is stored on its connection or logged, and the
+ * snapshot goes on. A connection whose entry can't be read is left alone (and
+ * holds its accounts out of the day's total, lib/connectors/institutions.ts).
+ */
+export function syncConnectorsDaily(ctx: Ctx, opts: { now?: number } = {}): { recent: Promise<void>; done: Promise<void> } {
+  const deadline = Date.now() + DAILY_DEADLINE_MS;
+  let recentSettled: () => void = () => {};
+  const recent = new Promise<void>((resolve) => {
+    recentSettled = resolve;
+  });
+  const failed = (err: unknown) => console.error(`Connectors: the daily fetch failed for a connection in container ${ctx.container}.`, loggable(err));
+  const done = (async () => {
+    try {
+      const { entries, unreadable, unrecognised } = await connectionsStore.getAllReport(ctx);
+      if (unreadable.length + unrecognised.length > 0) {
+        console.error(`Connectors: ${unreadable.length + unrecognised.length} connection(s) in container ${ctx.container} could not be read and were not fetched.`);
+      }
+      const ids = [...entries.keys()];
+      const results = await Promise.all(
+        ids.map((id) =>
+          syncConnection(ctx, id, { purpose: 'daily', now: opts.now, deadline, backfill: false }).catch((err) => {
+            failed(err);
+            return null;
+          })
+        )
+      );
+      recentSettled();
+      await Promise.all(ids.map((id, i) => (results[i] ? syncOlderHistory(ctx, id, results[i]!, { now: opts.now, deadline }).catch(failed) : null)));
+    } catch (err) {
+      console.error(`Connectors: the daily fetch could not start for container ${ctx.container}.`, loggable(err));
+    } finally {
+      recentSettled();
+    }
+  })();
+  return { recent, done };
 }

@@ -51,6 +51,25 @@ describe('connector health', () => {
     expect(connectorSideText('My Bank', h)).toBe('On your side: your SimpleFIN account');
   });
 
+  test('a card or a loan reported as money held is the person’s to answer, and isn’t counted until they do', () => {
+    const h = connectorHealth(detail('sign', { messages: ['Visa (+$500.00)'], accounts: ['Visa'] }), null);
+    expect(h).toMatchObject({ state: 'partial', action: 'resolve', side: 'you' });
+    expect(connectorBadge(h)).toBe('Needs your answer');
+    expect(connectorHealthText('My Bank', h)).toBe(
+      "SimpleFIN reports Visa (+$500.00) as money held. For a card or a loan that is unusual: some servers report what you owe that way. Say which it is, once: until you do, it isn’t counted, and no day's total is saved."
+    );
+    expect(connectorSideText('My Bank', h)).toBe('On your side: your SimpleFIN account');
+  });
+
+  test('a balance from days ago is SimpleFIN’s link to the bank gone quiet, said with its date, fixed there', () => {
+    const h = connectorHealth(detail('old_balance', { messages: ['2026-09-20T12:00:00.000Z'], accounts: ['Checking'] }), null);
+    expect(h).toMatchObject({ state: 'needs_reauth', action: 'reconnect', side: 'connector' });
+    expect(connectorBadge(h)).toBe('Not updating at SimpleFIN');
+    expect(connectorHealthText('My Bank', h)).toBe(
+      "The latest balance SimpleFIN has from My Bank is from Sep 20: its link to My Bank has stopped updating. Fix it in SimpleFIN (often by signing in to My Bank there again), then refresh here. Until then its balances are shown as last known, and no day's total is saved."
+    );
+  });
+
   test('what is on Nya’s side asks nothing of the person', () => {
     for (const issue of ['stale', 'unreadable', 'limited', 'rejected'] as ConnectorIssue[]) {
       const h = connectorHealth(detail(issue, { messages: ['x'] }), null);

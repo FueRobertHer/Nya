@@ -298,11 +298,12 @@ export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = n
   await pruneAccessLog(ctx, Date.now(), live, { until: Date.now() + PRUNE_BUDGET_MS });
   // The daily fetch from the connectors the person brought (SimpleFIN,
   // lib/connectors/sync.ts), beside Plaid's: a few requests within a deadline
-  // shorter than Plaid's worst case, so the run takes no longer and the
-  // emails' time is untouched. It never throws; its accounts are read once
-  // it is over, and a failed fetch holds them out of the day's total.
+  // shorter than Plaid's worst case. It never throws; its accounts are read
+  // once their recent window is in, and a failed fetch holds them out of the
+  // day's total. Older history goes on meanwhile, and the run waits for it
+  // before it ends.
   const connectors = syncConnectorsDaily(ctx);
-  const { institutions, netWorth } = await computeNetWorth(ctx, { connectorsReady: connectors });
+  const { institutions, netWorth } = await computeNetWorth(ctx, { connectorsReady: connectors.recent });
   const { date: recorded, holdings } = await recordFetch(ctx, institutions, netWorth);
   const counted = holdings.failed > 0 ? { holdings_failed: holdings.failed } : {};
   // Each connection's last good sync, and what is due about a connection that
@@ -318,6 +319,8 @@ export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = n
   } catch (err) {
     console.error(`Connection notices failed for container ${ctx.container}:`, reasonOf(err));
   }
+  // The connectors' older history, which ran beside the recording above.
+  await connectors.done;
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
   if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.', ...counted };
 

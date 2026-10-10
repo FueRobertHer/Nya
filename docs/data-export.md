@@ -298,12 +298,14 @@ The accounts SimpleFIN keeps up to date ([features.md](features.md#bring-your-ow
 | `remote_id` | SimpleFIN's own id for the account. |
 | `name`, `institution_name` | Its name and its bank's, as SimpleFIN gave them. |
 | `institution_key` | SimpleFIN's key for the bank, which groups its accounts: the bank's id there, else its web domain, else its name. |
-| `institution_ref` | A random id the accounts of one bank on one connection share: its card's id on the Accounts tab. |
+| `institution_ref` | The id the accounts of one bank on one connection share, its card's id on the Accounts tab: 16 hex characters of a SHA-256 of the connection's id and the bank's key, never its name. |
 | `type`, `subtype` | What you said it is (`depository`, `credit`, `loan`, `investment` or `other`), and `null`: SimpleFIN says neither. |
+| `sign` | For a card or a loan whose balance came positive, how you said to read it: `as_reported` (money held), or `owed_positive` (SimpleFIN reports what you owe as positive). Absent or `null` until you said; until then that balance isn't counted. |
 | `currency` | Its currency's ISO 4217 code. |
-| `reported_balance`, `reported_available` | The balance and available balance as SimpleFIN reported them, from the holder's side: money held is positive, money owed negative (`accounts` and `account_history` give it in Nya's sign, a card's debt positive). `null` until an answer held one. |
+| `reported_balance`, `reported_available` | The balance and available balance as SimpleFIN reported them: by the protocol's rule money held is positive and money owed negative, unless `sign` says this server reports what you owe as positive (`accounts` and `account_history` give it in Nya's sign, a card's debt positive). `null` until an answer held one. |
 | `balance_at` | When the bank says that balance was, or `null` if it didn't say. |
 | `fetched_at` | When Nya received it. |
+| `ok_at` | When the bank last synced it cleanly: the time of the balance from the latest answer that reported no problem about it. Absent or `null` before one. |
 | `created_at` | When you started tracking it. |
 
 It goes when you stop tracking the account or disconnect: kept as a manual account, it moves to `manual_accounts`.
@@ -322,7 +324,7 @@ Your connections to SimpleFIN, one entry per connection: `id` is its id (as `ite
 | `last_answer_at` | When an answer last came, whatever it reported, or `null`. |
 | `tracked[]` | The accounts you track: `remote_id`, SimpleFIN's id, and `account_id`, Nya's. |
 | `available[]` | The accounts SimpleFIN offers that you don't track, names only, never a balance: `remote_id`, `name`, `institution`, `institution_key`, `currency` (`null` for one Nya doesn't know) and `currency_text`, the currency as SimpleFIN wrote it. |
-| `history` | How much history has been fetched, or `null` before the first: `from` and `to`, UTC days with no gap between them, `complete` once SimpleFIN had nothing older or two years were fetched, and `failed`, when the last try at an older window failed. |
+| `history` | How much history has been fetched, or `null` before the first: `from` and `to`, UTC days with no gap between them, `complete` once two whole answers in a row had nothing older or two years were fetched, `failed`, when the last try at an older window got no whole answer, and `empty`, how many whole answers in a row brought nothing older. |
 
 It goes when you disconnect.
 
@@ -411,7 +413,7 @@ Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or impor
 | `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, `to`, the one it became, and `account_id`, the account whose balance it was (absent on one noted before that was kept). Absent otherwise. |
 | `created_at`, `updated_at` | When it was entered, and last changed in the app. An import that replaces it with its file's version, and the undo of that, leave `updated_at` as it was: neither is your change. |
 
-Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
+Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`. A payment between two of your SimpleFIN accounts that the app shows as a transfer is worked out each time the rows are read, so nothing here marks it.
 
 #### `transaction-annotations`
 
@@ -488,7 +490,7 @@ There are two exports, and they are kept apart on purpose (#55): one that did bo
 | Covers | One person | The whole environment, every person |
 | Values | Decrypted, in documented fields | Encrypted, byte for byte as stored, and unreadable without the keys; dates, account and transaction ids, bank names and the merchant names you renamed are in plain text ([operations.md](operations.md#taking-a-backup-by-hand)) |
 | Formats | JSON, CSV | NDJSON of raw database keys, with a checksum |
-| Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records) |
+| Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records), and the access a SimpleFIN connection gives Nya, which works on its own and must never come back after a disconnect |
 | Restores | Not yet: restoring from this file is planned (#43). Files from your bank can be imported, into a manual account ([features.md](features.md#importing-files)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
 | Gets it | You, after a fresh sign-in, 5 an hour | The operator, with `OPS_SECRET`, or the nightly cron |
 

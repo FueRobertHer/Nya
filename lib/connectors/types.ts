@@ -47,10 +47,13 @@ export type RemoteAccount = {
   currency: string | null;
   /** The currency as the connector wrote it, to say what an unknown one was. */
   currency_text: string;
-  /** The balance from the account holder's side, as the connector reports
-   *  it: positive is money held, negative is money owed. Nya's own sign for a
-   *  card or a loan (positive is owed, lib/balance.ts) is applied once the
-   *  person says what kind of account it is. */
+  /** The balance as the connector reports it: by the protocol's rule, from
+   *  the account holder's side, positive money held and negative money owed.
+   *  Nya's own sign for a card or a loan (positive is owed, lib/balance.ts)
+   *  is applied once the person says what kind of account it is, and for one
+   *  reported positive, how to read it (lib/connectors/institutions.ts SIGNS):
+   *  the protocol doesn't pin a debt's sign, and some servers report it
+   *  positive. */
   balance: number;
   /** The available balance, from the same side, when the connector gives one. */
   available: number | null;
@@ -163,6 +166,9 @@ export type ConnectorDef = {
   overlapDays: number;
   /** How many requests a day the connector allows per credential. */
   providerDailyLimit: number;
+  /** Checks what the person pasted before anything is sent or counted:
+   *  throws ExchangeFailure('invalid') when it can't be what `exchange` takes. */
+  checkInput(input: string): void;
   /** Exchanges what the person pasted for the credential to keep, and the
    *  host it reaches. Throws ExchangeFailure. */
   exchange(input: string, opts: { timeoutMs: number }): Promise<{ secret: string; host: string }>;
@@ -182,6 +188,13 @@ export type ConnectorIssue =
   | 'reported'
   /** A tracked account wasn't in the latest answer. */
   | 'missing'
+  /** A card or a loan the connector reports as money held (a positive
+   *  balance), which the person hasn't said how to read: never counted until
+   *  they do. */
+  | 'sign'
+  /** The latest balance the connector has is from days ago: its link to the
+   *  bank has stopped updating. */
+  | 'old_balance'
   /** No answer for longer than Nya's daily update allows. */
   | 'stale'
   /** What Nya keeps about these accounts couldn't be read. */

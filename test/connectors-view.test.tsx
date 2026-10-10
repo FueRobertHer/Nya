@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectButtonsView, SIMPLEFIN_OPTION } from '@/components/ConnectButtons';
-import { ChooseView, ConnectIntro, ConnectorCardView, guessKind, KINDS } from '@/components/Connectors';
+import { ChooseView, ConnectIntro, ConnectorCardView, guessKind, KINDS, reportedWords, SignView } from '@/components/Connectors';
 import { ConnectionHealthView } from '@/components/ConnectionHealth';
 import { connectorHealth } from '@/lib/connectors/health';
 import type { ConnectionView } from '@/lib/connectors/view';
@@ -24,7 +24,20 @@ const conn = (over: Partial<ConnectionView> = {}): ConnectionView => ({
   last_fetch: { at: '2026-10-09T13:00:00.000Z', ok: true, kind: null, message: null, problems: [], missing: [], added: 4, updated: 0, pending: 1, unreadable: 0, note: null },
   last_answer_at: '2026-10-09T13:00:00.000Z',
   history: { from: '2026-07-11', to: '2026-10-09', complete: false },
-  accounts: [{ account_id: 'manual_a', name: 'Checking', institution_name: 'My Bank', type: 'depository', currency: 'USD', balance: 1500.25, balance_at: '2026-10-08T12:00:00.000Z' }],
+  accounts: [
+    {
+      account_id: 'manual_a',
+      name: 'Checking',
+      institution_name: 'My Bank',
+      type: 'depository',
+      currency: 'USD',
+      balance: 1500.25,
+      reported: 1500.25,
+      sign: null,
+      needs_sign: false,
+      balance_at: '2026-10-08T12:00:00.000Z',
+    },
+  ],
   available: [],
   ...over,
 });
@@ -35,6 +48,9 @@ describe('the option to connect', () => {
     expect(html).toContain('>Connect with SimpleFIN</button>');
     expect(html).toContain(SIMPLEFIN_OPTION.note);
     expect(SIMPLEFIN_OPTION.note).toContain('$15 a year, paid to SimpleFIN');
+    // A separate paid service, and coverage nobody here has checked bank by bank.
+    expect(SIMPLEFIN_OPTION.note).toContain('may reach banks Plaid doesn’t');
+    expect(SIMPLEFIN_OPTION.note).toContain('Redbark, a separate paid service');
     expect(renderToStaticMarkup(<ConnectButtonsView connecting={false} starting={null} brokerage={false} idBase="cb" onConnect={noop} />)).not.toContain('SimpleFIN');
   });
 
@@ -43,6 +59,10 @@ describe('the option to connect', () => {
     expect(html).toContain('You pay SimpleFIN for it ($15 a year), not Nya');
     expect(html).toContain('A token works once');
     expect(html).toContain('keeps that\n        access encrypted, and never sees your bank password'.replace(/\n\s+/g, ' '));
+    // Where the person decides: what SimpleFIN doesn't bring, and Redbark's own price.
+    expect(html).toContain('It brings no pending transactions, no holdings for investment accounts (only their balances) and no categories');
+    expect(html).toContain('a separate service, with its own price');
+    expect(html).not.toContain('reaches banks Plaid');
     expect(renderToStaticMarkup(<ConnectIntro again={true} />)).toContain('the same accounts carry on, with their history');
   });
 });
@@ -69,9 +89,10 @@ describe('choosing accounts', () => {
         label="SimpleFIN"
         tracked={[]}
         offers={[
-          { remote_id: 'A', name: 'Checking', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 1500.25, balance_at: null },
-          { remote_id: 'B', name: 'Visa', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: -432.1, balance_at: null },
-          { remote_id: 'C', name: 'Miles', institution: 'Airline', currency: null, currency_text: 'https://example.com/miles.json' },
+          { remote_id: 'A', name: 'Checking', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 1500.25, balance_at: null, elsewhere: null },
+          { remote_id: 'B', name: 'Visa', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: -432.1, balance_at: null, elsewhere: null },
+          { remote_id: 'C', name: 'Miles', institution: 'Airline', currency: null, currency_text: 'https://example.com/miles.json', elsewhere: null },
+          { remote_id: 'D', name: 'Savings', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 20, balance_at: null, elsewhere: 'bridge.other' },
         ]}
         choices={{ A: 'depository', B: 'credit' }}
         keep={true}
@@ -83,8 +104,13 @@ describe('choosing accounts', () => {
     );
     expect(html).toContain('Nya guessed from its name and balance: check each one');
     expect(html).toContain('<p class="institution-name">My Bank</p>');
-    expect(html).toContain('$1,500.25');
-    expect(html).toContain('-$432.10');
+    // The sign said in words, never presented as what is owed before it is known.
+    expect(html).toContain('<div class="type-tag">+$1,500.25, held</div>');
+    expect(html).toContain('<div class="type-tag">-$432.10, owed</div>');
+    expect(html).not.toContain('shown as what you owe');
+    // One tracked through the other connection can't be chosen again.
+    expect(html).toContain('Tracked through your other connection (bridge.other): not tracked twice');
+    expect(html).toMatch(/<select disabled="" aria-label="Track Savings">/);
     expect(html).toContain('In a currency Nya doesn’t know (https://example.com/miles.json): can’t be tracked');
     expect(html).toMatch(/<select disabled="" aria-label="Track Miles">/);
   });
@@ -106,6 +132,38 @@ describe('choosing accounts', () => {
     expect(html).toContain('Past net-worth totals keep what it held');
     expect(html).toMatch(/<input type="radio" name="connector-keep" checked=""/);
     expect(html).toContain('<option value="stop" selected="">Stop tracking</option>');
+  });
+});
+
+describe('a card or a loan reported as money held', () => {
+  const visa = {
+    account_id: 'manual_v',
+    name: 'Visa',
+    institution_name: 'My Bank',
+    type: 'credit',
+    currency: 'USD',
+    balance: null,
+    reported: 500,
+    sign: null,
+    needs_sign: true,
+    balance_at: '2026-10-08T12:00:00.000Z',
+  } as const;
+
+  test('its sign is said in words, either way', () => {
+    expect([reportedWords(-432.1, 'USD'), reportedWords(500, 'USD'), reportedWords(0, 'USD')]).toEqual(['-$432.10, owed', '+$500.00, held', '$0.00, held']);
+  });
+
+  test('its card says so and offers to answer; the question asks which way, once, with neither chosen', () => {
+    const html = renderToStaticMarkup(<ConnectorCardView conn={conn({ accounts: [...conn().accounts, visa] })} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
+    expect(html).toContain('SimpleFIN reports Visa (+$500.00) as money held. Say which way it goes: until you do, it isn’t counted.');
+    expect(html).toContain('>Answer</button>');
+    const ask = renderToStaticMarkup(<SignView label="SimpleFIN" accounts={[visa]} signs={{}} busy={false} onSign={noop} />);
+    expect(ask).toContain('Visa · My Bank: +$500.00, held');
+    expect(ask).toContain('I owe $500.00');
+    expect(ask).toContain('It’s money held, $500.00');
+    expect(ask).not.toContain('checked=""');
+    const owed = renderToStaticMarkup(<SignView label="SimpleFIN" accounts={[visa]} signs={{ manual_v: 'owed_positive' }} busy={false} onSign={noop} />);
+    expect(owed.match(/checked=""/g)?.length).toBe(1);
   });
 });
 
@@ -166,6 +224,18 @@ describe('in connection health', () => {
     expect(html).toContain('>Refresh</button>');
     // Never Plaid's own words.
     expect(html).not.toContain('Plaid');
+  });
+
+  test('a sign to confirm offers Answer, on the person’s side; an old balance links to SimpleFIN with a Refresh', () => {
+    const signRow = { ...row('sign', ['Visa (+$500.00)']), health: connectorHealth({ connector: 'simplefin', label: 'SimpleFIN', host: 'bridge.example', connection_id: 'conn_1', issue: 'sign', messages: ['Visa (+$500.00)'], accounts: ['Visa'] }, null) };
+    const sign = render([signRow]);
+    expect(sign).toContain('>Answer</button>');
+    expect(sign).toContain('Needs your answer');
+    expect(sign).toContain('SimpleFIN reports Visa (+$500.00) as money held');
+    const old = render([row('old_balance', ['2026-09-20T12:00:00.000Z'])]);
+    expect(old).toContain('The latest balance SimpleFIN has from My Bank is from Sep 20');
+    expect(old).toContain('>Open SimpleFIN</a>');
+    expect(old).toContain('>Refresh</button>');
   });
 
   test('refused access offers Connect again; missing accounts offer Choose accounts; Nya’s side offers nothing', () => {

@@ -18,34 +18,49 @@
 // a disconnect is the same id carried on: its balances, its transactions,
 // whether it is hidden, its goals and its shares all stay with it.
 //
-// BALANCES ARE MEASUREMENTS, ONLY WHEN WHOLE. A balance is the one the
-// institution gave through SimpleFIN, with the day it gave it, measured as a
-// Plaid balance is: on a clean answer it is recorded in the real history layer
-// like any other (lib/networth.ts recordFetch). A card is held out of that
-// (`error` set, which closes the snapshot gate, and its balances marked
-// `stale`, which keeps them out of the per-account layers too) whenever its
-// accounts' latest word is not a whole answer:
+// BALANCES ARE MEASUREMENTS, ONLY WHEN WHOLE AND CURRENT. A balance is the
+// one the institution gave through SimpleFIN, with the time it gave it
+// (balance-date), measured as a Plaid balance is: on a clean answer it is
+// recorded in the real history layer like any other (lib/networth.ts
+// recordFetch), in the day's total and its breakdown, as a Plaid balance up to
+// a day behind is. A card is held out of that (`error` set, which closes the
+// snapshot gate, and its balances marked `stale`, which keeps them out of the
+// per-account layers too) whenever its accounts' latest word is not a whole,
+// current answer:
 //   - the latest request failed (nothing came);
 //   - SimpleFIN reported a problem that concerns this bank, or names no bank
 //     at all (it could be any);
 //   - one of its tracked accounts was missing from the answer;
-//   - no answer has held a balance for it yet;
+//   - no answer has held a balance for it yet, or none has been asked for
+//     since it was connected again;
+//   - a card or a loan reports a positive balance the person hasn't said how
+//     to read (below);
+//   - the bank's latest balance is more than OLD_BALANCE_HOURS old: SimpleFIN
+//     answers, but its link to the bank has stopped updating;
 //   - no answer has come for FRESH_HOURS (the daily update didn't run).
-// Its last balances are still shown, with their date, as last known; never
-// written as measured, and never recovered from the history layer.
+// Its last balances are still shown, with their own date, as last known;
+// never written as measured, and never recovered from the history layer.
 //
-// A balance is kept as SimpleFIN reported it (positive held, negative owed)
-// and turned into Nya's sign here, by the type the person gave the account:
-// a card's or a loan's is the amount owed, positive. Its contribution to net
-// worth is the reported balance whichever type is chosen, so a type picked
-// wrongly misnames the account, never misstates the total.
+// SIGNS. A balance is kept as SimpleFIN reported it and turned into Nya's
+// sign here. The protocol's convention, which SimpleFIN Bridge follows, is the
+// holder's side: money held positive, money owed negative. So an account the
+// person calls a card or a loan normally reports a negative balance, which is
+// the positive amount owed in Nya's sign, and whatever type is chosen, its
+// contribution to net worth is the reported balance. But the protocol doesn't
+// pin a liability's sign, and some servers report what is owed as positive,
+// which read that way would add a debt to net worth. So a card or a loan with
+// a positive balance is never counted until the person says how to read it,
+// once per account (ConnectorAccount.sign): money held, as reported (a card
+// paid past zero), or what is owed (the server reports it positive, so its
+// sign is turned). Until then its bank is held, and it has no balance at all.
 
 import { createHash } from 'node:crypto';
 import type { Ctx } from '../containers';
 import type { InstitutionResult } from '../networth';
 import { isOwedType } from '../balance';
 import { connectionsStore, connectorAccountsStore, type ConnectorAccount, type ConnectorConnection } from './store';
-import { connectorHealth } from './health';
+import { connectorHealth, shortDay } from './health';
+import { formatMoney } from '../format';
 import { connectorOf } from './registry';
 import type { ConnectorDetail, ConnectorIssue, ConnectorKind } from './types';
 import type { Side } from '../connection-state';
@@ -53,6 +68,10 @@ import type { Side } from '../connection-state';
 /** How long the last answer counts as current: a day and a half, so a
  *  daily update a few hours late still counts. */
 export const FRESH_HOURS = 36;
+/** How old the bank's own balance may be and still count as current: three
+ *  days, so a weekend's quiet at the bank still counts, and a link that has
+ *  stopped updating at SimpleFIN doesn't for long. */
+export const OLD_BALANCE_HOURS = 72;
 
 const HOUR = 3_600_000;
 
@@ -63,15 +82,78 @@ export function institutionRef(connection_id: string, institution_key: string): 
   return createHash('sha256').update(`${connection_id}\n${institution_key}`).digest('hex').slice(0, 16);
 }
 
-/** A tracked account's balance in Nya's sign, or null before an answer held one. */
-export function nyaBalance(a: Pick<ConnectorAccount, 'type' | 'reported_balance'>): number | null {
+/** Whether a tracked account's balance can't be counted until the person
+ *  says how to read it: a card or a loan reported as money held, with no
+ *  answer from them yet (see SIGNS in the header). */
+export function needsSign(a: Pick<ConnectorAccount, 'type' | 'reported_balance' | 'sign'>): boolean {
+  return isOwedType(a.type) && a.reported_balance !== null && a.reported_balance > 0 && (a.sign ?? null) === null;
+}
+
+/**
+ * A tracked account's balance in Nya's sign (a card's or a loan's is the
+ * positive amount owed), or null when there is none to count: before an
+ * answer held one, and while a card's or a loan's positive balance waits for
+ * the person to say how to read it (needsSign).
+ */
+export function nyaBalance(a: Pick<ConnectorAccount, 'type' | 'reported_balance' | 'sign'>): number | null {
   if (a.reported_balance === null) return null;
-  const b = isOwedType(a.type) ? -a.reported_balance : a.reported_balance;
+  let b = a.reported_balance;
+  if (isOwedType(a.type)) {
+    if (needsSign(a)) return null;
+    // The protocol's way, owed negative, turned into an amount owed; or the
+    // server's own way, owed positive, as the person said.
+    b = a.sign === 'owed_positive' ? a.reported_balance : -a.reported_balance;
+  }
   return b === 0 ? 0 : b;
 }
 
 /** The time a balance is from: the institution's, else when Nya received it. */
 const asOfOf = (a: ConnectorAccount) => a.balance_at ?? a.fetched_at;
+
+/** An account as two connections could both name it: its bank's name and its
+ *  own, case and spacing aside. */
+const fingerprint = (institution: string, name: string) => `${institution.trim().replace(/\s+/g, ' ').toLowerCase()}\n${name.trim().replace(/\s+/g, ' ').toLowerCase()}`;
+
+/**
+ * The account another connection already tracks that an offered one is, or
+ * null: the same connector id on the same host, or the same bank and account
+ * name anywhere. Tracking it twice would count it twice, so it is refused
+ * (lib/connectors/manage.ts trackAccounts) and shown as tracked elsewhere.
+ */
+export function trackedElsewhere(
+  offer: { remote_id: string; name: string; institution: string },
+  host: string,
+  others: readonly { account: ConnectorAccount; host: string | null }[]
+): { account: ConnectorAccount; host: string | null } | null {
+  const print = fingerprint(offer.institution, offer.name);
+  return (
+    others.find(({ account, host: there }) => (account.remote_id === offer.remote_id && there === host) || fingerprint(account.institution_name, account.name) === print) ??
+    null
+  );
+}
+
+/** Whether the bank's own balance is too old to count as current. */
+export function balanceTooOld(a: Pick<ConnectorAccount, 'balance_at'>, now: number): boolean {
+  if (!a.balance_at) return false;
+  const at = Date.parse(a.balance_at);
+  return Number.isFinite(at) && now - at > OLD_BALANCE_HOURS * HOUR;
+}
+
+/**
+ * Whether a connection's latest answer was whole for every account it tracks:
+ * an answer came, no problem it reported concerns them or names no bank, none
+ * was missing, each has a balance, and none of those is too old. The daily run
+ * asks again within REFETCH_HOURS unless it was (lib/connectors/sync.ts), so a
+ * held bank is never left held for a day by a fetch it skipped.
+ */
+export function answeredWhole(conn: ConnectorConnection, tracked: readonly ConnectorAccount[], now: number): boolean {
+  const f = conn.last_fetch;
+  if (!f || f.failure) return false;
+  const ids = new Set(tracked.map((a) => a.account_id));
+  if (f.problems.some((p) => p.accounts === null || p.accounts.some((id) => ids.has(id)))) return false;
+  if (f.missing.some((id) => ids.has(id))) return false;
+  return tracked.every((a) => a.reported_balance !== null && !balanceTooOld(a, now));
+}
 
 /** What is wrong with one card's accounts, its words, and whose side a
  *  failed request said it was on. */
@@ -90,7 +172,14 @@ function issueOf(
   }
   const missing = group.filter((a) => fetch?.missing.includes(a.account_id));
   if (missing.length > 0) return { issue: 'missing', messages: [], accounts: missing.map((a) => a.name) };
-  if (group.some((a) => a.reported_balance === null)) return { issue: 'waiting', messages: [], accounts: [] };
+  // No answer yet, or none asked for since it was connected again.
+  if (!fetch || group.some((a) => a.reported_balance === null)) return { issue: 'waiting', messages: [], accounts: [] };
+  const unsure = group.filter(needsSign);
+  if (unsure.length > 0) {
+    return { issue: 'sign', messages: unsure.map((a) => `${a.name} (+${formatMoney(a.reported_balance!, a.currency)})`), accounts: unsure.map((a) => a.name) };
+  }
+  const old = group.filter((a) => balanceTooOld(a, now)).sort((x, y) => (x.balance_at! < y.balance_at! ? -1 : 1));
+  if (old.length > 0) return { issue: 'old_balance', messages: [old[0].balance_at!], accounts: old.map((a) => a.name) };
   const last = conn.last_answer_at ? Date.parse(conn.last_answer_at) : NaN;
   if (!Number.isFinite(last) || now - last > FRESH_HOURS * HOUR) return { issue: 'stale', messages: [], accounts: [] };
   return { issue: 'ok', messages: [], accounts: [] };
@@ -106,7 +195,11 @@ function errorLine(issue: ConnectorIssue, label: string, messages: string[]): st
     case 'missing':
       return `Not every account was in ${label}'s latest answer`;
     case 'waiting':
-      return `Waiting for ${label}'s first answer`;
+      return `Waiting for ${label}'s answer`;
+    case 'sign':
+      return `${label} reports a card or loan as money held: say which way it goes`;
+    case 'old_balance':
+      return `${label}'s latest balance is from ${shortDay(messages[0])}`;
     case 'stale':
       return `No answer from ${label} in over a day`;
     case 'gone':
@@ -170,8 +263,10 @@ export function buildConnectorInstitutions(connections: ReadonlyMap<string, Conn
           .map((a) => asOfOf(a)!)
           .sort()[0]
       : undefined;
-    const fetched = group.map((a) => a.fetched_at);
-    const lastOk = fetched.every((t) => t !== null) ? (fetched as string[]).sort()[0] : null;
+    // When the bank last synced cleanly: the oldest of its accounts' (an
+    // answer that reported a problem with it doesn't count).
+    const synced = group.map((a) => a.ok_at ?? null);
+    const lastOk = synced.every((t) => t !== null) ? (synced as string[]).sort()[0] : null;
     const detail: ConnectorDetail = {
       connector: kind,
       label,
@@ -204,8 +299,11 @@ export function buildConnectorInstitutions(connections: ReadonlyMap<string, Conn
 /** The cards, read from the stores: strict, so a connection or an account
  *  that can't be read throws, and the caller holds the gate. */
 export async function connectorInstitutions(ctx: Ctx, now: number = Date.now()): Promise<InstitutionResult[]> {
-  const [connections, accounts] = await Promise.all([connectionsStore.getAll(ctx), connectorAccountsStore.getAll(ctx)]);
+  // The accounts first: with none tracked, a connection entry that can't be
+  // read holds nothing up.
+  const accounts = await connectorAccountsStore.getAll(ctx);
   if (accounts.size === 0) return [];
+  const connections = await connectionsStore.getAll(ctx);
   return buildConnectorInstitutions(connections, accounts.values(), now);
 }
 

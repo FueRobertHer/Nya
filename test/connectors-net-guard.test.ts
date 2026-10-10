@@ -62,11 +62,13 @@ describe('IPv6', () => {
     ['IPv4-mapped metadata, dotted', '::ffff:169.254.169.254'],
     ['IPv4-mapped metadata, in hex', '::ffff:a9fe:a9fe'],
     ['IPv4-mapped private', '::ffff:10.1.2.3'],
+    ['IPv4-translated private', '::ffff:0:10.0.0.1'],
     ['IPv4-compatible (deprecated)', '::10.0.0.1'],
     ['IPv4-compatible public, still not global unicast', '::8.8.8.8'],
     ['NAT64 to metadata', '64:ff9b::a9fe:a9fe'],
     ['NAT64 to a private address', '64:ff9b::10.0.0.1'],
     ['local-use NAT64', '64:ff9b:1::1'],
+    ['local-use NAT64 to a private address', '64:ff9b:1::a00:1'],
     ['discard-only', '100::1'],
     ['Teredo', '2001::1'],
     ['protocol assignments 2001::/23', '2001:1ff::1'],
@@ -86,7 +88,7 @@ describe('IPv6', () => {
     test(`refuses ${what}: ${ip}`, () => expect(isPublicAddress(ip)).toBe(false));
   }
 
-  const allowed = ['2606:4700:4700::1111', '2001:4860:4860::8888', '2a00:1450:4001:80b::200e', '::ffff:8.8.8.8', '::ffff:1.1.1.1', '64:ff9b::808:808', '2001:200::1', '3ffe::1', '3fff:1000::1'];
+  const allowed = ['2606:4700:4700::1111', '2001:4860:4860::8888', '2a00:1450:4001:80b::200e', '2600:1f18::1', '::ffff:8.8.8.8', '::ffff:1.1.1.1', '64:ff9b::808:808', '2001:200::1', '3ffe::1', '3fff:1000::1'];
   for (const ip of allowed) {
     test(`allows the public ${ip}`, () => expect(isPublicAddress(ip)).toBe(true));
   }

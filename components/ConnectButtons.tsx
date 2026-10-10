@@ -15,7 +15,7 @@ import type { LinkKind } from '@/lib/item-products';
  *  ways and only started when chosen. */
 export const SIMPLEFIN_OPTION = {
   label: 'Connect with SimpleFIN',
-  note: 'Bring your own sync: your own SimpleFIN account ($15 a year, paid to SimpleFIN) reaches banks Plaid doesn’t, and Redbark in Australia and New Zealand.',
+  note: 'Bring your own sync: your own SimpleFIN account ($15 a year, paid to SimpleFIN) may reach banks Plaid doesn’t. Redbark, a separate paid service that works the same way, covers Australia and New Zealand.',
 } as const;
 
 /** What each way is called, and what it is for. */

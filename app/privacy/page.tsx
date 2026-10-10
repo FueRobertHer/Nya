@@ -110,7 +110,7 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
   ],
   [
     'SimpleFIN, if you connect it',
-    'Only if you connect your own SimpleFIN account, which you pay SimpleFIN for (or another server that speaks its protocol, such as Redbark). It holds your bank connections, made through the provider it uses to reach banks, under its own terms, and sees when Nya asks. Nya keeps the read-only access it gives Nya, encrypted. About once a day Nya reads your accounts there, and keeps the balances and transactions of the ones you choose to track, and only the names of the others.',
+    'Only if you connect your own SimpleFIN account, which you pay SimpleFIN for (or another paid service that speaks its protocol, such as Redbark). It holds your bank connections, made through the provider it uses to reach banks, under its own terms, and sees when Nya asks. Nya keeps the read-only access it gives Nya, encrypted. About once a day Nya reads your accounts there, and keeps the balances and transactions of the ones you choose to track, and only the names of the others.',
   ],
   [
     'Clerk',
@@ -158,7 +158,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   ],
   [
     'A SimpleFIN connection',
-    'The access SimpleFIN gave Nya, encrypted, and never in your download: until you disconnect it, or delete your account. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
+    'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
   ],
   ['Nightly backups', backupsRow(backups)],
   [

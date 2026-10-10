@@ -5,10 +5,10 @@
 // didn't choose to track except in the answer to connecting, which lists
 // what SimpleFIN offers with its balances to choose from, from memory, once.
 
-import type { ConnectorAccount, ConnectorConnection } from './store';
+import type { ConnectorAccount, ConnectorConnection, OwedSign } from './store';
 import type { ConnectorKind, FailureKind, RemoteAnswer } from './types';
 import { connectorOf } from './registry';
-import { nyaBalance } from './institutions';
+import { needsSign, nyaBalance, trackedElsewhere } from './institutions';
 import { connectorSite } from './health';
 
 export type AccountView = {
@@ -17,8 +17,15 @@ export type AccountView = {
   institution_name: string;
   type: string;
   currency: string;
-  /** In Nya's sign; null before an answer held one. */
+  /** In Nya's sign; null before an answer held one, and while a card's or a
+   *  loan's positive balance waits for the person to say how to read it. */
   balance: number | null;
+  /** As SimpleFIN reported it: positive held, negative owed by its rule. */
+  reported: number | null;
+  /** How the person said to read a card's or a loan's sign, if they did. */
+  sign: OwedSign | null;
+  /** A card or a loan reported as money held, not yet read either way. */
+  needs_sign: boolean;
   balance_at: string | null;
 };
 
@@ -33,6 +40,10 @@ export type OfferView = {
   /** As SimpleFIN reports it: positive held, negative owed. */
   balance?: number;
   balance_at?: string | null;
+  /** The host of another connection that tracks this account already (or
+   *  the connector's name, when that connection is gone): it can't be tracked
+   *  here too. Null when none does. */
+  elsewhere: string | null;
 };
 
 export type FetchView = {
@@ -77,12 +88,26 @@ export function accountView(a: ConnectorAccount): AccountView {
     type: a.type,
     currency: a.currency,
     balance: nyaBalance(a),
+    reported: a.reported_balance,
+    sign: a.sign ?? null,
+    needs_sign: needsSign(a),
     balance_at: a.balance_at ?? a.fetched_at,
   };
 }
 
-/** One connection as the screens show it. */
-export function connectionView(connection_id: string, conn: ConnectorConnection, accounts: ConnectorAccount[]): ConnectionView {
+/** The accounts other connections track, with their hosts, for marking an
+ *  offer as tracked elsewhere (lib/connectors/institutions.ts trackedElsewhere). */
+export type Others = readonly { account: ConnectorAccount; host: string | null }[];
+
+/** Where an offer is tracked already, for OfferView.elsewhere. */
+function elsewhereOf(offer: { remote_id: string; name: string; institution: string }, conn: ConnectorConnection, others: Others): string | null {
+  const there = trackedElsewhere(offer, conn.host, others);
+  return there ? (there.host ?? connectorOf(conn.connector).label) : null;
+}
+
+/** One connection as the screens show it. `others`: the accounts other
+ *  connections track, so an offer one of them tracks says so. */
+export function connectionView(connection_id: string, conn: ConnectorConnection, accounts: ConnectorAccount[], others: Others = []): ConnectionView {
   const label = connectorOf(conn.connector).label;
   const nameOf = new Map(accounts.map((a) => [a.account_id, a.name]));
   const f = conn.last_fetch;
@@ -116,13 +141,20 @@ export function connectionView(connection_id: string, conn: ConnectorConnection,
       .filter((a) => a.connection_id === connection_id)
       .sort((x, y) => x.institution_name.localeCompare(y.institution_name) || x.name.localeCompare(y.name))
       .map(accountView),
-    available: conn.available.map((a) => ({ remote_id: a.remote_id, name: a.name, institution: a.institution, currency: a.currency, currency_text: a.currency_text })),
+    available: conn.available.map((a) => ({
+      remote_id: a.remote_id,
+      name: a.name,
+      institution: a.institution,
+      currency: a.currency,
+      currency_text: a.currency_text,
+      elsewhere: elsewhereOf(a, conn, others),
+    })),
   };
 }
 
 /** The accounts an answer offers that aren't tracked, with their balances as
  *  SimpleFIN reported them, for choosing right after connecting. */
-export function offersIn(answer: RemoteAnswer, tracked: ReadonlySet<string>): OfferView[] {
+export function offersIn(answer: RemoteAnswer, tracked: ReadonlySet<string>, conn: ConnectorConnection | null = null, others: Others = []): OfferView[] {
   return answer.accounts
     .filter((a) => !tracked.has(a.remote_id))
     .map((a) => ({
@@ -133,5 +165,6 @@ export function offersIn(answer: RemoteAnswer, tracked: ReadonlySet<string>): Of
       currency_text: a.currency_text,
       balance: a.balance,
       balance_at: a.balance_at,
+      elsewhere: conn ? elsewhereOf({ remote_id: a.remote_id, name: a.name, institution: a.institution.name }, conn, others) : null,
     }));
 }

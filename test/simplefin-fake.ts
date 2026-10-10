@@ -78,6 +78,9 @@ export class FakeSimplefin {
   extra: Record<string, unknown> = {};
   readonly seen: SeenRequest[] = [];
   behaviour: Behaviour | null = null;
+  /** An answer of a test's own for a request (when it likes, later), or null
+   *  for the usual one. */
+  override: ((url: URL) => Response | Promise<Response> | null) | null = null;
   /** Hosts other than bridge.test, and the address each resolves to. */
   readonly names = new Map<string, string[]>();
   private server!: ReturnType<typeof Bun.serve>;
@@ -109,6 +112,7 @@ export class FakeSimplefin {
     this.extra = {};
     this.seen.length = 0;
     this.behaviour = null;
+    this.override = null;
     this.names.clear();
   }
 
@@ -157,6 +161,8 @@ export class FakeSimplefin {
       authorization,
     });
     const kind = url.pathname.startsWith('/simplefin/claim/') ? 'claim' : url.pathname === '/simplefin/accounts' ? 'accounts' : 'other';
+    const own = this.override?.(url);
+    if (own) return own;
     const b = this.behaviour;
     if (b && (!b.on || b.on === kind)) {
       if (b.times !== undefined && --b.times <= 0) this.behaviour = null;

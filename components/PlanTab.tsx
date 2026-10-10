@@ -67,6 +67,7 @@ import {
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
 import { assetsLeftOut, fiFigures, measuredInputs, spendingLeftOut, transactionCoverage, transactionsMissing } from '@/lib/fire/progress';
+import { uncategorizedNote } from '@/lib/spending';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding } from '@/lib/allocation/allocation';
@@ -762,6 +763,7 @@ export function FiCard({
         source={`from ${windowText(flows)}${parts.length ? `. Includes ${parts.join(' and ')}` : ''}${refunds}.${cashNote}${excluded}${alsoNamed}`}
         warnings={[
           leftOut.otherCurrencies,
+          uncategorizedNote(flows.uncategorized ?? 0),
           cashHint,
           flows.unclearLoans > 0
             ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`

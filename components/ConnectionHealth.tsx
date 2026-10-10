@@ -384,7 +384,8 @@ export function ConnectionHealthView({
 }
 
 /** What a SimpleFIN row offers: fixing it at SimpleFIN, then a Refresh;
- *  connecting again with a new Setup Token; choosing accounts; a Refresh. */
+ *  connecting again with a new Setup Token; choosing accounts; saying how to
+ *  read a card's or a loan's balance; a Refresh. */
 function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { health: Health }; onConnector?: (ask: ConnectorAsk) => void }) {
   const d = inst.health.detail;
   const id = d?.connection_id;
@@ -406,6 +407,12 @@ function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { he
           </button>
         </div>
       );
+    case 'sign':
+      return (
+        <div className="card-actions">
+          <button onClick={() => onConnector({ kind: 'sign', connection_id: id })}>Answer</button>
+        </div>
+      );
     case 'gone':
       return (
         <div className="card-actions">
@@ -415,6 +422,7 @@ function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { he
         </div>
       );
     case 'reported':
+    case 'old_balance':
     case 'payment':
     case 'down':
     case 'answer':
@@ -423,7 +431,7 @@ function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { he
     case 'waiting':
       return (
         <div className="card-actions">
-          {(d.issue === 'reported' || d.issue === 'payment') && site && (
+          {(d.issue === 'reported' || d.issue === 'old_balance' || d.issue === 'payment') && site && (
             <a className="connector-site" href={site} target="_blank" rel="noreferrer">
               Open {d.label}
             </a>

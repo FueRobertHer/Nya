@@ -31,13 +31,13 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 const { setTransportForTests } = await import('@/lib/connectors/http');
-const { connect, trackAccounts, retypeAccounts, releaseAccounts, disconnect, reconnect, MAX_CONNECTIONS } = await import('@/lib/connectors/manage');
+const { connect, trackAccounts, retypeAccounts, releaseAccounts, disconnect, reconnect, confirmSigns, othersOf, MAX_CONNECTIONS } = await import('@/lib/connectors/manage');
 const sync = await import('@/lib/connectors/sync');
 const { syncConnection, syncConnectorsDaily, recentStart, advanceHistory, backfillWindow, DAILY_REQUESTS, REFRESH_RESERVE, BACKFILL_WINDOWS_PER_RUN } = sync;
 const { connectionsStore, connectorAccountsStore, secretsStore } = await import('@/lib/connectors/store');
-const { buildConnectorInstitutions, FRESH_HOURS } = await import('@/lib/connectors/institutions');
+const { buildConnectorInstitutions, FRESH_HOURS, trackedElsewhere } = await import('@/lib/connectors/institutions');
 const { computeNetWorth, recordFetch, isRecordable } = await import('@/lib/networth');
-const { manualTxnStore, editManualTxn, findManualTxn } = await import('@/lib/manual-txns');
+const { manualTxnStore, editManualTxn, findManualTxn, connectorTransfers } = await import('@/lib/manual-txns');
 const { getManualAccounts } = await import('@/lib/manual');
 const { getAccountHistory, recordSnapshot } = await import('@/lib/history');
 const { setAccountHidden, getHiddenAccounts } = await import('@/lib/hidden');
@@ -192,10 +192,12 @@ describe('connecting', () => {
 });
 
 describe('tracking and fetching', () => {
-  test('the first fetch asks for the last 90 days and keeps posted transactions in Plaid’s sign, under SimpleFIN’s ids', async () => {
+  test('the first fetch asks for under 90 days and keeps posted transactions in Plaid’s sign, under SimpleFIN’s ids', async () => {
     const id = await connectAndTrack();
     const fetch = server.accountRequests.at(-1)!;
-    expect(fetch.query).toEqual({ 'start-date': String(Date.parse(`${dayOf(NOW - 90 * DAY)}T00:00:00Z`) / 1000) });
+    // From 00:00 UTC 89 days ago, with no end: under 90 days, however late today it runs.
+    expect(fetch.query).toEqual({ 'start-date': String(Date.parse(`${dayOf(NOW - 89 * DAY)}T00:00:00Z`) / 1000) });
+    expect((NOW / 1000 - Number(fetch.query['start-date'])) / 86_400).toBeLessThan(90);
     const accounts = await accountsByRemote();
     const chk = await rowsOf(accounts.get('CHK')!.account_id);
     expect(chk.map((r) => [r.source, r.source_id, r.amount, r.name, r.date]).sort()).toEqual(
@@ -214,7 +216,7 @@ describe('tracking and fetching', () => {
     // Balances as reported, and the time the bank gave them.
     expect(accounts.get('CARD')).toMatchObject({ reported_balance: -432.1, type: 'credit', balance_at: new Date(ago(1) * 1000).toISOString() });
     const conn = (await connectionsStore.get(ctx, id))!;
-    expect(conn.history).toEqual({ from: dayOf(NOW - 90 * DAY), to: TODAY, complete: false, failed: null });
+    expect(conn.history).toEqual({ from: dayOf(NOW - 89 * DAY), to: TODAY, complete: false, failed: null });
     expect(conn.available).toEqual([]);
     expect(conn.tracked.map((t) => t.remote_id).sort()).toEqual(['CARD', 'CHK', 'SAV']);
   });
@@ -307,10 +309,10 @@ describe('tracking and fetching', () => {
 describe('windows and older history', () => {
   const def = { windowDays: 90, overlapDays: 5 };
 
-  test('the recent window starts five days into what was fetched, and never more than 90 days ago', () => {
-    expect(recentStart(null, '2026-10-09', def)).toBe('2026-07-11');
+  test('the recent window starts five days into what was fetched, and never 90 days back or more', () => {
+    expect(recentStart(null, '2026-10-09', def)).toBe('2026-07-12');
     expect(recentStart({ from: '2026-01-01', to: '2026-10-08', complete: true }, '2026-10-09', def)).toBe('2026-10-03');
-    expect(recentStart({ from: '2026-01-01', to: '2026-05-01', complete: true }, '2026-10-09', def)).toBe('2026-07-11');
+    expect(recentStart({ from: '2026-01-01', to: '2026-05-01', complete: true }, '2026-10-09', def)).toBe('2026-07-12');
   });
 
   test('history joins up when the window overlaps, and starts again after a gap', () => {
@@ -326,7 +328,7 @@ describe('windows and older history', () => {
     expect(backfillWindow(null, def)).toBeNull();
   });
 
-  test('the daily run walks back a window at a time, adds what overlaps once, and stops when there is nothing older', async () => {
+  test('the daily run walks back a window at a time, adds what overlaps once, and stops after two whole windows with nothing older', async () => {
     const id = await connectAndTrack([['CHK', 'depository']]);
     const chkId = (await accountsByRemote()).get('CHK')!.account_id;
     // History beyond the first window: 120, 150 and 200 days ago, and one on
@@ -341,18 +343,20 @@ describe('windows and older history', () => {
     expect(first.backfilled.windows).toBe(BACKFILL_WINDOWS_PER_RUN);
     const asked = server.accountRequests.slice(before).map((r) => r.query);
     expect(asked).toEqual([
-      { 'start-date': String(Date.parse(`${dayOf(NOW - 175 * DAY)}T00:00:00Z`) / 1000), 'end-date': String(Date.parse(`${dayOf(NOW - 85 * DAY)}T00:00:00Z`) / 1000) },
-      { 'start-date': String(Date.parse(`${dayOf(NOW - 260 * DAY)}T00:00:00Z`) / 1000), 'end-date': String(Date.parse(`${dayOf(NOW - 170 * DAY)}T00:00:00Z`) / 1000) },
+      { 'start-date': String(Date.parse(`${dayOf(NOW - 174 * DAY)}T00:00:00Z`) / 1000), 'end-date': String(Date.parse(`${dayOf(NOW - 84 * DAY)}T00:00:00Z`) / 1000) },
+      { 'start-date': String(Date.parse(`${dayOf(NOW - 259 * DAY)}T00:00:00Z`) / 1000), 'end-date': String(Date.parse(`${dayOf(NOW - 169 * DAY)}T00:00:00Z`) / 1000) },
     ]);
     const ids = (await rowsOf(chkId)).map((r) => r.source_id);
     expect(ids.filter((x) => x === 'edge').length).toBe(1);
     expect(['old1', 'old2', 'old3'].every((x) => ids.includes(x))).toBe(true);
-    expect((await connectionsStore.get(ctx, id))!.history).toMatchObject({ from: dayOf(NOW - 260 * DAY), complete: false });
-    // The next night (a new day's requests): its window brings nothing older,
-    // so history is complete.
+    expect((await connectionsStore.get(ctx, id))!.history).toMatchObject({ from: dayOf(NOW - 259 * DAY), complete: false, empty: 0 });
+    // The next night (a new day's requests): its two windows bring nothing
+    // older, the first a quiet stretch that might have more before it, the
+    // second the end: history is complete.
     await nextDay();
-    await syncConnection(ctx, id, { purpose: 'daily', now: NOW });
-    expect((await connectionsStore.get(ctx, id))!.history).toMatchObject({ complete: true });
+    const second = await syncConnection(ctx, id, { purpose: 'daily', now: NOW });
+    expect(second.backfilled.windows).toBe(2);
+    expect((await connectionsStore.get(ctx, id))!.history).toMatchObject({ complete: true, empty: 2 });
     const after = server.accountRequests.length;
     await syncConnection(ctx, id, { purpose: 'daily', now: NOW });
     expect(server.accountRequests.length).toBe(after);
@@ -534,9 +538,10 @@ describe('the snapshot gate and connection health', () => {
     server.accounts[0].balance = '1600.00';
     // As the catch-up would find it: the last answer old enough to ask again.
     await connectionsStore.update(ctx, id, (c) => (c ? { ...c, last_answer_at: new Date(NOW - 13 * 3_600_000).toISOString() } : c));
-    const ready = syncConnectorsDaily(ctx);
-    const { institutions } = await computeNetWorth(ctx, { connectorsReady: ready });
+    const daily = syncConnectorsDaily(ctx);
+    const { institutions } = await computeNetWorth(ctx, { connectorsReady: daily.recent });
     expect(instOf(institutions, 'My Bank').accounts.find((a) => a.name === 'Checking')?.balance).toBe(1600);
+    await daily.done;
   });
 });
 
@@ -562,7 +567,7 @@ describe('letting accounts go', () => {
     const { institutions } = await computeNetWorth(ctx);
     expect(institutions.every((i) => i.manual && !i.connector)).toBe(true);
     const requests = server.accountRequests.length;
-    await syncConnectorsDaily(ctx);
+    await syncConnectorsDaily(ctx).done;
     expect(server.accountRequests.length).toBe(requests);
   });
 
@@ -621,7 +626,7 @@ describe('containers', () => {
     expect(mineKeys().length).toBeGreaterThan(0);
     // Reaching for their connection from mine finds nothing, and changes nothing there.
     expect((await syncConnection(ctx, theirs, { purpose: 'refresh', now: NOW })).skipped).toBe('gone');
-    await syncConnectorsDaily(ctx);
+    await syncConnectorsDaily(ctx).done;
     await disconnect(ctx, theirs, false, NOW);
     expect(snapshot()).toBe(before);
     expect((await computeNetWorth(OTHER)).institutions.map((i) => i.institution_name)).toEqual(['Second Credit Union']);
@@ -631,16 +636,306 @@ describe('containers', () => {
 });
 
 describe('the bank’s transactions', () => {
-  test('keep their date, amount and payee: only their category and note change, and they are never deleted alone', async () => {
+  test('keep their date, amount, payee and note: only their category changes, and they are never deleted alone', async () => {
     await connectAndTrack([['CHK', 'depository']]);
     const chk = (await accountsByRemote()).get('CHK')!;
     const row = (await rowsOf(chk.account_id))[0];
-    const amount = await editManualTxn(ctx, row.id, { amount: 1 }, { from: chk.account_id }).catch((e) => e);
-    expect([amount.name, amount.message]).toEqual(['InvalidTxnError', expect.stringContaining('through SimpleFIN')]);
-    const saved = await editManualTxn(ctx, row.id, { category: 'groceries', note: 'weekly shop' }, { from: chk.account_id });
-    expect([saved?.category, saved?.note, saved?.amount]).toEqual(['groceries', 'weekly shop', row.amount]);
+    for (const change of [{ amount: 1 }, { note: 'weekly shop' }]) {
+      const refused = await editManualTxn(ctx, row.id, change, { from: chk.account_id }).catch((e) => e);
+      expect([refused.name, refused.message]).toEqual(['InvalidTxnError', expect.stringContaining('Its category is yours to change')]);
+    }
+    const saved = await editManualTxn(ctx, row.id, { category: 'groceries' }, { from: chk.account_id });
+    expect([saved?.category, saved?.note, saved?.amount]).toEqual(['groceries', null, row.amount]);
     const { deleteManualTxn } = await import('@/lib/manual-txns');
     expect((await deleteManualTxn(ctx, row.id, chk.account_id).catch((e) => e)).name).toBe('InvalidTxnError');
     expect(await findManualTxn(ctx, row.id, chk.account_id)).not.toBeNull();
+  });
+});
+
+// ---- What the review found, each held to its fix ----
+
+const bankOf = (list: Awaited<ReturnType<typeof computeNetWorth>>['institutions'], name = 'My Bank') => list.find((i) => i.institution_name === name)!;
+const balanceOf = (list: Awaited<ReturnType<typeof computeNetWorth>>['institutions'], name: string) => list.flatMap((i) => i.accounts).find((a) => a.name === name)?.balance;
+
+/** Connects with the given accounts on the server, and tracks the chosen ones. */
+async function trackOn(accounts: ReturnType<typeof fakeAccount>[], choices: [string, 'depository' | 'credit' | 'investment' | 'loan' | 'other'][], c = ctx) {
+  server.accounts = accounts;
+  const { connection_id } = await connect(c, 'simplefin', server.setupToken(`t-${Math.random()}`), NOW);
+  await trackAccounts(c, connection_id, choices.map(([remote_id, type]) => ({ remote_id, type })), NOW);
+  return connection_id;
+}
+
+describe('a card or a loan SimpleFIN reports as money held', () => {
+  for (const type of ['credit', 'loan'] as const) {
+    test(`a ${type} with a positive balance is never counted until the person says how to read it, then counts their way`, async () => {
+      await trackOn(
+        [fakeAccount({ id: 'CHK', name: 'Checking', balance: '1000.00', 'balance-date': ago(1) }), fakeAccount({ id: 'OWED', name: 'Owed', balance: '500.00', 'balance-date': ago(1) })],
+        [
+          ['CHK', 'depository'],
+          ['OWED', type],
+        ]
+      );
+      const owed = (await accountsByRemote()).get('OWED')!;
+      // Unconfirmed: no balance at all, the bank held, nothing recorded, the person asked.
+      let read = await computeNetWorth(ctx);
+      expect(read.netWorth).toBe(1000);
+      expect(balanceOf(read.institutions, 'Owed')).toBeNull();
+      expect(read.institutions.every(isRecordable)).toBe(false);
+      expect(bankOf(read.institutions).health).toMatchObject({ state: 'partial', side: 'you', detail: { issue: 'sign', messages: ['Owed (+$500.00)'], accounts: ['Owed'] } });
+      expect((await recordFetch(ctx, read.institutions, read.netWorth)).date).toBeNull();
+      // Not shared, and not in the estimated history, while it has no balance.
+      expect((await getKeptAccounts(ctx)).map((a) => a.name)).toEqual(['Checking']);
+      // "SimpleFIN reports what I owe as positive": a debt of 500.
+      expect(await confirmSigns(ctx, [{ account_id: owed.account_id, sign: 'owed_positive' }])).toBe(1);
+      read = await computeNetWorth(ctx);
+      expect([read.netWorth, balanceOf(read.institutions, 'Owed'), read.institutions.every(isRecordable)]).toEqual([500, 500, true]);
+      // "It is money held, as reported": a credit of 500.
+      await confirmSigns(ctx, [{ account_id: owed.account_id, sign: 'as_reported' }]);
+      read = await computeNetWorth(ctx);
+      expect([read.netWorth, balanceOf(read.institutions, 'Owed'), read.institutions.every(isRecordable)]).toEqual([1500, -500, true]);
+    });
+  }
+
+  test('a negative balance on a card is owed by the protocol’s own rule, and asks nothing; neither does a positive one on checking', async () => {
+    await trackOn(
+      [fakeAccount({ id: 'CARD', name: 'Visa', balance: '-432.10', 'balance-date': ago(1) }), fakeAccount({ id: 'CHK', name: 'Checking', balance: '50.00', 'balance-date': ago(1) })],
+      [
+        ['CARD', 'credit'],
+        ['CHK', 'depository'],
+      ]
+    );
+    const read = await computeNetWorth(ctx);
+    expect([balanceOf(read.institutions, 'Visa'), balanceOf(read.institutions, 'Checking'), read.netWorth]).toEqual([432.1, 50, 50 - 432.1]);
+    expect(read.institutions.every(isRecordable)).toBe(true);
+  });
+
+  test('the answer is kept per account, and only for a card or a loan', async () => {
+    await trackOn([fakeAccount({ id: 'CHK', name: 'Checking', balance: '10.00', 'balance-date': ago(1) })], [['CHK', 'depository']]);
+    const chk = (await accountsByRemote()).get('CHK')!;
+    expect(await confirmSigns(ctx, [{ account_id: chk.account_id, sign: 'owed_positive' }])).toBe(0);
+    expect((await accountsByRemote()).get('CHK')!.sign ?? null).toBeNull();
+  });
+});
+
+describe('the bank’s own balance date', () => {
+  test('a balance from days ago is never recorded as current: the bank is held, with its date, on SimpleFIN’s side', async () => {
+    await trackOn([fakeAccount({ id: 'CHK', name: 'Checking', balance: '1000.00', 'balance-date': ago(20) })], [['CHK', 'depository']]);
+    const { institutions } = await computeNetWorth(ctx);
+    const bank = bankOf(institutions);
+    expect(isRecordable(bank)).toBe(false);
+    expect(bank.error).toBe(`SimpleFIN's latest balance is from ${new Date(ago(20) * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`);
+    expect(bank.health).toMatchObject({ side: 'connector', detail: { issue: 'old_balance', messages: [new Date(ago(20) * 1000).toISOString()] } });
+    // Shown as last known, with the bank's own date.
+    expect(bank.stale_as_of).toBe(dayOf(ago(20) * 1000));
+    expect(bank.accounts[0]).toMatchObject({ balance: 1000, stale: true, updated_at: new Date(ago(20) * 1000).toISOString() });
+  });
+
+  test('one from two days ago still counts', async () => {
+    await trackOn([fakeAccount({ id: 'CHK', name: 'Checking', balance: '1000.00', 'balance-date': ago(2) })], [['CHK', 'depository']]);
+    expect((await computeNetWorth(ctx)).institutions.every(isRecordable)).toBe(true);
+  });
+});
+
+describe('the daily run asks again whenever the bank is held', () => {
+  test('an account with no balance yet (its first fetch out of requests) is asked for by the next run, not skipped as fresh', async () => {
+    const id = await trackOn([fakeAccount({ id: 'CHK', name: 'Checking' }), fakeAccount({ id: 'SAV', name: 'Savings' })], [['CHK', 'depository']]);
+    for (let i = 0; i < DAILY_REQUESTS; i++) await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    const tracked = await trackAccounts(ctx, id, [{ remote_id: 'SAV', type: 'depository' }], NOW);
+    expect(tracked?.skipped).toBe('budget');
+    expect((await computeNetWorth(ctx)).institutions.every(isRecordable)).toBe(false);
+    await nextDay();
+    const daily = await syncConnection(ctx, id, { purpose: 'daily', now: NOW + 2 * 3_600_000 });
+    expect(daily.skipped).toBeNull();
+    expect((await computeNetWorth(ctx)).institutions.every(isRecordable)).toBe(true);
+  });
+
+  test('a problem SimpleFIN reported is asked about again within twelve hours, and a whole answer is not', async () => {
+    const id = await trackOn([fakeAccount({ id: 'CHK', name: 'Checking' })], [['CHK', 'depository']]);
+    server.errors = ['Connection to My Bank may need attention'];
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    server.errors = [];
+    const again = await syncConnection(ctx, id, { purpose: 'daily', now: NOW + 3_600_000 });
+    expect(again.skipped).toBeNull();
+    expect((await computeNetWorth(ctx)).institutions.every(isRecordable)).toBe(true);
+    expect((await syncConnection(ctx, id, { purpose: 'daily', now: NOW + 2 * 3_600_000 })).skipped).toBe('fresh');
+  });
+
+  test('the last clean sync is the last answer with no problem about the bank, not the latest answer', async () => {
+    const id = await trackOn([fakeAccount({ id: 'CHK', name: 'Checking', 'balance-date': ago(1) })], [['CHK', 'depository']]);
+    const clean = new Date(ago(1) * 1000).toISOString();
+    expect(bankOf((await computeNetWorth(ctx)).institutions).health?.last_ok_at).toBe(clean);
+    server.accounts[0]['balance-date'] = ago(0);
+    server.errors = ['Connection to My Bank may need attention'];
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect(bankOf((await computeNetWorth(ctx)).institutions).health?.last_ok_at).toBe(clean);
+    server.errors = [];
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect(bankOf((await computeNetWorth(ctx)).institutions).health?.last_ok_at).toBe(new Date(ago(0) * 1000).toISOString());
+  });
+});
+
+describe('the daily run beside the snapshot', () => {
+  test('the day’s total waits only for the recent window; older history goes on, and the run waits for it at the end', async () => {
+    const id = await connectAndTrack([['CHK', 'depository']]);
+    // As the catch-up would find it: the last answer old enough to ask again.
+    await connectionsStore.update(ctx, id, (c) => (c ? { ...c, last_answer_at: new Date(NOW - 13 * 3_600_000).toISOString() } : c));
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    server.override = (url) => (url.searchParams.has('end-date') ? held.then(() => Response.json({ errors: [], accounts: [] })) : null);
+    const daily = syncConnectorsDaily(ctx);
+    let finished = false;
+    void daily.done.then(() => (finished = true));
+    await daily.recent;
+    const { institutions } = await computeNetWorth(ctx, { connectorsReady: daily.recent });
+    expect(institutions.every(isRecordable)).toBe(true);
+    expect(finished).toBe(false);
+    release();
+    await daily.done;
+    expect(finished).toBe(true);
+  });
+});
+
+describe('older history, from whole answers only', () => {
+  test('a window missing the account, or reporting a problem with its bank, ends nothing: it is asked again, and the older rows come', async () => {
+    const id = await trackOn([fakeAccount({ id: 'CHK', name: 'Checking', transactions: [txn('n1', 5, '-1.00'), txn('old', 120, '-9.00')] })], [['CHK', 'depository']]);
+    const chk = (await accountsByRemote()).get('CHK')!;
+    server.override = (url) => (url.searchParams.has('end-date') ? Response.json({ errors: ['Connection to My Bank may need attention'], accounts: [] }) : null);
+    const first = await syncConnection(ctx, id, { purpose: 'daily', now: NOW });
+    expect(first.backfilled.windows).toBe(1);
+    let history = (await connectionsStore.get(ctx, id))!.history!;
+    expect(history).toMatchObject({ from: dayOf(NOW - 89 * DAY), complete: false });
+    expect(history.failed).toBeTruthy();
+    expect((await rowsOf(chk.account_id)).some((r) => r.source_id === 'old')).toBe(false);
+    server.override = null;
+    await nextDay();
+    await syncConnection(ctx, id, { purpose: 'daily', now: NOW });
+    history = (await connectionsStore.get(ctx, id))!.history!;
+    expect(history.failed).toBeNull();
+    expect((await rowsOf(chk.account_id)).some((r) => r.source_id === 'old')).toBe(true);
+  });
+
+  test('a recent answer that isn’t whole doesn’t move history on, so the next one asks from where the last whole one ended', async () => {
+    const id = await trackOn([fakeAccount({ id: 'CHK', name: 'Checking' })], [['CHK', 'depository']]);
+    const before = (await connectionsStore.get(ctx, id))!.history!;
+    server.errors = ['Connection to My Bank may need attention'];
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW + 3 * DAY });
+    expect((await connectionsStore.get(ctx, id))!.history).toEqual(before);
+  });
+
+  test('while older history is still coming, Activity says the bank is importing; once complete, it doesn’t', async () => {
+    const id = await trackOn([fakeAccount({ id: 'CHK', name: 'Checking' })], [['CHK', 'depository']]);
+    const { readManualTxnsForDisplay } = await import('@/lib/manual-txns');
+    const read = () => readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '2000-01-01' });
+    expect((await read()).incomplete).toEqual([{ institution_name: 'My Bank', coverage: 'importing' }]);
+    await connectionsStore.update(ctx, id, (c) => (c ? { ...c, history: { ...c.history!, complete: true } } : c));
+    expect((await read()).incomplete).toEqual([]);
+  });
+});
+
+describe('never the same account twice', () => {
+  test('an account another connection tracks is refused, saying why, and shown as tracked elsewhere', async () => {
+    seedServer();
+    const first = await connectAndTrack([['CHK', 'depository']]);
+    seedServer();
+    const { connection_id: second } = await connect(ctx, 'simplefin', server.setupToken(`t-${Math.random()}`), NOW);
+    const refused = await trackAccounts(ctx, second, [{ remote_id: 'CHK', type: 'depository' }], NOW).catch((e) => e);
+    expect([refused.name, refused.status, refused.message]).toEqual([
+      'ConnectorRefused',
+      409,
+      `Checking at My Bank is already tracked through your other SimpleFIN connection (bridge.test:${server.port}), so it isn't tracked again here: it would be counted twice.`,
+    ]);
+    // The other accounts can be tracked here.
+    await trackAccounts(ctx, second, [{ remote_id: 'SAV', type: 'depository' }], NOW);
+    const all = [...(await connectorAccountsStore.getAll(ctx)).values()];
+    expect(all.map((a) => [a.remote_id, a.connection_id === first ? 'first' : 'second']).sort()).toEqual([
+      ['CHK', 'first'],
+      ['SAV', 'second'],
+    ]);
+    const conn = (await connectionsStore.get(ctx, second))!;
+    const { connectionView } = await import('@/lib/connectors/view');
+    const view = connectionView(second, conn, all, await othersOf(ctx, second, all));
+    expect(view.available.find((a) => a.remote_id === 'CHK')?.elsewhere).toBe(`bridge.test:${server.port}`);
+    expect(view.available.find((a) => a.remote_id === 'CARD')?.elsewhere).toBeNull();
+  });
+
+  test('on another server, the same bank and account name is the same account', () => {
+    const account = { remote_id: 'X1', name: 'Everyday  Checking', institution_name: 'Big Bank' } as Parameters<typeof trackedElsewhere>[2][number]['account'];
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK' }, 'other.host', [{ account, host: 'one.host' }])?.host).toBe('one.host');
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, 'other.host', [{ account, host: 'one.host' }])).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, 'one.host', [{ account, host: 'one.host' }])?.host).toBe('one.host');
+  });
+});
+
+describe('connecting again, and what was pasted', () => {
+  test('a new token forgets the old refusal: until it answers, the accounts wait for it, and never show it as the new token’s', async () => {
+    const id = await connectAndTrack([['CHK', 'depository']]);
+    server.behaviour = { on: 'accounts', status: 403 };
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    server.behaviour = null;
+    expect(bankOf((await computeNetWorth(ctx)).institutions).health?.detail?.issue).toBe('refused');
+    for (let i = 0; i < DAILY_REQUESTS; i++) await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    const again = await reconnect(ctx, id, server.setupToken(`t-${Math.random()}`), NOW);
+    expect(again.skipped).toBe('budget');
+    expect((await connectionsStore.get(ctx, id))!.last_fetch).toBeNull();
+    const bank = bankOf((await computeNetWorth(ctx)).institutions);
+    expect(bank.health?.detail?.issue).toBe('waiting');
+    expect(isRecordable(bank)).toBe(false);
+  });
+
+  test('something that isn’t a token is refused before it counts against the hour’s claims', async () => {
+    const { claimsCount } = await import('@/lib/connectors/store');
+    const refused = await connect(ctx, 'simplefin', 'not a token at all', NOW).catch((e) => e);
+    expect([refused.name, refused.kind]).toEqual(['ExchangeFailure', 'invalid']);
+    expect((await claimsCount.read(ctx)).count).toBe(0);
+  });
+
+  test('accounts are read before connections: with none tracked, a connection that can’t be read holds nothing up', async () => {
+    seedServer();
+    const { connection_id } = await connect(ctx, 'simplefin', server.setupToken(`t-${Math.random()}`), NOW);
+    await fake.hset(ctxKey('connector-connections'), { [connection_id]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const { institutions } = await computeNetWorth(ctx);
+    expect(institutions).toEqual([]);
+  });
+});
+
+describe('transfers between two SimpleFIN accounts', () => {
+  const row = (id: string, account_id: string, date: string, amount: number, over: Partial<Parameters<typeof connectorTransfers>[0][number]> = {}) =>
+    ({ id, account_id, date, amount, currency: 'USD', name: id, category: null, note: null, source: 'simplefin', source_id: id, created_at: '', updated_at: '', ...over }) as Parameters<typeof connectorTransfers>[0][number];
+
+  test('an exact opposite pair within a few days is a transfer; anything else is not', () => {
+    const pairs = connectorTransfers([
+      row('pay', 'chk', '2026-09-02', 2000),
+      row('thanks', 'card', '2026-09-03', -2000),
+      // Same account: not a move between two.
+      row('a', 'chk', '2026-09-05', 50),
+      row('b', 'chk', '2026-09-05', -50),
+      // Too far apart.
+      row('c', 'chk', '2026-09-01', 70),
+      row('d', 'sav', '2026-09-10', -70),
+      // Categorized by the person: theirs wins.
+      row('e', 'chk', '2026-09-12', 90, { category: 'rent' }),
+      row('f', 'sav', '2026-09-12', -90),
+      // Another currency.
+      row('g', 'chk', '2026-09-14', 30),
+      row('h', 'sav', '2026-09-14', -30, { currency: 'EUR' }),
+      // Typed by hand: never paired.
+      row('i', 'chk', '2026-09-16', 40),
+      row('j', 'wallet', '2026-09-16', -40, { source: 'manual' }),
+    ]);
+    expect([...pairs].sort()).toEqual(['pay', 'thanks']);
+  });
+
+  test('each side pairs once, with the nearest', () => {
+    const pairs = connectorTransfers([row('out', 'chk', '2026-09-10', 100), row('far', 'sav', '2026-09-13', -100), row('near', 'card', '2026-09-11', -100)]);
+    expect([...pairs].sort()).toEqual(['near', 'out']);
+  });
+});
+
+describe('dates and names in SimpleFIN’s answers', () => {
+  test('a message names a bank only as words of its own', async () => {
+    const { accountsNamedIn } = await import('@/lib/connectors/simplefin');
+    const ally = { remote_id: 'A', institution: { name: 'Ally', key: 'k', domain: null } } as Parameters<typeof accountsNamedIn>[1][number];
+    expect(accountsNamedIn('Connection to Rally Credit Union may need attention', [ally])).toBeNull();
+    expect(accountsNamedIn('Connection to Ally may need attention', [ally])).toEqual(['A']);
   });
 });

@@ -10,13 +10,20 @@
 // nothing is tracked until they do, and the balances of accounts they don't
 // choose are never stored. CONNECTING AGAIN, when SimpleFIN no longer accepts
 // Nya's access, claims a new token for the same connection: its accounts,
-// their history and their transactions stay, matched by SimpleFIN's ids.
+// their history and their transactions stay, matched by SimpleFIN's ids. What
+// the old access came to is forgotten with it: until the new one answers, the
+// accounts wait for it, never showing the old refusal as the new token's.
+// What was pasted is checked before anything is counted or sent.
 //
 // TRACKING an account gives it an id of its own ("manual_" and a random UUID,
 // see lib/connectors/institutions.ts), chosen inside the one compare-and-set
 // on the connection entry, so the same account tracked from two devices at
-// once is one account. Its history is then fetched afresh: the recent window
-// at once, the older windows over the following nights.
+// once is one account. One another connection already tracks (the same id on
+// the same host, or the same bank and account name) is refused, saying why:
+// tracked twice it would be counted twice. Its history is then fetched
+// afresh: the recent window at once, the older windows over the following
+// nights. A card or a loan whose balance comes positive waits for the person
+// to say how to read it (confirmSigns).
 //
 // LETTING GO, of one account or of the whole connection (a disconnect),
 // follows the rules of removing a Plaid connection: nothing Nya recorded of
@@ -36,10 +43,10 @@
 // SimpleFIN account themselves, and the routes say so.
 
 import type { Ctx } from '../containers';
-import { connectionsStore, connectorAccountsStore, secretsStore, claimsCount, CLAIMS_PER_HOUR, newConnectionId, type ConnectorAccount, type ConnectorConnection } from './store';
+import { connectionsStore, connectorAccountsStore, secretsStore, claimsCount, CLAIMS_PER_HOUR, newConnectionId, type ConnectorAccount, type ConnectorConnection, type OwedSign } from './store';
 import { connectorOf } from './registry';
 import { syncConnection, type SyncResult } from './sync';
-import { institutionRef, nyaBalance } from './institutions';
+import { institutionRef, nyaBalance, trackedElsewhere } from './institutions';
 import type { ConnectorKind } from './types';
 import { CLAIM_TIMEOUT_MS } from './simplefin';
 import { getManualAccounts, newManualId, saveManualAccount, MANUAL_TYPES, type ManualType } from '../manual';
@@ -49,9 +56,10 @@ import { MANY_AT_ONCE } from '../repo';
 import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
 import { loggable } from '../log-safe';
+import { isOwedType } from '../balance';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
- *  holds up to 25 institutions; a second is for another server that speaks
+ *  holds the person's banks there; a second is for another server that speaks
  *  the protocol (Redbark, say). */
 export const MAX_CONNECTIONS = 2;
 /** How many accounts connectors may feed one container. */
@@ -86,8 +94,10 @@ export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now:
   if ((await connectionsStore.count(ctx)) >= MAX_CONNECTIONS) {
     throw new ConnectorRefused(`Nya keeps at most ${MAX_CONNECTIONS} connections like this. Disconnect one first.`, 409);
   }
-  await takeClaim(ctx);
   const def = connectorOf(kind);
+  // Only what could be a token counts against the hour's claims.
+  def.checkInput(input);
+  await takeClaim(ctx);
   const { secret, host } = await def.exchange(input, { timeoutMs: CLAIM_TIMEOUT_MS });
   const connection_id = newConnectionId();
   const connection: ConnectorConnection = {
@@ -114,10 +124,14 @@ export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now:
 export async function reconnect(ctx: Ctx, connection_id: string, input: string, now: number = Date.now()): Promise<SyncResult> {
   const conn = await connectionsStore.get(ctx, connection_id);
   if (!conn) throw new ConnectorRefused('That connection no longer exists.', 404);
+  const def = connectorOf(conn.connector);
+  def.checkInput(input);
   await takeClaim(ctx);
-  const { secret, host } = await connectorOf(conn.connector).exchange(input, { timeoutMs: CLAIM_TIMEOUT_MS });
+  const { secret, host } = await def.exchange(input, { timeoutMs: CLAIM_TIMEOUT_MS });
   await secretsStore.set(ctx, connection_id, { connector: conn.connector, secret });
-  await connectionsStore.update(ctx, connection_id, (c) => (c ? { ...c, host } : c));
+  // The old access's last word goes with it (see the header).
+  await connectionsStore.update(ctx, connection_id, (c) => (c ? { ...c, host, last_fetch: null } : c));
+  await clearCaches(ctx);
   return syncConnection(ctx, connection_id, { purpose: 'refresh', now });
 }
 
@@ -141,8 +155,21 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
     if (!MANUAL_TYPES.includes(c.type)) throw new ConnectorRefused('Choose what kind of account each one is.', 400);
   }
   if (choices.length === 0) return null;
-  if ((await connectorAccountsStore.count(ctx)) + choices.length > MAX_CONNECTOR_ACCOUNTS) {
+  const all = await connectorAccountsStore.getAll(ctx);
+  if (all.size + choices.length > MAX_CONNECTOR_ACCOUNTS) {
     throw new ConnectorRefused(`Nya tracks at most ${MAX_CONNECTOR_ACCOUNTS} accounts through connectors.`, 400);
+  }
+  // Never the same account through two connections: it would be counted twice.
+  const others = await othersOf(ctx, connection_id, [...all.values()]);
+  for (const c of choices) {
+    const a = offered.get(c.remote_id)!;
+    const there = trackedElsewhere(a, conn.host, others);
+    if (there) {
+      throw new ConnectorRefused(
+        `${a.name} at ${a.institution} is already tracked through your other ${connectorOf(conn.connector).label} connection${there.host ? ` (${there.host})` : ''}, so it isn't tracked again here: it would be counted twice.`,
+        409
+      );
+    }
   }
 
   // Ids made once, outside the compare-and-set; inside it, an account tracked
@@ -205,9 +232,19 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   return result;
 }
 
-/** Changes what kind of account tracked accounts are. Their contribution to
- *  net worth stays the balance SimpleFIN reports; the kind says whether it is
- *  money held or owed. */
+/** The accounts other connections track, each with the host its connection
+ *  reaches (null when that connection's entry is gone). */
+export async function othersOf(ctx: Ctx, connection_id: string, accounts: ConnectorAccount[]): Promise<{ account: ConnectorAccount; host: string | null }[]> {
+  const theirs = accounts.filter((a) => a.connection_id !== connection_id);
+  if (theirs.length === 0) return [];
+  const connections = await connectionsStore.getMany(ctx, [...new Set(theirs.map((a) => a.connection_id))]);
+  return theirs.map((account) => ({ account, host: connections.get(account.connection_id)?.host ?? null }));
+}
+
+/** Changes what kind of account tracked accounts are. With the sign as the
+ *  protocol has it (owed negative), their contribution to net worth stays the
+ *  balance SimpleFIN reports, and the kind says whether it is money held or
+ *  owed; a card or a loan reported positive waits for confirmSigns. */
 export async function retypeAccounts(ctx: Ctx, changes: { account_id: string; type: ManualType }[]): Promise<number> {
   let changed = 0;
   for (let i = 0; i < changes.length; i += MANY_AT_ONCE) {
@@ -223,6 +260,41 @@ export async function retypeAccounts(ctx: Ctx, changes: { account_id: string; ty
           const a = current.get(c.account_id);
           if (!a || a.type === c.type) continue;
           writes.set(c.account_id, { ...a, type: c.type, subtype: null });
+          here++;
+        }
+        return writes;
+      }
+    );
+    changed += here;
+  }
+  if (changed > 0) {
+    await clearBackfillDone(ctx);
+    await clearCaches(ctx);
+  }
+  return changed;
+}
+
+/**
+ * Records how to read the sign of tracked cards' and loans' balances, as the
+ * person said (lib/connectors/institutions.ts SIGNS): once said, the balance
+ * counts. Returns how many changed; an account that isn't a card or a loan is
+ * left as it is.
+ */
+export async function confirmSigns(ctx: Ctx, answers: { account_id: string; sign: OwedSign }[]): Promise<number> {
+  let changed = 0;
+  for (let i = 0; i < answers.length; i += MANY_AT_ONCE) {
+    const chunk = answers.slice(i, i + MANY_AT_ONCE);
+    let here = 0;
+    await connectorAccountsStore.updateMany(
+      ctx,
+      chunk.map((c) => c.account_id),
+      (current) => {
+        here = 0; // this may run more than once
+        const writes = new Map<string, ConnectorAccount | null>();
+        for (const c of chunk) {
+          const a = current.get(c.account_id);
+          if (!a || !isOwedType(a.type) || a.sign === c.sign) continue;
+          writes.set(c.account_id, { ...a, sign: c.sign });
           here++;
         }
         return writes;

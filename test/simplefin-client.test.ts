@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import { FakeSimplefin, fakeAccount, at } from './simplefin-fake';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
+import { FakeSimplefin, fakeAccount, at, TEST_CERT } from './simplefin-fake';
 import { setTransportForTests, guardedRequest, UnsafeUrlError, RequestFailedError, MAX_REDIRECTS } from '@/lib/connectors/http';
 import { isPublicAddress } from '@/lib/connectors/net-guard';
 import { ConnectorFailure, ExchangeFailure } from '@/lib/connectors/types';
@@ -13,6 +16,8 @@ import {
   readTime,
   epochOfDay,
   accountsNamedIn,
+  accountsUrl,
+  namesWord,
   SIMPLEFIN,
 } from '@/lib/connectors/simplefin';
 
@@ -291,6 +296,43 @@ describe('reading accounts', () => {
   });
 });
 
+describe('where the accounts are read, and on which day', () => {
+  test('an Access URL whose path starts with "//" is read on its own host, never on the one the path names', async () => {
+    for (const [access, path] of [
+      ['https://u:p@bridge.test//evil.example', '//evil.example/accounts'],
+      ['https://u:p@bridge.test/%2F%2Fevil.example', '/%2F%2Fevil.example/accounts'],
+      ['https://u:p@bridge.test/simplefin/', '/simplefin/accounts'],
+      ['https://u:p@bridge.test', '/accounts'],
+    ] as const) {
+      const url = accountsUrl(parseAccessUrl(access)!);
+      expect([access, url.host, url.pathname]).toEqual([access, 'bridge.test', path]);
+    }
+    // And the request goes there, with the credentials, to the fake's own host.
+    const sneaky = `https://${fake.user}:${fake.password}@${fake.host}:${fake.port}//evil.example`;
+    await failure(fetchAccountSet(sneaky, { balancesOnly: true }, { timeoutMs: 3000 }));
+    expect(fake.seen.at(-1)).toMatchObject({ path: '//evil.example/accounts', authorized: true });
+  });
+
+  test('a transaction is dated by the UTC day of its posted time, the rule SimpleFIN Bridge’s noon stamps need', () => {
+    const answer = (posted: number) =>
+      readAccountSet({ accounts: [fakeAccount({ transactions: [{ id: 't', posted, amount: '-1.00', description: 'X' }] })] }).accounts[0].transactions[0].date;
+    // Noon UTC, SimpleFIN Bridge's stamp: its own day.
+    expect(answer(Date.parse('2026-10-05T12:00:00Z') / 1000)).toBe('2026-10-05');
+    // The last second of a UTC day stays in it; local midnight in New York (04:00 UTC) is its day too.
+    expect(answer(Date.parse('2026-10-05T23:59:59Z') / 1000)).toBe('2026-10-05');
+    expect(answer(Date.parse('2026-10-05T04:00:00Z') / 1000)).toBe('2026-10-05');
+    // Midnight in Sydney (14:00 UTC the day before) is read by its UTC day: a
+    // server that stamps that way dates a day early (lib/connectors/simplefin.ts DATES).
+    expect(answer(Date.parse('2026-10-04T14:00:00Z') / 1000)).toBe('2026-10-04');
+  });
+
+  test('a bank is named in a message only as words of its own', () => {
+    expect([namesWord('Connection to Rally Credit Union may need attention', 'Ally'), namesWord('Connection to Ally may need attention', 'Ally')]).toEqual([false, true]);
+    expect(namesWord('Connection to My Bank (US) failed', 'My Bank (US)')).toBe(true);
+    expect(namesWord('ally.', 'Ally')).toBe(true);
+  });
+});
+
 describe('the request guard', () => {
   const claimTo = (host: string) => Buffer.from(`https://${host}:${fake.port}/simplefin/claim/demo`).toString('base64');
 
@@ -322,11 +364,73 @@ describe('the request guard', () => {
 
   test('refuses an address written in the URL itself, in any form a URL parser accepts', async () => {
     setTransportForTests({ ...fake.transport(), allowAddress: isPublicAddress });
-    for (const host of ['127.0.0.1', '2130706433', '0x7f.1', '[::1]', '[::ffff:7f00:1]', '169.254.169.254', '10.1.1.1']) {
+    for (const host of [
+      '127.0.0.1',
+      '127.0.0.1.',
+      '127.1',
+      '2130706433',
+      '017700000001',
+      '0x7f.1',
+      '0x7f.0x0.0x0.0x1',
+      '0',
+      '0.0.0.0',
+      '[::1]',
+      '[::]',
+      '[::ffff:7f00:1]',
+      '[::ffff:127.0.0.1]',
+      '[0:0:0:0:0:ffff:7f00:1]',
+      '[::127.0.0.1]',
+      '[fd00::1]',
+      '[fe80::1]',
+      '[64:ff9b::a9fe:a9fe]',
+      '[2002:a9fe:a9fe::1]',
+      '[2001::1]',
+      '169.254.169.254',
+      '100.100.100.200',
+      '10.1.1.1',
+    ]) {
       const err = await failure(guardedRequest({ method: 'GET', url: new URL(`https://${host}:${fake.port}/x`), accept: '*/*', timeoutMs: 500, maxBytes: 100 }));
       expect([host, err instanceof UnsafeUrlError && err.reason]).toEqual([host, 'address']);
     }
     expect(fake.seen).toEqual([]);
+  });
+
+  test('refuses localhost through the system’s own resolver, before sending anything', async () => {
+    setTransportForTests(null);
+    for (const url of ['https://localhost:9/x', 'https://LocalHost:9/x']) {
+      const err = await failure(guardedRequest({ method: 'GET', url: new URL(url), accept: '*/*', timeoutMs: 3000, maxBytes: 100 }));
+      expect([url, err instanceof UnsafeUrlError && err.reason]).toEqual([url, 'address']);
+    }
+  });
+
+  test('asks for no compression and inflates none: a compressed answer stays as small as it came, and isn’t read', async () => {
+    const key = readFileSync(join(import.meta.dir, 'fixtures', 'simplefin', 'test-key.pem'), 'utf8');
+    // A bomb: 20 MB of spaces, gzipped to a few kilobytes.
+    const bomb = gzipSync(Buffer.alloc(20 * 1024 * 1024, 0x20));
+    const echo = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      tls: { cert: TEST_CERT, key },
+      fetch: (req) =>
+        new URL(req.url).pathname === '/bomb'
+          ? new Response(bomb, { headers: { 'content-encoding': 'gzip', 'content-type': 'application/json' } })
+          : Response.json(Object.fromEntries(req.headers)),
+    });
+    try {
+      setTransportForTests({ resolve: async () => [{ address: '127.0.0.1', family: 4 }], allowAddress: (a) => a === '127.0.0.1', ca: TEST_CERT });
+      const base = `https://bridge.test:${echo.port}`;
+      const got = await guardedRequest({ method: 'GET', url: new URL(`${base}/simplefin/accounts`), auth: { user: 'u', password: 'p' }, accept: 'application/json', timeoutMs: 3000, maxBytes: 10_000 });
+      const headers = JSON.parse(got.body);
+      expect(headers['accept-encoding']).toBeUndefined();
+      expect(headers.authorization).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
+      const claim = await guardedRequest({ method: 'POST', url: new URL(`${base}/claim`), accept: 'text/plain', timeoutMs: 3000, maxBytes: 10_000 });
+      expect(JSON.parse(claim.body).authorization).toBeUndefined();
+      const inflated = await guardedRequest({ method: 'GET', url: new URL(`${base}/bomb`), accept: 'application/json', timeoutMs: 5000, maxBytes: 1024 * 1024 });
+      expect(inflated.body.length).toBeLessThan(bomb.length + 1);
+      expect(() => JSON.parse(inflated.body)).toThrow();
+    } finally {
+      echo.stop(true);
+    }
   });
 
   test('refuses http, and credentials in the URL', async () => {

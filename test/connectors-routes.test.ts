@@ -187,6 +187,24 @@ describe('connecting through the routes', () => {
     expect((await call(connectors.DELETE, 'DELETE', { connection_id: id, keep: 'no' })).status).toBe(400);
   });
 
+  test('a card reported as money held isn’t counted until the person answers which way, through the route', async () => {
+    server.accounts[1].balance = '432.10';
+    const id = await connectAndTrack();
+    let { body } = await list();
+    const visa = body.connections[0].accounts.find((a: any) => a.name === 'Visa');
+    expect(visa).toMatchObject({ balance: null, reported: 432.1, sign: null, needs_sign: true });
+    for (const bad of [
+      { connection_id: id, sign: [{ account_id: visa.account_id, sign: 'negative' }] },
+      { connection_id: id, sign: [{ account_id: 'manual_someone-else', sign: 'as_reported' }] },
+    ]) {
+      expect((await call(accountsRoute.PUT, 'PUT', bad)).status).toBe(400);
+    }
+    const said = await call(accountsRoute.PUT, 'PUT', { connection_id: id, sign: [{ account_id: visa.account_id, sign: 'owed_positive' }] });
+    expect([said.status, said.body.signed]).toEqual([200, 1]);
+    ({ body } = await list());
+    expect(body.connections[0].accounts.find((a: any) => a.name === 'Visa')).toMatchObject({ balance: 432.1, sign: 'owed_positive', needs_sign: false });
+  });
+
   test('Refresh is refused once the day’s requests are spent, saying when they come back', async () => {
     const id = await connectAndTrack();
     let last = await call(refreshRoute.POST, 'POST', { connection_id: id });
@@ -215,6 +233,65 @@ describe('everywhere else, like any account', () => {
     expect(add.status).toBe(404);
     const after = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions.find((t: any) => t.transaction_id === coffee.transaction_id);
     expect([after.category, after.amount]).toEqual(['food', 12.5]);
+  });
+
+  test('a payment between two of them is a transfer, left out of totals; the rest say they have no category', async () => {
+    server.accounts[0].transactions.push(txn('p1', 2, '-300.00', 'PAYMENT TO VISA'));
+    server.accounts[1].transactions.push(txn('p2', 1, '300.00', 'PAYMENT THANK YOU'));
+    await connectAndTrack();
+    const rows = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions;
+    const code = (name: string) => rows.find((t: any) => t.name === name)?.transaction_code;
+    expect([code('PAYMENT TO VISA'), code('PAYMENT THANK YOU'), code('COFFEE')]).toEqual(['transfer', 'transfer', null]);
+    const { isTransfer, uncategorizedFromConnector, uncategorizedNote } = await import('@/lib/spending');
+    const { planFlow } = await import('@/lib/fire/inputs');
+    const payments = rows.filter((t: any) => t.name.startsWith('PAYMENT'));
+    expect(payments.every(isTransfer)).toBe(true);
+    // Neither side is spending or income on the Plan either.
+    expect(payments.map(planFlow)).toEqual(['transfer', 'transfer']);
+    // COFFEE, PAYROLL and DINER count, uncategorized: said under the totals.
+    expect(uncategorizedFromConnector(rows)).toBe(3);
+    expect(uncategorizedNote(3)).toContain('3 transactions from SimpleFIN have no category');
+    // Categorized, it counts as the person said, and is no longer one of them.
+    const coffee = rows.find((t: any) => t.name === 'COFFEE');
+    await call(recategorize.POST, 'POST', { transaction_id: coffee.transaction_id, category: 'food', account_id: coffee.account_id });
+    const after = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions;
+    expect(uncategorizedFromConnector(after)).toBe(2);
+  });
+
+  test('its category edits through the form answer like any row’s; its note, like its amount, is refused before anything is saved', async () => {
+    await connectAndTrack();
+    const rows = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions;
+    const coffee = rows.find((t: any) => t.name === 'COFFEE');
+    const category = await call(manualTxns.PATCH, 'PATCH', { id: coffee.transaction_id, account_id: coffee.account_id, category: 'groceries' });
+    expect([category.status, category.body.transaction?.category, category.body.transaction?.account_name]).toEqual([200, 'groceries', 'Checking']);
+    const note = await call(manualTxns.PATCH, 'PATCH', { id: coffee.transaction_id, account_id: coffee.account_id, note: 'mine' });
+    expect([note.status, note.body.error]).toEqual([400, expect.stringContaining('Its category is yours to change')]);
+    const now = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).transactions.find((t: any) => t.transaction_id === coffee.transaction_id);
+    expect([now.note, now.category]).toEqual([null, 'groceries']);
+  });
+
+  test('SimpleFIN accounts that can’t be read hide only their own rows, under a note naming them; banks still importing say so', async () => {
+    await connectAndTrack();
+    const listed = (await (await transactions.GET(new Request('http://localhost/api/transactions'))).json()).incomplete;
+    expect(listed).toEqual([{ institution_name: 'My Bank', coverage: 'importing' }]);
+    // A manual account with a row of its own, and a damaged SimpleFIN entry.
+    const wallet = 'manual_00000000-0000-4000-8000-0000000000aa';
+    const { saveManualAccount } = await import('@/lib/manual');
+    await saveManualAccount(ctx, { account_id: wallet, name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 20, updated_at: new Date().toISOString() });
+    const manual = await call(manualTxns.POST, 'POST', {
+      account_id: wallet,
+      id: 'manual-txn:00000000-0000-4000-8000-0000000000bb',
+      date: dayOf(NOW),
+      amount: 4,
+      currency: 'USD',
+      name: 'TEA',
+    });
+    expect(manual.status).toBe(200);
+    await fake.hset(`test:c:${ctx.container}:connector-accounts`, { 'manual_00000000-0000-4000-8000-0000000000cc': 'not-ciphertext-but-long-enough-to-be-tried' });
+    const { result: body } = await quietly(async () => (await transactions.GET(new Request('http://localhost/api/transactions'))).json());
+    expect(body.transactions.map((t: any) => t.name)).toEqual(['TEA']);
+    expect(body.notes).toContain("SimpleFIN accounts: couldn't be read, so their transactions aren't shown");
+    expect(body.notes).not.toContain("Manual accounts: couldn't be read, so transactions entered for them aren't shown");
   });
 
   test('net worth shows them under their bank, via SimpleFIN, with their health', async () => {
@@ -313,7 +390,7 @@ describe('the Access URL', () => {
       setTransportForTests({ ...server.transport(), allowAddress: () => false });
       check('blocked refresh', (await call(refreshRoute.POST, 'POST', { connection_id: id })).text);
       setTransportForTests(server.transport());
-      await syncConnectorsDaily(ctx);
+      await syncConnectorsDaily(ctx).done;
       // A claim that fails, and the download.
       server.behaviour = { on: 'claim', status: 500, body: secret };
       check('failed claim', (await call(connectRoute.POST, 'POST', { connector: 'simplefin', token: server.setupToken('fails') })).text);

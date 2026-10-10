@@ -19,7 +19,8 @@ export type TotalNoteInstitution = {
   stale_as_of_at?: string;
   stale_missing?: number;
   unconfirmed_missing?: number;
-  health?: { last_ok_at: string | null };
+  /** `detail`: what a connector's accounts are waiting on (lib/connectors/health.ts). */
+  health?: { last_ok_at: string | null; detail?: { issue: string } | null };
 };
 
 export type DayFormat = {
@@ -37,6 +38,12 @@ function accountsAt(insts: TotalNoteInstitution[], count: (i: TotalNoteInstituti
   return { n, where: joinNames([...new Set(insts.map((i) => i.institution_name))]) };
 }
 
+/** What is wrong with an institution shown at last known balances, in a few
+ *  words: a card or loan SimpleFIN reports as money held waits for the
+ *  person's answer, which no refresh brings. */
+const holdUp = (i: TotalNoteInstitution) =>
+  i.health?.detail?.issue === 'sign' ? 'has a card or loan waiting for your answer' : i.needs_reauth ? 'needs reconnecting' : "couldn't refresh";
+
 /** The notes for the total, in the order they were always shown. */
 export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat): string[] {
   const notes: string[] = [];
@@ -45,9 +52,9 @@ export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat)
   const stale = institutions.filter((i) => i.stale_as_of);
   if (stale.length === 1) {
     const [i] = stale;
-    notes.push(`${i.institution_name} ${i.needs_reauth ? 'needs reconnecting' : "couldn't refresh"}; its balances are from ${day.snapshot(i.stale_as_of!, i.stale_as_of_at)}`);
+    notes.push(`${i.institution_name} ${holdUp(i)}; its balances are from ${day.snapshot(i.stale_as_of!, i.stale_as_of_at)}`);
   } else if (stale.length > 1) {
-    const phrases = stale.map((i) => `${i.institution_name} ${i.needs_reauth ? 'needs reconnecting' : "couldn't refresh"}`);
+    const phrases = stale.map((i) => `${i.institution_name} ${holdUp(i)}`);
     const dates = new Set(stale.map((i) => i.stale_as_of));
     const from = dates.size === 1 ? ` from ${day.snapshot(stale[0].stale_as_of!, stale[0].stale_as_of_at)}` : '';
     notes.push(`${joinNames(phrases)}; showing their last known balances${from}`);

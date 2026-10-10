@@ -50,6 +50,7 @@ const {
   COUNTER_TAKE,
 } = await import('@/lib/repo');
 const { declaredStores, declaredStore } = await import('@/lib/stores');
+const connectorStores = await import('@/lib/connectors/store');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
 const { listedKind } = await import('@/lib/key-families');
 const { isExcluded } = await import('@/lib/export');
@@ -1485,7 +1486,7 @@ describe('the key inventory', () => {
     expect(classify(`${c}seam-contract-temp`)).toBeNull();
   });
 
-  test('the lists are unchanged, and no declared store is on them or left out of backups', () => {
+  test('the lists are unchanged, no declared store is on them, and only one declared out of backups is left out of them', () => {
     expect(classify(`${c}goals`)).toBe('string');
     expect(classify('goals')).toBe('string');
     expect(classify(`${c}manual:accounts`)).toBe('hash');
@@ -1495,7 +1496,7 @@ describe('the key inventory', () => {
     expect(classify(`${c}snapshot:runs`)).toBe('plain');
     const stored = { value: 'string', map: 'hash', counter: 'plain' } as const;
     for (const store of declaredStores()) {
-      expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, false]);
+      expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, !store.backedUp]);
       expect(classify(`${c}${store.name}`)).toBe(stored[store.kind]);
     }
     // A counter is a plain integer, which the re-encryption pass leaves alone.
@@ -1529,6 +1530,19 @@ describe('the key inventory', () => {
       expect(() => defineMapStore(name, { what: 'test notes', isValid: isNote, exportable: false })).toThrow(why);
       expect(declaredStore(name)).toBeNull();
     }
+  });
+
+  test('a store kept out of backups must be one backups leave out, and only such a store may be', () => {
+    // Out of backups, but lib/export.ts would back it up: refused.
+    expect(() => defineMapStore('seam-out-of-backups', { what: 'test notes', isValid: isNote, exportable: false, backup: false })).toThrow(
+      'declared out of backups, but lib/export.ts would back it up'
+    );
+    expect(() => defineCounterStore('seam-out-of-backups', { what: 'test counts', windowSeconds: 60, backup: false })).toThrow('declared out of backups');
+    expect(declaredStore('seam-out-of-backups')).toBeNull();
+    // A connector's credential and its counters are, and say so.
+    const { secretsStore, requestsCount, claimsCount, connectionsStore, connectorAccountsStore } = connectorStores;
+    expect([secretsStore.backedUp, requestsCount.backedUp, claimsCount.backedUp]).toEqual([false, false, false]);
+    expect([connectionsStore.backedUp, connectorAccountsStore.backedUp]).toEqual([true, true]);
   });
 
   test('declaring a name again replaces the store, unless it is another kind', () => {

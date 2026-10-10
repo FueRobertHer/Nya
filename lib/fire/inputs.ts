@@ -189,6 +189,9 @@ export type TrailingFlows = {
   /** Transactions that would count but are in another currency: in none of
    *  the figures, by currency. */
   leftOut: LeftOut;
+  /** Transactions from SimpleFIN with no category, counted as spending or
+   *  income (lib/spending.ts uncategorizedFromConnector); absent is none. */
+  uncategorized?: number;
 };
 
 const DAY_MS = 86_400_000;
@@ -231,6 +234,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
   };
   let count = 0;
   let excludedCount = 0;
+  let uncategorized = 0;
   let earliest = end;
   let largestRefund: TrailingFlows['largestRefund'] = null;
   for (const t of inWindow) {
@@ -249,6 +253,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       continue;
     }
     sums[flow] += t.amount;
+    if (t.source === 'simplefin' && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
     // A row on the cash account, typed or imported (any source but a bank's,
     // which has none): spending of the cash withdrawn.
     if (flow === 'spending' && t.source && t.account_id && opts.cashAccounts?.has(t.account_id)) {
@@ -289,6 +294,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     excludedCount,
     currency,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    uncategorized,
   };
 }
 

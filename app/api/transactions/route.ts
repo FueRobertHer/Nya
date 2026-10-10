@@ -197,9 +197,10 @@ export async function GET(req: Request) {
       else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
     }
     const notes = [...plaid.notes, ...manual.notes];
-    // The institutions whose rows aren't all here (Plaid's part: a manual
+    // The institutions whose rows aren't all here: Plaid's, and the banks of a
+    // SimpleFIN connection whose older history is still arriving (a manual
     // account has no connection, so it is never incomplete).
-    const incomplete = plaid.incomplete ?? [];
+    const incomplete = [...(plaid.incomplete ?? []), ...manual.incomplete];
 
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them

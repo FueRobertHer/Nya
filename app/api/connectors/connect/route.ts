@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
-import { connect, reconnect } from '@/lib/connectors/manage';
+import { connect, othersOf, reconnect } from '@/lib/connectors/manage';
 import { connectionsStore, connectorAccountsStore } from '@/lib/connectors/store';
 import { connectionView, offersIn } from '@/lib/connectors/view';
 import { requestsLeft } from '@/lib/connectors/sync';
@@ -35,10 +35,12 @@ export async function POST(req: Request) {
     const outcome = result ?? made!.result;
     const [conn, accounts, requests] = await Promise.all([connectionsStore.get(ctx, id), connectorAccountsStore.getAll(ctx), requestsLeft(ctx)]);
     const tracked = new Set(conn?.tracked.map((t) => t.remote_id) ?? []);
+    const all = [...accounts.values()];
+    const others = await othersOf(ctx, id, all);
     return NextResponse.json({
       connection_id: id,
-      connection: conn ? connectionView(id, conn, [...accounts.values()]) : null,
-      offers: outcome.answer ? offersIn(outcome.answer, tracked) : [],
+      connection: conn ? connectionView(id, conn, all, others) : null,
+      offers: outcome.answer ? offersIn(outcome.answer, tracked, conn, others) : [],
       skipped: outcome.skipped,
       requests,
     });

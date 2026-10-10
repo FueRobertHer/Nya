@@ -24,8 +24,10 @@ export async function GET() {
     // listed by the connection they had, so they can be let go too.
     const orphaned = new Map<string, typeof all>();
     for (const a of all) if (!connections.has(a.connection_id)) orphaned.set(a.connection_id, [...(orphaned.get(a.connection_id) ?? []), a]);
+    // Each connection's offers say when another connection tracks them.
+    const othersOf = (id: string) => all.filter((a) => a.connection_id !== id).map((account) => ({ account, host: connections.get(account.connection_id)?.host ?? null }));
     return NextResponse.json({
-      connections: [...connections].map(([id, c]) => connectionView(id, c, all)),
+      connections: [...connections].map(([id, c]) => connectionView(id, c, all, othersOf(id))),
       orphaned: [...orphaned].map(([connection_id, list]) => ({ connection_id, accounts: list.map(accountView) })),
       requests: requests ? { ...requests, limit: DAILY_REQUESTS } : null,
       max_connections: MAX_CONNECTIONS,
