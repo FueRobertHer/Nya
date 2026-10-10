@@ -56,6 +56,12 @@ describe('the archive', () => {
         'c:*:api-tokens*',
         'api-requests*',
         'c:*:api-requests*',
+        'connector-secrets*',
+        'c:*:connector-secrets*',
+        'connector-requests*',
+        'c:*:connector-requests*',
+        'connector-claims*',
+        'c:*:connector-claims*',
       ],
     });
   });
@@ -99,6 +105,19 @@ describe('the archive', () => {
 
     const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
     expect(keys).toEqual(['goals']);
+  });
+
+  test('leaves out a connector’s credential and its counters, which a restore must never bring back', async () => {
+    const c = 'c:00000000-0000-4000-8000-000000000000';
+    await fake.hset(testKey(`${c}:connector-secrets`), { conn_1: 'encrypted-access-url' });
+    await fake.set(testKey(`${c}:connector-requests`), '5');
+    await fake.set(testKey(`${c}:connector-claims`), '1');
+    // The connection and its accounts are the person's data: backed up.
+    await fake.hset(testKey(`${c}:connector-connections`), { conn_1: 'encrypted-connection' });
+    await fake.hset(testKey(`${c}:connector-accounts`), { manual_1: 'encrypted-account' });
+
+    const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
+    expect(keys).toEqual([`${c}:connector-accounts`, `${c}:connector-connections`]);
   });
 
   test('leaves out API tokens and their counts, so restoring a backup can never bring back a revoked token', async () => {

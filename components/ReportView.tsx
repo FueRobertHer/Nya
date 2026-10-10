@@ -160,15 +160,20 @@ export function ReportView({ report }: { report: Report }) {
                     const gaps = gapsOf(i.item_id);
                     return (
                       <tr key={i.item_id}>
-                        <td>{i.institution_name}</td>
+                        <td>
+                          {i.institution_name}
+                          {i.connector?.host ? ` at ${i.connector.host}` : ''}
+                        </td>
                         <td>
                           {i.no_transactions
                             ? NO_TRANSACTIONS_WORDS[i.no_transactions]
-                            : i.problem
-                              ? `${STATE_WORDS[i.problem.state] ?? 'Not updating'} since ${reportTime(i.problem.since, tz)}`
-                              : i.records_unreadable
-                                ? 'Its records couldn’t all be read'
-                                : 'No problem recorded'}
+                            : i.connector
+                              ? i.connector.state
+                              : i.problem
+                                ? `${STATE_WORDS[i.problem.state] ?? 'Not updating'} since ${reportTime(i.problem.since, tz)}`
+                                : i.records_unreadable
+                                  ? 'Its records couldn’t all be read'
+                                  : 'No problem recorded'}
                         </td>
                         <td>{i.no_transactions ? '' : i.synced_at ? reportTime(i.synced_at, tz) : 'Not known'}</td>
                         <td>{i.first_date ? reportDay(i.first_date) : ''}</td>

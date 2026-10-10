@@ -11,6 +11,7 @@ Nya runs on Vercel, with Upstash Redis for storage and Plaid for bank data. Bun 
 - [7. Install on your phone](#7-install-on-your-phone)
 - [Email notices](#email-notices)
 - [Brokerage and retirement connections](#brokerage-and-retirement-connections)
+- [Bring your own sync](#bring-your-own-sync)
 - [Security headers and the Content-Security-Policy](#security-headers-and-the-content-security-policy)
 - [Preview deployments](#preview-deployments)
 
@@ -65,7 +66,7 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 
 | Time (UTC) | Route | Job |
 | --- | --- | --- |
-| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, and sends the [email notices](#email-notices) about its connections. |
+| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, fetching from the [SimpleFIN connections](#bring-your-own-sync) people made beside Plaid, and sends the [email notices](#email-notices) about its connections. |
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
@@ -148,6 +149,15 @@ A release from before this one has no such check, and calls for every connection
 5. Connect a real 401(k) or IRA, and a brokerage account, with the new option. Each one's record should carry `"transactions_billed":false`: Plaid isn't billing Transactions on it. Its card on the Accounts tab shows its holdings and no error, and nothing on the Activity tab names it as failing.
 
 From then on, never roll back to a release from before this one: see [operations.md](operations.md#rolling-back-once-the-brokerage-option-is-on). Turning the option off again hides the button and refuses new brokerage link tokens; connections already made with it keep working.
+
+## Bring your own sync
+
+**Connect with SimpleFIN** ([features.md](features.md#bring-your-own-sync)) needs no environment variable and nothing set up: it is offered to everyone beside the Plaid buttons, and each person brings and pays for their own SimpleFIN account. It costs the deployment nothing, and there is no setting to turn it off.
+
+- **Outbound HTTPS.** The server reaches the host a person's Setup Token names, to claim it, and the host of the access that claim returns, to read their accounts (SimpleFIN Bridge, Redbark or another that speaks the protocol), at public addresses only ([architecture.md](architecture.md#connectors)). Vercel's functions reach the internet as they are; where outbound traffic is restricted, allow HTTPS to the servers your people use. The browser never talks to SimpleFIN, so the Content-Security-Policy needs nothing for it.
+- **The daily fetch** runs inside `/api/snapshot`, beside Plaid's fetch, within 60 seconds per container (each request at most 20). The day's total waits only for each connection's recent window; older history goes on while the snapshot is recorded and its emails are prepared, and the container's run waits for it before it ends. Beside Plaid's fetch it adds no time unless SimpleFIN is the slower, and 60 seconds is under Plaid's own worst case, so the email notices keep their time. A container with only SimpleFIN connections, which used to take a second or two, can take up to a minute when SimpleFIN is slow, so on a busy night more containers may be left to the catch-up run. Crons run only on production, so elsewhere a connection is fetched only when someone chooses its accounts or presses **Refresh**.
+- **Requests** are bounded per person: at most 8 a day to SimpleFIN for all their connections together (SimpleFIN allows 24 per connection), and 10 tokens claimed an hour.
+- **The access each connection gives** (its Access URL, which holds the credentials) is encrypted like a Plaid access token and stored through the storage seam (`connector-secrets`), never in a person's download, a log or an error message, and never in a backup: it works on its own, so a backup must neither carry it nor bring one back after the person disconnected. A restore therefore ends every SimpleFIN access, and each person connects again with a new Setup Token; their accounts, history and transactions carry on. The counts of requests and claims are left out of backups too. Deleting an account deletes the access; ending it on SimpleFIN's side is the person's to do there.
 
 ## Security headers and the Content-Security-Policy
 

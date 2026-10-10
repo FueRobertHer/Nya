@@ -57,7 +57,10 @@ export type SharingPayload = {
   enabled: boolean;
   connections?: Connection[];
   blocked?: { id: string; label: string }[];
-  accounts?: { id: string; label: string; institution?: string; name?: string }[];
+  /** What I can share, and (`waiting`) a shared account a connector feeds
+   *  that is only waiting for its balance: its share can be kept or ended,
+   *  not begun or changed, until it has one (lib/sharing.ts). */
+  accounts?: { id: string; label: string; institution?: string; name?: string; waiting?: true }[];
 };
 /** Both records of showings on one connection (lib/sharing.ts
  *  connectionRecords), asked for when it is opened. */
@@ -464,8 +467,11 @@ export function SharingPanelView({
   );
 
   if (current) {
-    // What they can see now: a share on an account I've since hidden is paused.
-    const seen = accounts.filter((a) => current.sharing[a.id]).length;
+    // What they can see now: a share on an account I've since hidden, or on
+    // one waiting for its balance, is paused. One waiting is listed only
+    // where it is shared, to keep or end.
+    const seen = accounts.filter((a) => !a.waiting && current.sharing[a.id]).length;
+    const listed = accounts.filter((a) => !a.waiting || current.sharing[a.id]);
     const over = seen > 0 && ended(current.expires_at);
     return (
       <>
@@ -497,15 +503,22 @@ export function SharingPanelView({
                 : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, read-only${current.expires_at ? `, until ${endLabel(current.expires_at)}` : ''}.`}
             </p>
           )}
-          {accounts.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
-          {byInstitution(accounts).map(([institution, list]) => (
+          {listed.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
+          {byInstitution(listed).map(([institution, list]) => (
             <div key={institution} className="institution-group">
               <p className="institution-name">{institution}</p>
               {list.map((a) => (
                 <div key={a.id} className="peer-row">
-                  <span>{a.name ?? a.label}</span>
+                  <span>
+                    {a.name ?? a.label}
+                    {a.waiting && (
+                      <span className="type-tag" style={{ display: 'block' }}>
+                        Waiting for its balance: shown to them again once it has one
+                      </span>
+                    )}
+                  </span>
                   <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
-                    {(Object.keys(LEVEL_LABEL) as Choice[]).map((c) => (
+                    {(a.waiting ? (['none', current.sharing[a.id]] as Choice[]) : (Object.keys(LEVEL_LABEL) as Choice[])).map((c) => (
                       <option key={c} value={c}>
                         {LEVEL_LABEL[c]}
                       </option>
@@ -644,7 +657,7 @@ export function SharingPanelView({
         ) : (
           <div className="peer-list">
             {connections.map((c) => {
-              const seen = accounts.filter((a) => c.sharing[a.id]).length;
+              const seen = accounts.filter((a) => !a.waiting && c.sharing[a.id]).length;
               const what =
                 seen === 0
                   ? 'Sees none of your accounts'

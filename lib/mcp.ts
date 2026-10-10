@@ -97,12 +97,16 @@ function missingAccounts(missing: readonly ApiMissing[], withoutBalance = 0): st
   const count = (pred: (m: ApiMissing) => boolean) => missing.filter(pred).length;
   const unreadable = count((m) => m.account_id === null && m.reason === 'unreadable');
   const notLoaded = count((m) => m.reason === 'not_loaded');
-  const manual = count((m) => m.account_id !== null);
+  const manual = count((m) => m.account_id !== null && m.source !== 'simplefin');
+  const fed = count((m) => m.account_id !== null && m.source === 'simplefin');
   const parts = [
     unreadable > 0 ? `the accounts of ${plural(unreadable, 'connection')} couldn’t be read` : '',
     notLoaded > 0 ? `${plural(notLoaded, 'connection')} ${notLoaded === 1 ? 'hasn’t' : 'haven’t'} been loaded yet` : '',
     manual > 0 ? `${plural(manual, 'manual account')} couldn’t be read` : '',
-    withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no measured balance` : '',
+    fed > 0 ? `${plural(fed, 'SimpleFIN account')} couldn’t be read` : '',
+    // Never measured, or a card SimpleFIN reports as money held, waiting for
+    // the person's answer (the notes say which).
+    withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no balance to count` : '',
   ].filter(Boolean);
   return parts.length === 0 ? '' : ` Incomplete: ${parts.join('; ')}. See missing_accounts and notes.`;
 }

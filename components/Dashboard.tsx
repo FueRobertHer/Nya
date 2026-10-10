@@ -30,6 +30,7 @@ import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { type Txn } from './MonthBreakdown';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
+import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
@@ -182,6 +183,10 @@ type Institution = {
   // charted point for three days with nothing to explain it.
   unconfirmed_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
+  // Set on the accounts SimpleFIN feeds (lib/connectors/), `manual` too: they
+  // are not Plaid's, and their balances aren't typed (components/Connectors.tsx).
+  connector?: string;
+  connection_id?: string;
   // The connection's health: state, when it last synced, whose side a problem
   // is on and what to do (lib/connection-state.ts). Optional: a payload
   // cached before it existed has none, and nothing is said then.
@@ -564,6 +569,8 @@ export default function Dashboard({
   const [payoffOpen, setPayoffOpen] = useState(false);
   const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
+  // What the SimpleFIN drawer is asked to do (components/Connectors.tsx).
+  const [connectorAsk, setConnectorAsk] = useState<ConnectorAsk | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
   const [disconnectInput, setDisconnectInput] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
@@ -1063,6 +1070,19 @@ export default function Dashboard({
     },
     [loadNetWorth, requestBackfill, loadTransactions]
   );
+
+  // After a change through SimpleFIN (components/Connectors.tsx): balances and
+  // transactions reload, and when accounts were added, retyped, kept or
+  // removed, the estimated history is rebuilt too, as after a manual save.
+  const connectorChanged = useCallback(
+    async (accountsChanged: boolean) => {
+      await loadNetWorth(true);
+      if (accountsChanged) requestBackfill(() => loadNetWorth());
+      if (txns !== null) loadTransactions(true);
+    },
+    [loadNetWorth, requestBackfill, loadTransactions, txns]
+  );
+  const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
 
   const startAddManual = useCallback(() => {
     setManualError('');
@@ -1659,7 +1679,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
+              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1683,6 +1703,8 @@ export default function Dashboard({
               {error && <div className="error">{error}</div>}
               {lifecycleRepair}
             </div>
+            {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
+            <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
             {clerk && <SharedWithMe refreshKey={asOf} />}
           </>
@@ -1801,7 +1823,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} brokerage={brokerageLink} />
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -1866,7 +1888,13 @@ export default function Dashboard({
                       />
                     ) : null;
                   }}
+                  onConnector={setConnectorAsk}
                 />
+
+                {/* Each SimpleFIN connection: when it last answered, what it
+                    reported in its own words, Refresh, Choose accounts and
+                    Disconnect. Nothing when there is none. */}
+                <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
 
                 {/* Behind Manage accounts, like the other account upkeep, so
                     it doesn't take space in the everyday view; mounting only
@@ -1904,7 +1932,7 @@ export default function Dashboard({
                       <div className="inst-header">
                         <div className="inst-name">
                           {inst.institution_name}
-                          {inst.manual && <span className="manual-badge">Manual</span>}
+                          {inst.manual && <span className="manual-badge">{inst.connector ? 'via SimpleFIN' : 'Manual'}</span>}
                         </div>
                         <div className="inst-header-right">
                           <div className="inst-total">{fmt(instTotal, instCurrency)}</div>
@@ -1965,7 +1993,8 @@ export default function Dashboard({
                                         typed one has to say when it was set. */}
                                     {inst.manual && a.updated_at && (
                                       <div className="manual-updated">
-                                        Updated {fmtAsOf(a.updated_at)}
+                                        {/* SimpleFIN's balance is as of the day the bank gave it. */}
+                                        {inst.connector ? `Balance as of ${fmtInstantDay(a.updated_at)}` : `Updated ${fmtAsOf(a.updated_at)}`}
                                       </div>
                                     )}
                                     {/* Missing from its bank's answer, held
@@ -2029,14 +2058,14 @@ export default function Dashboard({
                                   </td>
                                   <td className="num">
                                     {a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}
-                                    {(inst.manual || manageMode) && (
+                                    {((inst.manual && !inst.connector) || manageMode) && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
                                       <div
                                         className="manual-row-actions"
                                         onClick={(e) => e.stopPropagation()}
                                       >
-                                        {inst.manual && (
+                                        {inst.manual && !inst.connector && (
                                           <button
                                             className="link-btn"
                                             disabled={savingManual || togglingHidden !== null}
@@ -2054,12 +2083,12 @@ export default function Dashboard({
                                             Update
                                           </button>
                                         )}
-                                        {inst.manual && (
+                                        {inst.manual && !inst.connector && (
                                           <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
                                             Add transaction
                                           </button>
                                         )}
-                                        {inst.manual && !a.hidden && (
+                                        {inst.manual && !inst.connector && !a.hidden && (
                                           <button className="link-btn" onClick={() => setImportTarget({ account_id: a.account_id })}>
                                             Import
                                           </button>
@@ -2106,7 +2135,7 @@ export default function Dashboard({
                                             Close…
                                           </button>
                                         )}
-                                        {inst.manual && manageMode && (
+                                        {inst.manual && !inst.connector && manageMode && (
                                           <button
                                             className="link-btn danger-link"
                                             disabled={savingManual || togglingHidden !== null}
@@ -2557,7 +2586,7 @@ export default function Dashboard({
                 onRename={renameVendor}
                 // Only with a manual account to add to (hidden ones aren't offered).
                 onAddTransaction={
-                  institutions.some((i) => i.manual && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
+                  institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
                 }
                 onImport={() => setImportTarget({ account_id: null })}
                 onEditTransaction={txnEdits.openEdit}
@@ -2809,6 +2838,7 @@ export default function Dashboard({
       />
 
       <ImportSheet target={importTarget} institutions={institutions} onClose={() => setImportTarget(null)} onImported={onImported} />
+      <ConnectorSheet ask={connectorAsk} onClose={() => setConnectorAsk(null)} onChanged={connectorChanged} />
 
       <Sheet
         open={!!redirect}

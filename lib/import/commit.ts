@@ -238,12 +238,13 @@ export type StatementBalance = {
  * whether it may be set from it: only from a statement dated today or
  * yesterday (or tomorrow, for a bank a time zone ahead), since setting a
  * balance records it as today's, and an older one would put a past figure in
- * today's place; only in US dollars, which manual balances are kept in; only
+ * today's place; only in the currency the account's balance is kept in (US
+ * dollars, unless it was kept from SimpleFIN in another); only
  * from a card statement onto a credit or loan account and a bank statement
  * onto any other, so the sign means what it says; and within the bounds the
  * Update form keeps. `today` is the server's day (UTC).
  */
-export function statementBalance(account: Pick<ManualAccount, 'type' | 'balance'>, s: StatementInfo | null, today: string): StatementBalance | null {
+export function statementBalance(account: Pick<ManualAccount, 'type' | 'balance' | 'currency'>, s: StatementInfo | null, today: string): StatementBalance | null {
   if (!s?.ledger) return null;
   const owed = isOwedType(account.type);
   // A card's balance is negative while money is owed; Nya keeps what is
@@ -253,7 +254,7 @@ export function statementBalance(account: Pick<ManualAccount, 'type' | 'balance'
   const kindFits = s.kind === 'creditcard' ? owed : !owed && account.type !== 'investment';
   let refusal: BalanceRefusal | null = null;
   if (!as_of) refusal = 'undated';
-  else if (s.currency && s.currency !== DEFAULT_CURRENCY) refusal = 'currency';
+  else if (s.currency && s.currency !== (account.currency ?? DEFAULT_CURRENCY)) refusal = 'currency';
   else if (!kindFits) refusal = 'kind';
   else if (as_of < addDays(today, -1)) refusal = 'past';
   else if (as_of > addDays(today, 1)) refusal = 'ahead';

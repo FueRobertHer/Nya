@@ -17,8 +17,10 @@
 // statement here (lib/download-options.ts ofxRefusal). It lists the account's
 // posted transactions, oldest first:
 //   - FITID is the transaction's own id: Plaid's transaction id, or a manual
-//     row's "manual-txn:..." id. It never changes, so importing the same file
-//     twice, into Nya's import or any app that honours FITIDs, adds nothing.
+//     row's "manual-txn:..." id (a row SimpleFIN brought is one too: an
+//     account SimpleFIN keeps up to date has its rows in a book, as a manual
+//     account has). It never changes, so importing the same file twice, into
+//     Nya's import or any app that honours FITIDs, adds nothing.
 //   - Pending transactions are left out, and a note says how many: the bank
 //     gives a transaction a new id when it posts, so an app holding the
 //     pending one would count it twice.
@@ -29,7 +31,11 @@
 //   - TRNTYPE is CREDIT or DEBIT by that sign, unless the bank said more
 //     through Plaid's transaction code (an ATM withdrawal, a fee, a transfer,
 //     a check, interest): what it says outright, never a guess from a
-//     category.
+//     category. One side of a payment or a move Nya works out between two of
+//     the person's SimpleFIN accounts (lib/manual-txns.ts connectorTransfers)
+//     is written as a bank's file writes it: a card's or a loan's payment
+//     PAYMENT, any other move XFER, as the transactions CSV files them (loan
+//     payments, transfer out or in), and as Nya's own import reads them back.
 //   - Dates are the days as the bank gave them (Plaid's are days at the bank,
 //     not instants), written at 10:59 with no time zone. OFX reads that as
 //     10:59 GMT, which is the same day in every time zone from UTC-10 to
@@ -54,10 +60,14 @@
 //   - The ledger balance (LEDGERBAL) is the latest balance Nya knows and the
 //     day it is as of, a day where the person is (the time zone their device
 //     sends; UTC without one): for a linked account, its newest recorded
-//     balance, never an estimate, on the day Nya recorded it; for a manual
-//     account, the balance as set, on the day it was set. History is kept by
-//     UTC day, so a linked account's is that UTC day where Nya didn't keep
-//     the moment (lib/history.ts snapshotTakenAt), or the balance was
+//     balance, never an estimate, on the day Nya recorded it; for an account
+//     SimpleFIN keeps up to date, the balance it last gave, as of the bank's
+//     own date for it (balance-date), and none while Nya holds it (a card
+//     whose sign you haven't said, a bank whose latest answer isn't whole and
+//     current: lib/connectors/institutions.ts); for a manual account, the
+//     balance as set, in its currency, on the day it was set. History is
+//     kept by UTC day, so a linked account's is that UTC day where Nya didn't
+//     keep the moment (lib/history.ts snapshotTakenAt), or the balance was
 //     measured on a day the snapshot was partial. A card's is negative while
 //     money is owed, as OFX writes it. Without one known, in the statement's
 //     currency, there is none, and a note says so; OFX asks for one, and an
@@ -70,6 +80,10 @@
 //     transactions come back with new ids from the bank then, though, so
 //     their FITIDs change: an app that matches by FITID may add again what a
 //     file from before the reconnection gave it.
+//   - ACCTTYPE is SAVINGS or MONEYMRKT where Plaid's subtype says so, else
+//     CHECKING: a manual account, or one SimpleFIN keeps up to date, says
+//     only that it is a bank account (you chose "Checking or savings"), and
+//     Nya doesn't guess which from its name.
 //   - BANKID is "NYA". It is not a routing number, which Nya doesn't know,
 //     but OFX requires the element in a bank statement, and a strict reader
 //     refuses a statement without it. A card statement has none.
@@ -85,7 +99,10 @@
 // document the route already read, so whatever couldn't be read is known: a
 // manual account's transactions, or whether a transaction was excluded, that
 // couldn't be read are said in a note and in the parts the file is short of
-// (`incomplete`), never left out quietly.
+// (`incomplete`), never left out quietly. So are an account SimpleFIN keeps
+// up to date whose older transactions may still be arriving, a few months a
+// night (in a note: nothing stored is short), its balance while held, and
+// the record of its connection when that can't be read (`incomplete` too).
 //
 // AN ACCOUNT THAT ENDED (#50, lib/lifecycle.ts) is a statement like any other:
 // every transaction Nya stored, its later ones too (the money moved, and an
@@ -99,11 +116,15 @@ import { cleanText } from './import/normalize';
 import { contentKey } from './transactions';
 import { carriedExclusions, isCarriedAnnotations, txnAnnotationStore, carriedAnnotationStore, type CarriedAnnotations } from './txn-annotations';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
-import { manualTxnStore } from './manual-txns';
+import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { missingIds, manualTransactionsIn, type ExportFile, type ExportLifecycle, type UserData, type UserExport } from './user-export';
+import { bookAccountTypes, missingIds, manualTransactionsIn, type ExportFile, type ExportLifecycle, type UserData, type UserExport } from './user-export';
+import { connectionsStore, connectorAccountsStore } from './connectors/store';
+import { isConnectorKind } from './connectors/types';
+import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
+import { formatMoney } from './format';
 
 // ---- Text ----
 
@@ -225,6 +246,10 @@ const BANK_CODES: Record<string, string> = {
   'standing order': 'REPEATPMT',
 };
 
+/** One side of a pair Nya worked out between two SimpleFIN accounts, as a
+ *  bank's file types it (see the header). */
+const PAIR_TYPES: Readonly<Record<PairKind, string>> = { card: 'PAYMENT', loan: 'PAYMENT', transfer: 'XFER' };
+
 // ---- The statement ----
 
 /** One transaction as a statement lists it. */
@@ -249,6 +274,9 @@ export type OfxRow = {
   transaction_code: string | null;
   /** Left out of budgets and reports, as the app reads it. */
   excluded: boolean;
+  /** One side of a pair Nya worked out between two SimpleFIN accounts
+   *  (lib/manual-txns.ts), and what it is. */
+  paired?: PairKind;
 };
 
 /** One account, ready to be written as statements. */
@@ -278,6 +306,8 @@ export type OfxStatement = {
 };
 
 const ISO_CODE = /^[A-Z]{3}$/;
+/** "EUR", "EUR and JPY", "EUR, GBP and JPY". */
+const listed = (items: readonly string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 /** The account's id in the file (see the header). */
@@ -311,8 +341,13 @@ export function statementsOf(account: OfxAccount): { statements: OfxStatement[];
   }
   const order = [primary, ...[...groups.keys()].filter((c) => c !== primary).sort()];
   if (order.length > 1) {
+    const others = order.slice(1);
     notes.push(
-      `This account’s transactions are in more than one currency (${order.join(', ')}), and an OFX statement has one, so the file has a statement for each, in that order. Nothing is converted.`
+      groups.get(primary)!.length > 0
+        ? `This account’s transactions are in more than one currency (${order.join(', ')}), and an OFX statement has one, so the file has a statement for each, in that order. Nothing is converted.`
+        : // None of them in its own currency: said so, rather than its own
+          // listed among theirs.
+          `This account’s transactions are in ${listed(others)}, not its own currency (${primary}), and an OFX statement has one currency, so the file has a statement for each, in this order: ${primary} (the account’s own, with no transactions), then ${others.join(', then ')}. Nothing is converted.`
     );
   }
   const balance = account.balance;
@@ -384,7 +419,10 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
         if (touched) lossy++;
         const memoText = memo.join('; ');
         const check = r.check_number ? to1252(r.check_number).text.slice(0, CHECKNUM_MAX) : '';
-        const type = (r.transaction_code && BANK_CODES[r.transaction_code]) || (check ? 'CHECK' : amount > 0 ? 'CREDIT' : amount < 0 ? 'DEBIT' : 'OTHER');
+        const type =
+          (r.paired && PAIR_TYPES[r.paired]) ||
+          (r.transaction_code && BANK_CODES[r.transaction_code]) ||
+          (check ? 'CHECK' : amount > 0 ? 'CREDIT' : amount < 0 ? 'DEBIT' : 'OTHER');
         pieces.push(
           '<STMTTRN>\r\n' +
             line('TRNTYPE', type) +
@@ -431,6 +469,9 @@ function entriesOf(doc: UserExport, key: string): { id: string; value: unknown }
 }
 
 const UNCHANGED = 'Nothing was changed: what could not be read is still stored as it was.';
+
+/** A day (YYYY-MM-DD) in words for a note: "Jul 12, 2026". */
+const shownDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
 /** Pieces joined up to about 64K characters, as the other formats hand them
  *  to the stream (lib/user-export.ts): one per transaction would be
@@ -502,11 +543,27 @@ export function ofxFile(
 ): { file: ExportFile } | OfxRefused {
   const linked = doc.accounts.find((a) => a.account_id === account_id);
   const manual = doc.manual_accounts.find((m) => m.account_id === account_id);
+  // An account SimpleFIN keeps up to date (or kept until it was let go): its
+  // rows are in a book, as a manual account's are, and its balance is the
+  // one SimpleFIN last gave (see the header).
+  const fed = linked && isConnectorKind(linked.provider) ? linked : null;
+  if (!manual && missingIds(doc.problems, connectorAccountsStore.name).includes(account_id)) {
+    return {
+      refused: 'What Nya keeps about this account from SimpleFIN couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.',
+      status: 409,
+    };
+  }
   if (!linked && !manual) {
     if (missingIds(doc.problems, 'manual_accounts').includes(account_id)) {
       return { refused: 'This manual account couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.', status: 409 };
     }
     return { refused: 'That account isn’t among yours: it may have been removed. Choose it again.', status: 404 };
+  }
+  if (fed && !data.connected.has(account_id)) {
+    return {
+      refused: 'You stopped tracking this account through SimpleFIN and removed it, with its transactions, so it has no statement. Its balance history is in the JSON download.',
+      status: 400,
+    };
   }
   const type = linked ? linked.type : manual!.type;
   const kind = ofxKindOf(type);
@@ -531,10 +588,94 @@ export function ofxFile(
   for (const { id, value } of entriesOf(doc, carriedAnnotationStore.name)) if (isCarriedAnnotations(value)) records.set(id, value);
   const carried = carriedExclusions(records, links);
 
+  // The rows a book holds for the account (a manual account's own, or those
+  // SimpleFIN brought), each side of a pair the app works out between two
+  // SimpleFIN accounts typed as a bank's file types it, and what couldn't be
+  // read said.
+  const bookRows = (): OfxRow[] => {
+    const stored = manualTransactionsIn(doc);
+    const pairs = knownPairs(stored, bookAccountTypes(doc));
+    if (missingIds(doc.problems, manualTxnStore.name).includes(account_id)) {
+      notes.push(`This account’s transactions could not be read, so the statement has none of them. The JSON download lists them under problems. ${UNCHANGED}`);
+      incomplete.add(manualTxnStore.name);
+    }
+    return stored
+      .filter((r) => r.account_id === account_id)
+      .map((r): OfxRow => {
+        const paired = pairs.get(r.id);
+        return {
+          id: r.id,
+          date: r.date,
+          user_date: null,
+          amount: r.amount,
+          currency: r.currency,
+          name: r.name,
+          description: null,
+          note: r.note,
+          check_number: null,
+          transaction_code: r.transaction_code ?? null,
+          excluded: own.get(r.id) ?? false,
+          ...(paired ? { paired } : {}),
+        };
+      });
+  };
+
   let rows: OfxRow[];
   let pending = 0;
   let account: Omit<OfxAccount, 'rows'>;
-  if (linked) {
+  if (fed) {
+    rows = bookRows();
+    const entry = data.connected.get(account_id)!;
+    const conn = data.connections.get(entry.connection_id);
+    // The record of the connection it comes through can't be read: how its
+    // bank is doing isn't known (the Accounts tab says so), nor whether older
+    // transactions are still arriving, and the file is short of it.
+    const unreadConnection = missingIds(doc.problems, connectionsStore.name).includes(entry.connection_id);
+    if (unreadConnection) {
+      notes.push(
+        `What Nya keeps about the SimpleFIN connection this account comes through could not be read, so whether its older transactions are still arriving isn’t known, and the statement may be missing some. The JSON download lists it under problems. ${UNCHANGED}`
+      );
+      incomplete.add(connectionsStore.name);
+    } else if (conn && !conn.history) {
+      notes.push('SimpleFIN hasn’t brought in this account’s transactions yet, so the statement may be missing them. Download it again once they are in.');
+    } else if (conn?.history && !conn.history.complete) {
+      // Older transactions still arriving, a few months a night
+      // (lib/connectors/sync.ts). The day is the connection's, which starts
+      // again when another account is tracked, so this account's statement
+      // may already go back further: it may be missing some, never "has none".
+      notes.push(
+        `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
+      );
+    }
+    // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
+    // date for it, where the person is: none while Nya holds it, as the
+    // Accounts tab does (lib/connectors/institutions.ts).
+    const bank = buildConnectorInstitutions(
+      data.connections,
+      [...data.connected.values()].filter((a) => a.connection_id === entry.connection_id && a.institution_ref === entry.institution_ref),
+      now.getTime()
+    )[0];
+    const waiting = needsSign(entry);
+    const amount = nyaBalance(entry);
+    const at = entry.balance_at ?? entry.fetched_at;
+    let no_balance = 'SimpleFIN hasn’t given a balance for this account yet.';
+    if (unreadConnection) {
+      no_balance = `Nya holds ${entry.institution_name}’s balances while what it keeps about the bank’s SimpleFIN connection can’t be read, as the Accounts tab does.`;
+    } else if (waiting) {
+      no_balance = `SimpleFIN reports this card’s balance as money held (+${formatMoney(entry.reported_balance!, entry.currency)}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
+    } else if (bank?.error) {
+      no_balance = `Nya holds ${entry.institution_name}’s balances while SimpleFIN’s latest answer about it isn’t whole and current (${bank.error}), as the Accounts tab does.`;
+    }
+    account = {
+      account_id,
+      kind,
+      subtype: fed.subtype,
+      mask: fed.mask,
+      currency: entry.currency,
+      balance: !unreadConnection && !waiting && !bank?.error && amount !== null && at ? { amount, as_of: dayOf(at), currency: entry.currency } : null,
+      no_balance,
+    };
+  } else if (linked) {
     rows = [];
     for (const t of doc.transactions) {
       if (t.account_id !== account_id) continue;
@@ -589,35 +730,18 @@ export function ofxFile(
     };
   } else {
     const m = manual!;
-    rows = manualTransactionsIn(doc)
-      .filter((r) => r.account_id === account_id)
-      .map(
-        (r): OfxRow => ({
-          id: r.id,
-          date: r.date,
-          user_date: null,
-          amount: r.amount,
-          currency: r.currency,
-          name: r.name,
-          description: null,
-          note: r.note,
-          check_number: null,
-          transaction_code: r.transaction_code ?? null,
-          excluded: own.get(r.id) ?? false,
-        })
-      );
-    if (missingIds(doc.problems, manualTxnStore.name).includes(account_id)) {
-      notes.push(`This account’s transactions could not be read, so the statement has none of them. The JSON download lists them under problems. ${UNCHANGED}`);
-      incomplete.add(manualTxnStore.name);
-    }
+    rows = bookRows();
+    // Kept in US dollars (lib/manual.ts), unless SimpleFIN fed it in
+    // another currency before it was kept as a manual account.
+    const currency = m.currency ?? MANUAL_CURRENCY;
     account = {
       account_id,
       kind,
       subtype: m.subtype,
       mask: null,
-      currency: null,
-      // As set, and when: kept in US dollars (lib/manual.ts).
-      balance: m.updated_at ? { amount: m.balance, as_of: dayOf(m.updated_at), currency: MANUAL_CURRENCY } : null,
+      currency,
+      // As set, and when.
+      balance: m.updated_at ? { amount: m.balance, as_of: dayOf(m.updated_at), currency } : null,
       no_balance: 'Nya doesn’t know when this account’s balance was set.',
     };
   }

@@ -43,10 +43,19 @@
 // so an empty list or a zero is never passed off as no spending.
 //
 // NEVER SHORT WITHOUT SAYING SO. What can't be read is named, and the rest
-// answered: accounts and net worth list the connections and manual accounts
-// they couldn't include (missing_accounts) and say complete: false; a
-// per-account history reads only that account's records; an account_id no
-// account has is a 404 (NotFound), never an empty series.
+// answered: accounts and net worth list the connections, manual accounts and
+// accounts SimpleFIN feeds they couldn't include (missing_accounts) and say
+// complete: false; a per-account history reads only that account's records;
+// an account_id no account has is a 404 (NotFound), never an empty series.
+//
+// SIMPLEFIN. The accounts a SimpleFIN connection keeps up to date
+// (lib/connectors/) are served beside the rest with source 'simplefin': the
+// balance SimpleFIN last reported, in Nya's sign, as of the time the bank
+// gave it, and none to count while a card's or a loan's positive balance
+// waits for the person to say how to read it (an answer built on it says
+// complete: false), with each bank's health as Connection health shows it.
+// Their rows come from the same assembly as the rest, and each bank is among
+// the sources, with whether its older history is all in.
 //
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
@@ -76,7 +85,12 @@ import { getEffectiveLifecycle, lifecycleOf, endOf, lastEndDay, shortDays, type 
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
-import { getManualAccountsReport, manualAccountExists, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
+import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
+import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
+import { connectorHealthText } from './connectors/health';
+import { connectorAccountsStore } from './connectors/store';
+import { connectorOf } from './connectors/registry';
+import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
 import { readHealthForDisplay } from './connection-health';
 import { noticesStore } from './connection-records';
@@ -153,9 +167,10 @@ export type ApiConnection = {
 
 export type ApiAccount = {
   id: string;
-  /** 'plaid' for a linked account, 'manual' for one tracked by hand. Version
+  /** 'plaid' for a linked account, 'simplefin' for one a SimpleFIN
+   *  connection keeps up to date, 'manual' for one tracked by hand. Version
    *  1 may add values (another way to connect): treat one you don't know as
-   *  neither. */
+   *  none of these. */
   source: string;
   name: string;
   official_name: string | null;
@@ -175,7 +190,8 @@ export type ApiAccount = {
   as_of: string | null;
   /** The moment, where it is known. */
   as_of_time: string | null;
-  /** Null for a manual account. */
+  /** Null for a manual account. For one SimpleFIN feeds, its bank's link
+   *  through SimpleFIN, as Connection health shows it. */
   connection: ApiConnection | null;
   /** When it ended, as the person said (or Nya assumed, `assumed`, when
    *  nobody answered about an account its bank stopped returning), or null
@@ -212,9 +228,12 @@ export type ApiMissing = {
   /** The connection's institution; null for a manual account, whose name is
    *  in what couldn't be read. */
   institution: string | null;
-  /** A manual account's id; null for a connection, whose accounts can't be
-   *  told apart until they are read. */
+  /** A manual account's id, or one SimpleFIN feeds; null for a connection,
+   *  whose accounts can't be told apart until they are read. */
   account_id: string | null;
+  /** Where it comes from, as ApiAccount.source: 'plaid' for a connection's
+   *  accounts, 'manual', or 'simplefin'. */
+  source: string;
   /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
    *  account stored intact in a form this version doesn't know (a later
    *  version's), kept as it is. 'unavailable': a manual account sealed under
@@ -258,7 +277,7 @@ export async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string)
 }
 
 async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsRead> {
-  const [items, remembered, effective, manual, facts] = await Promise.all([
+  const [items, remembered, effective, manual, facts, fed] = await Promise.all([
     getItems(ctx),
     rememberedAccountsReport(ctx),
     // Strict: a hidden account must never show for a read that failed.
@@ -271,6 +290,9 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     // reach, or a master key that can't open the data keys, still throws.
     getManualAccountsReport(ctx),
     connectionFacts(ctx),
+    // LENIENT, for this display only, as the manual accounts are: an account
+    // entry that can't be read is named in `missing`.
+    connectorBanksReport(ctx),
   ]);
   const notes: string[] = [];
   const missing: ApiMissing[] = [];
@@ -285,13 +307,13 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   for (const item of items) {
     if (unreadable.has(item.item_id)) {
       notes.push(`${item.institution_name}: its accounts couldn’t be read, so they aren’t listed`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable', source: 'plaid' });
       continue;
     }
     const accounts = remembered.byItem[item.item_id];
     if (!accounts) {
       notes.push(`${item.institution_name}: its accounts haven’t been loaded yet; open the app to load them`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'not_loaded' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: 'not_loaded', source: 'plaid' });
       continue;
     }
     for (const account of accounts) {
@@ -355,7 +377,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     ...manual.unrecognised.filter(asked).map((id) => ({ id, reason: 'unrecognised' as const })),
     ...manual.unavailable.filter(asked).map((id) => ({ id, reason: 'unavailable' as const })),
   ];
-  for (const { id, reason } of unlisted) missing.push({ institution: null, account_id: id, reason });
+  for (const { id, reason } of unlisted) missing.push({ institution: null, account_id: id, reason, source: 'manual' });
   if (unlisted.length > 0) {
     const one = unlisted.length === 1;
     notes.push(`${one ? 'A manual account' : `${unlisted.length} manual accounts`} couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
@@ -411,9 +433,71 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       lifecycle: apiLifecycle(lifecycle, root),
     });
   }
+  // The accounts a SimpleFIN connection keeps up to date (see SIMPLEFIN
+  // above). One kept as a manual account on a disconnect that stopped part
+  // way is in both stores: the manual one, listed above, is it.
+  const own = new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]);
+  const label = connectorOf('simplefin').label;
+  for (const card of fed.cards) {
+    const shown = card.accounts.filter((a) => !own.has(a.account_id) && asked(a.account_id));
+    if (shown.length === 0) continue;
+    const connection = fedConnection(card, fed);
+    for (const a of shown) {
+      const at = realTime(a.updated_at);
+      accounts.push({
+        id: a.account_id,
+        source: 'simplefin',
+        name: a.name,
+        official_name: null,
+        institution: card.institution_name,
+        type: a.type,
+        subtype: a.subtype,
+        mask: null,
+        // Nya's sign; null while there is none to count (see SIMPLEFIN).
+        balance: a.balance,
+        currency: a.currency,
+        credit_limit: null,
+        is_debt: isOwedType(a.type),
+        hidden: hidden.has(a.account_id),
+        // The time the bank gave the balance (its balance-date), else when
+        // Nya received it.
+        as_of: at ? at.slice(0, 10) : null,
+        as_of_time: at,
+        connection,
+        lifecycle: apiLifecycle(lifecycle, a.account_id),
+      });
+    }
+    const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
+    if (said) notes.push(`${card.institution_name}, through ${label}: ${said}`);
+  }
+  const unread = fed.unreadable.filter((u) => asked(u.account_id) && !own.has(u.account_id));
+  for (const u of unread) missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: 'simplefin' });
+  if (unread.length > 0) {
+    const one = unread.length === 1;
+    notes.push(`${one ? `An account ${label} keeps` : `${unread.length} accounts ${label} keeps`} up to date couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
+  }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
   return { accounts, missing, notes, hidden, links, lifecycle };
+}
+
+/**
+ * A SimpleFIN bank's link, as Connection health shows it, in the API's shape:
+ * when it last synced cleanly, and what is wrong with it while that lasts,
+ * with the state Connection health gives it and, as `since`, when Nya's
+ * latest request found it (when it began isn't kept), or, with no answer in
+ * over a day, when the last one came.
+ */
+function fedConnection(card: InstitutionResult, fed: ConnectorBanksReport, now: number = Date.now()): ApiConnection {
+  const health = card.health;
+  const conn = card.connection_id ? fed.connections.get(card.connection_id) : undefined;
+  const found = (health?.detail?.issue === 'stale' ? conn?.last_answer_at : fed.askedAt.get(card.item_id)) ?? conn?.created_at ?? new Date(now).toISOString();
+  return {
+    last_ok_at: health?.last_ok_at ?? null,
+    problem: !health || health.state === 'healthy' ? null : { state: health.state, since: found },
+    ends_at: null,
+    ...(card.connection_id && fed.unreadableConnections.has(card.connection_id) ? { records_unreadable: true as const } : {}),
+  };
 }
 
 export type ApiAccounts = {
@@ -442,7 +526,9 @@ export type ApiNetWorth = {
    *  account's newest measured balance, and can be from different days. */
   balances_from: string | null;
   balances_to: string | null;
-  /** Accounts left out of the totals for having no measured balance. */
+  /** Accounts left out of the totals for having no balance to count: none
+   *  ever measured, or a card's or a loan's SimpleFIN reports as money held,
+   *  until the person says how to read it. */
   accounts_without_balance: number;
   /** False when the totals leave accounts out: ones that couldn't be read or
    *  haven't been loaded (missing_accounts), or have no measured balance
@@ -600,11 +686,20 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
   let known = links.has(id) || [...links.values()].some((l) => l.to === id);
   let currency: string | null = null;
   if (isManualId(id)) {
-    // Whether it is there, without reading it: its currency is the one every
-    // manual balance is kept in.
-    const exists = await manualAccountExists(ctx, id);
-    known ||= exists;
-    if (exists) currency = MANUAL_CURRENCY;
+    // Its currency is its own: a manual account's (US dollars unless it says:
+    // one kept from SimpleFIN on a disconnect can be in another), or the one
+    // SimpleFIN gives an account it feeds. LENIENT, for this display only: a
+    // record that can't be read leaves the currency unknown, said in a note,
+    // rather than failing a history kept apart from it. Storage out of reach
+    // still throws.
+    const [manual, fed] = await Promise.all([getManualAccountsReport(ctx), connectorAccountsStore.getAllReport(ctx)]);
+    const own = manual.accounts.find((a) => a.account_id === id);
+    const feeds = fed.entries.get(id);
+    if (own) currency = own.currency ?? MANUAL_CURRENCY;
+    else if (feeds) currency = feeds.currency;
+    const damaged = [...manual.unreadable, ...manual.unrecognised, ...manual.unavailable, ...fed.unreadable, ...fed.unrecognised].includes(id);
+    if (!own && !feeds && damaged) notes.push('This account’s record couldn’t be read, so its currency isn’t known');
+    known ||= !!own || !!feeds || damaged;
   } else {
     // LENIENT, for this display only: an Item's record that can't be read
     // leaves this account's currency unknown, said in a note, rather than
@@ -748,21 +843,55 @@ type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources
  *  memory where the app hasn't yet (see CATEGORIES). */
 async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const { transactions, notes, history, taxonomy } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
+  const [{ transactions, notes, history, taxonomy }, fed] = await Promise.all([
+    finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
+    // LENIENT, for this display only: what can't be read is said by the
+    // assembly's own notes.
+    connectorBanksReport(ctx),
+  ]);
+  const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
-    notes,
+    notes: [...notes, ...fedSources.notes],
     ix: indexTaxonomy(taxonomy),
-    sources: bank.sources.map((s: BankSource) => ({
-      institution: s.institution_name,
-      synced_at: s.synced_at,
-      complete: s.coverage === 'complete',
-      no_transactions: s.no_transactions,
-    })),
+    sources: [
+      ...bank.sources.map((s: BankSource) => ({
+        institution: s.institution_name,
+        synced_at: s.synced_at,
+        complete: s.coverage === 'complete',
+        no_transactions: s.no_transactions,
+      })),
+      ...fedSources.sources,
+    ],
     hidden: bank.hidden,
     view: noTransactionsView(bank.payload),
   };
+}
+
+/**
+ * Each bank a SimpleFIN connection reaches, as a source of transactions: when
+ * it last synced cleanly, and whether its older history is all in (fetched a
+ * window a night, lib/connectors/sync.ts), with a note when it isn't. A bank
+ * whose every account is `hidden` isn't one.
+ */
+function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>): { sources: ApiSource[]; notes: string[] } {
+  const sources: ApiSource[] = [];
+  const notes: string[] = [];
+  const label = connectorOf('simplefin').label;
+  for (const card of fed.cards) {
+    if (card.accounts.every((a) => hidden.has(a.account_id))) continue;
+    const conn = card.connection_id ? fed.connections.get(card.connection_id) : undefined;
+    const unread = !!card.connection_id && fed.unreadableConnections.has(card.connection_id);
+    const history = conn?.history ?? null;
+    const complete = !unread && history !== null && history.complete;
+    sources.push({ institution: card.institution_name, synced_at: card.health?.last_ok_at ?? null, complete, no_transactions: null });
+    if (complete) continue;
+    if (unread) notes.push(`${card.institution_name}: what Nya keeps about its ${label} connection couldn’t be read, so whether its transactions are all here isn’t known`);
+    else if (history === null) notes.push(`${card.institution_name}: no transactions have come from ${label} yet`);
+    else notes.push(`${card.institution_name}: older transactions are still arriving from ${label}, a few months each night`);
+  }
+  return { sources, notes };
 }
 
 /**
@@ -1252,6 +1381,9 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
     if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
+    if (read.accounts.some((a) => a.id === opts.accountId && a.source === 'simplefin')) {
+      throw new NotFound('That account is kept up to date through SimpleFIN, which reports balances, not positions: it has no holdings.');
+    }
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
     return {
       accounts: [],
