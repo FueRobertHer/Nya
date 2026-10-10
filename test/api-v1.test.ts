@@ -424,15 +424,107 @@ describe('connections that bring in no transactions (lib/item-products.ts)', () 
 });
 
 describe('recurring bills and holdings', () => {
-  test('recurring bills are detected from the stored rows, each with its estimated next date', async () => {
+  /** The fixture's Netflix charges as the app's own detection reads them
+   *  (lib/recurring.ts), to hold the API to what the app shows. */
+  const appNetflix = async () => {
+    const { detectRecurring } = await import('@/lib/recurring');
+    const rows = [88, 57, 26].map((d) => ({
+      date: daysAgo(d),
+      name: 'Netflix',
+      amount: 15.99,
+      institution_name: 'Chase',
+      account_name: 'Checking',
+      account_type: 'depository',
+      category: 'entertainment',
+      transaction_code: null,
+      iso_currency_code: 'USD',
+    }));
+    return detectRecurring(rows)[0];
+  };
+  /** Rows typed on the fixture's manual wallet, in US dollars. */
+  const typed = async (rows: { name: string; amount: number; days: number; category: string }[]) => {
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const now = new Date().toISOString();
+    const before = (await manualTxnStore.get(ctx, 'manual_wallet'))!;
+    await manualTxnStore.set(ctx, 'manual_wallet', {
+      ...before,
+      rows: [
+        ...before.rows,
+        ...rows.map((r, i) => ({
+          id: `manual-txn:${String(i + 100).padStart(8, '0')}-0000-4000-8000-000000000000`,
+          account_id: 'manual_wallet',
+          date: daysAgo(r.days),
+          amount: r.amount,
+          currency: 'USD',
+          name: r.name,
+          category: r.category,
+          note: null,
+          source: 'manual',
+          source_id: null,
+          created_at: now,
+          updated_at: now,
+        })),
+      ],
+    });
+  };
+
+  test('recurring bills are detected from the stored rows as the app detects them, each with its cadence and next date', async () => {
+    const { expectedDates } = await import('@/lib/recurring');
     const { res, body } = await call('recurring');
     expect(res.status).toBe(200);
-    const next = new Date(Date.parse(`${daysAgo(26)}T00:00:00Z`) + 31 * DAY).toISOString().slice(0, 10);
+    // The next date the app shows for it: within the week.
+    const next = expectedDates(await appNetflix(), daysAgo(0), daysAgo(-400)).dates[0].date;
+    expect(next > daysAgo(0) && next <= daysAgo(-7)).toBe(true);
     expect(body).toMatchObject({
-      bills: [{ name: 'Netflix', institution: 'Chase', amount: 15.99, currency: 'USD', last_date: daysAgo(26), next_date: next, due_soon: true }],
+      bills: [
+        {
+          name: 'Netflix',
+          institution: 'Chase',
+          account: 'Checking',
+          amount: 15.99,
+          currency: 'USD',
+          cadence: 'monthly',
+          last_date: daysAgo(26),
+          next_date: next,
+          due_soon: true,
+          ended: false,
+          pays_card: false,
+        },
+      ],
       monthly_total: { currency: 'USD', amount: 15.99, left_out: [] },
       due_soon_days: 7,
     });
+  });
+
+  test('a yearly bill is found from the rows before the window, and one that may have ended is listed but not counted', async () => {
+    await typed([
+      // A domain renewed a year apart: its first charge is older than the window.
+      { name: 'Domain', amount: 12, days: 400, category: 'general services' },
+      { name: 'Domain', amount: 12, days: 35, category: 'general services' },
+      // A gym that stopped charging months ago.
+      ...[200, 169, 138].map((days) => ({ name: 'Gym', amount: 30, days, category: 'personal care' })),
+    ]);
+    const { body } = await call('recurring');
+    const by = (name: string) => body.bills.find((b: { name: string }) => b.name === name);
+    expect(by('Domain')).toMatchObject({ cadence: 'yearly', amount: 12, last_date: daysAgo(35), due_soon: false, ended: false });
+    expect(by('Gym')).toMatchObject({ cadence: 'monthly', amount: 30, last_date: daysAgo(138), due_soon: false, ended: true });
+    expect(by('Gym').next_date < daysAgo(0)).toBe(true);
+    // Netflix, and the domain at a twelfth of its price; never the gym.
+    expect(body.monthly_total).toEqual({ currency: 'USD', amount: 16.99, left_out: [] });
+  });
+
+  test('a bill marked not recurring is never named, nor counted; marks that can’t be read are said', async () => {
+    const { plannedStore } = await import('@/lib/planned-store');
+    await plannedStore.set(ctx, { version: 1, items: [], dismissed: [(await appNetflix()).id], threshold: null });
+    const { body } = await call('recurring');
+    expect(body.bills).toEqual([]);
+    expect(body.monthly_total).toEqual({ currency: 'USD', amount: 0, left_out: [] });
+    expect(body.notes.join(' ')).not.toContain('not recurring');
+    // Damaged: every bill is listed, and the notes say why.
+    await fake.set(ctxKey('planned-items'), 'not encrypted');
+    const after = (await call('recurring')).body;
+    expect(after.bills.map((b: { name: string }) => b.name)).toEqual(['Netflix']);
+    expect(after.notes).toContain('Bills marked not recurring: couldn’t be read, so any you marked are listed and counted in monthly_total');
   });
 
   test('the monthly total adds the bills in the totals’ currency, and names those in others, as the Budgets tab does', async () => {

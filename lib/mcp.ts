@@ -143,7 +143,10 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   spending_by_category: (r) =>
     `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
   get_budgets: (r) => `${plural(r.budgets.length, 'budget')} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}.${withoutTransactions(r)}`,
-  list_recurring_bills: (r) => `${plural(r.bills.length, 'recurring bill')}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`,
+  list_recurring_bills: (r) => {
+    const ended = r.bills.filter((b: any) => b.ended).length;
+    return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;
+  },
   list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')}.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
 };

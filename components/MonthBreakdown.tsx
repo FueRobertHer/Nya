@@ -34,6 +34,8 @@ export type Txn = {
   amount: number;
   pending: boolean;
   account_name: string;
+  // As in lib/transactions.ts: the account's type, for the cash forecast.
+  account_type?: string | null;
   institution_name: string;
   category: string | null;
   iso_currency_code: string | null;

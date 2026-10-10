@@ -17,6 +17,21 @@ import { loggable } from '@/lib/log-safe';
 // editing one or excluding one never drops the cache or waits on Plaid, a row
 // added while a load was running can't be cached away, and a record that
 // can't be read is only marked on its row, never a reason to stop caching.
+//
+// BEFORE THE YEAR. A yearly charge is seen twice only in two years, so the
+// rows from before the lookback that recurring detection can use go beside
+// the year's, as `recurring_history` (lib/activity.ts, lib/recurring.ts
+// olderRowsForDetection): compact, from merchants charged this year only once
+// or twice, at an amount charged this year too, with the same categories,
+// renames and exclusions. The cache keeps a wider set, chosen before the
+// person's own exclusions are applied, and each answer narrows it after them,
+// so an excluded row never keeps another from being sent. Only recurring
+// detection reads them, here and in the read-only API (lib/api-read.ts).
+//
+// ACCOUNT TYPES. Every row carries its account's name and type (depository,
+// credit, loan, investment), so the cash forecast counts only what leaves or
+// reaches checking and savings, never a card's own charges beside the card's
+// payment (lib/forecast.ts).
 
 export async function GET(req: Request) {
   try {
@@ -40,7 +55,7 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes, incomplete } = await finishActivity(ctx, plaid, hidden);
+    const { transactions, notes, incomplete, history } = await finishActivity(ctx, plaid, hidden);
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -50,6 +65,7 @@ export async function GET(req: Request) {
       incomplete,
       without_transactions: plaid.without_transactions ?? [],
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
+      recurring_history: history,
       as_of: plaid.as_of,
       from_cache: fromCache,
     });

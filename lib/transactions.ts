@@ -44,6 +44,7 @@ import {
   type Refusal,
 } from './item-products';
 import { rememberedKindsForItem } from './last-known';
+import { RECURRING_LOOKBACK_DAYS } from './recurring';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -63,6 +64,11 @@ export type Txn = {
   amount: number; // Plaid convention: positive = money leaving the account
   pending: boolean;
   account_name: string;
+  // Plaid's type for the account (depository | credit | loan | investment |
+  // other), or a manual account's own, so the cash forecast counts only what
+  // leaves or reaches checking and savings (lib/forecast.ts). Null when the
+  // account's type isn't known; absent on a row built before it was sent.
+  account_type?: string | null;
   institution_name: string;
   category: string | null;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
@@ -95,6 +101,31 @@ export type Txn = {
   note?: string | null; // a manual row's note
   excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
 };
+
+/** A row from before the lookback, sent only for recurring detection, which
+ *  needs two years to see a yearly charge twice (lib/recurring.ts
+ *  olderRowsForDetection): what detection reads, and what the assembly
+ *  (lib/activity.ts) needs to apply a category, a rename and an exclusion to
+ *  it. Always posted. */
+export type OlderTxn = Pick<
+  Txn,
+  | 'transaction_id'
+  | 'date'
+  | 'name'
+  | 'amount'
+  | 'account_name'
+  | 'account_type'
+  | 'institution_name'
+  | 'category'
+  | 'subcategory'
+  | 'iso_currency_code'
+  | 'unofficial_currency_code'
+  | 'transaction_code'
+  | 'vendor_key'
+  | 'logo_url'
+  | 'excluded'
+  | 'source'
+>;
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.
 // Adding a field later would cost a full re-sync (see TXN_SCHEMA_VERSION), and
@@ -1006,6 +1037,7 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       amount: t.amount,
       pending: t.pending,
       account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+      account_type: state.accounts[t.account_id]?.type ?? null,
       institution_name: t.institution_name,
       category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
       iso_currency_code: t.iso_currency_code,
@@ -1032,8 +1064,46 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
 }
 
 /**
+ * The rows before the lookback, back to RECURRING_LOOKBACK_DAYS, that
+ * recurring detection may need, as it needs two years to see a yearly charge
+ * twice: posted rows of the accounts shown, compact (OlderTxn), with the
+ * categories and exclusions carried across a re-link, as displayRows gives
+ * the year's. lib/activity.ts keeps those detection can use.
+ */
+async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<OlderTxn[]> {
+  // A reader that sets its own first day (a report) reads every row from it
+  // in displayRows, and needs none before it.
+  if (inputs.since !== undefined) return [];
+  const { hiddenAccountIds } = inputs;
+  const carried = await inputs.carriedIn;
+  const carriedExclusions = await inputs.carriedExclusionsIn;
+  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const since = daysAgoIso(RECURRING_LOOKBACK_DAYS);
+  return Object.values(state.txns)
+    .filter((t) => t.date < cutoff && t.date >= since && !t.pending && !hiddenAccountIds?.has(t.account_id))
+    .map((t) => ({
+      transaction_id: t.transaction_id,
+      date: t.date,
+      name: t.merchant_name || t.name,
+      amount: t.amount,
+      account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+      account_type: state.accounts[t.account_id]?.type ?? null,
+      institution_name: t.institution_name,
+      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
+      subcategory: humanizeSubcategory(t.personal_finance_category),
+      iso_currency_code: t.iso_currency_code,
+      unofficial_currency_code: t.unofficial_currency_code ?? null,
+      transaction_code: t.transaction_code ?? null,
+      vendor_key: vendorKey(t),
+      logo_url: t.logo_url,
+      ...(carriedExclusions?.size && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+    }));
+}
+
+/**
  * Sync + return the display-shaped transactions for the Activity tab, sliced to
- * the trailing LOOKBACK window (displayRows).
+ * the trailing LOOKBACK window (displayRows), and the rows before it recurring
+ * detection may need (`older`, olderRows).
  *
  * `hiddenAccountIds` drops rows of hidden accounts (lib/hidden.ts). It has to be
  * filtered here: Txn has no `account_id` afterwards. Hidden rows are then never
@@ -1052,15 +1122,16 @@ export async function syncItemTransactions(ctx: Ctx,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
   opts: { withAccountIds?: boolean; since?: string } = {}
-): Promise<{ txns: Txn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
   // missing from this load on its account, so it is never named as
   // incomplete. Why it has none goes back beside the rows: the views that
   // count spending say so, and a refused bank account leaves spending unknown.
-  if (!state) return noTransactions ? { txns: [], note, coverage: 'complete', noTransactions } : { txns: [], note, coverage: 'missing' };
-  const txns = await displayRows(state, { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds, since: opts.since });
-  return { txns, note, coverage: importing ? 'importing' : 'complete' };
+  if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
+  const inputs: DisplayInputs = { hiddenAccountIds, carriedIn, carriedExclusionsIn, withAccountIds: opts.withAccountIds, since: opts.since };
+  const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
 }
 
 /**
@@ -1082,9 +1153,10 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
 }
 
 /**
- * The same rows as syncItemTransactions, from what is stored, never calling
- * Plaid: for the read-only API (lib/api-read.ts), which must not reach Plaid
- * (no cost, no rate-limit pressure). As current as the last sync that saved
+ * The same rows as syncItemTransactions (and the same rows before them,
+ * `older`), from what is stored, never calling Plaid: for the read-only API
+ * (lib/api-read.ts), which must not reach Plaid (no cost, no rate-limit
+ * pressure). As current as the last sync that saved
  * (`synced_at`, null when not known: a store saved before it was kept). A
  * store that can't be read is a note and no rows (`missing`), never an empty
  * institution passed off as one with no transactions; one never synced is
@@ -1105,6 +1177,7 @@ export async function storedItemTransactions(
   inputs: DisplayInputs = {}
 ): Promise<{
   txns: Txn[];
+  older: OlderTxn[];
   note: string | null;
   coverage: TxnCoverage;
   synced_at: string | null;
@@ -1117,25 +1190,33 @@ export async function storedItemTransactions(
   } catch (err) {
     if (!(err instanceof StateUnreadableError)) throw err;
     console.error(err.message, err.kind);
-    return { txns: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null };
+    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null };
   }
   if (state.cursor === '' && Object.keys(state.txns).length === 0) {
     const noTransactions = await storedNoTransactions(ctx, item, state);
-    if (noTransactions) return { txns: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions };
-    return { txns: [], note: `${item.institution_name}: no transactions stored yet; open the app to load them`, coverage: 'missing', synced_at: null, first_date: null };
+    if (noTransactions) return { txns: [], older: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions };
+    return {
+      txns: [],
+      older: [],
+      note: `${item.institution_name}: no transactions stored yet; open the app to load them`,
+      coverage: 'missing',
+      synced_at: null,
+      first_date: null,
+    };
   }
-  const txns = await displayRows(state, inputs);
+  const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   const first_date = firstStoredDate(state, inputs.hiddenAccountIds);
   if (state.importing) {
     return {
       txns,
+      older,
       note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`,
       coverage: 'importing',
       synced_at: state.synced_at,
       first_date,
     };
   }
-  return { txns, note: null, coverage: 'complete', synced_at: state.synced_at, first_date };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date };
 }
 
 /** The oldest day among an Item's stored rows that would be shown in some

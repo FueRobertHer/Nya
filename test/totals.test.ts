@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { spendingByCategory, summarize, tidy, categoryOf, type TotalsRow } from '@/lib/totals';
+import { spendingByCategory, summarize, tidy, categoryOf, recurringMonthly, countsInMonthly, type TotalsRow } from '@/lib/totals';
 import { countsInTotals } from '@/lib/spending';
+import { detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
 
 // Totals over transactions (lib/totals.ts), shared by the Budgets tab and the
 // read-only API: the rules of lib/spending.ts, one currency per total, and
@@ -98,5 +99,55 @@ describe('a summary over a range', () => {
   test('categoryOf files a row without one under "other"', () => {
     expect(categoryOf({ category: null })).toBe('other');
     expect(categoryOf({ category: 'travel' })).toBe('travel');
+  });
+});
+
+describe('what recurring series come to in a month, as the Budgets tab and the API add it', () => {
+  const TODAY = '2026-10-09';
+  const monthly = (from: string, count: number, day: number) =>
+    scheduleDates({ unit: 'month', every: 1, days: [day], month: from, slot: 0 }, TODAY, count);
+  const charge = (date: string, name: string, amount: number, over: Partial<RecurringRow> = {}): RecurringRow => ({
+    date,
+    name,
+    amount,
+    institution_name: 'Chase',
+    account_name: 'Checking',
+    account_type: 'depository',
+    category: 'entertainment',
+    transaction_code: null,
+    iso_currency_code: 'USD',
+    ...over,
+  });
+  const series = detectRecurring([
+    // Monthly, still coming: in, at its price.
+    ...monthly('2026-04', 6, 14).map((d) => charge(d, 'Netflix', 15.99)),
+    // Weekly: about 4.35 times its price a month.
+    ...['2026-08-07', '2026-08-14', '2026-08-21', '2026-08-28', '2026-09-04', '2026-09-11', '2026-09-18', '2026-09-25', '2026-10-02', '2026-10-09'].map((d) =>
+      charge(d, 'Laundry', 10, { category: 'general services' })
+    ),
+    // Stopped in the spring: may have ended, so not in.
+    ...monthly('2026-01', 4, 3).map((d) => charge(d, 'Gym', 30, { category: 'personal care' })),
+    // A card's payment: its card's charges are counted where they are charged.
+    ...monthly('2026-04', 6, 25).map((d) => charge(d, 'CHASE CREDIT CRD AUTOPAY', 300, { category: 'loan payments', subcategory: 'credit card payment' })),
+    // In euros: left out, and named.
+    ...monthly('2026-04', 6, 20).map((d) => charge(d, 'Radio', 9.99, { iso_currency_code: 'EUR' })),
+  ]).filter((s) => s.kind === 'bill');
+
+  test('those still coming, at their monthly worth, in one currency; the rest named', () => {
+    const name = (n: string) => series.find((s) => s.name === n)!;
+    expect(countsInMonthly(name('Netflix'), TODAY)).toBe(true);
+    expect(countsInMonthly(name('Gym'), TODAY)).toBe(false);
+    expect(countsInMonthly(name('CHASE CREDIT CRD AUTOPAY'), TODAY)).toBe(false);
+    const { total, leftOut } = recurringMonthly(series, TODAY, 'USD');
+    expect(tidy(total)).toBe(tidy(15.99 + (10 * 365.25) / 12 / 7));
+    expect(leftOut).toEqual([{ currency: 'EUR', count: 1 }]);
+    // In euros instead: only the radio, and the dollars named.
+    expect(recurringMonthly(series, TODAY, 'EUR')).toEqual({ total: 9.99, leftOut: [{ currency: 'USD', count: 2 }] });
+  });
+
+  test('pay that varies too much to forecast is never in it', () => {
+    const steady = series.find((s) => s.name === 'Netflix')!;
+    expect(countsInMonthly({ ...steady, agreement: 'varies' }, TODAY)).toBe(false);
+    expect(recurringMonthly([{ ...steady, agreement: 'varies' }], TODAY, 'USD')).toEqual({ total: 0, leftOut: [] });
   });
 });

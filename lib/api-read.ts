@@ -22,7 +22,10 @@
 // spending or income goes through countsInTotals (lib/spending.ts, by way of
 // lib/totals.ts): one currency per total, what the person excluded left out,
 // transfers, cash withdrawals and loan payments left out (a bank's fees count),
-// and what was left out named.
+// and what was left out named. Recurring bills are detected as the app
+// detects them, with the rows before the window a yearly bill needs, never
+// one the person marked not recurring, and their monthly total is added up as
+// the Budgets tab adds it (lib/totals.ts recurringMonthly).
 //
 // CONNECTIONS WITHOUT TRANSACTIONS (lib/item-products.ts: investment accounts
 // only, no bank account or card, or a bank account or card whose transactions
@@ -64,13 +67,14 @@ import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
 import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
 import { getBudgets } from './budgets';
-import { detectRecurring, upcomingBills, type RecurringBill } from './recurring';
+import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
+import { plannedStore } from './planned-store';
 import { currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
-import { spendingByCategory, summarize, tidy, categoryOf, type Summary } from './totals';
+import { spendingByCategory, summarize, tidy, categoryOf, recurringMonthly, type Summary } from './totals';
 import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
 import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
-import { LOOKBACK_DAYS, type Txn } from './transactions';
+import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
@@ -599,16 +603,18 @@ function toApiTransaction(t: Txn, hidden: Set<string>): ApiTransaction {
  *  brings in none (lib/item-products.ts). */
 export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView };
+type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView };
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
- *  (lib/no-transactions.ts). */
+ *  (lib/no-transactions.ts), and the rows before them that recurring
+ *  detection needs (`history`). */
 async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const { transactions, notes } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
+  const { transactions, notes, history } = await finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
+    history,
     notes,
     sources: bank.sources.map((s: BankSource) => ({
       institution: s.institution_name,
@@ -830,12 +836,34 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
 //
 // The one place the API reads lib/recurring.ts: what it detects becomes the
 // API's shape here and nowhere else, so a change to the detection changes
-// this section alone.
+// this section alone. Detected as the app detects them (components/Dashboard.tsx):
+// from the window's rows and the rows before it a yearly bill needs
+// (lib/activity.ts), each on its own account and cadence. Bills only, never
+// income; never one the person marked not recurring (lib/planned.ts, matched
+// to a series by dismissedSeries, as the app matches it); and their monthly
+// total added up as the Budgets tab adds it (lib/totals.ts recurringMonthly).
 
 export type ApiRecurring = {
-  /** Detected from the transactions (a merchant charging about monthly at a
-   *  steady amount): an estimate, as is each next date. */
-  bills: { name: string; institution: string; amount: number; currency: string | null; last_date: string; next_date: string; due_soon: boolean }[];
+  /** Detected from the transactions (charged on a schedule, weekly to yearly,
+   *  at a steady or similar amount): an estimate, as is each next date. */
+  bills: {
+    name: string;
+    institution: string;
+    /** The account it is charged to; null when the rows didn't say. */
+    account: string | null;
+    amount: number;
+    currency: string | null;
+    cadence: Cadence;
+    last_date: string;
+    next_date: string;
+    due_soon: boolean;
+    /** Its expected dates went by with nothing arriving: it may have ended,
+     *  and isn't in monthly_total. */
+    ended: boolean;
+    /** It pays a card off: the card's own charges are counted where they are
+     *  charged, so it isn't in monthly_total. */
+    pays_card: boolean;
+  }[];
   /** What the bills come to in a month, in the budgets' currency, and the
    *  bills left out of it for being in another. */
   monthly_total: { currency: string | null; amount: number; left_out: LeftOut };
@@ -846,41 +874,54 @@ export type ApiRecurring = {
 };
 
 const DUE_SOON_DAYS = 7;
+/** How far ahead next_date looks: past a yearly bill's next date. */
+const NEXT_WITHIN_DAYS = 400;
 
-/** The bills' monthly total in `currency`, added up as the Budgets tab adds
- *  it (components/BudgetsTab.tsx): a bill that says no currency counts in
- *  this one, and the bills in others are left out, counted by currency. */
-function billsTotal(bills: readonly RecurringBill[], currency: string | null): { total: number; leftOut: LeftOut } {
-  let total = 0;
-  const others = new Map<string, number>();
-  for (const b of bills) {
-    const c = b.currency ?? currency;
-    if (c === currency || currency === null) total += b.amount;
-    else if (c) others.set(c, (others.get(c) ?? 0) + 1);
+/** The detected series the person marked not recurring, as saved
+ *  (lib/planned.ts); null when they couldn't be read. */
+async function readDismissed(ctx: Ctx): Promise<readonly string[] | null> {
+  try {
+    return (await plannedStore.get(ctx))?.dismissed ?? [];
+  } catch {
+    return null;
   }
-  return { total, leftOut: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count) };
 }
 
 export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; today?: string } = {}): Promise<ApiRecurring> {
-  const activity = await readActivity(ctx, !!opts.includeHidden);
-  const bills = detectRecurring(activity.rows);
+  const [activity, dismissed] = await Promise.all([readActivity(ctx, !!opts.includeHidden), readDismissed(ctx)]);
+  const today = opts.today ?? utcDay(Date.now());
+  const series = detectRecurring([...activity.rows, ...activity.history]);
+  const gone = dismissedSeries(series, dismissed ?? []);
+  const bills = series.filter((s) => s.kind === 'bill' && !gone.has(s.id));
   const currency = totalsCurrency(activity.rows);
-  const soon = new Set(upcomingBills(bills, DUE_SOON_DAYS, opts.today ?? utcDay(Date.now())));
-  const { total, leftOut } = billsTotal(bills, currency);
+  const soon = new Set(upcomingBills(bills, DUE_SOON_DAYS, today).map((u) => u.series.id));
+  const { total, leftOut } = recurringMonthly(bills, today, currency);
+  const until = addDays(today, NEXT_WITHIN_DAYS);
+  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  if (dismissed === null) notes.push('Bills marked not recurring: couldn’t be read, so any you marked are listed and counted in monthly_total');
   return {
-    bills: bills.map((b) => ({
-      name: b.name,
-      institution: b.institution,
-      amount: tidy(b.amount),
-      currency: b.currency,
-      last_date: b.lastDate,
-      next_date: b.nextDate,
-      due_soon: soon.has(b),
-    })),
+    bills: bills.map((b) => {
+      const expected = expectedDates(b, today, until);
+      return {
+        name: b.name,
+        institution: b.institution,
+        account: b.account || null,
+        amount: tidy(b.amount),
+        currency: b.currency,
+        cadence: b.cadence,
+        last_date: b.lastDate,
+        // Today for one that is late; for one that may have ended, the date
+        // it was expected on.
+        next_date: expected.dates[0]?.date ?? b.nextDate,
+        due_soon: soon.has(b.id),
+        ended: expected.status === 'ended',
+        pays_card: b.paysCard === true,
+      };
+    }),
     monthly_total: { currency, amount: tidy(total), left_out: leftOut },
     due_soon_days: DUE_SOON_DAYS,
     sources: activity.sources,
-    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')],
+    notes,
   };
 }
 

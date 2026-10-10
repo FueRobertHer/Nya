@@ -84,7 +84,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `planned-items`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `institutions[]`
 
@@ -374,6 +374,16 @@ Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or impor
 | `created_at`, `updated_at` | When it was entered, and last changed in the app. An import that replaces it with its file's version, and the undo of that, leave `updated_at` as it was: neither is your change. |
 
 Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
+
+#### `planned-items`
+
+What you told the cash forecast (`lib/planned.ts`, [Recurring bills and the cash forecast](features.md#recurring-bills-and-the-cash-forecast)), or `null` if you never saved any: `version` (the shape's version: 1), `items`, `dismissed` and `threshold`. The forecast itself is never stored, so it is not here.
+
+| Field | Meaning |
+| --- | --- |
+| `items[]` | Each expense or income you planned: `id` (random), `name`, `kind` (`expense` or `income`), `amount` (positive, in `currency`), `currency` (its ISO 4217 code), `date` (the day it falls on, or the first day of one that repeats) and `cadence` (`once`, `weekly`, `biweekly`, `monthly`, `quarterly`, `semiannual` or `yearly`). |
+| `dismissed[]` | The detected bills and income you marked not recurring, each as the series was when you did: its kind, institution, account, merchant (lower-cased), currency and amount in cents, joined by `\|`, the amount marked `=` when the series was one of a merchant's subscriptions told apart by amount. Each applies to the series of that account and merchant nearest its amount, or its price before a change: exactly when either is marked so, otherwise within 25% or 50 cents, so it holds as a bill's amount moves. |
+| `threshold` | The figure the forecast warns below, as `amount` and the `currency` it was set in (`null` for one saved before currencies were kept, read in the forecast's), or `null` for the default (100 in the forecast's currency). |
 
 #### `report-settings`
 

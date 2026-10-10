@@ -2,36 +2,42 @@
 
 // Budgets tab -- the Mint core loop: monthly budgets per spending category
 // with progress meters (fill carries severity: accent -> warning -> over),
-// plus detected recurring bills. Spending is the current month's outflows that
-// count in totals (lib/spending.ts: not transfers or loan payments, not
-// excluded, and in the totals' currency, naming what is in others), from the
-// already-loaded transactions: the same rule as the Activity tab and the Home
-// insights, so a budget agrees with both.
+// then savings goals, and what is coming: the cash forecast with its what-if
+// (components/ForecastCard.tsx), the calendar (components/CalendarView.tsx),
+// the recurring bills and income detected (components/RecurringCard.tsx) and
+// the items planned (components/PlannedCard.tsx). Spending is the current
+// month's outflows that count in totals (lib/spending.ts: not transfers or
+// loan payments, not excluded, and in the totals' currency, naming what is in
+// others), from the already-loaded transactions: the same rule as the
+// Activity tab and the Home insights, so a budget agrees with both.
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
-import { detectRecurring } from '@/lib/recurring';
-import { localMonth, instantDay } from '@/lib/local-date';
+import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
+import { localDate, localMonth, instantDay } from '@/lib/local-date';
+import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
+import { EMPTY_PLANNED, type Planned, type PlannedItem } from '@/lib/planned';
 import { formatMoney } from '@/lib/format';
 import { spendingByCategory } from '@/lib/totals';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import { missingMonthNotes, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
+import ForecastCard from './ForecastCard';
+import CalendarView from './CalendarView';
+import RecurringCard from './RecurringCard';
+import PlannedCard from './PlannedCard';
 
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
+const NO_SERIES: RecurringSeries[] = [];
+const NO_INSTITUTIONS: ForecastInstitution[] = [];
+const NO_ITEMS: PlannedItem[] = [];
+const NO_DISMISSED: string[] = [];
 
 export type Budgets = Record<string, number>;
-
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
-}
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
   if (ratio >= 1) return ' over';
@@ -56,6 +62,16 @@ export default function BudgetsTab({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  series: detected = null,
+  txnsFailed = false,
+  institutions = NO_INSTITUTIONS,
+  balancesAsOf = null,
+  balancesSaved = false,
+  planned = EMPTY_PLANNED,
+  plannedStatus = 'ready',
+  plannedError = null,
+  plannedSaveError = null,
+  onSavePlanned,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
@@ -86,6 +102,26 @@ export default function BudgetsTab({
    *  nothing against it, never "$0 of" it; a bank account Plaid doesn't
    *  provide transactions for is named under the month. */
   withoutTransactions?: NoTransactionsView;
+  /** The bills and income detected (lib/recurring.ts), once for the whole
+   *  dashboard, from the year loaded and the rows before it a yearly charge
+   *  needs; null until transactions load. */
+  series?: RecurringSeries[] | null;
+  /** Transactions couldn't be loaded: said, never shown as "nothing". */
+  txnsFailed?: boolean;
+  /** Every institution as the dashboard last loaded it, for the forecast's
+   *  cash accounts and the calendar's payments due. */
+  institutions?: ForecastInstitution[];
+  /** When those balances were loaded, and whether they are the ones saved on
+   *  this device from an earlier visit (components/Dashboard.tsx). */
+  balancesAsOf?: string | null;
+  balancesSaved?: boolean;
+  /** The planned items, dismissals and warning (lib/planned.ts), loaded and
+   *  saved whole like the budgets. */
+  planned?: Planned;
+  plannedStatus?: ListStatus;
+  plannedError?: string | null;
+  plannedSaveError?: string | null;
+  onSavePlanned?: (next: Planned) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState<string | null>(null); // category being edited
   const [editAmount, setEditAmount] = useState('');
@@ -138,24 +174,21 @@ export default function BudgetsTab({
     [budgets, spendByCat]
   );
 
-  const recurring = useMemo(() => (txns ? detectRecurring(txns) : []), [txns]);
-
-  // The bills' monthly total adds up those in the budgets' currency; each bill
-  // is listed in its own, and those in others are named.
-  const { monthlyBills, billsLeftOut } = useMemo(() => {
-    let total = 0;
-    const others = new Map<string, number>();
-    for (const b of recurring) {
-      const c = b.currency ?? displayCurrency;
-      if (c === displayCurrency || displayCurrency === null) total += b.amount;
-      else if (c) others.set(c, (others.get(c) ?? 0) + 1);
-    }
-    const leftOut = [...others].map(([currency, count]) => ({ currency, count })).sort((a, b) => b.count - a.count);
-    return {
-      monthlyBills: total,
-      billsLeftOut: leftOutText(leftOut, displayCurrency, { noun: 'bill', where: 'this total', plural: false }),
-    };
-  }, [recurring, displayCurrency]);
+  // Bills and income detected (lib/recurring.ts), for the recurring list, the
+  // forecast and the calendar alike.
+  const series = detected ?? NO_SERIES;
+  // Until the planned items load, no item counts and nothing is dismissed: the
+  // forecast says so. A dismissal follows its series as amounts move
+  // (lib/recurring.ts dismissedSeries): the series' ids, and what each was
+  // saved as, to restore it.
+  const ready = plannedStatus === 'ready';
+  const items = ready ? planned.items : NO_ITEMS;
+  const dismissedIds = ready ? planned.dismissed : NO_DISMISSED;
+  const gone = useMemo(() => dismissedSeries(series, dismissedIds), [series, dismissedIds]);
+  const dismissed = useMemo(() => new Set(gone.keys()), [gone]);
+  // A planned item starts in the forecast's currency: the cash accounts'.
+  const plannedCurrency = useMemo(() => cashPosition(institutions).currency ?? displayCurrency, [institutions, displayCurrency]);
+  const today = localDate();
 
   if (loading) {
     return (
@@ -355,58 +388,64 @@ export default function BudgetsTab({
         onSave={onSaveGoals}
       />
 
-      <div className="card">
-        <div className="inst-header">
-          <div className="inst-name">Recurring bills</div>
-          {recurring.length > 0 && (
-            <div className="inst-total">
-              ~{formatMoney(monthlyBills, displayCurrency)}/mo
-            </div>
-          )}
-        </div>
+      <ForecastCard
+        institutions={institutions}
+        series={series}
+        planned={planned}
+        plannedStatus={plannedStatus}
+        dismissed={dismissed}
+        onSavePlanned={onSavePlanned}
+        today={today}
+        txns={txns ?? undefined}
+        loading={txns === null && !txnsFailed}
+        failed={txnsFailed}
+        balancesAsOf={balancesAsOf}
+        balancesSaved={balancesSaved}
+        incomplete={incomplete}
+        stopped={stopped}
+        withoutTransactions={withoutTransactions}
+      />
 
-        {recurring.length === 0 && noSpending ? (
-          <p className="empty-note">{noSpending.lead}, so there are no bills to detect.</p>
-        ) : recurring.length === 0 ? (
-          <p className="empty-note">
-            No recurring charges detected yet — they show up once a merchant has billed a
-            consistent amount for three months.
-          </p>
-        ) : (
-          <table>
-            <tbody>
-              {recurring.map((b) => (
-                <tr key={`${b.institution}-${b.name}`}>
-                  <td>
-                    <div className="txn-main">
-                      {b.logo_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img className="txn-logo" src={b.logo_url} alt="" loading="lazy" />
-                      ) : (
-                        <span className="txn-logo txn-logo-fallback" aria-hidden="true">
-                          {b.name.slice(0, 1).toUpperCase()}
-                        </span>
-                      )}
-                      <div className="txn-text">
-                        {b.name}
-                        <div className="type-tag">
-                          {b.institution} · {b.monthsSeen} months · next ~{fmtDay(b.nextDate)}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="num">
-                    {formatMoney(b.amount, b.currency ?? displayCurrency)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div className="chart-note">
-          Detected from repeating charges of a consistent amount.{billsLeftOut && ` ${billsLeftOut}`}
-        </div>
-      </div>
+      <CalendarView
+        txns={txns}
+        failed={txnsFailed}
+        series={series}
+        planned={items}
+        dismissed={dismissed}
+        institutions={institutions}
+        today={today}
+        currency={displayCurrency}
+      />
+
+      <RecurringCard
+        series={series}
+        today={today}
+        currency={displayCurrency}
+        dismissed={dismissed}
+        status={plannedStatus}
+        saveError={plannedSaveError}
+        onDismiss={
+          onSavePlanned &&
+          ((s, dismiss) => {
+            const saved = gone.get(s.id);
+            const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
+            return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
+          })
+        }
+        noSpending={noSpending}
+        loading={txns === null && !txnsFailed}
+        failed={txnsFailed}
+      />
+
+      <PlannedCard
+        planned={planned}
+        status={plannedStatus}
+        error={plannedError}
+        saveError={plannedSaveError}
+        onSave={onSavePlanned}
+        today={today}
+        currency={plannedCurrency}
+      />
     </>
   );
 }

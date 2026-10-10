@@ -784,6 +784,7 @@ describe('stores built on the storage seam', () => {
       'import-settings',
       'imports',
       'manual-transactions',
+      'planned-items',
       'report-settings',
       'transaction-annotations',
     ]);

@@ -149,12 +149,12 @@ describe('an Item’s rows as stored', () => {
     console.error = () => {};
     try {
       await fake.set(ctxKey('txns:item_a'), DAMAGED);
-      expect(await storedItemTransactions(ctx, ITEM)).toEqual({ txns: [], note: 'Test Bank: stored transactions could not be read', coverage: 'missing', synced_at: null, first_date: null });
+      expect(await storedItemTransactions(ctx, ITEM)).toEqual({ txns: [], older: [], note: 'Test Bank: stored transactions could not be read', coverage: 'missing', synced_at: null, first_date: null });
     } finally {
       console.error = quiet;
     }
     await fake.del(ctxKey('txns:item_a'));
-    expect(await storedItemTransactions(ctx, ITEM)).toEqual({ txns: [], note: 'Test Bank: no transactions stored yet; open the app to load them', coverage: 'missing', synced_at: null, first_date: null });
+    expect(await storedItemTransactions(ctx, ITEM)).toEqual({ txns: [], older: [], note: 'Test Bank: no transactions stored yet; open the app to load them', coverage: 'missing', synced_at: null, first_date: null });
     // Saved before sync times were kept: rows, as of a time not known.
     await fake.set(ctxKey('txns:item_a'), await stored({ t1: row('t1', 'acct_1', 1, 5) }));
     expect(await storedItemTransactions(ctx, ITEM)).toMatchObject({ coverage: 'complete', synced_at: null });
@@ -167,8 +167,8 @@ describe('an Item’s rows as stored', () => {
     const refusal = async (code: string, accounts: string[], at = new Date().toISOString()) =>
       fake.set(ctxKey('txns:item_a'), await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at, code, accounts } }));
     type Read = Awaited<ReturnType<typeof storedItemTransactions>>;
-    const none = (noTransactions: Read['noTransactions']): Read => ({ txns: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions });
-    const notYet: Read = { txns: [], note: 'Test Bank: no transactions stored yet; open the app to load them', coverage: 'missing', synced_at: null, first_date: null };
+    const none = (noTransactions: Read['noTransactions']): Read => ({ txns: [], older: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions });
+    const notYet: Read = { txns: [], older: [], note: 'Test Bank: no transactions stored yet; open the app to load them', coverage: 'missing', synced_at: null, first_date: null };
 
     // Not known: no accounts remembered yet. The next sync decides.
     expect(await storedItemTransactions(ctx, unbilled)).toEqual(notYet);
