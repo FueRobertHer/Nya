@@ -447,6 +447,18 @@ describe('forgetting an earlier account', () => {
     expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
   });
 
+  // A disconnect whose cleanup failed leaves behind what was said about its
+  // transactions; a forget finishes it, for exclusions as for categories.
+  test('prunes what was said about transactions no stored Item holds, as it prunes their categories', async () => {
+    await setup();
+    const { setExcluded } = await import('@/lib/txn-annotations');
+    await overrides.setOverride(ctx, 't_left', 'treats');
+    await setExcluded(ctx, 't_left', true);
+    expect((await forget('acct_old')).status).toBe(200);
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't_left')).toBeNull();
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_left')).toBeNull();
+  });
+
   // The bank stopped returning a card, but the institution is still
   // connected: its transactions are still stored there.
   test('not an account of an institution that is still connected', async () => {

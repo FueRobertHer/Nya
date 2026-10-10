@@ -8,7 +8,7 @@ import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { getItems, removeItem, type StoredItem } from './storage';
 import { clearCaches } from './cache';
-import { clearItemTransactions, contentKey, readStoredTxns, storeIsBehind, type StoredTxn } from './transactions';
+import { clearItemTransactions, contentKey, readStoredTxns, storedTransactionIds, type StoredTxn } from './transactions';
 import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
 import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
@@ -18,22 +18,6 @@ import { clearNewAccounts } from './new-accounts';
 import { forgetConnection } from './connection-health';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
-
-/** Every transaction id the stored Items hold, or null when a store
- *  couldn't be read or is behind (rows shown from a store too large to save
- *  aren't in it), so nothing is pruned on a partial answer. */
-async function storedTransactionIds(ctx: Ctx, item_ids: string[]): Promise<Set<string> | null> {
-  const known = new Set<string>();
-  try {
-    for (const item_id of item_ids) {
-      if (await storeIsBehind(ctx, item_id)) return null;
-      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
-    }
-  } catch {
-    return null;
-  }
-  return known;
-}
 
 /**
  * `item` is the stored Item, or undefined when only a stale id is being
