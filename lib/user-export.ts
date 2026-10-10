@@ -120,7 +120,7 @@ import {
   type CategoryIndex,
   type Taxonomy,
 } from './categories';
-import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
+import { manualTxnStore, isManualTxnBook, withPairWords, type ManualTxn } from './manual-txns';
 
 export const EXPORT_FORMAT = 'nya-export';
 /** 2 since a part that can't be read is named under `problems` instead of
@@ -971,6 +971,16 @@ const PART_WORDS: Record<string, PartWords> = {
     // name is missing from them.
     inCsv: (counts) => `Not all of your manual accounts could be read: ${counts}. Their rows in this file are under their account ids, with no account name.`,
   },
+  // An account SimpleFIN keeps up to date: in a CSV, what names its rows and
+  // the type a pair of them is worked out by (transactionsCsv).
+  [connectorAccountsStore.name]: {
+    noun: connectorAccountsStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${connectorAccountsStore.what} could be read: ${counts}. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as SimpleFIN gave it, with no category.`,
+  },
   // One entry per manual account: its book.
   'manual-transactions': {
     noun: 'manual transactions',
@@ -1159,7 +1169,11 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       pfc_detailed: t.personal_finance_category?.detailed ?? null,
     };
   };
-  const manualRows = manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]);
+  // As the CSV lists them: a pair of SimpleFIN rows in the pair's words.
+  const manualRows = withPairWords(
+    manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]),
+    new Map([...[...data.connected.values()].map((c) => [c.account_id, c.type] as const), ...data.manual.map((m) => [m.account_id, m.type] as const)])
+  );
   let provisional = 0;
   const filing = indexTaxonomy(
     growTaxonomy(
@@ -1611,12 +1625,18 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
   // own: each is named as `manual_accounts` or `accounts` names its account.
-  const accounts = new Map<string, { name: string | null; institution_name: string | null }>([
+  const accounts = new Map<string, { name: string | null; institution_name: string | null; type: string | null }>([
     ...doc.accounts.filter((a) => a.provider !== 'plaid').map((a) => [a.account_id, a] as const),
     ...doc.manual_accounts.map((m) => [m.account_id, m] as const),
   ]);
+  const typeOf = new Map([...accounts].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
-  const manual = manualTransactionsIn(doc);
+  // A pair of SimpleFIN rows between two of the person's accounts (a card's
+  // payment, a loan's, a move between them) is worked out each time the rows
+  // are read, never stored: listed as the app shows it, each side in the
+  // pair's words and filed by them, so the file leaves out of a total what
+  // the app does (lib/manual-txns.ts withPairWords).
+  const manual = withPairWords(manualTransactionsIn(doc), typeOf);
   const filed = manualFiling(doc, manual);
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
@@ -1698,9 +1718,10 @@ export type ExportFile = { filename: string; contentType: string; pieces: () => 
  * every part.
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
-  // The books of the manual accounts, the names of the accounts they are on,
-  // and the categories every row is filed by (nya_category).
-  'transactions-csv': ['manual-transactions', 'manual_accounts', taxonomyStore.name],
+  // The books of the manual accounts, the names of the accounts they are on
+  // (and the types a pair of SimpleFIN rows is worked out by), and the
+  // categories every row is filed by (nya_category).
+  'transactions-csv': ['manual-transactions', 'manual_accounts', connectorAccountsStore.name, taxonomyStore.name],
   // The days, and the names of the manual accounts the rows are for.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
 };

@@ -38,6 +38,7 @@ const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
 const mcp = await import('@/app/api/mcp/route');
+const recategorizeRoute = await import('@/app/api/recategorize/route');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -220,6 +221,68 @@ describe('the download’s transactions.csv', () => {
       ['PAYMENT TO VISA', 'Checking', 'My Bank', 'simplefin', '300'],
     ]);
   });
+
+  test('files a pair between two SimpleFIN accounts as the app does: each side in the pair’s words, under Transfers, though nothing is stored', async () => {
+    server.accounts = [
+      fakeAccount({
+        id: 'CHK',
+        name: 'Checking',
+        balance: '5000.00',
+        'balance-date': ago(1),
+        transactions: [txn('coffee', 2, '-12.50', 'COFFEE'), txn('pay', 3, '-300.00', 'PAYMENT TO VISA'), txn('mtg', 5, '-2000.00', 'MORTGAGE PMT'), txn('sav', 6, '-500.00', 'TO SAVINGS')],
+      }),
+      fakeAccount({ id: 'CARD', name: 'Visa', balance: '-300.00', 'balance-date': ago(1), transactions: [txn('thanks', 2, '300.00', 'PAYMENT THANK YOU'), txn('dinner', 2, '-45.67', 'DINER')] }),
+      fakeAccount({ id: 'MTG', name: 'Home Loan', balance: '-250000.00', 'balance-date': ago(1), transactions: [txn('mtgin', 4, '2000.00', 'PAYMENT RECEIVED')] }),
+      fakeAccount({ id: 'SAV', name: 'Savings', balance: '1500.00', 'balance-date': ago(1), transactions: [txn('savin', 6, '500.00', 'FROM CHECKING')] }),
+    ];
+    const { connection_id } = await connect(ctx, 'simplefin', server.setupToken('pairs'));
+    await trackAccounts(ctx, connection_id, [
+      { remote_id: 'CHK', type: 'depository' },
+      { remote_id: 'CARD', type: 'credit' },
+      { remote_id: 'MTG', type: 'loan' },
+      { remote_id: 'SAV', type: 'depository' },
+    ]);
+    /** By name: the file's category, and where it files the row (its name, id and group). */
+    const fromFile = async () => {
+      const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
+      const [, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+      const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
+      const filed = Object.fromEntries(rows.map((r) => [col(r, 'name'), [col(r, 'category'), col(r, 'nya_category'), col(r, 'nya_category_id'), col(r, 'nya_group')]]));
+      return { doc, filed };
+    };
+    /** By name, where the API files each row (as the app does). */
+    const fromApi = async () =>
+      Object.fromEntries(((await rest('transactions')).body.transactions as any[]).map((t) => [t.name, [t.category ?? '', t.category_id ?? '', t.group ?? '']]));
+
+    const { doc, filed } = await fromFile();
+    const words = Object.fromEntries(Object.entries(filed).map(([name, [category, nya, , group]]) => [name, [category, nya, group]]));
+    expect(words).toEqual({
+      COFFEE: ['', '', 'Other'],
+      DINER: ['', '', 'Other'],
+      'PAYMENT TO VISA': ['loan payments', 'loan payments', 'Transfers'],
+      'PAYMENT THANK YOU': ['loan payments', 'loan payments', 'Transfers'],
+      'MORTGAGE PMT': ['loan payments', 'loan payments', 'Transfers'],
+      'PAYMENT RECEIVED': ['loan payments', 'loan payments', 'Transfers'],
+      'TO SAVINGS': ['transfer out', 'transfer out', 'Transfers'],
+      'FROM CHECKING': ['transfer in', 'transfer in', 'Transfers'],
+    });
+    // Filed exactly as the API files them.
+    const api = await fromApi();
+    expect(Object.fromEntries(Object.entries(filed).map(([name, [, ...nya]]) => [name, nya]))).toEqual(api);
+    // Worked out, never stored: the JSON file holds the rows as SimpleFIN gave them.
+    const stored = (doc['manual-transactions'] as { value: { rows: { name: string; category: string | null }[] } }[]).flatMap((e) => e.value.rows);
+    expect(stored.filter((r) => r.category !== null)).toEqual([]);
+
+    // A category of the person's on one side wins and undoes the pair, there as in the app.
+    const visa = ((await rest('transactions')).body.transactions as any[]).find((t) => t.name === 'PAYMENT TO VISA');
+    const res = await recategorizeRoute.POST(
+      new Request('http://localhost/api/recategorize', { method: 'POST', body: JSON.stringify({ transaction_id: visa.id, category: 'shopping', account_id: visa.account_id }) })
+    );
+    expect(res.status).toBe(200);
+    const after = (await fromFile()).filed;
+    expect([after['PAYMENT TO VISA'][0], after['PAYMENT THANK YOU'][0], after['PAYMENT THANK YOU'][3]]).toEqual(['shopping', '', 'Other']);
+    expect(Object.fromEntries(Object.entries(after).map(([name, [, ...nya]]) => [name, nya]))).toEqual(await fromApi());
+  });
 });
 
 describe('an entry that can’t be read', () => {
@@ -241,5 +304,13 @@ describe('an entry that can’t be read', () => {
     expect(doc.accounts.map((a) => a.name)).toEqual(['Checking']);
     expect((doc['connector-accounts'] as any[]).map((e) => e.id)).toEqual([checking]);
     expect((doc['manual-transactions'] as any[]).flatMap((b) => b.value.rows).map((r: any) => r.name).sort()).toEqual(['COFFEE', 'DINER']);
+    // The transactions CSV, which names its rows and works out their pairs by
+    // these accounts, says what it lacks.
+    const csv = exportFile(doc, 'transactions-csv');
+    expect(csv.incomplete).toEqual(['connector-accounts']);
+    expect(csv.notes).toContain(
+      'Not all of your accounts from SimpleFIN could be read: 1 entry whose stored data is damaged. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as SimpleFIN gave it, with no category. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+    );
+    expect(exportFile(doc, 'balances-csv').incomplete).toEqual([]);
   });
 });
