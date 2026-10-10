@@ -49,7 +49,7 @@ const commitments = (backups: BackupRetention): Commitment[] => [
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted, and names anything it couldn’t read: one JSON file, or CSV files of your transactions and of your balance history. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`,
+    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, or CSV files of your transactions and of your balance history. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`,
     next: {
       label: 'Not built yet',
       text: 'OFX files for other money apps, a passphrase to protect the file, a way to bring a download into another copy of Nya, and an email each time a download happens.',

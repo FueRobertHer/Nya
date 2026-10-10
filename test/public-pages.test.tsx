@@ -356,7 +356,7 @@ describe('the privacy page', () => {
   test('describes the download and the deletion receipt as they are', () => {
     const page = privacy();
     expect(page).toContain(
-      `True today Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted, and names anything it couldn’t read: one JSON file, or CSV files of your transactions and of your balance history. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
+      `True today Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, or CSV files of your transactions and of your balance history. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
     );
     expect(page).toContain('On the Accounts tab, tap Manage, then Download my data at the bottom.');
     expect(page).toContain(`Each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`);
