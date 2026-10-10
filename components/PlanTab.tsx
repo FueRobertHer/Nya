@@ -757,6 +757,9 @@ export function FiCard({
     // do those in another currency: in the words the FI card on Home uses
     // (lib/fire/progress.ts spendingLeftOut).
     const leftOut = spendingLeftOut(flows);
+    // Loan payments not counted, by where they came from (lib/fire/inputs.ts).
+    const unclearElsewhere = flows.unclearLoansElsewhere ?? 0;
+    const unclearFromPlaid = flows.unclearLoans - unclearElsewhere;
     const excluded = leftOut.excluded ? ` ${leftOut.excluded}` : '';
     spendingNote = (
       <Notes
@@ -765,8 +768,14 @@ export function FiCard({
           leftOut.otherCurrencies,
           uncategorizedNote(flows.uncategorized ?? 0),
           cashHint,
-          flows.unclearLoans > 0
-            ? `${money(flows.unclearLoans)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
+          // Said by where the rows came from: Plaid gives a loan's kind when it
+          // knows it; a row entered, imported or from SimpleFIN has only its
+          // category.
+          unclearFromPlaid > 0.005
+            ? `${money(unclearFromPlaid)} of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan, so it may be paying off a card, which settles spending already counted.`
+            : null,
+          unclearElsewhere > 0.005
+            ? `${money(unclearElsewhere)} of loan payments you entered, imported or categorized isn't counted: nothing says it pays a mortgage, car, student or personal loan rather than a card, whose payment settles spending already counted.`
             : null,
           unreadText(unread, 'low'),
           ...missingFigureNotes(withoutTransactions, 'low'),

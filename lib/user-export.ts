@@ -102,7 +102,7 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
-import { connectionsStore, connectorAccountsStore, type ConnectorAccount, type ConnectorConnection } from './connectors/store';
+import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { ConnectorKind } from './connectors/types';
 import { manualTxnStore, isManualTxnBook, type ManualTxn } from './manual-txns';
@@ -431,6 +431,9 @@ export type UserData = {
    *  (lib/connectors/store.ts). */
   connections: Map<string, ConnectorConnection>;
   connected: Map<string, ConnectorAccount>;
+  /** The accounts SimpleFIN fed that the person let go (connector-ended):
+   *  what names a removed one that some part of the file still mentions. */
+  ended: Map<string, EndedAccount>;
   hidden: HiddenMap;
   stores: { item_id: string; accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; behind: boolean }[];
   investments: { item_id: string; state: InvStoreState }[];
@@ -495,7 +498,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     });
 
   const items = await read('linked institutions', () => readItems(ctx));
-  const [remembered, directory, manual, connections, connected, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, sections] =
+  const [remembered, directory, manual, connections, connected, ended, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, sections] =
     await Promise.all([
       read('accounts', () => rememberedAccountsByItem(ctx)),
       read('accounts', () => readDirectoryStrict(ctx)),
@@ -513,6 +516,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       // to stop the download.
       read(connectionsStore.what, async () => (await connectionsStore.getAllReport(ctx)).entries),
       read(connectorAccountsStore.what, async () => (await connectorAccountsStore.getAllReport(ctx)).entries),
+      read(endedAccountsStore.what, async () => (await endedAccountsStore.getAllReport(ctx)).entries),
       read('hidden accounts', () => getHiddenAccounts(ctx)),
       Promise.all(
         items.map((item) =>
@@ -552,6 +556,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     manual: manual.accounts,
     connections,
     connected,
+    ended,
     hidden,
     stores,
     investments,
@@ -821,6 +826,35 @@ function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap): Exp
   };
 }
 
+/** An account SimpleFIN kept up to date that the person let go and removed,
+ *  which some part of the file still mentions (its balance history, say), as
+ *  `accounts` lists it: what its record in connector-ended says. One kept is
+ *  a manual account, in `manual_accounts`. */
+function endedAccount(id: string, e: EndedAccount, data: UserData, hidden: HiddenMap): ExportAccount {
+  const h = hidden.get(id);
+  return {
+    account_id: id,
+    provider: e.connector,
+    item_id: e.connection_id,
+    institution_name: e.institution_name,
+    institution_id: null,
+    connected: false,
+    name: e.name,
+    official_name: null,
+    type: e.type,
+    subtype: null,
+    mask: null,
+    currency: e.currency,
+    credit_limit: null,
+    persistent_account_id: null,
+    first_seen: e.tracked_at.slice(0, 10),
+    last_seen: e.ended_at.slice(0, 10),
+    hidden: !!h,
+    hidden_at: realTime(h?.hidden_at),
+    latest_balance: latestRecorded(data.history.accounts.get(id)),
+  };
+}
+
 /** How a core part of the file that can be missing something says so in
  *  words: what it holds, what it counts, and the sentence. A store on the
  *  seam is named by its declaration (`what`) and counts entries. */
@@ -935,6 +969,8 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     .map((id): ExportAccount => {
       const c = data.connected.get(id);
       if (c) return fedAccount(c, data, hidden);
+      const e = data.ended.get(id);
+      if (e) return endedAccount(id, e, data, hidden);
       const m = remembered.get(id);
       const d = data.directory.get(id);
       const s = synced.get(id);

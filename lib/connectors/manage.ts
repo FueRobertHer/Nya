@@ -75,7 +75,7 @@ import { CLAIM_TIMEOUT_MS } from './simplefin';
 import { getManualAccounts, newManualId, saveManualAccount, MANUAL_TYPES, type ManualType } from '../manual';
 import { removeAccountTxns } from '../manual-txns';
 import { forgetAnnotations } from '../txn-annotations';
-import { MANY_AT_ONCE } from '../repo';
+import { MANY_AT_ONCE, UnreadableEntriesError } from '../repo';
 import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
 import { loggable } from '../log-safe';
@@ -396,6 +396,7 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
             name: a.name,
             institution_name: a.institution_name,
             type: a.type,
+            currency: a.currency,
             tracked_at: a.created_at,
             history_from: conn?.history?.from ?? null,
             ended_at: at,
@@ -448,6 +449,24 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
     await clearCaches(ctx);
   }
   return out;
+}
+
+/**
+ * Forgets what Nya keeps of an account the person let go (connector-ended),
+ * at their word: its name, its bank and when, so reports no longer say what
+ * its going may have left out. Its past balances stay in the net-worth
+ * history, which is never rewritten. A record that can't be read may be
+ * forgotten unread; one this version doesn't recognise is intact data, and is
+ * never forgotten here (the seam's rule). Answers whether there was one.
+ */
+export async function forgetEnded(ctx: Ctx, account_id: string): Promise<boolean> {
+  try {
+    if (!(await endedAccountsStore.get(ctx, account_id))) return false;
+  } catch (err) {
+    if (!(err instanceof UnreadableEntriesError) || err.unrecognised.length > 0) throw err;
+  }
+  await endedAccountsStore.remove(ctx, account_id);
+  return true;
 }
 
 /**

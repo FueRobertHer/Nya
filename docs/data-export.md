@@ -133,7 +133,7 @@ Every account the file mentions anywhere, apart from the manual accounts you hav
 | Field | Meaning |
 | --- | --- |
 | `account_id` | Plaid's id for the account, or Nya's (`manual_...`) for one SimpleFIN keeps up to date, or a manual account you removed. |
-| `provider` | `"plaid"`; `"simplefin"` for one SimpleFIN keeps up to date; `"manual"` for a manual account you removed, which only its history (or a goal or share naming it) still mentions; `null` when nothing stored says. |
+| `provider` | `"plaid"`; `"simplefin"` for one SimpleFIN keeps up to date, or kept up to date until you removed it; `"manual"` for a manual account you removed, which only its history (or a goal or share naming it) still mentions; `null` when nothing stored says. |
 | `item_id` | The connection it belongs to, or `null` if unknown. |
 | `institution_name`, `institution_id` | Its bank. |
 | `connected` | Whether its connection is still linked. |
@@ -149,7 +149,7 @@ Every account the file mentions anywhere, apart from the manual accounts you hav
 
 An account known only by its id has `null` for everything Nya never learned about it.
 
-One SimpleFIN keeps up to date is described from its entry in [`connector-accounts`](#connector-accounts): `type` is what you said it is, `currency` SimpleFIN's, `connected` whether its connection is still there, `first_seen` the day you started tracking it and `last_seen` the day of the latest balance an answer held for it. SimpleFIN gives no `official_name`, `mask`, `credit_limit` or `persistent_account_id`, so those are `null`. Kept as a manual account when you disconnected, it is in `manual_accounts` instead, under the same id.
+One SimpleFIN keeps up to date is described from its entry in [`connector-accounts`](#connector-accounts): `type` is what you said it is, `currency` SimpleFIN's, `connected` whether its connection is still there, `first_seen` the day you started tracking it and `last_seen` the day of the latest balance an answer held for it. SimpleFIN gives no `official_name`, `mask`, `credit_limit` or `persistent_account_id`, so those are `null`. Kept as a manual account when you disconnected, it is in `manual_accounts` instead, under the same id. Removed, and still mentioned by its balance history (or a goal or share naming it), it is described from its record in [`connector-ended`](#connector-ended), until you forget that record: `connected` is `false`, `first_seen` the day you started tracking it and `last_seen` the day you let it go.
 
 ### `manual_accounts[]`
 
@@ -366,7 +366,7 @@ It goes when you disconnect.
 
 #### `connector-ended`
 
-The accounts SimpleFIN kept up to date that you stopped tracking or disconnected, one entry per account under its id, kept so a [report](features.md#reports) on a period it was tracked in can say its transactions may be gone, or since then only the ones you entered. `value` holds:
+The accounts SimpleFIN kept up to date that you stopped tracking or disconnected, one entry per account under its id, kept so a [report](features.md#reports) on a period it was tracked in can say its transactions may be gone, or since then only the ones you entered, until you forget it (**Accounts you stopped tracking** on the Reports page). `value` holds:
 
 | Field | Meaning |
 | --- | --- |
@@ -376,6 +376,7 @@ The accounts SimpleFIN kept up to date that you stopped tracking or disconnected
 | `host` | The server that connection reached, without the credentials, or `null` when the connection was already gone. |
 | `remote_id` | SimpleFIN's own id for the account. |
 | `name`, `institution_name`, `type` | Its name, its bank's and what you said it was. |
+| `currency` | Its currency's ISO 4217 code. |
 | `tracked_at` | When you started tracking it. |
 | `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any. |
 | `ended_at` | When you let it go. |

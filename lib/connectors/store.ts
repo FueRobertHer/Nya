@@ -41,7 +41,9 @@
 //                          so a report on a period it was tracked in can say
 //                          its transactions may be gone, as the account
 //                          directory lets it say of a removed Plaid
-//                          connection (lib/report/read.ts). In the download.
+//                          connection (lib/report/read.ts), until the person
+//                          forgets one (lib/connectors/manage.ts
+//                          forgetEnded). In the download.
 //   connector-requests     a count per container: the requests made to
 //                          connectors in the current day's window, the budget
 //                          that keeps Nya well under what a connector allows
@@ -297,6 +299,8 @@ export type EndedAccount = {
   name: string;
   institution_name: string;
   type: ManualType;
+  /** Its currency's ISO 4217 code, as SimpleFIN gave it. */
+  currency: string;
   /** When it was first tracked. */
   tracked_at: string;
   /** The first day of transactions its connection had fetched, or null
@@ -319,6 +323,8 @@ function isEndedAccount(v: unknown): v is EndedAccount {
     isText(v.name, 200) &&
     isText(v.institution_name, 200) &&
     (MANUAL_TYPES as readonly unknown[]).includes(v.type) &&
+    typeof v.currency === 'string' &&
+    /^[A-Z]{3}$/.test(v.currency) &&
     isTime(v.tracked_at) &&
     (v.history_from === null || isCalendarDay(v.history_from)) &&
     isTime(v.ended_at) &&

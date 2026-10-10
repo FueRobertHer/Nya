@@ -1048,6 +1048,45 @@ describe('a SimpleFIN card payment in the cash forecast', () => {
   });
 });
 
+describe('a SimpleFIN loan payment in the Plan', () => {
+  test('a mortgage paid from checking into a SimpleFIN loan counts as loan spending, as a bank’s mortgage payment does', async () => {
+    await trackOn(
+      [
+        fakeAccount({ id: 'CHK', name: 'Checking', balance: '5000.00', 'balance-date': ago(1), transactions: [txn('pay', 10, '5000.00', 'PAYROLL'), txn('m1', 5, '-2000.00', 'MORTGAGE PMT'), txn('food', 3, '-300.00', 'GROCER'), txn('old', 80, '-10.00', 'OLD COFFEE')] }),
+        fakeAccount({ id: 'MTG', name: 'Home Loan', balance: '-250000.00', 'balance-date': ago(1), transactions: [txn('m1in', 4, '2000.00', 'PAYMENT RECEIVED')] }),
+      ],
+      [
+        ['CHK', 'depository'],
+        ['MTG', 'loan'],
+      ]
+    );
+    const { readManualTxnsForDisplay } = await import('@/lib/manual-txns');
+    const { planFlow, trailingFlows } = await import('@/lib/fire/inputs');
+    const { txns } = await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '1900-01-01' });
+    expect(Object.fromEntries(txns.map((t) => [t.name, planFlow(t)]))).toMatchObject({ 'MORTGAGE PMT': 'loan', 'PAYMENT RECEIVED': 'transfer', GROCER: 'spending' });
+    const fromSimplefin = trailingFlows(txns, TODAY)!;
+    expect(fromSimplefin.unclearLoans).toBe(0);
+    // The same payment as a bank's row, with Plaid's mortgage detail.
+    const plaid = txns.map((t) =>
+      t.name === 'MORTGAGE PMT' || t.name === 'PAYMENT RECEIVED' ? { ...t, source: undefined, paired: undefined, category: 'loan payments', subcategory: 'mortgage payment' } : t
+    );
+    const fromPlaid = trailingFlows(plaid, TODAY)!;
+    expect([fromSimplefin.spending, fromSimplefin.loanPayments]).toEqual([fromPlaid.spending, fromPlaid.loanPayments]);
+    expect(fromSimplefin.loanPayments).toBeGreaterThan(0);
+  });
+
+  test('a SimpleFIN row the person calls a loan payment, with nothing else to say, isn’t counted, and isn’t said to be Plaid’s', async () => {
+    await trackOn([fakeAccount({ id: 'CHK', name: 'Checking', balance: '5000.00', 'balance-date': ago(1), transactions: [txn('pay', 40, '5000.00', 'PAYROLL'), txn('l1', 5, '-450.00', 'LOAN SERVICER')] })], [['CHK', 'depository']]);
+    const { readManualTxnsForDisplay } = await import('@/lib/manual-txns');
+    const { trailingFlows } = await import('@/lib/fire/inputs');
+    const { txns } = await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '1900-01-01' });
+    const rows = txns.map((t) => (t.name === 'LOAN SERVICER' ? { ...t, category: 'loan payments' } : t));
+    const f = trailingFlows(rows, TODAY)!;
+    expect(f.unclearLoans).toBeGreaterThan(0);
+    expect(f.unclearLoansElsewhere).toBe(f.unclearLoans);
+  });
+});
+
 describe('dates and names in SimpleFIN’s answers', () => {
   test('a message names a bank only as words of its own', async () => {
     const { accountsNamedIn } = await import('@/lib/connectors/simplefin');

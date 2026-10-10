@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
 
 // Reports (lib/report/) with the accounts a SimpleFIN connection keeps up to
@@ -46,6 +46,10 @@ const { ReportView } = await import('@/components/ReportView');
 const { formatMoney } = await import('@/lib/format');
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const transactions = await import('@/app/api/transactions/route');
+const endedRoute = await import('@/app/api/connectors/ended/route');
+const { collectUserData, buildUserExport } = await import('@/lib/user-export');
+const { encrypt } = await import('@/lib/crypto');
+const { StoppedAccountsView } = await import('@/components/ReportsPage');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -225,6 +229,74 @@ describe('where a report’s data comes from', () => {
     r = await report(dayOf(NOW - 30 * DAY));
     expect(r.gaps).toEqual([]);
     expect(r.removed).toEqual([]);
+  });
+
+  test('a removed account its history still mentions is SimpleFIN’s in the download, and forgetting its record takes it out of reports', async () => {
+    const id = await trackOn({ checking: [txn('c1', ago(3), '-12.50', 'COFFEE')] });
+    const accounts = [...(await connectorAccountsStore.getAll(ctx)).values()];
+    const checking = accounts.find((a) => a.name === 'Checking')!.account_id;
+    const visa = accounts.find((a) => a.name === 'Visa')!.account_id;
+    // A day of its balance in the history, which outlives the account.
+    await fake.hset(ctxKey('history:accounts'), { [dayOf(NOW - 2 * DAY)]: await encrypt(JSON.stringify({ [checking]: 1500.25 })) });
+    await disconnect(ctx, id, false, NOW);
+
+    const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
+    expect(doc.accounts.find((a) => a.account_id === checking)).toMatchObject({
+      provider: 'simplefin',
+      name: 'Checking',
+      institution_name: 'My Bank',
+      type: 'depository',
+      currency: 'USD',
+      connected: false,
+      first_seen: TODAY,
+      last_seen: TODAY,
+      latest_balance: { balance: 1500.25, date: dayOf(NOW - 2 * DAY) },
+    });
+
+    // Listed to forget, newest first; forgetting one takes it out of reports.
+    const call = async (method: 'GET' | 'DELETE', body?: unknown) => {
+      const res = method === 'GET' ? await endedRoute.GET() : await endedRoute.DELETE(new Request('http://localhost/api/connectors/ended', { method, body: JSON.stringify(body) }));
+      return { status: res.status, body: await res.json() };
+    };
+    const listed = await call('GET');
+    expect(listed.body.accounts.map((a: any) => [a.name, a.institution_name, a.connector, a.kept])).toEqual([
+      ['Checking', 'My Bank', 'SimpleFIN', false],
+      ['Visa', 'My Bank', 'SimpleFIN', false],
+    ]);
+    expect((await call('DELETE', { account_id: checking })).body).toEqual({ forgotten: true });
+    expect((await report(dayOf(NOW - 30 * DAY))).gaps).toMatchObject([{ kind: 'removed', accounts: ['Visa'] }]);
+    expect((await call('DELETE', { account_id: checking })).body).toEqual({ forgotten: false });
+    expect((await call('DELETE', { account_id: 'not-an-account' })).status).toBe(400);
+
+    // A record that can't be read is listed by id and may be forgotten; one a
+    // newer version saved is counted, and never forgotten here.
+    const later = 'manual_00000000-0000-4000-8000-0000000000ee';
+    await fake.hset(ctxKey('connector-ended'), { [visa]: 'damaged', [later]: await encrypt(JSON.stringify({ version: 2 })) });
+    expect((await call('GET')).body).toEqual({ accounts: [], unreadable: [visa], unrecognised: 1 });
+    expect((await call('DELETE', { account_id: later })).status).toBe(409);
+    expect((await call('DELETE', { account_id: visa })).body).toEqual({ forgotten: true });
+    expect((await call('GET')).body).toEqual({ accounts: [], unreadable: [], unrecognised: 1 });
+  });
+
+  test('the list to forget them from says what each is and offers Forget', () => {
+    const html = renderToStaticMarkup(
+      createElement(StoppedAccountsView, {
+        list: {
+          accounts: [{ account_id: 'manual_a', name: 'Visa', institution_name: 'My Bank', connector: 'SimpleFIN', ended_at: '2026-09-20T12:00:00.000Z', kept: false }],
+          unreadable: ['manual_b'],
+          unrecognised: 1,
+        },
+        busy: false,
+        error: null,
+        onForget: () => {},
+      })
+    );
+    expect(html).toContain('My Bank Visa');
+    expect(html).toContain('Removed on ');
+    expect(html).toContain('through SimpleFIN');
+    expect(html).toContain('A record that can’t be read');
+    expect(html.match(/>Forget</g)).toHaveLength(2);
+    expect(html).toContain('One more was saved by a newer version of Nya');
   });
 
   test('kept as manual accounts: from that day only what is entered or imported', async () => {

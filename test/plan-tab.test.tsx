@@ -158,6 +158,16 @@ describe('the FI card', () => {
     expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
   });
 
+  test('says loan payments not counted by where they came from: Plaid’s, or entered, imported or categorized', () => {
+    const t = card(plan(), { f: { ...flows, unclearLoans: 600, unclearLoansElsewhere: 200 } });
+    expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
+    expect(t).toContain("$200 of loan payments you entered, imported or categorized isn't counted: nothing says it pays a mortgage, car, student or personal loan rather than a card");
+    // Only from elsewhere: Plaid isn't blamed.
+    const only = card(plan(), { f: { ...flows, unclearLoans: 200, unclearLoansElsewhere: 200 } });
+    expect(only).not.toContain("Plaid doesn't say");
+    expect(only).toContain('$200 of loan payments you entered, imported or categorized');
+  });
+
   test('says which cash counted, withdrawals or the cash spending entered on an account marked cash on hand, never both, and names the account', () => {
     // Withdrawals only.
     expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } })).toContain('Includes $1,200 of cash withdrawals.');

@@ -12,6 +12,12 @@
 // The period is kept in the address (?kind=year&year=2025), so a report can
 // be bookmarked or opened again as it was; the time zone is not, since it is
 // the reader's own.
+//
+// ACCOUNTS YOU STOPPED TRACKING. Reports read what Nya keeps of each account a
+// SimpleFIN connection fed that the person let go (connector-ended), to say a
+// period may be missing its transactions. Here, and only here, the person can
+// see those records and forget one (app/api/connectors/ended), after which
+// reports no longer mention it.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReportView } from './ReportView';
@@ -79,8 +85,23 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [marking, setMarking] = useState(false);
+  const [stopped, setStopped] = useState<StoppedList | null>(null);
+  const [stoppedOpen, setStoppedOpen] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
+  const [stoppedError, setStoppedError] = useState<string | null>(null);
   // Only the latest request's answer is shown: one asked for earlier may come back later.
   const latest = useRef(0);
+
+  /** The accounts you stopped tracking, as stored: none shown when they can't be listed. */
+  const loadStopped = useCallback(async () => {
+    try {
+      const res = await fetch('/api/connectors/ended');
+      const body = await res.json().catch(() => null);
+      setStopped(res.ok && body && Array.isArray(body.accounts) ? (body as StoppedList) : null);
+    } catch {
+      setStopped(null);
+    }
+  }, []);
 
   const load = useCallback(async (f: ReportForm, tz: string) => {
     const checked = resolvePeriod(requestOf(f), tz, Date.now());
@@ -124,7 +145,31 @@ export default function ReportsPage() {
     setToday(day);
     setForm(f);
     void load(f, tz);
-  }, [load]);
+    void loadStopped();
+  }, [load, loadStopped]);
+
+  const forget = async (id: string, label: string) => {
+    const sure = window.confirm(
+      `Forget ${label}? Reports will no longer say what may be missing because you stopped tracking it. Its past balances stay in your net-worth history.`
+    );
+    if (!sure) return;
+    setForgetting(true);
+    setStoppedError(null);
+    try {
+      const res = await fetch('/api/connectors/ended', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: id }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) setStoppedError(typeof body.error === 'string' ? body.error : 'It couldn’t be forgotten.');
+      else {
+        await loadStopped();
+        if (form) void load(form, zone);
+      }
+    } catch {
+      setStoppedError('It couldn’t be forgotten. Check your connection and try again.');
+    } finally {
+      setForgetting(false);
+    }
+  };
+  const stoppedCount = stopped ? stopped.accounts.length + stopped.unreadable.length : 0;
 
   const thisYear = today ? Number(today.slice(0, 4)) : 0;
   const years = thisYear ? Array.from({ length: thisYear - 1999 }, (_, i) => thisYear - i) : [];
@@ -219,6 +264,11 @@ export default function ReportsPage() {
             <button className="secondary" onClick={() => setMarking(true)} disabled={!report || loading}>
               Mark categories
             </button>
+            {stoppedCount > 0 && (
+              <button className="secondary" onClick={() => setStoppedOpen(true)}>
+                Accounts you stopped tracking ({stoppedCount})
+              </button>
+            )}
           </div>
           <p className="panel-note">
             To save a PDF, choose Save as PDF in the print window. Days and times are read in {zone}. The report reads what Nya has stored, so open Nya first to
@@ -232,6 +282,12 @@ export default function ReportsPage() {
         <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
           <ReportView report={report} />
         </div>
+      )}
+
+      {stopped && (
+        <Sheet open={stoppedOpen} title="Accounts you stopped tracking" onClose={() => setStoppedOpen(false)}>
+          <StoppedAccountsView list={stopped} busy={forgetting} error={stoppedError} onForget={(id, label) => void forget(id, label)} />
+        </Sheet>
       )}
 
       {report && (
@@ -248,6 +304,76 @@ export default function ReportsPage() {
         </Sheet>
       )}
     </main>
+  );
+}
+
+/** The accounts a SimpleFIN connection fed that you let go, as
+ *  app/api/connectors/ended lists them. */
+export type StoppedList = {
+  accounts: { account_id: string; name: string; institution_name: string; connector: string; ended_at: string; kept: boolean }[];
+  /** Records that can't be read, by id: they can be forgotten. */
+  unreadable: string[];
+  /** Records a newer version of Nya saved, counted: never offered. */
+  unrecognised: number;
+};
+
+/** "Sep 3, 2026": the local day an instant fell on. */
+const shownDay = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+/** The records of accounts you stopped tracking, each with Forget. */
+export function StoppedAccountsView({
+  list,
+  busy,
+  error,
+  onForget,
+}: {
+  list: StoppedList;
+  busy: boolean;
+  error: string | null;
+  onForget: (account_id: string, label: string) => void;
+}) {
+  return (
+    <div className="sheet-form">
+      <p className="panel-note">
+        Accounts SimpleFIN kept up to date that you stopped tracking or disconnected. Nya keeps each one’s name, its bank and when, so a report on a period
+        it was tracked in can say what may be missing. Forget one and reports no longer mention it; its past balances stay in your net-worth history.
+      </p>
+      {list.accounts.map((a) => (
+        <div key={a.account_id} className="peer-row">
+          <span>
+            {a.institution_name} {a.name}
+            <span className="type-tag" style={{ display: 'block' }}>
+              {a.kept ? 'Kept as a manual account' : 'Removed'} on {shownDay(a.ended_at)}, through {a.connector}
+            </span>
+          </span>
+          <button className="link-btn danger-link" disabled={busy} onClick={() => onForget(a.account_id, `${a.institution_name} ${a.name}`)}>
+            Forget
+          </button>
+        </div>
+      ))}
+      {list.unreadable.map((id) => (
+        <div key={id} className="peer-row">
+          <span>A record that can’t be read</span>
+          <button className="link-btn danger-link" disabled={busy} onClick={() => onForget(id, 'this record that can’t be read')}>
+            Forget
+          </button>
+        </div>
+      ))}
+      {list.unrecognised > 0 && (
+        <p className="panel-note">
+          {list.unrecognised === 1 ? 'One more was' : `${list.unrecognised} more were`} saved by a newer version of Nya, so {list.unrecognised === 1 ? 'it' : 'they'}{' '}
+          can’t be shown or forgotten here.
+        </p>
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
