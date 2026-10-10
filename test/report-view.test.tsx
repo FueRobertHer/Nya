@@ -166,6 +166,13 @@ describe('the printed report', () => {
     expect(months.text).toContain('Nov 2026 Still to come');
   });
 
+  test('when a connection’s last sync isn’t known, the report claims no as-of time', () => {
+    const [first] = parts(html({ sources: [source({ synced_at: null })] }));
+    expect(first.text).toContain('When some of its data is from isn’t known: see the connections below.');
+    expect(first.text).not.toContain('Data as of');
+    expect(first.text).toContain('When Chase last synced isn’t known');
+  });
+
   test('nothing known to be missing says exactly that, and no figure is flagged', () => {
     const s = html({ sources: [source()], removed: [] });
     expect(text(s)).toContain('Nothing is known to be missing from this period.');

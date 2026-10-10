@@ -240,6 +240,27 @@ describe('the totals are the Activity tab’s', () => {
     expect([march.money_in, march.money_out, march.net]).toEqual([r.totals.money_in, r.totals.money_out, r.totals.net]);
   });
 
+  test('with the Activity tab’s currency, a month matches it however the other months’ currencies run', () => {
+    // A year mostly in euros, then a month mostly in dollars: the tab totals
+    // every month in euros (the currency most of its rows are in); a report on
+    // that month alone would pick dollars, and given euros, agrees with the tab.
+    const year = [
+      ...Array.from({ length: 8 }, (_, i) => row(`eu${i}`, `2025-0${1 + (i % 2)}-1${i}`, 10 + i, { iso_currency_code: 'EUR' })),
+      row('us1', '2025-03-02', 100),
+      row('us2', '2025-03-03', 50),
+      row('eu-march', '2025-03-04', 7, { iso_currency_code: 'EUR' }),
+      row('eu-refund', '2025-03-05', -3, { iso_currency_code: 'EUR' }),
+    ];
+    const tab = activityTab(year);
+    const march = period({ kind: 'range', start: '2025-03-01', end: '2025-03-31' });
+    expect(buildReport(input({ rows: year, period: march })).currency).toBe('USD');
+    const r = buildReport(input({ rows: year, period: march, currency: 'EUR' }));
+    const money = (n: number) => formatMoney(n, 'EUR');
+    expect([tab.in, tab.out, tab.net]).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    expect(r.totals.left_out_text).toBe("2 transactions in USD aren't in these totals, which are in EUR.");
+    expect(tab.note).toContain(r.totals.left_out_text!);
+  });
+
   test('every rule, figure by figure: transfers, cash and card payments never count, exclusions are left out and counted, one currency', () => {
     const r = buildReport(input({ rows: MARCH }));
     // In: pay and the refund. Out: everything spent in USD (or no currency),
@@ -325,6 +346,11 @@ describe('gaps: what the period may be missing, and the months each touches', ()
     const unknown = buildReport(input({ sources: [chase({ synced_at: null })] }));
     expect(sentencesOf(unknown.gaps)).toEqual(['When Chase last synced isn’t known, so this report may be missing some of its transactions.']);
     expect(unknown.months.every((m) => m.uncertain)).toBe(true);
+    // And the report's as-of isn't claimed: one connection's time is unknown.
+    expect(unknown.data_as_of).toBeNull();
+    expect(buildReport(input({ sources: [chase({ synced_at: null }), chase({ item_id: 'i2', institution_name: 'Citi' })] })).data_as_of).toBeNull();
+    // With no connection's transactions in it, the data is as of when it was read.
+    expect(buildReport(input({ sources: [] })).data_as_of).toBe(new Date(NOW).toISOString());
   });
 
   test('a period that ends today: synced today is all there can be, and the last days may still change', () => {
@@ -443,10 +469,23 @@ describe('gaps: what the period may be missing, and the months each touches', ()
   });
 
   test('unreadable: whatever else the read couldn’t read, in its own words, touching every month', () => {
-    const r = buildReport(input({ notes: ['Cash: transactions entered for Wallet couldn’t be read', 'Chase: stored transactions could not be read'] }));
+    const r = buildReport(input({ notes: ['Cash: transactions entered for Wallet couldn’t be read'] }));
     expect(r.gaps).toEqual([{ kind: 'unreadable', item_id: null, institution: null, note: 'Cash: transactions entered for Wallet couldn’t be read' }]);
     expect(sentencesOf(r.gaps)).toEqual(['Cash: transactions entered for Wallet couldn’t be read.']);
     expect(r.months.every((m) => m.uncertain && m.gaps.length === 0)).toBe(true);
+  });
+
+  test('a note is a bank’s own only when its gap says it: a manual account under the same name is never swallowed', () => {
+    const manualNote = 'Chase: transactions entered for Cash envelope couldn’t be read';
+    // Chase's transactions are all here: the note is the manual account's.
+    const fine = buildReport(input({ notes: [manualNote] }));
+    expect(fine.gaps).toEqual([{ kind: 'unreadable', item_id: null, institution: null, note: manualNote }]);
+    expect(fine.institutions[0].note).toBeNull();
+    // Chase's own couldn't be read too: one note is its own, the other a gap.
+    const both = buildReport(input({ sources: [chase({ coverage: 'missing' })], notes: ['Chase: stored transactions could not be read', manualNote] }));
+    expect(both.gaps.map((g) => g.kind)).toEqual(['missing', 'unreadable']);
+    expect(both.institutions[0].note).toBe('Chase: stored transactions could not be read');
+    expect(sentencesOf(both.gaps)[1]).toBe('Chase: transactions entered for Cash envelope couldn’t be read.');
   });
 
   test('every kind at once, in a fixed order, the headline saying the report may be incomplete', () => {

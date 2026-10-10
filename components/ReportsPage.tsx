@@ -14,7 +14,7 @@
 // the reader's own.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ReportView, reportHeading } from './ReportView';
+import { ReportView } from './ReportView';
 import { Sheet } from './Sheet';
 import type { Report } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
@@ -218,7 +218,7 @@ export default function ReportsPage() {
 
       {loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
       {report && (
-        <div className={loading ? 'report-loading' : undefined} aria-busy={loading} aria-label={reportHeading(report)}>
+        <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
           <ReportView report={report} />
         </div>
       )}

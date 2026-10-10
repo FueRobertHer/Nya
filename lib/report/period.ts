@@ -54,7 +54,8 @@ export function dayIn(at: string | number | Date, timeZone: string): string | nu
     f = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
     formats.set(timeZone, f);
   }
-  const part = (type: string) => f.formatToParts(d).find((p) => p.type === type)?.value ?? '';
+  const parts = f.formatToParts(d);
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   const day = `${part('year').padStart(4, '0')}-${part('month')}-${part('day')}`;
   return isCalendarDay(day) ? day : null;
 }

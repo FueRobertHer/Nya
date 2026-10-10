@@ -215,9 +215,10 @@ export type Report = {
   period: Period;
   generated_at: string;
   /** The oldest of the times the institutions' transactions were last
-   *  brought in (when the report's data is complete through, at best), or when
-   *  the report was made, for one with no connection's transactions in it. */
-  data_as_of: string;
+   *  brought in (when the report's data is complete through, at best); null
+   *  when that isn't known for one of them; when the report was made, for one
+   *  with no connection's transactions in it. */
+  data_as_of: string | null;
   currency: string | null;
   /** The currencies the period's transactions are in, most first. */
   currencies: { currency: string; transactions: number }[];
@@ -317,10 +318,21 @@ export function buildReport(input: ReportInput): Report {
   const summary = summarize(rows, inPeriod, currency);
   const byCategory = categoryTotals(rows, inPeriod, currency);
 
+  // The read's notes: an institution whose transactions aren't all here
+  // (missing, importing) has one of its own ("Chase: ..."), already said by
+  // its gap, and kept beside it. Every other note is a gap of its own, a
+  // manual account's under an institution of the same name as a bank's
+  // included: only one note per such institution is its own.
+  const unexplained = [...input.notes];
+  const noteOf = new Map<string, string>();
+  for (const s of input.sources) {
+    if (s.coverage === 'complete') continue;
+    const i = unexplained.findIndex((n) => n.startsWith(`${s.institution_name}:`));
+    if (i >= 0) noteOf.set(s.item_id, unexplained.splice(i, 1)[0]);
+  }
+
   // Gaps: each linked institution's, the removed connections', and whatever
   // else the read couldn't read.
-  const sourceNames = new Set(input.sources.map((s) => s.institution_name));
-  const noteFor = (name: string) => input.notes.find((n) => n.startsWith(`${name}:`)) ?? null;
   const live = input.sources.map((s) => ({ id: s.institution_id, name: nameKey(s.institution_name) }));
   const removed: ReportRemoved[] = (input.removed ?? [])
     .filter((r) => removedInPeriod(r, period))
@@ -334,9 +346,7 @@ export function buildReport(input: ReportInput): Report {
   const gaps: Gap[] = [
     ...input.sources.flatMap((s) => sourceGaps(s, period)),
     ...removed.filter((r) => !r.connected_again).map((r): Gap => ({ kind: 'removed', item_id: null, institution: r.institution, last_seen: r.last_seen })),
-    ...input.notes
-      .filter((n) => ![...sourceNames].some((name) => n.startsWith(`${name}:`)))
-      .map((note): Gap => ({ kind: 'unreadable', item_id: null, institution: null, note })),
+    ...unexplained.map((note): Gap => ({ kind: 'unreadable', item_id: null, institution: null, note })),
   ].sort((a, b) => GAP_ORDER.indexOf(a.kind) - GAP_ORDER.indexOf(b.kind) || String(a.institution).localeCompare(String(b.institution)));
 
   const months: ReportMonth[] = periodMonths(period).map((m) => {
@@ -414,7 +424,7 @@ export function buildReport(input: ReportInput): Report {
     version: 1,
     period,
     generated_at: input.generatedAt,
-    data_as_of: known[0] ?? input.generatedAt,
+    data_as_of: bringing.length === 0 ? input.generatedAt : known.length === bringing.length ? known[0] : null,
     currency,
     currencies,
     categories: [...new Set([...rows.map(categoryOf), ...markedList])].sort((a, b) => a.localeCompare(b)),
@@ -436,7 +446,7 @@ export function buildReport(input: ReportInput): Report {
     marked,
     appendix,
     institutions: input.sources
-      .map(({ institution_id: _, ...s }) => ({ ...s, note: noteFor(s.institution_name) }))
+      .map(({ institution_id: _, ...s }) => ({ ...s, note: noteOf.get(s.item_id) ?? null }))
       .sort((a, b) => a.institution_name.localeCompare(b.institution_name)),
     manual: [...input.manual].sort((a, b) => a.institution.localeCompare(b.institution) || a.name.localeCompare(b.name)),
     removed,

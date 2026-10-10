@@ -79,9 +79,10 @@ export function ReportView({ report }: { report: Report }) {
             {report.currencies.length > 1 && `; ${report.currencies.length - 1} other ${report.currencies.length === 2 ? 'currency is' : 'currencies are'} named below and left out`}.
           </p>
           <p className="report-meta">
-            Data as of {reportTime(report.data_as_of, tz)}
-            {report.institutions.filter((i) => !i.no_transactions).length > 1 && ', the oldest of the connections’ times below'}. Made{' '}
-            {reportTime(report.generated_at, tz)}. Times and today’s date are in {tz}; a transaction’s date is its bank’s own day.
+            {report.data_as_of
+              ? `Data as of ${reportTime(report.data_as_of, tz)}${report.institutions.filter((i) => !i.no_transactions).length > 1 ? ', the oldest of the connections’ times below' : ''}.`
+              : 'When some of its data is from isn’t known: see the connections below.'}{' '}
+            Made {reportTime(report.generated_at, tz)}. Times and today’s date are in {tz}; a transaction’s date is its bank’s own day.
           </p>
         </header>
 

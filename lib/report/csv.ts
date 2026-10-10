@@ -38,7 +38,15 @@ export function reportCsv(report: Report): string {
   line('report', reportTitle(report, iso), null, null, null, null, `From ${period.start} to ${period.through}`);
   line('time_zone', period.time_zone, null, null, null, null, 'Transaction dates are the bank’s own days; times and today are read in this time zone.');
   line('generated_at', report.generated_at);
-  line('data_as_of', report.data_as_of, null, null, null, null, 'The oldest time an institution’s transactions were last brought in');
+  line(
+    'data_as_of',
+    report.data_as_of,
+    null,
+    null,
+    null,
+    null,
+    report.data_as_of ? 'The oldest time an institution’s transactions were last brought in' : 'When some institution’s transactions were last brought in isn’t known'
+  );
   line('status', statusHeadline(report));
   for (const g of problemLines(report, iso)) line('gap', g);
   for (const n of caveatLines(report, iso)) line('caveat', n);
