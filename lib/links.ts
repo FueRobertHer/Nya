@@ -36,8 +36,8 @@ import { isManualId } from './manual';
 import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
 import { forgetAccountHoldings, forgetRecentHoldings } from './holdings-history';
 import { forgetCarried, pruneOrphanOverrides } from './overrides';
-import { forgetCarriedAnnotations } from './txn-annotations';
-import { storedAccountIds } from './transactions';
+import { forgetCarriedAnnotations, pruneOrphanAnnotations } from './txn-annotations';
+import { storedAccountIds, storedTransactionIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType, isInvestmentType } from './balance';
 import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
@@ -689,8 +689,12 @@ export async function forgetEarlierAccount(
   // be read by anyone.
   await redis().hdel(directoryKey(ctx), id);
   // Categories of its transactions that nothing can show any more (a failed
-  // disconnect-time cleanup would otherwise leave them for good).
-  await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
+  // disconnect-time cleanup would otherwise leave them for good), and what
+  // was said about them, the same way. Each checked against the Items stored
+  // when it runs, never the list read when the forget started: a bank linked
+  // meanwhile (linking takes no lock) has rows, and records on them, too.
+  await pruneOrphanOverrides(ctx).catch(() => 0);
+  await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx)).catch(() => 0);
   return { ...result, holdingsDamaged: holdings.damaged };
 }
 

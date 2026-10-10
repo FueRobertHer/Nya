@@ -86,6 +86,15 @@ export async function readEncryptedJson<T>(
   return parse(String(blob), what, isValid);
 }
 
+/** What is stored under the key, as the client hands it back, or null when
+ *  nothing has ever been saved (as readEncryptedJson reads it): for a reader
+ *  that opens it by the storage seam's rules and names what it can't use
+ *  instead of stopping (lib/repo.ts openStoredJson). */
+export async function readStoredValue(key: string): Promise<unknown> {
+  const blob = await redis().get<unknown>(key);
+  return blob === null || blob === undefined || blob === '' ? null : blob;
+}
+
 /**
  * Replace the stored value, unless what is there now cannot be read: then
  * refuse, so an unreadable value is never overwritten by one built from an

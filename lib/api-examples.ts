@@ -38,7 +38,10 @@ const MISSING_ACCOUNTS = (consequence: string): FieldDoc[] => [
   ],
   ['missing_accounts[].institution', 'The connection’s institution; null for a manual account, whose name is in what couldn’t be read.'],
   ['missing_accounts[].account_id', 'A manual account’s id; null for a connection, whose accounts can’t be told apart until they are read.'],
-  ['missing_accounts[].reason', '"unreadable" (stored, but couldn’t be read) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.'],
+  [
+    'missing_accounts[].reason',
+    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (a manual account saved under an encryption key this Nya doesn’t have: a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
+  ],
 ];
 const LEFT_OUT: readonly FieldDoc[] = [
   ['left_out', 'Transactions left out of these totals for being in another currency, by currency, most first. Nothing is converted.'],

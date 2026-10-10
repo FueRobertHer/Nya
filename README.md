@@ -22,7 +22,7 @@ More than one person can use a deployment: sign in with Clerk and each account g
 
 When a bank connection breaks, Nya sends one email (and one reminder a week later if it is still broken) naming the bank and what to do, never an amount, once email is set up (see [docs/deployment.md](docs/deployment.md#email-notices)).
 
-Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
+Your data is yours to take: under **Manage**, **Download my data** gives you everything Nya stores about you, decrypted, as one JSON file or as CSV files of your transactions and balance history, after a fresh sign-in (see [docs/data-export.md](docs/data-export.md)). When a record in your balance history, your manual accounts, your budgets or goals, or one of the newer stores can't be read, the file holds everything else and says what it is missing. Deleting your account ends with a receipt of what was deleted, when the last backup holding it expires, and what stays with Plaid.
 
 Programs you choose can read it too: a read-only API under `/api/v1`, and an MCP server at `/api/mcp` for AI assistants, each with a personal token you make (and revoke) under **Manage**. Both serve what Nya has stored, never a live call to Plaid, and the public `/developers` page documents every endpoint and tool (see [The API and the MCP server](docs/features.md#the-api-and-the-mcp-server)).
 

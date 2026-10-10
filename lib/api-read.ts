@@ -168,9 +168,14 @@ export type ApiMissing = {
   /** A manual account's id; null for a connection, whose accounts can't be
    *  told apart until they are read. */
   account_id: string | null;
-  /** 'unreadable': stored, and couldn't be read. 'not_loaded': a connection
-   *  whose accounts the app hasn't loaded yet. Version 1 may add reasons. */
-  reason: 'unreadable' | 'not_loaded';
+  /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
+   *  account stored intact in a form this version doesn't know (a later
+   *  version's), kept as it is. 'unavailable': a manual account sealed under
+   *  an encryption key this deployment doesn't have (lib/manual.ts
+   *  ManualAccountsReport): the deployment's problem, not damage.
+   *  'not_loaded': a connection whose accounts the app hasn't loaded yet.
+   *  Version 1 may add reasons. */
+  reason: 'unreadable' | 'unrecognised' | 'unavailable' | 'not_loaded';
 };
 
 /** The accounts, and what couldn't be included, named (`missing`): never a
@@ -211,7 +216,10 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     getEffectiveHidden(ctx, { readOnly: true }),
     // LENIENT, for this display only: an account that can't be read is named
     // in `missing`, and the others listed; recording a snapshot reads them all
-    // strictly (lib/networth.ts). Storage out of reach still throws.
+    // strictly (lib/networth.ts). One sealed under a key this deployment
+    // doesn't have is named too, with a reason of its own: one such account
+    // must not take every answer built on this one down. Storage out of
+    // reach, or a master key that can't open the data keys, still throws.
     getManualAccountsReport(ctx),
     connectionFacts(ctx),
   ]);
@@ -275,11 +283,19 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   });
 
   // A hidden one is left out either way: nothing missing from what was asked.
-  const unreadableManual = manual.unreadable.filter((id) => includeHidden || !hidden.has(id));
-  for (const id of unreadableManual) missing.push({ institution: null, account_id: id, reason: 'unreadable' });
-  if (unreadableManual.length > 0) {
-    const one = unreadableManual.length === 1;
-    notes.push(`${one ? 'A manual account' : `${unreadableManual.length} manual accounts`} couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
+  // Damaged, saved by a version this one doesn't know, or sealed under a key
+  // this deployment doesn't have (lib/manual.ts ManualAccountsReport), each is
+  // named, and none is listed.
+  const asked = (id: string) => includeHidden || !hidden.has(id);
+  const unlisted = [
+    ...manual.unreadable.filter(asked).map((id) => ({ id, reason: 'unreadable' as const })),
+    ...manual.unrecognised.filter(asked).map((id) => ({ id, reason: 'unrecognised' as const })),
+    ...manual.unavailable.filter(asked).map((id) => ({ id, reason: 'unavailable' as const })),
+  ];
+  for (const { id, reason } of unlisted) missing.push({ institution: null, account_id: id, reason });
+  if (unlisted.length > 0) {
+    const one = unlisted.length === 1;
+    notes.push(`${one ? 'A manual account' : `${unlisted.length} manual accounts`} couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
   }
   for (const inst of toInstitutions(manual.accounts)) {
     for (const a of inst.accounts) {

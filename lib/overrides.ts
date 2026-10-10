@@ -7,7 +7,7 @@
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
-import { contentKey, readStoredTxns, storeIsBehind, type StoredTxn } from './transactions';
+import { contentKey, storedTransactionIds, type StoredTxn } from './transactions';
 import { resolveId, type Link } from './link-core';
 
 const OVERRIDES_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-overrides');
@@ -218,23 +218,19 @@ export async function readCarriedStrict(ctx: Ctx): Promise<Carried> {
  * Deletes overrides whose transaction no longer exists in any stored Item (rows
  * the bank removed, pending rows replaced by their posted ones, rows of an Item
  * disconnected before categories were carried): they can never be shown again.
- * Only when every store could be read; otherwise nothing.
+ * Only when the Items and every store could be read, and no store is behind
+ * (rows shown from a store too large to save aren't in it, and their
+ * overrides are live); otherwise nothing (lib/transactions.ts
+ * storedTransactionIds).
  */
-export async function pruneOrphanOverrides(ctx: Ctx, item_ids: string[]): Promise<number> {
-  // The overrides first, then the stores: a category set on a row saved
-  // meanwhile is then always checked against a store read that has the row.
+export async function pruneOrphanOverrides(ctx: Ctx): Promise<number> {
+  // The overrides first, then the Items and their stores: a category set on a
+  // row saved meanwhile, of an Item linked meanwhile too, is then always
+  // checked against a read that has the row.
   const ids = await redis().hkeys(OVERRIDES_HASH(ctx));
-  const known = new Set<string>();
-  try {
-    for (const item_id of item_ids) {
-      // Rows shown from a store too large to save aren't in it: their
-      // overrides are live, so nothing is pruned while any Item is like that.
-      if (await storeIsBehind(ctx, item_id)) return 0;
-      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
-    }
-  } catch {
-    return 0; // a store we couldn't read might hold them
-  }
+  if (ids.length === 0) return 0;
+  const known = await storedTransactionIds(ctx);
+  if (!known) return 0;
   const orphans = ids.filter((id) => !known.has(id));
   if (orphans.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...orphans);
   return orphans.length;

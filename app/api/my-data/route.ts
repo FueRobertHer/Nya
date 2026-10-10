@@ -41,10 +41,15 @@ import {
 // so a person over the limit isn't asked to sign in for nothing, and counted
 // after it, so a reverification round trip doesn't use one up.
 //
-// EVERY STORE OR NOTHING: all of it is read before the first byte is sent, so
-// a store that can't be read is a 500 naming it, never a file that is quietly
-// short. Logs carry the kind of store and the error's class, never data, ids
-// or institution names.
+// NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1): all of it is
+// read before the first byte is sent. A store that can't be read for a reason
+// that says nothing about its data (storage, keys) is a 500 naming it, never a
+// file that is quietly short. An entry that is damaged, or saved in a form
+// this version doesn't know, is named in the file instead, and the file comes
+// with X-Nya-Export-Incomplete: the parts it is made from that are missing
+// something, by their keys in the JSON file, comma-separated, beside notes
+// that say it in words. Logs carry the kind of store, the error's class and
+// the incomplete parts' keys, never data, ids or institution names.
 //
 // A WHOLE FILE OR NONE. The file is written twice from the document already
 // in memory: once to count its bytes, keeping none of them, then again to
@@ -152,8 +157,9 @@ export async function POST(req: Request) {
 
   // Tell the owner a download happened, here, once that email is built: Nya
   // can send email now (lib/mail.ts, #51). When, and which format; never
-  // anything from the file itself.
-  console.log(`Data download: ${body.format}`);
+  // anything from the file itself. An incomplete one names its parts by key,
+  // for whoever runs Nya to look at: a store's name, never an id or a value.
+  console.log(`Data download: ${body.format}${file.incomplete.length > 0 ? `, incomplete: ${file.incomplete.join(', ')}` : ''}`);
 
   // The second pass: the same bytes, streamed.
   const chunks = fileChunks(file);
@@ -180,7 +186,9 @@ export async function POST(req: Request) {
     'X-Content-Type-Options': 'nosniff',
   };
   // The JSON carries its caveats inside; a CSV has nowhere to, so they also
-  // travel as a header for the page to show.
-  if (doc.notes.length > 0) headers['X-Nya-Export-Notes'] = encodeURIComponent(JSON.stringify(doc.notes));
+  // travel as headers for the page to show: in words, and, when the file is
+  // missing something, which parts (exportFile says which a CSV is made of).
+  if (file.notes.length > 0) headers['X-Nya-Export-Notes'] = encodeURIComponent(JSON.stringify(file.notes));
+  if (file.incomplete.length > 0) headers['X-Nya-Export-Incomplete'] = file.incomplete.join(', ');
   return new Response(stream, { headers });
 }
