@@ -35,6 +35,7 @@ const {
   defineValueStore,
   defineMapStore,
   defineCounterStore,
+  defineCounterMapStore,
   forgetDeclaredStore,
   StoredDataUnreadableError,
   UnreadableEntriesError,
@@ -48,7 +49,10 @@ const {
   UPDATE_ENTRIES,
   COUNTER_READ,
   COUNTER_TAKE,
+  openStored,
+  openStoredJson,
 } = await import('@/lib/repo');
+const { encodeJsonText } = await import('@/lib/blob');
 const { declaredStores, declaredStore } = await import('@/lib/stores');
 const connectorStores = await import('@/lib/connectors/store');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
@@ -97,8 +101,9 @@ const bigList = defineValueStore<Note[]>('seam-contract-big-list', { what: 'test
 const bigNotes = defineMapStore<Note>('seam-contract-big-notes', { what: 'test notes', isValid: isNote, exportable: true, compress: true });
 const WINDOW = 600;
 const counter = defineCounterStore('seam-contract-counter', { what: 'test counts', windowSeconds: WINDOW });
+const counters = defineCounterMapStore('seam-contract-counters', { what: 'test counts', windowSeconds: WINDOW });
 afterAll(() => {
-  for (const s of [list, notes, bigList, bigNotes, counter]) forgetDeclaredStore(s.name);
+  for (const s of [list, notes, bigList, bigNotes, counter, counters]) forgetDeclaredStore(s.name);
   client = recordedFake;
 });
 
@@ -107,6 +112,7 @@ const B = { container: '3f0b8c1e-6d2a-4b5c-9e7f-0a1b2c3d4e5f' } as typeof TEST_C
 const listKey = (ctx = A) => ctxKey('seam-contract-list', ctx);
 const notesKey = (ctx = A) => ctxKey('seam-contract-notes', ctx);
 const counterKey = (ctx = A) => ctxKey('seam-contract-counter', ctx);
+const countersKey = (ctx = A) => ctxKey('seam-contract-counters', ctx);
 const NOTE: Note = { text: 'groceries', amount: 82.13 };
 const RENT: Note = { text: 'rent', amount: 1200 };
 
@@ -228,15 +234,32 @@ function contract(b: Backend) {
         expect(err).toBeInstanceOf(UnreadableValueError);
         expect(err).toBeInstanceOf(StoredDataUnreadableError); // routes answer it as they do today
         expect(err.unrecognised).toBe(flaw === 'unrecognised'); // intact: never offered for removal
+        // The report says the same without throwing: no value, and why.
+        expect(await list.getReport(A)).toEqual({ value: null, unreadable: flaw === 'unreadable', unrecognised: flaw === 'unrecognised' });
         await expect(list.set(A, [NOTE])).rejects.toBeInstanceOf(UnreadableValueError);
         expect(await b.raw.get(listKey())).toBe(stored);
       });
     }
 
+    test('the report: never saved, or the value, in one read; a value it can use is never called a problem', async () => {
+      expect(await list.getReport(A)).toEqual({ value: null, unreadable: false, unrecognised: false });
+      await list.set(A, []);
+      expect(await list.getReport(A)).toEqual({ value: [], unreadable: false, unrecognised: false });
+      await list.set(A, [NOTE, RENT]);
+      const sent = await sentBy(async () => {
+        expect(await list.getReport(A)).toEqual({ value: [NOTE, RENT], unreadable: false, unrecognised: false });
+      });
+      expect(sent).toEqual(['get']);
+      // A compressed value reads the same.
+      await bigList.set(A, [RENT]);
+      expect(await bigList.getReport(A)).toEqual({ value: [RENT], unreadable: false, unrecognised: false });
+    });
+
     test('text that reads as nothing (empty, or the JSON literal null) is never saved, and a save replaces it', async () => {
       for (const nothing of ['', 'null', '""']) {
         await b.raw.set(listKey(), nothing);
         expect(await list.get(A)).toBeNull();
+        expect(await list.getReport(A)).toEqual({ value: null, unreadable: false, unrecognised: false });
         await list.set(A, [NOTE]);
         expect(await list.get(A)).toEqual([NOTE]);
       }
@@ -276,6 +299,8 @@ function contract(b: Backend) {
       await list.set(A, [NOTE]);
       b.failNext('get');
       await notBlamed(() => list.get(A));
+      b.failNext('get');
+      await notBlamed(() => list.getReport(A));
       b.failNext('get'); // the check before the write
       await expect(list.set(A, [])).rejects.toThrow(/armed failure/);
       b.failNext('set');
@@ -283,6 +308,22 @@ function contract(b: Backend) {
       b.failNext('del');
       await expect(list.remove(A)).rejects.toThrow(/armed failure/);
       expect(await list.get(A)).toEqual([NOTE]);
+    });
+
+    test('its size: nothing stored is nothing; else the characters stored, measured in one request without reading the value', async () => {
+      expect(await list.size(A)).toEqual({ entries: 0, chars: 0, largest: null });
+      await list.set(A, [NOTE, RENT]);
+      const stored = (await b.raw.get(listKey()))!;
+      const sent = await sentBy(async () => {
+        expect(await list.size(A)).toEqual({ entries: 1, chars: stored.length, largest: { id: null, chars: stored.length } });
+      });
+      expect(sent).toEqual(['strlen']);
+      // Readable or not, it is what is stored.
+      await b.raw.set(listKey(), 'damaged-and-still-stored');
+      expect(await list.size(A)).toEqual({ entries: 1, chars: 24, largest: { id: null, chars: 24 } });
+      expect(await list.size(B)).toEqual({ entries: 0, chars: 0, largest: null });
+      b.failNext('strlen');
+      await notBlamed(() => list.size(A));
     });
 
     test("two containers never see each other's value", async () => {
@@ -501,6 +542,7 @@ function contract(b: Backend) {
         ['n1', NOTE],
         ['n2', RENT],
       ]);
+      await bigList.set(A, [NOTE]);
       const working = globalThis.DecompressionStream;
       globalThis.DecompressionStream = class {
         constructor() {
@@ -508,7 +550,14 @@ function contract(b: Backend) {
         }
       } as never;
       try {
-        for (const read of [() => bigNotes.getAll(A), () => bigNotes.getAllReport(A), () => bigNotes.getAllLenient(A), () => bigNotes.get(A, 'n1')]) {
+        for (const read of [
+          () => bigNotes.getAll(A),
+          () => bigNotes.getAllReport(A),
+          () => bigNotes.getAllLenient(A),
+          () => bigNotes.get(A, 'n1'),
+          () => bigList.get(A),
+          () => bigList.getReport(A),
+        ]) {
           expect((await notBlamed(read)).message).toBe('decompression is unavailable');
         }
       } finally {
@@ -568,6 +617,7 @@ function contract(b: Backend) {
         ['hexists', () => notes.has(A, 'n1')],
         ['hset', () => notes.set(A, 'n3', NOTE)],
         ['hdel', () => notes.remove(A, 'n1')],
+        ['eval', () => notes.size(A)],
       ] as const) {
         b.failNext(command);
         await notBlamed(run);
@@ -576,6 +626,35 @@ function contract(b: Backend) {
         ['n1', NOTE],
         ['n2', RENT],
       ]);
+    });
+
+    test('its size: every entry counted, readable or not, ids and values together, and the largest, in one request', async () => {
+      expect(await notes.size(A)).toEqual({ entries: 0, chars: 0, largest: null });
+      await notes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', { text: 'a much longer note than the other one', amount: 1 }],
+        ['n3', RENT],
+      ]);
+      await b.raw.hset(notesKey(), 'n4', 'damaged');
+      const stored = await b.raw.hgetall(notesKey());
+      const chars = Object.entries(stored).reduce((n, [id, v]) => n + id.length + String(v).length, 0);
+      const sent = await sentBy(async () => {
+        expect(await notes.size(A)).toEqual({ entries: 4, chars, largest: { id: 'n2', chars: String(stored.n2).length } });
+      });
+      expect(sent).toEqual(['eval']);
+      // Bytes as stored: damaged bytes that aren't text count what they hold.
+      await notes.remove(A, 'n1', 'n2', 'n3', 'n4');
+      await b.raw.hsetBytes(notesKey(), 'n9', new Uint8Array([0xff, 0xfe, 0x41]));
+      expect(await notes.size(A)).toEqual({ entries: 1, chars: 5, largest: { id: 'n9', chars: 3 } });
+      // A tie goes to the lowest id, whatever order the hash gives them in.
+      await notes.remove(A, 'n9');
+      await b.raw.hset(notesKey(), 'n8', 'same');
+      await b.raw.hset(notesKey(), 'n7', 'same');
+      expect(await notes.size(A)).toEqual({ entries: 2, chars: 12, largest: { id: 'n7', chars: 4 } });
+      // An id that reads as a number is still an id.
+      await b.raw.hset(notesKey(), '12345', 'longest value');
+      expect((await notes.size(A)).largest).toEqual({ id: '12345', chars: 13 });
+      expect(await notes.size(B)).toEqual({ entries: 0, chars: 0, largest: null });
     });
 
     test("two containers never see each other's entries", async () => {
@@ -1026,6 +1105,7 @@ function contract(b: Backend) {
           () => notes.getMany(A, ['n1', 'n2']),
           () => notes.update(A, 'n1', () => RENT),
           () => list.get(A),
+          () => list.getReport(A),
           () => list.set(A, []),
         ]) {
           expect(await notBlamed(read)).toBeInstanceOf(MasterKeyError);
@@ -1055,6 +1135,7 @@ function contract(b: Backend) {
         () => notes.get(A, 'n2'),
         () => notes.update(A, 'n2', () => RENT),
         () => list.get(A),
+        () => list.getReport(A),
       ]) {
         expect(await notBlamed(read)).toBeInstanceOf(UnknownKeyError);
       }
@@ -1078,6 +1159,7 @@ function contract(b: Backend) {
         () => notes.getMany(A, ['n1', 'n3']),
         () => notes.update(A, 'n1', () => NOTE),
         () => list.get(A),
+        () => list.getReport(A),
       ]) {
         expect(await notBlamed(read)).toBeInstanceOf(DecryptFailedError);
       }
@@ -1095,6 +1177,8 @@ function contract(b: Backend) {
       expect(await b.raw.hget(notesKey(), 'n2')).toStartWith('v2.k1-');
       expect((await notes.getAllReport(A)).unreadable).toEqual(['n2']);
       expect((await notes.get(A, 'n2').catch((e) => e)).unreadable).toEqual(['n2']);
+      await b.raw.set(listKey(), tampered(await encrypt(JSON.stringify([RENT]))));
+      expect(await list.getReport(A)).toEqual({ value: null, unreadable: true, unrecognised: false });
     });
   });
 
@@ -1167,6 +1251,92 @@ function contract(b: Backend) {
     test('each operation is one atomic step', async () => {
       expect(await sentBy(() => counter.read(A))).toEqual(['eval']);
       expect(await sentBy(() => counter.take(A))).toEqual(['eval']);
+    });
+  });
+
+  describe('a counter map store', () => {
+    // Windows are measured by the caller's clock, so these pass their own.
+    const T0 = Date.parse('2026-10-09T12:00:00.000Z');
+    const at = (seconds: number) => T0 + seconds * 1000;
+    const endOf = (start: number) => T0 / 1000 + start + WINDOW;
+
+    test('the first count of an id starts its window; later ones count in it without moving its end', async () => {
+      expect(await counters.take(A, 't1', at(0))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await counters.take(A, 't1', at(100))).toEqual({ count: 2, secondsLeft: WINDOW - 100 });
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`2:${endOf(0)}`);
+      // The hash outlives every window in it, and goes on its own.
+      expect(await b.raw.ttl(countersKey())).toBe(2 * WINDOW);
+    });
+
+    test('each id counts on its own, in one hash for the container', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't1', at(1));
+      expect(await counters.take(A, 't2', at(2))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.hgetall(countersKey())).toEqual({ t1: `2:${endOf(0)}`, t2: `1:${endOf(2)}` });
+    });
+
+    test('a window that has ended starts again, from that count', async () => {
+      for (let i = 0; i < 3; i++) await counters.take(A, 't1', at(i));
+      expect(await counters.take(A, 't1', at(WINDOW))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`1:${endOf(WINDOW)}`);
+    });
+
+    test('a window ending further ahead than any could (a clock that moved back) starts again; one a little ahead is kept', async () => {
+      await b.raw.hset(countersKey(), 't1', `9:${endOf(0) + 5 * WINDOW}`);
+      expect(await counters.take(A, 't1', at(0))).toEqual({ count: 1, secondsLeft: WINDOW });
+      // Started by a clock 30 seconds ahead of this one: still that window,
+      // and never more than a window left.
+      await b.raw.hset(countersKey(), 't2', `4:${endOf(30)}`);
+      expect(await counters.take(A, 't2', at(0))).toEqual({ count: 5, secondsLeft: WINDOW });
+    });
+
+    test('counts racing each other are each counted once', async () => {
+      const counts = await Promise.all(Array.from({ length: 25 }, () => counters.take(A, 't1', at(0))));
+      expect(counts.map((c) => c.count).sort((x, y) => x - y)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`25:${endOf(0)}`);
+    });
+
+    test('each container counts on its own', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't1', at(0));
+      expect(await counters.take(B, 't1', at(0))).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`2:${endOf(0)}`);
+    });
+
+    test('remove forgets those ids\' windows and no other', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't2', at(0));
+      await counters.remove(A, 't1', 'never-counted');
+      expect(await b.raw.hgetall(countersKey())).toEqual({ t2: `1:${endOf(0)}` });
+      expect(await counters.take(A, 't1', at(1))).toEqual({ count: 1, secondsLeft: WINDOW });
+      await counters.remove(A);
+      expect(Object.keys(await b.raw.hgetall(countersKey())).sort()).toEqual(['t1', 't2']);
+    });
+
+    test('a count that is not one is damaged: an error naming its id, never no count, and left as it is, with an end', async () => {
+      for (const damaged of ['abc', '3', '0:5', '3:', '-1:5', '1.5:7', '01:5', '']) {
+        await b.raw.hset(countersKey(), 't1', damaged);
+        const err = await counters.take(A, 't1', at(0)).catch((e) => e);
+        expect([damaged, err instanceof UnreadableEntriesError, err.unreadable, err.unrecognised]).toEqual([damaged, true, ['t1'], []]);
+        expect(await b.raw.hget(countersKey(), 't1')).toBe(damaged);
+        // Written by hand with no expiry, it gets one, so it can't stay for good.
+        expect(await b.raw.ttl(countersKey())).toBe(2 * WINDOW);
+      }
+    });
+
+    test('storage failing is an error, never no count', async () => {
+      await counters.take(A, 't1', at(0));
+      b.failNext('eval');
+      expect((await notBlamed(() => counters.take(A, 't1', at(1)))).message).toContain('armed failure');
+      expect(await counters.take(A, 't1', at(2))).toEqual({ count: 2, secondsLeft: WINDOW - 2 });
+    });
+
+    test('each count is one atomic step, and ids are opaque', async () => {
+      expect(await sentBy(() => counters.take(A, 't1', at(0)))).toEqual(['eval']);
+      for (const id of ['', 'has space', 'x'.repeat(201), '__proto__']) {
+        await expect(counters.take(A, id, at(0))).rejects.toThrow('Invalid id');
+        await expect(counters.remove(A, id)).rejects.toThrow('Invalid id');
+      }
     });
   });
 
@@ -1269,6 +1439,51 @@ describe('the seam, on the test double', () => {
     sent: () => fakeSent,
   });
 
+  // A store kept outside the seam (balance history, manual accounts) reports
+  // what it can't read by these same rules, so the line between damage, a
+  // later version's format and the deployment's own problem is drawn once.
+  test('openStored tells what a value outside the seam is by the seam’s own rules, reading nothing', async () => {
+    const sent = fakeSent.length;
+    for (const [how, flaw, make] of FLAWED) {
+      const opened = await openStored(await make());
+      // Not JSON, or the wrong shape, is text it has: whether the reader
+      // understands it is the reader's to say.
+      if (how === 'not JSON once decrypted') expect(opened).toEqual({ ok: true, text: 'not json' });
+      else if (how === 'the wrong shape once decrypted') expect(opened).toEqual({ ok: true, text: '{"not":"the shape"}' });
+      else expect([how, opened.ok ? 'ok' : opened.flaw]).toEqual([how, flaw]);
+    }
+    // As the client hands values back: a number or an object it parsed, or nothing.
+    for (const parsed of [12345, { text: 'plain' }, null, '']) {
+      expect(await openStored(parsed)).toMatchObject({ ok: false, flaw: 'unreadable' });
+    }
+    expect(await openStored(await encrypt('1000.5'))).toEqual({ ok: true, text: '1000.5' });
+    expect(await openStored(await encodeJsonText('{"a":1}'))).toEqual({ ok: true, text: '{"a":1}' }); // compressed
+    // Under k0 a failed decrypt is the deployment's, as for every read here.
+    expect(await openStored(await underAnotherK0('1000')).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(await openStored(tampered(await encrypt('1000'))).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(fakeSent.length).toBe(sent);
+    // Under a data key, only damage.
+    process.env.MASTER_KEY = MASTER;
+    forgetActiveKey();
+    const sealed = await encrypt('1000');
+    expect(sealed).toStartWith('v2.k1-');
+    expect(await openStored(tampered(sealed))).toMatchObject({ ok: false, flaw: 'unreadable' });
+    expect(await openStored(sealed)).toEqual({ ok: true, text: '1000' });
+  });
+
+  // For a value outside the seam whose shape is one check (budgets, goals):
+  // the JSON and the shape, as a store's own read checks them.
+  test('openStoredJson adds the JSON and the shape: what it doesn’t understand is unrecognised', async () => {
+    const isList = (v: unknown): v is unknown[] => Array.isArray(v);
+    const sent = fakeSent.length;
+    expect(await openStoredJson(await encrypt('[1,2]'), isList)).toEqual({ ok: true, value: [1, 2] });
+    expect(await openStoredJson(await encrypt('{"not":"a list"}'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
+    expect(await openStoredJson(await encrypt('not json'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
+    expect(await openStoredJson('not-ciphertext-but-long-enough-to-be-tried', isList)).toMatchObject({ ok: false, flaw: 'unreadable' });
+    expect(await openStoredJson(await underAnotherK0('[]'), isList).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(fakeSent.length).toBe(sent);
+  });
+
   test('a data key that cannot be loaded is a problem with the deployment: thrown as it is, even by the lenient read', async () => {
     // As in test/stored-json.test.ts: values under a data key whose id is not
     // cached, so reading one must fetch the key, and the key store cannot be
@@ -1305,6 +1520,7 @@ describe('the seam, on the test double', () => {
       () => notes.get(A, 'n2'),
       () => notes.getMany(A, ['n1', 'n2']),
       () => list.get(A),
+      () => list.getReport(A),
     ]) {
       const err = await read().catch((e) => e);
       expect(err).toBeInstanceOf(Error);
@@ -1378,6 +1594,39 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
     sent: () => upstash.sent,
   });
 
+  // The double has no clock, so a counter's last second and its end are
+  // checked here, on the server's own: so a change to the scripts can never
+  // quietly reopen a window about to end, nor keep an ended one shut.
+  describe("a counter store's window, on the clock", () => {
+    /** Waits for the counter's window to end, a few seconds at most. */
+    const ended = async () => {
+      for (let i = 0; i < 100 && Number(await send('EXISTS', [counterKey()])) === 1; i++) await Bun.sleep(25);
+      expect(Number(await send('EXISTS', [counterKey()]))).toBe(0);
+    };
+
+    test('under a second from its end, a window is left to end: neither a count nor a read gives it a fresh one', async () => {
+      for (let i = 0; i < 3; i++) await counter.take(A);
+      // Under half a second left, which TTL answers as 0.
+      await send('PEXPIRE', [counterKey(), '450']);
+      expect(Number(await send('TTL', [counterKey()]))).toBe(0);
+      expect(await counter.take(A)).toEqual({ count: 4, secondsLeft: 1 });
+      expect(Number(await send('PTTL', [counterKey()]))).toBeLessThanOrEqual(450);
+      expect(await counter.read(A)).toEqual({ count: 4, secondsLeft: 1 });
+      expect(Number(await send('PTTL', [counterKey()]))).toBeLessThanOrEqual(450);
+    });
+
+    test('once a window has ended it reads as none, and the next count starts a fresh one', async () => {
+      await counter.take(A);
+      await counter.take(A);
+      await send('PEXPIRE', [counterKey(), '200']);
+      await ended();
+      expect(await counter.read(A)).toEqual({ count: 0, secondsLeft: 0 });
+      expect(await send('EXISTS', [counterKey()])).toBe(0); // the read wrote nothing
+      expect(await counter.take(A)).toEqual({ count: 1, secondsLeft: WINDOW });
+      expect(Number(await send('TTL', [counterKey()]))).toBe(WINDOW);
+    });
+  });
+
   test('a key of the wrong type is an error, never empty, and is left as it is', async () => {
     await send('SET', [notesKey(), 'a string where the hash should be']);
     for (const op of [
@@ -1391,6 +1640,7 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
       () => notes.has(A, 'n1'),
       () => notes.set(A, 'n1', NOTE),
       () => notes.remove(A, 'n1'),
+      () => notes.size(A),
     ]) {
       await expect(op()).rejects.toThrow('WRONGTYPE');
     }
@@ -1398,6 +1648,8 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
 
     await send('HSET', [listKey(), 'f', 'a hash where the string should be']);
     await expect(list.get(A)).rejects.toThrow('WRONGTYPE');
+    await expect(list.getReport(A)).rejects.toThrow('WRONGTYPE');
+    await expect(list.size(A)).rejects.toThrow('WRONGTYPE');
     await expect(list.set(A, [NOTE])).rejects.toThrow('WRONGTYPE');
     expect(await send('HGET', [listKey(), 'f'])).toBe('a hash where the string should be');
   });
@@ -1411,6 +1663,7 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
     client = upstashOn(lost);
     for (const read of [
       () => list.get(A),
+      () => list.getReport(A),
       () => notes.getAll(A),
       () => notes.getAllLenient(A),
       () => notes.getAllReport(A),
@@ -1494,14 +1747,28 @@ describe('the key inventory', () => {
     expect(classify(`${c}txns:item-1`)).toBe('string');
     expect(classify(`${c}plaid:items`)).toBe('items');
     expect(classify(`${c}snapshot:runs`)).toBe('plain');
-    const stored = { value: 'string', map: 'hash', counter: 'plain' } as const;
+    const stored = { value: 'string', map: 'hash', counter: 'plain', 'counter-map': 'plain' } as const;
     for (const store of declaredStores()) {
+      // In backups unless declared out of them, which lib/export.ts agrees with.
       expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, !store.backedUp]);
       expect(classify(`${c}${store.name}`)).toBe(stored[store.kind]);
     }
+    // Only the API's tokens and their counts, and a connector's credential and
+    // its counts, are left out: a restore must never revive a revoked token or
+    // a disconnected bank.
+    expect(declaredStores().filter((s) => !s.backedUp).map((s) => s.name).sort()).toEqual([
+      'api-requests',
+      'api-tokens',
+      'connector-claims',
+      'connector-requests',
+      'connector-secrets',
+    ]);
     // A counter is a plain integer, which the re-encryption pass leaves alone.
     expect(classify(`${c}seam-contract-counter`)).toBe('plain');
     expect(classify('seam-contract-counter')).toBeNull();
+    // A counter map is a hash of plain counts, which the pass leaves alone too.
+    expect(classify(`${c}seam-contract-counters`)).toBe('plain');
+    expect(classify('seam-contract-counters')).toBeNull();
   });
 
   test('a name that is not a plain key family, or that something else claims, is refused, and nothing is declared', () => {
@@ -1530,6 +1797,12 @@ describe('the key inventory', () => {
       expect(() => defineMapStore(name, { what: 'test notes', isValid: isNote, exportable: false })).toThrow(why);
       expect(declaredStore(name)).toBeNull();
     }
+    // Out of backups only where lib/export.ts leaves the key out too.
+    expect(() => defineMapStore('seam-contract-unbacked', { what: 'test notes', isValid: isNote, exportable: false, backup: false })).toThrow(
+      'declared out of backups, but lib/export.ts would back it up'
+    );
+    expect(() => defineCounterMapStore('seam-contract-unbacked', { what: 'test counts', windowSeconds: 60, backup: false })).toThrow('declared out of backups');
+    expect(declaredStore('seam-contract-unbacked')).toBeNull();
   });
 
   test('a store kept out of backups must be one backups leave out, and only such a store may be', () => {
@@ -1567,6 +1840,7 @@ describe('the catalogue', () => {
       ['seam-contract-big-list', 'value', 'test notes', true],
       ['seam-contract-big-notes', 'map', 'test notes', true],
       ['seam-contract-counter', 'counter', 'test counts', false],
+      ['seam-contract-counters', 'counter-map', 'test counts', false],
       ['seam-contract-list', 'value', 'test notes', true],
       ['seam-contract-notes', 'map', 'test notes', false],
     ]);
@@ -1604,7 +1878,7 @@ describe('the catalogue', () => {
    *  string. Imports, types and other mentions are not calls. */
   function declarationsIn(src: string): (string | null)[] {
     const out: (string | null)[] = [];
-    for (const m of src.matchAll(/\bdefine(?:Value|Map|Counter)Store\b/g)) {
+    for (const m of src.matchAll(/\bdefine(?:Value|Map|CounterMap|Counter)Store\b/g)) {
       let i = m.index! + m[0].length;
       const skipSpace = () => {
         while (/\s/.test(src[i] ?? '')) i++;
@@ -1630,7 +1904,7 @@ describe('the catalogue', () => {
     return out;
   }
   /** Renaming defineMapStore on import would hide its declarations from the scan. */
-  const aliases = (src: string) => [...src.matchAll(/\bdefine(?:Value|Map|Counter)Store\s+as\b/g)].length;
+  const aliases = (src: string) => [...src.matchAll(/\bdefine(?:Value|Map|CounterMap|Counter)Store\s+as\b/g)].length;
 
   const sources = files.filter((f) => rel(f) !== 'lib/repo.ts').map((f) => ({ file: rel(f), src: code(f) }));
   const declarations = sources.flatMap(({ file, src }) => declarationsIn(src).map((name) => ({ file, name })));
@@ -1647,10 +1921,12 @@ describe('the catalogue', () => {
       const c = defineMapStore(name, opts);
       type T = ReturnType<typeof defineMapStore>;
       export const d = defineCounterStore('sends', { what: 'sends', windowSeconds: 60 });
+      export const e = defineCounterMapStore('calls', { what: 'calls', windowSeconds: 60 });
     `.replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
-    expect(declarationsIn(sample)).toEqual(['rules', 'settings', null, 'sends']);
+    expect(declarationsIn(sample)).toEqual(['rules', 'settings', null, 'sends', 'calls']);
     expect(aliases(`import { defineMapStore as declareMap } from './repo';`)).toBe(1);
     expect(aliases(`import { defineCounterStore as counter } from './repo';`)).toBe(1);
+    expect(aliases(`import { defineCounterMapStore as counters } from './repo';`)).toBe(1);
     expect(aliases(sample)).toBe(0);
     expect(files.some((f) => rel(f) === 'proxy.ts')).toBe(true); // the walk reaches the root
   });

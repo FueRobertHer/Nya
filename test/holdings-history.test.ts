@@ -63,6 +63,7 @@ const {
   forgetAccountHoldings,
   forgetRecentHoldings,
   repairHoldingsIndex,
+  HoldingsIndexMissingError,
 } = hh;
 const { recordFetch } = await import('@/lib/networth');
 const { getHistory } = await import('@/lib/history');
@@ -580,6 +581,41 @@ describe('recording', () => {
     expect(await recordHoldings(ctx, [broker(['acct_1'], [hold('acct_1', 'vti')], [sec('vti')])], at('2026-10-08T13:00:00Z'))).toEqual({ recorded: 0, failed: 1 });
     expect(storedMonths()).toEqual([[id, unknown]]);
     expect(await fake.hget<string>(INDEX, 'index')).toBeNull();
+  });
+
+  test("months left without their index can't be read, and never read as nothing recorded, until the index is derived again", async () => {
+    await recordHoldings(ctx, [broker(['acct_1'], [hold('acct_1', 'vti')], [sec('vti')])], at('2026-10-07T13:00:00Z'));
+    await fake.hdel(INDEX, 'index');
+    for (const read of [() => readHoldingsSpan(ctx, { accountId: 'acct_1' }), () => readHoldingsSpan(ctx), () => readHoldingsRange(ctx, '2026-10-01', '2026-10-31')]) {
+      const err = await read().catch((e) => e);
+      expect(err).toBeInstanceOf(HoldingsIndexMissingError);
+      expect(err).toBeInstanceOf(StoredDataUnreadableError);
+      expect(err.repairable).toBe(true);
+    }
+    // The repair derives it, and every day reads again.
+    expect(await repairHoldingsIndex(ctx)).toEqual({ months: 1, damaged_months: 0 });
+    expect(await readHoldingsSpan(ctx, { accountId: 'acct_1' })).toEqual(span('2026-10-07', '2026-10-07', '2026-10-07T13:00:00.000Z', '2026-10-07T13:00:00.000Z'));
+    expect((await readHoldingsRange(ctx, '2026-10-01', '2026-10-31')).map((d) => d.date)).toEqual(['2026-10-07']);
+  });
+
+  test('without their index, a month this version does not recognise is named, and damaged months alone leave nothing to derive', async () => {
+    await recordHoldings(ctx, [broker(['acct_1'], [hold('acct_1', 'vti')], [sec('vti')])], at('2026-10-07T13:00:00Z'));
+    const [[id]] = storedMonths();
+    await fake.hdel(INDEX, 'index');
+    // Nothing can be derived around it, so it is what can't be read.
+    await fake.hset(HISTORY, { [id]: await later({ v: 2, month: '2026-10' }) });
+    const err = await readHoldingsSpan(ctx).catch((e) => e);
+    expect(err).toBeInstanceOf(UnreadableEntriesError);
+    expect([err.unreadable, err.unrecognised]).toEqual([[], [id]]);
+    // Damaged, it holds nothing anyone can read: still not nothing recorded.
+    await fake.hset(HISTORY, { [id]: 'damaged' });
+    const damaged = await readHoldingsSpan(ctx).catch((e) => e);
+    expect(damaged).toBeInstanceOf(HoldingsIndexMissingError);
+    expect(damaged.repairable).toBe(false);
+    // With nothing stored at all, nothing was recorded.
+    fake.reset();
+    expect(await readHoldingsSpan(ctx)).toEqual(span(null, null));
+    expect(await readHoldingsRange(ctx, '2026-10-01', '2026-10-31')).toEqual([]);
   });
 
   test('a damaged index stops recording, loudly, and is never written over', async () => {
@@ -1393,6 +1429,31 @@ describe('/api/holdings-history', () => {
     }
     await fake.hset(INDEX, { index: await later({ v: 2 }) });
     expect(await get('?summary=1')).toEqual({ status: 409, body: { error: unreadable, unreadable: true, unreadable_ids: [], unrecognised_ids: ['index'] } });
+  });
+
+  test('months whose index went missing are a 409 that offers the repair, never nothing recorded, and the repair derives it', async () => {
+    await recordToday(['acct_1']);
+    // Deleted by hand, say: the month stays.
+    await fake.hdel(INDEX, 'index');
+    for (const query of ['?summary=1&account_id=acct_1', '?summary=1', '']) {
+      expect(await get(query)).toEqual({ status: 409, body: { error: unreadable, unreadable: true, index_missing: true, repairable: true } });
+    }
+    expect(await post({ action: 'repair', confirm: true })).toEqual({ status: 200, body: { repaired: true, months: 1 } });
+    expect(await get('?summary=1&account_id=acct_1')).toEqual({
+      status: 200,
+      body: { first_recorded: today(), last_recorded: today(), first_recorded_at: isoToday(), last_recorded_at: isoToday() },
+    });
+  });
+
+  test('a missing index beside a month this version does not recognise is a 409 naming that month, with no repair offered', async () => {
+    await recordToday(['acct_1']);
+    const [[id]] = storedMonths();
+    await fake.hdel(INDEX, 'index');
+    await fake.hset(HISTORY, { [id]: await later({ v: 2, month: today().slice(0, 7) }) });
+    expect(await get('?summary=1&account_id=acct_1')).toEqual({
+      status: 409,
+      body: { error: unreadable, unreadable: true, unreadable_ids: [], unrecognised_ids: [id] },
+    });
   });
 
   test("a repair is made only on the person's word, and only of a damaged index", async () => {

@@ -292,6 +292,17 @@ describe('deleting my account', () => {
     expect(keysOf(partner.container)).toEqual([]);
   });
 
+  test('a day of balances or a manual account that can’t be read is still counted: it is stored, and deleted', async () => {
+    // A third day, damaged, and a second manual account, damaged: as the
+    // download of my data reads them, named rather than stopping it.
+    await fake.hset(`test:c:${partner.container}:history:net-worth`, { '2026-01-03': 'garbage-ciphertext' });
+    await fake.hset(`test:c:${partner.container}:manual:accounts`, { manual_broken: 'garbage-ciphertext' });
+    const res = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
+    expect(res.status).toBe(200);
+    expect(res.body.receipt.deleted).toMatchObject({ accounts: 3, transactions: 2, history_days: 3 });
+    expect(keysOf(partner.container)).toEqual([]);
+  });
+
   test('counting that stalls never stands between the person and their banks being disconnected', async () => {
     const undo = stallHistory();
     const said: string[] = [];

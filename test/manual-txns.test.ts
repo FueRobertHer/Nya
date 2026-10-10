@@ -547,6 +547,7 @@ describe('on the Activity tab', () => {
       amount: 12.5,
       pending: false,
       account_name: 'Wallet',
+      account_type: 'depository',
       institution_name: 'Cash',
       category: 'food and drink',
       iso_currency_code: 'USD',
@@ -631,10 +632,15 @@ describe('on the Activity tab', () => {
     expect(failed.result).toMatchObject({ txns: [], notes: [expect.stringContaining('Manual accounts: ')] });
     await fake.hset(ctxKey('manual:accounts'), { [CARD.account_id]: 'not-ciphertext-but-long-enough-to-be-tried' });
     const unreadable = await quietly(() => readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff }));
-    expect(unreadable.result).toEqual({ txns: [], notes: ["Manual accounts: couldn't be read, so transactions entered for them aren't shown"], incomplete: [] });
+    expect(unreadable.result).toEqual({
+      txns: [],
+      notes: ["Manual accounts: couldn't be read, so transactions entered for them aren't shown"],
+      incomplete: [],
+      unread: 'all',
+    });
   });
 
   test('read for the route: no manual accounts, nothing read wrong is worth a note', async () => {
-    expect(await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '2000-01-01' })).toEqual({ txns: [], notes: [], incomplete: [] });
+    expect(await readManualTxnsForDisplay(ctx, { hidden: new Set(), cutoff: '2000-01-01' })).toEqual({ txns: [], notes: [], incomplete: [], unread: [] });
   });
 });

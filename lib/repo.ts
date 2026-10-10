@@ -18,7 +18,7 @@
 //                     accounts). In Redis, one hash with a field per id; in a
 //                     table, a row per id.
 //
-// And one for the service's own bookkeeping:
+// And two for the service's own bookkeeping:
 //
 //   defineCounterStore  a count per container in a fixed window that starts
 //                       with its first count and ends on its own (a rate
@@ -27,6 +27,12 @@
 //                       Redis, one integer key with an expiry, counted in
 //                       Lua; in a table, a row with the count and the end of
 //                       its window.
+//   defineCounterMapStore  the same, a count per id within a container (a
+//                       rate limit per API token). In Redis, one hash with a
+//                       field per id holding its count and the end of its
+//                       window, counted in Lua, the hash kept a window past
+//                       its last count so it goes on its own; in a table, a
+//                       row per id.
 //
 // CONTAINERS ONLY, by design. Every store keeps its data inside a container (kc
 // in lib/storage.ts), so deleting the account deletes it with the rest
@@ -57,9 +63,9 @@
 // person's data download (lib/user-export.ts), where each store declared
 // exportable is a section of its own. The name is the key family, so a
 // declared store is in the key inventory by construction. A store holding a
-// credential that a restore must never bring back (a connector's credential)
-// is declared `backup: false`, and lib/export.ts leaves its key out of every
-// backup.
+// credential that a restore must never bring back (API tokens, a connector's
+// credential) is declared `backup: false`, and lib/export.ts leaves its key out
+// of every backup.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with
 // what is stored, or says exactly why it cannot:
@@ -90,6 +96,10 @@
 // is that removal with a value put in its place, in one step: it writes only
 // over an entry whose bytes are damaged and still the bytes it read, so it can
 // never replace one that reads, or one that is unrecognised.
+// ValueStore.getReport says of a value store's one value what getAllReport
+// says of entries. A store kept outside the seam whose reader reports what it
+// can't use the same way tells the kinds apart with openStored (or
+// openStoredJson), so every report draws the line where the seam does.
 //   MapStore.getAllLenient is the one lenient read: it leaves out what it cannot
 // use (a deployment problem still throws). It is only for conveniences that
 // nothing writes, deletes or records on; say so where it is called.
@@ -234,12 +244,13 @@ export type StoreOptions<T> = {
   /** Stores each value gzip-compressed (lib/blob.ts), for values that can grow
    *  large. Reads take either form, so it can be switched on or off later. */
   compress?: boolean;
-  /** False only for a credential a restore must never bring back (a
-   *  connector's credential, which a restore could otherwise revive after the
-   *  person disconnected it): its key is left out of every backup, and
-   *  lib/export.ts must list it in EXCLUDED_PREFIXES, which declare() checks
-   *  both ways. A restore then deletes what is there and brings none back.
-   *  Backed up by default. */
+  /** False only for a credential a restore must never bring back (an API
+   *  token, which a restore could otherwise revive after it was revoked, or a
+   *  connector's credential, which it could revive after the person
+   *  disconnected it): its key is left out of every backup, and lib/export.ts
+   *  must list it in EXCLUDED_PREFIXES, which declare() checks both ways. A
+   *  restore then deletes what is there and brings none back. Backed up by
+   *  default. */
   backup?: false;
 };
 
@@ -256,11 +267,20 @@ export type ValueStore<T> = Declared & {
   readonly kind: 'value';
   /** Strict. The value, or null if none was ever saved. */
   get(ctx: Ctx): Promise<T | null>;
+  /** Strict about deployment problems, but says why the value cannot be used
+   *  instead of throwing, as MapStore.getAllReport does for entries: the value,
+   *  or null, with `unreadable` (its bytes are damaged, so it may be offered
+   *  for removal once the person confirms) or `unrecognised` (intact, never
+   *  offered) when that is why. Both false and null: never saved. */
+  getReport(ctx: Ctx): Promise<{ value: T | null; unreadable: boolean; unrecognised: boolean }>;
   /** Replaces the value, unless the one there now cannot be read: then refuses,
    *  leaving it exactly as it is. Last write wins (see the header). */
   set(ctx: Ctx, value: T): Promise<void>;
   /** Deletes the value, readable or not. */
   remove(ctx: Ctx): Promise<void>;
+  /** How much it stores (StoreSize), readable or not, without reading the
+   *  value. One request. */
+  size(ctx: Ctx): Promise<StoreSize>;
 };
 
 export type MapStore<T> = Declared & {
@@ -319,6 +339,25 @@ export type MapStore<T> = Declared & {
   count(ctx: Ctx): Promise<number>;
   /** Whether there is an entry under the id, readable or not. */
   has(ctx: Ctx, id: string): Promise<boolean>;
+  /** How much it stores (StoreSize), readable or not, without reading any
+   *  value. One request (MAP_SIZE). */
+  size(ctx: Ctx): Promise<StoreSize>;
+};
+
+/**
+ * How much a value or map store holds in a container, measured, never read:
+ * what storage usage reports (lib/blob-sizes.ts). Characters are bytes here:
+ * every value is ASCII ciphertext (lib/blob.ts), as is every id.
+ */
+export type StoreSize = {
+  /** Entries stored, readable or not: 0 or 1 for a value store. */
+  entries: number;
+  /** Characters stored, ids and values together. */
+  chars: number;
+  /** The largest value: its id (null for a value store's one value) and its
+   *  characters; null when nothing is stored. Each write is held to the
+   *  request ceiling on its own (lib/blob.ts), so this is the one nearest it. */
+  largest: { id: string | null; chars: number } | null;
 };
 
 /** A counter store's window as it stands. */
@@ -342,7 +381,22 @@ export type CounterStore = Declared & {
   take(ctx: Ctx): Promise<CounterWindow>;
 };
 
-export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore;
+export type CounterMapStore = Declared & {
+  readonly kind: 'counter-map';
+  /** How long a window lasts, from its first count. */
+  readonly windowSeconds: number;
+  /** Counts one for `id`, atomically, starting a window for it if none is
+   *  running, and answers its window with this one counted. Each id counts
+   *  apart from the others, and two callers racing never get the same count,
+   *  so the count is what decides. `now` (ms) is the clock the window is
+   *  measured by: the caller's, and a test's own. Throws if it cannot count,
+   *  so a limit built on it fails closed. */
+  take(ctx: Ctx, id: string, now?: number): Promise<CounterWindow>;
+  /** Forgets these ids' windows, counted or not. */
+  remove(ctx: Ctx, ...ids: string[]): Promise<void>;
+};
+
+export type Store = ValueStore<unknown> | MapStore<unknown> | CounterStore | CounterMapStore;
 
 /**
  * Reads fields exactly: each as "v" followed by its stored text, or "" where
@@ -411,6 +465,28 @@ local v = redis.call('HGET', KEYS[1], ARGV[1])
 if not v then return {'', ''} end
 return {'v' .. v, 'v' .. redis.sha1hex(v)}`;
 
+/**
+ * How much a map store's hash holds, in one step, without reading a value:
+ * its number of fields, the bytes of every field name and value together, and
+ * the largest value's field (prefixed "v", so nothing parses it) and bytes,
+ * the lowest field name among equals, so the answer doesn't depend on the
+ * order HKEYS gives. Bytes as Redis stores them, so a damaged value counts
+ * what it holds. A string at the key is Redis's WRONGTYPE.
+ */
+export const MAP_SIZE = `-- nya:repo-size
+local fields = redis.call('HKEYS', KEYS[1])
+if #fields == 0 then return {0, 0, '', 0} end
+local chars, largest, most = 0, '', -1
+for i = 1, #fields do
+  local n = redis.call('HSTRLEN', KEYS[1], fields[i])
+  chars = chars + #fields[i] + n
+  if n > most or (n == most and fields[i] < largest) then
+    largest = fields[i]
+    most = n
+  end
+end
+return {#fields, chars, 'v' .. largest, most}`;
+
 /** The error a counter store's take answers for a stored count that is not
  *  one, so it can be told from storage failing. */
 const NOT_A_COUNT = 'ERR nya: the stored count is not a count';
@@ -453,6 +529,40 @@ if ttl < 0 then
   ttl = tonumber(ARGV[1])
 end
 return {n, ttl}`;
+
+/**
+ * Counts one for an id in a counter map store, in one step. Each field holds
+ * "<count>:<end of its window>" (whole seconds since 1970, by the clock of
+ * whoever started the window). ARGV: the id, now and the window, in seconds.
+ * A window that has ended, or ends further ahead than any could (a clock that
+ * moved back), starts again. The hash is kept two windows past its last count,
+ * so it outlives every window in it (with room for clocks a little apart) and
+ * goes on its own once nothing counts. What is there and is not a count as
+ * this writes one is refused, writing nothing but that expiry, should the hash
+ * have none (one restored by hand), so it can't stay forever. Answers the
+ * count and its seconds left.
+ */
+export const COUNTERS_TAKE = `-- nya:repo-counters-take
+local now = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+local count, ends = 0, 0
+if raw then
+  local c, e = string.match(raw, '^([1-9]%d*):([1-9]%d*)$')
+  if not c then
+    if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], 2 * window) end
+    return redis.error_reply('${NOT_A_COUNT}')
+  end
+  count, ends = tonumber(c), tonumber(e)
+end
+if ends <= now or ends - now > 2 * window then
+  count = 0
+  ends = now + window
+end
+count = count + 1
+redis.call('HSET', KEYS[1], ARGV[1], count .. ':' .. ends)
+redis.call('EXPIRE', KEYS[1], 2 * window)
+return {count, ends - now}`;
 
 /** Fields read per READ_ENTRIES call, well inside Lua's limit for unpack. */
 const READ_BATCH = 1000;
@@ -529,25 +639,29 @@ function storeKey(ctx: Ctx, name: string): string {
 
 type Codec<T> = Pick<StoreOptions<T>, 'what' | 'isValid' | 'upgrade' | 'compress'>;
 
-/** A stored value read back, or why it cannot be used by its own doing (see
- *  READS above). */
-type Decoded<T> = { ok: true; value: T } | { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown };
+/** Why a stored value cannot be used by its own doing (see READS above). */
+type Flaw = { ok: false; flaw: 'unreadable' | 'unrecognised'; cause: unknown };
+/** A stored value read back, or why it cannot be used. */
+export type Decoded<T> = { ok: true; value: T } | Flaw;
+/** A stored value's text, decrypted (and decompressed), or why it cannot be had. */
+export type Opened = { ok: true; text: string } | Flaw;
+
+const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown): Flaw => ({ ok: false, flaw, cause });
 
 /**
- * Reads a stored value back. Throws only what says nothing about the value: a
- * deployment that cannot read it (MasterKeyError for no master key or one that
- * does not open the data key, UnknownKeyError for a key the key store lacks, a
- * failed decrypt under k0, decompression failing, storage unreachable) or a
- * throwing upgrade (a bug). Damaged bytes are not ciphertext, or ciphertext
- * that fails to authenticate under a data key, whose id commits to its key.
- * Under k0 the same failure could as well be a replaced PLAID_ENCRYPTION_KEY,
- * and no other value can settle which (values written under a new k0 decrypt
- * beside old ones that cannot), so it is always thrown.
+ * A stored value's text, compressed or not. Throws only what says nothing
+ * about the value: a deployment that cannot read it (MasterKeyError for no
+ * master key or one that does not open the data key, UnknownKeyError for a
+ * key the key store lacks, a failed decrypt under k0, decompression failing,
+ * storage unreachable). Damaged bytes are not ciphertext, or ciphertext that
+ * fails to authenticate under a data key, whose id commits to its key. Under
+ * k0 the same failure could as well be a replaced PLAID_ENCRYPTION_KEY, and no
+ * other value can settle which (values written under a new k0 decrypt beside
+ * old ones that cannot), so it is always thrown.
  */
-async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
-  const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown): Decoded<T> => ({ ok: false, flaw, cause });
+async function openText(stored: unknown): Promise<Opened> {
   // The client JSON-parses what it can on the way out, so anything but
-  // non-empty text was never written by the seam.
+  // non-empty text was never written by the seam, nor by a store before it.
   if (typeof stored !== 'string' || stored === '') return flawed('unreadable', new Error('stored value is not encrypted text'));
   // What a later version may write (a version tag or flag this code does not
   // know, or a value bound to a context, which this code never passes) is
@@ -560,17 +674,47 @@ async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
     if (err instanceof MalformedCiphertextError) return flawed('unreadable', err);
     throw err;
   }
-  let text: string;
   try {
-    text = await decryptJsonText(stored); // compressed or not
+    return { ok: true, text: await decryptJsonText(stored) }; // compressed or not
   } catch (err) {
     if (err instanceof MalformedCiphertextError) return flawed('unreadable', err); // not base64, or too short
     if (err instanceof DecryptFailedError && err.keyId !== 'k0') return flawed('unreadable', err);
     throw err;
   }
+}
+
+/**
+ * Opens a value that a store kept outside the seam holds (balance history,
+ * manual accounts), for a reader that reports what it cannot use as
+ * getAllReport does instead of throwing: its text, or why it cannot be had,
+ * by exactly the rules every read here follows (see READS above), so a
+ * deployment problem is thrown as it is and never reported as damage. Text it
+ * has is the reader's to understand: text it does not (not JSON, not the
+ * shape it keeps) is unrecognised, as here. Reads nothing from storage.
+ */
+export function openStored(stored: unknown): Promise<Opened> {
+  return openText(stored);
+}
+
+/**
+ * openStored, then parsed and checked as a store's own reads check a value
+ * (decode), for a value kept outside the seam whose shape is one check
+ * (budgets and goals, read for the download of my data): text that is not
+ * JSON, or JSON `isValid` rejects, is unrecognised. Reads nothing from
+ * storage.
+ */
+export function openStoredJson<T>(stored: unknown, isValid: (v: unknown) => v is T): Promise<Decoded<T>> {
+  return decode({ what: 'a stored value', isValid }, stored);
+}
+
+/** Reads a stored value back, as openText does, then parses and checks it.
+ *  Also throws an upgrade that throws (a bug, never the data's doing). */
+async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
+  const opened = await openText(stored);
+  if (!opened.ok) return opened;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(opened.text);
   } catch (err) {
     return flawed('unrecognised', err);
   }
@@ -614,14 +758,20 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
   const { what } = codec;
   const key = (ctx: Ctx) => storeKey(ctx, name);
 
-  const read = async (ctx: Ctx): Promise<T | null> => {
+  /** The value decoded, or null when none was ever saved. */
+  const readDecoded = async (ctx: Ctx): Promise<Decoded<T> | null> => {
     // Uncaught: a failure to reach storage is never "never saved".
     const stored = await redis().get<unknown>(key(ctx));
     // Text that reads as nothing (empty, or the JSON literal null, which the
     // client parses) is never saved, as in lib/stored-json.ts. The seam writes
     // neither, and replacing one loses nothing.
     if (stored === null || stored === undefined || stored === '') return null;
-    const d = await decode(codec, stored);
+    return decode(codec, stored);
+  };
+
+  const read = async (ctx: Ctx): Promise<T | null> => {
+    const d = await readDecoded(ctx);
+    if (d === null) return null;
     if (d.ok) return d.value;
     throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
   };
@@ -633,6 +783,12 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     exportable: opts.exportable,
     backedUp: opts.backup !== false,
     get: read,
+    async getReport(ctx) {
+      const d = await readDecoded(ctx);
+      if (d === null) return { value: null, unreadable: false, unrecognised: false };
+      if (d.ok) return { value: d.value, unreadable: false, unrecognised: false };
+      return { value: null, unreadable: d.flaw === 'unreadable', unrecognised: d.flaw === 'unrecognised' };
+    },
     async set(ctx, value) {
       const json = serialize(codec, value);
       await read(ctx); // throws, so nothing is written, if what is there cannot be read
@@ -642,6 +798,12 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     },
     async remove(ctx) {
       await redis().del(key(ctx));
+    },
+    async size(ctx) {
+      // STRLEN: 0 where there is nothing, and WRONGTYPE for a hash.
+      const chars = Number(await redis().strlen(key(ctx)));
+      if (!Number.isSafeInteger(chars) || chars < 0) throw new Error(`repo: unexpected answer measuring ${name}`);
+      return chars === 0 ? { entries: 0, chars: 0, largest: null } : { entries: 1, chars, largest: { id: null, chars } };
     },
   });
 }
@@ -818,6 +980,15 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
     },
+    async size(ctx) {
+      const answer = await redis().eval(MAP_SIZE, [key(ctx)], []);
+      if (!Array.isArray(answer) || answer.length !== 4 || typeof answer[2] !== 'string') {
+        throw new Error(`repo: unexpected answer measuring ${name}`);
+      }
+      const [entries, chars, most] = [Number(answer[0]), Number(answer[1]), Number(answer[3])];
+      if (![entries, chars, most].every((n) => Number.isSafeInteger(n) && n >= 0)) throw new Error(`repo: unexpected answer measuring ${name}`);
+      return { entries, chars, largest: entries === 0 ? null : { id: answer[2].slice(1), chars: most } };
+    },
     async replaceUnreadable(ctx, id, value) {
       checkId(what, id);
       const written = await encode(codec, serialize(codec, value));
@@ -900,6 +1071,52 @@ export function defineCounterStore(name: string, opts: CounterOptions): CounterS
         throw err;
       }
       return windowOf(answer, true);
+    },
+  });
+}
+
+/**
+ * Declares a counter map store: a count per id in a container, each in a fixed
+ * window of its own (see TWO SHAPES above), such as requests per API token.
+ * The service's bookkeeping, like a counter store: never exportable, and its
+ * values are plain text ("<count>:<end>"), which the re-encryption pass knows
+ * (classify() in lib/reencrypt.ts). Ids are opaque, as a map store's are.
+ */
+export function defineCounterMapStore(name: string, opts: CounterOptions): CounterMapStore {
+  const { what, windowSeconds } = opts;
+  if (!Number.isInteger(windowSeconds) || windowSeconds < 1) {
+    throw new Error(`The window of "${name}" must be a whole number of seconds, 1 or more.`);
+  }
+  const key = (ctx: Ctx) => storeKey(ctx, name);
+  return declare<CounterMapStore>({
+    kind: 'counter-map',
+    name,
+    what,
+    exportable: false,
+    backedUp: opts.backup !== false,
+    windowSeconds,
+    async take(ctx, id, now = Date.now()) {
+      checkId(what, id);
+      let answer: unknown;
+      try {
+        answer = await redis().eval(COUNTERS_TAKE, [key(ctx)], [id, String(Math.floor(now / 1000)), String(windowSeconds)]);
+      } catch (err) {
+        // Damaged: thrown, never taken for no count, so a limit built on it
+        // stays shut rather than open. The id is named, as a map store's are.
+        if (err instanceof Error && err.message.includes(NOT_A_COUNT)) throw new UnreadableEntriesError(what, [id], [], err);
+        throw err;
+      }
+      const [count, left] = Array.isArray(answer) && answer.length === 2 ? answer.map(Number) : [NaN, NaN];
+      if (!Number.isSafeInteger(count) || count < 1 || !Number.isSafeInteger(left)) {
+        throw new Error(`repo: unexpected answer counting ${name}`);
+      }
+      // A window's end is set by the clock of whoever started it, which may run
+      // a little ahead of this one: never more than a window is left.
+      return { count, secondsLeft: Math.min(windowSeconds, Math.max(1, left)) };
+    },
+    async remove(ctx, ...ids) {
+      for (const id of ids) checkId(what, id);
+      if (ids.length > 0) await redis().hdel(key(ctx), ...ids);
     },
   });
 }

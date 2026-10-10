@@ -136,6 +136,7 @@ export function upstashOn(client: RedisClient) {
     hdel: async (key: string, ...fields: string[]) => Number(await call('hdel', [key, ...fields])),
     hlen: async (key: string) => Number(await call('hlen', [key])),
     hexists: async (key: string, field: string) => Number(await call('hexists', [key, field])),
+    strlen: async (key: string) => Number(await call('strlen', [key])),
     eval: async (script: string, keys: string[], args: string[]) =>
       upstashParse(await call('eval', [script, String(keys.length), ...keys, ...args])),
   };

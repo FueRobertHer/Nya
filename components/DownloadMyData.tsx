@@ -17,6 +17,12 @@
 // file that looks complete and isn't. Saved through a short-lived object URL,
 // revoked once the browser has the file; nothing is kept in the page's
 // storage. Named with the viewer's own date, not the server's UTC one.
+//
+// AN INCOMPLETE FILE SAYS SO. Something stored that is damaged, or saved in a
+// form this version doesn't know, never stops the download: the file holds
+// everything else, and the server names the parts it is missing something
+// from (X-Nya-Export-Incomplete) beside its notes. Then the card says plainly
+// that the file is incomplete, above the notes that say what is missing.
 
 import { useState } from 'react';
 import { useReverification } from '@clerk/nextjs';
@@ -38,7 +44,7 @@ export function formatsFor(sharing: boolean): { value: Format; label: string; no
     {
       value: 'transactions-csv',
       label: 'Transactions (CSV)',
-      note: 'Every stored bank and card transaction, one per row, for a spreadsheet. Investment transactions are in the JSON file only.',
+      note: 'Every stored transaction, from your banks and entered by hand or imported, one per row, for a spreadsheet. Investment transactions are in the JSON file only.',
     },
     { value: 'balances-csv', label: 'Balance history (CSV)', note: 'Net worth and each account’s balance, day by day.' },
   ];
@@ -57,11 +63,13 @@ export type Phase =
   /** The server is reading and decrypting everything. */
   | { kind: 'preparing' }
   | { kind: 'receiving'; bytes: number; total: number }
-  | { kind: 'done'; filename: string; bytes: number; notes: string[] }
+  /** `incomplete`: the parts of the JSON file it is made from that are
+   *  missing something (X-Nya-Export-Incomplete), empty when it is whole. */
+  | { kind: 'done'; filename: string; bytes: number; notes: string[]; incomplete: string[] }
   | { kind: 'error'; message: string };
 
 type Hint = { clerk_error: { type: string; reason: string } };
-type Outcome = { ok: true; blob: Blob; filename: string; notes: string[] } | { ok: false; error: string } | Hint;
+type Outcome = { ok: true; blob: Blob; filename: string; notes: string[]; incomplete: string[] } | { ok: false; error: string } | Hint;
 
 /** Clerk's reverification hint, as app/api/my-data answers with it. */
 function isHint(v: unknown): v is Hint {
@@ -75,6 +83,14 @@ export function localFilename(format: Format, now: Date = new Date()): string {
   const day = localDate(now);
   if (format === 'json') return `nya-data-${day}.json`;
   return `nya-${format === 'transactions-csv' ? 'transactions' : 'balances'}-${day}.csv`;
+}
+
+/** The parts a file is missing something from: keys, comma-separated. */
+export function incompleteOf(header: string | null): string[] {
+  return (header ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 function notesOf(header: string | null): string[] {
@@ -128,6 +144,7 @@ export async function requestFile(format: Format, password: string | null, setPh
   }
   const total = Number(declared);
   const notes = notesOf(res.headers.get('x-nya-export-notes'));
+  const incomplete = incompleteOf(res.headers.get('x-nya-export-incomplete'));
   const type = res.headers.get('content-type') ?? 'application/octet-stream';
   const parts: Uint8Array[] = [];
   let bytes = 0;
@@ -144,7 +161,7 @@ export async function requestFile(format: Format, password: string | null, setPh
   }
   // Ended without an error, but short (or long): not the file that was sent.
   if (bytes !== total) return { ok: false, error: CUT_OFF };
-  return { ok: true, blob: new Blob(parts as BlobPart[], { type }), filename: localFilename(format), notes };
+  return { ok: true, blob: new Blob(parts as BlobPart[], { type }), filename: localFilename(format), notes, incomplete };
 }
 
 /** Hands the file to the browser to save. */
@@ -177,7 +194,7 @@ function useDownload() {
       } else {
         save(outcome.blob, outcome.filename);
         setPassword('');
-        setPhase({ kind: 'done', filename: outcome.filename, bytes: outcome.blob.size, notes: outcome.notes });
+        setPhase({ kind: 'done', filename: outcome.filename, bytes: outcome.blob.size, notes: outcome.notes, incomplete: outcome.incomplete });
       }
     } catch (err) {
       if (isReverificationCancelledError(err)) setPhase({ kind: 'idle' });
@@ -310,6 +327,12 @@ export function DownloadMyDataView({
             <p className="status-note">
               Saved {phase.filename} ({formatBytes(phase.bytes)}).
             </p>
+            {phase.incomplete.length > 0 && (
+              <p className="stale-note">
+                This file is incomplete: some of what Nya keeps for you could not be read, so it isn’t in the file. What’s
+                missing is below. Nothing was changed.
+              </p>
+            )}
             {phase.notes.map((n, i) => (
               <p key={i} className="stale-note">
                 {n}

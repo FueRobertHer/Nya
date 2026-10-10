@@ -89,6 +89,7 @@ import { CONNECTIONS_PATH, healthOf, utcDaysBetween, warningLapsed, type Connect
 import { recordSyncs } from './connection-health';
 import { MAIL_TIMEOUT_MS, MailError, isEmailAddress, mailOff, sendMail, type Mail } from './mail';
 import { noticeRecipients, type RecipientDeps } from './notice-recipients';
+import { appUrl } from './app-url';
 import { ownersByContainer } from './owners';
 
 /** Days a connection goes without answering before an outage, or a problem on
@@ -194,23 +195,10 @@ function same(a: ConnectionNotice | null, b: ConnectionNotice | null): boolean {
   );
 }
 
-/**
- * The app's public address, from APP_URL, for the link in an email: https, or
- * http on this machine for local development. Null when unset or unusable, and
- * then the email says to open Nya without a link.
- */
-export function appUrl(): string | null {
-  const raw = process.env.APP_URL?.trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return null;
-    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
-  } catch {
-    return null;
-  }
-}
+// The app's public address, for the link in an email (lib/app-url.ts): null
+// when APP_URL is unset or unusable, and then the email says to open Nya
+// without a link.
+export { appUrl };
 
 
 /** An institution's name as an email may carry it: no control characters,

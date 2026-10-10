@@ -59,6 +59,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
+const { setExcluded } = await import('@/lib/txn-annotations');
 const {
   syncItemTransactions,
   readItemTransactions,
@@ -505,5 +506,114 @@ describe('unreadable stored blob', () => {
     // sits outside the try rather than inside it.
     expect(res.note).toBeNull();
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
+  });
+});
+
+// What the person said about a transaction (lib/txn-annotations.ts) goes once
+// the bank removes the transaction and a sync saves that, as a category goes
+// once no stored Item holds its row: by the same rules, so never while a
+// store can't be read or is behind, never a record this release doesn't
+// recognise, and never a manual row's.
+describe('what was said about a transaction the bank removed', () => {
+  const MANUAL = 'manual-txn:00000000-0000-4000-8000-000000000001';
+  const recordOf = (id: string) => fake.hashes.get(ctxKey('transaction-annotations'))?.get(id);
+  /** item_a stored with t1 to t4 and t6; t1 and t2 excluded, t3's record
+   *  from a later version, t4's damaged, t6 with none, and a manual row's. */
+  const seed = async () => {
+    await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify(ITEM) });
+    pages = [{ added: ['t1', 't2', 't3', 't4', 't6'].map((transaction_id) => txn({ transaction_id })) }];
+    await syncItemTransactions(ctx, ITEM);
+    for (const id of ['t1', 't2', MANUAL]) await setExcluded(ctx, id, true);
+    await fake.hset(ctxKey('transaction-annotations'), { t3: await encrypt('{"excluded":"a later version’s"}'), t4: 'damaged' });
+    calls = [];
+  };
+  const removing = (...ids: string[]) => {
+    pages = [{ removed: ids.map((transaction_id) => ({ transaction_id })) }];
+  };
+
+  test('goes once a sync saves its removal; a record this release doesn’t recognise, and a manual row’s, stay', async () => {
+    await seed();
+    removing('t2', 't3', 't4', 'never_stored');
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id).sort()).toEqual(['t1', 't6']);
+    expect(recordOf('t2')).toBeUndefined();
+    // Damaged, and its transaction gone: nothing in it can be read or shown.
+    expect(recordOf('t4')).toBeUndefined();
+    // Intact as far as this release can tell: left for the release that wrote it.
+    expect(recordOf('t3')).toBeDefined();
+    expect(recordOf('t1')).toBeDefined();
+    expect(recordOf(MANUAL)).toBeDefined();
+  });
+
+  test('nothing goes while another Item’s store can’t be read, or is behind what it showed', async () => {
+    await seed();
+    const item_b = { ...ITEM, item_id: 'item_b' };
+    await fake.hset(ctxKey('plaid:items'), { item_b: JSON.stringify(item_b) });
+    await fake.set(ctxKey('txns:item_b'), 'not-ciphertext');
+    removing('t2');
+    await syncItemTransactions(ctx, ITEM);
+    expect(recordOf('t2')).toBeDefined();
+
+    // Readable, but its last save failed: rows it showed may not be stored.
+    await fake.del(ctxKey('txns:item_b'));
+    await fake.set(ctxKey('txns-unsaved:item_b'), new Date().toISOString());
+    pages = [{ added: [txn({ transaction_id: 't5' })] }, { removed: [{ transaction_id: 't5' }] }];
+    calls = [];
+    await syncItemTransactions(ctx, ITEM);
+    await setExcluded(ctx, 't5', true);
+    await syncItemTransactions(ctx, ITEM);
+    expect(recordOf('t5')).toBeDefined();
+  });
+
+  test('nothing goes when the sync’s own save fails: the removed rows are still stored', async () => {
+    await seed();
+    removing('t2');
+    fake.failNext('set');
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await syncItemTransactions(ctx, ITEM);
+    } finally {
+      console.warn = warn;
+    }
+    expect(recordOf('t2')).toBeDefined();
+  });
+
+  test('the stores are read again only when a removed transaction has a record', async () => {
+    await seed();
+    let reads = 0;
+    const get = fake.get.bind(fake);
+    fake.get = (async (key: string) => {
+      if (key === ctxKey('txns:item_a')) reads++;
+      return get(key);
+    }) as typeof fake.get;
+    try {
+      // Nothing was said about t6: the sync's own read of its store, and no other.
+      removing('t6');
+      await syncItemTransactions(ctx, ITEM);
+      expect(reads).toBe(1);
+      // t1 was excluded: the stores are read once more, to be sure none holds it.
+      reads = 0;
+      calls = [];
+      removing('t1');
+      await syncItemTransactions(ctx, ITEM);
+      expect(reads).toBe(2);
+      expect(recordOf('t1')).toBeUndefined();
+    } finally {
+      fake.get = get;
+    }
+  });
+
+  // The removal and the row's return in one sync: the store it saves has the
+  // row, so the record is on a transaction still shown.
+  test('removed on one page and added back on a later page of the same sync: it stays', async () => {
+    await seed();
+    pages = [
+      { removed: [{ transaction_id: 't1' }], has_more: true, next_cursor: 'c-1' },
+      { added: [txn({ transaction_id: 't1', amount: 2 })] },
+    ];
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
+    expect(recordOf('t1')).toBeDefined();
   });
 });

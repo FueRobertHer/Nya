@@ -77,6 +77,9 @@ export const SCHEMA_ERA = 'containers';
  *     (lib/backup.ts);
  *   - unused invite links last hours, and a restored one would work again
  *     (lib/sharing.ts);
+ *   - an API token revoked since the backup would work again, so tokens and
+ *     their request counts are never backed up: a restore deletes them, and
+ *     people make new ones (lib/api-token-store.ts, declared backup: false);
  *   - a connector's credential (SimpleFIN's Access URL) works on its own, and a
  *     restored one would read a bank the person disconnected; the counts of
  *     requests and claims made to connectors would shut the next window early
@@ -93,6 +96,8 @@ export const EXCLUDED_PREFIXES = [
   'history:forgetting:',
   'backups:',
   'invites:',
+  'api-tokens',
+  'api-requests',
   'connector-secrets',
   'connector-requests',
   'connector-claims',

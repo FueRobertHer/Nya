@@ -46,7 +46,7 @@ import { ownersKey } from './owners';
 import { dropConnectionsOf } from './sharing';
 import { isDemoUser } from './demo';
 import { decrypt } from './crypto';
-import { collectUserData, countAccounts } from './user-export';
+import { collectUserData, countAccounts, missingIds } from './user-export';
 import type { DeletionCounts } from './deletion-receipt';
 
 export class DeletionRefused extends Error {}
@@ -103,7 +103,13 @@ async function countStored(ctx: Ctx, limitMs: number): Promise<StoredCounts> {
   const counting = (async (): Promise<StoredCounts> => {
     try {
       const data = await collectUserData({ ctx, userId: null });
-      const days = new Set([...data.history.totals.map((p) => p.date), ...[...data.history.accounts.values()].flatMap((s) => s.map((p) => p.date))]);
+      // A day that couldn't be read is still stored, and deleted with the rest.
+      const days = new Set([
+        ...data.history.totals.map((p) => p.date),
+        ...[...data.history.accounts.values()].flatMap((s) => s.map((p) => p.date)),
+        ...missingIds(data.problems, 'net_worth_history'),
+        ...missingIds(data.problems, 'account_history'),
+      ]);
       const { accounts, earlier } = countAccounts(data);
       return {
         accounts,

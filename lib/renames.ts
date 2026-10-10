@@ -17,22 +17,35 @@ import { encrypt, decrypt } from './crypto';
 const RENAMES_HASH = (ctx: Ctx) => kc(ctx, 'txn-vendor-renames');
 
 export async function getRenames(ctx: Ctx): Promise<Record<string, string>> {
+  return (await readRenamesReport(ctx)).renames;
+}
+
+/**
+ * The renames getRenames gives, and whether they were all read (`ok`): false
+ * when the hash couldn't be read or a rename couldn't be decrypted, both of
+ * which getRenames passes over. For a report, which says when the person's
+ * own names are missing from it (lib/report/read.ts); the app goes on as it
+ * always has.
+ */
+export async function readRenamesReport(ctx: Ctx): Promise<{ renames: Record<string, string>; ok: boolean }> {
   try {
     const map = await redis().hgetall<Record<string, string>>(RENAMES_HASH(ctx));
-    if (!map) return {};
+    if (!map) return { renames: {}, ok: true };
     const out: Record<string, string> = {};
+    let ok = true;
     await Promise.all(
       Object.entries(map).map(async ([key, blob]) => {
         try {
           out[key] = await decrypt(blob);
         } catch {
           // undecryptable rename (rotated key) -- drop it
+          ok = false;
         }
       })
     );
-    return out;
+    return { renames: out, ok };
   } catch {
-    return {};
+    return { renames: {}, ok: false };
   }
 }
 

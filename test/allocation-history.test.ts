@@ -446,6 +446,15 @@ describe('what can’t be read', () => {
     expect(body).toMatchObject({ unreadable: true, unreadable_ids: [id] });
   });
 
+  test('months whose index went missing are a flagged 409 too, never nothing recorded', async () => {
+    await twoDays();
+    await fake.hdel(ctxKey('holdings:history:index'), 'index');
+    const { status, body } = await quiet(() => ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB }));
+    expect(status).toBe(409);
+    expect(body.unreadable).toBe(true);
+    expect(body.days).toBeUndefined();
+  });
+
   test('settings that can’t be read are a flagged 409 too', async () => {
     await twoDays();
     await fake.set(ctxKey('allocation-settings'), 'damaged');

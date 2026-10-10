@@ -9,7 +9,8 @@
 
 import { kc } from './storage';
 import type { Ctx } from './containers';
-import { readEncryptedJson, writeEncryptedJson } from './stored-json';
+import { readEncryptedJson, writeEncryptedJson, readStoredValue } from './stored-json';
+import { openStoredJson } from './repo';
 
 const BUDGETS_KEY = (ctx: Ctx) => kc(ctx, 'budgets');
 
@@ -20,6 +21,22 @@ const isBudgets = (v: unknown): v is Budgets => typeof v === 'object' && v !== n
 /** Throws StoredDataUnreadableError if budgets were saved but cannot be read. */
 export async function getBudgets(ctx: Ctx): Promise<Budgets> {
   return (await readEncryptedJson(BUDGETS_KEY(ctx), 'budgets', isBudgets)) ?? {};
+}
+
+/**
+ * The budgets, for a reader that names what it can't use instead of stopping
+ * (the download of my data, lib/user-export.ts): null, with why (`problem`),
+ * when they were saved but can't be used, by the storage seam's rules
+ * (lib/repo.ts openStoredJson): `unreadable`, damaged; `unrecognised`,
+ * intact, in a form this code does not know. Never saved is no budgets.
+ * What says nothing about the value throws as it is: storage out of reach, a
+ * key this deployment can't load, a failed decrypt under k0.
+ */
+export async function getBudgetsReport(ctx: Ctx): Promise<{ budgets: Budgets | null; problem: 'unreadable' | 'unrecognised' | null }> {
+  const stored = await readStoredValue(BUDGETS_KEY(ctx));
+  if (stored === null) return { budgets: {}, problem: null };
+  const opened = await openStoredJson(stored, isBudgets);
+  return opened.ok ? { budgets: opened.value, problem: null } : { budgets: null, problem: opened.flaw };
 }
 
 /** Refuses (StoredDataUnreadableError) to replace budgets it cannot read. */

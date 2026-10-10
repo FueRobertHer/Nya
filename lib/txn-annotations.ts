@@ -22,6 +22,13 @@
 // transaction, and an explicit include has to be there to beat a rule that
 // would hide it, as it beats an exclusion carried across a re-link (below).
 //
+// GONE WITH ITS TRANSACTION. A bank transaction's record goes once no stored
+// Item holds the transaction (pruneOrphanAnnotations, by the rules of the
+// category overrides' own prune: nothing goes while a store can't be read or
+// is behind, nor a record this release doesn't recognise): after a sync that
+// saved the bank's removal of it (lib/transactions.ts), after a disconnect,
+// and after an earlier account is forgotten. A manual row's goes with its row.
+//
 // CARRIED ACROSS A RE-LINK, as categories are (#46, lib/overrides.ts). A
 // disconnect records the excluded transactions of the Item's accounts by
 // content key (account, date, amount, the bank's descriptor:
@@ -212,18 +219,25 @@ export async function retireAnnotations(ctx: Ctx, txns: RetiringTxn[]): Promise<
 /**
  * Forgets the records of bank transactions no stored Item holds any more (an
  * Item disconnected, rows the bank removed): they can never be shown again.
- * As lib/overrides.ts pruneOrphanOverrides does for categories, after the
- * Item is gone. `readKnown` reads every transaction id the stored Items hold
- * (lib/disconnect-item.ts), or null when a store couldn't be read or is
- * behind, and then nothing is pruned. The records are read first and the
- * stores after, so a record set meanwhile on a newly stored row is checked
- * against a read that has the row. A manual row's record goes with its row,
- * never here; one this release doesn't recognise is left for the release that
- * wrote it. Returns how many it forgot.
+ * As lib/overrides.ts pruneOrphanOverrides does for categories. `readKnown`
+ * reads every transaction id the stored Items hold (lib/transactions.ts
+ * storedTransactionIds), or null when a store couldn't be read or is behind,
+ * and then nothing is pruned. The records are read first and the stores
+ * after, so a record set meanwhile on a newly stored row is checked against a
+ * read that has the row. A manual row's record goes with its row, never here;
+ * one this release doesn't recognise is left for the release that wrote it.
+ * `among` keeps it to the records of those transactions (the ones a sync just
+ * saw the bank remove), and the stores are read only if one of them has a
+ * record: almost never, since a pending transaction can't be excluded and a
+ * bank rarely removes a posted one. Returns how many it forgot.
  */
-export async function pruneOrphanAnnotations(ctx: Ctx, readKnown: () => Promise<Set<string> | null>): Promise<number> {
+export async function pruneOrphanAnnotations(
+  ctx: Ctx,
+  readKnown: () => Promise<Set<string> | null>,
+  opts: { among?: ReadonlySet<string> } = {}
+): Promise<number> {
   const { entries, unreadable } = await txnAnnotationStore.getAllReport(ctx);
-  const ids = [...entries.keys(), ...unreadable].filter((id) => !id.startsWith(MANUAL_TXN_PREFIX));
+  const ids = [...entries.keys(), ...unreadable].filter((id) => !id.startsWith(MANUAL_TXN_PREFIX) && (!opts.among || opts.among.has(id)));
   if (ids.length === 0) return 0;
   const known = await readKnown();
   if (!known) return 0;

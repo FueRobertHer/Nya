@@ -6,9 +6,9 @@
 
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
-import { getItems, removeItem, type StoredItem } from './storage';
+import { removeItem, type StoredItem } from './storage';
 import { clearCaches } from './cache';
-import { clearItemTransactions, contentKey, readStoredTxns, storeIsBehind, type StoredTxn } from './transactions';
+import { clearItemTransactions, contentKey, readStoredTxns, storedTransactionIds, type StoredTxn } from './transactions';
 import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
 import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
@@ -18,22 +18,6 @@ import { clearNewAccounts } from './new-accounts';
 import { forgetConnection } from './connection-health';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
-
-/** Every transaction id the stored Items hold, or null when a store
- *  couldn't be read or is behind (rows shown from a store too large to save
- *  aren't in it), so nothing is pruned on a partial answer. */
-async function storedTransactionIds(ctx: Ctx, item_ids: string[]): Promise<Set<string> | null> {
-  const known = new Set<string>();
-  try {
-    for (const item_id of item_ids) {
-      if (await storeIsBehind(ctx, item_id)) return null;
-      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
-    }
-  } catch {
-    return null;
-  }
-  return known;
-}
 
 /**
  * `item` is the stored Item, or undefined when only a stale id is being
@@ -89,14 +73,14 @@ export async function disconnectItem(
   // And any override left behind for a transaction no stored Item has any
   // more (best effort: a user's categories are theirs to be rid of too).
   try {
-    await pruneOrphanOverrides(ctx, (await getItems(ctx)).map((i) => i.item_id));
+    await pruneOrphanOverrides(ctx);
   } catch (err) {
     console.error('disconnect: could not prune old category overrides', err instanceof Error ? err.message : err);
   }
   // And what was said about them, this Item's own exclusions among them, now
   // that it is gone: the ones to carry were recorded above (best effort too).
   try {
-    await pruneOrphanAnnotations(ctx, async () => storedTransactionIds(ctx, (await getItems(ctx)).map((i) => i.item_id)));
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx));
   } catch (err) {
     console.error('disconnect: could not prune old exclusions', err instanceof Error ? err.message : err);
   }

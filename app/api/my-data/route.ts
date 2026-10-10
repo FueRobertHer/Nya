@@ -1,16 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import { clerkEnabled } from '@/lib/auth-mode';
-import { verifyPassword } from '@/lib/auth';
 import type { Ctx } from '@/lib/containers';
-import {
-  passwordAttemptsExhausted,
-  countWrongPassword,
-  clearWrongPasswords,
-  downloadAllowed,
-  takeDownload,
-  DOWNLOADS_PER_WINDOW,
-} from '@/lib/rate-limit';
+import { downloadAllowed, takeDownload, DOWNLOADS_PER_WINDOW } from '@/lib/rate-limit';
+import { freshSignIn, PASSWORD_MAX } from '@/lib/fresh-sign-in';
 import {
   collectUserData,
   buildUserExport,
@@ -32,7 +24,8 @@ import {
 // POST, not GET: the request carries a password in the shared-password mode,
 // and a download link must not be something a page can make a browser fetch.
 //
-// Behind a FRESH SIGN-IN, on top of the session the proxy already checked:
+// Behind a FRESH SIGN-IN (lib/fresh-sign-in.ts, which making an API token
+// shares), on top of the session the proxy already checked:
 //   - with Clerk (lib/auth-mode.ts), a sign-in verified within the last ten
 //     minutes (Clerk's "strict" reverification: the second factor if the
 //     account has one, the first otherwise). Without it the answer is Clerk's
@@ -48,10 +41,15 @@ import {
 // so a person over the limit isn't asked to sign in for nothing, and counted
 // after it, so a reverification round trip doesn't use one up.
 //
-// EVERY STORE OR NOTHING: all of it is read before the first byte is sent, so
-// a store that can't be read is a 500 naming it, never a file that is quietly
-// short. Logs carry the kind of store and the error's class, never data, ids
-// or institution names.
+// NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1): all of it is
+// read before the first byte is sent. A store that can't be read for a reason
+// that says nothing about its data (storage, keys) is a 500 naming it, never a
+// file that is quietly short. An entry that is damaged, or saved in a form
+// this version doesn't know, is named in the file instead, and the file comes
+// with X-Nya-Export-Incomplete: the parts it is made from that are missing
+// something, by their keys in the JSON file, comma-separated, beside notes
+// that say it in words. Logs carry the kind of store, the error's class and
+// the incomplete parts' keys, never data, ids or institution names.
 //
 // A WHOLE FILE OR NONE. The file is written twice from the document already
 // in memory: once to count its bytes, keeping none of them, then again to
@@ -65,11 +63,6 @@ import {
 // over a slow connection takes minutes: the same allowance as the operator
 // export and the nightly backup.
 export const maxDuration = 300;
-
-/** How recent a Clerk sign-in must be (see the header). */
-const FRESH = 'strict' as const;
-
-const PASSWORD_MAX = 1024;
 
 type Body = { format: ExportFormat; password: string | null };
 
@@ -106,27 +99,6 @@ function notPrepared(err: unknown): NextResponse {
   return NextResponse.json({ error: 'The download could not be prepared, so nothing was downloaded. Try again later.' }, { status: 500 });
 }
 
-/** The fresh sign-in, or the response to send instead. `userId` is the
- *  Clerk account (null with the shared password). */
-async function freshSignIn(req: Request, body: Body): Promise<{ userId: string | null } | NextResponse> {
-  if (clerkEnabled()) {
-    const { auth, reverificationError } = await import('@clerk/nextjs/server');
-    const { userId, has } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 });
-    if (!has({ reverification: FRESH })) return NextResponse.json(reverificationError(FRESH), { status: 403 });
-    return { userId };
-  }
-  if (await passwordAttemptsExhausted(req)) {
-    return NextResponse.json({ error: 'Too many wrong passwords. Try again in a few minutes.' }, { status: 429 });
-  }
-  if (!body.password || !(await verifyPassword(body.password))) {
-    await countWrongPassword(req);
-    return NextResponse.json({ error: 'That password isn’t right.', wrong_password: true }, { status: 403 });
-  }
-  await clearWrongPasswords(req);
-  return { userId: null };
-}
-
 export async function POST(req: Request) {
   let ctx: Ctx;
   try {
@@ -148,7 +120,7 @@ export async function POST(req: Request) {
     return limitUnreadable();
   }
 
-  const signedIn = await freshSignIn(req, body);
+  const signedIn = await freshSignIn(req, body.password);
   if (signedIn instanceof NextResponse) return signedIn;
 
   try {
@@ -185,8 +157,9 @@ export async function POST(req: Request) {
 
   // Tell the owner a download happened, here, once that email is built: Nya
   // can send email now (lib/mail.ts, #51). When, and which format; never
-  // anything from the file itself.
-  console.log(`Data download: ${body.format}`);
+  // anything from the file itself. An incomplete one names its parts by key,
+  // for whoever runs Nya to look at: a store's name, never an id or a value.
+  console.log(`Data download: ${body.format}${file.incomplete.length > 0 ? `, incomplete: ${file.incomplete.join(', ')}` : ''}`);
 
   // The second pass: the same bytes, streamed.
   const chunks = fileChunks(file);
@@ -213,7 +186,9 @@ export async function POST(req: Request) {
     'X-Content-Type-Options': 'nosniff',
   };
   // The JSON carries its caveats inside; a CSV has nowhere to, so they also
-  // travel as a header for the page to show.
-  if (doc.notes.length > 0) headers['X-Nya-Export-Notes'] = encodeURIComponent(JSON.stringify(doc.notes));
+  // travel as headers for the page to show: in words, and, when the file is
+  // missing something, which parts (exportFile says which a CSV is made of).
+  if (file.notes.length > 0) headers['X-Nya-Export-Notes'] = encodeURIComponent(JSON.stringify(file.notes));
+  if (file.incomplete.length > 0) headers['X-Nya-Export-Incomplete'] = file.incomplete.join(', ');
   return new Response(stream, { headers });
 }

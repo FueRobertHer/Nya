@@ -479,6 +479,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, 
     amount: row.amount,
     pending: false,
     account_name: account.name,
+    account_type: account.type,
     institution_name: institution,
     category: row.category,
     iso_currency_code: row.currency,
@@ -557,7 +558,10 @@ const why = (err: unknown) => (err instanceof Error ? err.message : err);
  * hides only its own account's rows, and says so, and the manual accounts and
  * the accounts SimpleFIN feeds are read apart, so either one that can't be
  * read hides only its own rows, under a note naming it. Strict underneath:
- * nothing unreadable is ever shown as no rows without a note.
+ * nothing unreadable is ever shown as no rows without a note. `unread` names
+ * the accounts whose rows aren't here for that, or is 'all' when the manual
+ * accounts or their books couldn't be read, so a report never counts one as
+ * having none (lib/report/build.ts).
  *
  * `incomplete` names, as importing, the banks of each SimpleFIN connection
  * whose older history is still arriving (lib/connectors/sync.ts), so the
@@ -566,7 +570,12 @@ const why = (err: unknown) => (err instanceof Error ? err.message : err);
 export async function readManualTxnsForDisplay(
   ctx: Ctx,
   opts: { hidden: Set<string>; cutoff: string }
-): Promise<{ txns: Txn[]; notes: string[]; incomplete: { institution_name: string; coverage: 'importing' }[] }> {
+): Promise<{
+  txns: Txn[];
+  notes: string[];
+  incomplete: { institution_name: string; coverage: 'importing' }[];
+  unread: string[] | 'all';
+}> {
   const [manual, fed, connections, report] = await Promise.all([
     settled(getManualAccounts(ctx)),
     settled(connectorAccountsStore.getAll(ctx)),
@@ -597,15 +606,17 @@ export async function readManualTxnsForDisplay(
     console.error('manual-txns: manual transactions could not be read', why(report.err));
     // Only an account that could have rows makes this worth saying.
     if (accounts.length > 0) notes.push("Manual accounts: transactions entered for them couldn't be read");
-    return { txns: [], notes, incomplete };
+    return { txns: [], notes, incomplete, unread: accounts.length > 0 || !manual.ok ? 'all' : [] };
   }
   const { entries, unreadable, unrecognised } = report.value;
   const flawed = new Set([...unreadable, ...unrecognised]);
   const institutionOf = institutionsOf(accounts);
-  notes.push(
-    ...accounts
-      .filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id))
-      .map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions entered for ${a.name} couldn't be read`)
-  );
-  return { txns: manualRowsForDisplay(accounts, entries, opts), notes, incomplete };
+  const unshown = accounts.filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id));
+  notes.push(...unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions entered for ${a.name} couldn't be read`));
+  return {
+    txns: manualRowsForDisplay(accounts, entries, opts),
+    notes,
+    incomplete,
+    unread: manual.ok ? unshown.map((a) => a.account_id) : 'all',
+  };
 }

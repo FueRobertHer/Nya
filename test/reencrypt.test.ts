@@ -3,6 +3,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX } from './fake-redis';
 import { keyNamesIn } from './key-names';
+import { startRedis, type RealRedis } from './real-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -623,30 +624,23 @@ describe('the route', () => {
 // test double above only imitates them). Skipped where there is none, as in CI.
 const hasRedis = Bun.which('redis-server') !== null;
 describe.skipIf(!hasRedis && !process.env.CI)('the scripts, on a real Redis', () => {
-  const port = 30000 + Math.floor(Math.random() * 20000);
-  let server: ReturnType<typeof Bun.spawn> | null = null;
-  let client: InstanceType<typeof Bun.RedisClient>;
+  // Started by test/real-redis.ts, which tries another port when one is taken
+  // and bounds every wait, so a server that won't start fails here rather
+  // than hanging the tests.
+  let real: RealRedis | null = null;
+  let client: RealRedis['client'];
   const sha1 = (s: string) => new Bun.CryptoHasher('sha1').update(s).digest('hex');
   const evalScript = (script: string, keys: string[], args: string[]) =>
     client.send('EVAL', [script, String(keys.length), ...keys, ...args]);
 
   beforeEach(async () => {
-    if (!server) {
-      server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
-      client = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
-      for (let i = 0; i < 50; i++) {
-        try {
-          await client.send('PING', []);
-          break;
-        } catch {
-          await Bun.sleep(50);
-        }
-      }
-    }
+    real ??= await startRedis();
+    client = real.client;
     await client.send('FLUSHALL', []);
   });
   afterAll(() => {
-    server?.kill();
+    real?.stop();
+    real = null;
   });
 
   test('the probe answers what the pass expects', async () => {

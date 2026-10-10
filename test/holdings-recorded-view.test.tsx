@@ -4,6 +4,7 @@ import {
   HoldingsRecordedLine,
   HoldingsRecordedView,
   RepairConfirm,
+  afterRepair,
   recordedDay,
   requestRepair,
   summaryState,
@@ -104,6 +105,12 @@ describe('what the summary answer means', () => {
     expect(summaryState(409, { ...body, unreadable_ids: [], unrecognised_ids: ['index'] })).toEqual({ kind: 'unreadable', repairable: false });
     expect(summaryState(409, { ...body, unreadable_ids: ['index'], unrecognised_ids: [], repairable: true })).toEqual({ kind: 'unreadable', repairable: true });
   });
+
+  test('an index gone missing beside the months is told apart, and offered the repair only where the server offers it', () => {
+    const body = { error: 'Your saved holdings records could not be read, so they were left untouched.', unreadable: true, index_missing: true };
+    expect(summaryState(409, { ...body, repairable: true })).toEqual({ kind: 'unreadable', repairable: true, indexMissing: true });
+    expect(summaryState(409, body)).toEqual({ kind: 'unreadable', repairable: false, indexMissing: true });
+  });
 });
 
 describe('HoldingsRecordedView', () => {
@@ -116,6 +123,12 @@ describe('HoldingsRecordedView', () => {
     const stopped = "Holdings history can't be read, so it isn't being recorded.";
     expect(view({ kind: 'unreadable', repairable: false })).toBe(`<div class="as-of stale">${stopped}</div>`);
     expect(view({ kind: 'unreadable', repairable: true })).toBe(`<div class="as-of stale">${stopped} <button class="link-btn">Repair it</button></div>`);
+  });
+
+  test("months whose index went missing can't be read, and it says that, never that nothing was recorded nor that recording stopped", () => {
+    const missing = "Holdings history can't be read: the list of where its months are kept is missing.";
+    expect(view({ kind: 'unreadable', repairable: true, indexMissing: true })).toBe(`<div class="as-of stale">${missing} <button class="link-btn">Repair it</button></div>`);
+    expect(view({ kind: 'unreadable', repairable: false, indexMissing: true })).toBe(`<div class="as-of stale">${missing}</div>`);
   });
 
   test('after a repair, says which months were too damaged to read', () => {
@@ -139,6 +152,16 @@ describe('the repair', () => {
     expect(html).toContain('<button>Rebuild it</button>');
   });
 
+  test('for a missing list, says it is missing, not damaged, and that nothing is lost', () => {
+    const html = read(renderToStaticMarkup(<RepairConfirm phase={{ kind: 'confirming' }} missing onCancel={noop} onConfirm={noop} />));
+    expect(html).toContain("is missing, so what was recorded can't be read");
+    expect(html).toContain('Nya can rebuild it from the months themselves');
+    expect(html).toContain('Nothing is lost');
+    expect(html).not.toContain('damaged');
+    expect(html).not.toContain('no holdings are being recorded');
+    expect(html).toContain('<button>Rebuild it</button>');
+  });
+
   test('while it works nothing can be pressed, and a refusal is shown in the server\'s words', () => {
     const busy = confirm({ kind: 'repairing' });
     expect(busy).toContain('<button class="secondary" disabled="">Cancel</button>');
@@ -157,11 +180,28 @@ describe('the repair', () => {
     expect(sent[0].url).toBe('/api/holdings-history');
     expect([sent[0].init.method, JSON.parse(String(sent[0].init.body))]).toEqual(['POST', { action: 'repair', confirm: true }]);
     expect(await requestRepair(answer(200, { repaired: true, months: 3, damaged_months: 2 }))).toEqual({ ok: true, damagedMonths: 2 });
-    expect(await requestRepair(answer(409, { error: 'Your holdings records need no repair.' }))).toEqual({ ok: false, error: 'Your holdings records need no repair.' });
-    expect(await requestRepair(answer(500, {}))).toEqual({ ok: false, error: 'Could not repair holdings history. Try again.' });
+    const unreadable = { error: 'Your saved holdings records could not be read, so they were left untouched.', unreadable: true, unreadable_ids: [], unrecognised_ids: ['m1'] };
+    expect(await requestRepair(answer(409, unreadable))).toEqual({ ok: false, error: unreadable.error, readAgain: false });
+    expect(await requestRepair(answer(500, {}))).toEqual({ ok: false, error: 'Could not repair holdings history. Try again.', readAgain: false });
     const offline = (async () => {
       throw new TypeError('Failed to fetch');
     }) as unknown as typeof fetch;
-    expect(await requestRepair(offline)).toEqual({ ok: false, error: 'Could not reach Nya. Try again.' });
+    expect(await requestRepair(offline)).toEqual({ ok: false, error: 'Could not reach Nya. Try again.', readAgain: false });
+  });
+
+  test('refused with nothing left to repair (a recording derived the index first), the line is read again, never shown as a failure', async () => {
+    const answer = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const none = await requestRepair(answer(409, { error: 'Your holdings records need no repair.' }));
+    expect(none).toEqual({ ok: false, error: 'Your holdings records need no repair.', readAgain: true });
+    expect(afterRepair(none)).toEqual({ phase: { kind: 'closed' }, readAgain: true, damagedMonths: 0 });
+    // As after a repair that went through.
+    expect(afterRepair({ ok: true, damagedMonths: 2 })).toEqual({ phase: { kind: 'closed' }, readAgain: true, damagedMonths: 2 });
+    // Any other refusal stays on the sheet, in the server's words.
+    for (const failed of [
+      { ok: false as const, error: 'Your saved holdings records could not be read, so they were left untouched.', readAgain: false },
+      { ok: false as const, error: 'Could not reach Nya. Try again.', readAgain: false },
+    ]) {
+      expect(afterRepair(failed)).toEqual({ phase: { kind: 'failed', error: failed.error }, readAgain: false, damagedMonths: 0 });
+    }
   });
 });

@@ -55,13 +55,13 @@ for (const file of [...sources('lib'), ...sources('app'), ...sources('scripts'),
 
 describe('every rate-limit key the code builds, and where it lives', () => {
   test('the scan finds them, and nothing builds one another way', () => {
-    expect(built.map((b) => `${b.builder} ${b.name}`).sort()).toEqual(['kEnv ratelimit:demo:', 'kEnv ratelimit:login:']);
+    expect(built.map((b) => `${b.builder} ${b.name}`).sort()).toEqual(['kEnv ratelimit:api:', 'kEnv ratelimit:demo:', 'kEnv ratelimit:login:']);
     expect(elsewhere).toEqual([]);
   });
 
   test('a limit counted before anyone is known is the environment’s, and refused inside a container', () => {
     const env = built.filter((b) => b.builder === 'kEnv');
-    expect(env.length).toBeGreaterThanOrEqual(2);
+    expect(env.length).toBeGreaterThanOrEqual(3);
     for (const b of env) {
       expect({ at: b.file, key: b.sample, envWide: isEnvWide(b.sample) }).toEqual({ at: b.file, key: b.sample, envWide: true });
       expect({ at: b.file, key: b.sample, kind: classify(b.sample) }).toEqual({ at: b.file, key: b.sample, kind: 'plain' });
@@ -73,8 +73,11 @@ describe('every rate-limit key the code builds, and where it lives', () => {
   test('a limit on what a signed-in person does is a counter store on the seam, in their container', () => {
     // None is a key built by hand inside a container.
     expect(built.filter((b) => b.builder === 'kc')).toEqual([]);
-    const counters = declaredStores().filter((s) => s.kind === 'counter');
+    // A count per container (downloads of my data), or per id within one (API
+    // requests, per token).
+    const counters = declaredStores().filter((s) => s.kind === 'counter' || s.kind === 'counter-map');
     expect(counters.map((s) => s.name)).toContain('download-count');
+    expect(counters.map((s) => s.name)).toContain('api-requests');
     for (const s of counters) {
       expect({ store: s.name, envWide: isEnvWide(s.name), exportable: s.exportable }).toEqual({ store: s.name, envWide: false, exportable: false });
       expect({ store: s.name, inside: classify(`c:${CONTAINER}:${s.name}`), outside: classify(s.name) }).toEqual({

@@ -93,6 +93,14 @@ async function owned(userId: string): Promise<ContainerId | null> {
   return id;
 }
 
+/** The container one account owns, or null for none: one read, never
+ *  setting one up. For the read-only API (lib/api-tokens.ts), which checks a
+ *  token's account against the container it names on every request. Throws
+ *  ContainerError when the mapping names something that is not a container. */
+export async function ownedContainer(userId: string): Promise<ContainerId | null> {
+  return owned(userId);
+}
+
 /** The container this signed-in account owns, set up on its first sign-in.
  *  Throws ContainerError when it can't be reached. */
 export async function ownerContainer(userId: string, now: number = Date.now()): Promise<ContainerId> {
