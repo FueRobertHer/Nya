@@ -6,6 +6,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
   - [Storage seam](#storage-seam)
 - [Caching](#caching)
 - [Net-worth history](#net-worth-history)
+  - [Accounts that end, and notes on the timeline](#accounts-that-end-and-notes-on-the-timeline)
   - [Holdings history](#holdings-history)
 - [Import pipeline](#import-pipeline)
 - [Containers](#containers)
@@ -90,7 +91,7 @@ The daily net-worth series behind the Home chart (`lib/history.ts`) is stored th
 - The cron runs each active container on its own (`lib/snapshot-job.ts`) and answers 200 with one result per container, even when some failed. It answers 500 when nothing was snapshotted: the container registry cannot be read (after one retry), holds no container, or no container was recorded (every one failed, came back unclean, was deferred, or is not active). Nothing linked is not a failure.
 - A second entry two hours later (`/api/snapshot/catchup`) is the catch-up: containers already recorded that day are skipped, and the rest (failed, unclean, not started in time, or with nothing linked) are run again.
 - Each container's outcomes are kept per date and served, newest first, by `GET /api/snapshot-runs`. They describe this environment's cron, so exports leave them out and a restore keeps them.
-- No snapshot is recorded on a day when any institution failed or an account is unconfirmed missing. Accounts that did answer are still recorded to a separate per-account layer so their own charts stay real.
+- No snapshot is recorded on a day when any institution failed or an account is unconfirmed missing (held for an answer, [below](#accounts-that-end-and-notes-on-the-timeline)). Accounts that did answer are still recorded to a separate per-account layer so their own charts stay real.
 
 **Estimated backfill** reconstructs up to a year of history on first use (and after linking a new institution) from transaction data (`/api/backfill`), at three levels of fidelity:
 
@@ -106,7 +107,19 @@ The chart draws the whole estimated region dashed and labels it estimated. Some 
 - An investment account whose flows out-run its balance (a $60k rollover into an account worth less than that today) is floored at zero from that day backward rather than dropped, so a large arrival reads as the step it was.
 - Because a brokerage often reports further back than a bank, an investment account's own series is walked past the oldest cash transaction even though the net-worth total stops there.
 - New links request 730 days of transactions; older Items may only have about 90 days until relinked.
-- Hidden accounts are subtracted when the history is read, not when it is written, which is why hiding is retroactive and unhiding is exact. See [features.md](features.md#hiding-accounts).
+- Hidden accounts are subtracted when the history is read, not when it is written, which is why hiding is retroactive and unhiding is exact. See [features.md](features.md#hiding-accounts). Accounts that ended are subtracted the same way, from their end day on ([below](#accounts-that-end-and-notes-on-the-timeline)).
+
+### Accounts that end, and notes on the timeline
+
+An account's end (#50, [features.md](features.md#accounts-that-end)) is a state with a day, never a deletion, kept in the `account-lifecycle` map store (`lib/lifecycle.ts`), one entry per account id: closed or left on a day with an optional note, untracked from a day, or active with the answer to a question ("Still open"); the account's kind and name, so it can be signed and named after its institution is gone; its connection; when it was set; and `assumed` for a closure Nya assumed. The notes are the `timeline-notes` map store (`lib/timeline-notes.ts`): Nya's under `lifecycle.<account id>`, one per account and moved with it, the person's under random ids, up to 500 of 200 characters. Both are encrypted, closed in shape (a field this version doesn't know makes an entry unrecognised), exportable, and measured by storage usage.
+
+- **Applied on read, like hiding.** `getHistory(ctx, hidden, ended)` subtracts each ended account from every point on or after its end day, from its own balance in the per-account layers, signed by its kind, in the real and estimated layers alike; a day where it has a balance it can't sign (its kind unknown) is left out, never guessed, and an account both hidden and ended is subtracted once. The live total leaves an ended account out (`applyLifecycle`), from as soon as its end is set: an end may be today in the person's time zone, a day ahead of UTC (`lastEndDay`). Nothing is written to any history layer, so moving an end recomputes the later points and reopening restores them exactly; `test/lifecycle.test.ts` holds the real layer byte-identical.
+- **The cliff stays.** Across a stretch with nothing recorded, the chart draws a straight line between the points either side (`bridgeInteriorEstimates`); a stretch that holds an end day steps on that day instead (`endBreaks`), so the drop shows where it happened, and its note marks it.
+- **Links.** An end set on any id an account has had applies to all of them through the links that apply (`effectiveLifecycle`), so it survives a re-link: the current id's own entry wins, then the newest. Reopening clears every id's entry.
+- **Everywhere it counts**: the dashboard's payload (and with it the forecast, allocation, the FI figures and the Plan's inputs), transactions from the end day on (`lib/transactions.ts` displayRows and `lib/activity.ts`, so spending, budgets and the API's sums leave them out and keep the rows before), allocation over time, sharing (shown as ended from its day, `lib/sharing.ts`), the read-only API (`lifecycle` on each account, `lib/api-read.ts`), and the data download.
+- **Strict.** Every reader that counts reads the store strictly: an entry that can't be read fails the read, 409 with its id, rather than count an account the person closed. On the dashboard that 409 carries `repair`, and the Accounts tab offers to remove only damaged entries once confirmed (`POST /api/account-lifecycle` `{ "action": "repair", "confirm": true }`); unrecognised ones are only named. Notes are read with a report: the ones that can't be read are named and the rest shown.
+- **Detection, with vanished and last known.** `lib/vanished.ts` notices an account missing from a healthy answer (`unconfirmed_missing`, which keeps the snapshot gate shut). `lib/lifecycle-questions.ts` holds it at its last known balance for display only (marked `stale` and `held`, never recorded, as `lib/last-known.ts` recovers a failed institution) and asks. Unanswered after the vanished guard's three days, the outcome is recorded as an assumed closure, from the day after it was last measured, in the lifecycle store only, and the gate reopens; the account reappearing lifts it. A balance at zero for four weeks with no transaction since asks too, and holds nothing, since a zero moves no total whichever way it is answered. The module headers say why.
+- **Writes** go through `app/api/account-lifecycle`, one account per request, under the links lock, clearing both cached payloads, and write the account's auto note best effort. Ending the last open account of a Plaid connection answers `remove_connection`, and the dashboard asks whether to remove it. Forgetting an earlier account (`lib/links.ts`) takes its entry and note, and is refused while its balances after its end are what keeps it out of past totals.
 
 ### Holdings history
 
