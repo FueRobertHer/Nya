@@ -26,6 +26,7 @@ import {
   type QuestionKind,
 } from '@/lib/lifecycle';
 import { storeFailure } from '@/lib/store-failure';
+import { connectorAccountsStore } from '@/lib/connectors/store';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -142,19 +143,28 @@ function parseChange(body: unknown, now: number = Date.now()): Change | string {
 
 /** What an entry needs to know about the account (its kind, its name, its
  *  connection, and its currency where known), from wherever Nya has it: a
- *  manual account's own record; the entry it has already; the dashboard's
- *  cached payload; its institution's remembered accounts; the account
- *  directory, which outlives a disconnect (and keeps no currency). Null for
- *  an account none of them knows. */
+ *  manual account's own record; the entry it has already; the entry of an
+ *  account SimpleFIN keeps up to date; the dashboard's cached payload; its
+ *  institution's remembered accounts; the account directory, which outlives
+ *  a disconnect (and keeps no currency). Null for an account none of them
+ *  knows. */
 async function aboutAccount(ctx: Ctx, account_id: string): Promise<AccountAbout | null> {
   if (isManualId(account_id)) {
     const m = await getManualAccount(ctx, account_id);
-    // A manual account's balance is kept in US dollars (lib/manual.ts).
-    if (m) return { type: m.type, label: { name: m.name, institution: m.institution_name, mask: null }, item_id: null, currency: MANUAL_CURRENCY };
+    // A manual account's balance is in US dollars (lib/manual.ts), unless
+    // SimpleFIN fed it in another before it was kept as a manual account.
+    if (m) return { type: m.type, label: { name: m.name, institution: m.institution_name, mask: null }, item_id: null, currency: m.currency ?? MANUAL_CURRENCY };
   }
   const existing = await lifecycleStore.get(ctx, account_id);
   if (existing) return { type: existing.type, label: existing.label, item_id: existing.item_id, currency: existing.currency };
-  if (isManualId(account_id)) return null;
+  if (isManualId(account_id)) {
+    // An account SimpleFIN keeps up to date has a manual account's kind of id
+    // and its own entry (lib/connectors/store.ts). It is no Plaid
+    // connection's, so `item_id` stays null: nothing Plaid's (the guard on a
+    // missing account, the offer to remove a connection) reaches for it.
+    const fed = await connectorAccountsStore.get(ctx, account_id);
+    return fed ? { type: fed.type, label: { name: fed.name, institution: fed.institution_name, mask: null }, item_id: null, currency: fed.currency } : null;
+  }
 
   const cached = await readCache<{ institutions?: any[] }>(ctx, CacheKey.NetWorth);
   for (const inst of cached?.institutions ?? []) {
